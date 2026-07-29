@@ -112,8 +112,16 @@ def _requires_api_key(provider_key: str) -> bool:
     return provider_key not in KEYLESS_PROVIDER_KEYS
 
 
-def _default_api_key_env_var(provider_key: str) -> Optional[str]:
-    """Return the conventional environment variable for known keyed providers."""
+def default_api_key_env_var(provider_key: str) -> Optional[str]:
+    """Return the conventional environment variable for known keyed providers.
+
+    Single source of truth for the ``<PROVIDER>_API_KEY`` naming convention
+    (plus known aliases such as ``mistralai`` -> ``MISTRAL_API_KEY``); also
+    consumed by ``first_run_setup_state.read_provider_secret_presence`` so the
+    wizard's "found in your environment" detection agrees with Chat's own
+    readiness resolution even before ``api_key_env_var`` is explicitly
+    persisted to config.
+    """
     if provider_key not in PROVIDERS_REQUIRING_API_KEY_KEYS:
         return None
     return _DEFAULT_API_KEY_ENV_VAR_ALIASES.get(
@@ -195,7 +203,7 @@ def get_provider_readiness(
     env_var = (
         env_var_value.strip()
         if isinstance(env_var_value, str) and env_var_value.strip()
-        else _default_api_key_env_var(provider_key)
+        else default_api_key_env_var(provider_key)
     )
     env_key = _valid_api_key(env.get(env_var, "")) if env_var else None
     if env_key:

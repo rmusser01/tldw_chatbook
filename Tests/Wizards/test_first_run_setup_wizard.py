@@ -4,11 +4,16 @@ from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    CLOUD_PROBE_TIMEOUT_SECONDS,
     FirstRunSetupWizard,
+    ProviderStep,
     SetupWizardContainer,
 )
+from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_PROVIDER,
     STEP_RAG,
@@ -118,3 +123,258 @@ async def test_next_button_click_drives_quick_track_to_completion():
             "model",
             "summary",
         }
+
+
+def _provider_step(wizard=None, environ=None, discover=None, probe=None):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = wizard or SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    return ProviderStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="provider", title="Provider", step_number=2),
+        discover=discover or AsyncMock(return_value=()),
+        probe=probe or AsyncMock(),
+        environ=environ or {},
+    )
+
+
+class _StepHost(App):
+    def __init__(self, step):
+        super().__init__()
+        self._step = step
+
+    def compose(self) -> ComposeResult:
+        yield self._step
+
+
+@pytest.mark.asyncio
+async def test_provider_step_env_key_shows_found_in_environment():
+    step = _provider_step(environ={"OPENAI_API_KEY": "sk-x"})
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        await pilot.pause()
+        status = step.query_one("#setup-provider-key-status", Static)
+        assert "environment" in str(status.render()).lower()
+
+
+@pytest.mark.asyncio
+async def test_provider_step_stale_probe_result_is_discarded():
+    step = _provider_step()
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        generation_before = step.probe_generation
+        step.select_provider("anthropic")
+        # A result stamped with the old generation must not render.
+        step.apply_probe_result(generation_before, reachable=True, summary="stale ok")
+        status = step.query_one("#setup-provider-probe-status", Static)
+        assert "stale ok" not in str(status.render())
+
+
+@pytest.mark.asyncio
+async def test_provider_step_commit_writes_key_and_notes_key_entered():
+    from unittest.mock import AsyncMock
+
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        step.query_one("#setup-provider-key-input", Input).value = "sk-new"
+        ok, error = await step.commit()
+        assert ok, error
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed["api_settings.openai"]["api_key"] == "sk-new"
+        wizard.note_key_entered.assert_called_once()
+
+
+def test_provider_grouping_orders_cloud_then_local_then_custom():
+    """Mirror settings_screen.py:6423's grouping rule (task-6 brief interface)."""
+    from tldw_chatbook.Chat.console_provider_support import ConsoleProviderCatalogEntry
+
+    entries = (
+        ConsoleProviderCatalogEntry(
+            readiness_key="ollama", execution_key="ollama",
+            display_name="Ollama", requires_api_key=False,
+        ),
+        ConsoleProviderCatalogEntry(
+            readiness_key="local_llamacpp", execution_key="custom-openai-api",
+            display_name="local llama.cpp", requires_api_key=False,
+        ),
+        ConsoleProviderCatalogEntry(
+            readiness_key="openai", execution_key="openai",
+            display_name="OpenAI", requires_api_key=True,
+        ),
+        ConsoleProviderCatalogEntry(
+            readiness_key="anthropic", execution_key="anthropic",
+            display_name="Anthropic", requires_api_key=True,
+        ),
+    )
+    grouped = ProviderStep._grouped(entries)
+    # Cloud (alpha) -> Local (alpha) -> Custom/legacy alias keys, last.
+    assert [entry.readiness_key for entry in grouped] == [
+        "anthropic", "openai", "ollama", "local_llamacpp",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_provider_step_one_click_connect_adopts_discovered_server():
+    """Discovered local server: one click selects it; commit persists the
+    endpoint but never calls note_key_entered (no secret was involved)."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    server = DiscoveredLocalServer(
+        provider_key="llama_cpp", base_url="http://127.0.0.1:8080", model_ids=("m1",)
+    )
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, discover=AsyncMock(return_value=(server,)))
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        detected = step.query_one("#setup-provider-detected", Static)
+        assert "127.0.0.1:8080" in str(detected.render())
+        use_button = step.query_one("#setup-provider-use-detected", Button)
+        assert "hidden" not in use_button.classes
+
+        await pilot.click("#setup-provider-use-detected")
+        await pilot.pause()
+        assert step.selected_provider_key == "llama_cpp"
+        assert step.detected_base_url == "http://127.0.0.1:8080"
+
+        ok, error = await step.commit()
+        assert ok, error
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed == {
+            "api_settings.llama_cpp": {"api_url": "http://127.0.0.1:8080"}
+        }
+        wizard.note_key_entered.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_provider_step_masked_key_never_round_trips_configured_secret():
+    """A configured (non-env) secret renders as presence only -- never a value."""
+    wizard = MagicMock()
+    wizard.app_instance = MagicMock(
+        app_config={"api_settings": {"openai": {"api_key": "sk-existing-secret"}}}
+    )
+    step = _provider_step(wizard=wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        await pilot.pause()
+        key_input = step.query_one("#setup-provider-key-input", Input)
+        assert key_input.password is True
+        assert key_input.value == ""
+        status = step.query_one("#setup-provider-key-status", Static)
+        assert "sk-existing-secret" not in str(status.render())
+        actions = step.query_one("#setup-provider-key-actions")
+        assert "hidden" not in actions.classes
+
+
+@pytest.mark.asyncio
+async def test_provider_step_keep_preserves_existing_key_without_note():
+    """Keep must not touch the stored secret nor trigger the protect-keys gate."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={"api_settings": {"openai": {"api_key": "sk-existing"}}}
+        ),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        # Direct handler call: the full provider catalog can push these
+        # buttons below the visible test-terminal region, and this test is
+        # about the handler's effect, not the click hit-region.
+        step._on_keep()
+        await pilot.pause()
+        ok, error = await step.commit()
+        assert ok, error
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed == {}
+        wizard.note_key_entered.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_provider_step_clear_persists_empty_key_without_note():
+    """Clear must explicitly erase the stored secret (not just skip writing)."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={"api_settings": {"openai": {"api_key": "sk-existing"}}}
+        ),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        step._on_clear()  # see comment in the Keep test above
+        await pilot.pause()
+        key_input = step.query_one("#setup-provider-key-input", Input)
+        assert key_input.value == ""
+        ok, error = await step.commit()
+        assert ok, error
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed == {"api_settings.openai": {"api_key": ""}}
+        wizard.note_key_entered.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_provider_step_probe_budgets_cloud_vs_local():
+    """8.0s for a cloud key probe; 2.5s for a bare local-endpoint probe."""
+    from unittest.mock import AsyncMock
+
+    probe = AsyncMock()
+    step = _provider_step(probe=probe)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+
+        step._launch_probe(api_key="sk-cloud-key")
+        await pilot.pause()
+        assert probe.call_args.kwargs["timeout"] == CLOUD_PROBE_TIMEOUT_SECONDS
+        assert probe.call_args.kwargs["http_client"] is not None
+
+        step.detected_base_url = "http://127.0.0.1:8080"
+        step._launch_probe(api_key=None)
+        await pilot.pause()
+        assert probe.call_args.kwargs["timeout"] == 2.5
+        assert probe.call_args.kwargs["http_client"] is None

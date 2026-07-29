@@ -1029,6 +1029,7 @@ SmartContentTree Tree > .selected-node {
 
 /* ── First-run setup wizard ─────────────────────────────────────────── */
 .setup-welcome { padding: 2 4; }
+.setup-provider { padding: 2 4; }
 .setup-title { text-style: bold; text-align: center; margin-bottom: 1; }
 .setup-subtitle { color: $text-muted; margin-bottom: 2; }
 .setup-step-error { color: $error; margin-top: 1; }

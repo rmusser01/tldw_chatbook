@@ -261,9 +261,26 @@ def read_provider_secret_presence(
     *,
     provider_key: str,
 ) -> SecretPresence:
+    """Resolve whether a provider secret is configured, without ever reading it.
+
+    Falls back to the conventional ``<PROVIDER>_API_KEY`` environment variable
+    name (via ``provider_readiness.default_api_key_env_var``, the same
+    resolution Chat's own readiness check uses) when ``api_key_env_var`` is
+    not explicitly present in ``app_config``. Without this fallback, a wizard
+    run before the packaged default config.toml's ``api_key_env_var`` entries
+    have been persisted to disk (or any app_config that omits them) could
+    never detect an already-exported key -- exactly the first-run scenario
+    this step exists for.
+    """
+    from tldw_chatbook.Chat.provider_readiness import default_api_key_env_var
+
     settings = _section(_section(app_config, "api_settings"), provider_key)
     env_var_raw = settings.get("api_key_env_var")
-    env_var = env_var_raw.strip() if isinstance(env_var_raw, str) and env_var_raw.strip() else None
+    env_var = (
+        env_var_raw.strip()
+        if isinstance(env_var_raw, str) and env_var_raw.strip()
+        else default_api_key_env_var(provider_key)
+    )
     env_var_set = bool(env_var and environ.get(env_var))
     inline = _is_real_secret(settings.get("api_key"))
     return SecretPresence(

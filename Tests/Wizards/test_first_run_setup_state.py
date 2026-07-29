@@ -239,6 +239,40 @@ class TestSecretPresence:
         presence = read_provider_secret_presence({}, {}, provider_key="openai")
         assert presence.configured is False
 
+    def test_conventional_env_var_detected_without_explicit_config(self):
+        """No api_key_env_var persisted yet -- falls back to <PROVIDER>_API_KEY.
+
+        Task-6 finding: app_config may not yet carry the packaged default's
+        api_key_env_var entries (e.g. before first write to disk, or a
+        pared-down test double), which is exactly the state a first-run
+        wizard most plausibly sees. Without this fallback, an already
+        env-exported key could never be detected as "found in your
+        environment" here even though Chat's own readiness check
+        (provider_readiness.get_provider_readiness) would find it.
+        """
+        presence = read_provider_secret_presence(
+            {}, {"OPENAI_API_KEY": "sk-x"}, provider_key="openai"
+        )
+        assert presence.env_var == "OPENAI_API_KEY"
+        assert presence.env_var_set is True
+        assert presence.configured is True
+
+    def test_conventional_env_var_fallback_does_not_leak_when_unset(self):
+        """The fallback resolves a name but must not fabricate presence."""
+        presence = read_provider_secret_presence({}, {}, provider_key="openai")
+        assert presence.env_var == "OPENAI_API_KEY"
+        assert presence.env_var_set is False
+        assert presence.configured is False
+
+    def test_no_fallback_for_keyless_providers(self):
+        """llama_cpp needs no key; the fallback must not invent one."""
+        presence = read_provider_secret_presence(
+            {}, {"LLAMA_CPP_API_KEY": "unused"}, provider_key="llama_cpp"
+        )
+        assert presence.env_var is None
+        assert presence.env_var_set is False
+        assert presence.configured is False
+
 
 class TestWizardPrefill:
     def test_reads_current_values(self):
