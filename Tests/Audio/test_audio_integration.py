@@ -87,16 +87,13 @@ class TestEndToEndDictation:
                 mock_stream.read.side_effect = chunks + [Exception("Stop")]
 
                 # Create service and record
-                service = AudioRecordingService()
+                service = AudioRecordingService(backend="pyaudio", use_vad=False)
 
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                    service.start_recording(save_to_file=tmp.name)
+                    service.save_file = tmp.name
+                    service.is_recording = True
 
-                    # Process some chunks
-                    try:
-                        service._pyaudio_recording_loop()
-                    except Exception:
-                        pass  # Expected when chunks run out
+                    service._pyaudio_recording_loop()
 
                     # Stop and get audio
                     service.stop_recording()

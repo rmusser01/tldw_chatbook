@@ -470,9 +470,8 @@ class TestAudioRecordingIntegration:
 
                 mock_stream.read.side_effect = fake_read
 
-                service.start_recording(callback=callback)
-
-                # Run recording loop briefly
+                service.callback = callback
+                service.is_recording = True
                 service._pyaudio_recording_loop()
 
                 assert len(chunks_received) >= 3
@@ -501,14 +500,22 @@ class TestAudioRecordingIntegration:
                         backend="sounddevice", use_vad=False
                     )
 
-                    # Start recording
-                    service.start_recording()
+                    def stop_recording_loop(_interval):
+                        service.is_recording = False
+
+                    service.is_recording = True
+                    with patch(
+                        "tldw_chatbook.Audio.recording_service.time.sleep",
+                        side_effect=stop_recording_loop,
+                    ):
+                        service._sounddevice_recording_loop()
 
                     # Simulate callback being called
                     callback_func = mock_stream_class.call_args[1]["callback"]
                     test_data = np.array(
                         [[0.5], [-0.5], [0.25], [-0.25]], dtype=np.float32
                     )
+                    service.is_recording = True
                     callback_func(test_data, 4, None, None)
 
                     # Stop recording
