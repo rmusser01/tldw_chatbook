@@ -9,6 +9,7 @@ testable without a running app.
 from __future__ import annotations
 
 import importlib.util
+import sys
 import threading
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -21,13 +22,43 @@ from ..config import get_cli_setting
 # them itself; we only need to know whether at least one exists.
 CAPTURE_MODULES: tuple[str, ...] = ("pyaudio", "sounddevice")
 
-# Provider id -> import name. Only providers that run locally: the dictation
-# service's privacy mode rejects everything else (see resolve()).
-LOCAL_PROVIDER_MODULES: dict[str, str] = {
-    "parakeet-mlx": "parakeet_mlx",
-    "faster-whisper": "faster_whisper",
-    "lightning-whisper-mlx": "lightning_whisper_mlx",
+# Provider id -> required import name(s), ALL of which must resolve for the
+# provider to count as installed. Mirrors `get_available_providers()` in
+# `Local_Ingestion/transcription_service.py` -- same providers, same
+# declaration order (also the resolve() fallback preference below), same
+# detection rule per provider:
+#   - parakeet-onnx           find_spec("onnx_asr")
+#   - parakeet-mlx            find_spec("parakeet_mlx"), darwin only
+#   - lightning-whisper-mlx   find_spec("lightning_whisper_mlx"), darwin only
+#   - faster-whisper          find_spec("faster_whisper")
+#   - qwen2audio              find_spec("torch") AND find_spec("transformers")
+#   - parakeet / canary       find_spec("nemo") (NVIDIA NeMo)
+#
+# `remote-whisper` is deliberately excluded even though the service lists it:
+# it needs only `requests`, so it would always resolve as "installed", and
+# the dictation service's privacy mode (local_only, default True) rejects
+# non-local providers outright. Adding it here would let resolve() hand it
+# back as the chosen provider, which the service would then silently swap
+# out for something else -- exactly the silent-substitution bug this module
+# exists to prevent. Do not "complete the set" by adding it.
+LOCAL_PROVIDER_MODULES: dict[str, tuple[str, ...]] = {
+    "parakeet-onnx": ("onnx_asr",),
+    "parakeet-mlx": ("parakeet_mlx",),
+    "lightning-whisper-mlx": ("lightning_whisper_mlx",),
+    "faster-whisper": ("faster_whisper",),
+    "qwen2audio": ("torch", "transformers"),
+    "parakeet": ("nemo",),
+    "canary": ("nemo",),
 }
+
+# Providers usable only on Apple Silicon. Mirrors
+# `transcription_service._optional_module_available()`'s
+# `sys.platform == "darwin"` gate: a force-installed package on Linux must
+# not be reported as usable, or the button would light up and then fail at
+# capture time.
+DARWIN_ONLY_PROVIDERS: frozenset[str] = frozenset(
+    {"parakeet-mlx", "lightning-whisper-mlx"}
+)
 
 CAPTURE_REASON = "No microphone backend installed."
 CAPTURE_REMEDY = (
@@ -70,12 +101,24 @@ def capture_available() -> bool:
     return any(_module_installed(name) for name in CAPTURE_MODULES)
 
 
+def _provider_installed(provider: str, module_names: tuple[str, ...]) -> bool:
+    """Return True when `provider`'s required module(s) all resolve.
+
+    Darwin-only providers additionally require `sys.platform == "darwin"`,
+    checked before touching `find_spec` at all so a non-darwin platform never
+    even looks at whether the module happens to be importable.
+    """
+    if provider in DARWIN_ONLY_PROVIDERS and sys.platform != "darwin":
+        return False
+    return all(_module_installed(name) for name in module_names)
+
+
 def installed_local_providers() -> tuple[str, ...]:
     """Return the local transcription providers that are actually installed."""
     return tuple(
         provider
-        for provider, module_name in LOCAL_PROVIDER_MODULES.items()
-        if _module_installed(module_name)
+        for provider, module_names in LOCAL_PROVIDER_MODULES.items()
+        if _provider_installed(provider, module_names)
     )
 
 

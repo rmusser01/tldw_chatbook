@@ -154,7 +154,9 @@ def test_installed_local_providers_returns_subset_in_declared_order(monkeypatch)
     `lightning-whisper-mlx`) are alphabetically out of order relative to each
     other, so a stray `sorted()` in the implementation would also fail this
     test. Patches `find_spec` directly so a real, potentially
-    machine-installed `parakeet_mlx` cannot leak into the result.
+    machine-installed `parakeet_mlx` cannot leak into the result. Both
+    remaining providers are Apple-Silicon only, so `sys.platform` is pinned
+    to darwin rather than trusting whatever this machine happens to be.
     """
     installed = {"parakeet_mlx", "lightning_whisper_mlx"}
 
@@ -162,8 +164,125 @@ def test_installed_local_providers_returns_subset_in_declared_order(monkeypatch)
         return object() if name in installed else None
 
     monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
+    monkeypatch.setattr(cvi.sys, "platform", "darwin")
 
     assert cvi.installed_local_providers() == ("parakeet-mlx", "lightning-whisper-mlx")
+
+
+def test_installed_local_providers_includes_parakeet_onnx_when_present(monkeypatch):
+    """parakeet-onnx is the provider the shipping one-shot dictation used --
+    the worst omission this task fixes. Cross-platform: no darwin gate.
+    """
+    def fake_find_spec(name, *args, **kwargs):
+        return object() if name == "onnx_asr" else None
+
+    monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
+
+    assert cvi.installed_local_providers() == ("parakeet-onnx",)
+
+
+def test_installed_local_providers_excludes_parakeet_onnx_when_absent(monkeypatch):
+    monkeypatch.setattr(cvi.importlib.util, "find_spec", lambda name, *a, **k: None)
+
+    assert "parakeet-onnx" not in cvi.installed_local_providers()
+
+
+@pytest.mark.parametrize(
+    ("provider", "module_name"),
+    [
+        ("faster-whisper", "faster_whisper"),
+        ("parakeet", "nemo"),
+        ("canary", "nemo"),
+    ],
+)
+def test_installed_local_providers_detects_cross_platform_providers(
+    monkeypatch, provider, module_name
+):
+    """Providers with no darwin gate are detected purely by find_spec."""
+    def fake_find_spec(name, *args, **kwargs):
+        return object() if name == module_name else None
+
+    monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
+
+    assert provider in cvi.installed_local_providers()
+
+
+def test_parakeet_and_canary_both_come_from_nemo(monkeypatch):
+    """A single NeMo install makes both NeMo-backed providers available."""
+    def fake_find_spec(name, *args, **kwargs):
+        return object() if name == "nemo" else None
+
+    monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
+
+    installed = cvi.installed_local_providers()
+    assert "parakeet" in installed
+    assert "canary" in installed
+
+
+def test_qwen2audio_requires_both_torch_and_transformers(monkeypatch):
+    def fake_find_spec(name, *args, **kwargs):
+        return object() if name in {"torch", "transformers"} else None
+
+    monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
+
+    assert "qwen2audio" in cvi.installed_local_providers()
+
+
+@pytest.mark.parametrize("present_module", ["torch", "transformers"])
+def test_qwen2audio_unavailable_with_only_one_of_two_modules(monkeypatch, present_module):
+    """Present with only one of the two required modules -> not available."""
+    def fake_find_spec(name, *args, **kwargs):
+        return object() if name == present_module else None
+
+    monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
+
+    assert "qwen2audio" not in cvi.installed_local_providers()
+
+
+@pytest.mark.parametrize(
+    ("provider", "module_name"),
+    [("parakeet-mlx", "parakeet_mlx"), ("lightning-whisper-mlx", "lightning_whisper_mlx")],
+)
+def test_mlx_providers_require_darwin_even_if_module_resolves(
+    monkeypatch, provider, module_name
+):
+    """A force-installed MLX package on a non-darwin platform must not be
+    reported as usable -- it would light up the button and then fail at
+    capture time.
+    """
+    monkeypatch.setattr(
+        cvi.importlib.util, "find_spec", lambda name, *a, **k: object() if name == module_name else None
+    )
+    monkeypatch.setattr(cvi.sys, "platform", "linux")
+
+    assert provider not in cvi.installed_local_providers()
+
+
+@pytest.mark.parametrize(
+    ("provider", "module_name"),
+    [("parakeet-mlx", "parakeet_mlx"), ("lightning-whisper-mlx", "lightning_whisper_mlx")],
+)
+def test_mlx_providers_available_on_darwin_when_module_resolves(
+    monkeypatch, provider, module_name
+):
+    monkeypatch.setattr(
+        cvi.importlib.util, "find_spec", lambda name, *a, **k: object() if name == module_name else None
+    )
+    monkeypatch.setattr(cvi.sys, "platform", "darwin")
+
+    assert provider in cvi.installed_local_providers()
+
+
+def test_remote_whisper_is_never_returned(monkeypatch):
+    """Always-available in the service, but privacy-mode-incompatible here:
+    including it would let resolve() hand it back and have the service
+    silently swap it out later -- the exact bug this module exists to
+    prevent.
+    """
+    monkeypatch.setattr(cvi.importlib.util, "find_spec", lambda name, *a, **k: object())
+    monkeypatch.setattr(cvi.sys, "platform", "darwin")
+
+    assert "remote-whisper" not in cvi.installed_local_providers()
 
 
 @pytest.mark.parametrize("exc", [ImportError, ValueError])
@@ -252,22 +371,50 @@ def test_resolve_never_returns_an_uninstalled_provider(monkeypatch):
 def test_resolve_fallback_prefers_the_first_declared_provider(monkeypatch):
     """With several installed and none configured, declaration order decides.
 
-    Task 1 pins `installed_local_providers()`' order; this pins that `resolve()`
-    consumes it as a preference order rather than sorting it. A single-element
-    `installed` tuple cannot detect `sorted(installed)[0]`.
+    `installed_local_providers()`'s order now leads with `parakeet-onnx`
+    (added for the provider-coverage fix); this pins that `resolve()`
+    consumes that order as a preference rather than sorting it. A
+    single-element `installed` tuple cannot detect `sorted(installed)[0]`,
+    and the elements here are not alphabetical, so a stray `sorted()` would
+    also be caught.
     """
     monkeypatch.setattr(
         cvi,
         "installed_local_providers",
-        lambda: ("parakeet-mlx", "faster-whisper", "lightning-whisper-mlx"),
+        lambda: (
+            "parakeet-onnx",
+            "parakeet-mlx",
+            "faster-whisper",
+            "lightning-whisper-mlx",
+        ),
     )
     _stub_settings(monkeypatch, {"transcription.default_provider": "qwen2audio"})
 
     effective = cvi.resolve()
 
     assert effective is not None
-    assert effective.provider == "parakeet-mlx"
+    assert effective.provider == "parakeet-onnx"
     assert effective.was_overridden is True
+
+
+def test_resolve_honours_a_configured_parakeet_onnx(monkeypatch):
+    """The regression this task fixes: `parakeet-onnx` is the provider the
+    shipping one-shot dictation used, so a user with it configured and
+    installed must get it back verbatim, not overridden to whatever used to
+    be `installed[0]`.
+    """
+    monkeypatch.setattr(
+        cvi,
+        "installed_local_providers",
+        lambda: ("parakeet-onnx", "faster-whisper"),
+    )
+    _stub_settings(monkeypatch, {"transcription.default_provider": "parakeet-onnx"})
+
+    effective = cvi.resolve()
+
+    assert effective is not None
+    assert effective.provider == "parakeet-onnx"
+    assert effective.was_overridden is False
 
 
 def test_resolve_reads_the_real_config_key_names(monkeypatch):
