@@ -7823,6 +7823,34 @@ def test_native_console_state_round_trip_preserves_source_aware_character_identi
     assert restored_session.character_ref() is not None
 
 
+def test_live_server_session_never_exposes_local_character_projection():
+    """A stray server-side numeric ID cannot drive local rail/card state."""
+    session = ConsoleChatSession(
+        id="session-a",
+        title="Server character",
+        runtime_backend="server",
+        assistant_kind="character",
+        assistant_id="opaque-character",
+        assistant_authority_id="server-user-v1:" + ("f" * 64),
+        character_id=7,
+        character_name="Unrelated local card",
+    )
+    store = ConsoleChatStore()
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    screen = _bare_console_screen(store)
+
+    assert screen._current_console_rail_character_id() is None
+
+    payload = screen._serialize_native_console_state()
+    assert payload is not None
+    assert payload["sessions"][0]["character_id"] is None
+    assert session.character_id == 7
+
+
 def test_native_console_state_restore_adapts_legacy_local_character_without_authority():
     """Legacy numeric character state keeps direct-chat kind but stays unproven."""
     payload = {

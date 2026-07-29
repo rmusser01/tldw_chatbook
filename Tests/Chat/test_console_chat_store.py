@@ -44,6 +44,50 @@ def test_session_character_ref_projects_complete_local_and_server_identities():
     )
 
 
+def test_session_local_character_id_requires_canonical_local_character_identity():
+    valid = ConsoleChatSession(
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+    )
+    invalid = (
+        ConsoleChatSession(
+            runtime_backend="server",
+            assistant_kind="character",
+            assistant_id="opaque-character",
+            character_id=7,
+        ),
+        ConsoleChatSession(
+            runtime_backend="local",
+            assistant_kind="persona",
+            assistant_id="7",
+            character_id=7,
+        ),
+        ConsoleChatSession(
+            runtime_backend="local",
+            assistant_kind="character",
+            assistant_id="1",
+            character_id=True,
+        ),
+        ConsoleChatSession(
+            runtime_backend="local",
+            assistant_kind="character",
+            assistant_id="0",
+            character_id=0,
+        ),
+        ConsoleChatSession(
+            runtime_backend="local",
+            assistant_kind="character",
+            assistant_id="007",
+            character_id=7,
+        ),
+    )
+
+    assert valid.local_character_id() == 7
+    assert all(session.local_character_id() is None for session in invalid)
+
+
 @pytest.mark.parametrize(
     "session_kwargs",
     [
@@ -1340,6 +1384,63 @@ def test_store_persists_workspace_session_with_real_chat_persistence_service(tmp
         assert persisted_message["content"] == "hello"
         workspace_conversations = registry.list_workspace_conversations("workspace-a")
         assert [item.item_id for item in workspace_conversations] == [conversation_id]
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize(
+    "runtime_backend",
+    (
+        pytest.param("", id="missing"),
+        pytest.param(123, id="non-string"),
+        pytest.param("remote", id="unknown"),
+    ),
+)
+def test_invalid_runtime_source_never_reaches_real_chat_persistence(
+    tmp_path,
+    monkeypatch,
+    runtime_backend,
+):
+    """Malformed source provenance cannot become a durable local character."""
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        character_id = db.add_character_card({"name": "Existing local card"})
+        assert type(character_id) is int
+        character_count = db.count_character_cards()
+        persistence = ChatPersistenceService(db)
+        create_calls = []
+        real_create = persistence.create_conversation
+
+        def recording_create(**kwargs):
+            create_calls.append(kwargs)
+            return real_create(**kwargs)
+
+        monkeypatch.setattr(persistence, "create_conversation", recording_create)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(
+            title="Malformed character",
+            runtime_backend=runtime_backend,
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            assistant_authority_id=db.get_local_authority_id(),
+            character_id=character_id,
+            character_name="Injected local card",
+        )
+
+        conversation_id = store.persist_session_if_needed(session.id)
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Keep this message in memory",
+            persist=True,
+        )
+
+        assert conversation_id is None
+        assert session.persisted_conversation_id is None
+        assert message.persisted_message_id is None
+        assert create_calls == []
+        assert db.get_all_conversation_ids() == []
+        assert db.count_character_cards() == character_count
     finally:
         db.close()
 

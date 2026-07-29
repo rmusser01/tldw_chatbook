@@ -5723,11 +5723,7 @@ class ChatScreen(BaseAppScreen):
         native_session = self._active_native_console_session()
         if native_session is None:
             return None
-        character_id = getattr(native_session, "character_id", None)
-        try:
-            return int(character_id) if character_id is not None else None
-        except (TypeError, ValueError):
-            return None
+        return native_session.local_character_id()
 
     def _current_console_rail_character_name(self) -> Optional[str]:
         """Active native Console session's character name, or None."""
@@ -11828,7 +11824,7 @@ class ChatScreen(BaseAppScreen):
                     "assistant_kind": session.assistant_kind,
                     "assistant_id": session.assistant_id,
                     "assistant_authority_id": session.assistant_authority_id,
-                    "character_id": session.character_id,
+                    "character_id": session.local_character_id(),
                     "character_name": session.character_name,
                 }
                 for session in store.sessions()

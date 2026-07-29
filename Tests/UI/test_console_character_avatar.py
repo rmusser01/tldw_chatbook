@@ -52,7 +52,14 @@ def _store_with_session(session: ConsoleChatSession) -> ConsoleChatStore:
 
 
 def test_current_console_rail_character_id_reads_active_session():
-    session = ConsoleChatSession(id="session-a", character_id=7, character_name="Ada")
+    session = ConsoleChatSession(
+        id="session-a",
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+        character_name="Ada",
+    )
     screen = _bare_console_screen(_store_with_session(session))
 
     assert screen._current_console_rail_character_id() == 7
@@ -75,6 +82,9 @@ def test_p3c_leaves_dictionary_scope_ids_unchanged():
     """
     session = ConsoleChatSession(
         id="session-a",
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
         character_id=7,
         character_name="Ada",
         persisted_conversation_id="conv-1",
@@ -262,6 +272,14 @@ def _set_active_console_character(screen, character_id, character_name) -> None:
     assert session is not None, "no active native Console session"
     session.character_id = character_id
     session.character_name = character_name
+    session.runtime_backend = "local"
+    session.assistant_authority_id = None
+    if type(character_id) is int and character_id > 0:
+        session.assistant_kind = "character"
+        session.assistant_id = str(character_id)
+    else:
+        session.assistant_kind = "generic"
+        session.assistant_id = "console"
 
 
 @pytest.mark.asyncio

@@ -247,6 +247,18 @@ class ConsoleChatSession:
     character_id: int | None = None
     character_name: str | None = None
 
+    def local_character_id(self) -> int | None:
+        """Return the exact validated local character projection, if any."""
+        if (
+            self.runtime_backend != "local"
+            or self.assistant_kind != "character"
+            or type(self.character_id) is not int
+            or self.character_id < 1
+            or self.assistant_id != str(self.character_id)
+        ):
+            return None
+        return self.character_id
+
     def character_ref(self) -> CharacterRef | None:
         """Return the complete authority-scoped character identity, if any."""
         if self.assistant_kind != "character":
@@ -257,11 +269,7 @@ class ConsoleChatSession:
             return None
 
         if self.runtime_backend == "local":
-            if (
-                type(self.character_id) is not int
-                or self.character_id < 1
-                or self.assistant_id != str(self.character_id)
-            ):
+            if self.local_character_id() is None:
                 return None
         elif self.runtime_backend == "server":
             if self.character_id is not None:
@@ -1962,21 +1970,22 @@ class ConsoleChatStore:
             return session.persisted_conversation_id
         if self.persistence is None:
             return None
+        if (
+            type(session.runtime_backend) is not str
+            or session.runtime_backend not in {"local", "server"}
+        ):
+            return None
         scope_type, persisted_workspace_id = self._persistence_scope(session)
-        is_local_character = (
-            session.runtime_backend == "local"
-            and session.assistant_kind == "character"
-            and type(session.character_id) is int
-            and session.character_id > 0
-            and session.assistant_id == str(session.character_id)
-        )
+        local_character_id = session.local_character_id()
         identity_kwargs = {
             "runtime_backend": session.runtime_backend,
             "assistant_kind": session.assistant_kind,
             "assistant_id": session.assistant_id,
             "assistant_authority_id": session.assistant_authority_id,
-            "character_id": session.character_id if is_local_character else None,
-            "character_name": session.character_name if is_local_character else None,
+            "character_id": local_character_id,
+            "character_name": (
+                session.character_name if local_character_id is not None else None
+            ),
         }
         session.persisted_conversation_id = self.persistence.create_conversation(
             conversation_title=session.title,
