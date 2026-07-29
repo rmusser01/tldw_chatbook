@@ -74,9 +74,24 @@ Make per-segment finals live in `LazyLiveDictationService`:
 - Apply the already-requested VAD (webrtcvad, already a declared dependency of
   the `speech_recording` extra) to delivered chunks, and refresh
   `last_speech_time` **only for chunks containing speech**. The existing
-  2.0-second silence branch in `_process_audio_buffer` then becomes reachable
-  and fires `on_final_transcript` per pause, exactly as its code already
-  intends.
+  silence branch then becomes reachable and fires `on_final_transcript` per
+  pause, exactly as its code already intends.
+- **Exclude fully-silent chunks from transcription as well.** Today every
+  500 ms chunk reaches `transcribe_buffer`, speech or not — a wasted provider
+  call per half-second of silence, and Whisper-family models hallucinate on
+  silence ("Thank you." is the canonical artifact). V2's pause-command-pause
+  choreography feeds deliberate silences constantly, so this goes from waste
+  to an active correctness hazard: hallucinated tokens pollute the draft or
+  land inside a command's segment and break the whole-segment match. Rule: a
+  chunk containing **any** VAD-positive frames is speech and is transcribed;
+  only fully-silent chunks are skipped — soft speech is never dropped.
+- **The silence-timeout check must stay at the loop level.** It runs on every
+  `_processing_loop` iteration (`dictation_service_lazy.py:584-590`),
+  independent of chunk arrival — which is precisely why skipping silent
+  chunks cannot starve finalization. Moving it inside
+  `_process_audio_buffer` (a plausible tidy-up) would make segments never
+  finalize once silent chunks stop being processed, and commands would
+  silently stop firing. Pinned here so no refactor "improves" it.
 - Where VAD is unavailable (import missing), behavior must degrade to today's
   finals-at-stop — never a crash, never a changed default for the three other
   service consumers. In that degraded mode spoken commands still parse but
@@ -175,7 +190,9 @@ A small dispatch table maps `VoiceCommand.name` to existing paths:
   never ship the user's message. This ordering is why `VoiceFailed` precedes
   `VoiceStateChanged(idle)` in the first place.
 - `new session` → the existing new-tab action (`ctrl+t` path).
-- `read that back` → latest assistant message of the active session; post
+- `read that back` → latest **completed** assistant message of the active
+  session (a reply still streaming acks "still responding" — spoken if the
+  toggle is on, toast otherwise — rather than speaking a partial); post
   `TTSRequestEvent(text=..., message_id=...)`; update
   `_console_speaking_message_id` and resync, mirroring task-559's handler.
   Works regardless of the spoken-feedback toggle. If there is no assistant
