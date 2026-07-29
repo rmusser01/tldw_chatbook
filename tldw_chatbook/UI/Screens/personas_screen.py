@@ -940,7 +940,8 @@ class PersonasScreen(BaseAppScreen):
 
         Everything that only arranges already-composed widgets stays here, so
         the screen is laid out and readable immediately. Only the library read
-        and what genuinely depends on it is deferred, in its original order.
+        and what genuinely depends on it is deferred, in its original order --
+        including the loading-manager setup, which the library read follows.
         """
         super().on_mount()
         self._sync_responsive_workbench()
@@ -948,12 +949,6 @@ class PersonasScreen(BaseAppScreen):
         self._set_persona_editor_runtime_source(self.persona_handler.current_mode())
         self.query_one(PersonasLibraryPane).set_mode(self.state.active_mode)
         self._show_center(None)
-        # Reflect a "my name" pointer persisted from a previous session
-        # immediately, before any selection happens (task-442 T3) -- now
-        # genuinely immediate, rather than behind the library read.
-        self.query_one(PersonasInspectorPane).set_active_profile_name(
-            get_active_user_profile_pointer()
-        )
         self.run_worker(
             self._load_after_mount(),
             group="personas_initial_load",
