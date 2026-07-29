@@ -205,7 +205,7 @@ def test_controller_emits_voice_command_for_command_segment(monkeypatch):
 ```
 
 - [ ] **Step 2: Run to verify failure.**
-- [ ] **Step 3: Implement** (`VoiceCommand` frozen dataclass beside the other events; `normalize_spoken` with `str.translate` over `string.punctuation`; prefix read via `get_cli_setting("dictation", "command_prefix", None)`, `str.strip()`, blank→`"console"`; wire `classify_segment` into `_run_begin`'s lambda). Docstrings with `Args:`/`Returns:` on all new public callables.
+- [ ] **Step 3: Implement** (`VoiceCommand` frozen dataclass beside the other events; `normalize_spoken` removing every character whose `unicodedata.category` starts with `P` (Unicode punctuation — covers ASCII, curly quotes U+2019, and ellipsis U+2026, all of which Whisper emits) plus ASCII `string.punctuation` as a belt; prefix read via `get_cli_setting("dictation", "command_prefix", None)`, `str.strip()`, blank→`"console"`; wire `classify_segment` into `_run_begin`'s lambda). Docstrings with `Args:`/`Returns:` on all new public callables.
 - [ ] **Step 4: Run** `Tests/Chat/test_console_voice_input.py` + the subprocess import guard (same file) — all green.
 - [ ] **Step 5: Mutation-check** (preserve internal punctuation → `test_console_comma_send_period_matches` fails; drop whole-segment rule → trailing-words test fails) **and commit** `feat(console): whole-segment spoken-command grammar in the voice controller`.
 
