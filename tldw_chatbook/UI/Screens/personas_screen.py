@@ -1396,6 +1396,35 @@ class PersonasScreen(BaseAppScreen):
                 page_offset=offset,
                 page_size=PERSONAS_LIBRARY_PAGE_SIZE,
             )
+            if request_is_current is not None and not request_is_current():
+                self._count_cache_key = None
+                self._characters = []
+                self._character_total = 0
+                self._update_status_row()
+                if self.state.runtime_source == "server":
+                    current_sort_label = "Sort: Server order"
+                    current_tag_label = "Tag: All"
+                else:
+                    current_sort_labels = dict(self._character_sort_cycle())
+                    current_sort_label = (
+                        f"Sort: "
+                        f"{current_sort_labels.get(self.state.sort_key, 'Name')}"
+                    )
+                    current_tag_label = (
+                        f"Tag: {self.state.tag_filter}"
+                        if self.state.tag_filter
+                        else "Tag: All"
+                    )
+                library.set_sort_label(current_sort_label)
+                library.set_tag_label(current_tag_label)
+                await library.update_rows(
+                    (),
+                    total=0,
+                    noun="characters",
+                    page_offset=self.state.page_offset,
+                    page_size=PERSONAS_LIBRARY_PAGE_SIZE,
+                )
+                return
             library.set_sort_label(sort_label)
             library.set_tag_label(tag_label)
             if (
@@ -6723,7 +6752,10 @@ class PersonasScreen(BaseAppScreen):
         )
         # Clear any active search (state + Input, as _apply_mode does) and reset
         # paging so the imported character shows on page 0 of the refreshed list.
+        self._cancel_search_debounce()
         self.state.search_query = ""
+        if self.state.sort_key == "relevance":
+            self.state.sort_key = "name_asc"
         self.state.page_offset = 0
         try:
             self.query_one("#personas-library-search", Input).value = ""

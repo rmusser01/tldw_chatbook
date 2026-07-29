@@ -236,12 +236,17 @@ class RuntimeServerContextProvider:
         self,
         *,
         expected_server_id: str,
+        context_capture: object | None = None,
     ) -> str:
         """Resolve authority for the expected target's authenticated user.
 
         Args:
             expected_server_id: Configured target identifier already carried
                 by the caller's character context.
+            context_capture: Optional opaque capture returned by
+                :meth:`capture_character_authority_context`. Supplying it
+                binds identity resolution to the caller's exact authenticated
+                context across later operations.
 
         Returns:
             The versioned server-user character authority identifier.
@@ -252,7 +257,18 @@ class RuntimeServerContextProvider:
             asyncio.CancelledError: If the caller cancels the identity lookup.
         """
         try:
-            capture = self._capture_character_authority_context(expected_server_id)
+            if context_capture is None:
+                capture = self._capture_character_authority_context(
+                    expected_server_id
+                )
+            elif (
+                type(context_capture) is _CharacterAuthorityContextCapture
+                and context_capture.expected_server_id == expected_server_id
+                and self._character_authority_capture_matches(context_capture)
+            ):
+                capture = context_capture
+            else:
+                raise ServerIdentityUnavailable()
         except Exception:
             raise ServerIdentityUnavailable() from None
 
@@ -298,6 +314,29 @@ class RuntimeServerContextProvider:
             authority_id=authority_id,
         )
         return authority_id
+
+    def capture_character_authority_context(
+        self,
+        *,
+        expected_server_id: str,
+    ) -> object:
+        """Return an opaque proof of the current authenticated character context.
+
+        The returned object intentionally exposes no public credential or
+        client fields. Callers may only pass it back to the provider's
+        character-authority APIs.
+        """
+        try:
+            return self._capture_character_authority_context(expected_server_id)
+        except Exception:
+            raise ServerIdentityUnavailable() from None
+
+    def is_character_authority_context_current(self, capture: object) -> bool:
+        """Return whether an opaque capture still owns the authenticated client."""
+        return (
+            type(capture) is _CharacterAuthorityContextCapture
+            and self._character_authority_capture_matches(capture)
+        )
 
     async def close_cached_client(self) -> None:
         cached_client = self._cached_client

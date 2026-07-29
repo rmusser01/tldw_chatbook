@@ -4189,6 +4189,82 @@ class TestServerCharacterSourceIsolation:
 
         assert screen._characters == [{"id": 3, "name": "Newer X winner"}]
 
+    async def test_mid_render_invalidation_clears_partial_stale_character_page(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """A newer failed reload leaves no older page published after its await."""
+        import asyncio
+
+        mock_app_instance.runtime_backend = "local"
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            library = screen.query_one("#personas-library-pane")
+            original_update_rows = library.update_rows
+            stale_render_started = asyncio.Event()
+            release_stale_render = asyncio.Event()
+            count_calls = 0
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                nonlocal count_calls
+                if function is personas_screen_module.count_character_page:
+                    count_calls += 1
+                    if count_calls == 1:
+                        return 1
+                    raise RuntimeError("newer page failed")
+                return [{"id": 7, "name": "Older X"}]
+
+            async def block_after_row_publication(rows, **kwargs):
+                await original_update_rows(rows, **kwargs)
+                if tuple(row.name for row in rows) == ("Older X",):
+                    stale_render_started.set()
+                    await release_stale_render.wait()
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+            monkeypatch.setattr(library, "update_rows", block_after_row_publication)
+            screen._character_db = lambda: object()
+            screen._count_cache_key = None
+            screen._notify = Mock()
+            screen.state.sort_key = "modified_desc"
+            screen.state.tag_filter = "older-tag"
+
+            stale = asyncio.create_task(screen._reload_character_page())
+            await stale_render_started.wait()
+
+            screen.state.sort_key = "name_asc"
+            screen.state.tag_filter = None
+            await screen._reload_character_page()
+
+            release_stale_render.set()
+            await stale
+            await pilot.pause()
+
+            assert screen._characters == []
+            assert screen._character_total == 0
+            assert not list(screen.query(".personas-library-row"))
+            assert (
+                str(
+                    screen.query_one(
+                        "#personas-library-count",
+                        Static,
+                    ).renderable
+                )
+                == "0 characters"
+            )
+            assert (
+                str(screen.query_one("#personas-library-sort", Button).label)
+                == "Sort: Name"
+            )
+            assert (
+                str(screen.query_one("#personas-library-tag", Button).label)
+                == "Tag: All"
+            )
+
     @pytest.mark.parametrize("older_outcome", ("success", "failure"))
     async def test_server_target_aba_drops_older_request(
         self, mock_app_instance, older_outcome
@@ -6255,6 +6331,17 @@ class TestPersonaHumanIdentityRemoval:
         server_target_id = "configured-target-7"
         server_authority_id = "server-user-v1:" + ("d" * 64)
         authority_resolver = AsyncMock(return_value=server_authority_id)
+        authority_capture = object()
+
+        async def resolve_authority_for_capture(
+            *,
+            expected_server_id,
+            context_capture,
+        ):
+            assert context_capture is authority_capture
+            return await authority_resolver(
+                expected_server_id=expected_server_id
+            )
 
         class _CapturingStore:
             def __init__(self):
@@ -6297,7 +6384,13 @@ class TestPersonaHumanIdentityRemoval:
             character_persona_scope_service=server_profile_service,
             local_character_persona_service=local_profile_service,
             server_context_provider=SimpleNamespace(
-                resolve_character_authority_id=authority_resolver
+                capture_character_authority_context=Mock(
+                    return_value=authority_capture
+                ),
+                is_character_authority_context_current=Mock(
+                    side_effect=lambda capture: capture is authority_capture
+                ),
+                resolve_character_authority_id=resolve_authority_for_capture,
             ),
         )
         screen = ChatScreen(runtime_app)

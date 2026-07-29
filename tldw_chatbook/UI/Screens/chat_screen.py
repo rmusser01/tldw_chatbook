@@ -12225,6 +12225,20 @@ class ChatScreen(BaseAppScreen):
 
         assistant_authority_id: str | None
         local_character_id: int | None
+        server_context_capture: object | None = None
+        server_context_is_current: Callable[[object], bool] | None = None
+
+        def exact_server_context_is_current() -> bool:
+            if (
+                server_context_capture is None
+                or server_context_is_current is None
+            ):
+                return False
+            try:
+                return server_context_is_current(server_context_capture) is True
+            except Exception:
+                return False
+
         if runtime_backend == "local":
             db = getattr(self.app_instance, "chachanotes_db", None)
             get_local_authority_id = getattr(db, "get_local_authority_id", None)
@@ -12257,11 +12271,36 @@ class ChatScreen(BaseAppScreen):
 
             assistant_authority_id = None
             provider = getattr(self.app_instance, "server_context_provider", None)
+            capture_context = getattr(
+                provider,
+                "capture_character_authority_context",
+                None,
+            )
+            server_context_is_current = getattr(
+                provider,
+                "is_character_authority_context_current",
+                None,
+            )
             resolver = getattr(provider, "resolve_character_authority_id", None)
+            if not callable(capture_context) or not callable(
+                server_context_is_current
+            ):
+                return False
+            try:
+                server_context_capture = capture_context(
+                    expected_server_id=expected_server_id
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return False
+            if not exact_server_context_is_current():
+                return False
             if callable(resolver):
                 try:
                     resolved_authority_id = await resolver(
-                        expected_server_id=expected_server_id
+                        expected_server_id=expected_server_id,
+                        context_capture=server_context_capture,
                     )
                 except asyncio.CancelledError:
                     raise
@@ -12279,7 +12318,11 @@ class ChatScreen(BaseAppScreen):
             # This is both the post-resolver fence and the immediately
             # pre-card-fetch fence. No card from a newly active target may be
             # used for the ID carried by the handoff.
-            if getattr(self.app_instance, "active_server_id", None) != expected_server_id:
+            if (
+                not exact_server_context_is_current()
+                or getattr(self.app_instance, "active_server_id", None)
+                != expected_server_id
+            ):
                 return False
             local_character_id = None
 
@@ -12304,7 +12347,11 @@ class ChatScreen(BaseAppScreen):
 
         if runtime_backend == "server":
             expected_server_id = payload.active_server_profile_id
-            if getattr(self.app_instance, "active_server_id", None) != expected_server_id:
+            if (
+                not exact_server_context_is_current()
+                or getattr(self.app_instance, "active_server_id", None)
+                != expected_server_id
+            ):
                 return False
 
         # Local import matches this module's existing convention of
@@ -12328,6 +12375,12 @@ class ChatScreen(BaseAppScreen):
             system_prompt=system_prompt,
             character_label=name,
         )
+        if runtime_backend == "server" and (
+            not exact_server_context_is_current()
+            or getattr(self.app_instance, "active_server_id", None)
+            != payload.active_server_profile_id
+        ):
+            return False
         session = store.create_session(
             title=f"Chat with {name}",
             workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,

@@ -3116,13 +3116,33 @@ def _character_handoff_runtime(
         get_character=AsyncMock(return_value=scoped_card),
     )
     resolver = AsyncMock(return_value=server_authority)
+    initial_capture = SimpleNamespace(account="A")
+    authority_context_state = {"current": initial_capture}
+    capture_context = Mock(
+        side_effect=lambda *, expected_server_id: authority_context_state["current"]
+    )
+    capture_is_current = Mock(
+        side_effect=lambda capture: capture is authority_context_state["current"]
+    )
+    resolve_captures: list[object | None] = []
+
+    async def resolve_character_authority_id(
+        *,
+        expected_server_id: str,
+        context_capture: object | None = None,
+    ):
+        resolve_captures.append(context_capture)
+        return await resolver(expected_server_id=expected_server_id)
+
     app = SimpleNamespace(
         app_config={},
         active_server_id=active_server_id,
         chachanotes_db=db,
         character_persona_scope_service=scope_service,
         server_context_provider=SimpleNamespace(
-            resolve_character_authority_id=resolver
+            capture_character_authority_context=capture_context,
+            is_character_authority_context_current=capture_is_current,
+            resolve_character_authority_id=resolve_character_authority_id,
         ),
     )
     return SimpleNamespace(
@@ -3130,6 +3150,11 @@ def _character_handoff_runtime(
         db=db,
         scope_service=scope_service,
         resolver=resolver,
+        initial_capture=initial_capture,
+        authority_context_state=authority_context_state,
+        capture_context=capture_context,
+        capture_is_current=capture_is_current,
+        resolve_captures=resolve_captures,
     )
 
 
@@ -3640,6 +3665,122 @@ async def test_server_target_switch_during_card_fetch_discards_card(monkeypatch)
     )
     runtime.scope_service.get_character.assert_awaited_once_with(7, mode="server")
     assert store.session is None
+
+
+@pytest.mark.parametrize(
+    "authenticated_transition",
+    ("a_to_b", "a_to_b_to_a"),
+)
+@pytest.mark.asyncio
+async def test_server_authenticated_context_change_during_card_fetch_aborts_session(
+    monkeypatch,
+    authenticated_transition,
+):
+    expected_server_id = "configured-target-7"
+    runtime = _character_handoff_runtime(
+        active_server_id=expected_server_id,
+    )
+    card_fetch_started = asyncio.Event()
+    release_card_fetch = asyncio.Event()
+
+    async def _blocked_card_fetch(character_id, *, mode):
+        assert (character_id, mode) == (7, "server")
+        card_fetch_started.set()
+        await release_card_fetch.wait()
+        return _character_card()
+
+    runtime.scope_service.get_character.side_effect = _blocked_card_fetch
+    handoff = asyncio.create_task(
+        _run_character_handoff(
+            monkeypatch,
+            runtime,
+            _character_start_handoff(
+                runtime_backend="server",
+                active_server_profile_id=expected_server_id,
+            ),
+        )
+    )
+    await card_fetch_started.wait()
+
+    runtime.authority_context_state["current"] = SimpleNamespace(account="B")
+    if authenticated_transition == "a_to_b_to_a":
+        runtime.authority_context_state["current"] = SimpleNamespace(account="A")
+    assert runtime.app.active_server_id == expected_server_id
+
+    release_card_fetch.set()
+    started, store = await handoff
+
+    assert started is False
+    assert runtime.resolve_captures == [runtime.initial_capture]
+    runtime.scope_service.get_character.assert_awaited_once_with(7, mode="server")
+    assert store.session is None
+    assert store.messages == []
+
+
+@pytest.mark.asyncio
+async def test_server_authenticated_context_change_during_resolver_fetches_no_card(
+    monkeypatch,
+):
+    expected_server_id = "configured-target-7"
+    runtime = _character_handoff_runtime(
+        active_server_id=expected_server_id,
+    )
+
+    async def _resolve_then_change(**kwargs):
+        assert kwargs == {"expected_server_id": expected_server_id}
+        runtime.authority_context_state["current"] = SimpleNamespace(account="B")
+        return "server-user-v1:" + ("b" * 64)
+
+    runtime.resolver.side_effect = _resolve_then_change
+    started, store = await _run_character_handoff(
+        monkeypatch,
+        runtime,
+        _character_start_handoff(
+            runtime_backend="server",
+            active_server_profile_id=expected_server_id,
+        ),
+    )
+
+    assert started is False
+    assert runtime.resolve_captures == [runtime.initial_capture]
+    runtime.scope_service.get_character.assert_not_awaited()
+    assert store.session is None
+
+
+@pytest.mark.asyncio
+async def test_server_authenticated_context_change_immediately_before_commit_aborts(
+    monkeypatch,
+):
+    expected_server_id = "configured-target-7"
+    runtime = _character_handoff_runtime(
+        active_server_id=expected_server_id,
+    )
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+
+    def _settings_then_change_context():
+        runtime.authority_context_state["current"] = SimpleNamespace(account="B")
+        return ConsoleSessionSettings(
+            provider="anthropic",
+            model="claude-3-haiku",
+        )
+
+    monkeypatch.setattr(
+        screen,
+        "_default_console_session_settings",
+        _settings_then_change_context,
+    )
+    started = await screen._start_character_console_session(
+        _character_start_handoff(
+            runtime_backend="server",
+            active_server_profile_id=expected_server_id,
+        )
+    )
+
+    assert started is False
+    assert runtime.resolve_captures == [runtime.initial_capture]
+    assert store.session is None
+    assert store.messages == []
 
 
 @pytest.mark.asyncio

@@ -705,6 +705,48 @@ async def test_character_authority_rejects_stale_in_flight_capture(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "same_target_change",
+    ("credential", "credential_aba", "client"),
+)
+async def test_public_character_authority_capture_rejects_same_target_context_change(
+    tmp_path,
+    monkeypatch,
+    same_target_change,
+):
+    client = IdentityClient(_identity_response(42))
+    provider, _, _, _ = _authority_provider(
+        tmp_path,
+        monkeypatch,
+        [client],
+    )
+
+    capture = provider.capture_character_authority_context(
+        expected_server_id=_AUTHORITY_SERVER_ID
+    )
+    assert provider.is_character_authority_context_current(capture)
+    authority_id = await provider.resolve_character_authority_id(
+        expected_server_id=_AUTHORITY_SERVER_ID,
+        context_capture=capture,
+    )
+    assert authority_id == server_context_module.encode_server_user_character_authority(
+        _AUTHORITY_SCOPE,
+        42,
+    )
+    assert "access-1" not in repr(capture)
+
+    if same_target_change == "credential":
+        provider.store_auth_tokens(access_token="access-2")
+    elif same_target_change == "credential_aba":
+        provider.store_auth_tokens(access_token="access-2")
+        provider.store_auth_tokens(access_token="access-1")
+    else:
+        await provider.close_cached_client()
+
+    assert not provider.is_character_authority_context_current(capture)
+
+
+@pytest.mark.asyncio
 async def test_character_authority_rejects_older_conflicting_account_response(
     tmp_path,
     monkeypatch,
