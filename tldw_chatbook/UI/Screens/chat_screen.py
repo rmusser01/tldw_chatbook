@@ -1,12 +1,15 @@
 """Chat screen implementation with comprehensive state management."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 import asyncio
+from functools import partial
 import inspect
 import os
 from pathlib import Path
 import re
+import threading
 import time
 from typing import Any, Dict, Iterable, Literal, Optional, TYPE_CHECKING
 import uuid
@@ -21,6 +24,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.color import Color
 from textual.events import Click, DescendantFocus, Key, MouseUp, Paste, Resize
+from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -158,6 +162,36 @@ from ...Chat.console_provider_gateway import (
     normalize_llamacpp_base_url,
 )
 from ...Chat.console_provider_endpoints import first_configured_endpoint
+
+# Import-safe at module scope: `console_voice_input` reaches the optional
+# speech stack only through `importlib.util.find_spec` and a function-body
+# import inside `default_service_factory`, so nothing here drags
+# `tldw_chatbook.Audio` (and with it faster-whisper and NeMo) into app start.
+#
+# The module itself is imported (not just the names below) so
+# `_sync_console_dictation_availability` can call `console_voice_input.probe()`
+# through the module's own namespace at call time -- the same target tests
+# already monkeypatch (`_patch_availability` in
+# `Tests/UI/test_console_dictation_streaming.py`) to make the controller's own
+# internal `probe()` call deterministic. Binding `probe` as a bare name here
+# instead would capture the unpatched function at import time and silently
+# stop tracking that monkeypatch.
+from ...Chat import console_voice_input
+from ...Chat.console_voice_input import (
+    NO_CAPTURE_MESSAGE,
+    NO_SPEECH_MESSAGE,
+    STATE_LISTENING,
+    TRANSCRIPTION_INCOMPLETE_REASON,
+    TRANSCRIPTION_INCOMPLETE_REMEDY,
+    ConsoleVoiceInputController,
+    VoiceFailed,
+    VoiceFinal,
+    VoiceModelPreparing,
+    VoiceModelWarmupFailed,
+    VoicePartial,
+    VoiceProviderOverridden,
+    default_service_factory,
+)
 from ...Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON,
@@ -328,6 +362,7 @@ from ...Widgets.Console.console_prompt_picker_modal import (
     MODE_APPLY_SYSTEM as CONSOLE_PROMPT_PICKER_MODE_APPLY_SYSTEM,
     ConsolePromptPickerModal,
 )
+from ...Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from ...Widgets.Console.console_skill_picker_modal import ConsoleSkillPickerModal
 from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.Console.console_system_prompt_modal import ConsoleSystemPromptModal
@@ -383,6 +418,28 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="ChatScreen")
 CONSOLE_DICTATION_MAX_SECONDS = 60.0
+#: `AudioRecordingService`'s own capture defaults, restated rather than
+#: imported: `tldw_chatbook.Audio` pulls in the transcription stack at module
+#: scope, and this module must stay importable without it (see
+#: `Tests/UI/test_console_dictation_streaming.py`'s subprocess import guard).
+CONSOLE_DICTATION_SAMPLE_RATE = 16_000
+CONSOLE_DICTATION_CHANNELS = 1
+CONSOLE_DICTATION_SAMPLE_WIDTH = 2
+#: Slack over the wall-clock cap so the bound is a *memory* backstop and never
+#: the thing that ends an ordinary capture: the 60 s timer below should always
+#: win first, and only a recorder that outruns its own clock (a wedged timer, a
+#: device delivering faster than real time) should ever reach this.
+CONSOLE_DICTATION_BUFFER_HEADROOM = 1.5
+#: The PCM bound handed to the recorder. Without it `AudioRecordingService`
+#: retains every chunk for the whole capture -- and so do its undrained
+#: `audio_queue` and `LazyLiveDictationService.audio_buffer`, at ~32 KB/s each.
+CONSOLE_DICTATION_MAX_BYTES = int(
+    CONSOLE_DICTATION_SAMPLE_RATE
+    * CONSOLE_DICTATION_CHANNELS
+    * CONSOLE_DICTATION_SAMPLE_WIDTH
+    * CONSOLE_DICTATION_MAX_SECONDS
+    * CONSOLE_DICTATION_BUFFER_HEADROOM
+)
 CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = ("notes", "media", "conversations")
 CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
 CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
@@ -498,6 +555,297 @@ CONSOLE_FOCUS_TARGETS_BY_PANE = {
 }
 
 
+class ConsoleDictationEvent(Message):
+    """Carry a `console_voice_input` event onto the Console screen's thread.
+
+    The controller emits from whichever thread the recognizer happens to be on.
+    `post_message` is the only thread-safe route to the UI here: never
+    `call_from_thread`, which blocks its caller, and the caller is the audio
+    path.
+    """
+
+    def __init__(self, session: Any, event: Any) -> None:
+        """Wrap one controller event.
+
+        Args:
+            session: The session that emitted it, so the screen can drop
+                events from a session it has already discarded.
+            event: The `VoicePartial` / `VoiceFinal` / `VoiceFailed` /
+                `VoiceStateChanged` / `VoiceProviderOverridden` instance.
+        """
+        super().__init__()
+        self.session = session
+        self.event = event
+
+
+class ConsoleDictationLimitSignal(Message):
+    """Carry a recorder PCM-bound signal onto the Console screen's thread.
+
+    `AudioRecordingService` invokes its `on_buffer_limit` callback from a
+    freshly spawned notification thread, so the same rule as
+    `ConsoleDictationEvent` applies: `post_message`, never `call_from_thread`
+    (which blocks its caller until the UI thread gets round to it).
+
+    Named to avoid `Message.handler_name`: Textual derives
+    `on_<snake_case_class_name>` from this class and dispatches both that and
+    its `_on_`-prefixed private twin. A `ConsoleDictationBufferLimit` would
+    therefore have been delivered straight into
+    `_on_console_dictation_buffer_limit` -- the recorder callback that *posts*
+    this message -- with the message itself as the `session` argument, i.e. an
+    unbounded message loop (8 GB of RSS in three minutes, measured).
+    """
+
+    def __init__(self, session: Any) -> None:
+        """Wrap one buffer-limit signal.
+
+        Args:
+            session: The session whose recorder hit the bound, so the screen
+                can drop a signal from a capture it has already torn down.
+        """
+        super().__init__()
+        self.session = session
+
+
+class ConsoleStreamingDictationSession:
+    """Drive `ConsoleVoiceInputController` through the one-shot session port.
+
+    The Console screen owns dictation as three blocking calls -- `start()`,
+    `stop_and_transcribe()` and `discard()` -- each already run off the UI
+    thread by `asyncio.to_thread`, with the visible button transitions applied
+    around them. Keeping that port intact is what lets the streaming backend
+    replace the one-shot recorder without changing a single observable
+    transition:
+
+    ============================  ==================  =========================
+    Controller state              Button state        Applied by
+    ============================  ==================  =========================
+    ``preparing``                 ``starting``        before ``start()`` runs
+    ``listening``                 ``recording``       when ``start()`` returns
+    ``finishing``                 ``transcribing``    before ``stop_and_transcribe()``
+    ``idle``                      ``idle``            when it returns
+    ============================  ==================  =========================
+
+    `spawn` is therefore inline: this object is *already* on a worker thread,
+    and the controller's blocking halves must complete before the call it
+    stands behind returns.
+
+    Live events still flow the moment they happen -- partials and per-segment
+    finals go straight to `on_event` -- but the finals are accumulated here so
+    `stop_and_transcribe()` returns one transcript at the instant the
+    controller reaches `idle`. That preserves the shipping insertion contract:
+    the draft is written once, at the caret, and never mid-capture.
+    """
+
+    def __init__(
+        self,
+        *,
+        on_event: Callable[[Any, Any], None],
+        service_factory: Callable[..., Any] = default_service_factory,
+        max_buffer_bytes: int | None = CONSOLE_DICTATION_MAX_BYTES,
+    ) -> None:
+        """Build a session over a fresh controller.
+
+        Args:
+            on_event: Called with `(session, event)` for every controller
+                event, from whatever thread emitted it.
+            service_factory: Builds the dictation service; injected by tests.
+            max_buffer_bytes: Hard cap on the PCM the recorder retains for one
+                capture, passed through to the dictation service. `None`
+                leaves the recorder unbounded (the service default, which the
+                non-Console dictation callers still use).
+        """
+        self._on_event = on_event
+        self._lock = threading.Lock()
+        self._segments: list[str] = []
+        self._failure = ""
+        self._in_blocking_call = False
+        self._heard_recognizer_output = False
+        self._service_factory = service_factory
+        self._max_buffer_bytes = max_buffer_bytes
+        self._on_buffer_limit: Callable[[], None] | None = None
+        self._controller = ConsoleVoiceInputController(
+            emit=self._handle_event,
+            spawn=lambda thunk: thunk(),
+            # Not `service_factory` directly: the controller builds the service
+            # deep inside `start()`, long after the caller handed us its
+            # buffer-limit callback, so the bound has to be attached here.
+            service_factory=self._build_service,
+        )
+
+    def _build_service(self, **kwargs: Any) -> Any:
+        """Build the dictation service with this session's PCM bound attached.
+
+        Args:
+            **kwargs: Provider, model and language keywords chosen by the
+                controller. Passed through untouched.
+
+        Returns:
+            The dictation service the controller will drive.
+        """
+        if self._max_buffer_bytes is not None:
+            kwargs.setdefault("max_buffer_bytes", self._max_buffer_bytes)
+        if self._on_buffer_limit is not None:
+            kwargs.setdefault("on_buffer_limit", self._on_buffer_limit)
+        return self._service_factory(**kwargs)
+
+    def _handle_event(self, event: Any) -> None:
+        """Record what the screen cannot see, then forward. Never raises.
+
+        A raise here would land in the recognizer's callback -- or, for a
+        `VoiceFailed`, inside the controller's own `_fail()`, whose raising-emit
+        handling exists precisely so a plumbing error cannot bury the real
+        cause. Neither is a place to propagate from.
+
+        Args:
+            event: The controller event being emitted.
+        """
+        try:
+            forward = True
+            if isinstance(event, VoiceFinal):
+                text = event.text.strip()
+                with self._lock:
+                    # A final that strips to nothing still proves the
+                    # recognizer ran and produced output; only its text is
+                    # discarded. `stop_and_transcribe()` needs that distinction
+                    # to pick between the two silent-capture messages.
+                    self._heard_recognizer_output = True
+                    if text:
+                        self._segments.append(text)
+            elif isinstance(event, VoicePartial):
+                if event.text.strip():
+                    with self._lock:
+                        self._heard_recognizer_output = True
+            elif isinstance(event, VoiceFailed):
+                with self._lock:
+                    self._failure = (f"{event.reason} {event.remedy}").strip()
+                    # A blocking call is in flight, so it is about to raise
+                    # this failure and the screen's existing error path will
+                    # report it. Forwarding it as well would notify the user
+                    # about one failure twice. What does need forwarding is
+                    # the other kind: the recognizer dying mid-capture, with
+                    # nothing blocked on it to carry the news.
+                    forward = not self._in_blocking_call
+            if forward:
+                self._on_event(self, event)
+        except Exception:  # noqa: BLE001 - the audio path must never see this
+            logger.opt(exception=True).warning(
+                "Console dictation event could not be delivered"
+            )
+
+    def _take_failure(self) -> str:
+        with self._lock:
+            failure, self._failure = self._failure, ""
+        return failure
+
+    @contextmanager
+    def _blocking_call(self) -> Iterator[None]:
+        """Mark the window in which a failure will be raised, not forwarded."""
+        with self._lock:
+            self._in_blocking_call = True
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._in_blocking_call = False
+
+    def start(self, *, on_buffer_limit: Callable[[], None] | None = None) -> None:
+        """Open the microphone, blocking until it is live or has failed.
+
+        Args:
+            on_buffer_limit: Invoked once, from a recorder notification thread,
+                if the capture reaches `max_buffer_bytes`. Wired through to
+                `AudioRecordingService`, which stops taking audio at the bound.
+                Streaming does *not* make the PCM go away: the recorder's own
+                `audio_buffer`, its undrained `audio_queue`, and
+                `LazyLiveDictationService.audio_buffer` all grow for the whole
+                capture at ~32 KB/s each, and the screen's wall-clock timer is
+                the only other thing bounding them.
+
+        Raises:
+            RuntimeError: The controller refused or could not start capture.
+        """
+        self._on_buffer_limit = on_buffer_limit
+        with self._lock:
+            self._segments.clear()
+            self._failure = ""
+            self._heard_recognizer_output = False
+        with self._blocking_call():
+            self._controller.start()
+        failure = self._take_failure()
+        if failure:
+            raise RuntimeError(failure)
+        if self._controller.state != STATE_LISTENING:
+            # `start()` was ignored -- the controller was abandoned, or a
+            # previous capture never returned it to idle.
+            raise RuntimeError("Microphone dictation could not be started.")
+
+    def stop_and_transcribe(self) -> str:
+        """Close the microphone and return every segment finalized so far.
+
+        Blocks until the controller reaches `idle`, so the screen inserts
+        exactly once, with the whole transcript, at that moment.
+
+        Never returns an empty transcript, matching the one-shot backend this
+        replaced (`Audio/console_dictation.py`): it raised rather than hand
+        back nothing, and the screen's insertion has no empty case -- an empty
+        transcript still pads to a stray space at the caret, silently, and gets
+        persisted to the session draft.
+
+        An empty transcript has three genuinely different causes, and this
+        reports each as itself rather than blaming the microphone for all
+        three:
+
+        1. The recorder delivered no bytes -- a real capture or permission
+           problem. Keeps the one-shot backend's wording verbatim.
+        2. Bytes arrived but nothing was recognized -- also that backend's
+           wording, verbatim.
+        3. The service's processing thread was still transcribing when its
+           join expired, so audio was dropped unread. Nothing here is a
+           statement about the microphone, which worked fine.
+
+        The recorder's byte count comes from the service
+        (`CaptureOutcome.captured_bytes`), not from guessing at the transcript.
+        When a service does not report it -- test fakes, older services -- the
+        recognizer-output flag is the fallback, exactly as before.
+
+        Returns:
+            The accumulated segments, space-joined. Never empty.
+
+        Raises:
+            RuntimeError: The controller failed while finishing, nothing was
+                transcribed, or the transcription never completed.
+        """
+        with self._blocking_call():
+            self._controller.stop()
+        failure = self._take_failure()
+        if failure:
+            raise RuntimeError(failure)
+        with self._lock:
+            transcript = " ".join(self._segments)
+            heard = self._heard_recognizer_output
+        if transcript:
+            return transcript
+        outcome = self._controller.last_capture_outcome
+        if not outcome.transcription_complete:
+            raise RuntimeError(
+                f"{TRANSCRIPTION_INCOMPLETE_REASON} {TRANSCRIPTION_INCOMPLETE_REMEDY}"
+            )
+        heard = heard or bool(outcome.captured_bytes)
+        raise RuntimeError(NO_SPEECH_MESSAGE if heard else NO_CAPTURE_MESSAGE)
+
+    def discard(self) -> None:
+        """Release the microphone without the blocking join.
+
+        Terminal teardown only (unmount, or a failure the screen has already
+        surfaced): `abandon()` is one-way for this instance, and the screen
+        drops the session on both of those paths.
+        """
+        self._controller.abandon()
+        with self._lock:
+            self._segments.clear()
+            self._failure = ""
+
+
 @dataclass(frozen=True)
 class _ConsoleTranscriptReadingState:
     anchored: bool
@@ -564,7 +912,74 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ("F2", "rename a session (in the Ctrl+K switcher)"),
         ),
     ),
+    (
+        # Fleet-UX expert review F2 (task-1232): Alt+W and Alt+1..9 are real
+        # BINDINGS (see this screen's BINDINGS list) but the footer is a
+        # single-line, non-wrapping Static already at ~120 chars for its 7
+        # entries -- adding all of these there would just push more of an
+        # already-overflowing line further off tested narrow-terminal widths
+        # (this suite runs Console at 80 columns). Help is the reachable
+        # surface for the full set; Ctrl+T/Ctrl+K are repeated here (they
+        # also appear above) because this group is what a user scanning for
+        # "how do multiple tabs work" will read top-to-bottom.
+        "Agents & fleet",
+        (
+            ("Alt+W", "switch workspace"),
+            ("Alt+1..9", "jump to tab 1-9"),
+            ("Ctrl+T", "new tab (new agent)"),
+            ("Ctrl+K", "switch session"),
+        ),
+    ),
 )
+
+#: Fleet-UX expert review F4 (task-1233 also references this legend --
+#: keep it a single, clearly-marked string so that task can find/reuse it
+#: verbatim rather than re-deriving the copy).
+#:
+#: TWIN CONSTANT -- see `CONSOLE_RUN_MARKER_MEANINGS` in
+#: `tldw_chatbook/Chat/console_chat_models.py` (task-1233's marker-aware
+#: tab/sidebar tooltips). That dict deliberately uses its OWN fuller
+#: in-context phrasing ("agent running"/"waiting for approval"/
+#: "finished — unseen") rather than this line's shorter per-glyph words
+#: ("running"/"needs approval"/"finished"/"failed") -- a deliberate
+#: register split (task-1233 review round 1: a compact scannable legend
+#: line vs. a specific in-context tooltip sentence), not drift. If you
+#: change what a glyph MEANS, update both.
+CONSOLE_FLEET_MARKER_LEGEND = (
+    "Status markers: ● running · ◆ needs approval · ✓ finished · ✗ failed "
+    "— clears once you visit that tab."
+)
+
+
+def _console_workbench_agents_notes(max_parallel_runs: int) -> tuple[str, ...]:
+    """Build the F1 Help "Agents" section lines (fleet-UX F2, task-1232).
+
+    A function, not a module constant: the parallel-run cap is user-
+    adjustable (``console.max_parallel_runs``, Settings > Console Behavior)
+    and this must read the LIVE value, not the default baked in at import
+    time.
+
+    Args:
+        max_parallel_runs: The live ``ConsoleChatController.max_parallel_runs``
+            cap to quote in the second line.
+
+    Returns:
+        Ordered prose lines for the help panel's "Agents" notes block.
+    """
+    # task-1232 round 1 (Minor b): cap=1 is a supported floored value
+    # (MIN_CONSOLE_MAX_PARALLEL_RUNS), so "1 runs" must not ship.
+    run_noun = "run" if max_parallel_runs == 1 else "runs"
+    return (
+        "Each Console tab runs its own agent; a run keeps going in the "
+        "background while you're on another tab.",
+        f"Up to {max_parallel_runs} {run_noun} in parallel "
+        "(change in Settings > Console Behavior).",
+        "Built-in tools ask before running; a background session that "
+        "needs approval parks with a ◆ badge and a toast.",
+        CONSOLE_FLEET_MARKER_LEGEND,
+        "Leaving Console cancels any runs still in progress -- you'll be "
+        "asked first.",
+    )
 
 
 def _is_empty_select_value(value: Any) -> bool:
@@ -1092,12 +1507,18 @@ class ChatScreen(BaseAppScreen):
             self._pending_console_launch_context
         )
         workbench_state = self._build_console_workbench_state(control_state)
+        # Fleet-UX expert review F2 (task-1232): read the LIVE parallel-run
+        # cap so the help copy tracks a user override instead of quoting the
+        # baked-in default.
+        max_parallel_runs = self._ensure_console_chat_controller().max_parallel_runs
         self.app.push_screen(
             WorkbenchHelpPanel(
                 WorkbenchHelpState(
                     route_id=workbench_state.route_id,
                     title="Console",
                     actions=workbench_state.actions,
+                    notes_heading="Agents",
+                    notes=_console_workbench_agents_notes(max_parallel_runs),
                     shortcut_groups=CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
                 )
             )
@@ -1604,6 +2025,12 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         self._open_console_workspace_switcher()
 
+    @on(Button.Pressed, "#console-fleet-coachmark-dismiss")
+    def on_console_fleet_coachmark_dismiss(self, event: Button.Pressed) -> None:
+        """Dismiss the one-time fleet coach-mark and persist the seen flag."""
+        event.stop()
+        self._record_console_fleet_coachmark_dismissed()
+
     def action_open_console_workspace_switcher(self) -> None:
         """Open the workspace switcher (Alt+W / command palette, TASK-722)."""
         self._open_console_workspace_switcher()
@@ -2060,6 +2487,30 @@ class ChatScreen(BaseAppScreen):
         # switch initiation; consumed by the deferred draft swap.
         self._console_draft_switch_snapshot: tuple[str | None, str, int] | None = None
         self._console_agent_bridge: Any | None = None
+        # TASK-1141: round/request ids (namespaced "mcp:<round_id>" /
+        # "install:<request_id>" / "script:<request_id>") this screen has
+        # already fired a park toast for -- see `_park_console_approval`'s
+        # docstring for the re-invocation hazard this guards against. Never
+        # pruned: entries are one-off UUIDs minted per approval-like round,
+        # so this set's steady-state size is bounded by "how many rounds
+        # this screen instance has EVER parked", not by anything unbounded
+        # over a session's lifetime.
+        self._console_toasted_park_round_ids: set[str] = set()
+        #: TASK-1141 review round 1: the LAST non-empty snapshot of
+        #: `_current_park_round_ids(controller, session_id)`, per session
+        #: id -- the fallback identity `_park_console_approval` consults
+        #: when a re-invocation arrives AFTER the round's own teardown has
+        #: already popped it from every live `_parked_*_payloads` map (so
+        #: `_current_park_round_ids` alone reads back empty and can no
+        #: longer distinguish "a stray post-teardown re-announcement of a
+        #: round already toasted" from "a session this screen has never
+        #: parked anything for"). Overwritten (not merged) on every
+        #: non-empty snapshot -- only the MOST RECENT live round/request
+        #: id set for a session is a useful fallback key, since anything
+        #: older has already been superseded or resolved. Never pruned,
+        #: for the same "bounded by distinct sessions ever parked" reason
+        #: as `_console_toasted_park_round_ids` above.
+        self._console_last_parked_round_ids: dict[str, frozenset[str]] = {}
         self._console_agent_drilldown_run_id: str | None = None
         # Finding C: the conversation the drill-in was set for -- used to
         # detect a conversation/session switch and drop back to the
@@ -2081,8 +2532,14 @@ class ChatScreen(BaseAppScreen):
         # (skip Static.update()/style work when the computed payload hasn't
         # changed since the last successful apply).
         self._console_agent_section_last: (
-            tuple[str, str, str, str, bool, bool] | None
+            tuple[str, str, str, str, bool, bool, bool] | None
         ) = None
+        # Finding D (review round 2): cache of the "View full log"
+        # affordance's availability, keyed by the target run id -- see
+        # `_console_agent_full_log_available`'s docstring for why this
+        # exists (avoids a filesystem/DB probe on every 0.2s rail tick).
+        self._console_agent_full_log_cache_run_id: str | None = None
+        self._console_agent_full_log_cache_available: bool = False
         # TASK-915: transient (never persisted) "user collapsed the Agent
         # section while the fleet was busy" flag. Set by
         # `_toggle_console_rail_section` when the user closes the section
@@ -2119,7 +2576,17 @@ class ChatScreen(BaseAppScreen):
             "idle", "starting", "recording", "transcribing"
         ] = "idle"
         self._console_dictation_timer: Any | None = None
+        #: 1 s ticker driving the chip's elapsed-time display while
+        #: `recording`. Started in `_start_console_dictation`; stopped on
+        #: every exit path (`_notify_console_dictation_error`,
+        #: `_request_console_dictation_stop`, `on_unmount`) -- distinct from
+        #: `_console_dictation_timer`, the 60 s wall-clock cutoff above.
+        self._console_dictation_elapsed_timer: Any | None = None
         self._console_dictation_origin_session_id: str | None = None
+        #: Newest in-flight recognizer text. Chip-only by contract -- a partial
+        #: is superseded by the next one or by its segment's final, and must
+        #: never reach the draft.
+        self._console_dictation_partial = ""
         self._console_provider_gateway: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
         self._console_command_registry: ConsoleCommandRegistry = (
@@ -2173,6 +2640,14 @@ class ChatScreen(BaseAppScreen):
         self._last_console_rail_state: ConsoleRailState | None = None
         self._console_guidance_dismissed = False
         self._console_first_send_completed_cached: bool | None = None
+        # Fleet-UX expert review F2 (task-1232): one-time coach-mark shown
+        # the first time the session count actually TRANSITIONS to 2 (not
+        # merely "is 2" -- a restore that lands the store at 2+ sessions on
+        # first sync must not misfire as a "creation" event). `None` means
+        # "not seeded yet"; seeded from the count observed on this screen's
+        # first sync tick.
+        self._last_console_session_count: int | None = None
+        self._console_fleet_coachmark_seen_cached: bool | None = None
         self._console_detected_local_server: DiscoveredLocalServer | None = None
         self._console_local_discovery_started = False
         # P1g: cached "what's in play" chat-dictionary summary for the
@@ -2966,9 +3441,20 @@ class ChatScreen(BaseAppScreen):
         if drill:
             record = bridge.subagent_run(drill)
             if record is not None and record.get("conversation_id") == conversation_id:
+                # Finding A (review round 2): this used to slice the raw
+                # `summary`/`result` field to a hardcoded 80 characters,
+                # bypassing `_summarize_persisted_step` entirely -- so a
+                # drilled-in sub-agent's step text neither respected the
+                # user-configurable display cap (TASK-870) nor got the
+                # word-boundary truncation affordance every other render
+                # path shares. Route through the same helper the top-level
+                # overview's persisted/resumed steps already use (see
+                # `ConsoleAgentBridge._derive_historical_snapshot`).
+                from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+
                 steps = "\n".join(
                     f"{s.get('kind')}: "
-                    f"{str(s.get('summary') or s.get('result') or '')[:80]}"
+                    f"{ConsoleAgentBridge._summarize_persisted_step(s)}"
                     for s in record.get("steps", [])
                 )
                 return (
@@ -3001,7 +3487,13 @@ class ChatScreen(BaseAppScreen):
         status = f"Agent: {snapshot.status}"
         if snapshot.status == "running":
             status = f"Agent: running · step {snapshot.step}"
-        steps = "\n".join(f"· {s.text[:80]}" for s in snapshot.steps)
+        # Finding A (review round 2): `s.text` is already truncated to the
+        # user-configurable cap by whichever bridge helper built this
+        # snapshot (`_summarize` for a live step, `_summarize_persisted_
+        # step` for a resumed/historical one) -- re-slicing to a hardcoded
+        # 80 here silently overrode any configured value above 80 with no
+        # visible effect, defeating the whole point of that setting.
+        steps = "\n".join(f"· {s.text}" for s in snapshot.steps)
         glyphs = {
             "done": "✓",
             "running": "●",
@@ -3033,6 +3525,171 @@ class ChatScreen(BaseAppScreen):
             return ""
         return f"{running} other agents running, {pending} waiting for approval."
 
+    def _console_agent_full_log_run_id(self) -> str | None:
+        """Return the run id the "View full log" affordance should target.
+
+        TASK-870: mirrors ``_console_agent_section_lines``'s own
+        drill-vs-overview precedence -- the drilled-into sub-agent run
+        (when drilled in and still valid for the active conversation, the
+        same check that method uses), else the conversation's latest
+        primary run, which is what the top-level overview is summarizing.
+
+        Returns:
+            The relevant run id, or ``None`` when there is nothing to
+            target -- no bridge, no active conversation, a stale drill-in
+            left over from a conversation switch, or a conversation that
+            has never run an agent. Callers must still confirm
+            ``ConsoleAgentBridge.run_log_available`` before showing the
+            affordance for whatever id this returns -- a valid run id does
+            not imply a log was ever written for it.
+        """
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return None
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if not conversation_id:
+            return None
+        drill = self._console_agent_drilldown_run_id
+        if drill:
+            record = bridge.subagent_run(drill)
+            if record is not None and record.get("conversation_id") == conversation_id:
+                return drill
+            return None
+        # getattr tolerates a bare test double that only implements the
+        # older bridge surface (subagent_run/subagent_runs/live_snapshot) --
+        # same idiom _console_agent_section_lines already uses for
+        # historical_snapshot, immediately below this method in this file.
+        latest_primary_run_id = getattr(bridge, "latest_primary_run_id", None)
+        if latest_primary_run_id is None:
+            return None
+        return latest_primary_run_id(conversation_id)
+
+    def _console_agent_full_log_available(self, *, allow_probe: bool = True) -> bool:
+        """Whether the "View full log" affordance should be shown right now.
+
+        TASK-870 (AC#6/#7): ``True`` only when ``_console_agent_full_log_
+        run_id`` resolves to a run AND that run actually has an on-disk log
+        -- absent (button hidden) for every other case, including a bridge
+        or filesystem lookup that raises, so a resolution failure can never
+        surface as a dangling or erroring button.
+
+        Finding D (review round 2): the underlying check costs a SQLite
+        lookup (``_console_agent_full_log_run_id``, to resolve the target
+        run id) plus a filesystem probe (``bridge.run_log_available``, to
+        confirm a log directory/segment exists -- for a drilled-in
+        sub-agent this can also mean parsing its primary's whole log, see
+        finding B) -- paying that unconditionally on every 0.2s rail tick
+        is real, avoidable I/O for a value that is overwhelmingly the same
+        tick to tick. The filesystem/DB probe result is cached keyed by
+        the resolved run id and only redone when that id changes; when
+        ``allow_probe`` is ``False`` (the periodic sync passes this while
+        the Agent section is collapsed -- see
+        ``_sync_console_agent_section``), this returns the last cached
+        answer WITHOUT even resolving the current run id, so a collapsed
+        section's steady-state tick touches neither disk nor the DB.
+
+        Args:
+            allow_probe: Whether a cache miss may fall through to the
+                SQLite/filesystem lookup. Callers that need a fresh,
+                authoritative answer (the one-shot compose-time render,
+                and the "open the viewer" press-time re-check) should
+                leave this ``True``; the periodic rail sync passes
+                ``section_open`` here.
+
+        Returns:
+            Whether the affordance should be visible for the current
+            target run -- possibly a stale cached value when
+            ``allow_probe`` is ``False`` and the target has since changed
+            unobserved (self-corrects the moment the section reopens).
+        """
+        if not allow_probe:
+            return self._console_agent_full_log_cache_available
+        run_id = self._console_agent_full_log_run_id()
+        if run_id == self._console_agent_full_log_cache_run_id:
+            return self._console_agent_full_log_cache_available
+        if not run_id:
+            available = False
+        else:
+            bridge = self._ensure_console_agent_bridge()
+            if bridge is None:
+                available = False
+            else:
+                try:
+                    available = bool(bridge.run_log_available(run_id))
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "console agent rail: run_log_available check failed for "
+                        f"run_id={run_id}; hiding the View full log affordance"
+                    )
+                    available = False
+        self._console_agent_full_log_cache_run_id = run_id
+        self._console_agent_full_log_cache_available = available
+        return available
+
+    def _open_console_agent_run_log_viewer(self) -> None:
+        """Kick off loading the full run log for whatever "View full log" targets.
+
+        TASK-870 (AC#6): re-resolves the target run id at press time
+        (rather than trusting a value cached from the last 0.2s sync) so a
+        drill-in change between sync ticks can never open the wrong run's
+        log. No-ops quietly if there is no current target.
+
+        Finding C (review round 2): the actual filesystem read + record
+        parse + formatting now happens off the UI thread (see
+        ``_load_console_agent_run_log``) -- a run's segments can total
+        many megabytes (4MB per segment, no cap on segment count), and
+        doing that synchronously on the Textual event loop could freeze
+        the whole app for the duration of the read.
+        """
+        run_id = self._console_agent_full_log_run_id()
+        if not run_id:
+            return
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return
+        self._load_console_agent_run_log(bridge, run_id)
+
+    @work(thread=True)
+    def _load_console_agent_run_log(self, bridge: Any, run_id: str) -> None:
+        """Load, filter, and format one run's full log off the UI thread.
+
+        Finding C: the worker half of ``_open_console_agent_run_log_
+        viewer`` -- everything here is filesystem/CPU work (no widget
+        access), so it is safe to run in a real thread. The modal is only
+        ever pushed back on the UI thread, via ``call_from_thread``.
+
+        Args:
+            bridge: The already-resolved Console agent bridge (resolved on
+                the UI thread by the caller -- lazy bridge construction
+                touches ``self.app_instance``/config and should not run
+                off-thread).
+            run_id: The run id to load, as resolved by the caller at press
+                time.
+        """
+        try:
+            if not bridge.run_log_available(run_id):
+                return
+            log_text = bridge.load_run_log_text(run_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"console agent rail: failed to load run log for run_id={run_id}"
+            )
+            return
+        if not log_text:
+            return
+        self.app.call_from_thread(
+            self._show_console_agent_run_log_modal, run_id, log_text
+        )
+
+    def _show_console_agent_run_log_modal(self, run_id: str, log_text: str) -> None:
+        """Push the full-log modal. UI-thread only -- see ``_load_console_agent_run_log``.
+
+        Args:
+            run_id: The run id the loaded text belongs to.
+            log_text: The fully rendered, untruncated log text.
+        """
+        self.app.push_screen(ConsoleRunLogModal(run_id=run_id, log_text=log_text))
+
     def _sync_console_agent_section(self) -> None:
         """Refresh the mounted Agent rail Statics + Back-button visibility.
 
@@ -3050,6 +3707,11 @@ class ChatScreen(BaseAppScreen):
         or release the section on this same periodic sync, or the fleet
         line would only ever be reachable for whichever fleet state
         happened to exist at the moment the screen was first composed.
+
+        TASK-870: also tracks the "View full log" affordance's visibility
+        (``_console_agent_full_log_available``) -- present only while a run
+        log actually exists for whatever run the section is currently
+        showing (AC#6/#7).
         """
         status_line, steps_text, subagents_text = self._console_agent_section_lines()
         fleet_line = self._console_agent_fleet_summary_line()
@@ -3070,6 +3732,11 @@ class ChatScreen(BaseAppScreen):
             # still worth applying even when the section's own open state
             # cannot be derived.
             section_open = False
+        # Finding D: never probe disk/DB for the full-log affordance while
+        # the section is collapsed -- `section_open` must be known first.
+        full_log_visible = self._console_agent_full_log_available(
+            allow_probe=section_open
+        )
         payload = (
             status_line,
             steps_text,
@@ -3077,6 +3744,7 @@ class ChatScreen(BaseAppScreen):
             fleet_line,
             back_visible,
             section_open,
+            full_log_visible,
         )
         if payload == self._console_agent_section_last:
             return
@@ -3091,6 +3759,10 @@ class ChatScreen(BaseAppScreen):
             fleet_summary.styles.display = "block" if fleet_line else "none"
             back_button = self.query_one("#console-agent-drilldown-back", Button)
             back_button.styles.display = "block" if back_visible else "none"
+            full_log_button = self.query_one(
+                "#console-agent-view-full-log", Button
+            )
+            full_log_button.styles.display = "block" if full_log_visible else "none"
             agent_body = self.query_one("#console-rail-section-body-agent")
             agent_body.styles.display = "block" if section_open else "none"
             agent_header = self.query_one(
@@ -3868,26 +4540,231 @@ class ChatScreen(BaseAppScreen):
         if composer is not None:
             composer.sync_dictation_state(state)
 
+    def _sync_console_dictation_availability(self) -> None:
+        """Refresh the mic button's tooltip from a fresh availability probe.
+
+        Called once after mount, so the button's initial tooltip is accurate
+        without waiting for a first press, and again at the top of every
+        activation attempt (`_request_console_dictation_start`), so installing
+        the missing extra or plugging in a microphone mid-run is picked up
+        without a screen remount. `probe()` only calls
+        `importlib.util.find_spec`, so it is cheap and safe to call
+        repeatedly.
+
+        This is the cosmetic half only -- it never blocks starting dictation.
+        A real attempt still goes through `ConsoleVoiceInputController.start()`,
+        which re-probes on its own and fails visibly
+        (`_notify_console_dictation_error`) if unavailable. Gating here too
+        would double-report the same failure, and -- because a genuinely
+        Textual-`disabled` button can never be pressed again afterward
+        (Click is never delivered to a disabled widget, so pressing could
+        never recover it) -- this stays purely cosmetic by design; see
+        `ConsoleComposerBar.sync_dictation_state`.
+
+        A probe crash is swallowed and treated as available, so a bug in the
+        probe cannot brick the button in a permanently unavailable-looking
+        state with no way to recover.
+        """
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return
+        try:
+            availability = console_voice_input.probe()
+        except Exception:  # noqa: BLE001 - a probe crash must not disable the button
+            logger.opt(exception=True).warning(
+                "Console dictation availability probe crashed"
+            )
+            composer.set_dictation_availability(available=True)
+            return
+        # `remedy` alone is a complete, self-explanatory sentence for both
+        # kinds (it already opens by restating `reason` -- see CAPTURE_REMEDY
+        # / PROVIDER_REMEDY in console_voice_input.py); joining `reason` ahead
+        # of it here would stutter ("No ... installed. No ... installed.
+        # Install with: ..."). The `reason + remedy` join used for the
+        # VoiceFailed toast is a one-off event, not idle copy shown on every
+        # glance at the button, so it can afford the redundancy this can't.
+        composer.set_dictation_availability(
+            available=availability.ok,
+            tooltip="" if availability.ok else availability.remedy,
+        )
+
     def _cancel_console_dictation_timer(self) -> None:
         timer = self._console_dictation_timer
         self._console_dictation_timer = None
         if timer is not None:
             timer.stop()
 
+    def _cancel_console_dictation_elapsed_timer(self) -> None:
+        """Stop the chip's 1 s elapsed-time ticker if one is running."""
+        timer = self._console_dictation_elapsed_timer
+        self._console_dictation_elapsed_timer = None
+        if timer is not None:
+            timer.stop()
+
+    def _tick_console_dictation_elapsed(self) -> None:
+        """Advance the voice chip's elapsed-time display by one second."""
+        composer = self._console_composer_or_none()
+        if composer is not None:
+            composer.tick_voice_elapsed()
+
     def _notify_console_dictation_error(self, exc: Exception) -> None:
         """Return dictation to idle and show its actionable failure."""
         self._cancel_console_dictation_timer()
+        self._cancel_console_dictation_elapsed_timer()
         self._console_dictation_origin_session_id = None
         self._console_dictation_session = None
+        self._console_dictation_partial = ""
         self._set_console_dictation_state("idle")
         self.app_instance.notify(f"Dictation failed: {exc}", severity="error")
 
-    def _on_console_dictation_buffer_limit(self) -> None:
-        """Marshal a recorder-thread memory-limit signal onto the UI thread."""
+    def _emit_console_dictation_event(self, session: Any, event: Any) -> None:
+        """Hand a controller event to the UI thread. Safe from any thread.
+
+        Args:
+            session: The dictation session that emitted the event.
+            event: The `console_voice_input` event instance.
+        """
         try:
-            self.app.call_from_thread(self._handle_console_dictation_limit)
-        except NoActiveAppError:
+            self.post_message(ConsoleDictationEvent(session, event))
+        except Exception:  # noqa: BLE001 - the audio path must never see this
+            logger.opt(exception=True).debug(
+                "Console dictation event could not be posted"
+            )
+
+    @on(ConsoleDictationEvent)
+    def _handle_console_dictation_event(self, message: ConsoleDictationEvent) -> None:
+        """Apply the streaming events the blocking session port cannot express.
+
+        Button state stays owned by `_start_console_dictation` /
+        `_stop_console_dictation`, which bracket the blocking calls: they are
+        the only places that can order an `idle` transition *after* the
+        transcript has been inserted. What only the event stream can deliver
+        is a partial (chip-only) and a failure that arrives mid-capture, with
+        no blocking call in flight to raise it.
+
+        Args:
+            message: The posted controller event.
+        """
+        if message.session is not self._console_dictation_session:
+            # A session the screen has already discarded; its events are stale.
             return
+        event = message.event
+        if isinstance(event, VoicePartial):
+            # Only while the microphone is live. A successful capture keeps its
+            # session (only failures drop it), so the staleness check above
+            # cannot catch the partial the recognizer flushes as
+            # `stop_dictation()` joins -- that one drains after the state is
+            # already `idle` and would leave a ghost in the chip.
+            if self._console_dictation_state == "recording":
+                self._console_dictation_partial = event.text
+                composer = self._console_composer_or_none()
+                if composer is not None:
+                    composer.set_voice_partial(event.text)
+            return
+        if isinstance(event, VoiceFinal):
+            # The segment is committed; the partial that previewed it is spent.
+            self._console_dictation_partial = ""
+            composer = self._console_composer_or_none()
+            if composer is not None:
+                composer.set_voice_partial("")
+            return
+        if isinstance(event, VoiceModelPreparing):
+            # The speech model is loading, before the microphone opens. On a
+            # fresh machine that is a multi-gigabyte download, and the button
+            # sitting on "Mic…" with no explanation is indistinguishable from
+            # a hang. Only meaningful while the screen is still starting: a
+            # notice that drains late must not repaint a live capture's chip.
+            if self._console_dictation_state != "starting":
+                return
+            composer = self._console_composer_or_none()
+            if composer is not None:
+                # The composer *holds* this, so an unrelated control-bar
+                # refresh cannot wipe it mid-download.
+                composer.set_voice_preparing_message(f"◌ {event.message}")
+            # The chip is 42 cells and one row; the full explanation would be
+            # cut mid-sentence there, taking the duration warning with it. Send
+            # it somewhere with room, once.
+            if event.detail:
+                self.app_instance.notify(event.detail, severity="information")
+            return
+        if isinstance(event, VoiceModelWarmupFailed):
+            # Advisory, not fatal: the capture is going ahead. Making this
+            # fatal would mean one transient error permanently disables
+            # dictation, since the Console warms on every press.
+            self.app_instance.notify(
+                f"{event.reason} {event.remedy}".strip(), severity="warning"
+            )
+            return
+        if isinstance(event, VoiceFailed):
+            # Only ever a mid-capture failure: the session forwards a
+            # `VoiceFailed` exactly when no blocking call is in flight to
+            # raise it, so this cannot double-report a start/stop failure.
+            # Handling it here -- ahead of the `VoiceStateChanged(idle)` the
+            # controller emits next, which this method deliberately ignores --
+            # is what cancels the wall timer and clears the origin session
+            # before anything else can run.
+            reason = f"{event.reason} {event.remedy}".strip()
+            self._notify_console_dictation_error(RuntimeError(reason))
+            return
+        if isinstance(event, VoiceProviderOverridden):
+            # The controller (`ConsoleVoiceInputController._override_announced`)
+            # already latches this to once per controller instance, but a
+            # fresh controller is built on every new dictation session (e.g.
+            # after any failure discards the old one, or on a fresh screen
+            # mount -- ChatScreen itself is rebuilt on every Console
+            # navigation, never a persistent singleton). The user only needs
+            # telling once per app run, not once per capture, so the flag
+            # lives on `self.app_instance`, the one object that actually
+            # persists for the app's whole run.
+            if not getattr(
+                self.app_instance, "_console_dictation_override_notified", False
+            ):
+                self.app_instance._console_dictation_override_notified = True
+                # `event.configured` traces back to the user's own
+                # `transcription.default_provider` TOML setting -- unvalidated
+                # free text, not a value from a closed enum -- and
+                # `App.notify` defaults to `markup=True`, so a provider name
+                # containing `[...]` must be escaped or it is silently
+                # swallowed as (invalid) Rich markup instead of shown.
+                self.app_instance.notify(
+                    f"Configured dictation provider "
+                    f"'{escape_markup(event.configured)}' isn't available; "
+                    f"using '{escape_markup(event.effective)}' instead.",
+                    severity="warning",
+                )
+
+    def _on_console_dictation_buffer_limit(self, session: Any) -> None:
+        """Marshal a recorder-thread memory-limit signal onto the UI thread.
+
+        `post_message`, not `call_from_thread`: this runs on the recorder's
+        notification thread, and `call_from_thread` blocks its caller until the
+        UI thread services it -- the same rule `ConsoleDictationEvent` exists
+        to enforce for the recognizer's callbacks.
+
+        Args:
+            session: The dictation session whose recorder hit its PCM bound.
+        """
+        try:
+            self.post_message(ConsoleDictationLimitSignal(session))
+        except Exception:  # noqa: BLE001 - the audio path must never see this
+            logger.opt(exception=True).debug(
+                "Console dictation buffer limit could not be posted"
+            )
+
+    @on(ConsoleDictationLimitSignal)
+    def _handle_console_dictation_buffer_limit(
+        self, message: ConsoleDictationLimitSignal
+    ) -> None:
+        """Stop the capture whose recorder ran out of its PCM budget.
+
+        Args:
+            message: The posted buffer-limit signal.
+        """
+        if message.session is not self._console_dictation_session:
+            # A capture the screen has already torn down; its recorder's late
+            # signal must not stop whatever is recording now.
+            return
+        self._handle_console_dictation_limit()
 
     def _handle_console_dictation_limit(self) -> None:
         """Stop and transcribe when the wall-clock or memory bound is reached."""
@@ -3899,14 +4776,31 @@ class ChatScreen(BaseAppScreen):
         )
         self._request_console_dictation_stop()
 
-    @staticmethod
-    def _create_console_dictation_session() -> Any:
-        """Load the optional local STT stack only when the Mic action is used."""
-        from tldw_chatbook.Audio.console_dictation import ConsoleDictationSession
+    def _create_console_dictation_session(self) -> Any:
+        """Build a streaming dictation session bound to this screen.
 
-        return ConsoleDictationSession()
+        Constructing the controller costs nothing: the optional speech stack is
+        only imported when `start()` actually reaches the service factory.
+        """
+        return ConsoleStreamingDictationSession(
+            on_event=self._emit_console_dictation_event,
+        )
 
     async def _start_console_dictation(self) -> None:
+        """Open the microphone for the capture the user just asked for.
+
+        `session` is captured up front and re-checked after the await, exactly
+        as `_stop_console_dictation` does: this one await covers the speech-model
+        load (minutes on a fresh machine) *and* the capture opening, and two
+        different things can null the screen's session inside it -- a deliberate
+        cancel (`_request_console_dictation_cancel`) and a mid-capture
+        `VoiceFailed` draining through `_notify_console_dictation_error`. Both
+        have already told the user and cleaned up, so whichever side loses that
+        race must stay silent; announcing "recording" and arming the timers
+        afterwards would leave a ticking chip and a `Rec ●` button over a
+        capture that is already dead, and the next press would surface an
+        internal string ("Microphone dictation is not recording.").
+        """
         session = (
             self._console_dictation_session or self._create_console_dictation_session()
         )
@@ -3914,18 +4808,29 @@ class ChatScreen(BaseAppScreen):
         try:
             await asyncio.to_thread(
                 session.start,
-                on_buffer_limit=self._on_console_dictation_buffer_limit,
+                on_buffer_limit=partial(
+                    self._on_console_dictation_buffer_limit, session
+                ),
             )
         except Exception as exc:
-            self._notify_console_dictation_error(exc)
+            if self._console_dictation_session is session:
+                self._notify_console_dictation_error(exc)
+            else:
+                logger.debug("Console dictation start skipped; the attempt was cancelled")
             return
-        if not self.is_mounted:
+        if not self.is_mounted or self._console_dictation_session is not session:
+            # Cancelled, failed or unmounted while the model was loading: the
+            # capture may have opened a moment ago, so release it rather than
+            # leave a live microphone behind an idle button.
             await asyncio.to_thread(session.discard)
             return
         self._set_console_dictation_state("recording")
         self._console_dictation_timer = self.set_timer(
             CONSOLE_DICTATION_MAX_SECONDS,
             self._handle_console_dictation_limit,
+        )
+        self._console_dictation_elapsed_timer = self.set_interval(
+            1.0, self._tick_console_dictation_elapsed
         )
 
     @staticmethod
@@ -3978,50 +4883,135 @@ class ChatScreen(BaseAppScreen):
                 severity="warning",
             )
 
-    async def _stop_console_dictation(self) -> None:
-        session = self._console_dictation_session
+    async def _stop_console_dictation(self, session: Any) -> None:
+        """Finish the capture this stop was requested for, and only that one.
+
+        The session is captured on the UI thread by
+        `_request_console_dictation_stop` rather than read here, and re-checked
+        after every await: a mid-capture `VoiceFailed` can drain at any point
+        in between, and it tears the capture down and tells the user itself.
+        Whichever side loses that race must stay silent, or one failure becomes
+        two toasts -- the second one either a duplicate or an internal string
+        ("Microphone dictation is not recording.") that means nothing to a user.
+
+        Args:
+            session: The dictation session that was live when the user (or the
+                wall timer) asked to stop.
+        """
         origin_session_id = self._console_dictation_origin_session_id
         if session is None:
             self._notify_console_dictation_error(
                 RuntimeError("Microphone dictation is not recording.")
             )
             return
+        if self._console_dictation_session is not session:
+            logger.debug("Console dictation stop skipped; the capture was torn down")
+            return
         try:
             transcript = await asyncio.to_thread(session.stop_and_transcribe)
         except Exception as exc:
             await asyncio.to_thread(session.discard)
-            self._notify_console_dictation_error(exc)
+            if self._console_dictation_session is session:
+                self._notify_console_dictation_error(exc)
             return
         if not self.is_mounted:
+            return
+        if self._console_dictation_session is not session:
             return
         self._insert_console_dictation(
             origin_session_id=origin_session_id,
             transcript=transcript,
         )
         self._console_dictation_origin_session_id = None
+        self._console_dictation_partial = ""
         self._set_console_dictation_state("idle")
 
     def _request_console_dictation_stop(self) -> None:
         if self._console_dictation_state != "recording":
             return
+        # Read on the UI thread, atomically with the state change, so the
+        # worker finishes the capture the user stopped rather than whatever is
+        # in the field by the time it first ticks.
+        session = self._console_dictation_session
         self._cancel_console_dictation_timer()
+        self._cancel_console_dictation_elapsed_timer()
         self._set_console_dictation_state("transcribing")
         self.run_worker(
-            self._stop_console_dictation(),
+            self._stop_console_dictation(session),
             exclusive=True,
             group="console-dictation-stop",
+            exit_on_error=False,
         )
+
+    async def _discard_console_dictation_session(self, session: Any) -> None:
+        """Release a cancelled capture's microphone off the UI thread.
+
+        `discard()` is documented as non-blocking (`abandon()` never joins), but
+        it still reaches the audio backend to close the stream: measured at
+        1.51 s of frozen UI when called inline. Every other call site already
+        goes through `asyncio.to_thread`; this is the one that did not.
+
+        Args:
+            session: The session to abandon. Failures are logged, never raised
+                -- cancelling must not produce an error the user did not cause.
+        """
+        try:
+            await asyncio.to_thread(session.discard)
+        except Exception:  # noqa: BLE001 - cancelling must never raise
+            logger.opt(exception=True).debug(
+                "Console dictation could not be cancelled cleanly"
+            )
+
+    def _request_console_dictation_cancel(self) -> None:
+        """Abandon a capture that is still preparing, without waiting for it.
+
+        The `starting` phase now covers a speech-model load, which is a
+        multi-gigabyte download on a fresh machine. `abandon()` returns
+        immediately (it never joins), and the load itself is on a daemon
+        thread, so this returns the UI to idle at once and lets the process
+        exit even if the download is still running.
+
+        Dropping the session first is what makes `_start_console_dictation`'s
+        re-checks fire, so the cancelled attempt cannot also raise a failure
+        toast on its way out. The release itself is handed to a worker: the UI
+        is already back at idle by then, so nothing the user can see is waiting
+        on the audio backend letting go of the device.
+        """
+        if self._console_dictation_state != "starting":
+            return
+        session = self._console_dictation_session
+        self._cancel_console_dictation_timer()
+        self._cancel_console_dictation_elapsed_timer()
+        self._console_dictation_session = None
+        self._console_dictation_origin_session_id = None
+        self._console_dictation_partial = ""
+        self._set_console_dictation_state("idle")
+        if session is not None:
+            self.run_worker(
+                self._discard_console_dictation_session(session),
+                group="console-dictation-cancel",
+                exit_on_error=False,
+            )
+        self.app_instance.notify("Dictation cancelled.", severity="information")
 
     def _request_console_dictation_start(self) -> None:
         if self._console_dictation_state != "idle":
             return
+        # Re-probe on every activation attempt (TASK-15): refreshes the mic
+        # tooltip so an extra installed or a microphone plugged in mid-run is
+        # reflected without a remount. Cosmetic only -- see
+        # `_sync_console_dictation_availability`'s docstring for why this
+        # never blocks the attempt below.
+        self._sync_console_dictation_availability()
         store = self._ensure_console_chat_store()
         self._console_dictation_origin_session_id = store.active_session_id
+        self._console_dictation_partial = ""
         self._set_console_dictation_state("starting")
         self.run_worker(
             self._start_console_dictation(),
             exclusive=True,
             group="console-dictation-start",
+            exit_on_error=False,
         )
 
     def _capture_console_draft_switch_snapshot(self) -> None:
@@ -4190,6 +5180,7 @@ class ChatScreen(BaseAppScreen):
     ) -> ConsoleControlState:
         """Build Console-owned control/readiness labels."""
         provider, model, settings = self._active_console_provider_model_display()
+        active_session = self._active_native_console_session()
         source = pending_launch.source if pending_launch else None
         return ConsoleControlState.from_values(
             provider=provider,
@@ -4202,7 +5193,9 @@ class ChatScreen(BaseAppScreen):
                 getattr(settings, "character_label", None)
                 or self._current_console_rail_character_name()
             ),
-            persona=getattr(settings, "user_profile_label", None),
+            assistant_kind=getattr(active_session, "assistant_kind", None),
+            assistant_name=getattr(active_session, "assistant_name", None),
+            assistant_id=getattr(active_session, "assistant_id", None),
             rag_enabled=_source_mentions_rag(source),
             staged_source_count=1 if pending_launch else 0,
             tool_count=self._console_tool_count(),
@@ -7267,6 +8260,112 @@ class ChatScreen(BaseAppScreen):
         except Exception as exc:
             logger.warning("Failed to persist Console onboarding flag: {}", exc)
 
+    def _console_fleet_coachmark_seen(self) -> bool:
+        """Return the persisted one-time fleet coach-mark flag (fleet-UX F2, task-1232).
+
+        Mirrors ``_console_first_send_completed``'s manual nested-dict read
+        rather than ``get_cli_setting`` -- ``get_cli_setting`` takes a flat
+        ``(section, key)`` pair and does not resolve a dotted
+        ``"console.onboarding"`` section (a prior program's documented trap).
+        """
+        if self._console_fleet_coachmark_seen_cached is None:
+            app_config = getattr(self.app_instance, "app_config", None)
+            raw = None
+            if isinstance(app_config, dict):
+                onboarding = app_config.get("console", {})
+                if isinstance(onboarding, dict):
+                    onboarding = onboarding.get("onboarding", {})
+                raw = (
+                    onboarding.get("fleet_coachmark_seen")
+                    if isinstance(onboarding, dict)
+                    else None
+                )
+            self._console_fleet_coachmark_seen_cached = coerce_bool_setting(
+                raw, False
+            )
+        return self._console_fleet_coachmark_seen_cached
+
+    def _maybe_show_fleet_coachmark(
+        self,
+        sessions: list[ConsoleChatSession],
+        surface: ConsoleSessionSurface,
+    ) -> None:
+        """Show the one-time "each tab runs its own agent" coach-mark.
+
+        Fleet-UX expert review F2 / Upgrade proposal 1 (task-1232): fires the
+        first time the Console session count actually TRANSITIONS to
+        exactly 2 (Ctrl+T, the tab strip's "New tab" button, a workspace
+        auto-tab, a Personas "Start Chat" handoff -- every creation path
+        already lands here via ``_sync_native_console_chat_ui`` ->
+        ``_sync_console_native_session_tabs``). Seeded from whatever count
+        this screen instance first observes, so a restore that starts the
+        store already at 2+ sessions is never mistaken for a "creation".
+
+        Args:
+            sessions: The current Console session list (already fetched by
+                the caller for the tab-strip sync).
+            surface: The mounted Console session surface to render the
+                banner on (already resolved by the caller).
+        """
+        current_count = len(sessions)
+        previous_count = self._last_console_session_count
+        self._last_console_session_count = current_count
+        if previous_count is None:
+            # First sync tick for this screen instance: seed only. Whatever
+            # the store already holds is not a "creation" event.
+            return
+        if current_count != 2 or previous_count >= 2:
+            return
+        if self._console_fleet_coachmark_seen():
+            return
+        max_parallel_runs = self._ensure_console_chat_controller().max_parallel_runs
+        surface.show_fleet_coachmark(
+            f"Each tab runs its own agent — up to {max_parallel_runs} in "
+            "parallel (change in Settings > Console Behavior)."
+        )
+
+    def _record_console_fleet_coachmark_dismissed(self) -> None:
+        """Hide the fleet coach-mark and persist the one-time seen flag.
+
+        The flag is written on DISMISS (not on show): an undismissed banner
+        is allowed to reappear next time the session count transitions to 2
+        (e.g. the user never noticed it, closed the tab, and reopened a
+        second one) -- only an explicit acknowledgement makes it gone for
+        good, including across restarts.
+        """
+        surface = self.console_session_surface
+        if surface is not None:
+            surface.hide_fleet_coachmark()
+        if self._console_fleet_coachmark_seen_cached is True:
+            return
+        self._console_fleet_coachmark_seen_cached = True
+        app_config = getattr(self.app_instance, "app_config", None)
+        if isinstance(app_config, dict):
+            console_cfg = app_config.get("console")
+            if not isinstance(console_cfg, dict):
+                console_cfg = {}
+                app_config["console"] = console_cfg
+            onboarding_cfg = console_cfg.get("onboarding")
+            if not isinstance(onboarding_cfg, dict):
+                onboarding_cfg = {}
+                console_cfg["onboarding"] = onboarding_cfg
+            onboarding_cfg["fleet_coachmark_seen"] = True
+        self._save_console_fleet_coachmark_flag()
+
+    @work(thread=True)
+    def _save_console_fleet_coachmark_flag(self) -> None:
+        """Persist the fleet coach-mark seen flag without blocking the UI thread."""
+        try:
+            save_setting_to_cli_config(
+                "console.onboarding",
+                "fleet_coachmark_seen",
+                True,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist Console fleet coach-mark flag: {}", exc
+            )
+
     def _migrate_console_rail_fallback_preferences(
         self,
         key: str,
@@ -7533,11 +8632,21 @@ class ChatScreen(BaseAppScreen):
         Parallel-agents spec §6, fix round 2 (live-smoke finding): the Agent
         section's persisted preference defaults collapsed (``agent_open=
         False``, see ``ConsoleRailPreferences``) and nothing previously
-        reopened it, so its BODY -- where the fleet summary line
-        (``#console-agent-fleet-summary``) lives -- stayed ``display: none``
-        even while another session was running or parked on an approval.
-        Scrolling the rail only ever reached the still-collapsed header; the
-        line itself was unreachable regardless of scroll position.
+        reopened it, so its BODY -- the status/step/sub-agent detail for
+        the viewed session's own run -- stayed ``display: none`` even
+        while another session was running or parked on an approval.
+        Scrolling the rail only ever reached the still-collapsed header;
+        that detail was unreachable regardless of scroll position.
+
+        TASK-1140 (UAT F1, fix round 1): ``#console-agent-fleet-summary``
+        itself no longer lives inside this section's body -- it is now a
+        pinned, non-scrolling sibling of the rail's own header (see the
+        compose block a few hundred lines up), painted unconditionally
+        whenever the fleet has anything to report, independent of this
+        section's open/collapsed state. This method's force-open still
+        matters for the Agent section's OWN contextual detail (status/
+        steps/sub-agents for whichever conversation is viewed), just not
+        for fleet-line visibility anymore.
 
         Mirrors ``_apply_pending_launch_inspector_auto_open``: an ephemeral
         override applied to the RENDERED rail state only, never written back
@@ -7545,8 +8654,8 @@ class ChatScreen(BaseAppScreen):
         takes effect the moment the fleet goes quiet (``fleet_summary_
         counts()`` returns to ``(0, 0)``). Uses ``_console_agent_fleet_
         summary_line()`` -- the exact same non-empty-string signal the
-        fleet Static's own ``display`` toggles on -- so "must render open"
-        and "has a line to show" can never disagree.
+        pinned fleet Static's own ``display`` toggles on -- so "must render
+        the section open" and "has a line to show" can never disagree.
 
         TASK-915: fix round 3 (live-smoke finding). Round 2's force was a
         one-shot-per-rendered-state override, but the 0.2s sync tick
@@ -8696,7 +9805,10 @@ class ChatScreen(BaseAppScreen):
     @staticmethod
     def _hidden_static(text: str, *, id: str, classes: str = "") -> Static:
         widget = Static(
-            text, id=id, classes=f"{classes} console-hidden-control".strip()
+            text,
+            id=id,
+            classes=f"{classes} console-hidden-control".strip(),
+            markup=False,
         )
         widget.styles.display = "none"
         widget.styles.height = 0
@@ -8736,16 +9848,22 @@ class ChatScreen(BaseAppScreen):
     def _console_mode_summary(control_state: ConsoleControlState) -> str:
         def readiness_count(label: str) -> str:
             value = label.partition(":")[2].strip()
-            return value.split(maxsplit=1)[0] if value else "0"
+            if not value:
+                return "0"
+            first_token = value.split(maxsplit=1)[0]
+            # Fleet-UX expert review F7 (task-1234): `tools_label` can now
+            # read "Tools: not loaded" (ConsoleControlState.from_values, a
+            # neutral placeholder at a zero count) instead of always
+            # "Tools: N ready" -- naively taking the first word rendered
+            # this compact summary as the nonsensical "Tools not". Any
+            # non-numeric first token falls back to the same neutral dash
+            # rather than a truncated word fragment.
+            return first_token if first_token.isdigit() else "—"
 
-        # The mode summary names the AI side: in a roleplay session that is the
-        # character, which is what the user is actually tracking.
-        character = str(control_state.character_label or "")
-        if character.startswith("Character: "):
-            character = character.removeprefix("Character: ").strip()
+        assistant = str(control_state.assistant_label or "Assistant: General")
         return (
             "Chat/RAG/Follow"
-            f" | {character or 'no character'}"
+            f" | {assistant}"
             f" | Sources {readiness_count(control_state.sources_label)}"
             f" | Tools {readiness_count(control_state.tools_label)}"
             f" | Approvals {readiness_count(control_state.approvals_label)}"
@@ -9721,6 +10839,51 @@ class ChatScreen(BaseAppScreen):
                         collapse_button.styles.min_width = 3
                         collapse_button.styles.max_width = 3
                         yield collapse_button
+
+                    # TASK-1140 (UAT F1, fix round 1): the fleet summary --
+                    # "N other agents running, M waiting for approval."
+                    # (parallel-agents spec §6, PA-T8) -- is pinned HERE, a
+                    # plain sibling of `left_rail_header` inside the
+                    # non-scrolling `left_rail` Vertical, deliberately
+                    # OUTSIDE `#console-left-rail-body` (the `VerticalScroll`
+                    # every section below shares). `#console-left-rail-body`
+                    # is CSS `height: 1fr` -- it only ever claims whatever
+                    # vertical space is left over after ITS non-scrolling
+                    # siblings (the header, this line) are laid out, so this
+                    # widget is painted unconditionally: independent of rail
+                    # scroll position, which sections are open/collapsed,
+                    # and how much step content the Agent section carries.
+                    # Round 1 (compose-order-only, fleet line first inside
+                    # the Agent section body) was insufficient -- Session
+                    # and Model are BOTH open by persisted default
+                    # (`ConsoleRailPreferences.session_open`/`model_open`)
+                    # and together already exceed the rail body's own
+                    # ~10-row visible budget in a 44-row terminal, so any
+                    # position inside that shared scrollable flow could
+                    # still land below the fold before a user ever touches
+                    # the Agent section's own content.
+                    #
+                    # Present but display:none when both counts are zero
+                    # (mirrors the recovery Static in the Model section),
+                    # so `_sync_console_agent_section`'s targeted update
+                    # never needs to mount/unmount it -- and the pinned slot
+                    # collapses to zero rows rather than leaving a blank
+                    # line (`height: auto` + `display: none` both cooperate
+                    # here: Textual excludes a `display: none` widget from
+                    # layout entirely).
+                    fleet_line = self._console_agent_fleet_summary_line()
+                    fleet_summary = Static(
+                        fleet_line,
+                        id="console-agent-fleet-summary",
+                        classes="console-agent-section-fleet-summary",
+                        markup=False,
+                    )
+                    fleet_summary.styles.height = "auto"
+                    fleet_summary.styles.display = (
+                        "block" if fleet_line else "none"
+                    )
+                    yield fleet_summary
+
                     with VerticalScroll(
                         id="console-left-rail-body",
                         classes="console-left-rail-body",
@@ -9902,6 +11065,27 @@ class ChatScreen(BaseAppScreen):
                         if not rail_state.agent_open:
                             agent_body.styles.display = "none"
                         with agent_body:
+                            # TASK-1140 (UAT F1, fix round 1): the fleet
+                            # summary Static used to mount HERE (first, per
+                            # round 1's compose-order-only fix). Round 1's
+                            # own harness proved that placement insufficient
+                            # once the reviewer ran it against Session/Model
+                            # left at their real PERSISTED DEFAULTS (both
+                            # open) rather than collapsed: those two
+                            # sections alone already exceed the rail's own
+                            # ~10-row visible budget in a 44-row terminal,
+                            # so ANY position inside the shared, scrollable
+                            # `#console-left-rail-body` -- including the top
+                            # of the Agent section -- can still land below
+                            # the fold. The widget now lives OUTSIDE that
+                            # scrollable flow entirely (see `left_rail_header`
+                            # below, a few hundred lines up in this same
+                            # compose method) so it is painted regardless of
+                            # scroll position, section open/collapsed state,
+                            # or step-content length. Not duplicated here --
+                            # two widgets sharing one id is invalid, and the
+                            # pinned copy already covers "does the Agent
+                            # section's own busy state show a fleet line".
                             status_line, steps_text, subagents_text = (
                                 self._console_agent_section_lines()
                             )
@@ -9923,23 +11107,6 @@ class ChatScreen(BaseAppScreen):
                                 classes="console-agent-section-subagents",
                                 markup=False,
                             )
-                            # Parallel-agents spec §6 (PA-T8): fleet summary
-                            # -- "N other agents running, M waiting for
-                            # approval." Present but display:none when both
-                            # counts are zero (mirrors the recovery Static
-                            # above), so `_sync_console_agent_section`'s
-                            # targeted update never needs to mount/unmount.
-                            fleet_line = self._console_agent_fleet_summary_line()
-                            fleet_summary = Static(
-                                fleet_line,
-                                id="console-agent-fleet-summary",
-                                classes="console-agent-section-fleet-summary",
-                                markup=False,
-                            )
-                            fleet_summary.styles.display = (
-                                "block" if fleet_line else "none"
-                            )
-                            yield fleet_summary
                             back_button = Button(
                                 "Back",
                                 id="console-agent-drilldown-back",
@@ -9950,6 +11117,27 @@ class ChatScreen(BaseAppScreen):
                             if not self._console_agent_drilldown_run_id:
                                 back_button.styles.display = "none"
                             yield back_button
+                            # TASK-870 (AC#6/#7): the full-run-log
+                            # affordance -- present only while a run log
+                            # actually exists for whatever run this section
+                            # is currently showing.
+                            full_log_button = Button(
+                                "View full log",
+                                id="console-agent-view-full-log",
+                                classes=(
+                                    "console-workspace-action "
+                                    "console-agent-view-full-log"
+                                ),
+                                compact=True,
+                            )
+                            full_log_button.tooltip = (
+                                "Open the full, untruncated run log for this "
+                                "run -- what the model actually saw, before "
+                                "the Console's display cap trimmed it."
+                            )
+                            if not self._console_agent_full_log_available():
+                                full_log_button.styles.display = "none"
+                            yield full_log_button
 
                         # Section 4: Details (storage, sync, handoff plumbing).
                         yield DestinationRailSectionHeader(
@@ -10196,6 +11384,8 @@ class ChatScreen(BaseAppScreen):
         """Initialize the native Console screen."""
         super().on_mount()
 
+        self._notify_console_fleet_teardown_if_any()
+
         # Restore collapsible states after mount
         self.set_timer(0.1, self._restore_collapsible_states)
         self.set_timer(0.05, self.sync_task_resume_state)
@@ -10208,24 +11398,136 @@ class ChatScreen(BaseAppScreen):
         # existing resume/user-triggered retry paths.
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.set_timer(0.15, self.consume_pending_console_provider_intent)
+        # Same hedge as the handoff timers above: the native composer is not
+        # guaranteed to exist in the DOM yet at `call_after_refresh` time
+        # either, and `_sync_console_dictation_availability` silently no-ops
+        # when it doesn't -- without this retry, a mount that loses that race
+        # would leave the mic showing its unmounted-default tooltip until the
+        # user's first activation attempt re-probes it.
+        self.call_after_refresh(self._sync_console_dictation_availability)
+        self.set_timer(0.15, self._sync_console_dictation_availability)
         self.call_after_refresh(self._sync_native_console_chat_ui)
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)
+
+    def _notify_console_fleet_teardown_if_any(self) -> None:
+        """One-shot toast reporting a fleet the LAST Console instance lost.
+
+        TASK-1143 (F5): navigating away from Console unmounts the screen,
+        and ``on_unmount`` records how many runs/rounds its ``shutdown()``
+        call killed in ``app_instance._console_fleet_teardown_notice`` --
+        the app outlives this screen instance, and screens are never
+        cached (``TldwCli._create_navigation_screen`` always builds a
+        fresh instance, so there is no "same screen" to have shown a toast
+        on when it happened). A non-zero count here means the user left a
+        busy Console before this mount and the fleet was torn down without
+        being acknowledged; show it exactly once and clear the slot so an
+        ordinary mount (nothing killed, or already reported) stays silent.
+        """
+        count = getattr(self.app_instance, "_console_fleet_teardown_notice", 0)
+        if not count:
+            return
+        self.app_instance._console_fleet_teardown_notice = 0
+        noun = "run" if count == 1 else "runs"
+        verb = "was" if count == 1 else "were"
+        self.app_instance.notify(
+            f"{count} agent {noun} {verb} cancelled when you left Console.",
+            severity="warning",
+        )
+
+    async def confirm_navigation(self) -> bool:
+        """Confirm leaving Console while the agent fleet still has live work.
+
+        TASK-1143 (F5): navigating away from Console unmounts this screen,
+        and ``on_unmount`` awaits ``ConsoleChatController.shutdown()`` --
+        cancelling every in-flight stream and denying every pending/parked
+        approval round for EVERY session this controller owns, not just
+        the one being viewed (see ``ConsoleChatController.shutdown``'s own
+        docstring). That is correct, by-design teardown -- screens are
+        never cached, so nothing could resolve those rounds through this
+        instance again regardless -- but it was previously silent. This
+        hook is the ``flush_pending_work`` sibling seam
+        ``TldwCli.handle_screen_navigation`` awaits before the switch
+        commits: returning ``False`` keeps this screen (and its
+        controller, and its fleet) mounted exactly like a flush veto.
+
+        Returns:
+            ``True`` when navigation may proceed -- an idle fleet (the
+            common case: no dialog, no delay), or the user chose "Leave"
+            in the confirmation dialog. ``False`` when the user chose
+            "Stay": the screen and its controller are left exactly as
+            they were, nothing cancelled, nothing denied.
+        """
+        controller = self._console_chat_controller
+        if controller is None:
+            return True
+        busy_count = controller.busy_fleet_session_count()
+        if busy_count <= 0:
+            return True
+        noun = "run" if busy_count == 1 else "runs"
+        dialog = ConfirmationDialog(
+            title="Leave Console?",
+            message=(
+                f"{busy_count} agent {noun} will be cancelled if you "
+                "leave Console. Leave anyway?\n\n"
+                "Tab/Shift+Tab selects Stay or Leave, Enter activates the "
+                "selected button, Esc stays."
+            ),
+            confirm_label="Leave",
+            cancel_label="Stay",
+        )
+        # `push_screen_wait` (the usual way to await a dialog's result) may
+        # ONLY be called from within a worker -- `App.push_screen` raises
+        # `NoActiveWorker` otherwise, since blocking a bare Future-await
+        # for a result only a LATER message resolves is exactly the
+        # deadlock shape workers exist to make safe. `confirm_navigation`
+        # itself runs on `TldwCli.handle_screen_navigation`'s own call
+        # stack -- which TASK-1230 made a worker's call stack (see
+        # `TldwCli._dispatch_screen_navigation`), specifically so this
+        # await can never starve the App's own event routing for the
+        # dialog's lifetime -- but the wait is still delegated to its own
+        # worker here (rather than a bare `await push_screen_wait(...)`)
+        # so `confirm_navigation` keeps working correctly even if some
+        # future caller ever invokes it outside that worker context --
+        # `exit_on_error=False` so a broken dialog fails this navigation
+        # closed (see the caller's except branch) rather than crashing the
+        # app.
+        worker = self.run_worker(
+            self.app_instance.push_screen_wait(dialog),
+            exclusive=False,
+            exit_on_error=False,
+        )
+        proceed = await worker.wait()
+        return bool(proceed)
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
         self._stop_console_transcript_sync_timer()
         self._cancel_console_dictation_timer()
+        self._cancel_console_dictation_elapsed_timer()
         dictation_session = self._console_dictation_session
         self._console_dictation_session = None
         self._console_dictation_origin_session_id = None
+        self._console_dictation_partial = ""
         self._console_dictation_state = "idle"
         if dictation_session is not None:
             await asyncio.to_thread(dictation_session.discard)
         self._console_original_attempt_previews.clear()
         controller = self._console_chat_controller
         if controller is not None:
+            # TASK-1143 (F5): snapshot what shutdown() is ABOUT to kill
+            # BEFORE calling it, using the SAME busy_fleet_session_count()
+            # confirm_navigation showed the user before they chose "Leave"
+            # (or that a non-navigation teardown, e.g. app exit, never got
+            # to show) -- the pre-navigate warning and the post-navigate
+            # record always agree on N. The app (not this doomed screen)
+            # holds the count so the NEXT Console mount -- a fresh
+            # instance; screens are never cached -- can report it via
+            # ``_notify_console_fleet_teardown_if_any``.
+            killed = controller.busy_fleet_session_count()
             await controller.shutdown()
+            if killed:
+                self.app_instance._console_fleet_teardown_notice = killed
         gateway = self._console_provider_gateway
         close = getattr(gateway, "aclose", None)
         if callable(close):
@@ -10253,10 +11555,8 @@ class ChatScreen(BaseAppScreen):
         if not isinstance(payload, dict):
             return None
         values = dict(payload)
-        if "persona_label" in values and "user_profile_label" not in values:
-            # Pre-task-442 blobs serialized the old field name.
-            values["user_profile_label"] = values.pop("persona_label")
         values.pop("persona_label", None)
+        values.pop("user_profile_label", None)
         valid_fields = set(ConsoleSessionSettings.__dataclass_fields__)
         values = {key: value for key, value in values.items() if key in valid_fields}
         provider = str(values.get("provider") or "").strip()
@@ -10826,10 +12126,6 @@ class ChatScreen(BaseAppScreen):
         # Local import matches this module's existing convention of
         # deferring Character_Chat submodule imports (they pull in Pillow
         # and CharactersRAGDB) rather than importing them at module scope.
-        from ...Character_Chat.active_user_profile import (
-            resolve_active_user_profile_name_async,
-            resolve_runtime_backend_mode,
-        )
         from ...Character_Chat.Character_Chat_Lib import replace_placeholders
 
         name = str(card.get("name") or _name_hint or "").strip() or "Character"
@@ -10838,32 +12134,15 @@ class ChatScreen(BaseAppScreen):
             for key in ("system_prompt", "personality", "description", "scenario")
         ]
         system_prompt = "\n".join(p for p in parts if p) or "Stay in character."
-        # task-442/task-551: {{user}} renders the active user profile's name,
-        # resolved against the app-authoritative runtime backend (local
-        # persona service, or the scope service's server profiles). No
-        # active profile keeps the historical "User" literal byte-exact and
-        # leaves the session's "General" label untouched.
-        active_user_name = await resolve_active_user_profile_name_async(
-            getattr(self.app_instance, "character_persona_scope_service", None),
-            mode=resolve_runtime_backend_mode(self.app_instance),
-            local_service=getattr(
-                self.app_instance, "local_character_persona_service", None
-            ),
-        )
         greeting = replace_placeholders(
-            str(card.get("first_message") or ""), name, active_user_name or "User"
+            str(card.get("first_message") or ""), name, "User"
         )
 
         store = self._ensure_console_chat_store()
-        settings_overrides: dict[str, Any] = {
-            "system_prompt": system_prompt,
-            "character_label": name,
-        }
-        if active_user_name:
-            settings_overrides["user_profile_label"] = active_user_name
         settings = replace(
             self._default_console_session_settings(),
-            **settings_overrides,
+            system_prompt=system_prompt,
+            character_label=name,
         )
         session = store.create_session(
             title=f"Chat with {name}",
@@ -11719,6 +12998,7 @@ class ChatScreen(BaseAppScreen):
             if controller is not None
             else None
         )
+        self._maybe_show_fleet_coachmark(sessions, surface)
         await surface.sync_sessions(
             sessions=sessions,
             active_session_id=store.active_session_id,
@@ -15701,7 +16981,6 @@ class ChatScreen(BaseAppScreen):
                 next_settings = replace(
                     next_settings,
                     **override_fields,
-                    user_profile_label=settings.user_profile_label,
                     character_label=settings.character_label,
                 )
             if temperature is not None:
@@ -15811,9 +17090,85 @@ class ChatScreen(BaseAppScreen):
         user actually visits ``session_id``.
 
         Also usable directly as a test seam to drive the park path without
-        a live worker thread/round -- setting the badge flag itself here
-        (in addition to each bridge also setting it directly) is what makes
-        that safe: this method is fully self-contained.
+        a live worker thread/round -- setting the badge itself here (via
+        the deprecated ``set_run_pending_approval`` shim, ONLY when no real
+        round is registered yet) is what makes that safe: this method is
+        fully self-contained.
+
+        TASK-1050 (Defect A): the owning bridge (``request_mcp_approvals``/
+        ``request_skill_install_confirm``/``request_skill_script_confirm``)
+        already registers THIS round's own real round/request id via
+        ``add_pending_round`` moments before invoking this park callback --
+        by the time this runs, ``has_pending_approval_round(session_id)``
+        is normally already ``True``. This method has no round id of its
+        own to register (its public contract, wired as ``ConsoleChatController
+        .park_pending_approval``, is a single-arg ``Callable[[str], None]``
+        -- several tests wire it directly to a plain single-arg collector),
+        so it must NOT unconditionally stamp the deprecated boolean shim:
+        doing so would register the shim's synthetic sentinel round id
+        ALONGSIDE the real one, and the real round's own teardown
+        (``discard_pending_round``) would then leave that sentinel behind,
+        leaking a stale NEEDS_APPROVAL badge past the round's actual
+        resolution. Only falls back to the shim when no round is
+        registered yet -- i.e. when this method is used standalone (the
+        test-seam usage the docstring above describes).
+
+        TASK-1141 (UAT F2): this callback's "once per round" guarantee
+        previously relied ENTIRELY on the structural assumption that each
+        owning bridge invokes it exactly once per round -- true for a
+        single, race-free `request_mcp_approvals`/`request_skill_install_
+        confirm`/`request_skill_script_confirm` call, but the callback
+        itself carried no memory of which round it had already announced.
+        Live UAT observed a duplicate toast for an unchanged, still-parked
+        round: with a background session already parked (toast shown), a
+        DIFFERENT viewed session's own run completing re-fired the exact
+        same toast text for the backgrounded round, even though nothing
+        about that round had changed. Exhaustively tracing the suspects
+        (`_set_run_state`'s COMPLETED branch, `_finalize_agent_*`,
+        `switch_session`/`_remount_parked_*`'s re-derive step, the
+        unvisited-marker stamp) found none of them invoke this callback a
+        second time for the SAME round under single-threaded/synchronous
+        conditions -- but nothing in this method itself prevented a
+        second, differently-triggered invocation (e.g. a re-marshal racing
+        `call_from_thread`, or any future caller of the shared park seam)
+        from re-announcing a round whose identity hasn't changed. Rather
+        than depend on every CALLER staying single-invocation-per-round
+        forever, this method now keys its own idempotency directly off the
+        round/request id(s) the owning controller is CURRENTLY retaining
+        for `session_id` (`_parked_approval_payloads`/`_parked_skill_
+        install_payloads`/`_parked_skill_script_payloads` -- the exact
+        maps `switch_session` re-derives the mounted card from), via
+        `_current_park_round_ids`. A round/request id already recorded in
+        `_console_toasted_park_round_ids` is a re-announcement of a round
+        this screen already toasted for -- silently absorbed. A round/
+        request id NOT yet recorded (a genuinely new round, even for a
+        session that already has an outstanding one) still toasts, per
+        spec (parking must never go silent just because a SIBLING round is
+        also live). When none of the three maps carry any id for
+        `session_id` yet (the standalone test-seam usage described above,
+        or a caller that races ahead of the owning bridge's own
+        `_parked_*_payloads` write), there is no identity to key on, so
+        this falls back to the pre-TASK-1141 unconditional toast --
+        preserving every existing direct-call test's behavior.
+
+        TASK-1141 review round 1: the live-map lookup above alone is
+        blind to a re-invocation that arrives AFTER the round's own
+        teardown -- every owning bridge's `finally` pops its round out of
+        `_parked_*_payloads` once resolved (`request_mcp_approvals`'
+        docstring on that pop explains why), so a STRAY re-invocation
+        landing post-teardown finds all three maps empty and, pre-review,
+        fell straight into the "no identity to key on" unconditional-toast
+        branch above -- exactly the live-reproduced gap this review round
+        closes. `_console_last_parked_round_ids` remembers the most recent
+        NON-empty snapshot `_current_park_round_ids` ever returned for
+        `session_id`; when the live lookup now comes back empty, that
+        remembered snapshot is consulted instead: if every id in it is
+        already in `_console_toasted_park_round_ids`, this is a
+        post-teardown re-announcement of an already-surfaced round --
+        absorbed, same as the still-live case. Only when NO snapshot was
+        ever recorded for `session_id` (this screen has truly never seen a
+        live round for it -- the standalone test-seam case) does the
+        unconditional-toast fallback still apply.
 
         Args:
             session_id: The parked round's OWNING session.
@@ -15821,13 +17176,86 @@ class ChatScreen(BaseAppScreen):
         controller = self._console_chat_controller
         if controller is None:
             return
-        controller.set_run_pending_approval(session_id, True)
+        if not controller.has_pending_approval_round(session_id):
+            controller.set_run_pending_approval(session_id, True)
+        current_round_ids = self._current_park_round_ids(controller, session_id)
+        if current_round_ids:
+            # Remember this as the most recent LIVE snapshot for
+            # `session_id`, unconditionally -- consulted below by a later
+            # invocation that arrives after this round's own teardown has
+            # already emptied every live map (review round 1).
+            self._console_last_parked_round_ids[session_id] = current_round_ids
+            new_round_ids = current_round_ids - self._console_toasted_park_round_ids
+            if not new_round_ids:
+                # Every round/request id currently parked for this session
+                # has already been toasted -- this invocation is a
+                # re-announcement (re-marshal/re-derive/re-park) of round(s)
+                # already surfaced, not a genuinely new one.
+                return
+            self._console_toasted_park_round_ids.update(current_round_ids)
+        else:
+            # Nothing is currently live for `session_id` in any of the
+            # three bridges' payload maps. Fall back to the last snapshot
+            # this screen ever saw live for it (review round 1): if every
+            # id in that snapshot was already toasted, this is a stray
+            # post-teardown re-invocation for an already-surfaced round --
+            # absorbed. No snapshot at all means this screen has never
+            # parked a round for `session_id` (the standalone test-seam
+            # usage this method's own docstring describes), so it falls
+            # through and toasts, preserving that pre-TASK-1141 behavior.
+            last_round_ids = self._console_last_parked_round_ids.get(session_id)
+            if last_round_ids and last_round_ids <= self._console_toasted_park_round_ids:
+                return
         session_title, workspace_name = self._console_session_title_and_workspace_name(
             controller, session_id
         )
         self.app_instance.notify(
             f"Agent in {session_title} ({workspace_name}) needs approval."
         )
+
+    @staticmethod
+    def _current_park_round_ids(
+        controller: ConsoleChatController, session_id: str
+    ) -> frozenset[str]:
+        """Return every round/request id CURRENTLY retained for ``session_id``.
+
+        TASK-1141: namespaced per bridge (``"mcp:"``/``"install:"``/
+        ``"script:"``) since the three bridges mint their ids
+        independently -- two different bridges could theoretically mint
+        the same raw UUID by construction, however astronomically
+        unlikely, and namespacing costs nothing. Reads the SAME three
+        retained-payload maps ``switch_session``/``_remount_parked_
+        skill_install``/``_remount_parked_skill_script`` already treat as
+        the single source of truth for "what round is this session's card
+        showing right now" -- deliberately not a separate/parallel piece
+        of state that could itself drift from theirs.
+
+        Args:
+            controller: The owning Console chat controller.
+            session_id: The session to look up.
+
+        Returns:
+            A ``frozenset`` of namespaced round/request ids, empty when
+            none of the three bridges currently retain a payload for
+            ``session_id``.
+        """
+        ids: set[str] = set()
+        mcp_payload = controller._parked_approval_payloads.get(session_id)
+        if mcp_payload is not None:
+            round_id = mcp_payload.get("round_id")
+            if round_id:
+                ids.add(f"mcp:{round_id}")
+        install_payload = controller._parked_skill_install_payloads.get(session_id)
+        if install_payload is not None:
+            request_id = install_payload.get("request_id")
+            if request_id:
+                ids.add(f"install:{request_id}")
+        script_payload = controller._parked_skill_script_payloads.get(session_id)
+        if script_payload is not None:
+            request_id = script_payload.get("request_id")
+            if request_id:
+                ids.add(f"script:{request_id}")
+        return frozenset(ids)
 
     def _console_session_title_and_workspace_name(
         self, controller: ConsoleChatController, session_id: str
@@ -16006,6 +17434,11 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             if self._console_dictation_state == "idle":
                 self._request_console_dictation_start()
+            elif self._console_dictation_state == "starting":
+                # A first-run model load runs for minutes; this is the only
+                # in-app way out of it. "transcribing" has no cancel -- the
+                # capture is already recorded and worth finishing.
+                self._request_console_dictation_cancel()
             elif self._console_dictation_state == "recording":
                 self._request_console_dictation_stop()
             return
@@ -16029,6 +17462,10 @@ class ChatScreen(BaseAppScreen):
                 exclusive=True,
                 group="console-sync",
             )
+            return
+        if button_id == "console-agent-view-full-log":
+            event.stop()
+            self._open_console_agent_run_log_viewer()
             return
         if button_id and button_id.startswith(RAIL_SECTION_TOGGLE_PREFIX):
             event.stop()

@@ -1,3 +1,5 @@
+import inspect
+
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON,
@@ -16,7 +18,6 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
     state = ConsoleControlState.from_values(
         provider="OpenAI",
         model="gpt-5.5",
-        persona="Researcher",
         rag_enabled=True,
         staged_source_count=3,
         tool_count=4,
@@ -25,23 +26,22 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
 
     assert state.provider_label == "Provider: OpenAI"
     assert state.model_label == "Model: gpt-5.5"
-    assert state.user_profile_label == "You: Researcher"
+    assert state.assistant_label == "Assistant: General"
     assert state.rag_label == "RAG: on"
     assert state.sources_label == "Sources: 3 staged"
     assert state.tools_label == "Tools: 4 ready"
     assert state.approvals_label == "Approvals: 1 pending"
 
 
-def test_console_control_state_preserves_falsy_labels_and_default_profile_fallback():
+def test_console_control_state_preserves_falsy_labels_and_generic_assistant_fallback():
     state = ConsoleControlState.from_values(
         provider=0,
         model=False,
-        persona="",
     )
 
     assert state.provider_label == "Provider: 0"
     assert state.model_label == "Model: False"
-    assert state.user_profile_label == "You: default"
+    assert state.assistant_label == "Assistant: General"
 
 
 def test_console_control_state_counter_activity_flags():
@@ -80,6 +80,29 @@ def test_console_control_state_tools_chip_without_mcp_seam_counts_builtin_only()
     state = ConsoleControlState.from_values(tool_count=3)
     assert state.tools_label == "Tools: 3 ready"
     assert state.tools_active is True
+
+
+def test_console_control_state_tools_chip_shows_neutral_placeholder_at_zero():
+    """Fleet-UX expert review F7 (task-1234): a zero effective tool count
+    (the default -- the built-in count hook is never actually populated by
+    production code, see `ChatScreen._console_tool_count`) must not read
+    "Tools: 0 ready" -- live UAT read that as "no tools available" even
+    though calculator/get_current_datetime are always registered builtins.
+    `tools_active` (dim/emphasis) is UNCHANGED by this -- still False at
+    zero, exactly as before."""
+    state = ConsoleControlState.from_values()
+    assert state.tools_label == "Tools: not loaded"
+    assert "0 ready" not in state.tools_label
+    assert state.tools_active is False
+
+    # Explicit zero (not just the default) reads identically.
+    explicit_zero = ConsoleControlState.from_values(tool_count=0, mcp_tool_count=None)
+    assert explicit_zero.tools_label == "Tools: not loaded"
+
+    # A real mcp_tool_count of 0 (seam wired, catalog genuinely empty) is
+    # NOT "no MCP seam" (that's `None`) -- still an honest zero, same copy.
+    wired_but_empty = ConsoleControlState.from_values(tool_count=0, mcp_tool_count=0)
+    assert wired_but_empty.tools_label == "Tools: not loaded"
 
 
 def test_console_staged_context_state_preserves_live_work_payload_provenance():
@@ -263,38 +286,68 @@ def test_console_inspector_state_enables_pending_approval_tools_and_chatbook_act
     assert rows_by_label["Approvals"].status == "blocked"
 
 
-# --- Roleplay UAT: the "Assistant" chip named neither the assistant nor a truth ---
-# Live repro (origin/dev @ f384a2807): the chip read "Assistant: General" in every
-# session, including while actively roleplaying with a character. It was built
-# from the USER-PROFILE label (`persona`), which Console always passed as None,
-# so it was a constant that described nothing. For a roleplay user the AI side
-# (the character) is the thing that must be visible; the user profile is a
-# separate fact and gets its own chip.
-
-
-def test_character_chip_names_the_active_character():
+def test_assistant_label_names_the_active_character():
     state = ConsoleControlState.from_values(
         provider="llama_cpp", model="m", character="Seraphina"
     )
 
-    assert state.character_label == "Character: Seraphina"
+    assert state.assistant_label == "Character: Seraphina"
 
 
-def test_character_chip_reports_none_without_a_character():
+def test_assistant_label_is_generic_without_an_identified_assistant():
     state = ConsoleControlState.from_values(provider="llama_cpp", model="m")
 
-    assert state.character_label == "Character: none"
+    assert state.assistant_label == "Assistant: General"
 
 
-def test_user_profile_chip_is_labelled_for_the_user_not_the_assistant():
+def test_assistant_label_uses_existing_persona_name():
     state = ConsoleControlState.from_values(
-        provider="llama_cpp", model="m", persona="Corvin"
+        provider="llama_cpp",
+        model="m",
+        assistant_kind="persona",
+        assistant_name="Guide",
+        assistant_id="persona-7",
     )
 
-    assert state.user_profile_label == "You: Corvin"
+    assert state.assistant_label == "Persona: Guide"
 
 
-def test_user_profile_chip_defaults_without_claiming_an_assistant():
-    state = ConsoleControlState.from_values(provider="llama_cpp", model="m")
+def test_assistant_label_uses_existing_persona_id_when_name_is_missing():
+    state = ConsoleControlState.from_values(
+        provider="llama_cpp",
+        model="m",
+        assistant_kind="persona",
+        assistant_id="persona-7",
+    )
 
-    assert state.user_profile_label == "You: default"
+    assert state.assistant_label == "Persona: persona-7"
+
+
+def test_assistant_label_normalizes_persona_values_and_keeps_character_precedence():
+    normalized_kind = ConsoleControlState.from_values(
+        assistant_kind=" Persona ",
+        assistant_name=" Guide ",
+    )
+    id_fallback = ConsoleControlState.from_values(
+        assistant_kind="persona",
+        assistant_name=" \t ",
+        assistant_id=" persona-7 ",
+    )
+    character = ConsoleControlState.from_values(
+        character=" Ada ",
+        assistant_kind="persona",
+        assistant_name="Guide",
+    )
+
+    assert normalized_kind.assistant_label == "Persona: Guide"
+    assert id_fallback.assistant_label == "Persona: persona-7"
+    assert character.assistant_label == "Character: Ada"
+
+
+def test_console_control_state_has_one_assistant_presentation_field() -> None:
+    parameters = inspect.signature(ConsoleControlState.from_values).parameters
+
+    assert "persona" not in parameters
+    assert "user_profile_label" not in ConsoleControlState.__dataclass_fields__
+    assert "character_label" not in ConsoleControlState.__dataclass_fields__
+    assert "assistant_label" in ConsoleControlState.__dataclass_fields__

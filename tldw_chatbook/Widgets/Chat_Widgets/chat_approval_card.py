@@ -75,6 +75,42 @@ _REASON_SUFFIXES: dict[str, str] = {
     "risk_floored": " (high risk)",
 }
 
+#: Fleet-UX expert review F5/F7 (task-1234, item g): "(high risk)" on a
+#: plain read (e.g. `read_file`) reads as alarmist with no explanation --
+#: this is the row header's tooltip, a why-affordance for the badge alone.
+#: `config_changed` isn't included: its badge already names the concrete
+#: fact ("definition changed") and needs no further explanation.
+_REASON_TOOLTIPS: dict[str, str] = {
+    "risk_floored": (
+        "Reads can exfiltrate file contents; built-in file tools always "
+        "ask before running."
+    ),
+}
+
+
+def _row_header_tooltip(entry: Mapping[str, Any]) -> str:
+    """Return the row header's why-affordance tooltip, or ``""`` for none.
+
+    Args:
+        entry: One collapsed pending-call entry (see
+            ``_collapse_pending_calls``).
+
+    Returns:
+        The tooltip text for ``entry``'s reason code, or ``""`` when that
+        code carries no explanation (e.g. no reason at all, or
+        ``config_changed``, whose badge is already self-explanatory).
+    """
+    return _REASON_TOOLTIPS.get(str(entry.get("reason", "") or ""), "")
+
+#: TASK-1231/F3 AC2: appended (in addition to any `_REASON_SUFFIXES` badge)
+#: when the row's `path_precheck_failed` flag is set -- a file tool
+#: (read_file/list_directory/write_file) whose path argument will be
+#: rejected by the roots check regardless of the user's decision. This is
+#: a WARNING, never a gate: the row still offers every normal decision and
+#: the user can still approve it (it will then fail with the same
+#: recovery-route error `validate_path_multi` raises at dispatch).
+_PATH_PRECHECK_SUFFIX = " -- path outside allowed folders; will fail even if approved"
+
 _ARGS_SUMMARY_LIMIT = 80
 
 
@@ -101,7 +137,15 @@ def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str
 
 
 def _format_row_header(entry: Mapping[str, Any]) -> str:
-    """Return one row's header line: ``"server · tool"`` (+ ×N, + reason badge)."""
+    """Return one row's header line: ``"server · tool"`` (+ ×N, + badges).
+
+    Badge order: the reason badge (``config_changed``/``risk_floored``)
+    first, then the roots pre-flight warning (TASK-1231/F3 AC2) last --
+    a row can carry both (e.g. a high-risk `write_file` call whose path is
+    ALSO outside every allowed root), and the pre-flight warning is the
+    more actionable of the two, so it reads last/closest to the reader's
+    eye rather than being buried before another badge.
+    """
     server_label = str(entry.get("server_label", "") or "")
     tool_name = str(entry.get("tool_name", "") or "")
     header = f"{server_label} · {tool_name}"
@@ -109,6 +153,8 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
     if count > 1:
         header += f" ×{count}"
     header += _REASON_SUFFIXES.get(str(entry.get("reason", "") or ""), "")
+    if entry.get("path_precheck_failed"):
+        header += _PATH_PRECHECK_SUFFIX
     return header
 
 
@@ -168,6 +214,12 @@ class ChatApprovalCard(Container):
         self._batch_selects: list[Select] = []
         self._batch_legal_values: list[list[str]] = []
         self._batch_rows: list[Horizontal] = []
+        #: The current batch's fast-approval buttons (task-1234 review
+        #: round 1), if any -- membership-guards `on_button_pressed`
+        #: against a stale press the same way `_on_batch_row_select_
+        #: changed` guards `self._batch_selects`. See `_submit_fast_
+        #: decision`'s docstring for why this guard exists.
+        self._batch_fast_buttons: list[Button] = []
         #: The currently-rendered batch's round id (Task 9 fix round 1),
         #: echoed back unchanged in `ApprovalDecided` on submit. `None`
         #: whenever no batch (or a caller that predates round ids) is
@@ -253,18 +305,40 @@ class ChatApprovalCard(Container):
             self._batch_selects = []
             self._batch_legal_values = []
             self._batch_rows = []
+            self._batch_fast_buttons = []
             return
 
         self.display = True
         self.query_one("#approval-batch-body").display = True
+        # task-1234 review round 1: a submit-shaped control (Submit, or
+        # either fast button) disables itself right after a press to close
+        # the double-submit window -- see `_disable_batch_submit_controls`.
+        # A NEW batch must start every submitting control re-enabled,
+        # otherwise a round whose PREDECESSOR was resolved via Submit would
+        # render with a permanently-disabled Submit button.
+        try:
+            self.query_one("#approval-submit", Button).disabled = False
+        except NoMatches:
+            pass
 
         grouped = _collapse_pending_calls(calls)
         self._batch_generation += 1
         generation = self._batch_generation
+        # Fleet-UX expert review F5 (task-1234): a single-decision card
+        # still forced a two-step Select-then-Submit commit. Both fast
+        # decisions ("approve_once"/"deny") are legal for EVERY row this
+        # card ever renders -- MCP rows get the full `_DECISION_OPTIONS`
+        # set unconditionally, and the one narrowed case in production
+        # (built-in tools, `options=("approve_once", "approve_session",
+        # "deny")` -- see `ConsoleChatController`'s review-hook docstring)
+        # deliberately keeps both -- so no legality check is needed here,
+        # unlike the bulk Approve-all/Deny-all buttons' `legal_values` dance.
+        single_row = len(grouped) == 1
         names: list[str] = []
         selects: list[Select] = []
         legal_values: list[list[str]] = []
         rows: list[Horizontal] = []
+        fast_buttons: list[Button] = []
         for index, entry in enumerate(grouped):
             names.append(str(entry.get("llm_name", "")))
             row_options = _options_for_row(entry)
@@ -282,19 +356,52 @@ class ChatApprovalCard(Container):
             )
             selects.append(select)
             legal_values.append(row_values)
+            header_static = Static(
+                _format_row_header(entry),
+                markup=False,
+                classes="approval-row-header",
+            )
+            header_tooltip = _row_header_tooltip(entry)
+            if header_tooltip:
+                header_static.tooltip = header_tooltip
+            row_children: list[Any] = [
+                header_static,
+                Static(
+                    _summarize_arguments(entry.get("arguments")),
+                    markup=False,
+                    classes="approval-row-args",
+                ),
+                select,
+            ]
+            if single_row:
+                fast_approve = Button(
+                    "Approve once",
+                    id=f"approval-fast-approve-{generation}-{index}",
+                    variant="success",
+                    compact=True,
+                    classes="approval-row-fast-approve",
+                    tooltip=(
+                        "Approve once and resume immediately "
+                        "(skips Select + Submit)."
+                    ),
+                )
+                fast_deny = Button(
+                    "Deny",
+                    id=f"approval-fast-deny-{generation}-{index}",
+                    variant="error",
+                    compact=True,
+                    classes="approval-row-fast-deny",
+                    tooltip=(
+                        "Deny and resume immediately "
+                        "(skips Select + Submit)."
+                    ),
+                )
+                fast_buttons.extend((fast_approve, fast_deny))
+                row_children.append(fast_approve)
+                row_children.append(fast_deny)
             rows.append(
                 Horizontal(
-                    Static(
-                        _format_row_header(entry),
-                        markup=False,
-                        classes="approval-row-header",
-                    ),
-                    Static(
-                        _summarize_arguments(entry.get("arguments")),
-                        markup=False,
-                        classes="approval-row-args",
-                    ),
-                    select,
+                    *row_children,
                     id=f"approval-row-{generation}-{index}",
                     classes="approval-row",
                 )
@@ -303,6 +410,7 @@ class ChatApprovalCard(Container):
         self._batch_selects = selects
         self._batch_legal_values = legal_values
         self._batch_rows = rows
+        self._batch_fast_buttons = fast_buttons
 
         rows_container = self.query_one("#approval-batch-rows", Vertical)
         rows_container.remove_children()
@@ -310,7 +418,7 @@ class ChatApprovalCard(Container):
             rows_container.mount(*rows)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        button_id = event.button.id
+        button_id = event.button.id or ""
         if button_id == "approval-approve-all":
             event.stop()
             self._set_all_batch_decisions(("approve_once", "approve_session"))
@@ -320,6 +428,19 @@ class ChatApprovalCard(Container):
         elif button_id == "approval-submit":
             event.stop()
             self._submit_batch_decisions()
+        elif button_id.startswith("approval-fast-approve-"):
+            event.stop()
+            # task-1234 review round 1: membership-guard against a STALE
+            # button -- see `_submit_fast_decision`'s docstring for the
+            # race this closes. `event.button` (not the id string) so this
+            # matches by widget identity, the same way `_on_batch_row_
+            # select_changed` guards `self._batch_selects`.
+            if event.button in self._batch_fast_buttons:
+                self._submit_fast_decision("approve_once")
+        elif button_id.startswith("approval-fast-deny-"):
+            event.stop()
+            if event.button in self._batch_fast_buttons:
+                self._submit_fast_decision("deny")
 
     def _set_all_batch_decisions(self, candidates: tuple[str, ...]) -> None:
         """Bulk-set every row to the first of ``candidates`` that row legally offers.
@@ -375,11 +496,74 @@ class ChatApprovalCard(Container):
         index = self._batch_selects.index(select)
         self._batch_rows[index].remove_class("needs-decision")
 
+    def _disable_batch_submit_controls(self) -> None:
+        """Disable this round's submitting controls right after a press.
+
+        task-1234 review round 1: Submit and both fast buttons each
+        resolve the ENTIRE round with one press. Before this, a second
+        click landing in the brief window before the round's teardown
+        (the next ``set_batch``/hide) would post a SECOND ``ApprovalDecided``
+        for a round that may already be resolved -- safe only incidentally,
+        by whatever the controller does with a duplicate resolution, not by
+        anything this widget guaranteed. Disabling immediately, rather than
+        waiting on a re-render, closes that window directly. ``set_batch``
+        re-enables ``#approval-submit`` (and repopulates
+        ``self._batch_fast_buttons`` with fresh, enabled buttons) at the
+        start of every new round, so this is never a permanent lockout.
+        """
+        for button in self._batch_fast_buttons:
+            button.disabled = True
+        try:
+            self.query_one("#approval-submit", Button).disabled = True
+        except NoMatches:
+            pass
+
     def _submit_batch_decisions(self) -> None:
         decisions = {
             name: select.value
             for name, select in zip(self._batch_names, self._batch_selects)
         }
+        self._disable_batch_submit_controls()
         self.post_message(
             self.ApprovalDecided(decisions, round_id=self._batch_round_id)
+        )
+
+    def _submit_fast_decision(self, decision: str) -> None:
+        """Single-row fast path (task-1234/F5): resolve without touching Selects.
+
+        Only ever reachable when ``set_batch`` rendered exactly one row
+        (the fast buttons are gated on ``single_row`` there) AND the
+        pressed button is still a member of ``self._batch_fast_buttons``
+        (``on_button_pressed``'s guard, task-1234 review round 1) -- so
+        ``self._batch_names[0]`` is unambiguously THIS round's row. Without
+        that membership guard, a fire-and-forget ``remove_children()`` (see
+        ``set_batch``'s docstring) leaves a stale-generation button mounted
+        and clickable for one event-loop tick after a NEW batch supersedes
+        it; pressing it would otherwise resolve the NEW round using
+        whatever ``self._batch_names``/``self._batch_round_id`` the newer
+        ``set_batch`` call just overwrote them with -- silently deciding a
+        tool call the user never reviewed. ``round_id`` alone does not
+        catch this: ``set_batch`` overwrites ``_batch_round_id`` wholesale
+        on every call, so an old and a new round's messages are not
+        distinguishable by id at this layer.
+
+        Posts the SAME ``ApprovalDecided`` message, through the SAME
+        ``round_id``, as ``_submit_batch_decisions`` -- no new resolution
+        seam; ``ConsoleChatController.resolve_pending_approval`` cannot
+        tell this apart from a normal Select+Submit round trip.
+
+        Args:
+            decision: The verdict to submit. Only ever ``"approve_once"``
+                or ``"deny"`` (the two call sites in ``on_button_pressed``)
+                -- a fast click can never grant ``"approve_session"``/
+                ``"always_allow"``; those stay reachable only through the
+                row's own Select + Submit.
+        """
+        if not self._batch_names:
+            return
+        self._disable_batch_submit_controls()
+        self.post_message(
+            self.ApprovalDecided(
+                {self._batch_names[0]: decision}, round_id=self._batch_round_id
+            )
         )

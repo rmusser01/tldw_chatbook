@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any, Protocol
 
@@ -782,6 +784,36 @@ def test_elevenlabs_projection_uses_raw_sources_then_normalized_fallback(
         ]
         == expected_key
     )
+
+
+def test_legacy_modules_import_without_optional_audio_dependencies() -> None:
+    script = """
+import builtins
+
+real_import = builtins.__import__
+
+def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+    if name.partition(".")[0] in {"numpy", "pydub", "soundfile"}:
+        raise ImportError(f"optional dependency hidden: {name}")
+    return real_import(name, globals, locals, fromlist, level)
+
+builtins.__import__ = guarded_import
+
+from tldw_chatbook.TTS import audio_service
+from tldw_chatbook.TTS.backends import kokoro
+
+assert audio_service.NUMPY_AVAILABLE is False
+assert kokoro.NUMPY_AVAILABLE is False
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.asyncio

@@ -2101,6 +2101,236 @@ def test_review_hook_gates_builtins_with_no_mcp_provider():
     assert verdicts == {"write_thing": "proceed"}
 
 
+def _file_tool(name: str):
+    """A `Tool`-shaped double carrying a REAL file-tool name (read_file/
+    list_directory/write_file), so `path_precheck_failed` (looked up by
+    exact tool name) recognizes it. Unlike `_FakeMutatingTool`/`write_thing`
+    above, this name must be one of the three file tools for the
+    precheck to ever fire.
+    """
+    return type("_FakeFileTool", (), {"name": name})()
+
+
+def test_review_hook_flags_read_file_path_outside_roots(monkeypatch, tmp_path):
+    """TASK-1231/F3 AC2: a read_file row whose path the roots check will
+    reject must carry `path_precheck_failed=True` -- a WARNING only. The
+    row must still be offered every normal decision (never auto-denied);
+    the user can still approve it.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+    from tldw_chatbook.Tools import file_operation_tools as fot
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
+
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
+
+    def _raise():
+        raise RuntimeError("no workspace registry in this test")
+
+    monkeypatch.setattr(wfr, "_registry_factory", _raise)
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("x")
+
+    gate = _FakeBuiltinGate()
+    asked: dict[str, list[MCPPendingCall]] = {}
+
+    def request_approvals(pending: list[MCPPendingCall]) -> dict[str, str]:
+        asked["pending"] = pending
+        return {p.llm_name: "approve_once" for p in pending}
+
+    hook = build_tool_review_hook(
+        gate, _FakeBuiltinProvider(_file_tool("read_file")), None, request_approvals
+    )
+    verdicts = hook(
+        [ToolCall(name="read_file", args={"file_path": str(outside)})]
+    )
+
+    row = asked["pending"][0]
+    assert row.path_precheck_failed is True
+    # Never auto-denied: still offered every normal decision, and still
+    # proceeds if the user approves anyway.
+    assert row.options == ("approve_once", "approve_session", "deny")
+    assert verdicts == {"read_file": "proceed"}
+
+
+def test_review_hook_does_not_flag_read_file_path_inside_roots(monkeypatch, tmp_path):
+    """Counterpart to the above: a path the roots check WOULD accept must
+    not carry the warning."""
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+    from tldw_chatbook.Tools import file_operation_tools as fot
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
+
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
+
+    def _raise():
+        raise RuntimeError("no workspace registry in this test")
+
+    monkeypatch.setattr(wfr, "_registry_factory", _raise)
+
+    inside = sandbox / "notes.txt"
+    inside.write_text("x")
+
+    gate = _FakeBuiltinGate()
+    asked: dict[str, list[MCPPendingCall]] = {}
+
+    def request_approvals(pending: list[MCPPendingCall]) -> dict[str, str]:
+        asked["pending"] = pending
+        return {p.llm_name: "approve_once" for p in pending}
+
+    hook = build_tool_review_hook(
+        gate, _FakeBuiltinProvider(_file_tool("read_file")), None, request_approvals
+    )
+    hook([ToolCall(name="read_file", args={"file_path": str(inside)})])
+
+    row = asked["pending"][0]
+    assert row.path_precheck_failed is False
+
+
+def test_review_hook_leaves_non_file_builtins_unflagged():
+    """Scope guard (AC2): only read_file/list_directory/write_file are ever
+    pre-flighted -- every other builtin tool's row stays False regardless
+    of its arguments."""
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    gate = _FakeBuiltinGate()
+    asked: dict[str, list[MCPPendingCall]] = {}
+
+    def request_approvals(pending: list[MCPPendingCall]) -> dict[str, str]:
+        asked["pending"] = pending
+        return {p.llm_name: "approve_once" for p in pending}
+
+    hook = build_tool_review_hook(
+        gate, _FakeBuiltinProvider(_FakeMutatingTool()), None, request_approvals
+    )
+    hook([_builtin_call("write_thing")])
+
+    row = asked["pending"][0]
+    assert row.path_precheck_failed is False
+
+
+def _two_workspace_registry(tmp_path):
+    """Build a REAL registry with two workspaces, each bound to a DIFFERENT
+    folder, and ws-b set ACTIVE. Used by the round-1-review CRITICAL 1
+    regression tests below: a fake registry that merely raises (the
+    pattern the earlier precheck tests use) cannot exercise `get_active_
+    workspace()` resolving the WRONG workspace, since it never reaches
+    that far.
+    """
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "ws.sqlite", client_id="review-hook-test")
+    )
+    registry.ensure_default_workspace()
+    registry.create_workspace(workspace_id="ws-a", name="A")
+    registry.create_workspace(workspace_id="ws-b", name="B")
+    folder_a = tmp_path / "folder-a"
+    folder_b = tmp_path / "folder-b"
+    folder_a.mkdir()
+    folder_b.mkdir()
+    registry.add_folder_binding("ws-a", folder_a)
+    registry.add_folder_binding("ws-b", folder_b)
+    # The UI happens to be showing ws-b -- a DIFFERENT workspace than the
+    # one the reviewed run is actually bound to in every test below.
+    registry.set_active_workspace("ws-b")
+    return registry, folder_a, folder_b
+
+
+def test_review_hook_precheck_uses_the_runs_workspace_not_the_active_one(
+    monkeypatch, tmp_path
+):
+    """Round 1 review CRITICAL 1: `path_precheck_failed` (threaded through
+    `build_tool_review_hook`'s `workspace_id` param) must resolve THIS RUN's
+    OWN workspace -- never whatever workspace the UI happens to have
+    active, which can differ for a parked/background session's approval
+    round. A path inside the RUN's workspace's (ws-a) bound folder must not
+    warn, even though a DIFFERENT workspace (ws-b, with no binding covering
+    this path) is the one currently active.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+    from tldw_chatbook.Tools import file_operation_tools as fot
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
+
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
+    registry, folder_a, _folder_b = _two_workspace_registry(tmp_path)
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+
+    target_in_a = folder_a / "notes.txt"
+    target_in_a.write_text("x")
+
+    gate = _FakeBuiltinGate()
+    asked: dict[str, list[MCPPendingCall]] = {}
+
+    def request_approvals(pending: list[MCPPendingCall]) -> dict[str, str]:
+        asked["pending"] = pending
+        return {p.llm_name: "approve_once" for p in pending}
+
+    # workspace_id="ws-a" simulates a session BOUND to ws-a while ws-b is
+    # the workspace actually active in the UI.
+    hook = build_tool_review_hook(
+        gate,
+        _FakeBuiltinProvider(_file_tool("read_file")),
+        None,
+        request_approvals,
+        workspace_id="ws-a",
+    )
+    hook([ToolCall(name="read_file", args={"file_path": str(target_in_a)})])
+
+    row = asked["pending"][0]
+    assert row.path_precheck_failed is False
+
+
+def test_review_hook_precheck_does_not_fall_back_to_the_active_workspace(
+    monkeypatch, tmp_path
+):
+    """Inverse of the above: a path inside ws-b's (the ACTIVE workspace's)
+    folder, while the reviewed run is bound to ws-a (which does NOT cover
+    it) -- must WARN. Pre-fix, `path_precheck_failed` never bound a
+    workspace at all, so `allowed_file_roots` fell back to `registry.
+    get_active_workspace()` (ws-b) and this path would have resolved
+    successfully -- a false negative (no warning) for a call that is, in
+    fact, doomed against the RUN's real (ws-a) roots.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+    from tldw_chatbook.Tools import file_operation_tools as fot
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
+
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
+    registry, _folder_a, folder_b = _two_workspace_registry(tmp_path)
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+
+    target_in_b = folder_b / "notes.txt"
+    target_in_b.write_text("x")
+
+    gate = _FakeBuiltinGate()
+    asked: dict[str, list[MCPPendingCall]] = {}
+
+    def request_approvals(pending: list[MCPPendingCall]) -> dict[str, str]:
+        asked["pending"] = pending
+        return {p.llm_name: "approve_once" for p in pending}
+
+    hook = build_tool_review_hook(
+        gate,
+        _FakeBuiltinProvider(_file_tool("read_file")),
+        None,
+        request_approvals,
+        workspace_id="ws-a",
+    )
+    hook([ToolCall(name="read_file", args={"file_path": str(target_in_b)})])
+
+    row = asked["pending"][0]
+    assert row.path_precheck_failed is True
+
+
 def test_allow_resolved_builtin_never_prompts():
     from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
 
@@ -2273,6 +2503,44 @@ def test_approve_for_session_is_not_re_prompted_next_turn():
     # And the call genuinely still proceeds: this is the EXACT verdict
     # `BuiltinToolProvider.invoke()` consults on dispatch.
     assert gate.check(tool) is None
+
+
+# ---------------------------------------------------------------------------
+# _agent_failure_visible_copy (TASK-1231/F3 AC4, round 1 review Minor)
+# ---------------------------------------------------------------------------
+
+
+def test_agent_failure_visible_copy_avoids_double_lead_in_for_loop_guard():
+    """Round 1 review (Minor): `agent_runtime`'s loop-guard summary already
+    reads as a complete, user-facing sentence ("Agent stopped: ...") -- this
+    must not become "Agent run stuck: Agent stopped: ...".
+    """
+    from tldw_chatbook.Agents.agent_models import RUN_STUCK, STEP_ERROR
+
+    loop_guard_summary = (
+        "Agent stopped: it kept calling calculator with the same "
+        "arguments (3 times) without making progress."
+    )
+    outcome = SimpleNamespace(
+        status=RUN_STUCK,
+        steps=[SimpleNamespace(kind=STEP_ERROR, summary=loop_guard_summary)],
+    )
+    copy = ConsoleChatController._agent_failure_visible_copy(outcome)
+    assert copy == loop_guard_summary
+    assert not copy.startswith("Agent run stuck: Agent stopped")
+
+
+def test_agent_failure_visible_copy_keeps_prefix_for_budget_reasons():
+    """Every other RUN_STUCK reason (budget exhaustion) is not a complete
+    sentence on its own -- the "Agent run stuck: " lead-in must stay."""
+    from tldw_chatbook.Agents.agent_models import RUN_STUCK, STEP_ERROR
+
+    outcome = SimpleNamespace(
+        status=RUN_STUCK,
+        steps=[SimpleNamespace(kind=STEP_ERROR, summary="step budget exhausted")],
+    )
+    copy = ConsoleChatController._agent_failure_visible_copy(outcome)
+    assert copy == "Agent run stuck: step budget exhausted."
 
 
 # -----------------------------------------------------------------------------

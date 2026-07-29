@@ -42,7 +42,6 @@ from tldw_chatbook.UI.Screens import (
     artifacts_screen as artifacts_screen_module,
     library_screen as library_screen_module,
     skills_screen as skills_screen_module,
-    watchlists_collections_screen as wc_screen_module,
     workflows_screen as workflows_screen_module,
 )
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
@@ -1803,7 +1802,7 @@ async def test_personas_workbench_exposes_approved_three_column_ia():
         assert "Column 1:" not in visible_text
         assert "Column 2:" not in visible_text
         assert "Column 3:" not in visible_text
-        assert {"Characters", "User Profiles", "New", "Attach to Console"}.issubset(
+        assert {"Characters", "Personas", "New", "Attach to Console"}.issubset(
             buttons
         )
 

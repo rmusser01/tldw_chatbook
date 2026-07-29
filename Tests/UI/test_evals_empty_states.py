@@ -612,6 +612,61 @@ async def _wait_until(pilot, predicate, *, tries: int = 300, interval: float = 0
 
 
 @pytest.mark.asyncio
+async def test_first_run_marks_the_sample_bench_as_the_recommended_first_step(
+    configured_app,
+):
+    """TASK-1076: a genuinely first-run rail (zero benches, zero classic
+    tasks, zero datasets, zero runs -- ``configured_app`` seeds nothing but
+    the provider) used to offer "Create sample bench" / "+ New dataset" /
+    "Import..." with equal visual weight and no signal that the sample
+    bench is the intended starting point. The plain "No benches yet." copy
+    must be REPLACED by the "Start here" hint in this condition, not
+    supplemented -- two competing explanations would just be a second
+    version of the original problem.
+    """
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        hint = screen.query_one("#evals-rail-first-run-hint")
+        text = str(hint.renderable)
+        assert "Start here" in text
+        assert "sample bench" in text
+        # Scoped to the Benches section specifically: Datasets and Runs are
+        # ALSO empty in this fixture and legitimately keep their own plain
+        # ".evals-rail-empty-copy" text ("No datasets yet."/"No runs
+        # yet.") -- the hint replaces only the Benches section's version of
+        # that wording, not the whole rail's.
+        assert not screen.query("#evals-rail-section-body-benches .evals-rail-empty-copy")
+        # The recommended action itself is still exactly where it always
+        # was -- this only adds a signal ahead of it, never a replacement
+        # for the real control.
+        button = screen.query_one("#evals-create-sample-bench")
+        rail = screen.query_one("#evals-library-pane")
+        assert rail.region.contains_region(button.region)
+
+
+@pytest.mark.asyncio
+async def test_first_run_hint_does_not_show_once_a_dataset_already_exists(
+    configured_app, evals_db: EvalsDB
+):
+    """A user who already created a dataset (but no bench yet) is past
+    "first open" -- the plain "No benches yet." wording is still correct
+    for them, and claiming "start here" a second time, after they already
+    started somewhere else, would be a fabricated claim about their state.
+    Datasets/Runs still offer their own affordances unchanged either way.
+    """
+    evals_db.create_dataset(
+        name="already-here", format="custom", source_path="inline:already-here"
+    )
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        assert not screen.query("#evals-rail-first-run-hint")
+        plain = screen.query_one("#evals-rail-section-body-benches Static")
+        assert "No benches yet." in str(plain.renderable)
+
+
+@pytest.mark.asyncio
 async def test_no_benches_offers_a_genuinely_clickable_sample_bench(configured_app):
     async with configured_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()

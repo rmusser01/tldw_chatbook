@@ -92,10 +92,22 @@
     padding: 0 1;
 }
 
+/* TASK-1076: was a hard `30` at every terminal width -- the exact anti-
+ * pattern `#lab-rail` documents above (measured 30 cells at 80, 120, 160
+ * and 200 columns alike). At 200 columns that left the inspector's usable
+ * content ~28 cells wide (`.ds-inspector`'s own padding takes 2), so a
+ * plain sentence like "K requested 20 * K returned 20 * canary degenerate"
+ * wrapped mid-phrase with 170+ unused columns beside it. Fractional now,
+ * like the rail, so it actually grows on a wide terminal. `2fr` (a
+ * heavier weight than the rail's own `1fr`, since a FIXED pane was
+ * previously eating this whole width and `1fr` alone only grew it to 34
+ * cells at 200 columns, measured) -- `#lab-body` stays `4fr`, still the
+ * largest of the three regions, so the grid is not starved for it.
+ */
 #lab-inspector {
-    width: 30;
+    width: 2fr;
     min-width: 30;
-    max-width: 30;
+    max-width: 50;
     height: 100%;
     min-height: 0;
 }

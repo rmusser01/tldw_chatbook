@@ -593,6 +593,7 @@ class TestDatabaseCRUDAndSync:
         conn = sqlite3.connect(temp_db_path)
         try:
             conn.execute("DROP TABLE IF EXISTS ReadingProgress")
+            conn.execute("ALTER TABLE Media DROP COLUMN transcription_provenance_json")
             conn.execute("UPDATE schema_version SET version = 2")
             conn.commit()
         finally:
@@ -600,7 +601,7 @@ class TestDatabaseCRUDAndSync:
 
         reopened_db = Database(db_path=temp_db_path, client_id="schema_client")
         try:
-            assert get_schema_version(reopened_db) == 4
+            assert get_schema_version(reopened_db) == Database._CURRENT_SCHEMA_VERSION
             reopened_db.upsert_reading_progress(
                 media_id,
                 {

@@ -403,6 +403,31 @@
     border: none;
 }
 
+/* Tree node labels read as a list, so they align left (TASK-1091).
+ *
+ * Every node is a `Button`, and Textual centres a Button's label. With names
+ * of different lengths that puts each one at a different indent:
+ *
+ *     ▸     Daily  0
+ *     ▸  Security Watch  0
+ *
+ * The third Watchlists UAT read that leading gap as a stored leading space and
+ * filed it as a trimming bug. It is not — `WatchlistBundleService.create`/
+ * `rename` both strip before storing, and a whitespace-only name is already
+ * rejected (verified directly against the service). The cause is label
+ * centring, and left-alignment is the fix.
+ *
+ * Both properties are required. Textual's Button sets `text-align: center`
+ * AND `content-align: center middle`; overriding only the first leaves the
+ * label centred, which is what a first attempt at this did.
+ */
+.watchlist-tree .watchlist-tree-root,
+.watchlist-tree .watchlist-tree-watchlist,
+.watchlist-tree .watchlist-tree-source {
+    text-align: left;
+    content-align: left middle;
+}
+
 /* Left-rail tree selection highlight (task-876).
  *
  * `WatchlistTree` rendered every node as a `compact=True` Button and never
@@ -803,6 +828,27 @@ WatchlistSourcePickerDialog {
     padding: 0 1;
 }
 
+/* Tags + check cadence share the next row, for the reason spelled out above:
+ * the Sources pane is 16 rows tall at 160x42 and a sixth full-height field row
+ * would put `Create`/`Cancel` past its bottom edge. The Select needs the same
+ * `margin: 0` override as the type Select -- the bare global
+ * `Select { width: 100%; margin-bottom: 1; }` in features/_conversations.tcss
+ * otherwise adds a blank row beneath it and reintroduces exactly that overflow.
+ */
+#sources-create-form .sources-create-tags-row {
+    width: 100%;
+    height: 3;
+}
+
+#sources-create-form #sources-create-tags {
+    width: 1fr;
+}
+
+#sources-create-form #sources-create-frequency {
+    width: 16;
+    margin: 0;
+}
+
 /* `.dialog-buttons` (features/_media.tcss) supplies the side-by-side pair
  * itself -- `layout: horizontal`, and `margin: 0 1; min-width: 12` on each
  * Button -- so this form and `WatchlistNameDialog` pair their Create/Cancel
@@ -834,4 +880,38 @@ WatchlistSourcePickerDialog {
 
 #watchlists-backend-select {
     width: 12;
+}
+
+/* TASK-1105 lived here. Clicking any Watchlists table row other than the
+ * first left the selection on row 0, so `Preview`, `Check now` and `Delete`
+ * all acted on the wrong source. The cause is the app-wide keyboard-focus
+ * fallback `*:focus { outline: solid $ds-focus-accent; }` (core/_reset.tcss):
+ * Textual paints an `outline` OVER a widget's outermost rendered lines, and
+ * the overwritten segments lose the `{"row", "column"}` metadata that
+ * `DataTable._on_click` needs, so the bottom row of a FOCUSED table is
+ * unclickable. The Sources table is three rows tall here (header + two rows),
+ * which left row 0 as the only reachable data row.
+ *
+ * It was fixed with `.watchlists-region DataTable:focus { outline: none; }`
+ * plus a `$ds-focus-bg`/`$ds-focus-fg` cursor recolour, scoped to this
+ * screen, and its notes called out that every other table in the app still
+ * had it. TASK-1160 promoted exactly those two rules to a bare
+ * `DataTable:focus` type selector in components/_lists.tcss, which every
+ * region here inherits unchanged, and removed this local copy so there is one
+ * mechanism rather than two.
+ * Tests/UI/test_watchlists_source_row_click_selects.py still guards the
+ * Watchlists behaviour end to end.
+ */
+
+/* TASK-1020. The Overview region's and the Inspector's third state: the
+ * overview worker has been started and has not answered yet. Muted like
+ * `.watchlists-region-placeholder` and `.watchlists-first-run-body` so a
+ * transient line does not read as an alert, and `height: auto` so it does not
+ * claim the region's rows on the way past.
+ */
+.watchlists-loading-state {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+    color: $ds-text-muted;
 }

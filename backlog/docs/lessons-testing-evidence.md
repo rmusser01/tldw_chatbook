@@ -146,6 +146,272 @@ This one looked authoritative, ran green, and proved nothing.
 
 ---
 
+## Full component coverage, zero feature coverage
+
+**TASK-1210, 2026-07-27.** Watchlists never checked on a schedule — not at the
+wrong interval, never at all. Every component involved was tested and green:
+
+- `test_watchlist_projection.py` — rows become `ScheduledTask`s with a `next_run_at`
+- `test_watchlist_check_handler.py` — the handler checks feeds and records results
+- `test_scheduler_loop.py` — the loop dispatches due tasks to their handler
+- `test_config_flags.py` — asserted the flags' defaults, and **asserted the broken
+  values**, pinning the bug in place
+
+Each component was correct. Nothing tested them *joined*, and the join was where
+the feature lived: `app.py` only registered the `watchlist_job` handler when a
+flag was true, and that flag shipped false, so the loop logged "no handler
+registered for task type" and moved on. Silently, forever.
+
+The config test is the sharpest part. It was not absent — it was present,
+passing, and encoding the defect as the expected value. A test that asserts
+current behaviour without asking whether that behaviour is *right* converts a
+bug into a requirement.
+
+**What to do.** For any feature that spans components, own one test that drives
+the real path end to end — here, a real `Subscriptions_DB` row through the real
+projection, the real queue and a real `SchedulerLoop`, asserting the result lands
+back in the database. Component tests tell you the pieces work; only that test
+tells you the feature does.
+
+And when a test asserts a configuration default, make it state *why* that value
+is right, not just what it is. `assert enabled is False` is unfalsifiable
+documentation of whatever was there when it was written.
+
+## A green suite says nothing about installs that are not yours
+
+**The trap.** The suite runs where every optional extra is already installed. It
+therefore cannot see a dependency that is *declared* optional but has become
+*mandatory to boot* — the one environment it never tests is the plain install.
+
+**What happened.** 2026-07-27: the app died on start with
+`RuntimeError: Unable to resolve default chat screen`. `aiohttp` is optional —
+at the time declared only in the `[websearch]`/`[all-tools]` extras (task-1262
+has since given image generation its own `[image_generation]` extra), and
+registered `"aiohttp": False` in `Utils/optional_deps.py` — but the
+`/generate-image` console feature had quietly wired it onto the **default**
+screen's import chain:
+
+```
+UI/Screens/chat_screen.py
+  -> Chat/console_generate_image.py        (ImageGenerationService)
+    -> Media_Creation/image_generation_service.py
+      -> Media_Creation/swarmui_client.py  -> import aiohttp   (module scope)
+```
+
+Nothing was red. No test asserted that the default route resolves *without* the
+extras, so the suite was structurally blind to a total boot failure.
+
+Two multipliers made it worse:
+
+- **The masking cost more time than the bug.** `ScreenRoute.load_screen_class()`
+  catches `ImportError` and returns `None`, by design, so one broken optional
+  screen cannot break navigation. For the *default* screen that turned a precise
+  `ModuleNotFoundError: No module named 'aiohttp'` into a message naming neither
+  the module nor the file that imported it.
+- **The obvious suspect was innocent.** The only dirty file in the tree was a
+  `.tcss` whose diff was a regenerated timestamp comment. Reproducing first and
+  reading the traceback cost one command; guessing from `git status` would have
+  cost the session.
+
+**What to do.** When a feature adds an import to a screen module, check whether
+the new chain reaches an optional dependency — the import that breaks boot is
+rarely the one you wrote, it is three hops down. Guard boot-critical routes with
+a test that simulates absence, and run it in a **subprocess**: `sys.modules` is
+process-global, so an unrelated earlier test that imported the package gives a
+false pass.
+
+```python
+class _BlockAiohttp:                       # meta-path finder, installed first
+    def find_spec(self, name, path=None, target=None):
+        if name == "aiohttp" or name.startswith("aiohttp."):
+            raise ImportError("simulated missing aiohttp")
+        return None
+```
+
+See `Tests/Utils/test_optional_import_deferral.py` (the aiohttp section) and
+`Tests/UI/test_screen_navigation.py` (`screen_load_error`). And when a resolver
+degrades a failure to `None` on purpose, give callers for whom it is *fatal* a
+way to ask why — a graceful contract should not also be a silent one.
+
+---
+
+## Measure a dead-code graph from both ends
+
+**TASK-1211, 2026-07-28.** The audit that scoped this retirement measured the island
+by walking *outward* from `BriefingGenerator` — who imports it, who imports them —
+and arrived at ~5,100 LOC across 11 files.
+
+Walking the other direction, *down* from the scheduler that was about to be
+deleted, found the chain kept going:
+
+```
+textual_scheduler_worker  →  sole importer of Event_Handlers/subscription_events.py
+                          →  sole importer of subscription_ingest_worker.py
+                          →  sole caller of Subscriptions/content_processor.py
+```
+
+The real island was 8,148 lines across 13 files, plus a fourth module left
+deliberately in place. Deleting only what the outward walk found would have
+orphaned two files silently — the exact state that made this island expensive to
+diagnose in the first place: dead, but with importers a grep can point at.
+
+**Why one direction is not enough.** The outward walk answers "what does this dead
+thing depend on?" The downward walk answers "what depended on it and is about to
+become dead?" A retirement needs both: the first bounds what you may delete, the
+second bounds what your deletion *creates*.
+
+**What to do.** Before deleting a module, list its importers *and* list what it
+uniquely imports. Anything it is the sole importer of joins the removal set, and
+you recurse. Then re-run the runtime import trace afterwards — if a module you
+kept is still in `sys.modules` with no caller, you have made a new orphan and
+should either wire it, delete it, or file it. Filing is acceptable; silence is
+not.
+
+Corroboration is worth seeking: TASK-813's notes had already reached the same
+conclusion about `subscription_events` from the other direction months earlier
+(`handle_add_subscription` has zero dispatchers). A prior investigation's notes
+are cheaper than re-deriving the graph.
+
+## A missing extra fakes a code regression — check the env before blaming the code
+
+**The trap.** The mirror image of the entry above. There, everything was installed
+and the suite went blind. Here, an optional extra is *absent* and a test fails with a
+message describing a defect that does not exist. The failure text names production
+behaviour, so it reads as a regression, and you go fix code that was never broken.
+
+**What happened.** 2026-07-28, task-1261. `test_nltk_download_false_is_not_logged_as_success`
+was failing on dev with "no WARNING/ERROR mentioning punkt was logged". That is
+precisely what a deleted `logger.warning` looks like. It was filed as one — *"the
+warning was lost in a refactor"* — with `git log -L` even producing a plausible
+culprit commit that had genuinely rewritten that function, and an orphaned
+over-indented comment left behind as the apparent fingerprint.
+
+All of it was wrong. `nltk` is an optional extra, and it was not installed. The test
+sets `NLTK_AVAILABLE = True` to simulate presence, but `_ensure_nltk()` still runs a
+real `import nltk`, so it returned early and never reached the warning. Installing
+`nltk` turned the test green with no code change at all. The confirming probe written
+to "verify" the diagnosis had been run in the same interpreter, so it hit the same
+early return and agreed — a second wrong answer from the same cause reads as
+corroboration.
+
+**What to do.** When a test asserts that a log/branch/side effect is missing, check
+whether the code path can even be *reached* in your environment before concluding the
+behaviour was removed. One command settles it:
+
+```bash
+python -c "import importlib.util as u; print(u.find_spec('nltk') is not None)"
+```
+
+And a test that forces an availability flag must also stub the import that flag
+stands for — otherwise it silently depends on which extras you installed:
+
+```python
+monkeypatch.setattr(Chunk_Lib, "NLTK_AVAILABLE", True)   # not sufficient alone
+monkeypatch.setitem(sys.modules, "nltk", fake_nltk)      # _ensure_nltk() still imports
+```
+
+Corollary: a probe re-run in the same broken environment is not independent evidence.
+Vary the thing you suspect — here, install the package — and see if the symptom moves.
+
+---
+
+## A property test with no deadline override is load-sensitive
+
+**TASK-1260, 2026-07-28.** `test_safe_paths_always_validate` failed once inside a
+three-directory run, passed alone, passed on re-run, and passed on a clean
+baseline with the identical command. It is a Hypothesis `@given` property that
+creates a `TemporaryDirectory` and up to four directories per example (the
+strategy yields 1-5 components; the loop walks `components[:-1]`, the last being
+the file), with no `settings(...)` override and no Hypothesis profile in
+`Tests/conftest.py` — so it runs under the default **200 ms per-example
+deadline**. On a machine with 10+ concurrent pytest processes, filesystem work
+crosses that.
+
+**The cost is in attribution, not in the failure.** Establishing that it was not
+a regression took five runs across two worktrees: the identical command on a
+clean pre-change baseline, `Tests/Utils/` with and without a newly added file in
+that same directory, the test alone, and a re-run to show intermittency. The
+failure was indistinguishable from a real regression at the moment it appeared,
+and it appeared while unrelated work was in flight.
+
+**What to do.** When a failure appears in a run that mixes suites: before
+anything else, check whether the test is a Hypothesis property with no deadline
+override. If it is, the load hypothesis is cheap to confirm — run it alone, then
+re-run the mixed command. Do not skip the clean-baseline run, though: "it's
+probably a flake" is the same shape of reasoning as "it's probably unrelated",
+and this repo has punished both.
+
+The durable fix is a Hypothesis profile registered once in `Tests/conftest.py`,
+not a per-file patch — other property files carry the same exposure.
+
+---
+
+## A filter with no admitted callers is an off switch
+
+**TASK-1240, 2026-07-28.** The persistent app log wrote zero bytes. The handler
+was attached, the path resolved, the directory existed, the level was INFO.
+
+`PersistentDiagnosticFilter` admits a record only if it carries a marker set
+exclusively by `log_persistent_metadata()`. That function has **zero production
+call sites**. Every ordinary `logger.info(...)` is rejected, so the sink is
+correctly enforcing a boundary that nothing was ever migrated to cross.
+
+The privacy work that introduced it is sound and has its own ADR. The gap is
+between decision and implementation: ADR-029 requires logs be metadata-only
+*with respect to user and model content*, and the design's stated goal was to
+"keep persistent diagnostics **useful** without retaining private payload
+values". Admitting nothing satisfies the letter of the exclusion list and defeats
+the goal.
+
+**What to do.** When a sink produces nothing, check the **admission predicate
+before the plumbing**. Handler attached, path correct and level correct are all
+consistent with a filter that rejects everything. Then ask the question that
+distinguishes the two failures: *how many callers does the admitted path have?*
+Zero is the tell.
+
+And when the answer implicates a deliberate security boundary, record the gap
+and hand the decision to that work's owner. Loosening a privacy filter to make
+your own diagnostics visible is not a fix you get to make alone.
+
+This is the fourth instance of one shape in a single session: a closed import
+cycle, a flag gating the only executor, a prompt surface with no consumer, and
+now a log sink with no admitted caller. Each was built, wired, and given nothing
+to carry — and each read as live to a grep.
+
+---
+
+## A suite that no gate runs can rot invisibly for days
+
+**TASK-1310, 2026-07-28.** `Tests/UI/test_settings_configuration_hub.py` carried 22
+failures at dev tip — byte-identical at base and branch, so none were caused by the
+branch that finally surfaced them (TASK-1234's review, the first time this hub ran in
+that review cycle). The suite was last known green before #1050; nothing narrower
+caught the drift for days across two deliberate, well-reasoned refactors
+(`d15882398` "own provider selection by lifetime" and `1df0c4cb4` "reconcile privacy
+lifecycle eval and packaging hardening") that each correctly updated every production
+call site and left this one 253-test file behind.
+
+Both refactors were textbook-good: each shipped its own new, correct test coverage
+(`Tests/Provider/test_provider_model_resolution.py`; the batched-save-adapter test in
+this same file) and left zero live bugs — `grep` across all of `tldw_chatbook/` for the
+removed symbols (`chat_api_provider_value`, `save_setting_to_cli_config` imported into
+`settings_screen`) came back empty on both counts. The damage was entirely to *this*
+suite's ability to say so: 22 tests calling a removed signature/attribute is worse than
+0 tests, because a red suite nobody gates reports exactly as much confidence as a suite
+that does not exist, while still costing the CI minutes of everyone who happens to run
+it directly.
+
+**What to do.** A suite this large (253 tests, a whole product surface) needs a home in
+routine verification, not opportunistic discovery via someone else's PR review. The
+Settings/Console-area verification gate must include
+`Tests/UI/test_settings_configuration_hub.py` going forward — not because it is
+special, but because "carries the hub's tests" is exactly the kind of suite that rots
+silently when nothing runs it: too large to eyeball, too domain-specific for a generic
+CI matrix to catch by accident, and it will not fail loudly for anyone except the next
+person who happens to touch that screen.
+
+---
+
 ## Related
 
 - `lessons-live-verification.md` — why the suite could not see seven of these defects

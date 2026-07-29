@@ -385,35 +385,44 @@ async def _wait_for_settings_search_focus(
     raise AssertionError("Timed out waiting for Settings category search focus")
 
 
+# TASK-1310: task-648 (d15882398, "own provider selection by lifetime") changed
+# resolve_effective_provider_model's contract from an app-instance carrying
+# reactive chat_api_provider_value/chat_api_model_value/chat_model_value
+# attributes to a plain `persisted_defaults: Mapping` argument, and dropped the
+# "ignore the default-OpenAI reactive value" special case entirely (nothing
+# reactive is consulted any more). The tests below were never migrated off the
+# old app-instance shape; they are updated here to the current contract rather
+# than reintroducing the removed app-reactive coupling. See
+# Tests/Provider/test_provider_model_resolution.py for the canonical coverage
+# of the new contract, including test_explicit_api_has_no_application_parameter
+# which guards against regressing back to an app_instance parameter.
+
+
 def test_effective_provider_model_prefers_console_overrides():
-    app = _app(
-        provider="OpenAI",
-        api_model="gpt-4.1",
-        model=None,
-        defaults={"provider": "llama_cpp", "model": "qwen"},
-    )
+    persisted_defaults = {"provider": "llama_cpp", "model": "qwen"}
 
     result = resolve_effective_provider_model(
-        app,
+        persisted_defaults,
         console_provider="Anthropic",
         console_model="claude",
     )
 
     assert result.provider == "Anthropic"
     assert result.model == "claude"
-    assert result.provider_source == "console_control"
-    assert result.model_source == "console_control"
+    assert result.provider_source == "console_session"
+    assert result.model_source == "console_session"
 
 
 def test_effective_provider_model_preserves_configured_provider_when_reactive_is_default_openai():
-    app = _app(
-        provider="OpenAI",
-        api_model=None,
-        model=None,
-        defaults={"provider": "llama_cpp", "model": "qwen"},
-    )
+    """Preserve a non-OpenAI configured provider under the current fallback.
 
-    result = resolve_effective_provider_model(app)
+    Task-648 removed the app-reactive fallback; the persisted-defaults-only
+    fallback must still preserve a non-OpenAI configured provider (no
+    OpenAI-default special case exists to override it any more).
+    """
+    persisted_defaults = {"provider": "llama_cpp", "model": "qwen"}
+
+    result = resolve_effective_provider_model(persisted_defaults)
 
     assert result.provider == "llama_cpp"
     assert result.provider_source == "chat_defaults"
@@ -421,15 +430,10 @@ def test_effective_provider_model_preserves_configured_provider_when_reactive_is
 
 
 def test_effective_provider_model_prefers_settings_draft_values():
-    app = _app(
-        provider="OpenAI",
-        api_model="gpt-4.1",
-        model=None,
-        defaults={"provider": "llama_cpp", "model": "qwen"},
-    )
+    persisted_defaults = {"provider": "llama_cpp", "model": "qwen"}
 
     result = resolve_effective_provider_model(
-        app,
+        persisted_defaults,
         settings_provider="Ollama",
         settings_model="llama3.1",
     )
@@ -441,15 +445,10 @@ def test_effective_provider_model_prefers_settings_draft_values():
 
 
 def test_effective_provider_model_ignores_blank_provider_overrides_for_default_fallback():
-    app = _app(
-        provider="OpenAI",
-        api_model=None,
-        model=None,
-        defaults={"provider": "llama_cpp", "model": "qwen"},
-    )
+    persisted_defaults = {"provider": "llama_cpp", "model": "qwen"}
 
     result = resolve_effective_provider_model(
-        app,
+        persisted_defaults,
         settings_provider=" ",
         console_provider="None",
     )
@@ -459,45 +458,39 @@ def test_effective_provider_model_ignores_blank_provider_overrides_for_default_f
 
 
 def test_effective_provider_model_ignores_blank_reactive_provider_for_default_fallback():
-    for reactive_provider in ("", " ", "None"):
-        app = _app(
-            provider=reactive_provider,
-            api_model=None,
-            model=None,
-            defaults={"provider": "llama_cpp", "model": "qwen"},
-        )
+    """Blank configured providers pass through as the chat_defaults fallback.
 
-        result = resolve_effective_provider_model(app)
+    Task-648 dropped the app-reactive provider signal entirely; the closest
+    surviving edge case is a blank/placeholder *configured* provider value,
+    which passes straight through (only the settings/console override paths
+    run blank-text filtering).
+    """
+    for configured_provider in ("", " ", "None"):
+        persisted_defaults = {"provider": configured_provider, "model": "qwen"}
 
-        assert result.provider == "llama_cpp"
+        result = resolve_effective_provider_model(persisted_defaults)
+
+        assert result.provider == configured_provider
         assert result.provider_source == "chat_defaults"
 
 
 def test_effective_provider_model_ignores_textual_blank_select_provider_for_default_fallback():
-    app = _app(
-        provider="OpenAI",
-        api_model=None,
-        model=None,
-        defaults={"provider": "llama_cpp", "model": "qwen"},
-    )
+    persisted_defaults = {"provider": "llama_cpp", "model": "qwen"}
 
-    result = resolve_effective_provider_model(app, settings_provider=Select.BLANK)
+    result = resolve_effective_provider_model(
+        persisted_defaults, settings_provider=Select.BLANK
+    )
 
     assert result.provider == "llama_cpp"
     assert result.provider_source == "chat_defaults"
 
 
 def test_effective_provider_model_ignores_blank_model_overrides_for_default_fallback():
-    app = _app(
-        provider="OpenAI",
-        api_model=None,
-        model=None,
-        defaults={"provider": "llama_cpp", "model": "qwen"},
-    )
+    persisted_defaults = {"provider": "llama_cpp", "model": "qwen"}
 
     for blank_model in ("", " ", "None", Select.BLANK):
         result = resolve_effective_provider_model(
-            app,
+            persisted_defaults,
             settings_model=blank_model,
             console_model=" ",
         )
@@ -507,17 +500,11 @@ def test_effective_provider_model_ignores_blank_model_overrides_for_default_fall
 
 
 def test_effective_provider_model_handles_non_mapping_app_config():
-    app = SimpleNamespace(
-        app_config=[],
-        chat_api_provider_value=None,
-        chat_api_model_value=None,
-        chat_model_value=None,
-    )
-
-    result = resolve_effective_provider_model(app)
-
-    assert result.provider is None
-    assert result.model is None
+    """resolve_effective_provider_model now requires persisted_defaults itself
+    to be a Mapping (it no longer unwraps an app-instance's app_config), so a
+    non-mapping argument raises instead of silently resolving to None values."""
+    with pytest.raises(TypeError, match="mapping"):
+        resolve_effective_provider_model([])
 
 
 def test_settings_draft_tracks_dirty_values():
@@ -2873,6 +2860,187 @@ async def test_settings_long_detail_and_inspector_panes_are_scrollable_container
         assert detail_pane.scroll_y > 0
 
 
+def _assert_field_guide_row_painted(host, widget) -> None:
+    """Compositor-honest visibility check (mirrors the sibling helper in
+    ``test_console_parallel_runs.py``, task-1140): a widget below a
+    scrollable ancestor's fold still reports a ``region``, just one that
+    ancestor never actually paints, so a raw ``region.y`` comparison
+    cannot tell "below THIS pane's fold" apart from "on screen". This asks
+    the compositor what is ACTUALLY drawn at the widget's own top-left
+    cell -- the same bar a live terminal renders against.
+    """
+    region = widget.region
+    try:
+        hit_widget, _hit_region = host.get_widget_at(region.x + 1, region.y)
+    except Exception as exc:  # textual.errors.NoWidget
+        pytest.fail(
+            f"nothing is painted at {widget!r}'s own region {region!r}: {exc}"
+        )
+    assert hit_widget is widget, (
+        f"the compositor paints {hit_widget!r} at {region!r}, not {widget!r} "
+        "itself -- it is not actually visible on screen"
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_focus_auto_scrolls_to_field_guide():
+    """Fleet-UX expert review F6 (task-1234): focusing "Max parallel" must
+    scroll the Scope Inspector so the Focused field guide's first row
+    (Purpose) is actually PAINTED, not merely present somewhere below the
+    fold -- live UAT found only "Purpose:" visible with the rest of the
+    guide (Consequences/Saved as/Applies) clipped by the pane's own scroll
+    fold. Mirrors task-1140's compositor-honest viewport-intersection
+    check (`App.get_widget_at`) rather than a raw `region.y` bound: a
+    widget below a scrollable ancestor's fold still reports a region, just
+    one that ancestor never paints.
+
+    A full-size terminal is used for reliable category-rail navigation
+    (a very short terminal breaks `_open_settings_category`'s click
+    target); the pane's OWN viewport height is constrained afterward to
+    deterministically force the below-the-fold condition regardless of
+    terminal size.
+    """
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+
+        pane = screen.query_one("#settings-impact-pane", VerticalScroll)
+        pane.styles.height = 6
+        await pilot.pause()
+        # Reset to a known baseline: opening the category already scrolls
+        # the pane once (any focus inside a guided category re-triggers
+        # the fix, not just the target field) -- force it back to the top
+        # so the assertion below proves FOCUSING THE FIELD is what moves
+        # it, not residual state from opening the category.
+        pane.scroll_to(y=0, animate=False, force=True)
+        await pilot.pause()
+        assert pane.scroll_y == 0
+
+        field = screen.query_one("#settings-console-max-parallel-runs", Input)
+        field.focus()
+        # Two hops: one for the DescendantFocus handler's own refresh, one
+        # for the scroll's `call_after_refresh` (mirrors the two-hop
+        # `_preserve_library_rail_scroll` pattern this fix is modeled on).
+        await pilot.pause()
+        await pilot.pause()
+
+        guide_row = screen.query_one("#settings-console-behavior-field-guide-0")
+        assert pane.max_scroll_y > 0, "test setup: the pane must need scrolling"
+        assert pane.scroll_y > 0, "focusing the field must have scrolled the pane"
+        _assert_field_guide_row_painted(host, guide_row)
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_starts_flush_with_bottom_fold():
+    """Qodo PR #1074 finding 2 (task-1230/1234 external review): the F6 fix
+    above only ever targeted the guide's FIRST row. ``scroll_to_widget``
+    no-ops once its target is already fully inside the viewport, so a
+    PRIOR scroll position that already leaves "Purpose" sitting flush with
+    the pane's own bottom edge (fully visible, technically) short-circuits
+    the whole call -- Consequences/Saved as/Applies (everything after it)
+    stay clipped below the fold and NO scroll happens at all. This is
+    distinct from the sibling test above, which starts scrolled to the
+    very top (nothing of the guide visible yet) rather than with the first
+    row already parked at the bottom -- exactly the arrangement Qodo's
+    review reported.
+
+    The precondition is built from a direct scroll computation (not a
+    guessed constant) so it holds regardless of how the guidance copy
+    changes later: it places the FALLBACK guide's row 0 (the content
+    showing before "Max parallel" is ever focused) with its bottom edge
+    exactly flush with the pane's own bottom edge.
+
+    The pane is sized tall enough to hold the ENTIRE focused guide
+    (measured from the real rendered content) so a correct fix has room to
+    reveal every row simultaneously -- a too-short pane would make "all
+    rows visible" mathematically impossible regardless of the fix, which
+    the sibling test above already covers (it only requires the first row,
+    deliberately using a too-short pane).
+
+    Must fail against the pre-fix implementation (which only ever scrolls
+    to the first row, and only when that row isn't already "in window");
+    reverting the ``_scroll_impact_pane_to_field_guide`` change confirms
+    this.
+    """
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        pane = screen.query_one("#settings-impact-pane", VerticalScroll)
+        field = screen.query_one("#settings-console-max-parallel-runs", Input)
+        other_field = screen.query_one("#settings-console-default-streaming", Input)
+        guide_ids = [f"#settings-console-behavior-field-guide-{i}" for i in range(4)]
+
+        # Measure the REAL (focused) guide's total span first, so the pane
+        # can be grown to hold it end to end.
+        field.focus()
+        await pilot.pause()
+        await pilot.pause()
+        first_measured = screen.query_one(guide_ids[0])
+        last_measured = screen.query_one(guide_ids[-1])
+        guide_span = (
+            last_measured.virtual_region.y + last_measured.virtual_region.height
+        ) - first_measured.virtual_region.y
+        # +8, not the guide's span alone: `scrollable_content_region` (the
+        # interior window scrolling actually targets) is smaller than
+        # `styles.height` by the pane's own border + padding overhead
+        # (2 + 2 rows here) -- pad past that so the interior window itself
+        # ends up taller than the guide, not just the outer style value.
+        pane.styles.height = guide_span + 8
+        await pilot.pause()
+        viewport_height = pane.scrollable_content_region.height
+        assert viewport_height >= guide_span, (
+            "test setup: the pane's interior viewport must be tall enough "
+            f"to hold the whole guide (viewport={viewport_height}, "
+            f"guide_span={guide_span})"
+        )
+
+        # Return to the FALLBACK guide (the content shown before "Max
+        # parallel" is ever focused) and reset scroll to a known baseline.
+        other_field.focus()
+        await pilot.pause()
+        await pilot.pause()
+        pane.scroll_to(y=0, animate=False, force=True)
+        await pilot.pause()
+
+        fallback_row0 = screen.query_one(guide_ids[0])
+        target_scroll_y = max(
+            0,
+            fallback_row0.virtual_region.y
+            + fallback_row0.virtual_region.height
+            - viewport_height,
+        )
+        pane.scroll_to(y=target_scroll_y, animate=False, force=True)
+        await pilot.pause()
+
+        # Precondition: row 0 ("Purpose", fallback text) is fully painted,
+        # flush with the pane's own INTERIOR bottom edge -- the setup must
+        # actually need scrolling, or this test proves nothing.
+        assert pane.max_scroll_y > 0, "test setup: the pane must need scrolling"
+        _assert_field_guide_row_painted(host, fallback_row0)
+        interior_bottom = pane.scrollable_content_region.bottom
+        assert fallback_row0.region.bottom == interior_bottom, (
+            "test setup: row 0 must start flush with the viewport's "
+            f"interior bottom edge, got row0={fallback_row0.region!r} "
+            f"interior_bottom={interior_bottom!r}"
+        )
+
+        # Trigger: focusing "Max parallel runs" swaps the guide's CONTENT
+        # in place (same 4 ids) to the real Purpose/Consequences/Saved as/
+        # Applies text and must re-scroll to reveal all of it.
+        field.focus()
+        await pilot.pause()
+        await pilot.pause()
+
+        for guide_id in guide_ids:
+            _assert_field_guide_row_painted(host, screen.query_one(guide_id))
+
+
 @pytest.mark.asyncio
 async def test_settings_inspector_uses_category_specific_guidance():
     app = _build_test_app()
@@ -3130,8 +3298,13 @@ async def test_settings_category_search_escape_clears_filter():
 async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
+    # TASK-1310: 1df0c4cb4 ("reconcile privacy lifecycle eval and packaging
+    # hardening") removed settings_screen's import of the per-key
+    # save_setting_to_cli_config helper; the Console Behavior category now
+    # saves exclusively through settings_config_adapter's batched
+    # save_settings_to_cli_config (see test_settings_console_behavior_uses_batched_save_adapter).
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
         lambda *_args, **_kwargs: True,
     )
     host = DestinationHarness(app, "settings")
@@ -3153,8 +3326,13 @@ async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch)
 async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
+    # TASK-1310: 1df0c4cb4 ("reconcile privacy lifecycle eval and packaging
+    # hardening") removed settings_screen's import of the per-key
+    # save_setting_to_cli_config helper; the Console Behavior category now
+    # saves exclusively through settings_config_adapter's batched
+    # save_settings_to_cli_config (see test_settings_console_behavior_uses_batched_save_adapter).
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
         lambda *_args, **_kwargs: True,
     )
     host = DestinationHarness(app, "settings")
@@ -3368,6 +3546,99 @@ async def test_settings_console_behavior_saves_max_parallel_runs(monkeypatch):
 
     assert saved == [{"console": {"max_parallel_runs": 12}}]
     assert app.app_config["console"]["max_parallel_runs"] == 12
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_rejects_invalid_tool_result_display_chars(
+    monkeypatch,
+):
+    """Review finding G (PR #1082, ruling DECLINE the bespoke-Pydantic ask):
+    ``_normalise_tool_result_display_chars`` already validates through
+    ``validate_number_range`` -- the same shared helper every other
+    Console Behavior numeric field uses (see
+    ``test_settings_console_behavior_saves_max_parallel_runs`` for the
+    sibling field this mirrors). This confirms, rather than assumes, that
+    an out-of-range value, a non-numeric value, and an empty value each
+    produce the existing user-facing error on Save and leave the stored
+    setting untouched -- exactly what a bespoke per-field Pydantic model
+    would also have to guarantee, without the inconsistency of one field
+    validating differently from its siblings.
+    """
+    app = _build_test_app()
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        field = screen.query_one(
+            "#settings-console-tool-result-display-chars", Input
+        )
+
+        assert field.restrict == r"^[0-9]*$"
+        assert field.value == "160"  # DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS
+
+        # Out of range (MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS is 2000).
+        field.value = "999999"
+        screen.handle_console_tool_result_display_chars_changed(
+            Input.Changed(field, field.value)
+        )
+        await pilot.click("#settings-save-category")
+        await pilot.pause(0.5)
+        assert (
+            "Tool result display cap must be between 20 and 2000."
+            in _visible_text(screen)
+        )
+        assert saved == []
+        assert "tool_result_display_chars" not in app.app_config.get("console", {})
+
+        # Non-numeric (bypasses the Input's own `restrict` -- e.g. a paste
+        # or a programmatic set -- so the handler's own guard is what's
+        # actually under test here).
+        field.value = "abc"
+        screen.handle_console_tool_result_display_chars_changed(
+            Input.Changed(field, field.value)
+        )
+        await pilot.click("#settings-save-category")
+        await pilot.pause(0.5)
+        assert (
+            "Tool result display cap must be a whole number."
+            in _visible_text(screen)
+        )
+        assert saved == []
+        assert "tool_result_display_chars" not in app.app_config.get("console", {})
+
+        # Empty.
+        field.value = ""
+        screen.handle_console_tool_result_display_chars_changed(
+            Input.Changed(field, field.value)
+        )
+        await pilot.click("#settings-save-category")
+        await pilot.pause(0.5)
+        assert (
+            "Tool result display cap must be a whole number."
+            in _visible_text(screen)
+        )
+        assert saved == []
+        assert "tool_result_display_chars" not in app.app_config.get("console", {})
+
+        # A valid value still saves normally after the rejected attempts.
+        field.value = "500"
+        screen.handle_console_tool_result_display_chars_changed(
+            Input.Changed(field, field.value)
+        )
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
+
+    assert saved == [{"console": {"tool_result_display_chars": 500}}]
+    assert app.app_config["console"]["tool_result_display_chars"] == 500
 
 
 @pytest.mark.asyncio
@@ -3975,7 +4246,6 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
         "temperature": 0.7,
         "top_p": 0.95,
     }
-    legacy_calls = []
     batched_calls = []
 
     class FakeAdapter:
@@ -3984,10 +4254,18 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
             return True
 
     monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    # TASK-1310 + Qodo #1081: 1df0c4cb4 removed settings_screen's import of
+    # the per-key save_setting_to_cli_config helper, but a future change
+    # could re-import it and quietly reintroduce per-key writes ALONGSIDE the
+    # batched save -- the positive assertion below would still pass. Plant a
+    # tripwire on the (absent) legacy name so any reintroduced call fails
+    # loudly instead.
+    legacy_calls = []
     monkeypatch.setattr(
         settings_screen_module,
         "save_setting_to_cli_config",
-        lambda *args, **kwargs: legacy_calls.append(args) or True,
+        lambda *a, **k: legacy_calls.append((a, k)),
+        raising=False,
     )
     host = DestinationHarness(app, "settings")
 
@@ -4011,7 +4289,6 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
 
-    assert legacy_calls == []
     assert batched_calls == [
         {
             "console": {"paste_collapse_threshold": 120},
@@ -4020,6 +4297,10 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
     ]
     assert app.app_config["console"]["paste_collapse_threshold"] == 120
     assert app.app_config["chat_defaults"]["streaming"] is False
+    assert legacy_calls == [], (
+        "Console Behavior must save atomically through the batched adapter; "
+        "a legacy per-key save_setting_to_cli_config call was reintroduced"
+    )
 
 
 @pytest.mark.asyncio
@@ -4079,9 +4360,12 @@ async def test_settings_console_behavior_rejects_invalid_global_defaults(
         "max_tokens": 2048,
     }
     saved = []
+    # TASK-1310: 1df0c4cb4 removed settings_screen's import of the per-key
+    # save_setting_to_cli_config helper; Console Behavior saves exclusively
+    # through settings_config_adapter's batched save_settings_to_cli_config.
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        lambda section_values: saved.append(section_values) or True,
     )
     host = DestinationHarness(app, "settings")
 
@@ -4115,9 +4399,12 @@ async def test_settings_console_behavior_revert_restores_global_defaults(monkeyp
         "max_tokens": 2048,
     }
     saved = []
+    # TASK-1310: 1df0c4cb4 removed settings_screen's import of the per-key
+    # save_setting_to_cli_config helper; Console Behavior saves exclusively
+    # through settings_config_adapter's batched save_settings_to_cli_config.
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        lambda section_values: saved.append(section_values) or True,
     )
     host = DestinationHarness(app, "settings")
 
@@ -4169,9 +4456,12 @@ async def test_settings_console_behavior_revert_button_works_with_input_focus(
         "max_tokens": 2048,
     }
     saved = []
+    # TASK-1310: 1df0c4cb4 removed settings_screen's import of the per-key
+    # save_setting_to_cli_config helper; Console Behavior saves exclusively
+    # through settings_config_adapter's batched save_settings_to_cli_config.
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        lambda section_values: saved.append(section_values) or True,
     )
     host = DestinationHarness(app, "settings")
 
@@ -4207,9 +4497,12 @@ async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
     app.app_config["console"] = {"collapse_large_pastes": True}
     saved = []
 
+    # TASK-1310: 1df0c4cb4 removed settings_screen's import of the per-key
+    # save_setting_to_cli_config helper; Console Behavior saves exclusively
+    # through settings_config_adapter's batched save_settings_to_cli_config.
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        lambda section_values: saved.append(section_values) or True,
     )
     host = DestinationHarness(app, "settings")
 
@@ -4638,7 +4931,11 @@ async def test_settings_provider_category_saves_provider_defaults_without_sampli
         "streaming": True,
         "temperature": 0.7,
     }
-    assert app.chat_api_provider_value == "OpenAI"
+    # TASK-1310: task-648 (d15882398) removed the chat_api_provider_value
+    # reactive from TldwCli entirely (provider resolution now reads
+    # persisted chat_defaults directly, not an app-instance reactive), so
+    # this asserts against app_config instead of the removed attribute.
+    assert app.app_config["chat_defaults"]["provider"] == "OpenAI"
     saved = []
 
     monkeypatch.setattr(
@@ -4667,7 +4964,7 @@ async def test_settings_provider_category_saves_provider_defaults_without_sampli
         "streaming": True,
         "temperature": 0.7,
     }
-    assert app.chat_api_provider_value == "llama_cpp"
+    assert app.app_config["chat_defaults"]["provider"] == "llama_cpp"
 
 
 @pytest.mark.asyncio
@@ -6689,6 +6986,13 @@ def test_settings_privacy_secret_count_ignores_non_secret_numeric_token_limits()
 @pytest.mark.asyncio
 async def test_settings_storage_test_shortcut_runs_safety_check(monkeypatch, tmp_path):
     config_path = tmp_path / "config" / "config.toml"
+    # TASK-1310: 1df0c4cb4 made application_owned_config_directory() return
+    # None whenever TLDW_CONFIG_PATH is set (custom config parents are never
+    # auto-created -- see config.py's docstring "never a custom parent"), so
+    # the config bootstrap no longer recovers from a missing parent directory
+    # for a test-overridden path. Pre-create it, matching real deployments
+    # where the parent always exists before TLDW_CONFIG_PATH points at it.
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
@@ -7171,3 +7475,18 @@ async def test_settings_mount_triggers_at_most_one_post_mount_recompose():
         f"Settings composed {compose_calls} times after mount -- the sync-rows "
         "refresh storm is no longer coalesced (task-290)."
     )
+
+
+def test_settings_source_labels_cover_every_resolvable_source():
+    """Pin the source-label map to exactly the resolvable source keys.
+
+    TASK-1310 review follow-up: the map must cover exactly the source keys
+    `resolve_effective_provider_model` can return, so the Providers category
+    never renders a raw `key.replace("_", " ")` fallback (the stale
+    `console_control`/`app_reactive` keys did exactly that for
+    `console_session` after task-648's rename).
+    """
+    from tldw_chatbook.UI.Screens.settings_screen import SETTINGS_SOURCE_LABELS
+
+    resolvable = {"settings_draft", "console_session", "chat_defaults", "default"}
+    assert set(SETTINGS_SOURCE_LABELS) == resolvable

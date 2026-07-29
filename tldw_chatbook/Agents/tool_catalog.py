@@ -21,13 +21,22 @@ from .agent_models import (
     FIND_TOOLS_NAME,
     INSTALL_SKILL_TOOL_NAME,
     LOAD_TOOLS_NAME,
+    RUN_LOG_SLICE_TOOL_NAME,
+    RUN_LOG_STATS_TOOL_NAME,
     RUN_SKILL_SCRIPT_TOOL_NAME,
     RunBudget,
+    SEARCH_RUN_LOG_TOOL_NAME,
     SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
+)
+from .run_log_search import (
+    MAX_CROSS_RUN_RUNS,
+    MAX_SLICE_RECORDS,
+    MAX_STATS_GROUPS,
+    STATS_GROUP_BY_FIELDS,
 )
 
 SPAWN_TOOL_SCHEMA = ToolSchema(
@@ -150,6 +159,183 @@ RUN_SKILL_SCRIPT_TOOL_SCHEMA = ToolSchema(
             },
         },
         "required": ["skill_name", "script_path"],
+    },
+)
+
+
+SEARCH_RUN_LOG_TOOL_SCHEMA = ToolSchema(
+    id="runtime:search_run_log",
+    name=SEARCH_RUN_LOG_TOOL_NAME,
+    description=(
+        "Search this run's own complete log. Your context holds a truncated "
+        "view; the log holds every model turn, tool call, and tool result in "
+        "full. Use it to recover a truncated result or recall an earlier step "
+        "instead of re-running work. 'contains' (literal substring) and "
+        "'pattern' (regular expression, first 500 characters per record "
+        "only) both match a record's CONTENT ONLY -- never its metadata. "
+        "Use 'tool', 'type', 'status', and 'kind' to filter by metadata "
+        "instead -- e.g. to find every call to a specific tool, filter "
+        "with 'tool' rather than 'contains', since the tool's name may "
+        "never appear inside its own arguments or result. A record's "
+        "rendered content is windowed: when 'contains' or 'pattern' is set, "
+        "the window is centred on that record's first match; otherwise it "
+        "starts at the beginning. When a record is shown only partially, "
+        "the render states the character range and total size, and the "
+        "'offset' to pass next to keep reading. By default this searches "
+        "only THIS run; set 'scope' to also search this conversation's "
+        "earlier runs."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "scope": {
+                "type": "string",
+                "description": (
+                    "Which run(s) to search. 'run' (default): only this "
+                    "run's own log, exactly as before. 'conversation': "
+                    "also search this conversation's earlier runs, newest "
+                    f"first, up to {MAX_CROSS_RUN_RUNS} runs per call -- "
+                    "each hit is labelled with which run it came from and "
+                    "whether it is this run. A run whose log cannot be "
+                    "found under the current root (e.g. the workspace "
+                    "folder was bound, rebound, or unbound since) is "
+                    "reported as unavailable rather than silently omitted "
+                    "-- the response always states how many runs were "
+                    "actually searched vs. could not be located."
+                ),
+            },
+            "contains": {
+                "type": "string",
+                "description": "Literal substring to find in a record's content "
+                "(case-insensitive). Never matches metadata such as the tool "
+                "name -- use 'tool' for that.",
+            },
+            "pattern": {
+                "type": "string",
+                "description": "Regular expression over a record's content "
+                "only; first 500 chars per record.",
+            },
+            "tool": {"type": "string", "description": "Filter by tool name."},
+            "type": {
+                "type": "string",
+                "description": "Filter by record type: model, tool_call, tool_result.",
+            },
+            "status": {"type": "string", "description": "Filter: ok or error."},
+            "kind": {
+                "type": "string",
+                "description": "Filter by agent kind: primary or subagent.",
+            },
+            "from_record": {"type": "integer", "description": "Lowest record number."},
+            "to_record": {"type": "integer", "description": "Highest record number."},
+            "context": {
+                "type": "integer",
+                "description": "Records to include either side of each hit.",
+            },
+            "offset": {
+                "type": "integer",
+                "description": "Character offset into each record's rendered "
+                "content to start from. Use this to page through a record "
+                "larger than the render window -- the previous result names "
+                "the offset to pass next. Defaults to 0; ignored in favour "
+                "of a match-centred window when 'contains' or 'pattern' "
+                "matches and no offset is given.",
+            },
+        },
+        "required": [],
+    },
+)
+
+
+# Phase 2 (run-log spec §10, task-1271): two more runtime tools that COMPUTE
+# over the log rather than only retrieving from it -- registered exactly
+# like SEARCH_RUN_LOG_TOOL_SCHEMA above (same runtime-tool pattern, same
+# primary-agent-only gate in agent_service.py's `log_active` block).
+
+RUN_LOG_STATS_TOOL_SCHEMA = ToolSchema(
+    id="runtime:run_log_stats",
+    name=RUN_LOG_STATS_TOOL_NAME,
+    description=(
+        "Get bounded aggregate statistics over this run's own log WITHOUT "
+        "paging individual records through your context -- counts, error "
+        "counts, and content-byte totals grouped by tool, record type, "
+        "status, or agent kind (primary vs. sub-agent). Use this to answer "
+        "'which tool have I called most, and how often did it fail?' "
+        "Output is one line per distinct group value, never one line per "
+        "record, so it stays small no matter how long this run gets. At "
+        f"most {MAX_STATS_GROUPS} groups are shown per call, ranked by "
+        "count (the most frequent survive); if more distinct values "
+        "exist, the response says so explicitly with a count of how many "
+        "were omitted -- narrow with tool=/type=/status=/kind= or a "
+        "record range to see the rest. "
+        "Per-record token counts are not tracked in this run's log -- only "
+        "the whole run's total token spend is recorded once the run "
+        "finishes -- so this tool cannot report a live token total; "
+        "content_bytes is reported instead as an exact, always-available "
+        "proxy for how much content each group has produced."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "group_by": {
+                "type": "string",
+                "description": "Dimension to group by: " + ", ".join(STATS_GROUP_BY_FIELDS)
+                + " (default: tool). An unrecognised value falls back to tool.",
+            },
+            "tool": {
+                "type": "string",
+                "description": "Restrict to records for this tool before grouping.",
+            },
+            "type": {
+                "type": "string",
+                "description": "Restrict to this record type before grouping: "
+                "model, tool_call, tool_result.",
+            },
+            "status": {
+                "type": "string",
+                "description": "Restrict to this status before grouping: ok or error.",
+            },
+            "kind": {
+                "type": "string",
+                "description": "Restrict to this agent kind before grouping: "
+                "primary or subagent.",
+            },
+            "from_record": {"type": "integer", "description": "Lowest record number."},
+            "to_record": {"type": "integer", "description": "Highest record number."},
+        },
+        "required": [],
+    },
+)
+
+RUN_LOG_SLICE_TOOL_SCHEMA = ToolSchema(
+    id="runtime:run_log_slice",
+    name=RUN_LOG_SLICE_TOOL_NAME,
+    description=(
+        "Retrieve a contiguous range of this run's own log records as one "
+        "coherent unit, so you can reconstruct a stretch of your own "
+        "reasoning instead of assembling it from separate search_run_log "
+        "hits. Bounded the same way search_run_log bounds its own output: "
+        f"at most {MAX_SLICE_RECORDS} records per call regardless of how "
+        "wide the requested range is, and each record's content is "
+        "windowed at this run's own tool-result limit. When the requested "
+        "range is wider than what one call returns, the rendering states "
+        "how many records were shown and the from_record to pass next to "
+        "continue."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "from_record": {
+                "type": "integer",
+                "description": "Lowest record number to include. Coerced to "
+                "1 if missing or invalid.",
+            },
+            "to_record": {
+                "type": "integer",
+                "description": "Highest record number to include. Omit for "
+                "a default-width window starting at from_record.",
+            },
+        },
+        "required": ["from_record"],
     },
 )
 

@@ -1,7 +1,11 @@
 # TldwCli Reactive State Decomposition Design
 
 Date: 2026-07-26
-Status: User-approved for planning; implementation not started
+Status: Implemented
+Final task:
+[TASK-906](../../../backlog/tasks/task-906%20-%20Close-TldwCli-reactive-ownership-with-installed-distribution-sentinels.md)
+Final plan:
+[TldwCli Reactive Ownership Closeout](../plans/2026-07-26-task-906-reactive-ownership-closeout.md)
 ADR:
 [ADR-033](../../../backlog/decisions/033-application-session-state-ownership.md),
 [ADR-006](../../../backlog/decisions/006-provider-aware-generation-settings.md),
@@ -37,8 +41,8 @@ The tranche also repairs four contracts exposed by the inventory:
    legacy app handler from both applying one mutation;
 3. command-palette provider changes become an explicit Console intent instead
    of a root reactive cache;
-4. TLDW API worker completion carries its own immutable request context
-   instead of reading the last request from a shared app field.
+4. the orphaned TLDW API worker completion pipeline and its shared request
+   context are deleted, leaving Library as the sole production ingest owner.
 
 The design follows ADR-033 unchanged. It does not amend that accepted ADR and
 does not create a duplicate decision record.
@@ -810,3 +814,30 @@ The tranche is complete only when:
 - snapshots and diagnostics remain payload-safe;
 - source, authorized integration, formatting/static, and installed-wheel gates
   pass without surrogate applications.
+
+## Implementation Closeout
+
+TASK-647–652 and TASK-904–905 are Done with checked acceptance criteria and
+implementation evidence. TASK-906 completes slice 9 on latest `dev` commit
+`6784c4ba3`:
+
+- the source and installed-artifact AST sentinels enforce the exact retained
+  set `current_tab` and `splash_screen_active`, including transitive local
+  root mixins, all 59 retired names, and their root watchers;
+- the normal production `TldwCli` exercises every reviewed route twice with
+  fresh registered screens and payload-safe memory-only snapshots;
+- real-app readiness uses a monotonic 30-second deadline with a validated
+  `TLDW_TEST_SCREEN_WAIT_SECONDS` override, and installed navigation compares
+  canonical `TAB_HOME`/`TAB_CHAT` values rather than duplicated literals;
+- the installed-wheel probe runs outside both the checkout and copied build
+  input, audits every loaded package module, preserves installed hashes, and
+  exercises the registered Home and Chat screens;
+- the focused ownership/production-app gate passed 58 tests with 2 warnings
+  in 306.14 seconds, the installed-distribution gate passed 6 tests in 19.01
+  seconds, and the authorized integrated gate passed 197 tests with 5
+  warnings in 573.57 seconds;
+- compileall, scoped Ruff lint, the zero-F841 Settings baseline, the 37-file
+  format gate, and `git diff --check` passed.
+
+`Tests/UI` remains intentionally excluded because its conftest imports legacy
+surrogate app/widget harnesses. No repository-wide pytest result is claimed.

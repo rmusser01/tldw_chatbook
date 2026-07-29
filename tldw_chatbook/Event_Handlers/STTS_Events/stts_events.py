@@ -571,9 +571,13 @@ class STTSEventHandler:
             options={},
         )
         response = None
+        requested_selection = None
         primary_error: BaseException | None = None
         try:
-            response = await self._stts_service.synthesize(request, progress_sink)
+            response, requested_selection = await self._stts_service.synthesize_exact(
+                request,
+                progress_sink,
+            )
             chunks = [chunk async for chunk in response.byte_stream]
         except BaseException as error:
             primary_error = error
@@ -609,6 +613,7 @@ class STTSEventHandler:
                 audio_format=response.audio_format,
                 content_type=response.content_type,
                 metadata=response.metadata,
+                requested_selection=requested_selection,
             )
         except BaseException:
             if secure_delete_file(path) or not path.exists():

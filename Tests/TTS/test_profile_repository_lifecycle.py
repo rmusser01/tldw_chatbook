@@ -1572,7 +1572,7 @@ async def test_cancelled_open_settles_worker_and_publishes_consistent_state(
 
 
 @pytest.mark.asyncio
-async def test_normal_submission_rejects_every_non_open_state(
+async def test_normal_submission_checks_state_before_mismatched_expected_generation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1583,27 +1583,39 @@ async def test_normal_submission_rejects_every_non_open_state(
     repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
 
     with pytest.raises(ProfileRepositoryError) as caught:
-        await repository._submit_operation(lambda _connection: "closed")
+        await repository._submit_operation(
+            lambda _connection: "closed",
+            expected_generation=999,
+        )
     _assert_safe_error(caught.value, "closed")
 
     await repository.open()
     with repository._state_lock:
         repository._state = ProfileRepositoryState.RESTORING
     with pytest.raises(ProfileRepositoryError) as caught:
-        await repository._submit_operation(lambda _connection: "restoring")
+        await repository._submit_operation(
+            lambda _connection: "restoring",
+            expected_generation=999,
+        )
     _assert_safe_error(caught.value, "restoring")
 
     with repository._state_lock:
         repository._state = ProfileRepositoryState.UNAVAILABLE
     with pytest.raises(ProfileRepositoryError) as caught:
-        await repository._submit_operation(lambda _connection: "unavailable")
+        await repository._submit_operation(
+            lambda _connection: "unavailable",
+            expected_generation=999,
+        )
     _assert_safe_error(caught.value, "unavailable")
 
     with repository._state_lock:
         repository._state = ProfileRepositoryState.OPEN
     await repository.close()
     with pytest.raises(ProfileRepositoryError) as caught:
-        await repository._submit_operation(lambda _connection: "terminal")
+        await repository._submit_operation(
+            lambda _connection: "terminal",
+            expected_generation=999,
+        )
     _assert_safe_error(caught.value, "terminal")
 
 
@@ -2545,6 +2557,122 @@ async def test_restore_replaces_store_with_validated_candidate_and_safe_receipt(
         assert len(recoveries) == 1
         validate_profile_candidate(recoveries[0])
     finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_pre_restore_loaded_mutations_reject_same_identity_replacement_before_enqueue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    candidate = tmp_path / "candidate.sqlite3"
+    profile_id = UUID("00000000-0000-4000-8000-000000000001")
+    await _create_profile_store(candidate, "Replacement")
+    repository = _repository(database_path)
+    await repository.open()
+    loaded = await repository.create_profile(
+        _draft("Original"),
+        profile_id,
+    )
+    real_submit_operation = repository._submit_operation
+    all_paused = asyncio.Event()
+    resume_admission = asyncio.Event()
+    paused_count = 0
+    mutation_tasks: list[asyncio.Task[object]] = []
+
+    async def pause_mutation_admission(
+        operation: Callable[[sqlite3.Connection], object],
+        *,
+        expected_generation: int | None = None,
+    ) -> ProfileStoreResult[object]:
+        nonlocal paused_count
+        if expected_generation == loaded.generation:
+            paused_count += 1
+            if paused_count == 3:
+                all_paused.set()
+            await resume_admission.wait()
+        return await real_submit_operation(
+            operation,
+            expected_generation=expected_generation,
+        )
+
+    monkeypatch.setattr(
+        repository,
+        "_submit_operation",
+        pause_mutation_admission,
+    )
+
+    try:
+        mutation_tasks = [
+            asyncio.create_task(
+                repository.update_profile(
+                    profile_id,
+                    loaded.value.revision,
+                    _draft("Updated"),
+                    expected_generation=loaded.generation,
+                )
+            ),
+            asyncio.create_task(
+                repository.delete_profile(
+                    profile_id,
+                    expected_generation=loaded.generation,
+                )
+            ),
+            asyncio.create_task(
+                repository.create_profile(
+                    _draft("Duplicate"),
+                    expected_generation=loaded.generation,
+                )
+            ),
+        ]
+        await asyncio.wait_for(all_paused.wait(), timeout=1.0)
+
+        restored = await repository.restore_from(candidate)
+        assert restored.generation == 2
+        executor = repository._executor
+        assert executor is not None
+        real_executor_submit = executor.submit
+        stale_worker_submissions = 0
+        reject_stale_submission = True
+
+        def forbid_stale_worker_submission(
+            function: Callable[..., object],
+            /,
+            *args: object,
+            **kwargs: object,
+        ) -> Future[object]:
+            nonlocal stale_worker_submissions
+            if reject_stale_submission and function == repository._worker_operation:
+                stale_worker_submissions += 1
+                raise AssertionError("stale mutation reached worker submission")
+            return cast(Future[object], real_executor_submit(function, *args, **kwargs))
+
+        monkeypatch.setattr(
+            executor,
+            "submit",
+            forbid_stale_worker_submission,
+        )
+        resume_admission.set()
+
+        for mutation in mutation_tasks:
+            with pytest.raises(ProfileRepositoryError) as caught:
+                await mutation
+            _assert_safe_error(caught.value, "stale")
+
+        assert stale_worker_submissions == 0
+        reject_stale_submission = False
+        replacement = await repository.get_profile(profile_id)
+        assert replacement.generation == 2
+        assert replacement.value.display_name == "Replacement"
+        assert replacement.value.revision == loaded.value.revision == 1
+        page = await repository.list_profiles()
+        assert page.value.total == 1
+        assert page.value.profiles == (replacement.value,)
+    finally:
+        resume_admission.set()
+        if mutation_tasks:
+            await asyncio.gather(*mutation_tasks, return_exceptions=True)
         await repository.close()
 
 

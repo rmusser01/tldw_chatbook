@@ -23,11 +23,15 @@ import time
 
 import pytest
 
-from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_chat_controller import (
+    _MCP_APPROVAL_POLL_SECONDS,
+    ConsoleChatController,
+)
+from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
 
-class _FakeApp:
+class FakeApp:
     """`call_from_thread` stand-in: invokes the callback immediately."""
 
     def call_from_thread(self, fn, *args, **kwargs):
@@ -54,7 +58,7 @@ def controller():
     """
     store = ConsoleChatStore()
     ctrl = ConsoleChatController(store=store, provider_gateway=object())
-    ctrl.app = _FakeApp()
+    ctrl.app = FakeApp()
     ctrl.set_pending_skill_install = lambda payload: None
     ctrl.skill_install_confirm_timeout_seconds = lambda: 30.0
     ctrl.session_a = store.create_session(title="A").id
@@ -147,6 +151,235 @@ def test_teardown_of_one_round_leaves_the_other_armed(controller):
     assert results["two"] is False
 
 
+def test_two_rounds_for_the_same_session_keep_badge_and_payload_until_both_resolve(
+    controller,
+):
+    """TASK-1050 (Defect A/B): two install-confirm rounds for the SAME
+    session (unlike every test above, which uses two DIFFERENT sessions)
+    -- `_parked_skill_install_payloads` is keyed by session id alone, so
+    arming the second round overwrites the first's retained payload under
+    that key. Resolving the EARLIER round first must not clear the badge
+    (a sibling round is still outstanding) nor discard the NEWER round's
+    still-armed payload; only resolving the LAST one does either."""
+    results = {}
+    t1 = _arm(controller, "https://x/one", controller.session_a, results, "one")
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 1)
+    id1 = controller.pending_skill_install_ids()[0]
+    assert (
+        controller.run_marker_for(controller.session_a)
+        is ConsoleRunMarker.NEEDS_APPROVAL
+    )
+
+    t2 = _arm(controller, "https://x/two", controller.session_a, results, "two")
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 2)
+    id2 = [i for i in controller.pending_skill_install_ids() if i != id1][0]
+    # Round 2 overwrote round 1's stored payload under the same session key.
+    assert (
+        controller._parked_skill_install_payloads[controller.session_a]["request_id"]
+        == id2
+    )
+
+    # Round 1 (the EARLIER round) resolves first -- must not evict round
+    # 2's still-armed payload nor clear the badge.
+    controller.resolve_pending_skill_install(False, request_id=id1)
+    t1.join(timeout=5)
+    assert results["one"] is False
+    assert (
+        controller.run_marker_for(controller.session_a)
+        is ConsoleRunMarker.NEEDS_APPROVAL
+    )
+    assert controller.session_a in controller._pending_approvals
+    assert (
+        controller._parked_skill_install_payloads[controller.session_a]["request_id"]
+        == id2
+    )
+
+    # Round 2 (the LAST remaining round) resolves -- now everything clears.
+    controller.resolve_pending_skill_install(True, request_id=id2)
+    t2.join(timeout=5)
+    assert results["two"] is True
+    assert controller.run_marker_for(controller.session_a) is ConsoleRunMarker.NONE
+    assert controller.session_a not in controller._pending_approvals
+    assert controller.session_a not in controller._parked_skill_install_payloads
+
+
+def test_two_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_the_slot_populated(
+    controller,
+):
+    """TASK-1050 fix round 1 (review): reverse-ordering counterpart to the
+    sibling test above (mirrors `test_console_mcp_approval.py`'s identical
+    MCP-bridge test). `_parked_skill_install_payloads` is a SINGLE
+    per-session slot holding whichever round's payload was LAST WRITTEN,
+    so resolving the NEWER (newest-armed) round FIRST -- the natural live
+    ordering, since arming a round re-mounts its card, which typically
+    gets decided before an already-waiting sibling does -- must not pop
+    the slot while the OLDER round is still outstanding: the badge must
+    stay up and the slot must still hold a payload (remount still works,
+    even though it is round 2's own now-stale payload rather than round
+    1's -- the accepted single-slot scope). Only resolving the older,
+    now-last round clears both.
+
+    Fix round 3 (re-review) EXTENSION: mirrors `test_console_mcp_
+    approval.py`'s identical extension -- pins the CARD-CLEAR seam
+    itself, not just the payload map. The `controller` fixture wires
+    `set_pending_skill_install` as a discarding no-op, which could not
+    have caught the fix-round-2 regression (a stray clear call is
+    silently indistinguishable from no call at all through a no-op), so
+    this test overrides it locally with a recording list and asserts
+    directly on it: no NEW clear call reaches the seam while round 1 is
+    still armed, and round 1 remains resolvable (decidable) through its
+    own `request_id` throughout; only once round 1 (the last remaining
+    round) resolves does the clear actually fire."""
+    mounted: list[dict | None] = []
+    controller.set_pending_skill_install = mounted.append
+
+    results = {}
+    t1 = _arm(controller, "https://x/one", controller.session_a, results, "one")
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 1)
+    id1 = controller.pending_skill_install_ids()[0]
+    assert mounted and mounted[-1] is not None
+
+    t2 = _arm(controller, "https://x/two", controller.session_a, results, "two")
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 2)
+    id2 = [i for i in controller.pending_skill_install_ids() if i != id1][0]
+    assert mounted[-1] is not None
+    calls_after_both_armed = len(mounted)  # 2: round 1's mount, round 2's mount
+
+    # Round 2 (the NEWER round) resolves FIRST -- round 1 is still
+    # outstanding, so the badge must stay up, the slot must still hold a
+    # payload, and -- the regression this test now pins -- the
+    # CARD-CLEAR seam must NOT be invoked at all.
+    controller.resolve_pending_skill_install(True, request_id=id2)
+    t2.join(timeout=5)
+    assert results["two"] is True
+    assert (
+        controller.run_marker_for(controller.session_a)
+        is ConsoleRunMarker.NEEDS_APPROVAL
+    )
+    assert controller.session_a in controller._pending_approvals
+    assert controller.session_a in controller._parked_skill_install_payloads, (
+        "the parked slot must still hold a payload -- popping it here "
+        "would strand the still-armed older round unresolvable on the "
+        "next switch-away/back"
+    )
+    assert len(mounted) == calls_after_both_armed, (
+        "round 2 resolving must NOT invoke the card-clear seam while "
+        "round 1 is still armed -- doing so strands round 1 card-less "
+        "with the badge still lit"
+    )
+
+    # Round 1 (the OLDER round) remains fully decidable through the UI --
+    # resolving it now by its OWN `request_id` must still work correctly.
+    controller.resolve_pending_skill_install(False, request_id=id1)
+    t1.join(timeout=5)
+    assert results["one"] is False
+    assert controller.run_marker_for(controller.session_a) is ConsoleRunMarker.NONE
+    assert controller.session_a not in controller._pending_approvals
+    assert controller.session_a not in controller._parked_skill_install_payloads
+    # Round 1 (now the LAST remaining round) resolving DOES fire the clear.
+    assert len(mounted) == calls_after_both_armed + 1
+    assert mounted[-1] is None
+
+
+class _DeferredClearApp:
+    """`call_from_thread` stand-in that BLOCKS the round-identity-guarded
+    clear closures until a test explicitly releases them, while every
+    OTHER `call_from_thread` use (mount, park) still runs immediately.
+
+    Mirrors `test_console_mcp_approval.py`'s identical fake -- see
+    `_clear_pending_skill_install_if_round_is_current`'s docstring for
+    why the clear closures are always invoked with zero args/kwargs,
+    which is what identifies them here without any bridge-specific hook.
+    """
+
+    def __init__(self) -> None:
+        self.clear_enqueued = threading.Event()
+        self.release_clear = threading.Event()
+
+    def call_from_thread(self, fn, *args, **kwargs):
+        if not args and not kwargs:
+            self.clear_enqueued.set()
+            self.release_clear.wait(timeout=5)
+            return fn()
+        return fn(*args, **kwargs)
+
+
+def test_teardown_clear_is_round_identity_guarded_against_a_newer_same_session_round_arming_mid_teardown():
+    """TASK-1050 fix round 2 (review, Qodo PR #1041): mirrors `test_
+    console_mcp_approval.py`'s identical MCP-bridge test -- `request_
+    skill_install_confirm`'s teardown has the exact same shape (a
+    snapshot-guarded clear enqueued via `call_from_thread`), so it needs
+    the exact same round-identity-guarded fix and the exact same
+    deterministic (event/gate-controlled, never sleep-timed) proof: round
+    1 resolves and its teardown's clear call BLOCKS mid-flight; round 2
+    arms and mounts for the SAME session while round 1's clear is still
+    blocked; only then is round 1's clear released to actually run and
+    must no-op rather than wipe round 2's freshly-mounted card."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=object())
+    session_a = store.create_session(title="A").id
+    store.switch_session(session_a)
+    app = _DeferredClearApp()
+    controller.app = app
+    mounted: list[dict | None] = []
+    controller.set_pending_skill_install = mounted.append
+    controller.skill_install_confirm_timeout_seconds = lambda: 30.0
+
+    result_1: dict[str, bool] = {}
+
+    def _run_round_1() -> None:
+        result_1["allowed"] = controller.request_skill_install_confirm(
+            "https://x/one", session_id=session_a
+        )
+
+    worker_1 = threading.Thread(target=_run_round_1)
+    worker_1.start()
+    assert _wait_until(lambda: len(mounted) == 1), "round 1 never mounted"
+    assert mounted[-1] is not None
+    request_id_1 = mounted[-1]["request_id"]
+
+    controller.resolve_pending_skill_install(False, request_id=request_id_1)
+    assert app.clear_enqueued.wait(timeout=5), (
+        "round 1's teardown never reached its clear call"
+    )
+    assert session_a not in controller._pending_approvals
+    assert session_a not in controller._parked_skill_install_payloads
+
+    result_2: dict[str, bool] = {}
+
+    def _run_round_2() -> None:
+        result_2["allowed"] = controller.request_skill_install_confirm(
+            "https://x/two", session_id=session_a
+        )
+
+    worker_2 = threading.Thread(target=_run_round_2)
+    worker_2.start()
+    assert _wait_until(lambda: len(mounted) == 2), "round 2 never mounted"
+    assert mounted[-1] is not None
+    request_id_2 = mounted[-1]["request_id"]
+    assert request_id_2 != request_id_1
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+
+    # Release round 1's blocked clear -- the round-identity guard must see
+    # round 2 has since claimed the slot and no-op.
+    app.release_clear.set()
+    worker_1.join(timeout=2.0)
+    assert result_1["allowed"] is False
+
+    assert mounted[-1] is not None
+    assert mounted[-1]["request_id"] == request_id_2
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+    assert controller._pending_approvals[session_a] == {request_id_2}
+
+    controller.resolve_pending_skill_install(True, request_id=request_id_2)
+    worker_2.join(timeout=2.0)
+    assert result_2["allowed"] is True
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
+    assert session_a not in controller._pending_approvals
+    assert session_a not in controller._parked_skill_install_payloads
+    assert mounted[-1] is None
+
+
 def test_stale_request_id_with_both_rounds_live_resolves_neither(controller):
     """Security-critical, mirrors `resolve_pending_skill_script`'s stale-id
     hazard: a resolve carrying a PRIOR/unrelated round's id must not
@@ -221,40 +454,99 @@ def test_shutdown_denies_every_armed_round_with_real_session_ids(controller):
     assert controller.pending_skill_install_ids() == []
 
 
-def test_bare_shutdown_flag_alone_does_not_deny_a_real_session_round(controller):
-    """Fix round 2 finding (evidence, not a desired-behavior pin): the bare
-    `_shutdown_requested` flag alone -- WITHOUT the per-session
-    `_signal_stop` fanout `shutdown()` normally performs -- does NOT deny a
-    round armed with a real `session_id`. This is a pre-existing property
-    of `_is_session_cancelled` shared by all three approval/confirm bridges
-    (MCP, skill-install, skill-script) -- not introduced by TASK-910's
-    install-bridge conversion, and not exercised by the sibling
-    `test_shutdown_denies_every_armed_round` tests (both MCP's and
-    script's use `session_id=None`, whose fallback branch DOES read
-    `_shutdown_requested` directly -- see `_is_session_cancelled`'s
-    docstring). A real production `shutdown()` call still correctly
-    reaches a real-session round via its per-session `_signal_stop` fanout
-    (see the sibling test above) as long as that session is already present
-    in `_active_stream_tasks` at the moment `shutdown()` snapshots it --
-    the narrow gap this test documents is the (pre-existing, cross-bridge)
-    race window where it is not yet. Still fails CLOSED, never open: the
-    round is never auto-approved, only left waiting until its own confirm
-    timeout -- proven below with a shortened timeout so this stays fast.
+def test_bare_shutdown_flag_alone_denies_a_real_session_round_within_one_poll_interval(
+    controller,
+):
+    """TASK-1052 (was Fix round 2's `test_bare_shutdown_flag_alone_does_not_
+    deny_a_real_session_round`, pinning the GAP as evidence -- see git
+    history for that version and its own docstring for the pre-fix
+    reasoning). Contract, now closed: the bare `_shutdown_requested` flag
+    alone -- WITHOUT the per-session `_signal_stop` fanout `shutdown()`
+    normally performs -- DOES deny a round armed with a real `session_id`,
+    within one `_MCP_APPROVAL_POLL_SECONDS` poll interval.
+
+    `shutdown()`'s per-session `_signal_stop` fanout only reaches sessions
+    already present in its `_active_stream_tasks` snapshot at the moment it
+    runs (the "shutdown-snapshot race": TASK-1052) -- a round armed for a
+    session before that session is registered there was previously
+    invisible to that fanout and fell back to its own confirm/approval
+    timeout (up to ~120s in production) to fail closed. `_shutdown_requested`
+    is set only in this controller instance's `shutdown()` (which also fires
+    on ordinary navigation away from the Console screen) and never reset;
+    torn-down instances are never revisited (a fresh controller is built per
+    Console mount), so denying every round on it is safe by instance
+    lifecycle. `_is_session_cancelled`'s real-
+    `session_id` branch now ALSO ORs in `_shutdown_requested` directly (in
+    addition to that session's own `_active_cancel_events` entry), so every
+    armed round observes teardown within one poll interval regardless of
+    registration timing -- not just the `session_id=None` legacy fallback,
+    which already read the flag (see the sibling `test_shutdown_denies_
+    every_armed_round_with_real_session_ids` above, which drives the real
+    per-session fanout; this test isolates the bare-flag-alone case that
+    fanout doesn't reach).
+
+    Uses a timeout far longer than the poll interval so an early
+    resolution can only be attributed to the shutdown signal, never the
+    round's own deadline -- still fails CLOSED either way, never open.
     """
-    controller.skill_install_confirm_timeout_seconds = lambda: 0.3
+    controller.skill_install_confirm_timeout_seconds = lambda: 30.0
     results = {}
     t1 = _arm(controller, "https://x/one", controller.session_a, results, "one")
     assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 1)
 
     controller._shutdown_requested.set()  # global flag only -- no per-session fanout
-    time.sleep(0.1)
-    assert t1.is_alive(), (
-        "a real-session round was denied by the bare _shutdown_requested "
-        "flag alone with no per-session _signal_stop fanout -- if this now "
-        "fails, _is_session_cancelled's real-session branch changed to "
-        "read the shared flag; update this test (and its docstring) to "
-        "match the new, presumably-safer, behavior"
+    t1.join(timeout=_MCP_APPROVAL_POLL_SECONDS + 3.0)
+    assert not t1.is_alive(), (
+        "a real-session round with no matching _active_cancel_events entry "
+        "did not observe the bare _shutdown_requested flag within one poll "
+        "interval -- if this now fails, _is_session_cancelled's "
+        "real-session branch stopped ORing in the shared flag; that is the "
+        "TASK-1052 regression this test guards against"
     )
-
-    t1.join(timeout=2.0)  # released by its own shortened confirm timeout
     assert results["one"] is False  # still fails closed, never auto-approved
+    assert controller.pending_skill_install_ids() == []  # round's own accounting cleaned up
+
+
+def test_shutdown_flag_alone_denies_both_unregistered_sessions_rounds_and_cleans_accounting(
+    controller,
+):
+    """TASK-1052 x TASK-1050 interplay: two rounds armed for DIFFERENT
+    sessions, NEITHER registered in `_active_cancel_events` (so
+    `shutdown()`'s own per-session `_signal_stop` fanout could never reach
+    either one even if driven for real -- see `test_shutdown_denies_every_
+    armed_round_with_real_session_ids` above, which pre-registers both
+    sessions' cancel events specifically so that fanout DOES reach them;
+    this test deliberately skips that setup). Setting the bare
+    `_shutdown_requested` flag alone must still deny BOTH rounds within one
+    poll interval, and each round's own `finally` -- TASK-1050's
+    round-keyed `discard_pending_round` plus its guarded
+    `_parked_skill_install_payloads` pop -- must still run cleanly for
+    both: no stale pending-approval accounting or retained payload left
+    behind for either session, and no cross-talk between the two (each
+    session's own entries clear independently).
+    """
+    results = {}
+    t1 = _arm(controller, "https://x/one", controller.session_a, results, "one")
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 1)
+    t2 = _arm(controller, "https://x/two", controller.session_b, results, "two")
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 2)
+
+    assert controller.session_a not in controller._active_cancel_events
+    assert controller.session_b not in controller._active_cancel_events
+
+    controller._shutdown_requested.set()  # global flag only -- no per-session fanout
+    t1.join(timeout=_MCP_APPROVAL_POLL_SECONDS + 3.0)
+    t2.join(timeout=_MCP_APPROVAL_POLL_SECONDS + 3.0)
+
+    assert not t1.is_alive() and not t2.is_alive(), (
+        "both real-session rounds, neither registered in "
+        "_active_cancel_events, must observe the bare _shutdown_requested "
+        "flag within one poll interval"
+    )
+    assert results["one"] is False
+    assert results["two"] is False
+    assert controller.pending_skill_install_ids() == []
+    assert controller.session_a not in controller._pending_approvals
+    assert controller.session_b not in controller._pending_approvals
+    assert controller.session_a not in controller._parked_skill_install_payloads
+    assert controller.session_b not in controller._parked_skill_install_payloads

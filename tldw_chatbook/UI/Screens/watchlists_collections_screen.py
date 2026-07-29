@@ -110,6 +110,25 @@ WC_SERVICE_ERROR_COPY = "Watchlists services unavailable; retry Watchlists later
 WC_SERVICE_UNAVAILABLE_COPY = "Watchlists services are unavailable in this runtime."
 WC_SNAPSHOT_TIMEOUT_SECONDS = 1.5
 
+
+def watchlist_delete_consequence(source_count: int) -> str:
+    """Explain what happens to a watchlist's sources when it is deleted.
+
+    Split out so the wording is testable without driving a modal. The noun was
+    already pluralised; the verb and pronoun were not, so a single-source
+    watchlist read "Its 1 source are not deleted. They stay in..." (TASK-1091).
+    """
+    if source_count == 1:
+        return (
+            "Its 1 source is not deleted. It stays in Watchlists and appears "
+            "under Unassigned unless it also belongs to another watchlist."
+        )
+    return (
+        f"Its {source_count} sources are not deleted. They stay in Watchlists "
+        "and appear under Unassigned unless they also belong to another "
+        "watchlist."
+    )
+
 # task-895. Watchlist bundles and their membership are a LOCAL concept: the
 # server API has no wire path for them at all -- `SourceUpdateRequest`
 # carries no `group_ids`, neither group request carries members, and all of
@@ -1152,6 +1171,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         return OverviewPane.profile_is_empty(self.overview_data)
 
+    def _watchlists_profile_state(self) -> str:
+        """Loading, empty or populated (TASK-1020).
+
+        The same call the Overview region makes, so the Inspector's own
+        first-run text can never contradict it.
+
+        Returns:
+            One of `OverviewPane.LOADING`/`EMPTY`/`POPULATED`.
+        """
+        return OverviewPane.profile_state(self.overview_data)
+
     def _build_inspector_pane(
         self,
         latest_console_item: Any,
@@ -1250,10 +1280,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         inspector.selected_entity = self.selected_entity
         inspector.scope = self.selected_scope
         inspector.breadcrumb_labels = self._breadcrumb_labels
-        # TASK-998: same seeding rationale as the three lines above -- and the
-        # Inspector cannot work this out for itself, since it is handed a
-        # selection rather than the data behind it.
-        inspector.first_run = self._watchlists_are_empty()
+        # TASK-998, widened by TASK-1020: same seeding rationale as the three
+        # lines above -- and the Inspector cannot work this out for itself,
+        # since it is handed a selection rather than the data behind it. The
+        # value is the same one the Overview region keys off, so the rail's
+        # first-run text and the region's can never disagree.
+        inspector.profile_state = self._watchlists_profile_state()
         children.append(inspector)
         return Vertical(
             *children,
@@ -1611,7 +1643,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             worker_coro = self._run_tree_write(flow_factory())
         except Exception:
-            logger.opt(exception=True).debug("Watchlist tree write could not start.")
+            logger.opt(exception=True).warning("Watchlist tree write could not start.")
             self._notify_watchlists(
                 "That watchlist action could not be started.", severity="error"
             )
@@ -1626,7 +1658,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except Exception:
             self._tree_write_active = False
             worker_coro.close()
-            logger.opt(exception=True).debug("Watchlist tree write could not start.")
+            logger.opt(exception=True).warning("Watchlist tree write could not start.")
             self._notify_watchlists(
                 "That watchlist action could not be started.", severity="error"
             )
@@ -1644,7 +1676,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             await flow
         except Exception:
-            logger.opt(exception=True).debug("Watchlist tree write failed.")
+            logger.opt(exception=True).warning("Watchlist tree write failed.")
             self._notify_watchlists(
                 "That watchlist action could not be completed.", severity="error"
             )
@@ -1771,15 +1803,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         name = self._watchlist_display_name(watchlist_id)
         source_count = len(service.list_source_rows(watchlist_id))
+        # Still needed by the post-delete notification below, which reads
+        # correctly either way ("Its 1 source moved", "Its 2 sources moved").
         noun = "source" if source_count == 1 else "sources"
         confirmed = await self.app.push_screen_wait(
             ConfirmationDialog(
                 title="Delete watchlist",
                 message=(
                     f'Delete the watchlist "{escape_markup(name)}"?\n\n'
-                    f"Its {source_count} {noun} are not deleted. They stay in "
-                    "Watchlists and appear under Unassigned unless they also "
-                    "belong to another watchlist."
+                    + watchlist_delete_consequence(source_count)
                 ),
                 confirm_label="Delete watchlist",
                 cancel_label="Keep it",
@@ -2193,7 +2225,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Source created.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to create source.")
+            logger.opt(exception=True).warning("Failed to create source.")
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to create source.", severity="error")
@@ -2224,7 +2256,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Run cancellation requested.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to cancel run.")
+            logger.opt(exception=True).warning("Failed to cancel run.")
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to cancel run.", severity="error")
@@ -2245,7 +2277,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Run launched.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to launch run.")
+            logger.opt(exception=True).warning("Failed to launch run.")
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to launch run.", severity="error")
@@ -2275,7 +2307,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     timeout=10,
                 )
         except Exception:
-            logger.opt(exception=True).debug("Failed to preview source.")
+            logger.opt(exception=True).warning("Failed to preview source.")
             if callable(notify):
                 notify("Failed to preview source.", severity="error")
 
@@ -2287,21 +2319,121 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         self.run_worker(self._check_now_source(entity), exclusive=True)
 
+    #: Run statuses that mean the check did not succeed. `execute_run` catches
+    #: the fetch error itself and RETURNS a run in one of these states rather
+    #: than raising, so a screen that only watched for exceptions reported
+    #: success over a feed that had just 404'd (TASK-1090).
+    _FAILED_RUN_STATUSES = frozenset({"failed", "error", "errored"})
+    #: Statuses meaning the run is over. `check_now` on the server backend
+    #: delegates to `launch_run`, which returns `queued`/`running` while the
+    #: fetch is still in flight — so "complete" may only be claimed for these.
+    _TERMINAL_RUN_STATUSES = frozenset({"completed", "complete", "succeeded", "success"})
+
+    @classmethod
+    def _check_failure_message(cls, result: Any) -> str | None:
+        """The reason a completed check failed, or None if it succeeded.
+
+        Args:
+            result: Whatever `check_now` returned.
+
+        Returns:
+            A human-readable reason when the run reports a failed status,
+            otherwise None.
+        """
+        if not isinstance(result, Mapping):
+            return None
+        if str(result.get("status") or "").lower() not in cls._FAILED_RUN_STATUSES:
+            return None
+        stats = result.get("stats")
+        error_msg = result.get("error_msg")
+        if not error_msg and isinstance(stats, Mapping):
+            error_msg = stats.get("error_msg")
+        return str(error_msg or "the source reported a failed run")
+
     async def _check_now_source(self, source: dict[str, Any]) -> None:
+        """Run a check for one source and report what actually happened.
+
+        TASK-1090. This wrapped the whole call in `except Exception`, logged at
+        **debug** and showed a transient toast, which is the swallow that hid
+        TASK-1100: `Check now` raised `ValueError` on every press, the feature
+        was dead, and the only evidence was a debug line and a toast that had
+        gone before anyone looked. Three UAT runs called the screen working.
+
+        Two things changed. An unexpected exception is logged at `warning`
+        with the source it was checking, and its message is put in front of
+        the user instead of a generic "Failed to check source." And a run that
+        *completed* failed is now detected: `execute_run` records the failure
+        and returns normally, so the old code's `try` succeeded and it said
+        "Check now started." over a feed that had just failed to fetch.
+
+        The durable trace lives where it belongs -- `subscriptions.last_error`
+        and a `failed` row in `local_watchlist_runs`, both written by the
+        service (see `LocalWatchlistsService.record_run_failure`) -- and the
+        source list is reloaded here so the Sources table's Status column
+        shows it once the toast is gone.
+        """
         notify = getattr(self.app_instance, "notify", None)
+        source_id = source.get("id")
         try:
-            await self._controller.check_now(
+            result = await self._controller.check_now(
                 runtime_backend=self.runtime_backend,
-                source_id=source.get("id"),
+                source_id=source_id,
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Check now failed for watchlist source {source_id!r}: {exc}"
             )
             if callable(notify):
-                notify("Check now started.", severity="information")
-        except Exception:
-            logger.opt(exception=True).debug("Failed to check source.")
-            if callable(notify):
-                notify("Failed to check source.", severity="error")
+                notify(f"Check failed: {exc}", severity="error", timeout=10)
+        else:
+            failure = self._check_failure_message(result)
+            if failure is not None:
+                logger.warning(
+                    f"Check now for watchlist source {source_id!r} finished "
+                    f"failed: {failure}"
+                )
+                if callable(notify):
+                    notify(f"Check failed: {failure}", severity="error", timeout=10)
+            elif callable(notify):
+                # Only claim completion for a terminal status. `check_now` on
+                # the server backend delegates to `launch_run`, which triggers
+                # execution asynchronously and returns `queued`/`running` — so
+                # a fixed "Check complete." would tell the user the fetch had
+                # finished while it was still in flight (Qodo #4 on PR #1047).
+                status = str((result or {}).get("status") or "").lower()
+                if status in self._TERMINAL_RUN_STATUSES:
+                    notify("Check complete.", severity="information")
+                else:
+                    notify("Check started.", severity="information")
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
+        # Reload the source list so the Status and Last scraped columns carry
+        # the outcome after the toast has gone (AC#2). Same reload
+        # `_delete_source` performs for the same reason.
+        # Preserve the user's selection across the reload. Rebuilding the
+        # table emits a row-0 highlight, which `SourcesPane` treats as a real
+        # selection — so without this the reload silently retargets Preview /
+        # Check now / Delete at the first source (Qodo #3 on PR #1047, and
+        # the defect filed as task-1161).
+        self.run_worker(
+            self._load_sources_preserving_selection(), exclusive=True, group="wc_sources"
+        )
+
+    async def _load_sources_preserving_selection(self) -> None:
+        """Reload the source list without discarding the current selection."""
+        keep = self.selected_source
+        await self._load_sources()
+        if keep is None or not self.is_mounted:
+            return
+        keep_id = keep.get("id")
+        if keep_id is None:
+            return
+        try:
+            pane = self.query_one("#watchlists-sources-pane", SourcesPane)
+        except Exception:
+            return
+        if any(str(s.get("id")) == str(keep_id) for s in (pane.sources or [])):
+            pane.select_source_by_id(str(keep_id))
 
     @on(ImportOpmlRequested)
     def handle_import_opml_requested(self, event: ImportOpmlRequested) -> None:
@@ -2321,7 +2453,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify(f"Imported {created} source(s) from OPML.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to import OPML.")
+            logger.opt(exception=True).warning("Failed to import OPML.")
             if callable(notify):
                 notify("Failed to import OPML.", severity="error")
         self._refresh_local_wc_snapshot()
@@ -2340,7 +2472,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             self.app.push_screen(OpmlExportDialog(xml_text))
         except Exception:
-            logger.opt(exception=True).debug("Failed to export OPML.")
+            logger.opt(exception=True).warning("Failed to export OPML.")
             if callable(notify):
                 notify("Failed to export OPML.", severity="error")
 
@@ -2712,7 +2844,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify(f"Item marked {status}.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug(f"Failed to mark item {status}.")
+            logger.opt(exception=True).warning(f"Failed to mark item {status}.")
             if callable(notify):
                 notify(f"Failed to mark item {status}.", severity="error")
         self.run_worker(self._load_items(), exclusive=True)
@@ -2728,7 +2860,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Alert rule saved.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to save alert rule.")
+            logger.opt(exception=True).warning("Failed to save alert rule.")
             if callable(notify):
                 notify("Failed to save alert rule.", severity="error")
         self.run_worker(self._load_rules(), exclusive=True)
@@ -2780,7 +2912,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Source deleted.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to delete source.")
+            logger.opt(exception=True).warning("Failed to delete source.")
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to delete source.", severity="error")
@@ -2808,7 +2940,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Run deleted.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to delete run.")
+            logger.opt(exception=True).warning("Failed to delete run.")
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to delete run.", severity="error")
@@ -2826,7 +2958,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Alert rule deleted.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to delete alert rule.")
+            logger.opt(exception=True).warning("Failed to delete alert rule.")
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to delete alert rule.", severity="error")
@@ -2844,7 +2976,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Item ignored.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to ignore item.")
+            logger.opt(exception=True).warning("Failed to ignore item.")
             if callable(notify):
                 notify("Failed to ignore item.", severity="error")
         self.run_worker(self._load_items(), exclusive=True)

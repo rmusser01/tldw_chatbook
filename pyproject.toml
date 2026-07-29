@@ -127,6 +127,13 @@ local_transformers = ["transformers"]
 mcp = [
     "mcp[cli]>=1.0.0",
 ]
+image_generation = [
+    # SwarmUI API client (Media_Creation/swarmui_client.py). aiohttp previously
+    # shipped only in [websearch] -- for the article scraper -- so wanting image
+    # generation meant installing the web-search stack (playwright, trafilatura,
+    # pandas, nltk, scikit-learn, ...) to obtain one HTTP client (task-1262).
+    "aiohttp",
+]
 svg = [
     "cairosvg",  # SVG rasterization for image attachments; needs the cairo C library (e.g. `brew install cairo`)
 ]
@@ -273,14 +280,19 @@ diarization = [
     "numpy",  # Numerical operations (already in base deps)
 ]
 subscriptions = [
-    "markdown",  # For HTML generation from markdown
-    "schedule",  # For scheduled tasks
-    "feedparser",  # For RSS feed parsing
-    "beautifulsoup4", # HTML parsing for subscription monitors
-    "cryptography", # Security.py
-    "defusedxml",  # For safe XML parsing
+    # markdown/schedule/feedparser were dropped in TASK-1221: nothing imported
+    # them, and because the feature gate requires every listed package to
+    # import, their absence disabled Watchlists for no reason. Feeds are parsed
+    # by defusedxml/ElementTree plus bs4, never feedparser.
+    "beautifulsoup4", # HTML parsing for subscription monitors (hard import)
+    "cryptography", # Security.py -- without it credentials are stored plaintext
+    "defusedxml",  # Safe XML parsing; falls back to stdlib xml.etree if absent
     "tqdm",
 ]
+# Note: cryptography and defusedxml are shipped in this extra but are NOT part of
+# the availability gate in Utils/optional_deps.py, because both have working
+# fallbacks. Installing them is still the right default -- the fallbacks are
+# plaintext credentials and a less safe XML parser respectively.
 web = [
     "textual-serve",  # Web server for running Textual apps in browser
 ]
@@ -320,6 +332,8 @@ all-tools = [
     "pandas",
     "playwright",
     "trafilatura",
+    # Serves both [websearch] (article scraper) and [image_generation]
+    # (SwarmUI client); listed once here since all-tools enumerates packages.
     "aiohttp",
     "defusedxml",
     

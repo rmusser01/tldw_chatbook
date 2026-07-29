@@ -491,9 +491,40 @@ class EvalsScreen(LabScreen):
             return
 
         yield Static(
-            "Select a bench, dataset, or run in the library rail to see its "
-            "detail here.",
+            self._empty_detail_text(),
             id="evals-detail-empty",
+            markup=False,
+        )
+
+    def _empty_detail_text(self) -> str:
+        """Copy for the ``"none"``-selection Detail pane.
+
+        TASK-1076: the old, single wording ("Select a bench, dataset, or
+        run in the library rail...") is unactionable at the one moment it
+        is guaranteed to show -- a first launch, where the rail has
+        nothing to select at all. Distinguishes that genuinely-empty
+        library (nothing in any of the three rail sections) from the more
+        common "none" case -- a user who deleted their selection, or
+        clicked empty rail padding, while real rows still exist -- where
+        the original sentence is still the correct instruction.
+
+        The emptiness check itself lives in
+        ``EvalsViewModel.library_is_empty()``, not inline here: this
+        method reruns on every selection change (``select()`` ->
+        ``refresh(recompose=True)``), so a single, minimal-read helper
+        matters more here than in a one-shot call site -- see that
+        method's docstring for why it costs one task read (not two) and a
+        1-row dataset existence check (not a 500-row page).
+        """
+        if self._view_model.library_is_empty():
+            return (
+                "Nothing here yet. Create a sample bench in the library "
+                "rail to get started -- it builds a dataset and a run for "
+                "you in one step."
+            )
+        return (
+            "Select a bench, dataset, or run in the library rail to see "
+            "its detail here."
         )
 
     def _compose_inspector_pane(
@@ -540,6 +571,32 @@ class EvalsScreen(LabScreen):
                 yield EvalsCellInspector(id="evals-cell-inspector")
 
         label, disabled, tooltip = self._primary_action_state()
+        if disabled and tooltip:
+            # TASK-1076: a disabled Textual `Button` never emits `Pressed`
+            # -- a click on it produces no toast, no inline message, no
+            # state change, which is exactly the "silent no-op" UAT found.
+            # `tooltip=` below is real (screen-reader/mouse-hover users
+            # still get it) but it is the ONLY place the reason lived
+            # before this, and a hover-only explanation is not reachable
+            # from a keyboard-only session. Mirrors `EvalsInspector`'s own
+            # readiness convention just above (and reachable through the
+            # SAME `.ds-status-badge`/`evals-status-blocked` classes a
+            # Blocked target row uses, in `_status_css_class`) rather than
+            # inventing a second "why can't I do this" vocabulary: a
+            # status badge naming the action, plus a callout stating the
+            # reason -- always visible, never conditional on a mouse.
+            yield Static(
+                f"{label}: Blocked",
+                id="evals-primary-action-status",
+                classes="ds-status-badge evals-status-blocked",
+                markup=False,
+            )
+            yield Static(
+                tooltip,
+                id="evals-primary-action-reason",
+                classes="ds-recovery-callout",
+                markup=False,
+            )
         yield Button(
             label,
             id="evals-primary-action",

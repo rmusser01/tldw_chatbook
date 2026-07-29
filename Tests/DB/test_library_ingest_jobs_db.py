@@ -1,4 +1,6 @@
 import sqlite3
+from dataclasses import replace
+
 import pytest
 
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
@@ -35,6 +37,42 @@ def test_upsert_is_idempotent_update_in_place(tmp_path):
     db.upsert_job(reg.jobs()[0])  # same job_id, now PARSING
     rows = db.all_jobs()
     assert len(rows) == 1 and rows[0]["state"] == "parsing"
+    db.close()
+
+
+def test_retry_pair_upsert_rolls_back_both_rows_on_second_write_failure(
+    tmp_path,
+    monkeypatch,
+):
+    reg = LibraryIngestJobRegistry()
+    original = reg.submit(source_path="/a.mp3")
+    db = _db(tmp_path)
+    db.upsert_job(original)
+
+    superseded = replace(original, superseded=True)
+    retry = replace(
+        original,
+        job_id="ingest-job-2",
+        retry_of_job_id=original.job_id,
+    )
+    real_upsert = db._upsert_job
+    writes = 0
+
+    def fail_second_write(conn, job):
+        nonlocal writes
+        writes += 1
+        real_upsert(conn, job)
+        if writes == 2:
+            raise RuntimeError("second write failed")
+
+    monkeypatch.setattr(db, "_upsert_job", fail_second_write)
+
+    with pytest.raises(RuntimeError, match="second write failed"):
+        db.upsert_retry(superseded, retry)
+
+    rows = db.all_jobs()
+    assert [row["job_id"] for row in rows] == [original.job_id]
+    assert rows[0]["superseded"] == 0
     db.close()
 
 
@@ -127,6 +165,51 @@ def test_job_round_trip_with_json_columns(tmp_path):
     assert restored.progress == {"message": "50%"}
     assert restored.error_detail == {"category": "unsupported_file_type", "message": "nope"}
     assert restored.content_hash == "abc123"
+    db.close()
+
+
+def test_v4_to_v5_stt_lineage_migration_is_nullable_and_atomic(tmp_path):
+    db = _db(tmp_path)
+    reg = LibraryIngestJobRegistry()
+    job = reg.submit(source_path="/kept.wav", title="Kept")
+    db.upsert_job(job)
+    conn = db._get_connection()
+    for column in (
+        "retry_of_job_id",
+        "stt_failure_provenance_json",
+        "retry_source_failure_provenance_json",
+    ):
+        conn.execute(f"ALTER TABLE ingest_jobs DROP COLUMN {column}")
+    conn.execute("UPDATE schema_version SET version = 4")
+    conn.commit()
+
+    original_columns = db._STT_LINEAGE_COLUMNS
+    db._STT_LINEAGE_COLUMNS = (*original_columns, ("broken)", "TEXT"))
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            db._migrate_v4_to_v5()
+    finally:
+        db._STT_LINEAGE_COLUMNS = original_columns
+
+    assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 4
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(ingest_jobs)")}
+    assert "retry_of_job_id" not in columns
+    assert "stt_failure_provenance_json" not in columns
+    assert "retry_source_failure_provenance_json" not in columns
+    assert (
+        conn.execute(
+            "SELECT title FROM ingest_jobs WHERE job_id = ?",
+            (job.job_id,),
+        ).fetchone()[0]
+        == "Kept"
+    )
+
+    db._migrate_v4_to_v5()
+    assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 5
+    row = db.all_jobs()[0]
+    assert row["retry_of_job_id"] is None
+    assert row["stt_failure_provenance_json"] is None
+    assert row["retry_source_failure_provenance_json"] is None
     db.close()
 
 

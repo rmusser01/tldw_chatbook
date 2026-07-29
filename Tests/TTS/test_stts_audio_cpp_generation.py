@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import stat
-from uuid import UUID
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
+from uuid import UUID
 
 import pytest
 from loguru import logger
@@ -20,14 +20,15 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSPlaygroundGenerateEvent,
 )
 from tldw_chatbook.TTS import (
+    ProviderHealth,
     STTSGeneratedAudio,
     STTSPlaygroundRequest,
-    ProviderHealth,
-    TTSOperationError,
     TTSModelInfo,
+    TTSOperationError,
     TTSProviderCatalog,
     TTSProviderDescriptor,
     TTSRequest,
+    TTSRequestedSelectionSnapshot,
 )
 from tldw_chatbook.TTS.adapter_types import (
     TTSProviderReconfiguringError,
@@ -125,6 +126,26 @@ class _NativeService:
         del progress_sink
         self.requests.append(request)
         return self.response
+
+    async def synthesize_exact(
+        self,
+        request: TTSRequest,
+        progress_sink: object = None,
+    ) -> tuple[_Response, TTSRequestedSelectionSnapshot]:
+        del progress_sink
+        self.requests.append(request)
+        return (
+            self.response,
+            TTSRequestedSelectionSnapshot(
+                provider_id=request.provider_id,
+                model_id=request.model_id,
+                voice_id=request.voice,
+                response_format=request.response_format,
+                speed=request.speed,
+                options=request.options,
+                configuration_revision=3,
+            ),
+        )
 
     async def generate_audio_stream(
         self,
@@ -631,7 +652,17 @@ async def test_audio_cpp_native_generation_consumes_and_closes_one_wav_response(
             audio_format="wav",
             content_type="audio/wav",
             metadata={"sample_rate": 24_000, "engine": "audio.cpp"},
+            requested_selection=TTSRequestedSelectionSnapshot(
+                provider_id="audio_cpp",
+                model_id="model-1",
+                voice_id=None,
+                response_format="wav",
+                speed=1.0,
+                options={},
+                configuration_revision=3,
+            ),
         )
+        assert not hasattr(artifact.requested_selection, "text")
         assert artifact.path.read_bytes() == b"RIFFaudio"
         assert artifact.path.suffix == ".wav"
         assert stat.S_IMODE(artifact.path.stat().st_mode) == 0o600
@@ -716,6 +747,7 @@ async def test_legacy_generation_retains_stream_bridge_and_requested_conversion(
         assert artifact.provider_id == "openai"
         assert artifact.model_id == "model-1"
         assert artifact.voice_id == "alloy"
+        assert artifact.requested_selection is None
         assert artifact.path in handler._playground_audio_files
     finally:
         for path in tuple(handler._playground_audio_files):
@@ -774,7 +806,7 @@ async def test_native_operation_errors_display_only_stable_safe_contract(
         recovery_action="retry",
     )
     service = SimpleNamespace(
-        synthesize=AsyncMock(side_effect=operation_error),
+        synthesize_exact=AsyncMock(side_effect=operation_error),
     )
     app = _DeliveryApp()
     handler = STTSEventHandler(app=app)
@@ -846,7 +878,7 @@ async def test_native_local_failures_use_fixed_recovery_copy(
     failure: Exception,
     expected: str,
 ) -> None:
-    service = SimpleNamespace(synthesize=AsyncMock(side_effect=failure))
+    service = SimpleNamespace(synthesize_exact=AsyncMock(side_effect=failure))
     app = _DeliveryApp()
     handler = STTSEventHandler(app=app)
     handler._stts_service = service
@@ -868,7 +900,7 @@ async def test_unknown_native_failure_never_leaks_exception_or_request_details()
         "PRIVATE_MODEL_ID",
     )
     failure = RuntimeError(" ".join(private_values))
-    service = SimpleNamespace(synthesize=AsyncMock(side_effect=failure))
+    service = SimpleNamespace(synthesize_exact=AsyncMock(side_effect=failure))
     app = _DeliveryApp()
     handler = STTSEventHandler(app=app)
     handler._stts_service = service
@@ -924,7 +956,7 @@ async def test_cancelled_native_handler_closes_without_failure_notice() -> None:
 
 @pytest.mark.asyncio
 async def test_repeated_generate_is_rejected_without_replacing_active_work() -> None:
-    service = SimpleNamespace(synthesize=AsyncMock())
+    service = SimpleNamespace(synthesize_exact=AsyncMock())
     app = _DeliveryApp()
     handler = STTSEventHandler(app=app)
     handler._stts_service = service
@@ -932,7 +964,7 @@ async def test_repeated_generate_is_rejected_without_replacing_active_work() -> 
 
     await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(_snapshot()))
 
-    service.synthesize.assert_not_awaited()
+    service.synthesize_exact.assert_not_awaited()
     assert handler._is_generating is True
     assert app.notifications == [
         ("TTS generation already in progress", "warning"),

@@ -26,6 +26,7 @@ from Tests.Agents.test_mcp_tool_provider import (
 )
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.console_display_state import (
+    ConsoleControlState,
     ConsoleInspectorState,
     ConsoleStagedContextState,
     build_console_evidence_display_state,
@@ -345,10 +346,34 @@ async def test_console_mode_bar_groups_location_mode_and_readiness():
         mode_plain = getattr(mode_bar.render(), "plain", str(mode_bar.render()))
 
         assert title_plain == "Console"
+        # Fleet-UX expert review F7 (task-1234): the Tools segment now
+        # reads "Tools —" at a fresh app -- `ConsoleControlState.tools_
+        # label` reads "Tools: not loaded" (a neutral placeholder) rather
+        # than "Tools: 0 ready", and `_console_mode_summary`'s readiness_
+        # count falls back to the same dash for any non-numeric label.
         assert (
             mode_plain
-            == "Chat/RAG/Follow | General | Sources 0 | Tools 0 | Approvals 0"
+            == "Chat/RAG/Follow | Assistant: General | Sources 0 | Tools — | Approvals 0"
         )
+
+
+def test_console_mode_bar_treats_assistant_label_as_literal_text():
+    control_state = ConsoleControlState(
+        provider_label="Provider: OpenAI",
+        model_label="Model: gpt-5",
+        assistant_label="Persona: [bold]Guide[/bold]",
+        rag_label="RAG: off",
+        sources_label="Sources: 0 staged",
+        tools_label="Tools: 0 ready",
+        approvals_label="Approvals: 0 pending",
+    )
+    summary = ChatScreen._console_mode_summary(control_state)
+
+    mode_bar = ChatScreen._hidden_static(summary, id="console-mode-bar")
+    rendered = mode_bar.render()
+
+    assert mode_bar._render_markup is False
+    assert getattr(rendered, "plain", str(rendered)) == summary
 
 
 @pytest.mark.asyncio
@@ -910,6 +935,38 @@ async def test_console_stop_button_hidden_unless_streaming():
         )
         await pilot.pause()
         assert stop.styles.display == "none"
+
+
+@pytest.mark.asyncio
+async def test_console_stop_button_tooltip_scopes_to_this_tab():
+    """Fleet-UX expert review F7 (task-1234): under parallel runs, "Stop"
+    alone doesn't say WHICH run it stops -- the button only ever stops the
+    viewed tab's own run (behavior unchanged by this task), so the tooltip
+    must say so explicitly rather than the old ambiguous "active Console
+    session" phrasing. Both the expanded and collapsed-composer Stop
+    buttons carry the same copy. `ConsoleComposerBar.sync_action_state`
+    overwrites the expanded button's tooltip on every refresh (the
+    construction-time value alone is never what a user hovering an
+    ACTIVE Stop button actually sees), so a run must be active for this
+    assertion to exercise the real, live copy -- mirrors
+    `test_console_stop_button_hidden_unless_streaming`'s own setup."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer")
+        composer.sync_action_state(
+            has_draft=True, run_active=True, can_save_chatbook=False
+        )
+        await pilot.pause()
+
+        stop = console.query_one("#console-stop-generation")
+        assert str(stop.tooltip) == "Stop this tab's run."
+
+        collapsed_stop = console.query_one("#console-collapsed-stop-generation")
+        assert str(collapsed_stop.tooltip) == "Stop this tab's run."
 
 
 @pytest.mark.asyncio

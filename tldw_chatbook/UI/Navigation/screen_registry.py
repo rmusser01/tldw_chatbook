@@ -249,12 +249,75 @@ def resolve_screen_target(target: str) -> tuple[str, str, type | None]:
         ``screen_class`` is ``None`` when the target cannot be resolved.
     """
 
+    route_id, route = _lookup_route(target)
+    if route is None:
+        return route_id, route_id, None
+    return route.screen_name, route.canonical_tab, route.load_screen_class()
+
+
+def _lookup_route(target: str) -> tuple[str, ScreenRoute | None]:
+    """Resolve a navigation target to its route, without importing the class.
+
+    Args:
+        target: The requested route id or alias.
+
+    Returns:
+        A tuple of ``(route_id, route)``. ``route`` is ``None`` when the
+        target is not routable, in which case ``route_id`` is the furthest
+        the alias/shell-destination resolution got (used for the miss shape
+        and for error messages).
+    """
+
     route_id = _SCREEN_ALIASES.get(target, target)
     route = _SCREEN_ROUTES.get(route_id)
     if route is None:
         canonical_route = resolve_shell_route(route_id).canonical_route
         route_id = _SCREEN_ALIASES.get(canonical_route, canonical_route)
         route = _SCREEN_ROUTES.get(route_id)
-        if route is None:
-            return route_id, route_id, None
-    return route.screen_name, route.canonical_tab, route.load_screen_class()
+    return route_id, route
+
+
+def screen_load_error(target: str) -> BaseException | None:
+    """Return the exception that prevents ``target``'s screen class loading.
+
+    ``resolve_screen_target()`` deliberately degrades a failed route to
+    ``None`` so one broken optional screen cannot break navigation as a
+    whole -- but that swallows the reason. Callers for whom the failure is
+    fatal (notably ``app.py``'s ``_push_initial_screen()``) use this to
+    report *why* rather than emitting a bare "unable to resolve" message.
+
+    This re-attempts the import rather than caching the original error, so
+    it is only for the diagnostic/failure path, never the hot path.
+
+    Root-caused 2026-07-27: optional ``aiohttp`` on the default chat
+    screen's import chain surfaced only as ``RuntimeError: Unable to
+    resolve default chat screen``, naming neither the missing module nor
+    the file that imported it.
+
+    Args:
+        target: The requested route id or alias.
+
+    Returns:
+        The blocking exception, or ``None`` if the class loads cleanly.
+        Unroutable targets and unavailable dependency gates -- neither of
+        which raises on its own -- are reported as a synthesized
+        ``LookupError``/``ImportError`` so the caller always has a reason.
+    """
+
+    route_id, route = _lookup_route(target)
+    if route is None:
+        return LookupError(
+            f"no screen route is registered for target {target!r}"
+            f" (resolution reached {route_id!r})"
+        )
+    if not route.dependencies_available():
+        return ImportError(
+            f"screen route {route.screen_name!r} is gated on optional dependency"
+            f" check {route.dependency_check!r}, which reports unavailable"
+        )
+    try:
+        module = import_module(route.module_path)
+        getattr(module, route.class_name)
+    except (ImportError, AttributeError) as exc:
+        return exc
+    return None

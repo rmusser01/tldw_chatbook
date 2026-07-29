@@ -11,6 +11,14 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSProviderDescriptor,
 )
+from tldw_chatbook.TTS.profile_service import (
+    ProfileAvailabilityState,
+    TTSPlaygroundSelectionPreset,
+)
+from tldw_chatbook.TTS.profile_types import (
+    AUDIO_CPP_PROFILE_RESPONSE_FORMAT,
+    AUDIO_CPP_PROFILE_SPEED,
+)
 
 AUDIO_CPP_PROVIDER_ID = "audio_cpp"
 SERVER_DEFAULT_VOICE_LABEL = "Server default"
@@ -207,6 +215,95 @@ def controls_from_catalog(
         generation_allowed=generation_allowed,
         selection_changed=selection_changed or voice_changed,
     )
+
+
+def controls_from_profile_preset(
+    catalog: TTSProviderCatalog | None,
+    *,
+    preset: TTSPlaygroundSelectionPreset,
+    discovered_voices: tuple[str, ...] | None,
+) -> PlaygroundControls:
+    """Project one exact profile selection without catalog substitution.
+
+    Args:
+        catalog: Current provider catalog, or ``None`` when it is unverified.
+        preset: Exact persisted profile selection to project.
+        discovered_voices: Authoritative voices, or ``None`` when unverified.
+
+    Returns:
+        Controls that preserve every exact profile value without fallback.
+    """
+
+    model_options = (
+        tuple(
+            (model.display_name or model.model_id, model.model_id)
+            for model in catalog.models
+        )
+        if catalog is not None
+        else ()
+    )
+    if preset.model_id not in {value for _label, value in model_options}:
+        model_options = (*model_options, (preset.model_id, preset.model_id))
+
+    voice_options: tuple[SelectOption, ...] = (
+        (SERVER_DEFAULT_VOICE_LABEL, SERVER_DEFAULT_VOICE_ID),
+        *((voice, voice) for voice in (discovered_voices or ())),
+    )
+    selected_voice: SelectValue = (
+        SERVER_DEFAULT_VOICE_ID if preset.voice_id is None else preset.voice_id
+    )
+    if selected_voice not in {value for _label, value in voice_options}:
+        assert isinstance(selected_voice, str)
+        voice_options = (*voice_options, (selected_voice, selected_voice))
+
+    availability = profile_availability_from_catalog(preset, catalog)
+    return PlaygroundControls(
+        provider_id=preset.provider_id,
+        model_options=model_options,
+        selected_model_id=preset.model_id,
+        voice_options=voice_options,
+        selected_voice_id=selected_voice,
+        format_options=(preset.response_format,),
+        selected_format=preset.response_format,
+        format_locked=True,
+        speed=preset.speed,
+        speed_locked=True,
+        generation_allowed=availability != "unavailable",
+        selection_changed=False,
+    )
+
+
+def profile_availability_from_catalog(
+    preset: TTSPlaygroundSelectionPreset,
+    catalog: TTSProviderCatalog | None,
+) -> ProfileAvailabilityState:
+    """Conservatively revalidate exact profile fields against one catalog."""
+    if preset.availability == "unavailable":
+        return "unavailable"
+    if (
+        preset.provider_id != AUDIO_CPP_PROVIDER_ID
+        or preset.response_format != AUDIO_CPP_PROFILE_RESPONSE_FORMAT
+        or preset.speed != AUDIO_CPP_PROFILE_SPEED
+        or bool(preset.options)
+    ):
+        return "unavailable"
+    if catalog is None:
+        return "unverified"
+    if catalog.provider_id != preset.provider_id:
+        return "unavailable"
+    if not catalog.health.fresh or catalog.health.state == "reconfiguring":
+        return "unverified"
+    if catalog.health.state != "available":
+        return "unavailable"
+    model = next(
+        (item for item in catalog.models if item.model_id == preset.model_id),
+        None,
+    )
+    if model is None or preset.response_format not in model.formats:
+        return "unavailable"
+    if preset.voice_id is None and not model.omit_voice_uses_server_default:
+        return "unavailable"
+    return preset.availability
 
 
 def _selected_model(

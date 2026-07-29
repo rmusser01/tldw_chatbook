@@ -86,6 +86,17 @@ class MCPPendingCall:
     arguments: dict
     reason: str  # ask|config_changed|risk_floored
     options: tuple[str, ...] = ()
+    #: TASK-1231/F3 AC2: True when this is a builtin file tool
+    #: (read_file/list_directory/write_file) whose path argument will be
+    #: rejected by `allowed_file_roots`/`validate_path_multi` regardless of
+    #: the user's decision -- computed at card-build time by
+    #: `console_chat_controller.build_tool_review_hook` via
+    #: `Tools.file_operation_tools.path_precheck_failed`. This is a WARNING
+    #: only: the user can still approve (and the call will then fail with
+    #: the same recovery-route error `validate_path_multi` raises at
+    #: dispatch) -- it must never be used to auto-deny. Always `False` for
+    #: MCP rows and every non-file builtin tool.
+    path_precheck_failed: bool = False
 
 
 def _has_non_text_content(value: Any) -> bool:

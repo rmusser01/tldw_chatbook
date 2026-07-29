@@ -386,6 +386,51 @@ async def test_primary_action_is_disabled_with_a_reason_when_nothing_is_selected
 
 
 @pytest.mark.asyncio
+async def test_primary_action_reason_is_visible_without_hovering(evals_app):
+    """TASK-1076: a disabled Textual ``Button`` never emits ``Pressed`` --
+    the previous test proves the button IS disabled with a tooltip, but a
+    tooltip only reaches a user who hovers with a mouse. The reason must
+    also be reachable as plain, always-rendered text -- mirroring
+    ``EvalsInspector``'s own readiness convention (a status badge naming
+    what is blocked, plus a callout stating why), not a second,
+    invented vocabulary.
+    """
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen = evals_app.screen
+        status = screen.query_one("#evals-primary-action-status")
+        assert str(status.renderable) == "Run Bench: Blocked"
+        reason = screen.query_one("#evals-primary-action-reason")
+        assert "Select a bench in the library rail to run it." in str(
+            reason.renderable
+        )
+        # Both sit in the inspector pane, ahead of the button itself --
+        # never silently mounted somewhere the user would not see them
+        # alongside the control they explain.
+        inspector_pane = screen.query_one("#evals-inspector-pane")
+        assert inspector_pane.region.contains_region(status.region)
+        assert inspector_pane.region.contains_region(reason.region)
+
+
+@pytest.mark.asyncio
+async def test_primary_action_reason_names_the_bench_once_one_is_selected(
+    evals_app, seeded_bench
+):
+    """The visible reason must track the SAME per-selection explanation the
+    button's own tooltip carries (``_primary_action_state``), not a static
+    sentence that goes stale the moment a bench is selected."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=seeded_bench)
+        await pilot.pause()
+        status = evals_app.screen.query_one("#evals-primary-action-status")
+        assert "loaded-nouns" in str(status.renderable)
+        assert str(status.renderable).endswith(": Blocked")
+        reason = evals_app.screen.query_one("#evals-primary-action-reason")
+        assert "isn't wired up yet" in str(reason.renderable)
+
+
+@pytest.mark.asyncio
 async def test_inspector_reports_an_unexpected_load_bench_failure_instead_of_going_blank(
     evals_app, seeded_bench, monkeypatch
 ):
@@ -478,3 +523,114 @@ async def test_escape_and_bare_digits_are_no_longer_bound(evals_app):
     bound = {b.key for b in EvalsScreen.BINDINGS}
     assert "escape" not in bound
     assert not bound & {"1", "2", "3", "4", "5", "6"}
+
+
+@pytest.mark.asyncio
+async def test_detail_empty_text_points_at_the_sample_bench_when_the_library_is_empty(
+    evals_app,
+):
+    """TASK-1076: the old, single wording ("Select a bench, dataset, or
+    run...") is unactionable exactly when it is guaranteed to show -- a
+    first launch, where the rail has nothing to select. ``evals_app`` seeds
+    nothing (no benches, datasets, or runs), so this is that condition."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        empty = evals_app.screen.query_one("#evals-detail-empty")
+        text = str(empty.renderable)
+        assert "Nothing here yet" in text
+        assert "sample bench" in text
+
+
+@pytest.mark.asyncio
+async def test_detail_empty_text_stays_generic_when_the_library_has_real_rows(
+    evals_app, seeded_bench
+):
+    """The genuinely-empty-library wording must NOT show once real rows
+    exist -- a user who has a bench (and a dataset, via ``seeded_bench``)
+    but has not clicked anything yet still gets pointed at the rail, not
+    told there is nothing there."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        assert evals_app.screen._selection.kind == "none"
+        empty = evals_app.screen.query_one("#evals-detail-empty")
+        text = str(empty.renderable)
+        assert "Nothing here yet" not in text
+        assert "Select a bench, dataset, or run" in text
+
+
+@pytest.mark.asyncio
+async def test_selection_change_recompose_reads_tasks_once_for_the_empty_state_check(
+    evals_app, evals_db, monkeypatch
+):
+    """TASK-1076-QODO: ``_empty_detail_text()`` used to call
+    ``view_model.benches()`` and ``view_model.classic_tasks()`` back to
+    back on every selection-change recompose -- each independently
+    re-running ``EvalsDB.list_tasks(limit=500)`` -- on top of
+    ``LibraryRail``'s own two reads of the exact same table for the same
+    recompose (out of this fix's scope; it needs the full rows to render
+    rail sections, not just an emptiness check). Pins the fixed shape: the
+    rail still costs two ``list_tasks`` calls, but the detail pane's
+    emptiness check (now ``EvalsViewModel.library_is_empty()``) costs
+    exactly one more, not two -- three calls per recompose, never the old
+    four. A test that only checked the copy (see the two tests above)
+    would pass against the inefficient version just as well; this is the
+    assertion that actually protects the fix.
+    """
+    calls: list[int] = []
+    original_list_tasks = EvalsDB.list_tasks
+
+    def counting_list_tasks(self, *args, **kwargs):
+        calls.append(1)
+        return original_list_tasks(self, *args, **kwargs)
+
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        monkeypatch.setattr(EvalsDB, "list_tasks", counting_list_tasks)
+        calls.clear()
+        evals_app.screen.select(kind="none", id=None)
+        await pilot.pause()
+        assert len(calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_inspector_pane_widens_at_a_wide_terminal_instead_of_staying_fixed(
+    evals_app, seeded_bench
+):
+    """TASK-1076: ``#lab-inspector`` was a hard 30 cells at every terminal
+    width (the same anti-pattern ``#lab-rail`` was already fixed for) --
+    at 200 columns that left the Evals inspector's own content (e.g. the
+    focused-cell detail's "K requested 20 * K returned 20 * canary ..."
+    line) wrapping mid-phrase with most of a wide terminal sitting unused
+    beside it. Selecting a bench (rather than leaving the selection empty)
+    exercises the pane with its richest real content, mirroring
+    ``test_every_pane_descendant_stays_within_its_pane`` above.
+    """
+    widths: dict[int, int] = {}
+    for columns in (80, 200):
+        app = EvalsHarness(_FakeAppInstance(EvalsDB(db_path=":memory:", client_id="t")))
+        # Reseed a bench per app instance -- a Textual App is not re-runnable.
+        base_model_id = app.app_instance.evaluation_orchestrator.db.create_model(
+            name="base", provider="llama_cpp", model_id="m"
+        )
+        dataset_id = app.app_instance.evaluation_orchestrator.db.create_dataset(
+            name="loaded-nouns", format="custom", source_path="inline:loaded-nouns"
+        )
+        bench_id = save_bench(
+            app.app_instance.evaluation_orchestrator.db,
+            BenchConfig(
+                name="loaded-nouns v1", prompt_mode="raw", top_k=20,
+                dataset_id=dataset_id, target_ids=(base_model_id,),
+                probes=(" Sure", " I"),
+            ),
+        )
+        async with app.run_test(size=(columns, 45)) as pilot:
+            await pilot.pause()
+            app.screen.select(kind="bench", id=bench_id)
+            await pilot.pause()
+            widths[columns] = app.screen.query_one("#lab-inspector").region.width
+
+    assert 30 <= widths[80] <= 50
+    assert 30 <= widths[200] <= 50
+    assert widths[80] < widths[200], (
+        f"inspector did not scale with the terminal: {widths}"
+    )

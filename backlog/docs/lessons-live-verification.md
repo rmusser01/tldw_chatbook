@@ -148,6 +148,56 @@ this bug, not of a broken hit region — the app was fine every time.
 
 ---
 
+## A terminal capture is not evidence about what rendered
+
+**TASK-1210, 2026-07-27.** A new cadence dropdown on the Watchlists create form
+appeared, in `tmux capture-pane`, to open with **no options at all** — just an
+empty bordered box:
+
+```
+┌──────────────┐
+│▊▔▔▔▔▔▔▔▔▔▔▔▔▎│
+│▊  Every  ▼  ▎│
+```
+
+The pre-existing `All statuses` Select in the same pane looked identical, at
+both 160x42 and 235x52. Two controls, two terminal sizes, same symptom: it read
+as a screen-wide defect, and the next step was going to be replacing the Select
+with a cycling Button to route around it.
+
+It was not real. `Screen._compositor.render_strips()` shows all four options
+painted:
+
+```
+PAINTROW 37: │  Every 15m   │
+PAINTROW 38: │  Every 1h    │
+PAINTROW 39: │  Every 6h    │
+PAINTROW 40: │  Every 24h   │
+```
+
+**Widget state does not settle this either.** `select.region`, `overlay.visible`
+and `overlay.option_count` are all *pre-paint* facts — they describe what the
+layout engine decided, not what reached the screen. They were correct here, but
+they would have been correct for a genuinely clipped overlay too. Only the
+compositor answers the question actually being asked.
+
+**What to do.** When a live capture suggests something did not render, confirm
+with `Screen._compositor.render_strips()` before believing it, and certainly
+before redesigning around it:
+
+```python
+strips = screen._compositor.render_strips()
+row_text = "".join(seg.text for seg in strips[y])
+```
+
+This is the **fourth** capture-harness artifact on this programme — after the
+byte-offset click bug above, a stale screenshot that produced a whole spec, and
+a defect filed against a control that was working. The pattern is consistent
+enough to state as a rule: **the harness is wrong more often than the app is.**
+Terminal art is a hint about where to look, never a finding.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md` — why the green suite was not evidence

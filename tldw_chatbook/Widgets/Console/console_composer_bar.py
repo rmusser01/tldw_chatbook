@@ -11,12 +11,19 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.events import Click, DescendantBlur, DescendantFocus, MouseUp
 from textual.geometry import Region
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from ...Chat.console_voice_input import (
+    STATE_FINISHING,
+    STATE_IDLE,
+    STATE_LISTENING,
+    STATE_PREPARING,
+)
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -83,11 +90,24 @@ class ConsoleComposerBar(Horizontal):
     MIN_DRAFT_ROWS = 1
     MAX_DRAFT_ROWS = 4
     COMPOSER_CHROME_ROWS = 4
+    VOICE_CHIP_MIN_WIDTH = 24
+    VOICE_CHIP_MAX_WIDTH = 42
     FALLBACK_DRAFT_WIDTH = 80
     PASTE_TOKEN_STYLE = "bold cyan"
     PASTE_CONFIRM_STYLE = "bold black on yellow"
     CURSOR_GLYPH = "▌"  # LEFT HALF BLOCK, terminal-style caret
     CURSOR_BLINK_INTERVAL = 0.53
+    #: Shared with the mic button's initial `compose()` tooltip and
+    #: `sync_dictation_state`'s idle tooltip, and used as the fallback in
+    #: `set_dictation_availability` -- an `Availability(ok=False)` with no
+    #: `remedy` text must not blank the tooltip entirely.
+    #: Deliberately names no provider, model or language: dictation now streams
+    #: through whichever speech-to-text provider `console_voice_input.resolve()`
+    #: picks, in `transcription.default_language`. Any static claim about
+    #: "English" or "Parakeet v2" here is false on most machines.
+    DICTATION_IDLE_TOOLTIP = (
+        "Dictate into the draft with the configured speech-to-text provider."
+    )
 
     def __init__(
         self,
@@ -126,6 +146,32 @@ class ConsoleComposerBar(Horizontal):
         self._setup_blocked_reason = ""
         self._can_save_chatbook = False
         self._dictation_state: _DictationState = "idle"
+        #: Whether the last availability probe found both a capture backend
+        #: and a transcription provider installed. Only consulted while
+        #: `_dictation_state` is "idle" -- once a capture is underway, the
+        #: probe already ran (inside `ConsoleVoiceInputController.start()`)
+        #: and this flag stays out of the way of the busy-state tooltips.
+        self._dictation_available = True
+        #: Reason + remedy shown in the mic tooltip while unavailable. Empty
+        #: whenever `_dictation_available` is True.
+        self._dictation_unavailable_tooltip = ""
+        #: Chip-only display state for the active capture. Reset on every
+        #: fresh entry into "recording" (`sync_dictation_state`) and updated
+        #: live by `set_voice_partial()` / `tick_voice_elapsed()`; preserved
+        #: across a redundant `sync_dictation_state("recording")` call (the
+        #: 0.2s Console UI-sync tick calls this unconditionally) so that tick
+        #: cannot stomp the chip back to "0:00" mid-capture.
+        self._voice_partial: str = ""
+        self._voice_elapsed_seconds: int = 0
+        #: Latest model-preparation status for the chip, held for the same
+        #: reason `_voice_partial` is: `sync_dictation_state` is called
+        #: unconditionally by every control-bar refresh (changing a provider,
+        #: collapsing a rail), and without holding this a single keystroke
+        #: elsewhere would rewrite a multi-minute "Preparing speech model…" back
+        #: to "Preparing microphone…" -- which by then is also false, because
+        #: nothing is preparing a microphone. Cleared only on a genuine
+        #: transition into "starting", and on recording/idle.
+        self._voice_preparing_message: str = ""
         self._pending_attachment_label: str | None = None
         self._suppress_next_draft_click = False
         self._draft_selection_all = False
@@ -409,10 +455,16 @@ class ConsoleComposerBar(Horizontal):
 
         stop_button.disabled = False
         stop_button.variant = "warning" if run_active else "default"
+        # Fleet-UX expert review F7 (task-1234): this LIVE sync overrides
+        # the button's construction-time tooltip on every action-state
+        # refresh, so the compose-time copy alone (see `compose()` above)
+        # was never actually what a user hovering an active Stop button
+        # saw -- fixed here too, matching the collapsed Stop button (which
+        # has no such override).
         stop_button.tooltip = (
-            "Stop generation in the active Console session."
+            "Stop this tab's run."
             if run_active
-            else "No active Console run to stop."
+            else "No active run to stop in this tab."
         )
         stop_button.set_class(run_active, "console-stop-active")
         stop_button.set_class(not run_active, "console-stop-idle")
@@ -450,6 +502,8 @@ class ConsoleComposerBar(Horizontal):
         Args:
             state: Current one-shot dictation lifecycle state.
         """
+        entering_recording = state == "recording" and self._dictation_state != "recording"
+        entering_starting = state == "starting" and self._dictation_state != "starting"
         self._dictation_state = state
         try:
             button = self.query_one("#console-dictation", Button)
@@ -462,16 +516,145 @@ class ConsoleComposerBar(Horizontal):
             "transcribing": "STT…",
         }
         tooltips = {
-            "idle": "Record one English utterance with local Parakeet v2.",
-            "starting": "Starting the default microphone…",
+            "idle": self.DICTATION_IDLE_TOOLTIP,
+            # A first-run model download is minutes long, so this phase needs a
+            # way out. The button stays clickable here (unlike "transcribing",
+            # where there is nothing left to cancel) and a press cancels.
+            "starting": "Preparing the speech model — press to cancel.",
             "recording": "Stop microphone recording and transcribe.",
-            "transcribing": "Transcribing locally with Parakeet v2 INT8…",
+            # No provider name here either: the transcribing phase runs on the
+            # same resolved provider the idle tooltip declines to name.
+            "transcribing": "Transcribing…",
         }
+        # Unavailability is cosmetic-only, and only shown at idle: the button
+        # stays real-clickable (never Textual `disabled`) so a press can
+        # still reach the screen's activation handler, which re-probes and
+        # is what actually recovers the button without a remount once, say,
+        # the missing extra gets installed mid-run. Real Textual `disabled`
+        # would block the Click event from ever being delivered at all --
+        # including on a later retry -- which is exactly the dead-end this
+        # exists to avoid.
+        unavailable = state == "idle" and not self._dictation_available
         button.label = labels[state]
-        button.tooltip = tooltips[state]
-        button.disabled = state in {"starting", "transcribing"}
+        button.tooltip = (
+            self._dictation_unavailable_tooltip if unavailable else tooltips[state]
+        )
+        # "starting" stays enabled on purpose: it now covers a model load that
+        # can run for minutes on a first run, and a disabled button would leave
+        # the user with no in-app way out of it.
+        button.disabled = state == "transcribing"
         button.variant = "warning" if state == "recording" else "default"
         button.set_class(state == "recording", "console-dictation-recording")
+        button.set_class(unavailable, "console-dictation-unavailable")
+
+        # Mirror the lifecycle into the inline voice chip. The chip has its
+        # own vocabulary (STATE_* from console_voice_input), so map the
+        # button's states explicitly rather than passing the string through.
+        if state == "idle":
+            self._voice_partial = ""
+            self._voice_elapsed_seconds = 0
+            self._voice_preparing_message = ""
+            self.set_voice_status(STATE_IDLE)
+        elif state == "starting":
+            if entering_starting:
+                self._voice_partial = ""
+                self._voice_elapsed_seconds = 0
+                self._voice_preparing_message = ""
+            # Re-applied, not recomputed: a redundant resync (any control-bar
+            # refresh calls this) must not overwrite a live model-preparation
+            # message with the generic microphone one.
+            self.set_voice_status(
+                STATE_PREPARING,
+                message=self._voice_preparing_message or "◌ Preparing microphone…",
+            )
+        elif state == "recording":
+            if entering_recording:
+                self._voice_partial = ""
+                self._voice_elapsed_seconds = 0
+                self._voice_preparing_message = ""
+            self.set_voice_status(
+                STATE_LISTENING,
+                partial=self._voice_partial,
+                elapsed_seconds=self._voice_elapsed_seconds,
+            )
+        elif state == "transcribing":
+            self.set_voice_status(STATE_FINISHING, message="◌ Transcribing…")
+
+    def set_dictation_availability(
+        self, *, available: bool, tooltip: str = ""
+    ) -> None:
+        """Record the last dictation availability probe and refresh the mic button.
+
+        Args:
+            available: Whether a probe found both a capture backend and a
+                transcription provider installed.
+            tooltip: Reason and remedy to show in the mic tooltip while
+                unavailable (e.g. naming the missing extra to install).
+                Ignored when ``available`` is True. An empty string falls
+                back to the ordinary idle tooltip rather than blanking it --
+                `Availability(ok=False)` defaults both `reason` and `remedy`
+                to `""`, and a blank tooltip would be worse than the generic
+                one it replaced.
+        """
+        self._dictation_available = bool(available)
+        self._dictation_unavailable_tooltip = (
+            "" if available else (tooltip or self.DICTATION_IDLE_TOOLTIP)
+        )
+        self.sync_dictation_state(self._dictation_state)
+
+    def set_voice_preparing_message(self, text: str) -> None:
+        """Show model-preparation progress in the chip, and keep showing it.
+
+        Held in `_voice_preparing_message` rather than written straight to the
+        chip: `sync_dictation_state("starting")` fires from every control-bar
+        refresh, and a one-shot write would be erased by the next unrelated UI
+        change -- during exactly the multi-minute window this message exists
+        for, and replaced by a "Preparing microphone…" that is not even true.
+
+        Args:
+            text: Chip-sized status text (the "◌ " prefix included). Ignored
+                outside the `starting` lifecycle state, so a notice that drains
+                late cannot repaint a chip that has moved on.
+        """
+        if self._dictation_state != "starting":
+            return
+        self._voice_preparing_message = text
+        self.set_voice_status(STATE_PREPARING, message=text)
+
+    def set_voice_partial(self, text: str) -> None:
+        """Render live recognizer text into the chip while recording.
+
+        Args:
+            text: In-flight partial transcript from the recognizer. Ignored
+                (a no-op) outside the `recording` lifecycle state, so a
+                partial that drains after the capture already ended cannot
+                resurrect the chip.
+        """
+        if self._dictation_state != "recording":
+            return
+        self._voice_partial = text
+        self.set_voice_status(
+            STATE_LISTENING,
+            partial=self._voice_partial,
+            elapsed_seconds=self._voice_elapsed_seconds,
+        )
+
+    def tick_voice_elapsed(self) -> None:
+        """Advance the chip's elapsed-time counter by one second.
+
+        A no-op outside `recording` so a stray tick that fires just after the
+        capture ends (the owning timer is stopped on every exit path, but a
+        tick already queued for this frame can still land) cannot repaint a
+        chip that has already collapsed.
+        """
+        if self._dictation_state != "recording":
+            return
+        self._voice_elapsed_seconds += 1
+        self.set_voice_status(
+            STATE_LISTENING,
+            partial=self._voice_partial,
+            elapsed_seconds=self._voice_elapsed_seconds,
+        )
 
     @classmethod
     def _wrap_draft_lines(cls, text: str, width: int) -> list[str]:
@@ -1966,6 +2149,75 @@ class ConsoleComposerBar(Horizontal):
                 "Attach files or context through the active Console session."
             )
 
+    def set_voice_status(
+        self,
+        state: str,
+        *,
+        partial: str = "",
+        elapsed_seconds: int = 0,
+        message: str = "",
+    ) -> None:
+        """Render the dictation state into the inline voice chip.
+
+        Every write goes through `textual.content.Content`, never a bare string:
+        a `Static` parses strings as Textual markup, and `rich.markup.escape`
+        (which used to guard this) only escapes tags opening with `[a-z#/@]`.
+        Whisper's own tokens are uppercase, so `[BLANK_AUDIO]` and `[Music]`
+        survived escaping untouched and were then *stripped at paint time* --
+        the chip showed "● 0:03    hi" for "● 0:03  [BLANK_AUDIO] [Music] hi".
+        `Content` carries plain text with no markup semantics at all, so it
+        fixes the swallowing and the opposite failure (`[/tmp/x]` raising
+        `MarkupError`) in one move. Nothing in this chip is ever markup: the
+        text is either our own constants or recognizer output.
+
+        Args:
+            state: One of the `STATE_*` constants from `console_voice_input`.
+            partial: In-flight recognizer text. Truncated from the left so the
+                newest words stay visible, and dropped entirely on narrow
+                terminals so the 1fr draft never collapses.
+            elapsed_seconds: Recording duration, rendered as m:ss.
+            message: Status or failure text for non-listening states.
+        """
+        try:
+            chip = self.query_one("#console-voice-status", Static)
+        except NoMatches:
+            return
+
+        if state in ("idle", "unavailable"):
+            chip.styles.display = "none"
+            chip.styles.width = 0
+            chip.styles.min_width = 0
+            chip.update(Content(""))
+            return
+
+        # `size` is (0, 0) before the first layout; fall back to the ceiling
+        # rather than computing a zero width and rendering an invisible chip.
+        total_width = self.size.width or self.VOICE_CHIP_MAX_WIDTH * 2
+        available = max(0, total_width - self.VOICE_CHIP_MIN_WIDTH)
+        width = min(self.VOICE_CHIP_MAX_WIDTH, available)
+
+        if state == "listening":
+            head = f"● {elapsed_seconds // 60}:{elapsed_seconds % 60:02d}"
+            room = width - len(head) - 3
+            if partial and room > 8:
+                tail = partial[-room:]
+                body = f"{head}  {tail}"
+            else:
+                # Below the floor the counter alone still proves the mic is live.
+                body = head
+                width = min(width, len(head) + 2)
+        else:
+            body = message or state
+            width = min(width, len(body) + 2)
+
+        chip.styles.display = "block"
+        chip.styles.width = max(width, 1)
+        chip.styles.min_width = 0
+        chip.styles.height = 1
+        chip.styles.min_height = 1
+        chip.set_class(state == "error", "console-voice-status-error")
+        chip.update(Content(body))
+
     def compose(self) -> ComposeResult:
         expanded = Horizontal(
             id="console-composer-expanded",
@@ -2000,6 +2252,17 @@ class ConsoleComposerBar(Horizontal):
             recovery.styles.height = 0
             recovery.styles.min_height = 0
             yield recovery
+            voice_status = Static(
+                "",
+                id="console-voice-status",
+                classes="console-voice-status",
+            )
+            voice_status.styles.display = "none"
+            voice_status.styles.width = 0
+            voice_status.styles.min_width = 0
+            voice_status.styles.height = 0
+            voice_status.styles.min_height = 0
+            yield voice_status
             attachment_indicator = Static(
                 "",
                 id="console-attachment-indicator",
@@ -2073,7 +2336,11 @@ class ConsoleComposerBar(Horizontal):
                     width=8,
                     id="console-stop-generation",
                     classes="destination-action-button console-stop-button",
-                    tooltip="Stop generation in the active Console session.",
+                    # Fleet-UX expert review F7 (task-1234): under parallel
+                    # runs "Stop generation in the active Console session"
+                    # read as ambiguous scope; the button only ever stops
+                    # THIS tab's own run (behavior unchanged) -- say so.
+                    tooltip="Stop this tab's run.",
                 )
                 stop_button.styles.display = "none"
                 yield stop_button
@@ -2082,7 +2349,7 @@ class ConsoleComposerBar(Horizontal):
                     width=8,
                     id="console-dictation",
                     classes="destination-action-button console-dictation-button",
-                    tooltip="Record one English utterance with local Parakeet v2.",
+                    tooltip=self.DICTATION_IDLE_TOOLTIP,
                 )
                 yield self._bounded_button(
                     "Attach",
@@ -2126,7 +2393,9 @@ class ConsoleComposerBar(Horizontal):
                 id="console-collapsed-stop-generation",
                 classes="destination-action-button console-stop-button",
                 variant="warning",
-                tooltip="Stop generation in the active Console session.",
+                # Fleet-UX expert review F7 (task-1234): matches the
+                # expanded Stop button's tooltip (console-stop-generation).
+                tooltip="Stop this tab's run.",
             )
             collapsed_stop.styles.display = "block" if self._run_active else "none"
             yield collapsed_stop

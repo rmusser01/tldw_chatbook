@@ -25,6 +25,7 @@ from textual.widgets import Button, DataTable, Input, Select, Static
 from tldw_chatbook.MCP.readiness import HubAction
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import format_duration_ms
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
+from tldw_chatbook.UI.Widgets.table_click_select import DataTableClickSelectMixin
 
 _TABLE_COLUMNS = ("When", "Tool", "Initiator", "Decision", "Duration", "Outcome")
 
@@ -248,7 +249,7 @@ def _outcome_text(entry: dict[str, Any]) -> str:
     return "OK" if entry.get("ok") else "Failed"
 
 
-class MCPAuditMode(Vertical):
+class MCPAuditMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Audit mode: execution-log table, filters, empty state."""
 
     DEFAULT_CSS = """
@@ -543,6 +544,10 @@ class MCPAuditMode(Vertical):
             if row_key is not None and row_key.value is not None:
                 cursor_key = str(row_key.value)
 
+        # Rebuilding moves the cursor to row 0 before the key-based restore
+        # below puts it back; declaring the rebuild keeps that transient from
+        # being read as a selection (DataTableClickSelectMixin).
+        self.repopulating_table()
         table.clear(columns=True)
         table.add_columns(*_TABLE_COLUMNS)
         restored_index: int | None = None

@@ -34,6 +34,15 @@ LOAD_TOOLS_NAME = "load_tools"
 SKILL_FILE_TOOL_NAME = "skill_file"
 INSTALL_SKILL_TOOL_NAME = "install_skill"
 RUN_SKILL_SCRIPT_TOOL_NAME = "run_skill_script"
+SEARCH_RUN_LOG_TOOL_NAME = "search_run_log"
+# Phase 2 (run-log spec §10): the two aggregation/slicing runtime tools,
+# registered exactly like SEARCH_RUN_LOG_TOOL_NAME above -- same name-
+# constant + RUNTIME_TOOL_NAMES + tool_catalog schema + LoopDeps field +
+# dispatch-branch + primary-agent-only-service-gate pattern. See
+# agent_service.py's `log_active` gate and run_log_search.py's
+# `compute_stats`/`slice_records` for the implementations these dispatch to.
+RUN_LOG_STATS_TOOL_NAME = "run_log_stats"
+RUN_LOG_SLICE_TOOL_NAME = "run_log_slice"
 RUNTIME_TOOL_NAMES = frozenset(
     {
         SPAWN_TOOL_NAME,
@@ -42,6 +51,9 @@ RUNTIME_TOOL_NAMES = frozenset(
         SKILL_FILE_TOOL_NAME,
         INSTALL_SKILL_TOOL_NAME,
         RUN_SKILL_SCRIPT_TOOL_NAME,
+        SEARCH_RUN_LOG_TOOL_NAME,
+        RUN_LOG_STATS_TOOL_NAME,
+        RUN_LOG_SLICE_TOOL_NAME,
     }
 )
 
@@ -59,6 +71,13 @@ RUNTIME_TOOL_NAMES = frozenset(
 #: before any real work, on every single message.
 DIRECT_DISCLOSE_THRESHOLD = 16
 LOOP_DETECTION_N = 3
+#: Fence-protocol tool-result convention (`agent_runtime._append_tool_result`'s
+#: fence branch: `{"role": "user", "content": f"{FENCE_TOOL_RESULT_PREFIX}
+#: {call.name}: {content}"}`). Promoted to a shared constant (TASK-1272,
+#: Phase 3) so `run_log_eviction`'s protocol-aware turn grouping can match
+#: the exact same string rather than a re-typed copy that could silently
+#: drift from the one `_append_tool_result` actually writes.
+FENCE_TOOL_RESULT_PREFIX = "Tool result for "
 #: Default ceiling on provider turns (STEP_MODEL steps) in one run. Stays
 #: >= the default max_steps so it is provably unreachable at engine
 #: defaults; it only becomes the operative limiter for a caller that raises

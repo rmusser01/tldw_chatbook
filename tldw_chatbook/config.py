@@ -652,6 +652,35 @@ DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 50
 MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 1
 MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 100000
 
+# TASK-870: the single, user-adjustable cap on how much of an agent tool
+# result the Console *displays* -- replaces the scattered hardcoded caps
+# that used to govern the live step summary (200), the transcript TOOL
+# marker (160), and a resumed/persisted step's summary (200). Distinct from
+# `Agents.agent_models.RunBudget.max_tool_result_chars` (default 16,000),
+# which caps what the MODEL saw -- that value enters the model's own
+# history, not the Console's UI, and stays out of this control's reach.
+# Default (160) is the transcript TOOL marker's prior cap, kept as-is: the
+# inline marker is the primary, always-visible reading surface (every user
+# scrolling the transcript sees it), so a fresh install's TRANSCRIPT reads
+# unchanged. The Agent rail's live-step and resumed/persisted step summaries
+# were previously 200, not 160 -- unifying to one cap means those two
+# secondary, optional-panel surfaces now trim 40 characters more than
+# before. That is a real, if minor, behaviour change, not a no-op: chosen
+# over raising the default to 200 (which would instead grow the marker and
+# make the transcript itself noisier) because the transcript is what most
+# users actually read, and "View full log" now exists as the full-fidelity
+# escape hatch the rail's tighter preview can safely defer to.
+# Maximum (2000) is not arbitrary: `agent_runtime.py` already caps a step's
+# OWN recorded `result` field at 2000 characters before any of these three
+# display paths ever see it -- raising the display cap past that ceiling
+# could not reveal a single additional character, only mislead a user into
+# thinking a higher setting shows more. Reading the full, untruncated
+# result -- beyond what any display cap can reach -- is what the run log
+# ("View full log") is for.
+DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 160
+MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 20
+MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 2000
+
 
 def coerce_bool_setting(value: Any, default: bool = True) -> bool:
     """Coerce config/app setting values with the same bool rules as load_settings.
@@ -839,6 +868,16 @@ def load_settings(force_reload: bool = False) -> Dict:
         DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
         minimum=MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
         maximum=MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    )
+    # TASK-870: same coercion shape as paste_collapse_threshold above.
+    final_console_settings_cli["tool_result_display_chars"] = coerce_int_setting(
+        final_console_settings_cli.get(
+            "tool_result_display_chars",
+            DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        ),
+        DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        minimum=MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        maximum=MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     )
     background_effects = final_console_settings_cli.get("background_effects")
     if not isinstance(background_effects, dict):
@@ -2292,9 +2331,12 @@ sync_retry_max_delay_seconds = 300
 sync_retry_jitter = true
 scheduler_poll_interval_seconds = 30
 reminder_catchup_hours = 24
-# Feature flags for the watchlist-to-unified-scheduler migration (ADR-020).
-watchlist_checks_enabled = false  # Enable unified scheduler watchlist execution
-watchlist_checks_shadow = true    # Run new handler side-by-side without mutating Subscriptions_DB
+# Feature flags for the watchlist-to-unified-scheduler migration (ADR-019).
+# Both were staged for a shadow-mode dual-run against the legacy SubscriptionScheduler.
+# That scheduler is gone, so shadow mode has nothing to compare against and leaving
+# these at their staging values meant nothing ever checked a watchlist (TASK-1210).
+watchlist_checks_enabled = true   # Run watchlist checks on their configured cadence
+watchlist_checks_shadow = false   # Diagnostics only: fetch but DISCARD results, ignoring cadence
 
 [media_cleanup]
 # Media cleanup settings for automatic hard deletion of soft-deleted items

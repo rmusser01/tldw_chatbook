@@ -3,18 +3,14 @@ Miscellaneous Worker Handler - Handles various other worker types.
 
 This module manages state changes for workers that don't fit into the main
 categories, including:
-- TLDW API calls
 - Ollama API operations
 - Model downloads
 """
 
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 from textual.worker import Worker, WorkerState
 
 from .base_handler import BaseWorkerHandler
-
-if TYPE_CHECKING:
-    pass
 
 
 class MiscWorkerHandler(BaseWorkerHandler):
@@ -22,7 +18,6 @@ class MiscWorkerHandler(BaseWorkerHandler):
 
     # Worker groups this handler manages
     HANDLED_GROUPS = {
-        "api_calls",
         "ollama_api",
         "model_download",
     }
@@ -50,13 +45,7 @@ class MiscWorkerHandler(BaseWorkerHandler):
         worker_info = self.get_worker_info(event)
         self.log_state_change(worker_info, f"{worker_info['group']}: ")
 
-        # Import here to avoid circular imports
-        from tldw_chatbook.Event_Handlers import ingest_events
-
-        if worker_info["group"] == "api_calls":
-            await self._handle_api_calls(event, worker_info, ingest_events)
-
-        elif worker_info["group"] == "ollama_api":
+        if worker_info["group"] == "ollama_api":
             # Ollama operations now use asyncio.to_thread instead of workers
             self.logger.info(
                 f"Ollama API worker '{worker_info['name']}' finished with state {worker_info['state']}"
@@ -64,20 +53,6 @@ class MiscWorkerHandler(BaseWorkerHandler):
 
         elif worker_info["group"] == "model_download":
             await self._handle_model_download(event, worker_info)
-
-    async def _handle_api_calls(
-        self, event: Worker.StateChanged, worker_info: dict, ingest_events
-    ) -> None:
-        """Handle TLDW API call workers."""
-        self.logger.info(
-            f"TLDW API worker '{worker_info['name']}' finished with state {worker_info['state']}"
-        )
-
-        if worker_info["state"] == WorkerState.SUCCESS:
-            await ingest_events.handle_tldw_api_worker_success(self.app, event)
-
-        elif worker_info["state"] == WorkerState.ERROR:
-            await ingest_events.handle_tldw_api_worker_failure(self.app, event)
 
     async def _handle_model_download(
         self, event: Worker.StateChanged, worker_info: dict

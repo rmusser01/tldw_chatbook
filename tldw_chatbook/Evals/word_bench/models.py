@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from typing import Literal, Optional
 
 PromptMode = Literal["raw", "chat"]
@@ -85,7 +85,48 @@ class Target:
 
 @dataclass(frozen=True)
 class BenchConfig:
-    """A word bench definition."""
+    """A word bench definition.
+
+    ``strict`` (default ``True``) gates only the ``target_ids``-uniqueness
+    check below, and is an ``InitVar`` -- accepted by ``__init__`` but not
+    stored as a field, so it never appears in equality, ``repr``, or
+    ``dataclasses.asdict``.
+
+    Every WRITE call site (user-facing bench creation/edit, ``save_bench``,
+    ``create_run_group``, ``WordBenchRunner.run``) must go through a
+    ``strict=True`` construction (the default -- nothing needs to opt in)
+    so a duplicate can never be created or run: every per-target map
+    downstream (``WordBenchRunner``'s ``clients``, its preflight/canary
+    dicts, ``storage.create_run_group``'s ``run_ids``) is keyed by target
+    id, and a duplicate would otherwise silently collapse two targets into
+    one with no error.
+
+    ``storage.load_bench`` is the ONE exception, constructing with
+    ``strict=False``: it rebuilds a ``BenchConfig`` from whatever is
+    already sitting in ``eval_tasks.config_data``, including a bench saved
+    before this validation existed (task-1132). Rejecting on READ would
+    make that legacy bench permanently unopenable instead of merely
+    unrunnable -- worse than the bug this validation fixes, since the user
+    could no longer even see the duplicate to remove it. A lenient load
+    preserves both ids exactly as stored so the bench editor and readiness
+    inspector render every row (see their own duplicate-safe, index-keyed
+    widget ids), and the run control stays blocked until the write path
+    (which still validates unconditionally) accepts an edited config.
+
+    ``target_ids`` element-type validation (a list/tuple of non-empty
+    ``str``) is a SEPARATE check from the uniqueness one above and always
+    runs, regardless of ``strict`` -- task-1132 only ever gated the
+    uniqueness check; ``target_ids`` element shape was never validated
+    anywhere, on read or write, before or after that fix. It is worth
+    closing now because ``load_bench``'s read-leniency means this class
+    deliberately accepts more from stored data than it used to: a
+    corrupted ``config_data.target_ids`` entry (e.g. an int, or a nested
+    list) previously loaded without complaint and only failed later, deep
+    inside ``db.get_model(target_id)``, as an opaque sqlite
+    parameter-binding error far from the actual cause (``eval_models.id``
+    is ``TEXT``). Validating the shape here, unconditionally, turns that
+    into a clear failure at the boundary instead.
+    """
 
     name: str
     prompt_mode: PromptMode
@@ -95,8 +136,9 @@ class BenchConfig:
     probes: tuple[str, ...] = ()
     description: str = ""
     concurrency: int = 1
+    strict: InitVar[bool] = True
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, strict: bool) -> None:
         if self.prompt_mode not in ("raw", "chat"):
             raise ValueError(
                 f"prompt_mode must be 'raw' or 'chat', got {self.prompt_mode!r}"
@@ -105,7 +147,25 @@ class BenchConfig:
             raise ValueError(f"top_k must be >= 1, got {self.top_k}")
         if self.concurrency < 1:
             raise ValueError(f"concurrency must be >= 1, got {self.concurrency}")
-        if len(set(self.target_ids)) != len(self.target_ids):
+        # Element-type validation, unlike the uniqueness check below, is NOT
+        # gated by `strict`: it must catch genuinely malformed data on every
+        # path, including the lenient `load_bench` read. It also has to run
+        # BEFORE the `set(self.target_ids)` call below -- an unhashable
+        # element (e.g. a nested list) would otherwise blow up that line
+        # with an opaque TypeError instead of the diagnosable ValueError
+        # this check produces.
+        if not isinstance(self.target_ids, (list, tuple)):
+            raise ValueError(
+                f"target_ids must be a list or tuple, got {self.target_ids!r} "
+                f"(type: {type(self.target_ids).__name__})"
+            )
+        for target_id in self.target_ids:
+            if not isinstance(target_id, str) or not target_id:
+                raise ValueError(
+                    f"target_ids elements must be non-empty strings, got "
+                    f"{target_id!r} (type: {type(target_id).__name__})"
+                )
+        if strict and len(set(self.target_ids)) != len(self.target_ids):
             # Every per-target map downstream (WordBenchRunner's `clients`,
             # its preflight/canary dicts, storage.create_run_group's
             # `run_ids`) is keyed by target id. A duplicate silently

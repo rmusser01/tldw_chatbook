@@ -1,0 +1,52 @@
+Console
+Actions:
+- New tab
+- Settings
+- Attach context
+- Run Library RAG
+- Stop
+- Help
+Shortcuts:
+  Panes:
+    F6: next pane
+    Shift+F6: previous pane
+    Escape: return to the composer
+  Transcript:
+    j / k: select next / previous message
+    Enter: show the selected message's actions
+    c: copy the selected message
+    e: edit the selected message
+    r: regenerate the selected message
+    Escape: clear the selection
+  Composer:
+    Enter: send
+    Ctrl+J: insert a newline (works in any terminal)
+    Shift+Enter: insert a newline (where the terminal delivers it)
+    Alt+V: paste an image from the clipboard
+    Attach: attach files — up to 5 per message
+    Paste / drop path: paste or drop a file path to attach it
+    Ctrl+K: switch session
+    Ctrl+T: new tab
+  Global & modals:
+    F1: help
+    Ctrl+P: command palette
+    Alt+M: quick change model
+    F2: rename a session (in the Ctrl+K switcher)
+     Close
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

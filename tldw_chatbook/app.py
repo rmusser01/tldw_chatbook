@@ -43,7 +43,7 @@ from textual.app import App, ComposeResult, ScreenStackError
 from textual.widgets import RichLog, Markdown
 from textual.containers import Container
 from textual.reactive import reactive
-from textual.worker import Worker
+from textual.worker import Worker, WorkerState
 from textual.binding import Binding
 from textual.message import Message
 from textual.timer import Timer
@@ -205,6 +205,8 @@ from tldw_chatbook.Utils.Emoji_Handling import (
 )
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
+from tldw_chatbook.Utils.persistent_diagnostics import persist_event
+from tldw_chatbook.TTS import TTSProfileService
 from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
@@ -244,6 +246,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSAudioBookGenerateEvent,
 )
 from .Notes.Notes_Library import NotesInteropService
+from .Notes.file_notes_git_service import build_file_notes_session_owner
 from .Notes.notes_scope_service import NotesScopeService
 from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
 from .Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
@@ -324,7 +327,7 @@ from .UI.Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 from .UI.Navigation.screen_state_store import RuntimeIdentity, ScreenStateStore
-from .UI.Navigation.screen_registry import resolve_screen_target
+from .UI.Navigation.screen_registry import resolve_screen_target, screen_load_error
 from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from .UI.Screens.study_scope_models import StudyScopeContext
@@ -523,6 +526,13 @@ API_IMPORTS_SUCCESSFUL = True
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
 DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
+
+# TASK-1240. The `component` this module passes to `persist_event`. It is a
+# bounded metadata token (`persist_event` raises `ValueError` otherwise) and is
+# used raw to build the diagnostics logger name, so the four emit sites in this
+# file must agree on one spelling. Private to `app.py`: every event emitted
+# here belongs to the application lifecycle.
+_DIAGNOSTICS_COMPONENT_APP = "app"
 #
 #######################################################################################################################
 #
@@ -3379,9 +3389,6 @@ class TldwCli(
     # User ID for notes, will be initialized in __init__
     current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
 
-    # Shared state for tldw API requests
-    _last_tldw_api_request_context: Dict[str, Any] = {}
-
     def __init__(self):
         # Track startup timing
         self._startup_start_time = time.perf_counter()
@@ -3416,6 +3423,7 @@ class TldwCli(
         self._tts_profile_repository = TTSProfileRepository(get_tts_profiles_db_path())
         self._tts_profile_repository_open_task: asyncio.Task[bool] | None = None
         self._tts_profile_repository_close_task: asyncio.Task[None] | None = None
+        self._tts_profile_service: TTSProfileService | None = None
         self.acp_runtime_process_manager = ACPRuntimeProcessManager.from_app_config(
             self.app_config
         )
@@ -3425,6 +3433,16 @@ class TldwCli(
         load_runtime_policy_for_app(self)
         self.screen_state_store = ScreenStateStore()
         self.pending_handoffs = PendingHandoffStore()
+        self.file_notes_session_owner = build_file_notes_session_owner()
+        self._file_notes_session_owner_shutdown_task: asyncio.Task[None] | None = None
+        #: TASK-1143 (F5): count of Console agent runs/rounds the last
+        #: navigation-away teardown killed (``ChatScreen.on_unmount`` ->
+        #: ``ConsoleChatController.shutdown()``). The app outlives the
+        #: screen instance that recorded it -- screens are never cached
+        #: (``_create_navigation_screen``) -- so the NEXT Console mount
+        #: reads and clears this one-shot slot to show a single toast.
+        #: 0 means nothing to report.
+        self._console_fleet_teardown_notice: int = 0
         self.service_policy_enforcer = (
             ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
         )
@@ -4211,7 +4229,7 @@ class TldwCli(
         )
         self.local_character_persona_service = LocalCharacterPersonaService(
             self.chachanotes_db,
-            user_profile_store_path=get_user_data_dir() / "tldw_chatbook_personas.json",
+            persona_store_path=get_user_data_dir() / "tldw_chatbook_personas.json",
         )
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.local_character_persona_service,
@@ -4667,10 +4685,10 @@ class TldwCli(
         )
 
         watchlist_checks_enabled = get_cli_setting(
-            "scheduling", "watchlist_checks_enabled", False
+            "scheduling", "watchlist_checks_enabled", True
         )
         watchlist_checks_shadow = get_cli_setting(
-            "scheduling", "watchlist_checks_shadow", True
+            "scheduling", "watchlist_checks_shadow", False
         )
 
         watchlist_handler = None
@@ -5931,6 +5949,21 @@ class TldwCli(
         "customize": {"category": "theme"},
     }
 
+    # How long the outgoing screen gets to flush pending work before the app
+    # gives up on the transition.
+    #
+    # `handle_screen_navigation` is an `@on` handler on the App itself, so
+    # everything it awaits is awaited ON the App's message pump -- while it
+    # blocks, the app processes no clicks, no bindings and no further
+    # navigation. The flush path reaches genuinely unbounded awaits
+    # (`library_screen`'s `await worker.wait()`, and `_run_library_service_call`'s
+    # `asyncio.to_thread`, which cannot be cancelled at all), so a save that
+    # never completed left the app permanently frozen AND unkillable.
+    #
+    # Generous enough that a real save is never cut short, small enough that a
+    # wedged one costs a few seconds instead of the session.
+    NAVIGATION_FLUSH_TIMEOUT_SECONDS: float = 5.0
+
     def _create_navigation_screen(self, screen_name: str, screen_class: type):
         """Build a FRESH screen instance for every navigation.
 
@@ -5996,9 +6029,88 @@ class TldwCli(
         """Return the screen-snapshot scope from authoritative runtime state."""
         return RuntimeIdentity.from_state(self.runtime_policy.state)
 
+    def _screen_navigation_lock(self) -> asyncio.Lock:
+        """Return the lock serializing `handle_screen_navigation` attempts.
+
+        TASK-1230: `_dispatch_screen_navigation` (the App's real
+        ``@on(NavigateToScreen)`` handler) now runs each navigation attempt
+        as its own worker instead of awaiting it inline on the App's single
+        message-processing task -- see that method's docstring for why.
+        Workers are otherwise independent, and running two attempts
+        concurrently would let them race on shared state in a way the old
+        single-queue dispatch never allowed: ``self.current_tab``,
+        ``switch_screen``'s screen stack, and -- inside
+        ``_complete_screen_navigation``, itself called from within the
+        guarded region -- ``self.screen_state_store.save()`` (snapshotting
+        the OUTGOING screen) and ``.restore()`` (rehydrating the INCOMING
+        one); two attempts interleaving there could save/restore the wrong
+        screen's state or clobber a snapshot the other attempt just wrote.
+        This lock preserves the old FIFO ordering: `asyncio.Lock` serves
+        waiters in arrival order, so attempts still complete strictly one
+        at a time, in the order their ``NavigateToScreen`` messages were
+        dispatched -- confirmed by
+        ``test_overlapping_navigate_requests_complete_in_fifo_order``,
+        which reliably reorders without this lock -- the only change is
+        that an attempt waiting on a confirm-navigation dialog no longer
+        blocks the App from routing input to that very dialog while it
+        waits its turn.
+        """
+        lock = getattr(self, "_screen_navigation_lock_instance", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._screen_navigation_lock_instance = lock
+        return lock
+
     @on(NavigateToScreen)
+    def _dispatch_screen_navigation(self, message: NavigateToScreen) -> None:
+        """Kick off ``handle_screen_navigation`` as its own worker (TASK-1230).
+
+        F1 (fleet-UX expert review, 2026-07-28): a busy-fleet navigation
+        opens a confirm-navigate dialog via ``ChatScreen.confirm_navigation``
+        (``push_screen_wait`` inside a worker, its result awaited back out).
+        That await used to happen INLINE inside this handler -- and Textual
+        dispatches every ``@on``-decorated handler by awaiting it directly
+        from the App's own single message-processing task, the SAME task
+        solely responsible for routing every subsequent driver-originated
+        mouse/key event (``App.on_event`` -> ``screen._forward_event``) to
+        whatever is on top of the screen stack, dialog included. Awaiting
+        the dialog's result inline therefore starved that task's own event
+        loop for the dialog's entire lifetime: no click, key press, or
+        Escape could ever reach it, because delivering any of them requires
+        this exact task to loop back and dequeue the next message, which it
+        cannot do while suspended awaiting `confirm_navigation`. That is the
+        zombie-modal soft-lock: reproduced directly (not just theorized) by
+        posting a real driver-style MouseDown/MouseUp pair while a confirm
+        dialog was open and observing the App's own message queue grow
+        without ever draining -- see the task's Implementation Notes.
+
+        Running the full sequence (``handle_screen_navigation``, including
+        its own flush/confirm/complete steps) as a decoupled worker keeps
+        this task free to keep delivering input the moment ANY confirm
+        dialog opens, first one or a subsequent one alike.
+        ``handle_screen_navigation`` itself is unchanged and still directly
+        awaitable to completion (its own FIFO ordering across overlapping
+        attempts is preserved by ``_screen_navigation_lock``), so every
+        existing direct caller (tests included) keeps working exactly as
+        before; only real navigation -- dispatched through this handler --
+        gains the fix.
+        """
+        self.run_worker(
+            self.handle_screen_navigation(message),
+            group="screen-navigation",
+            exclusive=False,
+            exit_on_error=False,
+        )
+
     async def handle_screen_navigation(self, message: NavigateToScreen) -> None:
         """Handle navigation to a different screen using switch_screen for better performance."""
+        async with self._screen_navigation_lock():
+            await self._handle_screen_navigation_locked(message)
+
+    async def _handle_screen_navigation_locked(
+        self, message: NavigateToScreen
+    ) -> None:
+        """Body of `handle_screen_navigation`, run under its FIFO lock."""
         requested_screen = message.screen_name
         screen_name, current_tab_value, screen_class = (
             self._resolve_screen_navigation_target(requested_screen)
@@ -6018,13 +6130,50 @@ class TldwCli(
             try:
                 flush_result = flush()
                 if inspect.isawaitable(flush_result):
-                    flush_result = await flush_result
+                    # Shielded: giving up on the WAIT must not give up on the
+                    # SAVE. The Library File Notes flush persists through
+                    # `asyncio.to_thread`, which cannot be cancelled -- an
+                    # unshielded `wait_for` killed the coroutine at that await
+                    # while the thread kept writing, so `_save_draft` never ran
+                    # its reconciliation: `_save_state` stayed "saving" (which
+                    # makes `leave_allowed` False *forever*) and the cached
+                    # `content_hash` stayed stale, so the next save reported a
+                    # spurious conflict.
+                    flush_task = asyncio.ensure_future(flush_result)
+                    try:
+                        flush_result = await asyncio.wait_for(
+                            asyncio.shield(flush_task),
+                            timeout=self.NAVIGATION_FLUSH_TIMEOUT_SECONDS,
+                        )
+                    except asyncio.TimeoutError:
+                        self._retain_unfinished_flush(flush_task, screen_name)
+                        raise
                 if flush_result is False:
                     logger.info(
                         f"Navigation to {screen_name} vetoed by the outgoing "
                         "screen's pending-work flush"
                     )
                     return
+            except asyncio.TimeoutError:
+                # Fail closed, exactly like a flush that raised: the pending
+                # edits may exist ONLY in the outgoing screen, so keep it
+                # mounted rather than discarding it on a save we can't
+                # confirm. Abandoning the wait does not abandon the save --
+                # the note-save worker is a separate task and keeps running.
+                logger.warning(
+                    "Screen flush timed out after {}s; staying put (route={}).",
+                    self.NAVIGATION_FLUSH_TIMEOUT_SECONDS,
+                    screen_name,
+                )
+                try:
+                    self.notify(
+                        "Still saving pending changes; staying on this screen. "
+                        "Try again in a moment.",
+                        severity="warning",
+                    )
+                except Exception:
+                    pass
+                return
             except Exception as exc:
                 # The outgoing instance may be the only place pending edits
                 # still exist, so a failed flush must abort the transition.
@@ -6042,6 +6191,142 @@ class TldwCli(
                     pass
                 return
 
+        # TASK-1143 (F5): give the outgoing screen one awaited chance to
+        # ASK before it (and whatever it owns) is torn down -- e.g. Console
+        # unmounting cancels every in-flight run and denies every pending/
+        # parked approval round for its ConsoleChatController (see
+        # ChatScreen.on_unmount / ConsoleChatController.shutdown). Mirrors
+        # the flush-veto seam immediately above: False keeps the outgoing
+        # screen mounted exactly like a flush veto, only here the decision
+        # comes from a user-facing confirmation dialog rather than an
+        # unresolved save conflict.
+        confirm_navigation = getattr(current_screen, "confirm_navigation", None)
+        if callable(confirm_navigation):
+            try:
+                confirm_result = confirm_navigation()
+                if inspect.isawaitable(confirm_result):
+                    confirm_result = await confirm_result
+                if confirm_result is False:
+                    logger.info(
+                        f"Navigation to {screen_name} vetoed by the outgoing "
+                        "screen's confirm_navigation"
+                    )
+                    return
+            except Exception as exc:
+                # A broken confirm hook must not silently let navigation
+                # proceed and tear down live work the user was never asked
+                # about -- fail closed, same as the flush veto above.
+                logger.warning(
+                    "Screen navigation confirm failed (route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
+                )
+                try:
+                    self.notify(
+                        "Couldn't confirm leaving this screen; staying put.",
+                        severity="warning",
+                    )
+                except Exception:
+                    pass
+                return
+
+        release_navigation = None
+        acquire_navigation = getattr(
+            current_screen,
+            "acquire_navigation_transition",
+            None,
+        )
+        if callable(acquire_navigation):
+            admission = acquire_navigation()
+            if admission is False:
+                logger.info(
+                    f"Navigation to {screen_name} vetoed by the outgoing "
+                    "screen's transition admission"
+                )
+                return
+            release_navigation = admission
+        try:
+            await self._complete_screen_navigation(
+                message=message,
+                requested_screen=requested_screen,
+                screen_name=screen_name,
+                current_tab_value=current_tab_value,
+                screen_class=screen_class,
+                current_screen=current_screen,
+            )
+        finally:
+            if callable(release_navigation):
+                release_navigation()
+
+    def _retain_unfinished_flush(self, flush_task: Any, screen_name: str) -> None:
+        """Keep a timed-out flush alive until it finishes on its own.
+
+        The navigation wait is shielded, so the flush keeps running after the
+        app stops waiting -- but asyncio only holds a weak reference to a
+        running task, so without a strong reference here it could be garbage
+        collected mid-save. Retaining it also gives somewhere to consume the
+        eventual result, which otherwise surfaces as "exception was never
+        retrieved" noise long after the navigation that started it.
+
+        Args:
+            flush_task: The still-running flush task.
+            screen_name: Route being navigated to, for log context.
+        """
+        pending = getattr(self, "_pending_flush_tasks", None)
+        if pending is None:
+            pending = set()
+            self._pending_flush_tasks = pending
+        pending.add(flush_task)
+
+        def _finished(task: Any) -> None:
+            pending.discard(task)
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                logger.warning(
+                    "Screen flush eventually failed after navigation gave up "
+                    "waiting (route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
+                )
+            else:
+                logger.info(
+                    "Screen flush eventually completed after navigation gave "
+                    "up waiting (route={}).",
+                    screen_name,
+                )
+
+        flush_task.add_done_callback(_finished)
+
+    def _notify_navigation_failure(self, screen_name: str) -> None:
+        """Tell the user a destination failed to open, without raising.
+
+        Navigation failures are reported where they happen so the user is
+        not left staring at an unchanged screen wondering whether the click
+        registered. ``notify`` itself is guarded: this runs on the crash
+        path, and a failure to display the message must not replace one
+        escaping exception with another.
+        """
+        try:
+            self.notify(
+                f"Couldn't open {screen_name}. Staying on the current screen.",
+                severity="error",
+            )
+        except Exception:
+            logger.debug(f"Could not surface navigation failure for {screen_name!r}.")
+
+    async def _complete_screen_navigation(
+        self,
+        *,
+        message: NavigateToScreen,
+        requested_screen: str,
+        screen_name: str,
+        current_tab_value: str,
+        screen_class: type | None,
+        current_screen: Any,
+    ) -> None:
+        """Save, construct, restore, and switch while transition admission is held."""
         runtime_identity = self._current_runtime_identity()
         outgoing_key = str(self.current_tab or "").strip()
         if not outgoing_key:
@@ -6082,7 +6367,23 @@ class TldwCli(
                 )
 
         if screen_class:
-            new_screen = self._create_navigation_screen(screen_name, screen_class)
+            try:
+                new_screen = self._create_navigation_screen(screen_name, screen_class)
+            except Exception as exc:
+                # A destination that cannot even be constructed is a broken
+                # destination, never a dead app. This ran unguarded until
+                # 2026-07-28: the MCP canvases read `Select.NULL` (Textual 8+)
+                # at construction time, so on an older Textual the
+                # AttributeError escaped this handler and Textual exited the
+                # whole app rather than the user simply failing to reach MCP.
+                logger.opt(exception=True).error(
+                    "Screen construction failed "
+                    "(route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
+                )
+                self._notify_navigation_failure(screen_name)
+                return
 
             restored_state = self.screen_state_store.restore(
                 current_tab_value,
@@ -6124,7 +6425,21 @@ class TldwCli(
                     )
 
             # Use switch_screen to replace the current screen
-            await self.switch_screen(new_screen)
+            try:
+                await self.switch_screen(new_screen)
+            except Exception as exc:
+                # Sibling of the construction guard above: a screen can also
+                # fail while composing/mounting (the MCP audit canvas reads
+                # `Select.NULL` inside compose()), and Textual surfaces that
+                # through switch_screen. Same rule -- report the broken
+                # destination instead of taking the app down with it.
+                logger.opt(exception=True).error(
+                    "Screen mount failed (route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
+                )
+                self._notify_navigation_failure(screen_name)
+                return
 
             # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
             self.current_tab = current_tab_value
@@ -6423,6 +6738,19 @@ class TldwCli(
             return None
         return repository
 
+    async def _ensure_tts_profile_service(self) -> TTSProfileService | None:
+        """Return one profile service over the existing app-owned dependencies."""
+
+        repository = await self._ensure_tts_profile_repository()
+        if repository is None:
+            return None
+
+        profile_service = getattr(self, "_tts_profile_service", None)
+        if profile_service is None:
+            profile_service = TTSProfileService(repository, self.tts_service)
+            self._tts_profile_service = profile_service
+        return profile_service
+
     async def _close_tts_profile_repository(self) -> None:
         """Definitively close the app-owned profile repository once."""
 
@@ -6501,6 +6829,15 @@ class TldwCli(
         """Configure logging and schedule post-mount setup."""
         self._bind_tts_service()
         mount_start = time.perf_counter()
+
+        # TASK-1240. Anchors a session in the persistent log; its absence dates
+        # a crash to before this point. Wrapped: `persist_event` raises on a
+        # malformed component and its sink can fail; diagnostics must never be
+        # the reason mount does not complete.
+        try:
+            persist_event(_DIAGNOSTICS_COMPONENT_APP, "app_started")
+        except Exception:
+            pass
 
         # Restore persisted Library ingest job history (self.library_ingest_jobs
         # already exists -- constructed store-less in __init__). Never raises:
@@ -6842,11 +7179,25 @@ class TldwCli(
             self._resolve_screen_navigation_target(initial_tab)
         )
         if screen_class is None:
+            # Report why the configured target failed before falling back --
+            # otherwise a broken screen silently redirects to chat forever.
+            logger.warning(
+                f"Screen navigation: initial target {initial_tab!r} did not resolve"
+                f" ({screen_load_error(initial_tab)}); falling back to {TAB_CHAT!r}"
+            )
             resolved_screen_name = TAB_CHAT
             resolved_tab = TAB_CHAT
             _, _, screen_class = self._resolve_screen_navigation_target(TAB_CHAT)
             if screen_class is None:
-                raise RuntimeError("Unable to resolve default chat screen")
+                # Fatal: no screen to show. `resolve_screen_target()` degrades
+                # a failed route to None by design, so surface the underlying
+                # cause here -- a bare "unable to resolve" names neither the
+                # missing dependency nor the module that pulled it in.
+                cause = screen_load_error(TAB_CHAT)
+                message = f"Unable to resolve default chat screen ({TAB_CHAT!r})"
+                if cause is not None:
+                    message += f": {type(cause).__name__}: {cause}"
+                raise RuntimeError(message) from cause
 
         await self.push_screen(screen_class(self))
         self.current_tab = resolved_tab
@@ -7414,11 +7765,134 @@ class TldwCli(
         if client is not None and getattr(client, "sessions", None):
             await client.disconnect_all()
 
+    async def _shutdown_file_notes_session_owner(self) -> None:
+        """Settle the process-owned File Notes Git lifecycle exactly once."""
+        owner = getattr(self, "file_notes_session_owner", None)
+        if owner is None:
+            return
+        task = getattr(self, "_file_notes_session_owner_shutdown_task", None)
+        if task is None:
+            task = asyncio.create_task(
+                owner.shutdown_async(),
+                name="shutdown_file_notes_session_owner",
+            )
+            self._file_notes_session_owner_shutdown_task = task
+        await asyncio.shield(task)
+
+    async def _shutdown(self) -> None:
+        """Settle File Notes Git before Textual closes screens and replicas."""
+        cancellation: asyncio.CancelledError | None = None
+        owner_error: BaseException | None = None
+        shutdown_task = asyncio.current_task()
+        cancellation_requests = (
+            shutdown_task.cancelling() if shutdown_task is not None else 0
+        )
+        while True:
+            try:
+                await self._shutdown_file_notes_session_owner()
+            except asyncio.CancelledError as error:
+                next_cancellation_requests = (
+                    shutdown_task.cancelling()
+                    if shutdown_task is not None
+                    else 0
+                )
+                if next_cancellation_requests > cancellation_requests:
+                    cancellation = cancellation or error
+                    cancellation_requests = next_cancellation_requests
+                    continue
+                owner_error = error
+            except BaseException as error:
+                owner_error = error
+            break
+
+        shutdown_error: BaseException | None = None
+        try:
+            await super()._shutdown()
+        except asyncio.CancelledError as error:
+            cancellation = cancellation or error
+        except BaseException as error:
+            shutdown_error = error
+
+        if shutdown_error is not None:
+            if owner_error is not None:
+                shutdown_error.add_note(
+                    "File Notes session owner shutdown also failed before "
+                    "Textual screen teardown"
+                )
+            if cancellation is not None:
+                shutdown_error.add_note(
+                    "Application shutdown cancellation was also requested"
+                )
+            raise shutdown_error
+        if owner_error is not None:
+            if cancellation is not None:
+                owner_error.add_note(
+                    "Application shutdown cancellation was delayed while "
+                    "preserving the owner shutdown failure"
+                )
+            raise owner_error
+        if cancellation is not None:
+            raise cancellation
+
+    def _handle_exception(self, error: Exception) -> None:
+        """Record the crash type, then let Textual do what it always did.
+
+        TASK-1240. Names the exception class only -- never the message, which is
+        caller-supplied text and may quote user or model content. Calls super()
+        unconditionally: Textual sets the return code here, and swallowing that
+        would turn a crash into a hang.
+
+        `WorkerFailed` is unwrapped. When a worker raises and `exit_on_error` is
+        true (the default), `Worker._run` sets `WorkerState.ERROR` -- posting
+        `StateChanged` *asynchronously* -- and then calls this method
+        *synchronously* with `WorkerFailed(self._error)`. So this override fires
+        first and, without unwrapping, would persist
+        `exception_type=WorkerFailed` for every worker crash in the app, while
+        `_fatal_error()` -> `_close_messages_no_wait()` races the queued
+        `StateChanged` so the `worker_failed` event that carries the real type
+        and `operation` may never be delivered. A crashed session's log would
+        then read `event=unhandled_exception exception_type=WorkerFailed` and
+        nothing else. `WorkerFailed.error` holds the real exception.
+        """
+        from textual.worker import WorkerFailed
+
+        underlying = getattr(error, "error", None) if isinstance(error, WorkerFailed) else None
+        try:
+            persist_event(
+                _DIAGNOSTICS_COMPONENT_APP,
+                "unhandled_exception",
+                level=logging.ERROR,
+                exception_type=type(
+                    underlying if underlying is not None else error
+                ).__name__,
+            )
+        except Exception:
+            # Diagnostics must never be the reason a crash handler fails.
+            pass
+        super()._handle_exception(error)
+
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
         import asyncio
 
         logging.info("--- App Unmounting ---")
+        # TASK-1240. Distinguishes a clean exit from a kill: a log whose last
+        # line is app_started ended abruptly. Wrapped, and deliberately so:
+        # this line sits ABOVE the entire shutdown sequence -- DB closes,
+        # worker cancellation, ingest pool teardown. An exception escaping here
+        # would skip all of it. Diagnostics must never break the thing they
+        # observe.
+        try:
+            persist_event(_DIAGNOSTICS_COMPONENT_APP, "app_stopping")
+        except Exception:
+            pass
+        try:
+            await self._shutdown_file_notes_session_owner()
+        except Exception as error:
+            self.loguru_logger.warning(
+                "File Notes session owner fallback shutdown failed "
+                f"type={type(error).__name__}"
+            )
         self._ui_ready = False
         self._stop_ui_responsiveness_monitor()
 
@@ -7725,21 +8199,6 @@ class TldwCli(
         logging.shutdown()
         self.loguru_logger.info("--- App Unmounted (Loguru) ---")
 
-    ########################################################################
-    #
-    # WATCHER - Handles UI changes when current_tab's VALUE changes
-    #
-    # ######################################################################
-    def watch_current_tab(self, old_tab: Optional[str], new_tab: str) -> None:
-        """Legacy tab-content watcher; retained as a permanent no-op.
-
-        Screen-based navigation (``self._use_screen_navigation``, set
-        unconditionally in ``__init__``) now owns every tab switch, so
-        this watcher's original show/hide dispatch (``_execute_tab_switch``,
-        task-577 PR2 T2) has been retired along with it.
-        """
-        return
-
     def _log_view_dimensions(self, view, parent):
         """Helper to log view dimensions after refresh."""
         self.loguru_logger.info(
@@ -7825,6 +8284,42 @@ class TldwCli(
             f"on_worker_state_changed: Worker '{worker_name}' "
             f"(Group: {worker_group}, State: {event.state})"
         )
+
+        # TASK-1240. One hook already sees every worker transition, so failures
+        # are recorded without touching any of the 398 run_worker call sites.
+        # Only ERROR persists: a start or success event here would emit a line
+        # per keystroke-triggered search and per timer tick.
+        if event.state is WorkerState.ERROR:
+            error = getattr(event.worker, "error", None)
+            # DO NOT "improve" `operation` to `event.worker.description`.
+            # `Worker.name` is code-side -- the method or literal name given at
+            # the `run_worker`/`@work` site. `Worker.description` is built by
+            # textual's `_work_decorator` as `f"{name}={value!r}"` over the
+            # worker's *actual arguments*, so for a chat, tool or provider
+            # worker it contains prompts, API keys and tool values verbatim.
+            # Persisting it would put exactly what ADR-029 excludes on disk.
+            #
+            # `else "unknown"` stays. `Worker._run` assigns `self.state =
+            # WorkerState.ERROR` -- whose setter posts `StateChanged` -- one
+            # line *before* `self._error = error`. Delivery is via the message
+            # queue, so `_error` has landed by the time this handler runs in
+            # every real interleaving; the branch is a total-function guard for
+            # the ordering itself and for duck-typed workers, and it costs one
+            # comparison on a path that only runs when something already broke.
+            try:
+                persist_event(
+                    _DIAGNOSTICS_COMPONENT_APP,
+                    "worker_failed",
+                    level=logging.ERROR,
+                    operation=str(worker_name or "unknown"),
+                    exception_type=(
+                        type(error).__name__ if error is not None else "unknown"
+                    ),
+                )
+            except Exception:
+                # Diagnostics must never break the worker hook every worker
+                # transition in the app passes through.
+                pass
 
         # Delegate to the handler registry
         handled = await self.worker_handler_registry.handle_event(event)

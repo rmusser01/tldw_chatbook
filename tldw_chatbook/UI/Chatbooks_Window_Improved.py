@@ -9,6 +9,7 @@ Improved UI for the chatbooks feature with better visual hierarchy,
 more features, and enhanced user experience.
 """
 
+import asyncio
 from typing import List, Dict, Any, TYPE_CHECKING
 from datetime import datetime
 
@@ -475,9 +476,23 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
                 "0 chatbooks • 0 MB total", id="stats-text", classes="stats-text"
             )
 
-    async def on_mount(self) -> None:
-        """Called when screen is mounted."""
-        await self._refresh_chatbooks()
+    def on_mount(self) -> None:
+        """Mount now, scan after (TASK-1320).
+
+        Synchronous by design: mounting is awaited by the app's own navigation
+        handler, so awaiting the directory scan here held the App's message
+        pump for the length of the scan on top of blocking the event loop.
+        """
+        self.run_worker(
+            self._refresh_chatbooks(),
+            group="chatbooks_refresh",
+            # A failed scan is an empty list with an error toast (see
+            # `_refresh_chatbooks`), never a dead app. Textual defaults this to
+            # True, so deferring the scan into a worker would otherwise turn any
+            # error the scan does not catch itself into an app exit.
+            exit_on_error=False,
+            exclusive=True,
+        )
 
     def watch_chatbooks(self, old_value: List[Dict], new_value: List[Dict]) -> None:
         """React to chatbooks list changes."""
@@ -569,68 +584,82 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
         self.query_one("#stats-text", Static).update(stats_text)
 
     async def _refresh_chatbooks(self) -> None:
-        """Load chatbooks from export directory."""
+        """Load chatbooks from the export directory, off the event loop.
+
+        The scan itself is blocking (`glob`, `stat`, and a `ZipFile` open plus
+        manifest read per chatbook) and used to run directly here. Being inside
+        an `async def` bought nothing: with no await around the blocking calls
+        the whole event loop stopped for the duration, so the app froze while a
+        directory of chatbooks was read. Measured at ~1s per second of scan.
+
+        The scan now runs in a thread and only the reactive assignment happens
+        back on the loop (TASK-1320).
+        """
         try:
-            self._export_path = secure_chatbook_directory(self._export_path)
-
-            chatbooks = []
-
-            # Scan for .zip files
-            for zip_file in self._export_path.glob("*.zip"):
-                try:
-                    # Get basic info
-                    cb_info = {
-                        "name": zip_file.stem,
-                        "path": str(zip_file),
-                        "size_mb": zip_file.stat().st_size / (1024 * 1024),
-                        "created_at": datetime.fromtimestamp(
-                            zip_file.stat().st_ctime
-                        ).isoformat(),
-                    }
-
-                    # Try to read manifest for more info
-                    import zipfile
-                    import json
-
-                    try:
-                        with zipfile.ZipFile(zip_file, "r") as zf:
-                            if "manifest.json" in zf.namelist():
-                                manifest_data = json.loads(zf.read("manifest.json"))
-                                cb_info.update(
-                                    {
-                                        "name": manifest_data.get(
-                                            "name", cb_info["name"]
-                                        ),
-                                        "description": manifest_data.get(
-                                            "description", ""
-                                        ),
-                                        "tags": manifest_data.get("tags", []),
-                                        "statistics": manifest_data.get(
-                                            "statistics",
-                                            {
-                                                "conversations": 0,
-                                                "notes": 0,
-                                                "characters": 0,
-                                            },
-                                        ),
-                                    }
-                                )
-                    except Exception:
-                        pass
-
-                    chatbooks.append(cb_info)
-                except Exception as e:
-                    logger.error(f"Error reading chatbook {zip_file}: {e}")
-
-            # Sort by created date, newest first
-            chatbooks.sort(key=lambda x: x["created_at"], reverse=True)
+            chatbooks = await asyncio.to_thread(self._scan_chatbooks)
             self.chatbooks = chatbooks
-
         except Exception as e:
             logger.error(f"Error refreshing chatbooks: {e}")
             self.app_instance.notify(
                 f"Error loading chatbooks: {str(e)}", severity="error"
             )
+
+    def _scan_chatbooks(self) -> List[Dict[str, Any]]:
+        """Read the export directory. Blocking -- always call via a thread."""
+        self._export_path = secure_chatbook_directory(self._export_path)
+
+        chatbooks = []
+
+        # Scan for .zip files
+        for zip_file in self._export_path.glob("*.zip"):
+            try:
+                # Get basic info
+                cb_info = {
+                    "name": zip_file.stem,
+                    "path": str(zip_file),
+                    "size_mb": zip_file.stat().st_size / (1024 * 1024),
+                    "created_at": datetime.fromtimestamp(
+                        zip_file.stat().st_ctime
+                    ).isoformat(),
+                }
+
+                # Try to read manifest for more info
+                import zipfile
+                import json
+
+                try:
+                    with zipfile.ZipFile(zip_file, "r") as zf:
+                        if "manifest.json" in zf.namelist():
+                            manifest_data = json.loads(zf.read("manifest.json"))
+                            cb_info.update(
+                                {
+                                    "name": manifest_data.get(
+                                        "name", cb_info["name"]
+                                    ),
+                                    "description": manifest_data.get(
+                                        "description", ""
+                                    ),
+                                    "tags": manifest_data.get("tags", []),
+                                    "statistics": manifest_data.get(
+                                        "statistics",
+                                        {
+                                            "conversations": 0,
+                                            "notes": 0,
+                                            "characters": 0,
+                                        },
+                                    ),
+                                }
+                            )
+                except Exception:
+                    pass
+
+                chatbooks.append(cb_info)
+            except Exception as e:
+                logger.error(f"Error reading chatbook {zip_file}: {e}")
+
+        # Sort by created date, newest first
+        chatbooks.sort(key=lambda x: x["created_at"], reverse=True)
+        return chatbooks
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""

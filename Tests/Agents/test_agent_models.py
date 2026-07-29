@@ -9,11 +9,14 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
+    RUN_LOG_SLICE_TOOL_NAME,
+    RUN_LOG_STATS_TOOL_NAME,
     RUN_RUNNING,
     RUN_SKILL_SCRIPT_TOOL_NAME,
     RUN_STUCK,
     RUN_SUPERSEDED,
     RUNTIME_TOOL_NAMES,
+    SEARCH_RUN_LOG_TOOL_NAME,
     SPAWN_TOOL_NAME,
     TERMINAL_RUN_STATUSES,
     AgentConfig,
@@ -57,6 +60,9 @@ def test_runtime_tool_names():
         "skill_file",
         INSTALL_SKILL_TOOL_NAME,
         RUN_SKILL_SCRIPT_TOOL_NAME,
+        SEARCH_RUN_LOG_TOOL_NAME,
+        RUN_LOG_STATS_TOOL_NAME,
+        RUN_LOG_SLICE_TOOL_NAME,
     }
     assert DIRECT_DISCLOSE_THRESHOLD == 16 and LOOP_DETECTION_N == 3
 

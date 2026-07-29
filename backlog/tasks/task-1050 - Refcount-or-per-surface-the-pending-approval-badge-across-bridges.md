@@ -1,9 +1,11 @@
 ---
 id: TASK-1050
 title: Refcount or per-surface the pending-approval badge across bridges
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-27 14:30'
+updated_date: '2026-07-27 22:06'
 labels:
   - console
   - approvals
@@ -22,9 +24,39 @@ This is production-unreachable today: per-session tool dispatch is sequential, s
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
-- [ ] #1 The pending-approval badge for a session stays set while ANY surface (MCP approval, skill-install confirm, skill-script confirm) has an outstanding round for that session, and only clears once none remain.
-- [ ] #2 The session-keyed parked-payload maps are only cleared for a bridge's own round, never in a way that discards a sibling surface's still-armed payload for the same session.
-- [ ] #3 A regression test exercises two concurrent same-session rounds from different bridges (or, if dispatch is truly sequential today, a direct unit test of the teardown logic) and proves the badge/payload survive the first round's resolution.
+- [x] #1 The pending-approval badge for a session stays set while ANY surface (MCP approval, skill-install confirm, skill-script confirm) has an outstanding round for that session, and only clears once none remain.
+- [x] #2 The session-keyed parked-payload maps are only cleared for a bridge's own round, never in a way that discards a sibling surface's still-armed payload for the same session.
+- [x] #3 A regression test exercises two concurrent same-session rounds from different bridges (or, if dispatch is truly sequential today, a direct unit test of the teardown logic) and proves the badge/payload survive the first round's resolution.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Audit every call site of `set_run_pending_approval` (controller bridges + ChatScreen._park_console_approval + direct test callers) to decide design (a) full-migration-with-round-id-signature vs (b) new add/discard_pending_round methods + deprecated boolean shim.
+2. Change `_pending_approvals` from `set[str]` to `dict[str, set[str]]` (session id -> outstanding round ids); add `add_pending_round`/`discard_pending_round`/`has_pending_approval_round`; keep `set_run_pending_approval` as a deprecated shim backed by a reserved sentinel round id so it composes safely with real round ids.
+3. Migrate all three bridges (request_mcp_approvals, request_skill_install_confirm, request_skill_script_confirm) arm/teardown to the round-keyed API; extend MCP's teardown with the still_armed_same_session guard the other two bridges already had (defect B parity across all three).
+4. Guard each bridge's parked-payload pop with "last armed round for session OR stored payload still belongs to this round" so an earlier round's teardown never evicts a newer round's payload under the same session-keyed slot.
+5. Guard ChatScreen._park_console_approval's redundant badge stamp with has_pending_approval_round so the deprecated shim never leaks a stale sentinel past a real round's resolution.
+6. Rename _RunMarkerBearer -> RunMarkerBearer and test _FakeApp -> FakeApp (rider).
+7. Add tests: same-session cross-bridge survival, same-session same-bridge payload-overwrite guard, idempotent add/discard, legacy-shim composition.
+8. Run the two hard-rule pytest gates in the worktree venv; confirm the 2 known pre-existing failures are unchanged via git stash comparison.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Replaced the single shared boolean `_pending_approvals` (set[str] of session ids, written by `set_run_pending_approval`) with round-keyed accounting: `_pending_approvals: dict[str, set[str]]` (session id -> outstanding round ids), via new `add_pending_round`/`discard_pending_round`/`has_pending_approval_round`. `run_marker_for`/`fleet_summary_counts` needed no code changes since dict key membership/iteration mirrors the old set semantics exactly.
+
+Audited every `set_run_pending_approval` caller: all 6 in-controller bridge call sites (request_mcp_approvals x2, request_skill_install_confirm x2, request_skill_script_confirm x2) have a real round/request uuid4 id in scope and were migrated to the round-keyed API. `ChatScreen._park_console_approval` genuinely lacks one (its public contract `Callable[[str], None]` is wired directly to single-arg collectors in 3 existing tests, and one test drives it standalone with a payload carrying no round id) -- kept `set_run_pending_approval` as a deprecated shim backed by a reserved sentinel round id (composes safely alongside real ids in the same set), and guarded its one remaining call site with `has_pending_approval_round` so it never leaks a stale sentinel past a real round's own resolution.
+
+Defect B fix (payload retention, final form after fix round 1): each `finally` pops its session-keyed parked-payload map ONLY when no armed round remains for the session (`not still_armed_same_session`) -- order-independent, matching the mounted-card guard. The intermediate design additionally popped when the stored payload belonged to the completing round; review reproduced that clause evicting the slot when the NEWEST round resolves first with an older sibling still armed (badge lit, remount None), so it was removed in fix round 1 (bbdaa1f20). Residual accepted scope: the single per-session slot retains the last-armed payload, so after newest-first resolution the remounted card can be stale -- deciding it no-ops safely by round identity. MCP previously had no `still_armed_same_session` guard at all (unlike skill-install/skill-script, task-581/TASK-910) -- added it for parity, including gating the mounted-card clear, not just the payload pop.
+
+Rider: `_RunMarkerBearer` -> `RunMarkerBearer` (conversation_browser_state.py), `_FakeApp` -> `FakeApp` (test_skill_install_concurrent_confirms.py); both single-use, no external importers.
+
+Tests added (all additive, zero existing-test signature changes -- every pre-existing `in`/`not in controller._pending_approvals` assertion passed unchanged against the new dict type): 4 new in test_console_run_markers.py (same-session multi-round survival, idempotent add/discard x2, legacy-shim composition), 3 new in test_console_mcp_approval.py (cross-bridge same-session survival, same-bridge retention, reverse-ordering regression from fix round 1), 2 new in test_skill_install_concurrent_confirms.py (incl. reverse-ordering), 1 new in test_skill_script_concurrent_confirms.py (reverse-ordering covered by verified byte-identical-code argument) (+ session-scoped _arm_for_session helper).
+
+Verified in worktree venv (import path confirmed /private/tmp/tldw-approval-acct). Gate 1 (mcp_approval + skill_install_concurrent + skill_script_concurrent + run_markers + parallel_runs): 81 passed post-fix-round-1, 2 failed -- both are the named pre-existing failures (CSS-geometry batch-row test, mcp cancellation execution-log test), confirmed via git-stash comparison against the unmodified branch. Gate 2 (run_state_per_session + skill_install_confirm): 32 passed. ruff check clean on all 7 touched files.
+
+Full design rationale, per-bridge diffs, and caller audit table: .superpowers/sdd/approval-accounting/task-1050-report.md
+<!-- SECTION:NOTES:END -->

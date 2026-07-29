@@ -25,6 +25,7 @@ from tldw_chatbook.UI.Screens.chat_screen import (
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Console.console_control_bar import _summary_line
 from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_workbench_state import (
@@ -173,13 +174,28 @@ def _control_state() -> ConsoleControlState:
     return ConsoleControlState(
         provider_label="Provider: llama.cpp",
         model_label="Model: local-model",
-        character_label="Character: none",
-        user_profile_label="You: default",
+        assistant_label="Assistant: General",
         rag_label="RAG: off",
         sources_label="Sources: 0",
         tools_label="Tools: 0",
         approvals_label="Approvals: 0",
     )
+
+
+def test_console_control_summary_contains_one_persona_assistant_identity() -> None:
+    state = ConsoleControlState.from_values(
+        provider="llama_cpp",
+        model="local-model",
+        assistant_kind="persona",
+        assistant_name="Guide",
+        assistant_id="persona-7",
+    )
+
+    summary = _summary_line(state)
+
+    assert "Persona: Guide" in summary
+    assert summary.count("Persona: Guide") == 1
+    assert "As:" not in summary
 
 
 @pytest.mark.asyncio
@@ -275,8 +291,7 @@ async def test_console_control_bar_renders_visible_state_chips():
         expected_selectors = (
             "#console-provider-chip",
             "#console-model-chip",
-            "#console-character-chip",
-            "#console-persona-chip",
+            "#console-assistant-chip",
             "#console-rag-chip",
             "#console-sources-chip",
             "#console-tools-chip",
@@ -292,10 +307,11 @@ async def test_console_control_bar_renders_visible_state_chips():
 
         assert any("Provider:" in text for text in visible_chip_text)
         assert any("Model:" in text for text in visible_chip_text)
-        # The AI side (character) and the human side (user profile) are now
-        # separate chips; the old single "Assistant:" chip named neither.
-        assert any("Character:" in text for text in visible_chip_text)
-        assert any("You:" in text for text in visible_chip_text)
+        assert [text for text in visible_chip_text if "Assistant:" in text] == [
+            "Assistant: General"
+        ]
+        assert not console.query("#console-character-chip")
+        assert not console.query("#console-persona-chip")
         assert any("RAG:" in text for text in visible_chip_text)
         assert any("Sources:" in text for text in visible_chip_text)
         assert any("Tools:" in text for text in visible_chip_text)
@@ -336,8 +352,7 @@ async def test_console_control_chips_are_focusable_and_reveal_full_label_on_focu
         chip_ids = (
             "#console-provider-chip",
             "#console-model-chip",
-            "#console-character-chip",
-            "#console-persona-chip",
+            "#console-assistant-chip",
             "#console-rag-chip",
             "#console-sources-chip",
             "#console-tools-chip",
@@ -867,6 +882,16 @@ def test_console_workbench_state_exposes_core_actions_visibly():
     assert state.route_id == "chat"
     assert state.density == "normal"
     assert state.header.title == "Console"
+    assert tuple(mode.id for mode in state.modes) == (
+        "provider",
+        "model",
+        "assistant",
+        "rag",
+        "sources",
+        "tools",
+        "approvals",
+    )
+    assert tuple(mode.label for mode in state.modes).count("Assistant: General") == 1
     assert tuple(pane.id for pane in state.panes) == (
         "context",
         "transcript",
@@ -884,8 +909,7 @@ def test_console_workbench_state_hides_recovery_banner_when_provider_blocked():
         control_state=ConsoleControlState(
             provider_label="Provider: OpenAI",
             model_label="Model: --",
-            character_label="Character: none",
-        user_profile_label="You: default",
+            assistant_label="Assistant: General",
             rag_label="RAG: off",
             sources_label="Sources: 0",
             tools_label="Tools: 0",

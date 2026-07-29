@@ -126,16 +126,16 @@ class CharacterExpressionStylePickRequested(Message):
     """
 
 
-class EditUserProfileRequested(Message):
-    """Edit was requested for the displayed user profile."""
+class EditPersonaProfileRequested(Message):
+    """Edit was requested for the displayed persona."""
 
     def __init__(self, persona_id: str) -> None:
         self.persona_id = persona_id
         super().__init__()
 
 
-class UserProfileSaveRequested(Message):
-    """The user profile editor form was submitted."""
+class PersonaProfileSaveRequested(Message):
+    """The persona editor form was submitted."""
 
     def __init__(self, data: Dict[str, Any]) -> None:
         self.data = data

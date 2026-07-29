@@ -16,6 +16,7 @@ from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.message import Message
+from textual.reactive import reactive
 from textual.widgets import ContentSwitcher
 from textual.worker import Worker
 
@@ -386,6 +387,12 @@ class _AdvancedSectionShim:
 class MCPWorkbench(Container):
     """Assembles the MCP Hub. Read-only over the control-plane service."""
 
+    #: Whether a `reload()` is in flight. Distinct from `_reloading`, which is
+    #: internal write-ordering state: this one is the UI-facing third state
+    #: (loading / empty / populated) so an in-flight load is never rendered as
+    #: "nothing here" -- the same distinction TASK-1020 drew for Watchlists.
+    is_loading: reactive[bool] = reactive(False)
+
     class ModeChanged(Message, namespace="mcp_workbench"):
         """Posted by `set_mode()` whenever the active mode actually changes,
         so the hosting screen can keep its mode-chip highlight in sync.
@@ -661,13 +668,111 @@ class MCPWorkbench(Container):
                 yield MCPAuditMode(id="mcp-mode-canvas-audit")
             yield MCPInspector(id="mcp-hub-inspector", classes="destination-workbench-pane")
 
-    async def on_mount(self) -> None:
-        await self.reload()
+    def on_mount(self) -> None:
+        """Mount now, load after (TASK-1320).
+
+        This is deliberately SYNCHRONOUS. Textual awaits a widget's `on_mount`
+        as part of mounting, and the app awaits the whole mount inside its own
+        `NavigateToScreen` handler -- so awaiting the service here awaited it on
+        the App's message pump, and the entire app stopped handling clicks,
+        keys and further navigation until it answered. Against a configured but
+        unreachable server that window was minutes, which users reported as the
+        app freezing when they clicked into a screen.
+
+        Scheduling `reload()` instead lets the canvas mount immediately in a
+        loading state. `_reloading` already existed to guard a restore racing an
+        in-flight reload, so a reload outliving mount is a case this widget was
+        already built for -- it is simply the normal case now.
+        """
+        self.is_loading = True
+        # Claim the reload SYNCHRONOUSLY, before yielding to the event loop.
+        # `set_initial_view_state()` treats `_reloading` as "a reload owns the
+        # restore, stash it for the end" -- and it is called by the destination
+        # screen during this same mount. When `reload()` was awaited inline the
+        # flag was already set by the time that happened; deferring the load
+        # left it False, so the screen started its own restore worker and
+        # applied the saved mode before the mode chips existed to hear
+        # `ModeChanged`. Setting it here preserves the original ordering: the
+        # restore is stashed and consumed at the end of `reload()`.
+        self._reloading = True
+        # `call_after_refresh`, not a bare `run_worker`: a widget's `on_mount`
+        # fires once IT is mounted, before the children `compose()` yielded have
+        # finished mounting. The old `await reload()` happened to be safe
+        # because each await let the pending child mounts drain first; a worker
+        # started here does not, and `_sync_children()` then tries to mount into
+        # a canvas that does not exist yet ("Can't mount widget(s) before
+        # Vertical(id='mcp-perm-server-profiles') is mounted"). Deferring one
+        # refresh puts the load after the subtree has settled.
+        self.call_after_refresh(self._start_initial_load)
+
+    def _start_initial_load(self) -> None:
+        """Kick off the mount-time reload once the subtree is mounted."""
+        # Re-assert the spinner now that the subtree has definitely settled.
+        # `watch_is_loading` runs when `on_mount` sets the flag, and the canvas
+        # happens to be queryable by then -- but that watcher tolerates a miss
+        # rather than retrying, so re-applying here keeps a future change to
+        # mount ordering from silently costing the loading state.
+        self.watch_is_loading(self.is_loading)
+        self.run_worker(
+            self._reload_guarded(),
+            group="mcp_workbench_reload",
+            # A load failure is a broken destination, never a dead app. Textual
+            # defaults this to True, so moving mount work into a worker would
+            # otherwise turn any error `reload()` does not itself catch into an
+            # app exit -- a failure mode that did not exist while the load ran
+            # inside `on_mount`.
+            exit_on_error=False,
+            exclusive=True,
+        )
+
+    async def _reload_guarded(self) -> None:
+        """Run the mount-time reload without letting a failure strand the UI."""
+        try:
+            await self.reload()
+        except Exception as exc:
+            # `reload()` clears `is_loading` in its own `finally`, but only for
+            # paths that reach it; anything raised earlier would otherwise leave
+            # the canvas spinning forever, telling the user data is coming when
+            # nothing is.
+            self.is_loading = False
+            self._reloading = False
+            logger.opt(exception=True).error(
+                "MCP workbench initial load failed "
+                "(source={}, scope={}, scope_ref={}, server_key={}, mode={}, "
+                "exception_category={}).",
+                self._source,
+                self._scope,
+                self._scope_ref,
+                self._selected_server_key,
+                self.active_mode,
+                type(exc).__name__,
+            )
+            try:
+                self.app.notify(
+                    "Couldn't load MCP data. Use Refresh to try again.",
+                    severity="error",
+                )
+            except Exception:
+                pass
+
+    def watch_is_loading(self, loading: bool) -> None:
+        """Show the spinner over the canvas only, leaving the rail usable."""
+        try:
+            self.query_one("#mcp-hub-canvas").loading = loading
+        except Exception:
+            # Called before the canvas exists (the reactive is set in
+            # `on_mount`, ahead of the first refresh) -- nothing to show yet.
+            pass
 
     # -- data loading ---------------------------------------------------------
 
     async def reload(self) -> None:
         self._reloading = True
+        # Raised here, not only in `on_mount`: `reload()` always CLEARS this in
+        # its `finally`, so every caller must also raise it or a direct reload
+        # (MCPScreen's manual refresh calls this straight) would fetch with no
+        # spinner and then clear a flag it never set.
+        self.is_loading = True
         try:
             service = self._service()
             if service is not None:
@@ -691,6 +796,7 @@ class MCPWorkbench(Container):
             self._rebind_inspector_advanced_context(service)
         finally:
             self._reloading = False
+            self.is_loading = False
         # Consume any view state that arrived while this reload was in
         # flight (see `set_initial_view_state()`), so it is applied exactly
         # once and always after this reload's own `_sync_children()`.

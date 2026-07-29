@@ -59,6 +59,7 @@ CREATE_FIELD_ORDER = [
     "sources-create-type",
     "sources-create-active",
     "sources-create-tags",
+    "sources-create-frequency",
     "sources-create-submit",
     "sources-create-cancel",
 ]

@@ -264,8 +264,6 @@ def ensure_nltk_data() -> None:
     # LookupError. Probing the behaviour instead of naming a resource is what
     # keeps that from depending on the installed nltk version (task-842).
     _nltk_data_ready = _ensure_nltk() is not None
-            # Depending on how critical this is, you might raise an error or just warn
-            # For now, we'll let it proceed, and sent_tokenize will fail later if needed.
 
 
 ### REWRITTEN SECTION: New Configuration Loading ###

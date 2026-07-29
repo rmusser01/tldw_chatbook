@@ -6,6 +6,8 @@ import inspect
 from enum import Enum
 from typing import Any, Mapping
 
+from loguru import logger
+
 from ..runtime_policy.types import PolicyDeniedError
 from .watchlist_opml_service import WatchlistOpmlService
 from .watchlist_preview_service import WatchlistPreviewService
@@ -244,6 +246,51 @@ class WatchlistScopeService:
             service.list_items(source_id=source_id, status=status, limit=limit, offset=offset)
         )
 
+    async def update_item(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        item_id: Any,
+        status: str,
+    ) -> dict[str, Any]:
+        """Move a watchlist content item to a new status.
+
+        TASK-1120 AC#3. This method did not exist, so
+        `WatchlistsBackendController.update_item_status` -- which probes for
+        `update_item`, then `update_item_status`, then `mark_item_status` --
+        found none of them and raised `NotImplementedError`. The screen caught
+        that as a plain `Exception`, logged it at debug and toasted "Failed to
+        mark item reviewed", so `Mark reviewed`, `Ingest` and `Ignore` were
+        inert with no durable trace (the swallow TASK-1090 is about).
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+            item_id: Item identifier, namespaced (``local:watchlist_item:2``)
+                or bare.
+            status: One of `LocalWatchlistsService.ITEM_STATUSES`.
+
+        Returns:
+            The backend's normalized result for the updated item.
+
+        Raises:
+            ValueError: If the server backend is requested; item status is
+                local-only, exactly as `list_items` already is -- the server
+                API carries no item-status route.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "items.update")
+        if backend == WatchlistBackend.SERVER:
+            raise ValueError(
+                "Item status updates are only supported for the local backend "
+                "in this slice."
+            )
+        service = self._service_for_backend(backend)
+        return await self._maybe_await(
+            service.update_item(
+                item_id=self._source_id_from_item_id(item_id), status=status
+            )
+        )
+
     async def get_watch_item_detail(
         self,
         item_id: Any,
@@ -330,9 +377,32 @@ class WatchlistScopeService:
                     raise ValueError(
                         "Local watchlist run launch did not return a run identifier."
                     )
-                return await self._maybe_await(
-                    execute_run(self._run_id_from_item_id(run_id))
-                )
+                resolved_run_id = self._run_id_from_item_id(run_id)
+                try:
+                    return await self._maybe_await(execute_run(resolved_run_id))
+                except Exception as exc:
+                    # TASK-1090. `execute_run` records its own fetch failures,
+                    # but anything that escapes it -- a subscription deleted
+                    # between launch and execution, a service fault, the
+                    # namespaced-id `ValueError` of TASK-1100 -- used to leave
+                    # the row inserted a moment ago sitting at `queued`
+                    # forever with nothing recorded anywhere. The run is the
+                    # user's only durable evidence that a check was attempted
+                    # and failed, so it is written before the error is
+                    # re-raised for the screen to report.
+                    record_failure = getattr(service, "record_run_failure", None)
+                    if callable(record_failure):
+                        try:
+                            await self._maybe_await(
+                                record_failure(resolved_run_id, error=exc)
+                            )
+                        except Exception:
+                            logger.opt(exception=True).warning(
+                                "Watchlists: could not record the failure of run "
+                                f"{resolved_run_id}; the original error is "
+                                "re-raised below."
+                            )
+                    raise
         return launched
 
     async def list_runs(

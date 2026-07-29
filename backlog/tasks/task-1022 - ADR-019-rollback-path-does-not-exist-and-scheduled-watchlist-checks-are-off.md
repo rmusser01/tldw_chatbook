@@ -2,7 +2,7 @@
 id: TASK-1022
 title: >-
   ADR-019's rollback path does not exist and scheduled watchlist checks are off by default
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-27 14:00'
 labels:
@@ -63,3 +63,30 @@ So this is not an ADR that was authored against code that never worked; it is a 
 Handed to the **watchlists workstream** (2026-07-27). This was found incidentally while deleting dead worker components under TASK-1010, and the investigation deliberately stopped at establishing the facts: the decision — restore the rollback path, or amend ADR-019 and retire the old scheduler chain — belongs with whoever owns the watchlist migration, not with a cleanup task.
 
 Everything needed to make that call is in the description above: the missing `else` branch, the absent construction path, the default-false flag, what still works (manual "Check now"), and the twelve-hour window in which the rollback path was severed. No code was changed.
+
+## Implementation Notes
+
+Resolved by TASK-1210 (#1054), TASK-1211 (#1058) and the ADR-019 amendment they carried. Closing
+against that work rather than doing it twice.
+
+**This task was right, and it was here first.** Filed 2026-07-27 from a reading of the code, it had
+already established every load-bearing fact: the flag has no `else` branch, `SubscriptionScheduler`
+has no construction path from the app, the flag defaults false, and manual "Check now" is
+unaffected because it bypasses the scheduler entirely.
+
+A day later TASK-1210 re-derived the same conclusion from a runtime import trace, without checking
+whether the board already held it. The duplicated effort was mine; this file was the better
+starting point and I should have found it. The repo's own hygiene note — *audit the board, do not
+trust your own summary* — exists for exactly this.
+
+What shipped against it:
+
+- `watchlist_checks_enabled` now defaults **true** and `watchlist_checks_shadow` **false**, in the
+  shipped TOML and in `app.py`'s in-code fallbacks, so scheduled checks actually run. Verified live:
+  a seeded overdue source fetched 5 real items with no user interaction.
+- The unreachable `SubscriptionScheduler` / `SubscriptionSchedulerWorker` and the briefing island
+  they anchored were removed — ~8,150 LOC.
+- ADR-019 is amended to record that the dual-run and its rollback lever were never implemented, and
+  that the promotion gate it defined was unsatisfiable because the path it compared against did not
+  run.
+

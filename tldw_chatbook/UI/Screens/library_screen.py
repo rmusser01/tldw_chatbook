@@ -1050,9 +1050,14 @@ class LibraryScreen(BaseAppScreen):
         super().__init__(app_instance, "library", **kwargs)
         self._library_notes_source: Literal["database", "files"] = "database"
         self._library_file_notes_workspace: LibraryFileNotesWorkspace | None = None
-        self._library_file_notes_workspace_factory = (
-            file_notes_workspace_factory or LibraryFileNotesWorkspace
-        )
+        if file_notes_workspace_factory is None:
+            self._library_file_notes_workspace_factory = lambda: (
+                LibraryFileNotesWorkspace(
+                    session_owner=app_instance.file_notes_session_owner,
+                )
+            )
+        else:
+            self._library_file_notes_workspace_factory = file_notes_workspace_factory
         self._local_source_records: dict[str, tuple[Mapping[str, Any], ...]] = {
             "notes": (),
             "media": (),
@@ -1738,6 +1743,22 @@ class LibraryScreen(BaseAppScreen):
         assert self._library_file_notes_workspace is not None
         return await self._library_file_notes_workspace.flush_pending_work()
 
+    def _acquire_file_notes_transition(
+        self,
+        kind: Literal["screen", "source"],
+    ) -> Callable[[], None] | Literal[False] | None:
+        """Synchronously admit a transition for the active exact root binding."""
+        if not self._file_notes_active():
+            return None
+        assert self._library_file_notes_workspace is not None
+        return self._library_file_notes_workspace.acquire_transition(kind)
+
+    def acquire_navigation_transition(
+        self,
+    ) -> Callable[[], None] | Literal[False] | None:
+        """Admit outgoing screen navigation after the awaited leave flush."""
+        return self._acquire_file_notes_transition("screen")
+
     async def flush_pending_work(self) -> bool:
         """Persist pending note edits before the app navigates away.
 
@@ -1823,12 +1844,33 @@ class LibraryScreen(BaseAppScreen):
         """
         if not await self._flush_active_file_notes():
             return
+        release_source = self._acquire_file_notes_transition("source")
+        if release_source is False:
+            return
+        try:
+            await self._apply_navigation_context_after_source_admission(context)
+        finally:
+            if callable(release_source):
+                release_source()
+
+    async def _apply_navigation_context_after_source_admission(
+        self,
+        context: Mapping[str, Any],
+    ) -> None:
+        """Apply mounted navigation context while source admission is held."""
         await self._flush_library_note_save()
         if self._library_note_dirty:
             return
-        self._apply_navigation_context_state(context)
+        self._apply_navigation_context_state(context, recompose=False)
+        if self.is_mounted:
+            await self.recompose()
 
-    def _apply_navigation_context_state(self, context: Mapping[str, Any]) -> None:
+    def _apply_navigation_context_state(
+        self,
+        context: Mapping[str, Any],
+        *,
+        recompose: bool = True,
+    ) -> None:
         """Apply validated navigation context to canvas state and recompose.
 
         Split from ``apply_navigation_context`` so its mounted dirty-editor
@@ -1962,7 +2004,7 @@ class LibraryScreen(BaseAppScreen):
                 # Deep-link into Collections must load the snapshot the retired
                 # chip flow ran; the panel shows the records once loaded.
                 self.run_worker(self._sync_collections_panel(refresh_snapshot=True))
-            else:
+            elif recompose:
                 self.refresh(recompose=True)
 
     async def _open_pending_library_source(self) -> None:
@@ -6800,8 +6842,15 @@ class LibraryScreen(BaseAppScreen):
             return
         if not await self._flush_active_file_notes():
             return
-        self._library_notes_source = "database"
-        self.refresh(recompose=True)
+        release_source = self._acquire_file_notes_transition("source")
+        if release_source is False:
+            return
+        try:
+            self._library_notes_source = "database"
+            await self.recompose()
+        finally:
+            if callable(release_source):
+                release_source()
 
     @on(Button.Pressed, ".library-rail-row")
     async def handle_library_rail_row(self, event: Button.Pressed) -> None:
@@ -6846,6 +6895,20 @@ class LibraryScreen(BaseAppScreen):
         """
         if not await self._flush_active_file_notes():
             return
+        release_source = self._acquire_file_notes_transition("source")
+        if release_source is False:
+            return
+        try:
+            await self._select_library_rail_row_after_source_admission(row_id)
+        finally:
+            if callable(release_source):
+                release_source()
+
+    async def _select_library_rail_row_after_source_admission(
+        self,
+        row_id: str,
+    ) -> None:
+        """Recompose a rail destination while source admission is held."""
         await self._flush_library_note_save()
         if self._library_note_dirty:
             return
@@ -6917,9 +6980,12 @@ class LibraryScreen(BaseAppScreen):
         ):
             # First Collections entry must load the snapshot the retired chip
             # flow ran; _sync_collections_panel recomposes once records arrive.
-            await self._sync_collections_panel(refresh_snapshot=True)
+            await self._sync_collections_panel(
+                refresh_snapshot=True,
+                wait_for_recompose=True,
+            )
             return
-        self.refresh(recompose=True)
+        await self.recompose()
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
             self._start_library_export_counts_worker()
         if row_id == LIBRARY_ROW_CREATE_PROMPT and self.is_mounted:
@@ -14327,13 +14393,21 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
 
-    async def _sync_collections_panel(self, *, refresh_snapshot: bool = False) -> None:
+    async def _sync_collections_panel(
+        self,
+        *,
+        refresh_snapshot: bool = False,
+        wait_for_recompose: bool = False,
+    ) -> None:
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS:
             self._library_collection_pending_delete_id = ""
             return
         if refresh_snapshot:
             await self._refresh_library_collections_snapshot()
-        self.refresh(recompose=True)
+        if wait_for_recompose:
+            await self.recompose()
+        else:
+            self.refresh(recompose=True)
 
     async def _refresh_collections_panel_action_state_widgets(self) -> None:
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS or not list(

@@ -216,7 +216,7 @@ async def test_sort_cycle_excludes_relevance_outside_characters_mode(
         screen.state.search_query = "abc"
         assert screen.state.active_mode == "characters"
         assert any(key == "relevance" for key, _ in screen._character_sort_cycle())
-        screen.state.active_mode = "user_profiles"
+        screen.state.active_mode = "personas"
         assert all(key != "relevance" for key, _ in screen._character_sort_cycle())
         await pilot.pause()
 

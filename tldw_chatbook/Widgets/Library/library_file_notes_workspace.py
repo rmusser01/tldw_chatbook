@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from threading import Lock, RLock
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, cast
 from uuid import uuid4
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -18,14 +19,30 @@ from textual.containers import Horizontal, Vertical
 from textual.events import Resize
 from textual.timer import Timer
 from textual.worker import Worker
-from textual.widgets import Button, Input, Static, TextArea, Tree
+from textual.widgets import Button, Input, ListView, Static, TextArea, Tree
 
 from tldw_chatbook.config import (
+    apply_settings_mutation_to_cli_config,
     get_cli_setting,
     get_user_data_dir,
-    save_setting_to_cli_config,
+)
+from tldw_chatbook.Notes.file_notes_git_service import (
+    DiscoveryResult,
+    GitActionResult,
+    GitMutationAdmissionError,
+    GitStatusAdmissionError,
+    coalesce_session_changes,
 )
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
+from tldw_chatbook.Notes.file_notes_session_owner import (
+    FileNotesSessionOwner,
+    RepositoryIdentity,
+    SequencedSessionChange,
+    SessionBinding,
+    SessionGitRow,
+    SessionGitStatus,
+    SessionTransitionKind,
+)
 from tldw_chatbook.Notes.file_notes_service import (
     FileNoteEntry,
     FileNotesService,
@@ -36,10 +53,73 @@ from tldw_chatbook.Notes.file_notes_service import (
 )
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
+    LibraryFileNotesGitPanel,
+    SessionGitTrustDialog,
+)
 
 SaveState = Literal["idle", "dirty", "saving", "saved", "conflict", "error"]
 _UNSET = object()
+_SESSION_GIT_MUTATION_BUSY = (
+    "Session Git mutation in progress; structural actions are busy."
+)
 _TreeData = tuple[Literal["file", "folder", "deleted"], str]
+
+
+@dataclass(frozen=True, slots=True)
+class _GitActionSummaryContext:
+    """Immutable presentation counts captured before one bulk action."""
+
+    bulk: bool = False
+    skipped: int = 0
+    already_staged: int = 0
+    clean: int = 0
+    blocked: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _GitLastAction:
+    """One action presentation bound to exact owner authority and changes."""
+
+    binding: SessionBinding
+    repository: RepositoryIdentity
+    changes: tuple[SequencedSessionChange, ...]
+    text: str
+
+
+class _SessionGitService(Protocol):
+    """UI-facing service contract already implemented by FileNotesGitService."""
+
+    async def discover(self, binding: SessionBinding) -> DiscoveryResult: ...
+
+    async def revalidate_repository(
+        self,
+        binding: SessionBinding,
+        repository: RepositoryIdentity,
+    ) -> bool: ...
+
+    def retained_status(
+        self,
+        binding: SessionBinding,
+    ) -> asyncio.Task[SessionGitStatus] | None: ...
+
+    def start_status(
+        self,
+        binding: SessionBinding,
+        changes: tuple[SequencedSessionChange, ...],
+    ) -> asyncio.Task[SessionGitStatus]: ...
+
+    def start_stage(
+        self,
+        binding: SessionBinding,
+        group_ids: Collection[int],
+    ) -> asyncio.Task[GitActionResult]: ...
+
+    def start_unstage(
+        self,
+        binding: SessionBinding,
+        group_ids: Collection[int],
+    ) -> asyncio.Task[GitActionResult]: ...
 
 
 class LibraryFileNotesWorkspace(Vertical):
@@ -107,8 +187,7 @@ class LibraryFileNotesWorkspace(Vertical):
 
     #file-notes-breadcrumb,
     #file-notes-save-status,
-    #file-notes-action-status,
-    #file-notes-session-changes {
+    #file-notes-action-status {
         height: auto;
         min-height: 1;
     }
@@ -118,8 +197,7 @@ class LibraryFileNotesWorkspace(Vertical):
     }
 
     #file-notes-save-status,
-    #file-notes-action-status,
-    #file-notes-session-changes {
+    #file-notes-action-status {
         color: $text-muted;
     }
 
@@ -134,7 +212,8 @@ class LibraryFileNotesWorkspace(Vertical):
     }
 
     .file-notes-toolbar Button,
-    #file-notes-back {
+    #file-notes-back,
+    #file-notes-session-changes {
         width: auto;
         min-width: 0;
         height: 1;
@@ -142,6 +221,43 @@ class LibraryFileNotesWorkspace(Vertical):
         padding: 0 1;
         border: none;
         background: transparent;
+    }
+
+    LibraryFileNotesWorkspace.-prepare-session-wide .file-notes-toolbar {
+        display: none;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions .file-notes-toolbar {
+        layout: grid;
+        grid-size: 3;
+        grid-columns: 1fr 1fr 1fr;
+        height: auto;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions .file-notes-toolbar Button {
+        width: 1fr;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions
+    .file-notes-toolbar.-confirm-delete {
+        grid-size: 4;
+        grid-columns: 1fr 1fr 1fr 1fr;
+        grid-rows: 1 1;
+        height: 2;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions
+    .file-notes-toolbar.-confirm-delete Button {
+        padding: 0;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions
+    #file-notes-delete.-confirm-delete {
+        column-span: 2;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions #file-notes-editor {
+        min-height: 3;
     }
     """
 
@@ -151,6 +267,7 @@ class LibraryFileNotesWorkspace(Vertical):
         root: str | Path | None | object = _UNSET,
         replica: FileNotesReplica | None | object = _UNSET,
         replica_path: str | Path | None = None,
+        session_owner: FileNotesSessionOwner | None = None,
         poll_interval: float = 1.5,
         autosave_delay: float = 2.0,
         **kwargs: Any,
@@ -163,6 +280,7 @@ class LibraryFileNotesWorkspace(Vertical):
             replica: Optional injected replica. When omitted, the standard
                 user-data replica is opened off the UI loop.
             replica_path: Optional persistent replica location.
+            session_owner: Optional process owner retained across workspaces.
             poll_interval: Reconciliation cadence in seconds.
             autosave_delay: Debounce delay in seconds.
             **kwargs: Textual widget arguments.
@@ -177,6 +295,12 @@ class LibraryFileNotesWorkspace(Vertical):
             replica if isinstance(replica, FileNotesReplica) else None
         )
         self._owns_replica = replica is _UNSET
+        self._session_owner = (
+            FileNotesSessionOwner() if session_owner is None else session_owner
+        )
+        self._owns_session_owner = session_owner is None
+        self._initial_session_binding = self._session_owner.current_binding()
+        self._session_binding: SessionBinding | None = None
         self._service: FileNotesService | None = None
         self._runtime_warning = ""
 
@@ -186,6 +310,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self._autosave_timer: Timer | None = None
         self._poll_worker: Worker[Any] | None = None
         self._save_worker: Worker[Any] | None = None
+        self._git_status_worker: Worker[Any] | None = None
+        self._git_action_worker: Worker[Any] | None = None
+        self._git_status_task: asyncio.Task[SessionGitStatus] | None = None
+        self._git_status_task_binding: SessionBinding | None = None
         self._active = False
         self._refresh_lock = asyncio.Lock()
         self._save_lock = asyncio.Lock()
@@ -212,6 +340,14 @@ class LibraryFileNotesWorkspace(Vertical):
         self._root_offline: bool | None = None
         self._narrow = False
         self._narrow_view: Literal["navigator", "editor"] = "navigator"
+        self._navigator_mode: Literal["files", "search", "git"] = "files"
+        self._navigator_mode_before_git: Literal["files", "search"] = "files"
+        self._editor_action_layout_sync_scheduled = False
+        self._git_observed_changes: tuple[SequencedSessionChange, ...] | None = None
+        self._git_refresh_timer: Timer | None = None
+        self._git_refresh_after_mutation = False
+        self._git_last_action: _GitLastAction | None = None
+        self._git_panel_widget = LibraryFileNotesGitPanel()
         # The editor itself is retained across parent Library recompositions.
         # Textual calls ``compose`` again when this same workspace object is
         # remounted, so constructing it inside ``compose`` would silently
@@ -272,11 +408,31 @@ class LibraryFileNotesWorkspace(Vertical):
     @property
     def leave_allowed(self) -> bool:
         """Return whether the retained draft can be left without a flush."""
+        binding = self._session_binding
         return (
             not self._root_transitioning
             and not self._path_transitioning
+            and not (
+                binding is not None
+                and self._session_owner.mutation_active(binding)
+            )
             and self._save_state not in {"dirty", "saving", "conflict", "error"}
         )
+
+    def acquire_transition(
+        self,
+        kind: SessionTransitionKind,
+    ) -> Callable[[], None] | Literal[False] | None:
+        """Synchronously admit an exact-binding screen or source transition."""
+        if kind not in {"screen", "source"}:
+            raise ValueError(f"Unsupported workspace transition kind: {kind}")
+        binding = self._session_binding
+        if binding is None:
+            return None
+        lease = self._session_owner.try_acquire_transition(binding, kind)
+        if lease is None:
+            return False
+        return lease.release
 
     @property
     def narrow(self) -> bool:
@@ -319,11 +475,12 @@ class LibraryFileNotesWorkspace(Vertical):
                 )
                 search_results.display = False
                 yield search_results
-                yield Static(
-                    "Session changes: none",
+                yield Button(
+                    "Session Git (0)",
                     id="file-notes-session-changes",
-                    markup=False,
+                    compact=True,
                 )
+                yield self._git_panel_widget
             with Vertical(id="file-notes-editor-pane"):
                 back = Button(
                     "‹ Navigator",
@@ -377,6 +534,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._set_save_state(self._save_state, self._save_detail)
         self._set_action_status(self._action_detail)
         self._update_root_surface()
+        self._sync_navigator_mode()
+        self._rehydrate_git_presentation()
         self._update_controls()
         self.run_worker(
             self._initialize(),
@@ -396,25 +555,45 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._save_state == "saving":
             self._save_state = "dirty"
             self._save_detail = "save interrupted"
-        for timer in (self._poll_timer, self._autosave_timer):
+        for timer in (
+            self._poll_timer,
+            self._autosave_timer,
+            self._git_refresh_timer,
+        ):
             if timer is not None:
                 timer.stop()
         self._poll_timer = None
         self._autosave_timer = None
+        self._git_refresh_timer = None
         self._poll_worker = None
         self._save_worker = None
+        self._git_status_worker = None
+        self._git_action_worker = None
+        self._editor_action_layout_sync_scheduled = False
 
     async def shutdown(self) -> None:
         """Permanently close this workspace's owned replica once."""
-        if self._shutdown:
-            return
-        self._shutdown = True
-        self._active = False
-        for timer in (self._poll_timer, self._autosave_timer):
+        with self._runtime_lock:
+            if self._shutdown:
+                return
+            self._shutdown = True
+            self._active = False
+        for timer in (
+            self._poll_timer,
+            self._autosave_timer,
+            self._git_refresh_timer,
+        ):
             if timer is not None:
                 timer.stop()
         self._poll_timer = None
         self._autosave_timer = None
+        self._git_refresh_timer = None
+        if self._owns_session_owner:
+            await asyncio.to_thread(self._session_owner.shutdown)
+        elif self._owns_replica:
+            await asyncio.to_thread(
+                self._session_owner.wait_for_root_commit,
+            )
         if self._owns_replica:
             await asyncio.to_thread(self._close_owned_replica)
 
@@ -438,9 +617,18 @@ class LibraryFileNotesWorkspace(Vertical):
 
     async def _initialize(self) -> None:
         generation = self._root_generation
+        expected_binding = (
+            self._session_binding
+            if self._session_binding is not None
+            else self._initial_session_binding
+        )
         previous_service = self._service
         was_initialized = self._initialized
-        root, replica, service, warning = await asyncio.to_thread(self._build_runtime)
+        root, replica, service, warning = await asyncio.to_thread(
+            self._build_runtime,
+            generation,
+            expected_binding,
+        )
         if not self._active or generation != self._root_generation:
             return
         resuming = was_initialized and service is previous_service
@@ -488,6 +676,10 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def _build_runtime(
         self,
+        expected_generation: int,
+        _expected_binding: SessionBinding | None,
+        *,
+        bind_session: bool = True,
     ) -> tuple[
         Path | None,
         FileNotesReplica | None,
@@ -517,20 +709,139 @@ class LibraryFileNotesWorkspace(Vertical):
                 except Exception as error:
                     replica = None
                     warning = f"Recovery unavailable: {error}"
-            service = self._service
-            if root is None:
-                service = None
-            elif (
-                service is None
+            generation_is_current = expected_generation == self._root_generation
+            if not bind_session or not generation_is_current:
+                return root, replica, self._service, warning
+
+        stable_root = self._session_owner.acquire_stable_root(root)
+        if stable_root is None:
+            return root, replica, None, warning
+        try:
+            binding = stable_root.binding
+            root = None if binding is None else Path(binding.root_key)
+            with self._runtime_lock:
+                if self._shutdown:
+                    return self._root, self._replica, None, warning
+                if expected_generation != self._root_generation:
+                    return self._root, self._replica, self._service, warning
+                service = self._service
+                if root is None:
+                    service = None
+                elif (
+                    service is None
+                    or service.root_key != str(root)
+                    or previous_replica is not replica
+                    or self._session_binding != binding
+                ):
+                    assert binding is not None
+                    service = FileNotesService(
+                        root,
+                        replica,
+                        operation_lock=self._service_lock,
+                        session_owner=self._session_owner,
+                        session_binding=binding,
+                    )
+                self._root = root
+                self._replica = replica
+                self._service = service
+                self._session_binding = binding
+                self._runtime_warning = warning
+                return root, replica, service, warning
+        finally:
+            stable_root.release()
+
+    async def _commit_root_candidate(
+        self,
+        root: Path,
+        service: FileNotesService,
+        result: ScanResult,
+        deleted: tuple[str, ...],
+        generation: int,
+        expected_binding: SessionBinding | None,
+        *,
+        persist: bool,
+    ) -> bool:
+        with self._runtime_lock:
+            if (
+                self._shutdown
+                or not self._active
+                or generation != self._root_generation
                 or service.root_key != str(root)
-                or previous_replica is not replica
             ):
-                service = FileNotesService(
-                    root,
-                    replica,
-                    operation_lock=self._service_lock,
+                return False
+            reservation = self._session_owner.try_reserve_root(
+                root,
+                expected_binding=expected_binding,
+            )
+        if reservation is None:
+            return False
+
+        cancellation: asyncio.CancelledError | None = None
+        persistence_warning = ""
+        try:
+            if persist:
+                persistence_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        apply_settings_mutation_to_cli_config,
+                        {"file_notes": {"root": str(root)}},
+                    )
                 )
-            return root, replica, service, warning
+                while not persistence_task.done():
+                    try:
+                        await asyncio.shield(persistence_task)
+                    except asyncio.CancelledError as error:
+                        if cancellation is None:
+                            cancellation = error
+                    except BaseException:
+                        break
+                try:
+                    persistence = persistence_task.result()
+                except BaseException as error:
+                    if cancellation is not None:
+                        raise cancellation from error
+                    raise
+                if not persistence.file_replaced:
+                    if cancellation is not None:
+                        raise cancellation
+                    return False
+                if persistence.failure_phase == "cache_reload":
+                    persistence_warning = (
+                        "Root saved, but configuration cache reload failed."
+                    )
+
+            def publish(binding: SessionBinding) -> None:
+                binding_changed = binding != self._session_binding
+                if binding_changed:
+                    self._clear_git_last_action()
+                    self._git_observed_changes = None
+                    self._git_status_task = None
+                    self._git_status_task_binding = None
+                    if self._active and self.is_mounted:
+                        self._git_panel_widget.render_unavailable(
+                            "Selected notes root changed. Reopen Prepare "
+                            "session for commit to check the new root."
+                        )
+                service._bind_session_owner(self._session_owner, binding)
+                self._root = root
+                self._session_binding = binding
+                self._service = service
+                self._clear_open_document()
+                self._initialized = True
+                if persistence_warning:
+                    self._runtime_warning = persistence_warning
+                self._apply_scan(result, deleted)
+
+            # Atomic file replacement is the point of no return. There is
+            # deliberately no await between observing it and synchronously
+            # aligning the owner, service, workspace, and scan projection under
+            # this reservation.
+            with self._runtime_lock:
+                reservation.commit(publish)
+            if cancellation is not None:
+                raise cancellation
+            return True
+        finally:
+            reservation.release()
 
     async def _load_deleted_paths(
         self,
@@ -557,12 +868,26 @@ class LibraryFileNotesWorkspace(Vertical):
         result: ScanResult,
         deleted: tuple[str, ...],
     ) -> None:
+        self._adopt_scan_state(result, deleted)
+        self._render_scan_state()
+
+    def _adopt_scan_state(
+        self,
+        result: ScanResult,
+        deleted: tuple[str, ...],
+    ) -> None:
+        """Install a scan projection without requiring mounted widgets."""
         self._entries = {entry.relative_path: entry for entry in result.entries}
         self._deleted_paths = deleted
         self._root_offline = result.offline
         if result.replica_warning:
             self._runtime_warning = result.replica_warning
-        self._update_root_surface(offline=result.offline)
+
+    def _render_scan_state(self) -> None:
+        """Render the installed scan projection when the widget tree is live."""
+        if not self._active or not self.is_mounted or not self.children:
+            return
+        self._update_root_surface(offline=self._root_offline)
         self._rebuild_tree()
         self._refresh_active_search()
         self._refresh_session_changes()
@@ -590,12 +915,21 @@ class LibraryFileNotesWorkspace(Vertical):
         self._update_controls()
 
     def _update_root_surface(self, *, offline: bool | None = None) -> None:
-        if not self._active or not self.is_mounted:
+        if not self._active or not self.is_mounted or not self.children:
             return
         status = self.query_one("#file-notes-root-status", Static)
         body = self.query_one("#file-notes-body")
         choose = self.query_one("#file-notes-choose-root", Button)
-        choose.disabled = self._root_transitioning or self._path_transitioning
+        binding = self._session_binding
+        mutation_active = (
+            binding is not None
+            and self._session_owner.mutation_active(binding)
+        )
+        choose.disabled = (
+            self._root_transitioning
+            or self._path_transitioning
+            or mutation_active
+        )
         if self._root is None:
             status.update("Choose a notes folder.")
             body.display = False
@@ -630,6 +964,77 @@ class LibraryFileNotesWorkspace(Vertical):
             navigator.display = True
             editor.display = True
             back.display = False
+        self._sync_navigator_mode()
+        self._schedule_editor_action_layout()
+
+    def _sync_navigator_mode(self) -> None:
+        """Show one retained navigator surface without remounting its peers."""
+        if not self._active or not self.is_mounted:
+            return
+        search = self.query_one("#file-notes-search", Input)
+        tree = self.query_one("#file-notes-tree", Tree)
+        results = self.query_one("#file-notes-search-results", Tree)
+        entry = self.query_one("#file-notes-session-changes", Button)
+        panel = self.query_one(
+            "#file-notes-git-panel",
+            LibraryFileNotesGitPanel,
+        )
+        git_visible = self._navigator_mode == "git"
+        panel.display = git_visible
+        search.display = not git_visible
+        entry.display = not git_visible
+        tree.display = not git_visible and self._navigator_mode == "files"
+        results.display = not git_visible and self._navigator_mode == "search"
+        self.set_class(
+            git_visible and not self._narrow,
+            "-prepare-session-wide",
+        )
+
+    def _schedule_editor_action_layout(self) -> None:
+        """Coalesce editor-action measurements after Textual refreshes layout."""
+        if (
+            not self._active
+            or not self.is_mounted
+            or self._editor_action_layout_sync_scheduled
+        ):
+            return
+        self._editor_action_layout_sync_scheduled = True
+        self.call_after_refresh(self._sync_editor_action_layout)
+
+    def _set_delete_confirmation(self, relative_path: str = "") -> None:
+        """Project one confirmation state into its copy and narrow layout."""
+        confirmed = bool(relative_path)
+        self._delete_confirmation_path = relative_path
+        delete = self.query_one("#file-notes-delete", Button)
+        delete.label = "Confirm delete" if confirmed else "Delete"
+        delete.set_class(confirmed, "-confirm-delete")
+        toolbar = delete.parent
+        if toolbar is not None:
+            toolbar.set_class(confirmed, "-confirm-delete")
+        self._schedule_editor_action_layout()
+
+    def _sync_editor_action_layout(self) -> None:
+        """Stack current editor actions only when their labels need the space."""
+        self._editor_action_layout_sync_scheduled = False
+        if not self._active or not self.is_mounted:
+            return
+        pane = self.query_one("#file-notes-editor-pane")
+        if not pane.display:
+            return
+        available_width = pane.content_region.width
+        if available_width <= 0:
+            return
+        needs_stack = any(
+            toolbar.display
+            and sum(
+                cell_len(str(button.label)) + 4
+                for button in toolbar.query(Button)
+                if button.display
+            )
+            > available_width
+            for toolbar in pane.query(".file-notes-toolbar")
+        )
+        self.set_class(needs_stack, "-stack-editor-actions")
 
     def _rebuild_tree(self) -> None:
         if not self._active or not self.is_mounted:
@@ -706,20 +1111,432 @@ class LibraryFileNotesWorkspace(Vertical):
     def _refresh_session_changes(self) -> None:
         if not self._active or not self.is_mounted:
             return
-        changes = () if self._service is None else self._service.session_changes
-        text = "Session changes: none"
-        if changes:
-            parts = []
-            for change in changes:
-                if change.destination_path:
-                    parts.append(
-                        f"{change.action} {change.relative_path} → "
-                        f"{change.destination_path}"
+        binding = self._session_binding
+        changes: tuple[SequencedSessionChange, ...] = ()
+        if binding is not None:
+            changes = self._session_owner.snapshot(binding).changes
+        self._sync_git_last_action()
+        count = len(coalesce_session_changes(changes))
+        self.query_one("#file-notes-session-changes", Button).label = (
+            f"Session Git ({count})"
+        )
+        prior = self._git_observed_changes
+        self._git_observed_changes = changes
+        if prior is None or prior == changes or binding is None:
+            return
+        self._git_panel_widget.mark_stale(
+            retain_rows=self._git_can_retain_rows(binding),
+        )
+        if self._navigator_mode == "git":
+            self._schedule_git_refresh()
+
+    def _schedule_git_refresh(self) -> None:
+        """Debounce visible mutation-driven refresh requests."""
+        if self._navigator_mode != "git":
+            return
+        if self._git_refresh_timer is not None:
+            self._git_refresh_timer.stop()
+        self._git_refresh_timer = self.set_timer(
+            0.05,
+            self._debounced_git_refresh,
+        )
+
+    def _debounced_git_refresh(self) -> None:
+        self._git_refresh_timer = None
+        self._start_git_refresh()
+
+    def _session_git_service(self) -> _SessionGitService | None:
+        service = self._session_owner.attached_git_service()
+        return None if service is None else cast(_SessionGitService, service)
+
+    def _git_binding_is_current(self, binding: SessionBinding) -> bool:
+        return (
+            self._active
+            and self._navigator_mode == "git"
+            and self._git_binding_matches_session(binding)
+        )
+
+    def _git_binding_matches_session(self, binding: SessionBinding) -> bool:
+        """Return whether a result still belongs to this retained root."""
+        return (
+            binding == self._session_binding
+            and binding == self._session_owner.current_binding()
+        )
+
+    @staticmethod
+    def _repository_identity_is_complete(
+        repository: RepositoryIdentity | None,
+    ) -> bool:
+        """Return whether a repository identity is complete enough to key UI."""
+        return (
+            repository is not None
+            and bool(repository.worktree_root)
+            and bool(repository.git_dir)
+            and bool(repository.git_common_dir)
+            and repository.worktree_identity is not None
+            and repository.git_dir_identity is not None
+            and repository.git_common_dir_identity is not None
+        )
+
+    def _capture_git_action_key(
+        self,
+        binding: SessionBinding,
+    ) -> _GitLastAction | None:
+        """Capture exact owner authority immediately around action admission."""
+        if binding != self._session_owner.current_binding():
+            return None
+        snapshot = self._session_owner.snapshot(binding)
+        repository = snapshot.trusted_repository
+        if not self._repository_identity_is_complete(repository):
+            return None
+        assert repository is not None
+        return _GitLastAction(
+            binding=snapshot.binding,
+            repository=repository,
+            changes=snapshot.changes,
+            text="",
+        )
+
+    def _git_action_key_is_current(self, action: _GitLastAction) -> bool:
+        """Compare one captured key with a fresh immutable owner snapshot."""
+        if action.binding != self._session_owner.current_binding():
+            return False
+        snapshot = self._session_owner.snapshot(action.binding)
+        return (
+            snapshot.binding == action.binding
+            and snapshot.trusted_repository == action.repository
+            and snapshot.changes == action.changes
+            and self._repository_identity_is_complete(
+                snapshot.trusted_repository
+            )
+        )
+
+    def _clear_git_last_action(self) -> None:
+        """Discard obsolete action text in both workspace and mounted panel."""
+        self._git_last_action = None
+        if self._active and self.is_mounted:
+            self._git_panel_widget.clear_last_action()
+
+    def _sync_git_last_action(self) -> bool:
+        """Validate and project the retained action against fresh owner state."""
+        action = self._git_last_action
+        if action is not None and not self._git_action_key_is_current(action):
+            action = None
+            self._git_last_action = None
+        if self._active and self.is_mounted:
+            if action is None:
+                self._git_panel_widget.clear_last_action()
+            else:
+                self._git_panel_widget.set_last_action(action.text)
+        return action is not None
+
+    def _git_can_retain_rows(self, binding: SessionBinding) -> bool:
+        """Prove prior rows belong to the same complete trusted authority."""
+        if binding != self._session_owner.current_binding():
+            return False
+        snapshot = self._session_owner.snapshot(binding)
+        repository = snapshot.trusted_repository
+        status = snapshot.git_status
+        return (
+            self._repository_identity_is_complete(repository)
+            and status is not None
+            and status.binding_generation == binding.generation
+            and status.repository == repository
+        )
+
+    def _ensure_git_status_waiter(
+        self,
+        task: asyncio.Task[SessionGitStatus],
+        binding: SessionBinding,
+        *,
+        replace: bool = False,
+    ) -> None:
+        """Attach presentation to one service-owned task without restarting it."""
+        if (
+            not self._active
+            or not self.is_mounted
+            or (
+                not replace
+                and self._git_status_worker is not None
+                and not self._git_status_worker.is_finished
+            )
+        ):
+            return
+        self._git_status_worker = self.run_worker(
+            self._render_git_status(task, binding),
+            name="file-notes-git-status",
+            group="file-notes-git-status",
+            exclusive=True,
+        )
+
+    def _rehydrate_git_presentation(self) -> bool:
+        """Render retained owner/task state without starting hidden Git work."""
+        if (
+            not self._active
+            or not self.is_mounted
+            or self._navigator_mode != "git"
+        ):
+            return False
+        binding = self._session_binding
+        if binding is None or not self._git_binding_matches_session(binding):
+            self._clear_git_last_action()
+            return False
+        snapshot = self._session_owner.snapshot(binding)
+        self._sync_git_last_action()
+        if self._session_owner.mutation_active(binding):
+            if snapshot.git_status is not None:
+                self._git_panel_widget.render_status(
+                    snapshot.git_status,
+                    retain_rows=self._git_can_retain_rows(binding),
+                )
+            self._git_panel_widget.set_mutating(
+                True,
+                "Git mutation in progress…",
+            )
+            self._git_refresh_after_mutation = True
+            return True
+        service = self._session_git_service()
+        retained_task = (
+            None if service is None else service.retained_status(binding)
+        )
+        if retained_task is not None:
+            self._git_status_task = retained_task
+            self._git_status_task_binding = binding
+        task = self._git_status_task
+        if (
+            task is not None
+            and self._git_status_task_binding == binding
+            and not task.done()
+        ):
+            repository = snapshot.trusted_repository
+            if repository is not None:
+                self._git_panel_widget.render_checking(
+                    repository.worktree_root,
+                    retain_rows=self._git_can_retain_rows(binding),
+                )
+            self._ensure_git_status_waiter(task, binding)
+            return True
+        if snapshot.git_status is not None:
+            self._git_panel_widget.render_status(
+                snapshot.git_status,
+                retain_rows=self._git_can_retain_rows(binding),
+            )
+            self._sync_git_last_action()
+            return True
+        if (
+            task is not None
+            and self._git_status_task_binding == binding
+            and task.done()
+        ):
+            self._ensure_git_status_waiter(task, binding)
+            return True
+        return False
+
+    @staticmethod
+    def _git_discovery_failure_detail(discovery: DiscoveryResult) -> str:
+        """Project one discovery failure to reason plus feasible recovery."""
+        if discovery.state == "not_repository":
+            return (
+                "This notes folder is not in a Git worktree. "
+                "Notes remain fully usable."
+            )
+
+        defaults = {
+            "unavailable": "Git is unavailable",
+            "unsupported": "Git repository compatibility is unsupported",
+            "unsafe_root": "Selected File Notes root is unsafe",
+        }
+        recoveries = {
+            "unavailable": (
+                "Install or restore Git, then reopen Prepare session for "
+                "commit."
+            ),
+            "unsupported": (
+                "Resolve Git compatibility outside Chatbook, then reopen "
+                "Prepare session for commit."
+            ),
+            "unsafe_root": (
+                "Select or fix a safe notes root, then reopen Prepare session "
+                "for commit."
+            ),
+        }
+        reason = (
+            discovery.message
+            or defaults.get(
+                discovery.state,
+                "Git repository discovery is unavailable",
+            )
+        ).strip()
+        if reason and reason[-1] not in ".!?":
+            reason += "."
+        recovery = recoveries.get(
+            discovery.state,
+            "Reopen Prepare session for commit.",
+        )
+        return f"{reason} {recovery}"
+
+    async def _open_session_git(self, *, force_prompt: bool = False) -> None:
+        binding = self._session_binding
+        service = self._session_git_service()
+        if binding is None or service is None:
+            self._clear_git_last_action()
+            self._git_panel_widget.render_unavailable(
+                "Git is unavailable for the selected File Notes root. "
+                "Restore Git, then reopen Prepare session for commit."
+            )
+            return
+        discovery = await service.discover(binding)
+        if not self._git_binding_is_current(binding):
+            return
+        repository = discovery.repository
+        if discovery.state != "ready" or repository is None:
+            self._clear_git_last_action()
+            self._git_panel_widget.render_unavailable(
+                self._git_discovery_failure_detail(discovery)
+            )
+            return
+        snapshot = self._session_owner.snapshot(binding)
+        needs_trust = (
+            force_prompt or snapshot.trusted_repository != repository
+        )
+        if needs_trust:
+            self._clear_git_last_action()
+            self._git_panel_widget.render_untrusted(repository.worktree_root)
+            accepted = await self.app.push_screen_wait(
+                SessionGitTrustDialog(repository.worktree_root)
+            )
+            if not accepted or not self._git_binding_is_current(binding):
+                return
+            if not await service.revalidate_repository(binding, repository):
+                if self._git_binding_is_current(binding):
+                    self._clear_git_last_action()
+                    self._git_panel_widget.render_untrusted(
+                        repository.worktree_root
                     )
-                else:
-                    parts.append(f"{change.action} {change.relative_path}")
-            text = "Session changes: " + "; ".join(parts)
-        self.query_one("#file-notes-session-changes", Static).update(text)
+                    self._git_panel_widget.set_current_status(
+                        "Status: TRUST REQUIRED — Repository identity changed; "
+                        "retry Trust and check status."
+                    )
+                return
+            if not self._session_owner.publish_trust(binding, repository):
+                self._clear_git_last_action()
+                return
+            snapshot = self._session_owner.snapshot(binding)
+        if (
+            self._git_refresh_after_mutation
+            and not self._session_owner.mutation_active(binding)
+        ):
+            self._git_refresh_after_mutation = False
+            self._start_git_refresh()
+            self.call_after_refresh(self._focus_session_git_panel)
+            return
+        if self._rehydrate_git_presentation():
+            self.call_after_refresh(self._focus_session_git_panel)
+            return
+        self._start_git_refresh()
+
+    def _start_git_refresh(self) -> None:
+        """Synchronously admit visible status and delegate retained awaiting."""
+        if self._navigator_mode != "git":
+            return
+        binding = self._session_binding
+        service = self._session_git_service()
+        if binding is None or service is None:
+            self._clear_git_last_action()
+            self._git_panel_widget.render_unavailable(
+                "Git status is unavailable. Restore Git, then reopen "
+                "Prepare session for commit."
+            )
+            return
+        if self._session_owner.mutation_active(binding):
+            self._git_refresh_after_mutation = True
+            self._git_panel_widget.mark_stale(
+                "Git mutation in progress; refresh will follow.",
+                retain_rows=self._git_can_retain_rows(binding),
+            )
+            return
+        snapshot = self._session_owner.snapshot(binding)
+        repository = snapshot.trusted_repository
+        if repository is None:
+            self._clear_git_last_action()
+            self._git_panel_widget.render_unavailable(
+                "Repository trust is unavailable. Return to the navigator, "
+                "reopen Prepare session for commit, and trust the repository."
+            )
+            return
+        self._git_panel_widget.render_checking(
+            repository.worktree_root,
+            retain_rows=self._git_can_retain_rows(binding),
+        )
+        try:
+            task = service.start_status(binding, snapshot.changes)
+        except GitStatusAdmissionError as error:
+            if error.reason == "mutation_active":
+                self._git_refresh_after_mutation = True
+            self._git_panel_widget.mark_stale(
+                f"{error}. Retry Refresh.",
+                retain_rows=self._git_can_retain_rows(binding),
+            )
+            return
+        self._git_status_task = task
+        self._git_status_task_binding = binding
+        self._ensure_git_status_waiter(task, binding, replace=True)
+
+    async def _render_git_status(
+        self,
+        task: asyncio.Task[SessionGitStatus],
+        binding: SessionBinding,
+    ) -> None:
+        try:
+            status = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            if self._git_binding_is_current(binding):
+                self._sync_git_last_action()
+                self._git_panel_widget.mark_stale(
+                    f"Git status failed: {error}. Retry Refresh.",
+                    retain_rows=self._git_can_retain_rows(binding),
+                    error=True,
+                )
+                if self._git_status_task is task:
+                    self._git_status_task = None
+                    self._git_status_task_binding = None
+            return
+        self._sync_git_last_action()
+        if not self._git_binding_is_current(binding):
+            return
+        snapshot = self._session_owner.snapshot(binding)
+        if self._git_status_task is task:
+            self._git_status_task = None
+            self._git_status_task_binding = None
+        if snapshot.trusted_repository is None:
+            self._clear_git_last_action()
+            self._git_panel_widget.render_unavailable(
+                "Repository trust changed while checking status. Return to "
+                "the navigator, reopen Prepare session for commit, and trust "
+                "the current repository."
+            )
+            return
+        if status == snapshot.git_status:
+            self._git_panel_widget.render_status(
+                status,
+                retain_rows=self._git_can_retain_rows(binding),
+            )
+            self._sync_git_last_action()
+            return
+        if snapshot.git_status is not None:
+            self._git_panel_widget.render_status(
+                snapshot.git_status,
+                retain_rows=self._git_can_retain_rows(binding),
+            )
+            self._sync_git_last_action()
+            return
+        if (
+            snapshot.trusted_repository is not None
+            and not self._rehydrate_git_presentation()
+        ):
+            self._start_git_refresh()
 
     def _set_save_state(self, state: SaveState, detail: str = "") -> None:
         self._save_state = state
@@ -740,47 +1557,76 @@ class LibraryFileNotesWorkspace(Vertical):
         if not self._active or not self.is_mounted:
             return
         transitioning = self._root_transitioning or self._path_transitioning
-        has_service = self._service is not None and not transitioning
+        binding = self._session_binding
+        mutation_active = (
+            binding is not None
+            and self._session_owner.mutation_active(binding)
+        )
+        structurally_available = not transitioning and not mutation_active
+        has_service = self._service is not None and structurally_available
         has_document = self._opened is not None and not transitioning
         has_deleted = bool(self._selected_deleted_path) and not transitioning
         self.query_one("#file-notes-new", Button).disabled = not has_service
-        for selector in ("move", "delete", "protect", "reload"):
+        for selector in ("move", "delete", "reload"):
             self.query_one(
                 f"#file-notes-{selector}", Button
-            ).disabled = not has_document
+            ).disabled = not (
+                has_document and structurally_available
+            )
+        self.query_one("#file-notes-protect", Button).disabled = not has_document
         self.query_one("#file-notes-save-copy", Button).disabled = (
-            not has_document or self._save_state not in {"dirty", "conflict", "error"}
+            not has_document
+            or not structurally_available
+            or self._save_state not in {"dirty", "conflict", "error"}
         )
         self.query_one("#file-notes-restore", Button).disabled = (
-            not has_service or not has_deleted
+            not has_service or not has_deleted or not structurally_available
         )
-        self.query_one("#file-notes-refresh", Button).disabled = not has_service
+        self.query_one("#file-notes-refresh", Button).disabled = (
+            self._service is None or transitioning
+        )
         protect = self.query_one("#file-notes-protect", Button)
         protect.label = (
             "Unprotect"
             if self._opened is not None and self._opened.protected
             else "Protect"
         )
+        self._schedule_editor_action_layout()
         self.query_one("#file-notes-search", Input).disabled = transitioning
-        self.query_one("#file-notes-path", Input).disabled = transitioning
-        self.query_one("#file-notes-tree", Tree).disabled = transitioning
-        self.query_one("#file-notes-search-results", Tree).disabled = transitioning
+        self.query_one("#file-notes-path", Input).disabled = (
+            transitioning or mutation_active
+        )
+        self.query_one("#file-notes-tree", Tree).disabled = (
+            transitioning or mutation_active
+        )
+        self.query_one("#file-notes-search-results", Tree).disabled = (
+            transitioning or mutation_active
+        )
         editor = self.query_one("#file-notes-editor", TextArea)
         editor.read_only = transitioning or not (
             self._opened is not None and self._opened.editable
         )
+        self._git_panel_widget.set_mutating(mutation_active)
 
     @contextmanager
     def _hold_path_transition(
         self,
     ) -> Iterator[tuple[FileNotesService, int] | None]:
         service = self._service
+        binding = self._session_binding
         if (
             not self._active
             or self._root_transitioning
             or self._path_transitioning
             or service is None
+            or binding is None
         ):
+            yield None
+            return
+        lease = self._session_owner.try_acquire_transition(binding, "path")
+        if lease is None:
+            if self._session_owner.mutation_active(binding):
+                self._set_action_status(_SESSION_GIT_MUTATION_BUSY)
             yield None
             return
         self._path_transitioning = True
@@ -790,6 +1636,7 @@ class LibraryFileNotesWorkspace(Vertical):
             yield service, self._root_generation
         finally:
             self._path_transitioning = False
+            lease.release()
             self._update_root_surface()
             self._update_controls()
 
@@ -812,6 +1659,25 @@ class LibraryFileNotesWorkspace(Vertical):
             return False
         if not self._active or self._path_transitioning or self._shutdown:
             return False
+        expected_binding = (
+            self._session_binding
+            if self._session_binding is not None
+            else self._initial_session_binding
+        )
+        root_lease = (
+            None
+            if expected_binding is None
+            else self._session_owner.try_acquire_transition(
+                expected_binding,
+                "root",
+            )
+        )
+        if expected_binding is not None and root_lease is None:
+            if self._session_owner.mutation_active(expected_binding):
+                self._set_action_status(
+                    "Session Git mutation in progress; root change is busy."
+                )
+            return False
         self._root_generation += 1
         generation = self._root_generation
         self._root_transitioning = True
@@ -823,7 +1689,10 @@ class LibraryFileNotesWorkspace(Vertical):
                 return False
             if self._replica_seed is _UNSET and self._replica is None:
                 _, replica, _, warning = await asyncio.to_thread(
-                    self._build_runtime
+                    self._build_runtime,
+                    generation,
+                    expected_binding,
+                    bind_session=False,
                 )
                 if not self._active or generation != self._root_generation:
                     return False
@@ -837,15 +1706,6 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             if not self._active or generation != self._root_generation:
                 return False
-            if persist:
-                await asyncio.to_thread(
-                    save_setting_to_cli_config,
-                    "file_notes",
-                    "root",
-                    str(canonical),
-                )
-                if not self._active or generation != self._root_generation:
-                    return False
             result = await asyncio.to_thread(service.scan)
             deleted = await self._load_deleted_paths(
                 replica=self._replica,
@@ -853,13 +1713,20 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             if not self._active or generation != self._root_generation:
                 return False
-            self._root = canonical
-            self._service = service
-            self._clear_open_document()
-            self._initialized = True
-            self._apply_scan(result, deleted)
+            if not await self._commit_root_candidate(
+                canonical,
+                service,
+                result,
+                deleted,
+                generation,
+                expected_binding,
+                persist=persist,
+            ):
+                return False
             return True
         finally:
+            if root_lease is not None:
+                root_lease.release()
             if generation == self._root_generation:
                 self._root_transitioning = False
                 self._update_root_surface()
@@ -914,14 +1781,13 @@ class LibraryFileNotesWorkspace(Vertical):
         self._current_path = opened.relative_path
         self._selected_deleted_path = ""
         self._session_key = uuid4().hex
-        self._delete_confirmation_path = ""
+        self._set_delete_confirmation()
         editor = self.query_one("#file-notes-editor", TextArea)
         with editor.prevent(TextArea.Changed):
             editor.load_text(opened.body)
         editor.read_only = not opened.editable
         self.query_one("#file-notes-path", Input).value = opened.relative_path
         self.query_one("#file-notes-breadcrumb", Static).update(opened.relative_path)
-        self.query_one("#file-notes-delete", Button).label = "Delete"
         if opened.editable:
             self._set_save_state("saved")
         else:
@@ -936,21 +1802,24 @@ class LibraryFileNotesWorkspace(Vertical):
         self._update_controls()
 
     def _clear_open_document(self, *, keep_restore_path: bool = False) -> None:
-        if not self._active:
-            return
         self._opened = None
         self._current_path = ""
         self._session_key = ""
         self._delete_confirmation_path = ""
+        if not keep_restore_path:
+            self._selected_deleted_path = ""
+        if not self._active or not self.is_mounted:
+            self._save_state = "idle"
+            self._save_detail = ""
+            return
         editor = self.query_one("#file-notes-editor", TextArea)
         with editor.prevent(TextArea.Changed):
             editor.load_text("")
         editor.read_only = True
         if not keep_restore_path:
-            self._selected_deleted_path = ""
             self.query_one("#file-notes-path", Input).value = ""
             self.query_one("#file-notes-breadcrumb", Static).update("No file selected")
-        self.query_one("#file-notes-delete", Button).label = "Delete"
+        self._set_delete_confirmation()
         self._set_save_state("idle")
         self._update_controls()
 
@@ -1147,9 +2016,19 @@ class LibraryFileNotesWorkspace(Vertical):
             self._set_action_status(result.replica_warning or "")
             return False
 
+    def _mutation_blocks_flush(self, binding: SessionBinding | None) -> bool:
+        """Explain an exact-binding mutation refusal without changing admission."""
+        if binding is None or not self._session_owner.mutation_active(binding):
+            return False
+        self._set_action_status(_SESSION_GIT_MUTATION_BUSY)
+        return True
+
     async def flush_pending_work(self) -> bool:
         """Flush a pending autosave; unresolved draft states veto leaving."""
+        binding = self._session_binding
         if self._root_transitioning or self._path_transitioning:
+            return False
+        if self._mutation_blocks_flush(binding):
             return False
         if not self._active:
             return self.leave_allowed
@@ -1166,6 +2045,9 @@ class LibraryFileNotesWorkspace(Vertical):
             return False
         if self._save_state == "dirty":
             await self._save_draft()
+        binding = self._session_binding
+        if self._mutation_blocks_flush(binding):
+            return False
         return self.leave_allowed
 
     async def _rescan_after_action(self) -> bool:
@@ -1242,8 +2124,7 @@ class LibraryFileNotesWorkspace(Vertical):
             or not self._opened.editable
         ):
             return
-        self._delete_confirmation_path = ""
-        self.query_one("#file-notes-delete", Button).label = "Delete"
+        self._set_delete_confirmation()
         self._set_save_state("dirty")
         self._arm_autosave()
 
@@ -1252,16 +2133,21 @@ class LibraryFileNotesWorkspace(Vertical):
         event.stop()
         query = event.value.strip()
         self._search_query = event.value
-        tree = self.query_one("#file-notes-tree", Tree)
         results = self.query_one("#file-notes-search-results", Tree)
         if not query:
             self._search_generation += 1
-            tree.display = True
-            results.display = False
+            if self._navigator_mode == "git":
+                self._navigator_mode_before_git = "files"
+            else:
+                self._navigator_mode = "files"
+            self._sync_navigator_mode()
             results.reset(Text("Search results"))
             return
-        tree.display = False
-        results.display = True
+        if self._navigator_mode == "git":
+            self._navigator_mode_before_git = "search"
+        else:
+            self._navigator_mode = "search"
+        self._sync_navigator_mode()
         self._start_search(query)
 
     def _start_search(self, query: str) -> None:
@@ -1335,6 +2221,448 @@ class LibraryFileNotesWorkspace(Vertical):
         self._narrow_view = "navigator"
         self._apply_responsive_layout(self.size.width)
 
+    @on(Button.Pressed, "#file-notes-session-changes")
+    def _session_git_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        entry_owned_focus = event.button.has_focus
+        if self._navigator_mode != "git":
+            self._navigator_mode_before_git = (
+                "search"
+                if self._navigator_mode == "search"
+                else "files"
+            )
+        self._navigator_mode = "git"
+        self._sync_navigator_mode()
+        if entry_owned_focus:
+            self.screen.set_focus(
+                self.query_one("#file-notes-git-back", Button),
+                scroll_visible=False,
+            )
+        self.call_after_refresh(self._focus_session_git_panel)
+        self.run_worker(
+            self._open_session_git(),
+            name="file-notes-git-open",
+            group="file-notes-git-open",
+            exclusive=True,
+        )
+
+    def _focus_session_git_panel(self, retries_remaining: int = 8) -> None:
+        """Move focus off the hidden entry into the visible Git surface."""
+        if (
+            not self._active
+            or not self.is_mounted
+            or self._navigator_mode != "git"
+        ):
+            return
+        entry = self.query_one("#file-notes-session-changes", Button)
+        back = self.query_one("#file-notes-git-back", Button)
+        focused = self.app.focused
+        if not (
+            focused is entry
+            or focused is back
+            or (
+                focused is not None
+                and (
+                    focused is self._git_panel_widget
+                    or self._git_panel_widget in focused.ancestors
+                )
+            )
+        ):
+            return
+        rows = self.query_one("#file-notes-git-rows", ListView)
+        if self._git_panel_widget.rows:
+            if rows.display:
+                self.screen.set_focus(rows, scroll_visible=False)
+            elif retries_remaining:
+                self.call_after_refresh(
+                    self._focus_session_git_panel,
+                    retries_remaining - 1,
+                )
+            else:
+                self.screen.set_focus(back, scroll_visible=False)
+            return
+        self.screen.set_focus(back, scroll_visible=False)
+
+    @on(LibraryFileNotesGitPanel.BackRequested)
+    def _session_git_back(
+        self,
+        event: LibraryFileNotesGitPanel.BackRequested,
+    ) -> None:
+        event.stop()
+        self._navigator_mode = self._navigator_mode_before_git
+        self._sync_navigator_mode()
+        self.call_after_refresh(
+            self.query_one("#file-notes-session-changes", Button).focus
+        )
+
+    @on(LibraryFileNotesGitPanel.RefreshRequested)
+    def _session_git_refresh(
+        self,
+        event: LibraryFileNotesGitPanel.RefreshRequested,
+    ) -> None:
+        event.stop()
+        self._start_git_refresh()
+
+    @on(LibraryFileNotesGitPanel.TrustRequested)
+    def _session_git_trust(
+        self,
+        event: LibraryFileNotesGitPanel.TrustRequested,
+    ) -> None:
+        event.stop()
+        self.run_worker(
+            self._open_session_git(force_prompt=True),
+            name="file-notes-git-trust",
+            group="file-notes-git-open",
+            exclusive=True,
+        )
+
+    @on(LibraryFileNotesGitPanel.StageRequested)
+    async def _session_git_stage(
+        self,
+        event: LibraryFileNotesGitPanel.StageRequested,
+    ) -> None:
+        event.stop()
+        await self._start_git_action("stage", event.group_ids, bulk=event.bulk)
+
+    @on(LibraryFileNotesGitPanel.UnstageRequested)
+    async def _session_git_unstage(
+        self,
+        event: LibraryFileNotesGitPanel.UnstageRequested,
+    ) -> None:
+        event.stop()
+        await self._start_git_action("unstage", event.group_ids, bulk=event.bulk)
+
+    async def _start_git_action(
+        self,
+        action: Literal["stage", "unstage"],
+        group_ids: tuple[int, ...],
+        *,
+        bulk: bool,
+    ) -> None:
+        """Flush as required, then synchronously admit one retained action."""
+        binding = self._session_binding
+        service = self._session_git_service()
+        if binding is None or service is None or self._navigator_mode != "git":
+            return
+        summary_context = self._git_action_summary_context(
+            action,
+            group_ids,
+            bulk=bulk,
+        )
+        pending_save = (
+            self._save_state in {"dirty", "saving"}
+            or self._autosave_timer is not None
+            or (
+                self._save_worker is not None
+                and not self._save_worker.is_finished
+            )
+        )
+        if (action == "stage" or pending_save) and not await self.flush_pending_work():
+            gerund = "staging" if action == "stage" else "unstaging"
+            if self._save_state == "conflict":
+                detail = (
+                    f"Save conflict must be resolved before {gerund}. "
+                    "Return to the editor."
+                )
+            elif self._save_state == "error":
+                detail = (
+                    f"Fix the save error before {gerund}. "
+                    "Return to the editor."
+                )
+            else:
+                detail = (
+                    f"Save the note before {gerund}. Return to the editor."
+                )
+            self._git_panel_widget.set_current_status(
+                f"Status: CURRENT · BLOCKED — {detail}"
+            )
+            return
+        if (
+            not self._git_binding_is_current(binding)
+            or self._root_transitioning
+            or self._path_transitioning
+            or self._save_state in {"dirty", "saving", "conflict", "error"}
+        ):
+            self._git_panel_widget.set_current_status(
+                "Status: CURRENT · BLOCKED — File Notes changed before "
+                f"{action.title()}. Return to the editor, finish the save or "
+                "transition, then Refresh."
+            )
+            return
+        action_key = self._capture_git_action_key(binding)
+        if action_key is None:
+            self._git_panel_widget.set_current_status(
+                "Status: STALE · BLOCKED — Repository or session authority "
+                "changed before the action. Return to the navigator, reopen "
+                "Prepare session for commit, then Refresh."
+            )
+            return
+        try:
+            task = (
+                service.start_stage(binding, group_ids)
+                if action == "stage"
+                else service.start_unstage(binding, group_ids)
+            )
+        except GitMutationAdmissionError as error:
+            self._git_panel_widget.set_current_status(
+                f"Status: CURRENT · BLOCKED — {action.title()} could not "
+                f"start: {error}. Finish the active File Notes action, then "
+                "Refresh."
+            )
+            return
+        action_key_after_admission = self._capture_git_action_key(binding)
+        if action_key_after_admission != action_key:
+            action_key = None
+        self._clear_git_last_action()
+        self._git_status_task = None
+        self._git_status_task_binding = None
+        self._git_panel_widget.set_mutating(
+            True,
+            f"{action.title()} in progress…",
+        )
+        self._update_root_surface()
+        self._update_controls()
+        self._git_action_worker = self.run_worker(
+            self._render_git_action(
+                task,
+                binding,
+                summary_context,
+                action_key,
+            ),
+            name=f"file-notes-git-{action}",
+            group="file-notes-git-action",
+            exclusive=True,
+        )
+
+    async def _render_git_action(
+        self,
+        task: asyncio.Task[GitActionResult],
+        binding: SessionBinding,
+        summary_context: _GitActionSummaryContext,
+        action_key: _GitLastAction | None,
+    ) -> None:
+        result: GitActionResult | None = None
+        try:
+            result = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            detail = (
+                f"Git action failed: {error}. Inspect the repository "
+                "index outside Chatbook, then Refresh."
+            )
+            if (
+                action_key is not None
+                and self._git_action_key_is_current(action_key)
+            ):
+                self._git_last_action = replace(
+                    action_key,
+                    text=f"Last action: FAILED — {detail}",
+                )
+                if self._git_binding_is_current(binding):
+                    self._sync_git_last_action()
+            if self._git_binding_is_current(binding):
+                self._git_panel_widget.mark_stale(
+                    detail,
+                    retain_rows=self._git_can_retain_rows(binding),
+                    error=True,
+                )
+        else:
+            if action_key is not None:
+                summary = self._git_action_summary(
+                    result,
+                    summary_context,
+                    action_key,
+                )
+                if (
+                    summary is not None
+                    and self._git_action_key_is_current(action_key)
+                ):
+                    self._git_last_action = replace(
+                        action_key,
+                        text=(
+                            f"Last action: {self._git_action_label(result)} — "
+                            f"{summary}"
+                        ),
+                    )
+                    if self._git_binding_is_current(binding):
+                        self._sync_git_last_action()
+        finally:
+            binding_changed = (
+                binding != self._session_binding
+                or binding != self._session_owner.current_binding()
+            )
+            if not binding_changed:
+                if self._session_owner.mutation_active(binding):
+                    self._git_refresh_after_mutation = True
+                else:
+                    self._update_root_surface()
+                    self._update_controls()
+                    if self._navigator_mode == "git" and self._active:
+                        self._git_refresh_after_mutation = False
+                        self._start_git_refresh()
+                    else:
+                        self._git_refresh_after_mutation = True
+                        if self._active and self.is_mounted:
+                            self._git_panel_widget.mark_stale(
+                                "Git action finished while Prepare session was "
+                                "hidden. Reopen it to Refresh.",
+                                retain_rows=self._git_can_retain_rows(binding),
+                            )
+
+    def _git_action_summary_context(
+        self,
+        action: Literal["stage", "unstage"],
+        group_ids: tuple[int, ...],
+        *,
+        bulk: bool,
+    ) -> _GitActionSummaryContext:
+        """Classify excluded displayed rows without re-deciding eligibility."""
+        if not bulk:
+            return _GitActionSummaryContext()
+        requested = frozenset(group_ids)
+        excluded: tuple[SessionGitRow, ...] = tuple(
+            row
+            for row in self._git_panel_widget.rows
+            if row.group_id not in requested
+        )
+        clean = sum(row.state == "clean" for row in excluded)
+        if action == "stage":
+            already_staged = sum(row.state == "owned" for row in excluded)
+            return _GitActionSummaryContext(
+                bulk=True,
+                already_staged=already_staged,
+                clean=clean,
+                blocked=len(excluded) - clean - already_staged,
+            )
+        skipped = sum(row.state == "unstaged" for row in excluded)
+        return _GitActionSummaryContext(
+            bulk=True,
+            skipped=skipped,
+            clean=clean,
+            blocked=len(excluded) - clean - skipped,
+        )
+
+    def _git_action_summary(
+        self,
+        result: GitActionResult,
+        context: _GitActionSummaryContext,
+        action_key: _GitLastAction,
+    ) -> str | None:
+        """Render one current checked result without overstating its proof."""
+        if not self._git_action_key_is_current(action_key):
+            return None
+        affected_group_ids = (
+            result.staged_group_ids
+            if result.action == "stage"
+            else result.unstaged_group_ids
+        )
+        affected = len(tuple(dict.fromkeys(affected_group_ids)))
+        counts: list[str] = []
+        if (
+            context.bulk
+            and result.action == "stage"
+            and context.already_staged
+        ):
+            counts.append(f"already staged {context.already_staged}")
+        if context.bulk and result.action == "unstage" and context.skipped:
+            counts.append(f"skipped {context.skipped}")
+        clean = len(result.clean_group_ids) + context.clean
+        blocked = len(result.blocked_group_ids) + context.blocked
+        if clean:
+            counts.append(f"clean {clean}")
+        if blocked:
+            counts.append(f"blocked {blocked}")
+        counts_text = (
+            f"Counts: {'; '.join(counts)}." if counts else ""
+        )
+
+        message = (result.message or "").strip()
+        if message and message[-1] not in ".!?":
+            message += "."
+
+        if result.state == "success" and affected:
+            note = "session note" if affected == 1 else "session notes"
+            if result.action == "stage":
+                core = (
+                    f"{affected} {note} staged; Chatbook targeted only "
+                    "eligible session paths."
+                )
+            else:
+                entry = "entry" if affected == 1 else "entries"
+                core = (
+                    f"{affected} {note} unstaged; Chatbook restored only its "
+                    f"owned session {entry}."
+                )
+            return " ".join(
+                part for part in (core, message, counts_text) if part
+            )
+
+        if result.state == "success":
+            past = "staged" if result.action == "stage" else "unstaged"
+            return " ".join(
+                part
+                for part in (
+                    f"No session notes {past}.",
+                    message,
+                    counts_text,
+                    "Review current eligibility, then Refresh.",
+                )
+                if part
+            )
+
+        if result.state == "blocked" and not affected and clean and not blocked:
+            return " ".join(
+                part
+                for part in (
+                    message,
+                    counts_text,
+                    "No eligible note changes remain; Refresh status.",
+                )
+                if part
+            )
+
+        fallback = {
+            "blocked": f"{result.action.title()} was blocked.",
+            "stale": f"{result.action.title()} status became stale.",
+            "error": f"{result.action.title()} failed.",
+            "uncertain": f"{result.action.title()} outcome is uncertain.",
+        }[result.state]
+        recovery = {
+            "blocked": (
+                "Resolve the reported Git state outside Chatbook, then Refresh."
+            ),
+            "stale": (
+                "Review the changed repository or session state, then Refresh."
+            ),
+            "error": "Fix the reported Git error outside Chatbook, then Refresh.",
+            "uncertain": (
+                "Inspect the repository index outside Chatbook, then Refresh."
+            ),
+        }[result.state]
+        return " ".join(
+            part for part in (message or fallback, counts_text, recovery) if part
+        )
+
+    @staticmethod
+    def _git_action_label(result: GitActionResult) -> str:
+        """Return the semantic token for one checked action result."""
+        affected = (
+            result.staged_group_ids
+            if result.action == "stage"
+            else result.unstaged_group_ids
+        )
+        if result.state == "success" and affected:
+            return "STAGED" if result.action == "stage" else "UNSTAGED"
+        if result.state == "success":
+            return "NO CHANGE"
+        return {
+            "blocked": "BLOCKED",
+            "stale": "STALE",
+            "error": "FAILED",
+            "uncertain": "UNCERTAIN",
+        }[result.state]
+
     @on(Button.Pressed, "#file-notes-new")
     async def _new_file(self, event: Button.Pressed) -> None:
         event.stop()
@@ -1380,8 +2708,7 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._service is None or opened is None:
             return
         if self._delete_confirmation_path != opened.relative_path:
-            self._delete_confirmation_path = opened.relative_path
-            event.button.label = "Confirm delete"
+            self._set_delete_confirmation(opened.relative_path)
             self._set_action_status("Click Delete again to confirm.")
             return
         if not await self.flush_pending_work():

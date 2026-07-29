@@ -77,8 +77,11 @@ from ...Chat.provider_catalog import (
 from ...config import (
     DEFAULT_CONFIG_FROM_TOML,
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     _default_base_data_dir,
     coerce_bool_setting,
     coerce_int_setting,
@@ -294,6 +297,7 @@ CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
         "collapse_large_pastes",
         "paste_collapse_threshold",
         "max_parallel_runs",
+        "tool_result_display_chars",
     }
 )
 # Parallel-agents spec S4 (task-5): user-adjustable global cap on
@@ -358,6 +362,7 @@ CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "collapse_large_pastes",
     "paste_collapse_threshold",
     "max_parallel_runs",
+    "tool_result_display_chars",
     "streaming",
     "temperature",
     "top_p",
@@ -403,9 +408,13 @@ API_URL_PROVIDER_KEYS = {
     "vllm",
 }
 SETTINGS_SOURCE_LABELS = {
+    # Keys mirror the source values resolve_effective_provider_model can
+    # return (Provider/provider_model_resolution.py) -- task-648 renamed
+    # console_control to console_session and deleted app_reactive; TASK-1310's
+    # review caught the stale keys here rendering a raw "console session"
+    # fallback label in Settings > Providers.
     "settings_draft": "Unsaved Settings draft",
-    "console_control": "Console runtime override",
-    "app_reactive": "Current app selection",
+    "console_session": "Console runtime override",
     "chat_defaults": "Saved chat defaults",
     "default": "Default fallback",
 }
@@ -788,6 +797,26 @@ _RAG_GROUP_BY_COLLAPSIBLE_ID: dict[str, str] = {
     "settings-library-rag-chunking-group": "chunking",
     "settings-library-rag-vector-store-group": "vector_store",
     "settings-library-rag-reranking-group": "reranking",
+}
+
+# Fleet-UX expert review F6 (task-1234): every guided category's "Focused
+# field guide" rows share the SAME symptom task-1140 already fixed once for
+# the fleet line -- the content updates in place (`_refresh_*_field_
+# guidance`, no recompose) but focus never moves the Scope Inspector's
+# scroll position, so the guide can sit below the pane's fold with only a
+# thin scrollbar sliver hinting at it (worst case: only "Purpose:" visible,
+# Consequences/Saved-as/Validation all clipped). Maps each guided category
+# to its guide block's FIRST row id -- every id below already exists (see
+# `_render_impact_pane`'s per-category "Focused field guide" loops) and is
+# rendered unconditionally (the fallback rows use the same ids when no
+# specific field is focused), so scrolling to it is meaningful even when
+# `_active_settings_field_id` resolves to the generic fallback.
+_FIELD_GUIDE_FIRST_ROW_ID: dict[SettingsCategoryId, str] = {
+    SettingsCategoryId.APPEARANCE: "settings-appearance-field-guide-0",
+    SettingsCategoryId.STORAGE: "settings-storage-field-guide-0",
+    SettingsCategoryId.LIBRARY_RAG: "settings-library-rag-field-guide-0",
+    SettingsCategoryId.CONSOLE_BEHAVIOR: "settings-console-behavior-field-guide-0",
+    SettingsCategoryId.PROVIDERS_MODELS: "settings-provider-field-guide-0",
 }
 
 # One concise, fixed-length (5-row) entry per group (Task 3, 541 AC3).
@@ -1491,6 +1520,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_selection = False
         self._syncing_console_threshold = False
         self._syncing_console_max_parallel_runs = False
+        self._syncing_console_tool_result_display_chars = False
         self._syncing_console_defaults = False
         self._syncing_console_background_effects = False
         self._syncing_library_rag_defaults = False
@@ -2519,6 +2549,20 @@ class SettingsScreen(BaseAppScreen):
             minimum=MIN_CONSOLE_MAX_PARALLEL_RUNS,
         )
 
+    def _loaded_tool_result_display_chars(self) -> int:
+        # TASK-870: how much of an agent tool result the Console DISPLAYS --
+        # distinct from [agents]/RunBudget.max_tool_result_chars, which
+        # governs how much the MODEL saw and is not user-configurable here.
+        return coerce_int_setting(
+            self._console_settings().get(
+                "tool_result_display_chars",
+                DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+            ),
+            DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+            minimum=MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+            maximum=MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        )
+
     @staticmethod
     def _coerce_float_default(
         value: object,
@@ -2623,6 +2667,7 @@ class SettingsScreen(BaseAppScreen):
             "collapse_large_pastes": self._loaded_collapse_large_pastes_enabled(),
             "paste_collapse_threshold": self._loaded_paste_collapse_threshold(),
             "max_parallel_runs": self._loaded_console_max_parallel_runs(),
+            "tool_result_display_chars": self._loaded_tool_result_display_chars(),
             "streaming": self._loaded_console_default_streaming(),
             "temperature": self._loaded_console_default_temperature(),
             "top_p": self._loaded_console_default_top_p(),
@@ -2778,6 +2823,20 @@ class SettingsScreen(BaseAppScreen):
         if draft is not None and "max_parallel_runs" in draft.values:
             return draft.values["max_parallel_runs"]
         return self._loaded_console_max_parallel_runs()
+
+    def _tool_result_display_chars_value(self) -> int | str:
+        draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        if draft is not None and "tool_result_display_chars" in draft.values:
+            return draft.values["tool_result_display_chars"]
+        return self._loaded_tool_result_display_chars()
+
+    def _tool_result_display_chars_label(self) -> str:
+        value = self._tool_result_display_chars_value()
+        try:
+            chars = self._normalise_tool_result_display_chars(value)
+        except ValueError:
+            return f"Invalid value: {value}"
+        return f"{chars} characters"
 
     def _update_console_paste_summary(self) -> None:
         try:
@@ -4060,13 +4119,51 @@ class SettingsScreen(BaseAppScreen):
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
 
+    def _normalise_tool_result_display_chars(self, value: object) -> int:
+        # TASK-870: same bounded-integer shape as
+        # _normalise_paste_collapse_threshold, with this setting's own
+        # documented min/max (see config.DEFAULT_CONSOLE_TOOL_RESULT_
+        # DISPLAY_CHARS's docstring for why 2000 is the ceiling).
+        text_value = str(value).strip()
+        if not text_value or not text_value.isdigit():
+            raise ValueError("Tool result display cap must be a whole number.")
+        if not validate_number_range(
+            text_value,
+            min_val=MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+            max_val=MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        ):
+            raise ValueError(
+                "Tool result display cap must be between "
+                f"{MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS} and "
+                f"{MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS}."
+            )
+        return int(text_value)
+
+    def _stage_tool_result_display_chars_value(self, value: object) -> None:
+        category = SettingsCategoryId.CONSOLE_BEHAVIOR
+        draft = self._settings_drafts.setdefault(
+            category, SettingsDraft(category=category)
+        )
+        try:
+            staged_value: object = self._normalise_tool_result_display_chars(value)
+        except ValueError:
+            staged_value = str(value)
+        draft.set_value(
+            "tool_result_display_chars",
+            self._loaded_tool_result_display_chars(),
+            staged_value,
+        )
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+
     def _console_behavior_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
         """Focused-field guidance for Console Behavior (task-5).
 
-        Only the "Max parallel agent runs" field has dedicated guidance
-        today; other Console Behavior fields keep the always-visible
-        "Control guide" static block rendered in
-        `_render_category_impact_pane` instead of per-field guidance.
+        Only the "Max parallel agent runs" and (TASK-870) "Tool result
+        display cap" fields have dedicated guidance today; other Console
+        Behavior fields keep the always-visible "Control guide" static
+        block rendered in `_render_category_impact_pane` instead of
+        per-field guidance.
         """
         if self._active_settings_field_id == "settings-console-max-parallel-runs":
             return (
@@ -4088,6 +4185,33 @@ class SettingsScreen(BaseAppScreen):
                     "Applies",
                     "Applies to new sends on save; running agents are never "
                     "stopped by lowering it.",
+                ),
+            )
+        if self._active_settings_field_id == "settings-console-tool-result-display-chars":
+            return (
+                (
+                    "Purpose",
+                    "How much of an agent tool result the Console SHOWS you -- in "
+                    "the live run rail, the transcript's tool-call markers, and a "
+                    "resumed/historical run's step summaries.",
+                ),
+                (
+                    "Consequences",
+                    "This is NOT the same limit as max_tool_result_chars ([agents] "
+                    "config, default 16,000), which caps what the MODEL saw and "
+                    "stays fixed regardless of this setting. Raising this display "
+                    f"cap past {MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS} cannot show "
+                    "more -- the engine itself only records up to that many "
+                    "characters per step. Use \"View full log\" on a run (Agent "
+                    "rail) to read everything the model actually saw, beyond any "
+                    "cap here.",
+                ),
+                ("Saved as", "console.tool_result_display_chars"),
+                (
+                    "Applies",
+                    "Applies to newly rendered steps immediately on save -- no "
+                    "restart needed. Steps already on screen keep their rendered "
+                    "text until the transcript next redraws them.",
                 ),
             )
         return (
@@ -8777,6 +8901,28 @@ class SettingsScreen(BaseAppScreen):
                     placeholder=str(DEFAULT_CONSOLE_MAX_PARALLEL_RUNS),
                     restrict=r"^[0-9]*$",
                 )
+            yield Static(
+                "Agent tool-result display cap", classes="destination-section"
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static(
+                    "Tool result display cap", classes="settings-input-label"
+                )
+                yield Input(
+                    value=str(self._tool_result_display_chars_value()),
+                    id="settings-console-tool-result-display-chars",
+                    classes="settings-compact-input",
+                    placeholder=str(DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS),
+                    restrict=r"^[0-9]*$",
+                )
+            yield Static(
+                "How much of an agent tool result the Console shows you here -- "
+                "distinct from max_tool_result_chars, which caps what the model "
+                "itself saw. Open a run's \"View full log\" (Agent rail) to read "
+                "everything beyond this cap.",
+                id="settings-console-tool-result-display-chars-help",
+                classes="settings-detail-row",
+            )
             yield Static("Global fallback defaults", classes="destination-section")
             yield Static(
                 "Used when no provider+model profile or active Console session overrides them.",
@@ -11512,6 +11658,7 @@ class SettingsScreen(BaseAppScreen):
                 widget_id if widget_id in appearance_field_ids else None
             )
             self._refresh_appearance_field_guidance()
+            self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is SettingsCategoryId.STORAGE:
             storage_field_ids = {
@@ -11528,6 +11675,7 @@ class SettingsScreen(BaseAppScreen):
                 widget_id if widget_id in storage_field_ids else None
             )
             self._refresh_storage_field_guidance()
+            self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is SettingsCategoryId.LIBRARY_RAG:
             # Task 3 (541 v2 UX AC3): membership uses the shared
@@ -11538,16 +11686,22 @@ class SettingsScreen(BaseAppScreen):
                 widget_id if widget_id in _RAG_FIELD_GROUP_BY_ID else None
             )
             self._refresh_rag_field_guidance()
+            self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is SettingsCategoryId.CONSOLE_BEHAVIOR:
-            # task-5: only the "Max parallel agent runs" field has dedicated
-            # focused-field guidance today; other Console Behavior fields
-            # keep the always-visible "Control guide" static block.
-            console_behavior_field_ids = {"settings-console-max-parallel-runs"}
+            # task-5 + TASK-870: only "Max parallel agent runs" and "Tool
+            # result display cap" have dedicated focused-field guidance
+            # today; other Console Behavior fields keep the always-visible
+            # "Control guide" static block.
+            console_behavior_field_ids = {
+                "settings-console-max-parallel-runs",
+                "settings-console-tool-result-display-chars",
+            }
             self._active_settings_field_id = (
                 widget_id if widget_id in console_behavior_field_ids else None
             )
             self._refresh_console_behavior_field_guidance()
+            self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is not SettingsCategoryId.PROVIDERS_MODELS:
             self._active_settings_field_id = None
@@ -11579,6 +11733,85 @@ class SettingsScreen(BaseAppScreen):
             widget_id if widget_id in provider_field_ids else None
         )
         self._refresh_provider_field_guidance()
+        self._scroll_impact_pane_to_field_guide(active_category)
+
+    def _scroll_impact_pane_to_field_guide(self, category: SettingsCategoryId) -> None:
+        """Scroll the Scope Inspector so the Focused field guide is visible.
+
+        Fleet-UX expert review F6 (task-1234): focusing a guided field
+        already refreshes the guide row TEXT in place (the ``_refresh_*_
+        field_guidance`` methods above, no recompose) but never moved the
+        pane's own scroll position, so the guide block could sit below
+        ``#settings-impact-pane``'s fold with only a thin scrollbar sliver
+        hinting at it -- reported live as "focusing Max parallel shows only
+        Purpose:". Same disease task-1140 fixed for the fleet line, in a
+        second location.
+
+        Qodo PR #1074 finding 2: scrolling to only the FIRST row was
+        insufficient on its own -- ``scroll_to_widget`` no-ops once its
+        target is already fully inside the viewport, so a prior scroll
+        position that happens to leave the first row sitting flush with
+        the pane's own bottom edge (fully visible, technically) short-
+        circuits the whole call, leaving every row after it (Consequences/
+        Saved as/Applies, etc.) below the fold. Two passes fix this:
+        first reveal the LAST row (pulls the whole guide into view when it
+        fits the viewport), then re-target the FIRST row with ``top=True``
+        to force-pin it to the pane's top edge regardless of whether
+        anything actually needed to move. When the guide is short enough
+        to fit the viewport this second pass is a no-op in effect (the
+        first pass already made the whole block visible); when the guide
+        is TALLER than the viewport, it deliberately re-prioritizes the
+        first rows -- Purpose/Focused setting, the most load-bearing
+        content -- over the tail, maximizing visible coverage starting
+        from the top rather than the bottom.
+
+        ``call_after_refresh`` + ``force=True`` mirrors the pattern proven
+        in ``library_screen.LibraryScreen._preserve_library_rail_scroll``:
+        an unforced ``scroll_to_widget`` clamps to 0 when a container's
+        scroll bounds haven't been (re)computed yet -- relevant here
+        because a CATEGORY switch recomposes ``#settings-impact-pane``
+        from scratch (``_render_impact_pane``), and focus can land on the
+        new category's first field before that layout has settled.
+
+        Args:
+            category: The Settings category whose "Focused field guide"
+                block (if any -- see ``_FIELD_GUIDE_FIRST_ROW_ID``) should
+                be scrolled into view.
+        """
+        row_id = _FIELD_GUIDE_FIRST_ROW_ID.get(category)
+        if row_id is None:
+            return
+        row_prefix = row_id.rsplit("-", 1)[0]
+
+        def _scroll() -> None:
+            try:
+                pane = self.query_one("#settings-impact-pane")
+                first_row = self.query_one(f"#{row_id}")
+            except Exception:
+                return
+            # Guide rows are a fixed-length, contiguous block of Static
+            # widgets rendered unconditionally (see the per-category
+            # ``*_field_guidance_rows`` methods) -- find the last one by
+            # probing sequential ids rather than hardcoding a row count a
+            # future guidance edit would silently drift out of sync with.
+            last_row = first_row
+            index = 1
+            while True:
+                try:
+                    last_row = self.query_one(f"#{row_prefix}-{index}")
+                except Exception:
+                    break
+                index += 1
+            # Pass 1: reveal the guide's tail. If the whole guide fits the
+            # viewport this already brings every row into view.
+            pane.scroll_to_widget(last_row, animate=False, force=True)
+            # Pass 2: force the first row to the pane's top edge -- see the
+            # docstring above for why this must run unconditionally (not
+            # only when pass 1 left it hidden) and why ``top=True`` beats a
+            # plain minimal-scroll re-target.
+            pane.scroll_to_widget(first_row, animate=False, force=True, top=True)
+
+        self.call_after_refresh(_scroll)
 
     @on(Collapsible.Toggled)
     def handle_settings_library_rag_collapsible_toggled(
@@ -12144,6 +12377,19 @@ class SettingsScreen(BaseAppScreen):
         if self._syncing_console_max_parallel_runs:
             return
         self._stage_console_max_parallel_runs_value(event.value)
+        self._console_behavior_result = "Console behavior settings staged."
+        self._set_static_text(
+            "#settings-console-behavior-result", self._console_behavior_result_text()
+        )
+        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Input.Changed, "#settings-console-tool-result-display-chars")
+    def handle_console_tool_result_display_chars_changed(
+        self, event: Input.Changed
+    ) -> None:
+        if self._syncing_console_tool_result_display_chars:
+            return
+        self._stage_tool_result_display_chars_value(event.value)
         self._console_behavior_result = "Console behavior settings staged."
         self._set_static_text(
             "#settings-console-behavior-result", self._console_behavior_result_text()
@@ -13948,6 +14194,12 @@ class SettingsScreen(BaseAppScreen):
                             dirty_values["max_parallel_runs"]
                         )
                     )
+                if "tool_result_display_chars" in dirty_values:
+                    dirty_values["tool_result_display_chars"] = (
+                        self._normalise_tool_result_display_chars(
+                            dirty_values["tool_result_display_chars"]
+                        )
+                    )
                 if "streaming" in dirty_values:
                     dirty_values["streaming"] = (
                         self._normalise_console_default_streaming(
@@ -14763,6 +15015,16 @@ class SettingsScreen(BaseAppScreen):
                 ).value = str(self._console_max_parallel_runs_value())
             finally:
                 self._syncing_console_max_parallel_runs = False
+        except QueryError:
+            pass
+        try:
+            self._syncing_console_tool_result_display_chars = True
+            try:
+                self.query_one(
+                    "#settings-console-tool-result-display-chars", Input
+                ).value = str(self._tool_result_display_chars_value())
+            finally:
+                self._syncing_console_tool_result_display_chars = False
         except QueryError:
             pass
         input_values = {

@@ -8,6 +8,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
+from tldw_chatbook.STT.persistence import (
+    dump_failed_transcription_attempt,
+    dump_transcription_provenance_document,
+    load_failed_transcription_attempt,
+    load_transcription_provenance_document,
+)
+
 
 class ViewMode(str, Enum):
     single = "single"
@@ -59,6 +66,20 @@ def _normalize_nonempty_string(value: Any, *, field_name: str) -> str:
     if not text:
         raise ValueError(f"{field_name}_must_not_be_blank")
     return text
+
+
+def _normalize_transcription_provenance(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return load_transcription_provenance_document(
+        dump_transcription_provenance_document(value)
+    )
+
+
+def _normalize_failed_attempt(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return load_failed_transcription_attempt(dump_failed_transcription_attempt(value))
 
 
 def _normalize_saved_search_query(value: Any) -> dict[str, Any]:
@@ -273,6 +294,7 @@ class ServerMediaListItem(BaseModel):
     url: str
     type: str
     keywords: list[str] = Field(default_factory=list)
+    transcription_provenance: dict[str, Any] | None = None
 
     @field_validator("keywords", mode="before")
     @classmethod
@@ -284,6 +306,11 @@ class ServerMediaListItem(BaseModel):
         return [
             _normalize_nonempty_string(entry, field_name="keyword") for entry in value
         ]
+
+    @field_validator("transcription_provenance", mode="before")
+    @classmethod
+    def _validate_transcription_provenance(cls, value: Any) -> Any:
+        return _normalize_transcription_provenance(value)
 
 
 class ServerMediaListPagination(BaseModel):
@@ -421,6 +448,7 @@ class AddMediaRequest(BaseModel):
     chunk_size: int | None = None
     chunk_overlap: int | None = None
     transcription_model: str | None = None
+    transcription_provenance: dict[str, Any] | None = None
     transcription_language: str | None = None
     hotwords: str | None = None
     diarize: bool | None = None
@@ -437,7 +465,10 @@ class AddMediaRequest(BaseModel):
     ocr_output_format: str | None = None
     ocr_prompt_preset: str | None = None
 
-
+    @field_validator("transcription_provenance", mode="before")
+    @classmethod
+    def _validate_transcription_provenance(cls, value: Any) -> Any:
+        return _normalize_transcription_provenance(value)
 
 
 class MediaIngestSubmitResponse(BaseModel):
@@ -606,6 +637,18 @@ class MediaIngestJobItem(BaseModel):
     source: str
     source_kind: str
     status: str
+    retry_of_job_id: int | str | None = None
+    stt_failure_provenance: dict[str, Any] | None = None
+    retry_source_failure_provenance: dict[str, Any] | None = None
+
+    @field_validator(
+        "stt_failure_provenance",
+        "retry_source_failure_provenance",
+        mode="before",
+    )
+    @classmethod
+    def _validate_failed_attempt(cls, value: Any) -> Any:
+        return _normalize_failed_attempt(value)
 
 
 class SubmitMediaIngestJobsResponse(BaseModel):
@@ -643,6 +686,18 @@ class MediaIngestJobStatus(BaseModel):
     source: str | None = None
     source_kind: str | None = None
     batch_id: str | None = None
+    retry_of_job_id: int | str | None = None
+    stt_failure_provenance: dict[str, Any] | None = None
+    retry_source_failure_provenance: dict[str, Any] | None = None
+
+    @field_validator(
+        "stt_failure_provenance",
+        "retry_source_failure_provenance",
+        mode="before",
+    )
+    @classmethod
+    def _validate_failed_attempt(cls, value: Any) -> Any:
+        return _normalize_failed_attempt(value)
 
 
 class MediaIngestJobListResponse(BaseModel):
@@ -875,6 +930,7 @@ class MediaDetailResponse(BaseModel):
     versions: list[DocumentVersionDetailResponse] = Field(default_factory=list)
     has_original_file: bool = False
     original_file_url: str | None = None
+    transcription_provenance: dict[str, Any] | None = None
 
     @field_validator("keywords", mode="before")
     @classmethod
@@ -887,15 +943,10 @@ class MediaDetailResponse(BaseModel):
             _normalize_nonempty_string(entry, field_name="keyword") for entry in value
         ]
 
-
-
-
-
-
-
-
-
-
+    @field_validator("transcription_provenance", mode="before")
+    @classmethod
+    def _validate_transcription_provenance(cls, value: Any) -> Any:
+        return _normalize_transcription_provenance(value)
 
 
 class ReadingUpdateRequest(BaseModel):

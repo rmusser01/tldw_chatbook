@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, runtime_checkable
 
 ProgressSink = Callable[["TTSProgress"], Awaitable[None]]
 CleanupCallback = Callable[[], Awaitable[None]]
@@ -24,6 +25,9 @@ TTSOperationCode = Literal[
     "audio_response_invalid",
     "generation_timeout",
 ]
+VoiceDiscoveryState = Literal["complete", "model_missing", "unverified"]
+CapabilitySnapshotState = Literal["complete", "unverified"]
+_VOICE_DISCOVERY_PROVIDER_ID_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 
 
 class UnknownTTSProviderError(LookupError):
@@ -196,6 +200,149 @@ class TTSProviderCatalog:
 
 
 @dataclass(frozen=True, slots=True)
+class TTSVoiceDiscoveryResult:
+    """An immutable, status-aware observation of one model's voices.
+
+    ``complete`` may authoritatively contain no voices. ``model_missing`` is
+    authoritative only when empty. ``unverified`` may retain validated partial
+    voices for diagnostics, but compatibility callers must not project them.
+    """
+
+    provider_id: str
+    model_id: str
+    catalog_revision: int
+    voices: tuple[str, ...]
+    state: VoiceDiscoveryState
+
+    def __post_init__(self) -> None:
+        if type(self.provider_id) is not str or not (
+            _VOICE_DISCOVERY_PROVIDER_ID_PATTERN.fullmatch(self.provider_id)
+        ):
+            raise ValueError("Voice discovery provider ID is invalid")
+        _validate_voice_discovery_identifier(self.model_id, "model ID")
+        if type(self.catalog_revision) is not int:
+            raise TypeError("Voice discovery catalog revision must be an integer")
+        if self.catalog_revision < 0:
+            raise ValueError("Voice discovery catalog revision must be nonnegative")
+        if type(self.voices) is not tuple:
+            raise TypeError("Voice discovery voices must be a tuple")
+        for voice in self.voices:
+            _validate_voice_discovery_identifier(voice, "voice")
+        if type(self.state) is not str:
+            raise TypeError("Voice discovery state must be a string")
+        if self.state not in ("complete", "model_missing", "unverified"):
+            raise ValueError("Voice discovery state is invalid")
+        if self.state == "model_missing" and self.voices:
+            raise ValueError("Missing-model voice discovery must be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class TTSNativeCapabilitySnapshot:
+    """One configuration- and catalog-coherent native capability observation."""
+
+    provider_id: str
+    configuration_revision: int
+    state: CapabilitySnapshotState
+    catalog: TTSProviderCatalog | None
+    voice_results: Mapping[str, TTSVoiceDiscoveryResult]
+
+    def __post_init__(self) -> None:
+        if type(self.provider_id) is not str or not (
+            _VOICE_DISCOVERY_PROVIDER_ID_PATTERN.fullmatch(self.provider_id)
+        ):
+            raise ValueError("Capability snapshot provider ID is invalid")
+        if type(self.configuration_revision) is not int:
+            raise TypeError("Capability configuration revision must be an integer")
+        if self.configuration_revision < 0:
+            raise ValueError("Capability configuration revision must be nonnegative")
+        if type(self.state) is not str:
+            raise TypeError("Capability snapshot state must be a string")
+        if self.state not in ("complete", "unverified"):
+            raise ValueError("Capability snapshot state is invalid")
+        if self.catalog is not None:
+            if type(self.catalog) is not TTSProviderCatalog:
+                raise TypeError("Capability catalog must be a provider catalog")
+            if (
+                type(self.catalog.provider_id) is not str
+                or self.catalog.provider_id != self.provider_id
+            ):
+                raise ValueError("Capability catalog provider does not match")
+            if type(self.catalog.revision) is not int:
+                raise TypeError("Capability catalog revision must be an integer")
+            if self.catalog.revision < 0:
+                raise ValueError("Capability catalog revision must be nonnegative")
+            if type(self.catalog.health) is not ProviderHealth:
+                raise TypeError("Capability catalog health is invalid")
+            if type(self.catalog.health.fresh) is not bool:
+                raise TypeError("Capability catalog freshness must be a boolean")
+            if type(self.catalog.models) is not tuple:
+                raise TypeError("Capability catalog models must be a tuple")
+        if not isinstance(self.voice_results, Mapping):
+            raise TypeError("Capability voice results must be a mapping")
+
+        catalog_model_ids: set[str] = set()
+        if self.catalog is not None:
+            for model in self.catalog.models:
+                if type(model) is not TTSModelInfo:
+                    raise TypeError("Capability catalog model is invalid")
+                _validate_voice_discovery_identifier(model.model_id, "model ID")
+                catalog_model_ids.add(model.model_id)
+
+        frozen_results: dict[str, TTSVoiceDiscoveryResult] = {}
+        for model_id, result in self.voice_results.items():
+            _validate_voice_discovery_identifier(model_id, "model ID")
+            if type(result) is not TTSVoiceDiscoveryResult:
+                raise TypeError("Capability voice results must be discovery results")
+            if result.provider_id != self.provider_id:
+                raise ValueError("Capability voice result provider does not match")
+            if result.model_id != model_id:
+                raise ValueError("Capability voice result model does not match")
+            if result.state != "unverified":
+                if self.catalog is None:
+                    raise ValueError("Authoritative voice result requires a catalog")
+                if (
+                    not self.catalog.health.fresh
+                    or result.catalog_revision != self.catalog.revision
+                ):
+                    raise ValueError("Authoritative voice result catalog is stale")
+                if result.state == "complete" and model_id not in catalog_model_ids:
+                    raise ValueError("Complete voice result requires a catalog model")
+                if result.state == "model_missing" and model_id in catalog_model_ids:
+                    raise ValueError("Missing voice result contradicts the catalog")
+            frozen_results[model_id] = result
+
+        if self.state == "complete":
+            if self.catalog is None:
+                raise ValueError("Complete capability snapshot requires a catalog")
+            if not self.catalog.health.fresh:
+                raise ValueError("Complete capability snapshot requires fresh catalog")
+            for result in frozen_results.values():
+                if result.state == "unverified":
+                    raise ValueError(
+                        "Complete capability snapshot cannot contain unverified voices"
+                    )
+                if result.catalog_revision != self.catalog.revision:
+                    raise ValueError(
+                        "Complete capability snapshot revisions must match"
+                    )
+
+        object.__setattr__(
+            self,
+            "voice_results",
+            MappingProxyType(frozen_results),
+        )
+
+
+def _validate_voice_discovery_identifier(value: object, label: str) -> None:
+    if type(value) is not str or not value:
+        raise ValueError(f"Voice discovery {label} is invalid")
+    try:
+        value.encode("utf-8", errors="strict")
+    except UnicodeError:
+        raise ValueError(f"Voice discovery {label} is invalid") from None
+
+
+@dataclass(frozen=True, slots=True)
 class TTSProviderDescriptor:
     provider_id: str
     display_name: str
@@ -288,6 +435,18 @@ class TTSAdapter(Protocol):
         raise NotImplementedError
 
     async def close(self) -> None:
+        raise NotImplementedError
+
+
+@runtime_checkable
+class TTSStructuredVoiceAdapter(Protocol):
+    """Optional adapter capability for authoritative voice discovery state."""
+
+    async def observe_voices(
+        self,
+        model_id: str,
+        refresh: bool = False,
+    ) -> TTSVoiceDiscoveryResult:
         raise NotImplementedError
 
 

@@ -572,6 +572,40 @@ ConsoleSystemPromptModal {
     align-horizontal: right;
 }
 
+/* TASK-870: "View full log" read-only run-log viewer, sized/laid out the
+   same way as the system prompt editor above (a large text body plus a
+   single action row), minus the multi-field editing chrome that modal
+   doesn't need. */
+ConsoleRunLogModal {
+    align: center middle;
+}
+
+#console-run-log-modal {
+    width: 96;
+    max-width: 95%;
+    height: 36;
+    max-height: 90%;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    padding: 1 2;
+}
+
+#console-run-log-text {
+    width: 100%;
+    height: 1fr;
+    min-height: 10;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-run-log-actions {
+    height: 3;
+    min-height: 3;
+    align-horizontal: right;
+    margin: 1 0 0 0;
+}
+
 #console-system-prompt-clear,
 #console-system-prompt-cancel,
 #console-system-prompt-apply {
@@ -650,6 +684,17 @@ ConsoleSystemPromptModal {
     height: 1;
     min-height: 1;
     padding: 0 1;
+}
+
+/* The mic button stays real-clickable (never Textual `disabled`) while
+   dictation is unavailable -- a genuinely disabled widget can never be
+   pressed again, which would remove the only re-probe trigger that exists
+   (task-15). Dimming here restores the *appearance* of disabled, carried
+   before by `disabled`'s own styling, without the *semantics*: the tooltip
+   alone is not enough, since it is invisible to anyone who does not hover,
+   and to the rendered terminal text a screen reader would read. */
+.console-dictation-unavailable {
+    text-opacity: 60%;
 }
 
 .home-dashboard-region,
@@ -2317,6 +2362,16 @@ ConsoleSystemPromptModal {
     padding: 0;
     overflow-y: auto;
     overflow-x: hidden;
+    /* TASK-1191: do not remove `scrollbar-gutter: stable`.
+     * ConsoleWorkspaceContextTray._fit_height_to_content's single fit pass
+     * (Widgets/Console/console_workspace_context.py) depends on this rail's
+     * content width never shifting when rows are added/removed and the
+     * scrollbar toggles on/off -- `stable` reserves the gutter column
+     * unconditionally, so a toggling scrollbar cannot change
+     * `content_region.width` out from under an already-scheduled fit pass.
+     * Without it, that width shift could feed back into another relabel
+     * recompose after the single pass already ran, reopening the
+     * multi-pass settle race TASK-1191 retired. */
     scrollbar-gutter: stable;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
@@ -2859,6 +2914,22 @@ ConsoleSystemPromptModal {
     text-style: bold;
     text-overflow: ellipsis;
     text-wrap: nowrap;
+}
+
+.console-voice-status {
+    width: 0;
+    min-width: 0;
+    margin: 0 1 0 0;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-status-running;
+    text-style: bold;
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
+}
+
+.console-voice-status-error {
+    color: $ds-status-error;
 }
 
 #console-command-input {
@@ -5324,6 +5395,18 @@ Button.mcp-callout {
 }
 .approval-row-decision {
     width: 26;
+}
+/* Fleet-UX expert review F5 (task-1234): single-row cards additionally
+   mount two compact fast-path buttons after the decision Select --
+   "Approve once"/"Deny" submit immediately, bypassing Select+Submit for
+   the two most common decisions (`ChatApprovalCard.set_batch`'s
+   `single_row` gate; never rendered for a multi-row batch). `compact`
+   already keeps these borderless/1-row tall; fixed widths keep them from
+   claiming `Button`'s `width: auto` share and squeezing the row. */
+.approval-row-fast-approve,
+.approval-row-fast-deny {
+    width: 14;
+    min-width: 14;
 }
 /* task-5 (Phase-5 follow-up): a bulk "Approve all"/"Deny all" press can't
    legally reach every narrowed row (`ChatApprovalCard._set_all_batch_

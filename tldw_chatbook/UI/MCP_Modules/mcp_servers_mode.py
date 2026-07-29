@@ -28,6 +28,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
+from tldw_chatbook.UI.Widgets.table_click_select import DataTableClickSelectMixin
 
 _MUTATIONS_GATED_TOOLTIP = "Requires team, org, or system-admin scope."
 # I3: Import always writes to the LOCAL profile store (`_apply_import()` in
@@ -116,7 +117,7 @@ _BUILTIN_CHECKBOX_KEYS: dict[str, str] = {
 }
 
 
-class MCPServersMode(Vertical):
+class MCPServersMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Servers mode."""
 
     DEFAULT_CSS = """
@@ -515,6 +516,10 @@ class MCPServersMode(Vertical):
         # rendered column set, and this only runs on an actual overview
         # resync, not per keystroke.
         show_scope = source != "local"
+        # Rebuilding moves the cursor to row 0 before the key-based restore
+        # below puts it back; declaring the rebuild keeps that transient from
+        # being read as a selection (DataTableClickSelectMixin).
+        self.repopulating_table()
         table.clear(columns=True)
         table.add_columns(*(_TABLE_COLUMNS if show_scope else _TABLE_COLUMNS_NO_SCOPE))
         seen_keys: set[str] = set()

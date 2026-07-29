@@ -597,7 +597,7 @@ def _build_row_section(
 _RUN_MARKER_URGENCY = {"◆": 0, "●": 1, "✗": 2, "✓": 3}
 
 
-class _RunMarkerBearer(Protocol):
+class RunMarkerBearer(Protocol):
     """Structural type for anything exposing a resolved ``run_marker`` glyph.
 
     TASK-912 review fix round 1 (MINOR): `_most_urgent_run_marker` is called
@@ -608,12 +608,15 @@ class _RunMarkerBearer(Protocol):
     call site. This Protocol names the actual constraint (a plain
     `.run_marker: str` attribute) instead of an artificial union of the
     two-or-more concrete types that happen to satisfy it today.
+
+    Rider (Qodo finding 1, TASK-1050): renamed from ``_RunMarkerBearer`` --
+    a leading underscore on a class name is not PascalCase.
     """
 
     run_marker: str
 
 
-def _most_urgent_run_marker(rows: Iterable[_RunMarkerBearer]) -> str:
+def _most_urgent_run_marker(rows: Iterable[RunMarkerBearer]) -> str:
     """Return the single most-urgent non-empty ``run_marker`` glyph among ``rows``.
 
     Urgency (most to least): NEEDS_APPROVAL ("◆") > RUNNING ("●") >

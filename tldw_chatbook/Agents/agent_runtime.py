@@ -13,6 +13,7 @@ from typing import Callable
 from loguru import logger
 
 from .agent_models import (
+    FENCE_TOOL_RESULT_PREFIX,
     FIND_TOOLS_NAME,
     INSTALL_SKILL_TOOL_NAME,
     LOAD_TOOLS_NAME,
@@ -20,8 +21,11 @@ from .agent_models import (
     MAX_LOOP_PERIOD,
     RUN_CANCELLED,
     RUN_DONE,
+    RUN_LOG_SLICE_TOOL_NAME,
+    RUN_LOG_STATS_TOOL_NAME,
     RUN_SKILL_SCRIPT_TOOL_NAME,
     RUN_STUCK,
+    SEARCH_RUN_LOG_TOOL_NAME,
     SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
     STEP_ERROR,
@@ -254,6 +258,41 @@ class LoopDeps:
     # `None` (the default) means the run is not wired for it and a call by
     # that name falls through to the generic deps.invoke_tool path.
     run_skill_script: Callable[[str, str, list[str]], ToolResult] | None = None
+    # search_run_log: the seventh runtime tool (run-log query). Wired ONLY
+    # for the top-level agent (agent_kind == primary), like install_skill:
+    # a depth-1 child has max_subagents clamped to 0, so its "subtree" is
+    # itself and its short history is already in its context -- the tool
+    # would buy it nothing while widening what it can see. `None` (the
+    # default) means the run is not wired for it and a call by that name
+    # falls through to the generic deps.invoke_tool path.
+    search_run_log: Callable[[dict], ToolResult] | None = None
+    # run_log_stats: Phase 2's aggregation runtime tool (design spec §10,
+    # task-1271). Wired ONLY for the top-level agent, under the SAME gate
+    # as search_run_log above and for the identical reason: a spawned
+    # child's own short history is already in its context, so offering it
+    # a tool that computes over the run TREE's shared log would only widen
+    # what a child can see -- past its parent's history, contradicting
+    # spawn_subagent's "sees only the task text" isolation promise. `None`
+    # (the default) means the run is not wired for it and a call by that
+    # name falls through to the generic deps.invoke_tool path.
+    run_log_stats: Callable[[dict], ToolResult] | None = None
+    # run_log_slice: Phase 2's contiguous-range retrieval runtime tool
+    # (design spec §10, task-1271). Same primary-agent-only gate and
+    # rationale as run_log_stats/search_run_log immediately above. `None`
+    # (the default) means the run is not wired for it and a call by that
+    # name falls through to the generic deps.invoke_tool path.
+    run_log_slice: Callable[[dict], ToolResult] | None = None
+    # on_record: full-fidelity capture for the run log (run_log.py). Called
+    # with (record_type, payload) at the two points where the COMPLETE value
+    # exists -- which the step log does not carry, since `add()` truncates
+    # model turns to 200 chars and tool results to 2000. Captured in the
+    # loop rather than in service wrappers because the loop assembles
+    # `content` for EVERY dispatch branch at one point: a wrapper around
+    # deps.invoke_tool would silently miss find_tools, load_tools,
+    # spawn_subagent, skill_file, install_skill and run_skill_script.
+    # `None` (the default) is a no-op: behavior is byte-identical to
+    # pre-run-log runs.
+    on_record: Callable[[str, dict], int | None] | None = None
 
 
 def _catalog_lines(entries: list) -> str:
@@ -262,7 +301,32 @@ def _catalog_lines(entries: list) -> str:
     return "\n".join(f"{e.id} — {e.name}: {e.one_line_description}" for e in entries)
 
 
-def _truncate_tool_result(content: str, max_chars: int, tool_name: str) -> str:
+def _emit_record(deps: "LoopDeps", record_type: str, **payload) -> int | None:
+    """Best-effort run-log capture; a failing writer never aborts a run.
+
+    Args:
+        deps: The run's injected dependencies.
+        record_type: ``model``, ``tool_call``, or ``tool_result``.
+        **payload: ``content``, ``tool``, ``status``, ``call_id``.
+
+    Returns:
+        The assigned record number, or ``None`` when logging is off or the
+        write failed. Task 7 threads this into the truncation trailer.
+    """
+    if deps.on_record is None:
+        return None
+    try:
+        return deps.on_record(record_type, payload)
+    except Exception:  # noqa: BLE001 — logging is never load-bearing
+        logger.opt(exception=True).warning(
+            f"on_record hook raised for a {record_type} record; continuing"
+        )
+        return None
+
+
+def _truncate_tool_result(
+    content: str, max_chars: int, tool_name: str, record_number: int | None = None
+) -> str:
     """Bound one tool result before it enters history.
 
     Applied at the append seam rather than inside each tool so a tool that
@@ -275,6 +339,17 @@ def _truncate_tool_result(content: str, max_chars: int, tool_name: str) -> str:
             negative means unlimited.
         tool_name: Named in the trailer so the model knows which call was
             cut and can re-issue it more narrowly.
+        record_number: The run-log record number the untruncated result was
+            captured under, or ``None`` when logging is off or the capture
+            failed. When given, the trailer points at it via
+            ``search_run_log`` instead of suggesting a re-issue. F7 (Qodo
+            #7): may carry a truthy ``.truncated`` attribute (see
+            ``run_log.RunLogRecordNumber``) reporting that the LOG ITSELF
+            capped that record at ``run_log_max_record_bytes`` -- a plain
+            ``int`` (every pre-existing caller, including every test that
+            fabricates a bare record number) is read via ``getattr(...,
+            "truncated", False)`` and always treated as "not capped", so
+            this stays backward compatible.
 
     Returns:
         ``content`` unchanged when under the cap or when unlimited;
@@ -283,11 +358,45 @@ def _truncate_tool_result(content: str, max_chars: int, tool_name: str) -> str:
     """
     if max_chars <= 0 or len(content) <= max_chars:
         return content
+    if record_number is not None:
+        # F7 (Qodo #7): a record the WRITER itself had to cap (content over
+        # run_log_max_record_bytes, 1MB default) has an unrecoverable tail
+        # of its own -- pointing at it as "the full result" would be a
+        # second, compounding false promise on top of this history cut.
+        # `getattr` defaults to False so a plain int (every record number
+        # before this fix, and every record that was NOT capped) takes the
+        # unconditional-recovery wording unchanged.
+        if getattr(record_number, "truncated", False):
+            recovery = (
+                f" Record {record_number:06d} holds as much as this run's "
+                f"log could store under its own per-record cap -- the "
+                f"remainder was never written and cannot be recovered. "
+                f"search_run_log(from_record={record_number}, "
+                f"to_record={record_number}) shows exactly how much was kept."
+            )
+        else:
+            # TASK-1250: a bare from_record/to_record call renders the SAME
+            # first `max_chars` this trailer already cut -- format_results
+            # windows at this run's own tool-result ceiling, so it cannot
+            # show more in one call. Naming `contains=`/`offset=` here is
+            # what makes the pointer actually deliver content beyond this
+            # cut, instead of promising recovery a bare call can't provide.
+            recovery = (
+                f" The full result is recorded at record {record_number:06d} — "
+                f"search_run_log(from_record={record_number}, to_record={record_number}) "
+                f"renders it windowed at this same limit, so add contains=<term> to "
+                f"jump straight to a match, or offset=<n> to page past it (the "
+                f"rendered output states the next offset)."
+            )
+    else:
+        recovery = (
+            " Re-issue the call with a narrower query, or use the tool's "
+            "offset/limit arguments to read the rest."
+        )
     return (
         content[:max_chars]
         + f"\n\n[truncated: {tool_name} returned {len(content)} characters; "
-        f"showing the first {max_chars}. Re-issue the call with a narrower "
-        f"query, or use the tool's offset/limit arguments to read the rest.]"
+        f"showing the first {max_chars}.{recovery}]"
     )
 
 
@@ -300,8 +409,11 @@ def _append_tool_result(messages: list[dict], call: ToolCall, content: str) -> N
     Native protocol (``call.call_id`` set): a ``role="tool"`` message
     paired to the assistant turn's ``tool_calls`` entry by
     ``tool_call_id``. Fence protocol (``call.call_id`` unset): the
-    plain-text ``"Tool result for {name}: {content}"`` convention,
-    appended as a user-role message.
+    plain-text ``"{FENCE_TOOL_RESULT_PREFIX}{name}: {content}"``
+    convention, appended as a user-role message. ``FENCE_TOOL_RESULT_
+    PREFIX`` is a shared constant (``agent_models``) so
+    ``run_log_eviction``'s protocol-aware turn grouping matches this exact
+    string rather than a copy that could drift from it.
     """
     if call.call_id:
         messages.append(
@@ -309,7 +421,10 @@ def _append_tool_result(messages: list[dict], call: ToolCall, content: str) -> N
         )
     else:
         messages.append(
-            {"role": "user", "content": f"Tool result for {call.name}: {content}"}
+            {
+                "role": "user",
+                "content": f"{FENCE_TOOL_RESULT_PREFIX}{call.name}: {content}",
+            }
         )
 
 
@@ -423,6 +538,14 @@ def run_agent_loop(
         model_turns += 1
         total_tokens += turn.tokens
         add(STEP_MODEL, summary=turn.text[:200])
+        _emit_record(
+            deps,
+            "model",
+            content=turn.text,
+            tool="",
+            status="",
+            call_id="",
+        )
 
         calls = list(turn.tool_calls)
         if not calls:
@@ -466,6 +589,29 @@ def run_agent_loop(
                 verdicts = {}
 
         for call in calls:
+            # F5 (Qodo #5, PR #1066 review): emit the tool_call record BEFORE
+            # the dispatch chain below, not after. `call.name`/`call.args`
+            # are already known here, so nothing is gained by waiting -- and
+            # waiting is exactly the bug: the old placement sat at the
+            # content-assembly point, which runs AFTER the tool has already
+            # executed (including, for SPAWN_TOOL_NAME, after `deps.spawn`
+            # has run the ENTIRE child loop inline). A crash, a kill, or an
+            # indefinitely blocked tool left no durable record the call was
+            # ever attempted, and a child's own records -- written during
+            # the parent's still-in-progress spawn dispatch -- landed in the
+            # log BEFORE the parent's own record that caused them.
+            # MUST stay at this `for call in calls:` body level, OUTSIDE the
+            # `if verdict != "proceed": ... else: ...` pair below: that is
+            # what captures the review-hook refusal path too, and it is
+            # pinned by test_run_log_on_record.py.
+            _emit_record(
+                deps,
+                "tool_call",
+                content=json.dumps(call.args, sort_keys=True, default=str),
+                tool=call.name,
+                status="",
+                call_id=call.call_id,
+            )
             if deps.should_cancel():
                 return _outcome(RUN_CANCELLED)
             recent_calls.append((call.name, json.dumps(call.args, sort_keys=True)))
@@ -483,13 +629,31 @@ def run_agent_loop(
                         n for n, _ in list(recent_calls)[-period * repeats :]
                     )
                 )
-                add(
-                    STEP_ERROR,
-                    summary=(
-                        f"loop detected: {names} repeated in a "
-                        f"{period}-cycle ({repeats}x)"
-                    ),
+                # Log-side detail (TASK-1231/F3 AC4): the period/repeats
+                # jargon that used to be the ONLY copy this trip produced is
+                # kept here, at debug level, for anyone actually debugging
+                # the cycle detector -- but it must never be the user-facing
+                # `summary` below, which console_chat_controller surfaces
+                # verbatim as "Agent run stuck: {summary}." Fleet-UX review
+                # F3: "loop detected: read_file repeated in a 1-cycle (3x)"
+                # reads as unexplained jargon to a first-run user.
+                logger.debug(
+                    f"loop detected: period={period} repeats={repeats} "
+                    f"tools={names}"
                 )
+                if period == 1:
+                    summary = (
+                        f"Agent stopped: it kept calling {names} with the "
+                        f"same arguments ({repeats} times) without making "
+                        "progress."
+                    )
+                else:
+                    summary = (
+                        f"Agent stopped: it kept repeating the same "
+                        f"sequence of tool calls ({names}) without making "
+                        "progress."
+                    )
+                add(STEP_ERROR, summary=summary)
                 return _outcome(RUN_STUCK)
 
             # P5 Task 4: a non-"proceed" verdict (an absent name defaults to
@@ -635,18 +799,72 @@ def run_agent_loop(
                         str(call.args.get("script_path", "")),
                         [str(item) for item in raw_args],
                     )
+                elif (
+                    call.name == SEARCH_RUN_LOG_TOOL_NAME
+                    and deps.search_run_log is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.search_run_log(dict(call.args))
+                elif (
+                    call.name == RUN_LOG_STATS_TOOL_NAME
+                    and deps.run_log_stats is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.run_log_stats(dict(call.args))
+                elif (
+                    call.name == RUN_LOG_SLICE_TOOL_NAME
+                    and deps.run_log_slice is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.run_log_slice(dict(call.args))
                 else:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.invoke_tool(call)
 
                 content = result.content if result.ok else f"ERROR: {result.error}"
 
+            # tool_result capture stays HERE, after dispatch: this is the
+            # first point the full result/error text exists. (The tool_call
+            # record for this same call was already emitted above, BEFORE
+            # dispatch -- see the comment at the top of this `for` body.)
+            # Capture BEFORE _truncate_tool_result below: the log is the
+            # lossless record, history is the capped view of it. This single
+            # point covers every dispatch branch above -- builtin, MCP,
+            # skill, runtime tools -- and the review-hook refusal path.
+            # Final-review IMPORTANT 3: tool_catalog.py documents `status` as
+            # "ok or error", but this used to write only "ok" (any
+            # "proceed" verdict, even a dispatch that actually failed -- see
+            # `content = ... f"ERROR: {result.error}"` above) or "refused"
+            # -- "error" was never reachable. `result` is only safe to read
+            # here when verdict == "proceed": that is the sole branch above
+            # that assigns it in THIS iteration (a non-"proceed" verdict
+            # skips dispatch entirely, so `result` -- if it exists at all --
+            # would be a stale value from a different call in this batch).
+            if verdict == "proceed":
+                record_status = "ok" if result.ok else "error"
+            else:
+                record_status = "refused"
+            record_number = _emit_record(
+                deps,
+                "tool_result",
+                content=content,
+                tool=call.name,
+                status=record_status,
+                call_id=call.call_id,
+            )
+
             # Truncate once, unconditionally, regardless of which branch set
             # `content` above -- the review-hook refusal string (verdict !=
             # "proceed") and every dispatched-tool result share the same cap
-            # so neither path can enter history unbounded.
+            # so neither path can enter history unbounded. `record_number`
+            # (Task 7) is the number the tool_result record above was just
+            # captured under -- threading it through lets a truncated result
+            # point at its own full copy in the run log.
             content = _truncate_tool_result(
-                content, budget.max_tool_result_chars, call.name
+                content,
+                budget.max_tool_result_chars,
+                call.name,
+                record_number=record_number,
             )
 
             add(STEP_TOOL_RESULT, tool_name=call.name, result=content[:2000])

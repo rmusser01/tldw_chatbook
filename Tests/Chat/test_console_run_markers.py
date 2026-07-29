@@ -210,3 +210,124 @@ def test_approval_state_lock_serializes_snapshot_against_worker_thread_mutation(
     assert snapshot_done.wait(timeout=2), "fleet_summary_counts never completed"
     reader.join(timeout=2)
     assert result["counts"] == (0, 0)
+
+
+# ---------------------------------------------------------------------------
+# TASK-1050: round-keyed pending-approval accounting.
+# ---------------------------------------------------------------------------
+#
+# `_pending_approvals` used to be a plain `set[str]` of session ids
+# (`set_run_pending_approval` was the sole writer) -- ANY approval-like
+# bridge's teardown for a session cleared the badge for that session
+# regardless of whether a SIBLING round (same bridge, or one of the other
+# two bridges) was still outstanding. `add_pending_round`/`discard_
+# pending_round` replace that with round-id-keyed accounting: a session
+# reads as NEEDS_APPROVAL iff it has AT LEAST ONE outstanding round id,
+# and discarding one round's id never touches another's. The three
+# bridges (`request_mcp_approvals`/`request_skill_install_confirm`/
+# `request_skill_script_confirm`) exercise this through real worker
+# threads in their own test modules (`test_console_mcp_approval.py`,
+# `test_skill_install_concurrent_confirms.py`,
+# `test_skill_script_concurrent_confirms.py`) -- these tests pin the
+# accounting primitive itself directly, mirroring how this file already
+# drives `_set_run_state`/`set_run_pending_approval` as controller seams
+# rather than through a live run.
+
+
+def test_marker_stays_needs_approval_while_any_round_pending_for_session(
+    controller_with_two_sessions,
+):
+    """Two independent approval-like rounds (e.g. one from the MCP bridge,
+    one from the skill-install bridge) pending for the SAME session must
+    both have to resolve before the badge clears -- discarding the first
+    round's id alone must not clear a session that still has a second
+    round outstanding.
+    """
+    controller, session_a, _session_b = controller_with_two_sessions
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
+
+    controller.add_pending_round(session_a, "round-mcp-1")
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+
+    controller.add_pending_round(session_a, "round-skill-install-1")
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+
+    # The FIRST round resolving must not clear the badge -- the second is
+    # still outstanding.
+    controller.discard_pending_round(session_a, "round-mcp-1")
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+    assert session_a in controller._pending_approvals
+
+    # Only once the LAST round resolves does the badge clear.
+    controller.discard_pending_round(session_a, "round-skill-install-1")
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
+    assert session_a not in controller._pending_approvals
+
+
+def test_add_and_discard_pending_round_is_idempotent(controller_with_two_sessions):
+    """Double-adding or double-discarding the SAME round id must not
+    corrupt the per-session round-id accounting (no duplicate-clear, no
+    raise on a redundant discard)."""
+    controller, session_a, _session_b = controller_with_two_sessions
+
+    controller.add_pending_round(session_a, "round-1")
+    controller.add_pending_round(session_a, "round-1")  # duplicate add: no-op
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+
+    controller.discard_pending_round(session_a, "round-1")
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
+
+    # A second discard of the same (already-gone) id, and a discard of an
+    # id that was never added, must both be safe no-ops.
+    controller.discard_pending_round(session_a, "round-1")
+    controller.discard_pending_round(session_a, "never-added-round")
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
+
+
+def test_idempotent_discard_of_one_round_never_touches_a_sibling_round(
+    controller_with_two_sessions,
+):
+    """Discarding an already-discarded round id twice must not accidentally
+    discard a DIFFERENT, still-live round for the same session (guards
+    against an implementation that clears the whole set instead of just
+    the one id)."""
+    controller, session_a, _session_b = controller_with_two_sessions
+
+    controller.add_pending_round(session_a, "round-1")
+    controller.add_pending_round(session_a, "round-2")
+
+    controller.discard_pending_round(session_a, "round-1")
+    controller.discard_pending_round(session_a, "round-1")  # redundant, must no-op
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+
+    controller.discard_pending_round(session_a, "round-2")
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
+
+
+def test_legacy_boolean_shim_stacks_with_a_real_round_until_both_clear(
+    controller_with_two_sessions,
+):
+    """Pins the deprecated `set_run_pending_approval` shim's documented
+    composition contract: it registers/discards a synthetic sentinel round
+    id, so it never clobbers a REAL round id registered separately via
+    `add_pending_round` -- and, symmetrically, discarding the real round
+    alone does not clear a badge the shim's own `True` call is still
+    holding up. This is exactly why `ChatScreen._park_console_approval`
+    guards its own shim call with `has_pending_approval_round` first
+    (see that method's docstring) rather than calling the shim
+    unconditionally.
+    """
+    controller, session_a, _session_b = controller_with_two_sessions
+
+    controller.add_pending_round(session_a, "real-round-1")
+    controller.set_run_pending_approval(session_a, True)  # legacy shim, redundant
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+
+    # Discarding only the real round leaves the shim's own sentinel up.
+    controller.discard_pending_round(session_a, "real-round-1")
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+
+    # The shim's own `False` call clears its sentinel, and only then does
+    # the badge fully clear.
+    controller.set_run_pending_approval(session_a, False)
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE

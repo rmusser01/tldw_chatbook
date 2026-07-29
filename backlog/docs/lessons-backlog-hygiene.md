@@ -37,6 +37,26 @@ illustration of why these entries carry their evidence.
 
 ---
 
+## `--ac` does not split on commas — you get one run-on criterion
+
+**What happened.** 2026-07-28, filing task-1261: four acceptance criteria were passed
+as `--ac "first,second,third,fourth"`, exactly the shape CLAUDE.md documents
+(`--ac "Must work,Must be tested"`). The CLI (v1.44.0) wrote **a single** criterion
+whose text was the whole comma-joined string. Confirmed on a trivial control:
+`--ac "alpha,beta,gamma"` produces `- [ ] #1 alpha,beta,gamma`, not three items.
+
+A single run-on AC is not a cosmetic problem: it cannot be checked off
+independently, so the Definition of Done ("all `- [ ]` changed to `- [x]`") becomes
+all-or-nothing and the task stops describing what is actually left.
+
+**What to do.** Pass `--ac` **once per criterion** if the flag repeats, or write the
+`## Acceptance Criteria` block into the task file directly and verify with
+`backlog task <id> --plain` before moving on. Whichever route, read the rendered AC
+list back — the CLI accepted the comma form silently rather than erroring, so nothing
+warns you.
+
+---
+
 ## `git ls-tree` octal-escapes non-ASCII filenames
 
 **What happened.** Several task titles contain an em-dash. `git ls-tree` emits those
@@ -130,6 +150,30 @@ a filing**. Before it becomes a task, grep `origin/dev` for the fix, not just fo
 bug: `git log -S'<the selector or symbol>' origin/dev -- <path>`. This is cheap, and the
 alternative is a task that reaches an implementer, consumes a full cycle, and closes as
 "already fixed" — plus stale claims in whatever PR body and notes quoted it in between.
+
+---
+
+## Search the board for the defect before investigating it
+
+**TASK-1022 / TASK-1210, 2026-07-28.** A runtime import trace established that
+scheduled watchlist checks never ran: the feature flag had no `else` branch, the
+old scheduler had no construction path, and the flag shipped false. That was
+filed as TASK-1210 and fixed.
+
+TASK-1022 already said all of it — filed a day earlier, from a plain reading of
+the code, with the same four load-bearing facts and the same conclusion. The
+investigation was duplicated because nobody grepped `backlog/tasks/` first.
+
+**What to do.** Before investigating a defect, grep the board for its subject —
+here, `grep -il "watchlist.*schedul" backlog/tasks/` would have surfaced it in
+one command. Do it even when the finding feels new, and *especially* when it
+feels like a discovery: a confident diagnosis is exactly the state in which you
+skip the check.
+
+Closing the duplicate is not enough on its own. Say in the surviving task which
+one was first and what it already knew, so the board records that the second
+investigation was avoidable rather than quietly implying two independent
+confirmations.
 
 ---
 

@@ -7,6 +7,7 @@ from textual.app import ComposeResult
 from textual.geometry import Region
 from textual.screen import Screen
 from textual.containers import Container
+from textual.widgets import Static
 
 from .main_navigation import MainNavigationBar
 
@@ -180,7 +181,7 @@ class BaseAppScreen(Screen):
 
         # Content area below navigation
         with Container(id="screen-content"):
-            yield from self.compose_content()
+            yield from self._compose_content_or_failure()
 
         # Per-screen footer status bar (task-264): the App only ever mounts
         # ONE Footer-equivalent widget on its DEFAULT screen (app.py's own
@@ -205,6 +206,43 @@ class BaseAppScreen(Screen):
                 source=registration[0], shortcuts=registration[1]
             )
         yield footer
+
+    def _compose_content_or_failure(self) -> ComposeResult:
+        """Compose this screen's content, degrading to an error panel on failure.
+
+        A destination that cannot build its own body must not take the app
+        down with it. Textual composes a screen inside its mount pipeline, so
+        an exception raised in ``compose_content`` is NOT raised back to
+        whoever called ``switch_screen`` -- Textual records it on the App and
+        exits the process. The navigation handler's try/except therefore
+        cannot see it, and this is the only place that can.
+
+        Concretely: the MCP canvases read ``Select.NULL`` (Textual 8+) while
+        composing, so on an older Textual clicking MCP killed the whole app.
+
+        Widgets already yielded before the failure stay mounted -- a partly
+        built screen with a visible explanation beats a dead application.
+
+        Returns:
+            The subclass's content, or an error panel describing the failure.
+        """
+        try:
+            yield from self.compose_content()
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                "Screen content failed to compose "
+                f"(screen={self.screen_name!r}, exception_category={type(exc).__name__})."
+            )
+            yield Container(
+                Static(
+                    f"This screen failed to load.\n\n"
+                    f"{type(exc).__name__}: {exc}\n\n"
+                    "The rest of the app is unaffected -- use the navigation "
+                    "bar above to go elsewhere. Details are in the log.",
+                    id="screen-content-error-message",
+                ),
+                id="screen-content-error",
+            )
 
     def compose_content(self) -> ComposeResult:
         """Override in subclasses to provide screen-specific content."""

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import sys
 import threading
 import time
 from collections.abc import Mapping
@@ -44,11 +45,22 @@ from .native_tools import (
     provider_supports_native_tools,
     schemas_to_openai_tools,
 )
+from .run_log import _setting
+from .run_log_eviction import (
+    DEFAULT_MIN_RECENT_ROUNDS,
+    RUN_LOG_EVICT_ENABLED_KEY,
+    RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY,
+    bound_history_for_send,
+    coerce_min_recent_rounds,
+)
 from .tool_catalog import (
     FIND_TOOLS_SCHEMA,
     INSTALL_SKILL_TOOL_SCHEMA,
     LOAD_TOOLS_SCHEMA,
+    RUN_LOG_SLICE_TOOL_SCHEMA,
+    RUN_LOG_STATS_TOOL_SCHEMA,
     RUN_SKILL_SCRIPT_TOOL_SCHEMA,
+    SEARCH_RUN_LOG_TOOL_SCHEMA,
     SKILL_FILE_TOOL_SCHEMA,
     SPAWN_TOOL_SCHEMA,
     ToolCatalogRegistry,
@@ -61,6 +73,30 @@ from .tool_catalog import (
 SUBAGENT_SYSTEM_PROMPT = CATALOG["agents.subagent_system"].default
 
 TRUNCATION_NOTICE = "\n[truncated]"
+
+# Task 7: appended to config.system_prompt only when THIS run wired the
+# search_run_log tool (see the `log_active` gate in _run_one, reused
+# verbatim by _make_call_model) -- so the model is never told a log exists
+# when it can't actually search it. Phase 2 (task-1271): the same gate now
+# also wires run_log_stats/run_log_slice, so this section mentions all
+# three -- a model that only ever hears about search_run_log has no reason
+# to reach for the other two even though their schemas are disclosed.
+RUN_LOG_PROMPT_SECTION = (
+    "Run log: every model turn, tool call, and tool result of this run is "
+    "recorded in full to a log file. Your context holds a truncated view of "
+    "it. When a result was truncated, or you need something from earlier in "
+    "this run, call search_run_log to read the complete record instead of "
+    "re-running the work or guessing. Prefer the 'contains' argument (a "
+    "literal substring) over 'pattern' -- but note 'contains' and 'pattern' "
+    "both match a record's CONTENT ONLY, never its metadata; use the "
+    "'tool', 'type', 'status', and 'kind' arguments to filter by metadata. "
+    "Search for specific content you know you need rather than browsing. "
+    "For a summary instead of individual records -- e.g. which tool you've "
+    "called most, or how often something failed -- call run_log_stats "
+    "instead of paging through search results. To reconstruct a stretch of "
+    "your own reasoning as one unit rather than assembling it from separate "
+    "hits, call run_log_slice with a record-number range."
+)
 
 
 class SkillRunner(Protocol):
@@ -247,6 +283,7 @@ class AgentService:
         install_skill_tool: Callable[[str], ToolResult] | None = None,
         run_skill_script_tool: Callable[[str, str, list[str]], ToolResult]
         | None = None,
+        run_log_writer: "RunLogWriter | None" = None,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -296,13 +333,48 @@ class AgentService:
         # see the schema-pin comment in _run_one for the rationale. `None`
         # (the default) means the run is not wired for it.
         self._run_skill_script_tool = run_skill_script_tool
+        # Round-1 review fix (spec §3.1): the writer is per RUN TREE, not
+        # per service instance -- `bind()` latches permanently (see its own
+        # docstring), so a writer built here in __init__ and reused across
+        # two `run_turn` calls on the same `AgentService` would silently
+        # append the second tree's records into the first tree's
+        # already-bound directory and overwrite its manifest. `run_turn`
+        # builds a fresh, UNBOUND writer per call from this attribute being
+        # `None` -- see its own docstring/body. An explicitly injected
+        # writer (tests, primarily) is the one exception: it is honored
+        # as-is for the life of the service, on the assumption a caller
+        # supplying its own writer also owns that writer's lifecycle.
+        self._injected_run_log_writer = run_log_writer
+        self.run_log_writer = run_log_writer
 
     # -- internals -------------------------------------------------------
 
     def _make_call_model(
-        self, config: AgentConfig, api_endpoint: str, runtime_schemas: list
+        self,
+        config: AgentConfig,
+        api_endpoint: str,
+        runtime_schemas: list,
+        log_active: bool = False,
     ):
         native = config.native_tools and provider_supports_native_tools(api_endpoint)
+        # TASK-1272 (Phase 3): the ONLY gate on whether eviction may run at
+        # all is (a) `log_active` -- the SAME condition, reused verbatim,
+        # that gates the search_run_log tool and the prompt section above,
+        # so eviction is never offered a run that has nothing durable to
+        # recover from -- and (b) the opt-in `[agents] run_log_evict_
+        # enabled` flag, off by default so existing runs stay byte-identical
+        # until a user turns it on (requirement #5). Resolved once here,
+        # not per turn: neither operand can change during a run.
+        evict_enabled = log_active and _setting(RUN_LOG_EVICT_ENABLED_KEY, False)
+        # TASK-1272 follow-up (live-verified 2026-07-28): the minimum-
+        # recent-rounds floor, resolved once alongside evict_enabled for
+        # the same reason -- it cannot change during a run. Unused when
+        # evict_enabled is False, but resolving it unconditionally keeps
+        # this closure's config reads in one place rather than split
+        # across a conditional.
+        min_recent_rounds = coerce_min_recent_rounds(
+            _setting(RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY, DEFAULT_MIN_RECENT_ROUNDS)
+        )
         # task-245: one render per active-set change, not per turn. Keyed by
         # schema NAMES (the set only ever grows via load_tools — AC #2), and
         # scoped to this closure = this run, so sub-agents (their own
@@ -331,8 +403,21 @@ class AgentService:
                     protocol_key = key
                 if protocol_text:
                     system_content = f"{config.system_prompt}\n\n{protocol_text}"
-            payload = [{"role": "system", "content": system_content}]
-            payload.extend(messages)
+            if log_active:
+                system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+            # TASK-1272 (Phase 3): bound the SEND payload, never
+            # `run_agent_loop`'s own `messages` -- that list is untouched,
+            # see `bound_history_for_send`'s docstring. A no-op (returns
+            # `raw_payload` unchanged) whenever `evict_enabled` is False.
+            raw_payload = [{"role": "system", "content": system_content}] + messages
+            payload = bound_history_for_send(
+                raw_payload,
+                model=config.model,
+                provider=api_endpoint,
+                native=native,
+                enabled=evict_enabled,
+                min_recent_rounds=min_recent_rounds,
+            )
             resp = self.chat_call(
                 api_endpoint=api_endpoint,
                 messages_payload=payload,
@@ -441,6 +526,10 @@ class AgentService:
             budget=dataclasses.asdict(config.budget),
             assistant_message_id=assistant_message_id,
         )
+        # Two-phase: the writer was constructed before any run id existed.
+        # Only the PRIMARY run binds; a child finds it already bound.
+        if agent_kind == AGENT_KIND_PRIMARY:
+            self.run_log_writer.bind(run_id)
         started = self.clock()
 
         active, offer_find_load = initial_disclosure(self.registry, config.budget)
@@ -468,6 +557,49 @@ class AgentService:
         # applied in the bridge closure and the service, not here.
         if self._run_skill_script_tool is not None:
             runtime_schemas.append(RUN_SKILL_SCRIPT_TOOL_SCHEMA)
+        # search_run_log (7th runtime tool): primary agent only, like
+        # install_skill above -- a depth-1 child's max_subagents is always
+        # clamped to 0, so its "subtree" is only itself and its short
+        # history is already in its context; letting it search would only
+        # widen what it can see, into its parent's whole run tree, breaking
+        # the isolation spawn_subagent promises. Also gated on the writer
+        # actually being active: an inactive writer means no log directory
+        # was ever created, so there is nothing to search.
+        #
+        # Placed LAST, after every other runtime_schemas append above, and
+        # additionally requires `runtime_schemas or active` to be non-empty
+        # (controller ruling, post-review of the original spec): unlike
+        # every OTHER runtime tool -- spawn_subagent gated on
+        # `max_subagents > 0`, find_tools/load_tools on `offer_find_load`,
+        # skill_file on a non-empty authorized set -- an unconditional
+        # `is_active` gate would offer this tool even to a run with
+        # nothing else disclosed at all (empty allow-list, no sub-agents,
+        # no skills). Such a run can only ever produce model-turn log
+        # records -- it has no tool results, so nothing was ever
+        # truncated and there is nothing to recover -- so the tool would
+        # buy it nothing while changing the provider payload (adding a
+        # `tools=` kwarg) of a deliberately tool-less run. See task-243
+        # minor m3: a native-capable endpoint with no disclosable schemas
+        # must send no `tools=` kwarg at all.
+        # Task 7: reused verbatim (not re-derived) as the gate on whether the
+        # system prompt's RUN_LOG_PROMPT_SECTION gets appended below, so the
+        # prompt can never mention a tool this run didn't actually disclose.
+        log_active = (
+            agent_kind == AGENT_KIND_PRIMARY
+            and self.run_log_writer.is_active
+            and (runtime_schemas or active)
+        )
+        if log_active:
+            runtime_schemas.append(SEARCH_RUN_LOG_TOOL_SCHEMA)
+            # Phase 2 (task-1271): run_log_stats/run_log_slice compute over
+            # the same log search_run_log reads, so they share its EXACT
+            # gate rather than getting their own -- both need a bound,
+            # active writer (nothing to aggregate/slice otherwise) and the
+            # same primary-agent-only isolation argument (a child's log
+            # view would otherwise widen past its own short, already-in-
+            # context history into its parent's whole run tree).
+            runtime_schemas.append(RUN_LOG_STATS_TOOL_SCHEMA)
+            runtime_schemas.append(RUN_LOG_SLICE_TOOL_SCHEMA)
 
         def find_tools(query: str):
             # Q7(b): never surface a disallowed tool through find_tools,
@@ -706,8 +838,459 @@ class AgentService:
                 return ToolResult(ok=False, error=f"skill_file: {exc}")
             return ToolResult(ok=True, content=str(content))
 
+        def search_run_log(args: dict) -> ToolResult:
+            """Query THIS run's log, or (``scope="conversation"``) this
+            conversation's earlier runs too. Reads only what this agent --
+            and, in conversation scope, its own earlier runs -- produced.
+
+            F2 (Qodo #2, PR #1066 review -- DECLINED): Qodo's finding wanted
+            these raw ``dict`` args routed through a Pydantic model before
+            use. Declined: every OTHER runtime tool this service wires
+            (``install_skill``, ``run_skill_script``, ``skill_file``) takes
+            the exact same raw-dict-plus-defensive-cast shape, and every
+            argument here is ALREADY coerced defensively (``str(...)`` for
+            the metadata filters below; ``int(... or 0)`` inside a single
+            ``try/except (TypeError, ValueError)`` for the numeric ones) --
+            a bad value already returns a clean ``ToolResult`` error rather
+            than raising, which is the property Pydantic would add. Giving
+            this one tool a model would make it the odd one out in this
+            module without changing behavior. See
+            ``Tests/Agents/test_search_run_log_runtime_tool.py`` for the
+            coverage confirming every argument is safely coerced (string
+            where an int is expected, null, a nested object, a list).
+
+            task-1273 (``scope``): ``scope="run"`` (the default, and the
+            only value every call before this task could send) is handled
+            by the UNCHANGED code path below -- byte-identical output.
+            ``scope="conversation"`` branches out early into a separate,
+            best-effort cross-run path built on ``run_log_search.
+            search_across_runs``: it enumerates this conversation's own
+            PRIMARY runs via ``self.db.list_runs`` (capped at
+            ``MAX_CROSS_RUN_RUNS``), resolves each one's log directory via
+            ``run_log.resolve_existing_log_dir`` (the current run's own
+            directory is already known -- ``log_dir`` below -- and is never
+            re-resolved), and reports which runs could not be located
+            rather than silently omitting them. Any other ``scope`` value
+            falls back to ``"run"``, the same defensive-coercion convention
+            as every other argument here.
+
+            Args:
+                args: The model-supplied call arguments, straight off
+                    ``ToolCall.args`` (always a ``dict`` -- both parsing
+                    paths in ``native_tools.py``/``agent_runtime.py``
+                    guarantee that, never validated by a schema here).
+                    Recognised keys mirror ``search_records``'/
+                    ``format_results``' own parameters: ``contains``,
+                    ``pattern``, ``tool``, ``type``, ``status``, ``kind``,
+                    ``from_record``, ``to_record``, ``context``, ``offset``
+                    -- plus ``scope`` (``"run"`` default or
+                    ``"conversation"``).
+
+            Returns:
+                ``ToolResult(ok=True, content=...)`` with the rendered hits
+                (or "No matching records."), or ``ok=False`` with a
+                human-readable error -- for a missing log, malformed
+                numeric arguments, a rejected catastrophic-looking
+                ``pattern``, a search that exceeded its wall-clock budget
+                (F6), or (``scope="conversation"`` only) a failure to list
+                this conversation's runs. Never raises.
+            """
+            from .run_log import resolve_existing_log_dir
+            from .run_log_search import (
+                MAX_CROSS_RUN_RUNS,
+                RunLogSearchPatternRejected,
+                RunLogSearchTimeout,
+                format_cross_run_results,
+                format_results,
+                load_records,
+                search_across_runs,
+                search_records,
+            )
+
+            log_dir = self.run_log_writer.log_dir
+            if log_dir is None:
+                return ToolResult(ok=False, error="No run log is available.")
+            contains = str(args.get("contains", ""))
+            pattern = str(args.get("pattern", ""))
+            # task-1273: defensively coerced like every other argument here
+            # -- an unrecognised value falls back to "run", the byte-
+            # identical default every call before this task already got.
+            scope = str(args.get("scope") or "run").strip().lower()
+            if scope == "conversation":
+                try:
+                    offset = int(args.get("offset") or 0)
+                    # task-1273 review finding A: the cap is pushed INTO the
+                    # query (both `limit` and `agent_kind`) rather than
+                    # fetched-then-discarded -- a long-lived conversation's
+                    # run count (primary + every sub-agent run it has ever
+                    # spawned) must never size this query. `count_runs` is a
+                    # second, O(1)-row query that gets the EXACT total
+                    # without materializing it, so the coverage line can
+                    # still report a precise omitted count rather than only
+                    # "more exist".
+                    windowed = self.db.list_runs(
+                        conversation_id,
+                        include_superseded=True,
+                        limit=MAX_CROSS_RUN_RUNS,
+                        agent_kind=AGENT_KIND_PRIMARY,
+                    )
+                    total_primary_count = self.db.count_runs(
+                        conversation_id,
+                        include_superseded=True,
+                        agent_kind=AGENT_KIND_PRIMARY,
+                    )
+                    omitted_run_count = max(
+                        0, total_primary_count - len(windowed)
+                    )
+                    resolved_runs: list = []
+                    for run in windowed:
+                        candidate_id = run.get("id")
+                        if candidate_id == run_id:
+                            # This run's own directory is already known --
+                            # never re-resolved (avoids a redundant glob and
+                            # any race with THIS run's still-open writer).
+                            resolved_runs.append((candidate_id, log_dir))
+                        else:
+                            resolved_runs.append(
+                                (candidate_id, resolve_existing_log_dir(candidate_id))
+                            )
+                    cross_result = search_across_runs(
+                        resolved_runs,
+                        current_run_id=run_id,
+                        contains=contains,
+                        pattern=pattern,
+                        tool=str(args.get("tool", "")),
+                        type=str(args.get("type", "")),
+                        status=str(args.get("status", "")),
+                        kind=str(args.get("kind", "")),
+                        from_record=int(args.get("from_record") or 0),
+                        to_record=int(args.get("to_record") or 0),
+                        context=int(args.get("context") or 0),
+                    )
+                except (TypeError, ValueError, OverflowError) as exc:
+                    return ToolResult(
+                        ok=False, error=f"Invalid search arguments: {exc}"
+                    )
+                except (RunLogSearchPatternRejected, RunLogSearchTimeout) as exc:
+                    return ToolResult(ok=False, error=str(exc))
+                except Exception as exc:  # noqa: BLE001 — a run listing/
+                    # resolution failure (a missing DB file, a locked
+                    # connection, an unreadable directory) must degrade to a
+                    # ToolResult like every other failure mode here, never
+                    # raise into the run.
+                    return ToolResult(
+                        ok=False, error=f"Cross-run search failed: {exc}"
+                    )
+                ceiling = config.budget.max_tool_result_chars
+                render_max_chars = ceiling if ceiling > 0 else sys.maxsize
+                return ToolResult(
+                    ok=True,
+                    content=format_cross_run_results(
+                        cross_result,
+                        max_chars=render_max_chars,
+                        contains=contains,
+                        pattern=pattern,
+                        offset=offset,
+                        omitted_run_count=omitted_run_count,
+                    ),
+                )
+            # scope == "run" (the default, and any unrecognised value):
+            # UNCHANGED below -- byte-identical to every call before
+            # task-1273.
+            try:
+                records = load_records(log_dir)
+                hits = search_records(
+                    records,
+                    contains=contains,
+                    pattern=pattern,
+                    tool=str(args.get("tool", "")),
+                    type=str(args.get("type", "")),
+                    status=str(args.get("status", "")),
+                    kind=str(args.get("kind", "")),
+                    from_record=int(args.get("from_record") or 0),
+                    to_record=int(args.get("to_record") or 0),
+                    context=int(args.get("context") or 0),
+                )
+                # TASK-1250: offset, coerced the same defensively-numeric way
+                # as from_record/to_record/context above -- a model sending
+                # junk (a non-numeric string) is caught below like any other
+                # bad numeric arg, never raised into the run. Negative and
+                # past-the-end clamping happens in format_results itself
+                # (single point of truth, mirroring `context`'s own clamp).
+                offset = int(args.get("offset") or 0)
+            except (TypeError, ValueError, OverflowError) as exc:
+                # OverflowError: a model can send `float('inf')` (or a
+                # literal large enough to parse as one) for from_record/
+                # to_record/context/offset -- `int(float('inf'))` raises
+                # OverflowError, NOT TypeError/ValueError, so it must be
+                # caught here too or it escapes uncaught into the run.
+                # `float('nan')` already raises ValueError, already
+                # covered. Same gap `run_log_stats`/`run_log_slice` below
+                # already close for their own from_record/to_record --
+                # this closure (Phase 1, merged earlier) was the one
+                # sibling still missing it (task-1272 Phase 3 review,
+                # carried-over finding).
+                return ToolResult(ok=False, error=f"Invalid search arguments: {exc}")
+            except (RunLogSearchPatternRejected, RunLogSearchTimeout) as exc:
+                # F6 (Qodo #6): a model-supplied `pattern=` that looks
+                # catastrophic, or a search that ran past its wall-clock
+                # budget -- both must degrade to a normal tool error, never
+                # raise into (and abort) this run. See run_log_search.py's
+                # module docstring for why neither defense is complete
+                # alone.
+                return ToolResult(ok=False, error=str(exc))
+            # Final-review CRITICAL 1: render recovered records at THIS run's
+            # own tool-result ceiling, not format_results' 400-char rendering
+            # default. §6.1's whole point is that a truncation trailer points
+            # at a lossless copy -- if the copy renders at 400 chars while
+            # the truncation it repairs cut at 16,000, following the trailer
+            # returns LESS than the thing it was supposed to fix. Keep
+            # format_results' own default untouched (its existing tests pin
+            # 400) and instead pass the run's actual ceiling from here.
+            # 0 (or negative) is the documented "unlimited" value for
+            # RunBudget.max_tool_result_chars / _truncate_tool_result;
+            # format_results has no such sentinel (max_chars=0 would render
+            # nothing), so translate it into a ceiling that never trips
+            # format_results' own truncation branch. The rendered search
+            # RESULT still passes back through the loop's ordinary
+            # _truncate_tool_result at the history-append seam, so this
+            # cannot blow the run's context budget -- it only stops the
+            # recovery path from being strictly worse than what it repairs.
+            #
+            # TASK-1250: that alone was not enough. format_results always
+            # rendered from character 0 of each record, which is the SAME
+            # ceiling that truncated the result in the first place -- so a
+            # record larger than render_max_chars still rendered byte-
+            # identical to what history already showed, and a `contains=`
+            # match past that ceiling could render a body that did not
+            # contain it. Passing `contains`/`pattern` lets format_results
+            # centre the window on the actual match; passing `offset` lets
+            # the model page past render_max_chars deterministically once a
+            # render tells it the next offset to use.
+            ceiling = config.budget.max_tool_result_chars
+            render_max_chars = ceiling if ceiling > 0 else sys.maxsize
+            return ToolResult(
+                ok=True,
+                content=format_results(
+                    hits,
+                    max_chars=render_max_chars,
+                    contains=contains,
+                    pattern=pattern,
+                    offset=offset,
+                ),
+            )
+
+        def run_log_stats(args: dict) -> ToolResult:
+            """Aggregate counts/errors/bytes over THIS run's log, grouped.
+
+            Phase 2 (task-1271) sibling of ``search_run_log`` immediately
+            above -- same coercion discipline (F2: raw-dict-plus-defensive-
+            cast, declined Pydantic for the same reason every other
+            runtime-tool closure in this module uses that shape --
+            ``install_skill``, ``run_skill_script``, ``skill_file``,
+            ``search_run_log`` all take a raw ``dict`` through this exact
+            seam and coerce defensively rather than raising). Giving these
+            two tools alone a bespoke validation model would make them the
+            odd ones out without changing observable behaviour -- every
+            argument below is coerced the same way and proven safe against
+            the full space of JSON-decodable value types (str, int, float,
+            bool, None, list, dict) in every argument slot by
+            ``Tests/Agents/test_run_log_stats_slice_runtime_tools.py``'s
+            "every argument, every hostile JSON value" matrix -- so this
+            does not need re-litigating on the next review. Same "never
+            raise into the run" contract.
+
+            ``group_by`` is normalised HERE, before calling
+            ``compute_stats``, rather than left to that function's own
+            (still-present, defense-in-depth) fallback: ``compute_stats``
+            silently substitutes ``"tool"`` for an unrecognised value, and
+            if this closure echoed the caller's ORIGINAL (unrecognised)
+            string back into ``format_stats``' header line, the rendered
+            output would claim to be grouped by something it is not --
+            confidently mislabelled data. Normalising here keeps the label
+            passed to ``format_stats`` in sync with what ``compute_stats``
+            actually grouped by, for every input, not just the recognised
+            ones.
+
+            Args:
+                args: The model-supplied call arguments, straight off
+                    ``ToolCall.args`` (always a ``dict``, never validated
+                    by a schema here -- see ``search_run_log``'s own
+                    docstring for why). Recognised keys mirror
+                    ``run_log_search.compute_stats``'s parameters:
+                    ``group_by`` (``tool``/``type``/``status``/``kind``,
+                    default ``"tool"``; an unrecognised value falls back
+                    to ``"tool"`` and is reported as ``"tool"``, never
+                    raises here), and the same structured pre-filters
+                    ``search_run_log`` accepts (``tool``, ``type``,
+                    ``status``, ``kind``, ``from_record``, ``to_record``)
+                    -- never ``contains``/``pattern``: this tool aggregates
+                    metadata, it does not search content.
+
+            Returns:
+                ``ToolResult(ok=True, content=...)`` with one line per
+                (capped) distinct group value plus, when the cap trimmed
+                anything, an explicit "N further ... omitted" trailer --
+                bounded by ``run_log_search.MAX_STATS_GROUPS``, never by
+                the number of records or the number of distinct groups a
+                long run could accumulate -- or ``ok=False`` for a missing
+                log or a malformed numeric argument (including a value
+                that overflows ``int()``, e.g. ``float('inf')``). Never
+                raises.
+            """
+            from .run_log_search import (
+                STATS_GROUP_BY_FIELDS,
+                compute_stats,
+                format_stats,
+                load_records,
+            )
+
+            log_dir = self.run_log_writer.log_dir
+            if log_dir is None:
+                return ToolResult(ok=False, error="No run log is available.")
+            group_by = str(args.get("group_by") or "tool")
+            if group_by not in STATS_GROUP_BY_FIELDS:
+                group_by = "tool"
+            try:
+                records = load_records(log_dir)
+                groups, total, omitted = compute_stats(
+                    records,
+                    group_by=group_by,
+                    tool=str(args.get("tool", "")),
+                    type=str(args.get("type", "")),
+                    status=str(args.get("status", "")),
+                    kind=str(args.get("kind", "")),
+                    from_record=int(args.get("from_record") or 0),
+                    to_record=int(args.get("to_record") or 0),
+                )
+            except (TypeError, ValueError, OverflowError) as exc:
+                # OverflowError: a model can send `float('inf')` (or a
+                # literal large enough to parse as one) for from_record/
+                # to_record -- `int(float('inf'))` raises OverflowError,
+                # NOT TypeError/ValueError, so it must be caught here too
+                # or it escapes uncaught into the run. `float('nan')`
+                # already raises ValueError, already covered.
+                return ToolResult(ok=False, error=f"Invalid stats arguments: {exc}")
+            return ToolResult(
+                ok=True,
+                content=format_stats(
+                    groups, group_by=group_by, total_records=total, omitted_groups=omitted
+                ),
+            )
+
+        def run_log_slice(args: dict) -> ToolResult:
+            """Retrieve a contiguous range of THIS run's log as one unit.
+
+            Phase 2 (task-1271) sibling of ``search_run_log``/
+            ``run_log_stats`` above -- same coercion discipline (raw-dict-
+            plus-defensive-cast, deliberately NOT a Pydantic model, for the
+            same reason as every other runtime-tool closure in this module
+            -- ``install_skill``, ``run_skill_script``, ``skill_file``,
+            ``search_run_log``; see ``run_log_stats``'s own docstring
+            immediately above for the full rationale and the test that
+            proves every argument slot here is safe against the full
+            JSON-decodable value space), same "never raise into the run"
+            contract. Bounded the same way ``search_run_log`` bounds its
+            own output: this run's own ``max_tool_result_chars`` ceiling
+            per record (identical ``render_max_chars`` computation, reused
+            verbatim below), and ``run_log_search.MAX_SLICE_RECORDS``
+            records per call regardless of how wide the requested range
+            is.
+
+            Args:
+                args: The model-supplied call arguments, straight off
+                    ``ToolCall.args`` (always a ``dict``). Recognised keys:
+                    ``from_record`` (coerced defensively; a missing or
+                    invalid value falls back to record 1 rather than
+                    erroring -- see ``run_log_search.slice_records``) and
+                    ``to_record`` (optional; a default-width window is
+                    applied when omitted).
+
+            Returns:
+                ``ToolResult(ok=True, content=...)`` rendering the
+                selected records via ``run_log_search.format_slice``
+                (which itself reuses ``format_results`` -- no second
+                renderer), or ``ok=False`` for a missing log or a
+                malformed numeric argument (including a value that
+                overflows ``int()``, e.g. ``float('inf')``). Never raises.
+            """
+            from .run_log_search import format_slice, load_records, slice_records
+
+            log_dir = self.run_log_writer.log_dir
+            if log_dir is None:
+                return ToolResult(ok=False, error="No run log is available.")
+            try:
+                from_record = int(args.get("from_record") or 0)
+                to_record = int(args.get("to_record") or 0)
+            except (TypeError, ValueError, OverflowError) as exc:
+                # OverflowError: see run_log_stats' identical except clause
+                # immediately above -- `int(float('inf'))` raises
+                # OverflowError, not TypeError/ValueError, and a model can
+                # send that for from_record/to_record just as easily.
+                return ToolResult(ok=False, error=f"Invalid slice arguments: {exc}")
+            records = load_records(log_dir)
+            selected, total_matched, resolved_from, resolved_to = slice_records(
+                records, from_record=from_record, to_record=to_record
+            )
+            # Same ceiling-translation as search_run_log immediately above:
+            # 0 (or negative) is the documented "unlimited" sentinel for
+            # max_tool_result_chars, which format_results has no sentinel
+            # for (max_chars=0 would render nothing), so translate it into
+            # a ceiling format_results' own truncation branch never trips.
+            ceiling = config.budget.max_tool_result_chars
+            render_max_chars = ceiling if ceiling > 0 else sys.maxsize
+            return ToolResult(
+                ok=True,
+                content=format_slice(
+                    selected,
+                    from_record=resolved_from,
+                    to_record=resolved_to,
+                    total_matched=total_matched,
+                    max_chars=render_max_chars,
+                ),
+            )
+
+        def on_record(record_type: str, payload: dict) -> int | None:
+            """Append one full-fidelity record to THIS run tree's log.
+
+            The ``LoopDeps.on_record`` callable: called by
+            ``agent_runtime.run_agent_loop`` (via its ``_emit_record``
+            helper) at the two points the COMPLETE value exists, before any
+            truncation. Wraps ``self.run_log_writer.append`` with this
+            run's identity (``run_id``, ``agent_kind``) and defensively
+            stringifies every payload field, so a malformed payload can
+            never raise here either.
+
+            Args:
+                record_type: ``"model"``, ``"tool_call"``, or
+                    ``"tool_result"`` (``_emit_record``'s own vocabulary;
+                    ``"spawn"`` is not currently emitted -- a spawn's
+                    dispatch is captured as an ordinary ``tool_call``/
+                    ``tool_result`` pair like any other tool).
+                payload: ``content``/``tool``/``status``/``call_id``, as
+                    built by ``_emit_record``'s ``**payload`` kwargs.
+
+            Returns:
+                The record number MUST be returned here, not swallowed:
+                Task 7 threads it into the truncation trailer so a cut
+                result points at its own full copy in the log (see
+                ``_truncate_tool_result``). ``None`` when the writer is
+                inactive or the underlying write failed -- never raises.
+            """
+            return self.run_log_writer.append(
+                run_id=run_id,
+                kind=agent_kind,
+                type=record_type,
+                content=str(payload.get("content", "")),
+                tool=str(payload.get("tool", "")),
+                status=str(payload.get("status", "")),
+                call_id=str(payload.get("call_id", "")),
+            )
+
         deps = LoopDeps(
-            call_model=self._make_call_model(config, api_endpoint, runtime_schemas),
+            call_model=self._make_call_model(
+                config, api_endpoint, runtime_schemas, log_active
+            ),
             invoke_tool=invoke_tool,
             spawn=spawn,
             find_tools=find_tools,
@@ -739,6 +1322,20 @@ class AgentService:
                 else None
             ),
             run_skill_script=self._run_skill_script_tool,
+            search_run_log=(
+                search_run_log if agent_kind == AGENT_KIND_PRIMARY else None
+            ),
+            # Phase 2 (task-1271): wired under the identical
+            # `agent_kind == AGENT_KIND_PRIMARY` gate as search_run_log
+            # immediately above -- a spawned sub-agent must never receive
+            # either, for the same isolation reason.
+            run_log_stats=(
+                run_log_stats if agent_kind == AGENT_KIND_PRIMARY else None
+            ),
+            run_log_slice=(
+                run_log_slice if agent_kind == AGENT_KIND_PRIMARY else None
+            ),
+            on_record=on_record,
         )
         try:
             outcome = run_agent_loop(config, messages, active, deps)
@@ -809,9 +1406,31 @@ class AgentService:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its
             terminal ``RunOutcome``. The run record (and any sub-agent run
             records) are persisted before this returns.
+
+        Run-log contract:
+            The run-log writer is scoped to ONE run tree, not to this
+            service instance. Unless a writer was explicitly injected via
+            the constructor (tests, primarily — that one is reused as-is
+            for the life of the service), each call to ``run_turn`` builds
+            a fresh, unbound ``RunLogWriter``. ``bind()`` latches
+            permanently for that writer's whole life (see its own
+            docstring), so reusing one writer across two ``run_turn`` calls
+            would append the second tree's records into the first tree's
+            already-bound directory and overwrite its manifest.
         """
         if supersede_run_id:
             self.db.supersede_run_tree(supersede_run_id)
+        # Per run tree, not per service instance -- see "Run-log contract"
+        # above. `_injected_run_log_writer` is `None` for every caller that
+        # didn't pass one to the constructor (i.e. every production caller
+        # today), so this builds a new, unbound writer each call; an
+        # injected writer is honored unchanged.
+        if self._injected_run_log_writer is not None:
+            self.run_log_writer = self._injected_run_log_writer
+        else:
+            from .run_log import RunLogWriter as _RunLogWriter
+
+            self.run_log_writer = _RunLogWriter()
         # Per-run scope for the registry's owner-map cache (tool_catalog's
         # _owner_and_id): reset here, once, at the top of the run tree —
         # covers the primary turn AND any sub-agents it spawns via
@@ -819,7 +1438,7 @@ class AgentService:
         # is listed fresh at this point, so skill CRUD since the last run
         # is always picked up with no separate invalidation signal needed.
         self.registry.reset_catalog_cache()
-        return self._run_one(
+        run_id, outcome = self._run_one(
             conversation_id=conversation_id,
             messages=messages,
             config=config,
@@ -830,3 +1449,20 @@ class AgentService:
             parent_run_id=None,
             assistant_message_id=assistant_message_id,
         )
+        # Manifest needs run-level metadata the writer itself does not have
+        # (including supersession), so it is written once the whole run
+        # tree finishes, here rather than inside _run_one.
+        self.run_log_writer.write_manifest(
+            {
+                "run_id": run_id,
+                "model": config.model,
+                "api_endpoint": api_endpoint,
+                "allowed_tools": list(config.allowed_tools),
+                "budget": dataclasses.asdict(config.budget),
+                "status": outcome.status,
+                "superseded_run_id": supersede_run_id or "",
+                "total_tokens": outcome.total_tokens,
+            }
+        )
+        self.run_log_writer.close()
+        return run_id, outcome

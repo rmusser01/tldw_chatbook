@@ -39,6 +39,7 @@ SPEECH_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         "Speech",
         (
             ("playground", "🎤 TTS Playground"),
+            ("profiles", "🗣️ Voice Profiles"),
             ("settings", "⚙️ TTS Settings"),
             ("audiobook", "📚 AudioBook/Podcast"),
         ),
@@ -92,7 +93,7 @@ class STTSScreen(LabScreen):
         )
 
     def compose_lab_rail(self) -> ComposeResult:
-        """Yield the two rail sections and their six view rows."""
+        """Yield the two rail sections and their seven view rows."""
         for title, entries in SPEECH_RAIL_SECTIONS:
             yield Static(title, classes="lab-rail-section")
             for view_key, label in entries:
@@ -111,7 +112,7 @@ class STTSScreen(LabScreen):
                 yield row
 
         # One line, stating the fact. The full recovery taxonomy is ~14
-        # rendered lines; inline here it buried the six rows above it, so it
+        # rendered lines; inline here it buried the seven rows above it, so it
         # lives in the inspector instead (compose_lab_inspector below).
         summary = Static(
             speech_capability_text(),

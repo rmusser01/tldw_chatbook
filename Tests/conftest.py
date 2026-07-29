@@ -57,6 +57,34 @@ PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# Hypothesis: no per-example deadline (TASK-1260).
+#
+# Several property tests do real work per example -- `test_safe_paths_always_validate`
+# creates a TemporaryDirectory plus up to four directories, and the DB property
+# suites open SQLite connections. Hypothesis' default deadline is 200ms per
+# example, which a loaded machine crosses on work that is not actually slow:
+# this repo routinely runs 10+ concurrent pytest processes from parallel agents.
+#
+# The resulting failure is indistinguishable from a real regression at the moment
+# it appears, and attributing one instance cost five runs across two worktrees.
+# A deadline that fails a property which *holds* is measuring the machine, not
+# the code -- so it is disabled rather than merely raised. Do not "tighten this
+# back up" as an apparent improvement; timing belongs in benchmarks, not in
+# correctness properties.
+try:  # pragma: no cover - hypothesis is a test-only dependency
+    from hypothesis import HealthCheck, settings as _hypothesis_settings
+
+    _hypothesis_settings.register_profile(
+        "tldw",
+        deadline=None,
+        # `too_slow` fires for the same reason the deadline does: machine load,
+        # not a slow strategy.
+        suppress_health_check=[HealthCheck.too_slow],
+    )
+    _hypothesis_settings.load_profile("tldw")
+except ImportError:
+    pass
+
 # Protect against stdout/stderr being closed during testing
 # This can happen with certain test runners or when tests manipulate file descriptors
 if hasattr(sys.stdout, "fileno"):

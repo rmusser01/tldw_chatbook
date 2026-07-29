@@ -32,7 +32,7 @@ from ...Evals.word_bench import analysis
 from ...Evals.word_bench.models import CellError, PreflightResult
 from ...Evals.word_bench.storage import load_bench
 from .evals_state import EvalsViewModel
-from .results_grid import render_probe_reading, render_token
+from .results_grid import degenerate_canary_text, render_probe_reading, render_token
 
 if TYPE_CHECKING:
     from .results_grid import ResultsGrid
@@ -98,12 +98,12 @@ def _recovery_callout_text(target_label: str, result: PreflightResult) -> str:
     spec's Preflight table.
     """
     if result.is_warned:
-        return (
-            f"{target_label} preflighted with a degenerate canary: its plain-text "
-            "continuation looked out-of-distribution rather than failing outright. "
-            "This target is still runnable -- a large divergence in its column may "
-            "reflect that, not the prompt."
-        )
+        # TASK-1036: this sentence is shared with results_grid.py's run-
+        # view callout via degenerate_canary_text -- see that function's
+        # own docstring for why it lives there rather than being
+        # duplicated here. A single-element list reproduces this bench
+        # view's original wording byte for byte.
+        return degenerate_canary_text([target_label])
     problem, next_action = _BLOCKED_COPY.get(
         result.state,
         (result.detail or "could not be confirmed ready.", "Review this target's configuration."),

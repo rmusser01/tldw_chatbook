@@ -76,7 +76,17 @@ Cell states, never conflated (see each lens's own render function):
   through the run's stored preflight snapshot) -> the column header carries
   a readable ``" [warned]"`` suffix, so a large divergence in that column is
   never silently read as a finding about content rather than about a
-  preflighted-degenerate target.
+  preflighted-degenerate target. TASK-1036: that nine-character suffix was
+  the ONLY signal on this view -- searching a rendered run for "canary",
+  "degenerate", or "out-of-distribution" matched nothing, and the header
+  that carries it can drop entirely in one of the grid's two render paths
+  (TASK-1034, separate). ``compose()`` now also yields a
+  ``.ds-recovery-callout`` naming every warned target and stating the
+  consequence, using the exact wording ``inspector.EvalsInspector``'s own
+  per-target callout uses on the bench view (``degenerate_canary_text``,
+  below -- one shared function, so the two views cannot describe the same
+  verdict differently). Rendered only when at least one target is warned;
+  never an empty container or a reserved blank row otherwise.
 
 Interaction: arrow keys move the ``DataTable``'s own cell cursor (built in,
 not reimplemented here); ``DataTable.CellHighlighted`` fires on every move,
@@ -108,7 +118,7 @@ import csv
 import io
 import json
 from dataclasses import dataclass
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Sequence
 
 from loguru import logger
 from rich.text import Text
@@ -158,6 +168,79 @@ LENS_ORDER: tuple[LensKey, ...] = ("top1", "entropy", "probe", "coverage", "delt
 #: ``_render_cell``); this mark is only for a cell that was measured and
 #: came back an error.
 FAILED_MARK = "—"
+
+
+def _join_target_names(names: Sequence[str]) -> str:
+    """"A", "A and B", or an Oxford-commaed "A, B, and C" -- every warned
+    target must be individually named (see ``degenerate_canary_text``
+    below), never collapsed to "N targets" or "a target", which is not
+    actionable when a bench has several.
+    """
+    if len(names) == 1:
+        return names[0]
+    if len(names) == 2:
+        return f"{names[0]} and {names[1]}"
+    return f"{', '.join(names[:-1])}, and {names[-1]}"
+
+
+def degenerate_canary_text(target_labels: Sequence[str]) -> str:
+    """The shared "degenerate canary" sentence: names the warned target(s)
+    and states the CONSEQUENCE, not just the state -- reused verbatim by
+    both views that surface a warned preflight (TASK-1036):
+
+    - The bench view's per-target readiness callout
+      (``inspector._recovery_callout_text``), called with a single-element
+      list -- for that case this reproduces the original sentence byte for
+      byte.
+    - The run view's grid-top callout (``ResultsGrid.compose``, below),
+      which can name several warned targets from one bench in a single
+      line.
+
+    Living here (not duplicated in ``inspector.py``) is what keeps the two
+    views from silently drifting apart into different wording for the same
+    verdict -- the defect this task exists to fix in the first place.
+    ``inspector.py`` already imports ``render_probe_reading``/
+    ``render_token`` from this module, so adding one more name here creates
+    no new import direction.
+
+    Args:
+        target_labels: Every warned target's display name, in a stable
+            (e.g. column) order. Must be non-empty; callers only reach this
+            once they already know at least one target is warned.
+
+    Returns:
+        One sentence naming the target(s), with singular/plural grammar
+        ("its"/"is" vs. "their"/"are") matching whether one target or
+        several are named.
+    """
+    plural = len(target_labels) > 1
+    names = _join_target_names(target_labels)
+    its = "their" if plural else "its"
+    continuation_noun = "continuations" if plural else "continuation"
+    subject = "These targets" if plural else "This target"
+    be = "are" if plural else "is"
+    columns_noun = "columns" if plural else "column"
+    return (
+        f"{names} preflighted with a degenerate canary: {its} plain-text "
+        f"{continuation_noun} looked out-of-distribution rather than failing "
+        f"outright. {subject} {be} still runnable -- a large divergence in "
+        f"{its} {columns_noun} may reflect that, not the prompt."
+    )
+
+
+def _warned_target_labels(
+    targets: Sequence[dict[str, Any]], preflight: dict[str, PreflightResult]
+) -> list[str]:
+    """Every warned target's display name, in column order -- the run
+    view's grid-top callout's own input. Iterates ``targets`` (the
+    snapshot's column order), not ``preflight``'s own (unordered) keys, so
+    the named order always matches the columns the user is looking at.
+    """
+    return [
+        target["name"]
+        for target in targets
+        if (result := preflight.get(target["id"])) is not None and result.is_warned
+    ]
 
 
 @dataclass(frozen=True)
@@ -427,8 +510,41 @@ class ResultsGrid(NotifyMixin, Vertical):
         # side of this module. A Static with markup enabled runs its
         # `.update(str)` argument through the identical `Text.from_markup`
         # path.
-        yield Static("", id="evals-grid-meta", markup=False)
+        # TASK-1076: the meta line ("<bench> * raw * K 20 * 4 cells *
+        # 0 failed") is a first-contact wall of undefined jargon --
+        # "raw"/"K 20"/"cells" -- with nothing on the screen defining any
+        # of them. A tooltip (Static has no `tooltip=` constructor kwarg,
+        # unlike Button -- set post-construction) rather than a second
+        # visible line: the header must not grow to carry a definition
+        # every return visit already knows.
+        grid_meta = Static("", id="evals-grid-meta", markup=False)
+        grid_meta.tooltip = (
+            "raw/chat: this bench's prompt mode. K: how many top-token "
+            "probabilities were requested per call. cells: snippet x "
+            "target measurements captured in this run."
+        )
+        yield grid_meta
         yield Static("", id="evals-grid-state", markup=False)
+
+        # TASK-1036: named, visible without a cell click, and consistent
+        # with the bench view's own callout -- see degenerate_canary_text's
+        # docstring above. `markup=False` for the same reason as the two
+        # Statics just above: target names are user-authored free text that
+        # can legally contain "[...]", which Rich's markup parser would
+        # otherwise silently mangle (see _safe_cell's docstring for the
+        # DataTable-side version of this same trap). Absent entirely --
+        # not an empty container -- when nothing is warned.
+        warned_labels = _warned_target_labels(
+            snapshot.get("targets") or [], self._grid.get("preflight") or {}
+        )
+        if warned_labels:
+            yield Static(
+                degenerate_canary_text(warned_labels),
+                id="evals-grid-canary-callout",
+                classes="ds-recovery-callout",
+                markup=False,
+            )
+
         with Horizontal(id="evals-grid-controls"):
             yield Select(
                 [(LENS_LABELS[k], k) for k in LENS_ORDER],
