@@ -1101,6 +1101,34 @@ git add Tests/UI/test_command_palette_providers.py
 git commit -m "test(ui): follow console provider ownership"
 ```
 
+### Task 4x: Observe batched Library ingest option persistence
+
+**Files:**
+- Modify: `Tests/integration/test_library_ingest_flow.py`
+
+- [ ] **Step 1: Reproduce the retired per-key mock**
+
+Run `test_options_persist_to_config`. Expected: the test patches
+`save_setting_to_cli_config`, but submission uses the live batched
+`save_settings_to_cli_config`, so the obsolete mock records no calls.
+
+- [ ] **Step 2: Patch and assert the live batch seam**
+
+Capture the mapping passed to `save_settings_to_cli_config`. Assert it is
+called once and that the same batch contains the PDF engine plus generic
+`chunk=True` and normalized `chunk_size=1024` values. Do not change production
+or restore key-by-key config writes.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest Tests/integration/test_library_ingest_flow.py -q
+../../.venv/bin/python -m ruff check Tests/integration/test_library_ingest_flow.py
+../../.venv/bin/python -m ruff format --check Tests/integration/test_library_ingest_flow.py
+git add Tests/integration/test_library_ingest_flow.py
+git commit -m "test(library): observe batched ingest settings"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -1180,6 +1208,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/TTS/test_profile_backup_integration.py \
   Tests/TTS/test_tts_preferences.py \
   Tests/UI/test_command_palette_providers.py \
+  Tests/integration/test_library_ingest_flow.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
   Tests/Transcription/test_mlx_parakeet_edge_cases.py \
   Tests/Transcription/test_mlx_parakeet_transcription.py \
@@ -1212,6 +1241,7 @@ Expected: all affected tests pass.
   Tests/TTS/test_profile_backup_integration.py \
   Tests/TTS/test_tts_preferences.py \
   Tests/UI/test_command_palette_providers.py \
+  Tests/integration/test_library_ingest_flow.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
   Tests/Transcription/test_mlx_parakeet_edge_cases.py \
   Tests/Transcription/test_mlx_parakeet_transcription.py \
@@ -1239,6 +1269,7 @@ Expected: all affected tests pass.
   Tests/TTS/test_profile_backup_integration.py \
   Tests/TTS/test_tts_preferences.py \
   Tests/UI/test_command_palette_providers.py \
+  Tests/integration/test_library_ingest_flow.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
   Tests/Transcription/test_mlx_parakeet_edge_cases.py \
   Tests/Transcription/test_mlx_parakeet_transcription.py \

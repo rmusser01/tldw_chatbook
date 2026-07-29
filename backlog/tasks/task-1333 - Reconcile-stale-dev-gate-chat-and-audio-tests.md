@@ -54,6 +54,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #26 A valid zero-frame audio file returns the standard empty Parakeet MLX result before model loading or inference, avoiding MLX tensor-length underflow while preserving invalid-file errors and normal non-empty decoding.
 - [ ] #27 The Parakeet MLX no-SoundFile regression patches both the availability flag and runtime module seam, fails locally for its nonexistent fixture path, and never attempts a real model download.
 - [ ] #28 Command-palette provider regressions read the current provider from the mounted Console session and stage provider switches through the pending-handoff owner, without assigning or asserting the retired app-root provider reactive.
+- [ ] #29 The Library ingest option-persistence integration regression observes the live batched config writer and proves the submitted PDF and generic option groups are persisted together, without patching the retired per-key save path.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -88,6 +89,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 21. Short-circuit valid zero-frame Parakeet MLX input before model loading and inference.
 22. Isolate the Parakeet MLX no-SoundFile regression from installed optional dependencies and network downloads.
 23. Retarget command-palette provider regressions to the mounted Console session and pending-handoff ownership seams.
-24. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-25. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+24. Retarget the Library ingest option-persistence regression to the current batched config writer.
+25. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+26. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

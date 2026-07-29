@@ -233,6 +233,13 @@ Update the tests to describe current behavior:
     longer provider authority. Keep production behavior unchanged because the
     production ownership suite already proves live-session, configured-default,
     and off-Console queued-handoff behavior.
+27. In the Library ingest option-persistence integration regression, patch the
+    live `save_settings_to_cli_config` batch seam. Capture its single
+    section-to-values mapping and prove the submitted PDF engine plus generic
+    chunk and chunk-size values are present in that same batch. Do not patch
+    `save_setting_to_cli_config`, restore per-key persistence, or change
+    production; submission deliberately batches these settings to avoid
+    repeated config reads, writes, and cache invalidations.
 
 The only planned production behavior change outside an ADR-029 diagnostic
 correction is the three-name synchronization of the existing Library collision
@@ -314,6 +321,10 @@ fail-closed behavior. No compatibility shims. No broad deletion of live tests.
   read it would recreate competing provider authority. Retargeting the unit
   regression to the mounted Console and pending-handoff seams matches the
   production ownership suite without adding compatibility state.
+- Restoring per-key Library ingest persistence would undo the accepted
+  single-write behavior just to satisfy a stale mock. Observing the batch seam
+  directly preserves both the user-facing persistence contract and the current
+  write-efficiency boundary.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
