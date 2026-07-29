@@ -152,22 +152,31 @@ nothing else has happened; an empty file means the sink did not install.
 
 ## Testing
 
-- **The guard that would have caught this.** Install the real sink into a `tmp_path` via
-  `_configure_private_file_logging`, run the startup emitter, assert the file is **non-empty**.
-  Asserting a handler is attached is what passes today against an empty log.
-- **…and that guard must not be satisfiable by its own install line.** `persistent_sink_installed`
-  is written the moment the sink installs, so "non-empty" alone would pass even if every other
-  event were broken — the same vacuous shape this repo keeps paying for. The assertion is
-  therefore on **named events**: the file must contain `event=app_started` *and* at least one
-  event that is not `persistent_sink_installed`.
+- **Two halves, together closing the original gap; neither proves the other alone.** The original
+  defect was that `log_persistent_metadata()` had zero production call sites — the wrapper →
+  filter → handler → file machinery worked correctly throughout. Coverage is split to match that
+  shape, and the split must be read as two halves, not one guard:
+  - `Tests/test_persistent_log_is_not_empty.py` installs the real sink into a `tmp_path` via
+    `_configure_private_file_logging` and calls `persist_event` directly, asserting the file ends
+    up **non-empty** with **named events** (`event=app_started` and at least one event that is not
+    `persistent_sink_installed`; a bare non-empty check is satisfiable by the install line alone).
+    This proves a `persist_event` call reaches the file. Its caller is **synthetic** — no app is
+    booted — so this half says nothing about whether production ever makes that call.
+  - `Tests/App/test_app_lifecycle_events.py` and `Tests/Scheduling/test_scheduler_observability.py`
+    monkeypatch `persist_event` to a recorder and boot the real app / scheduler, proving production
+    **does** call it at the intended sites. But the monkeypatch means nothing in these tests ever
+    reaches the file.
+  Only together do the two halves cover the original defect: something calls `persist_event`, and a
+  call from that something reaches the file. **The machinery half alone — a real sink exercised by
+  a synthetic caller — would not have caught the original defect**, because the original defect was
+  entirely a missing caller, not broken machinery. Neither half should be described as "the guard
+  that would have caught this"; only the pair does. Composing a real production emitter with a real
+  sink in one test remains an open gap — see Risks.
 - **The boundary still holds.** An ordinary `logger.info` on the same logger is rejected; a
   Loguru-routed record carrying the marker is rejected. Both asserted, because both are
   security properties rather than incidental behaviour.
 - **The wrapper is the only idiom.** A test that `persist_event` writes and that its output
   parses as `event=… component=…` key/value pairs.
-- **The emitter actually runs.** A boot-path test that the startup emitter fires, rather than a
-  source scan for the call — this repo has been burned by name-matching guards that pass
-  vacuously.
 - The existing sentinel matrices and `Tests/test_persistent_diagnostic_boundary.py` must pass
   unchanged.
 
@@ -214,7 +223,7 @@ subsystem, the way a metric label would.
 
 ADR-029 is **Accepted**, with a design spec, a checked inventory
 (`Docs/security/production-diagnostic-inventory.json`, 401 owners) and task series 489–494. This
-design adds one admitted field and seven admitted events to a boundary that work owns.
+design adds one admitted field and six admitted events to a boundary that work owns.
 
 The ADR amendment recording that operational metadata events are in scope requires that owner's
 sign-off. It is not a unilateral doc edit, for the same reason TASK-1240 was filed rather than
@@ -225,8 +234,16 @@ fixed.
 - **Volume.** Six events per session is negligible. That holds only while the set stays failure-
   shaped; any future event that fires per-operation needs the same volume check `worker_started`
   failed.
-- **The allowlist rots.** Seven events could drift out of date as the app changes. The non-empty
+- **The allowlist rots.** Six events could drift out of date as the app changes. The non-empty
   guard catches total regression but not staleness; that is accepted, because the alternative
   (an automatic adapter) trades the guarantee for coverage and was rejected.
 - **`component` is a new admitted field.** Small, validated, code-side only — but it is the one
   place this design widens what can be written.
+- **No test composes a real production emitter with a real installed sink.** Coverage is split
+  across two halves (see Testing): a synthetic caller against a real sink, and monkeypatched
+  production callers against no sink at all. An ordering regression — `app.py` emitting
+  `app_started` *before* `Logging_Config` installs the persistent sink — would pass both halves
+  while the event reaches nowhere, reproducing the original TASK-1240 failure mode (machinery
+  works, caller calls, file stays empty) in a new form. Today the correct order holds only by
+  entry-point accident (`app.py` sets `_early_logging_initialized` before `run()`), and that
+  ordering is itself untested. Tracked as [TASK-1330](../../../backlog/tasks/task-1330%20-%20Prove-app_started-is-never-emitted-before-the-persistent-sink-installs.md).
