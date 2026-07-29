@@ -501,6 +501,18 @@ def real_search_run_log(wired, monkeypatch):
         {"context": [1, 2, 3]},
         {"offset": [1, 2, 3]},
         {"from_record": float("nan")},
+        # task-1272 Phase 3 review (carried-over finding, sibling PR): a
+        # model can send `float('inf')` for any of these -- `int(float(
+        # 'inf'))` raises OverflowError, NOT TypeError/ValueError, which
+        # this closure's `except (TypeError, ValueError)` previously did
+        # not catch, so it escaped uncaught into the run instead of
+        # degrading to a clean tool error like every other malformed
+        # value here. `run_log_stats`/`run_log_slice` (Phase 2) already
+        # caught this; `search_run_log` (Phase 1, merged earlier) did not.
+        {"from_record": float("inf")},
+        {"to_record": float("inf")},
+        {"context": float("inf")},
+        {"offset": float("inf")},
     ],
 )
 def test_unparseable_numeric_args_return_a_clean_error_never_raise(

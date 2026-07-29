@@ -13,6 +13,7 @@ from typing import Callable
 from loguru import logger
 
 from .agent_models import (
+    FENCE_TOOL_RESULT_PREFIX,
     FIND_TOOLS_NAME,
     INSTALL_SKILL_TOOL_NAME,
     LOAD_TOOLS_NAME,
@@ -408,8 +409,11 @@ def _append_tool_result(messages: list[dict], call: ToolCall, content: str) -> N
     Native protocol (``call.call_id`` set): a ``role="tool"`` message
     paired to the assistant turn's ``tool_calls`` entry by
     ``tool_call_id``. Fence protocol (``call.call_id`` unset): the
-    plain-text ``"Tool result for {name}: {content}"`` convention,
-    appended as a user-role message.
+    plain-text ``"{FENCE_TOOL_RESULT_PREFIX}{name}: {content}"``
+    convention, appended as a user-role message. ``FENCE_TOOL_RESULT_
+    PREFIX`` is a shared constant (``agent_models``) so
+    ``run_log_eviction``'s protocol-aware turn grouping matches this exact
+    string rather than a copy that could drift from it.
     """
     if call.call_id:
         messages.append(
@@ -417,7 +421,10 @@ def _append_tool_result(messages: list[dict], call: ToolCall, content: str) -> N
         )
     else:
         messages.append(
-            {"role": "user", "content": f"Tool result for {call.name}: {content}"}
+            {
+                "role": "user",
+                "content": f"{FENCE_TOOL_RESULT_PREFIX}{call.name}: {content}",
+            }
         )
 
 

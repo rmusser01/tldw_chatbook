@@ -45,6 +45,14 @@ from .native_tools import (
     provider_supports_native_tools,
     schemas_to_openai_tools,
 )
+from .run_log import _setting
+from .run_log_eviction import (
+    DEFAULT_MIN_RECENT_ROUNDS,
+    RUN_LOG_EVICT_ENABLED_KEY,
+    RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY,
+    bound_history_for_send,
+    coerce_min_recent_rounds,
+)
 from .tool_catalog import (
     FIND_TOOLS_SCHEMA,
     INSTALL_SKILL_TOOL_SCHEMA,
@@ -349,6 +357,24 @@ class AgentService:
         log_active: bool = False,
     ):
         native = config.native_tools and provider_supports_native_tools(api_endpoint)
+        # TASK-1272 (Phase 3): the ONLY gate on whether eviction may run at
+        # all is (a) `log_active` -- the SAME condition, reused verbatim,
+        # that gates the search_run_log tool and the prompt section above,
+        # so eviction is never offered a run that has nothing durable to
+        # recover from -- and (b) the opt-in `[agents] run_log_evict_
+        # enabled` flag, off by default so existing runs stay byte-identical
+        # until a user turns it on (requirement #5). Resolved once here,
+        # not per turn: neither operand can change during a run.
+        evict_enabled = log_active and _setting(RUN_LOG_EVICT_ENABLED_KEY, False)
+        # TASK-1272 follow-up (live-verified 2026-07-28): the minimum-
+        # recent-rounds floor, resolved once alongside evict_enabled for
+        # the same reason -- it cannot change during a run. Unused when
+        # evict_enabled is False, but resolving it unconditionally keeps
+        # this closure's config reads in one place rather than split
+        # across a conditional.
+        min_recent_rounds = coerce_min_recent_rounds(
+            _setting(RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY, DEFAULT_MIN_RECENT_ROUNDS)
+        )
         # task-245: one render per active-set change, not per turn. Keyed by
         # schema NAMES (the set only ever grows via load_tools — AC #2), and
         # scoped to this closure = this run, so sub-agents (their own
@@ -379,8 +405,19 @@ class AgentService:
                     system_content = f"{config.system_prompt}\n\n{protocol_text}"
             if log_active:
                 system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
-            payload = [{"role": "system", "content": system_content}]
-            payload.extend(messages)
+            # TASK-1272 (Phase 3): bound the SEND payload, never
+            # `run_agent_loop`'s own `messages` -- that list is untouched,
+            # see `bound_history_for_send`'s docstring. A no-op (returns
+            # `raw_payload` unchanged) whenever `evict_enabled` is False.
+            raw_payload = [{"role": "system", "content": system_content}] + messages
+            payload = bound_history_for_send(
+                raw_payload,
+                model=config.model,
+                provider=api_endpoint,
+                native=native,
+                enabled=evict_enabled,
+                min_recent_rounds=min_recent_rounds,
+            )
             resp = self.chat_call(
                 api_endpoint=api_endpoint,
                 messages_payload=payload,
@@ -872,7 +909,18 @@ class AgentService:
                 # past-the-end clamping happens in format_results itself
                 # (single point of truth, mirroring `context`'s own clamp).
                 offset = int(args.get("offset") or 0)
-            except (TypeError, ValueError) as exc:
+            except (TypeError, ValueError, OverflowError) as exc:
+                # OverflowError: a model can send `float('inf')` (or a
+                # literal large enough to parse as one) for from_record/
+                # to_record/context/offset -- `int(float('inf'))` raises
+                # OverflowError, NOT TypeError/ValueError, so it must be
+                # caught here too or it escapes uncaught into the run.
+                # `float('nan')` already raises ValueError, already
+                # covered. Same gap `run_log_stats`/`run_log_slice` below
+                # already close for their own from_record/to_record --
+                # this closure (Phase 1, merged earlier) was the one
+                # sibling still missing it (task-1272 Phase 3 review,
+                # carried-over finding).
                 return ToolResult(ok=False, error=f"Invalid search arguments: {exc}")
             except (RunLogSearchPatternRejected, RunLogSearchTimeout) as exc:
                 # F6 (Qodo #6): a model-supplied `pattern=` that looks

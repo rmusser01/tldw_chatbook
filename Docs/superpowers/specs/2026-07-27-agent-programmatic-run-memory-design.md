@@ -363,6 +363,7 @@ made loud at the prompt/tool level instead.
 | `run_log_dir_name` | `agent-runs` | Directory name within the workspace |
 | `run_log_max_record_bytes` | `1_000_000` | Per-record ceiling (§8.1) |
 | `run_log_segment_bytes` | `4_000_000` | Segment roll threshold |
+| `run_log_evict_enabled` | `false` | Phase 3 (§10) SEND-payload eviction. Off by default: existing runs stay byte-identical until opted in. |
 
 **Retention: never auto-delete.** Silently pruning files from a user's project
 directory is the wrong default. The Console surfaces total size and offers
@@ -490,18 +491,164 @@ echo with its `role="tool"` replies by `tool_call_id`. Eviction that orphans
 either half produces a request strict providers reject. Any eviction policy must
 operate on whole call/result groups.
 
+**Implemented by TASK-1272 (`Agents/run_log_eviction.py`).** Applied at the SEND
+seam only (`agent_service._make_call_model`'s `call_model` closure), immediately
+before the provider call — `run_agent_loop`'s own `messages` list is never
+touched, so cycle detection, retries, and step accounting are unaffected; only
+what is SENT shrinks. Reuses `bound_messages_to_window` (§14.1) rather than
+reimplementing it, extended with an optional `is_turn_boundary` predicate
+(`console_history_budget.py`, default unchanged so every Console call site
+stays byte-identical).
+
+One design decision worth recording because it is not obvious from §14.1's
+"reuse, don't reimplement" framing alone: the reused primitive's unit of
+"turn" is Console's own — anchored on the last human-authored message —
+which, inside a single agent run (only one such message, at the start),
+would collapse the *entire* run's own growth into one undroppable "current
+turn" and evict nothing while a run is actually in progress. That defeats
+goals 1 and 2 (§10.1) for exactly the long-single-run, small-context-model
+case this phase exists to serve. TASK-1272 therefore uses a finer *round*
+boundary instead — every assistant-authored message starts a new round; a
+native `role="tool"` reply or a fence `role="user"` tool-result row is a
+continuation of it, never a boundary — verified to still avoid orphaning any
+call/result pair for both protocols. `console_history_budget`'s own
+Console-facing default is untouched.
+
+Gated on `log_active` (§7's gate on the tool and the prompt section, reused
+verbatim — eviction never runs without a durable log to point the model back
+at) AND the new `[agents] run_log_evict_enabled` flag (§8), off by default.
+When something is dropped, a synthetic `role="user"` note (not `role=
+"system"`, which several local chat templates reject mid-conversation) is
+spliced in where the dropped rounds were, naming a count and
+`search_run_log` — never a specific record number, which the loop cannot
+derive accurately for a dropped round.
+
+**Live-verified defect, fixed same day (2026-07-28): the task instruction is
+not automatically safe just because eviction operates on whole rounds.**
+`bound_messages_to_window`'s contract — preserve the leading system prefix
+and "the current turn," from the LAST `role == "user"` row to the end — means
+something different for an agent run than for a Console chat, and that
+difference is exactly the kind of assumption that bites the next person who
+reuses the primitive without re-deriving it. For Console, every new human
+message restates intent, so "the last one" is always the live, relevant
+context. An agent run has exactly ONE real `role == "user"` row — the task —
+as the very first message; every later one bearing that role is a fence
+tool-result wearing it (§10.1's own round-boundary fix; §14.1's fence-vs-
+native trap). So "the last user message" in an agent run is a tool result,
+not the task, and the task sits in `kept_turns[0]` — the OLDEST, first-to-
+drop group — like any other droppable round. A live run against llama.cpp
+gemma-4-26B (fence protocol) reproduced this directly: with eviction firing,
+the task instruction dropped mid-run and the agent stopped executing its
+remaining steps, narrating about its own log instead of finishing. A flag-on,
+eviction-inactive control run (large window) was byte-identical to flag-off,
+confirming the failure correlates with eviction actually dropping rounds, not
+with the flag itself.
+
+Fixed by extending, not forking, the primitive: `bound_messages_to_window`
+gained `pin_first_user: bool = False` (default off, so every Console call
+site — which never passes it — is unaffected), which extends the pinned
+prefix through the first `role == "user"` row found after the leading system
+rows. No protocol awareness is needed for this direction of the scan (unlike
+the backward "last user" search `_make_round_boundary` corrects): no tool
+result can ever be emitted before the task that triggered it, so the first
+`role == "user"` row scanning forward is unambiguously the task, for either
+protocol. `run_log_eviction.bound_history_for_send` always passes
+`pin_first_user=True`. Degenerate case, decided deliberately: if the pinned
+prefix plus the current turn alone already exceed budget, the primitive's
+existing "if nothing fits, drop every middle turn" fallback still returns
+them — an over-budget payload the provider may reject is accepted in
+preference to ever silently dropping the task instruction.
+
+**Second live-verified defect, same day: a floor on recent rounds, not just
+the current one.** The pin fix alone was necessary but not sufficient. A
+follow-up live run (same model, eviction on, window 3000) produced two
+runs with byte-identical payload sequences `[1402, 1899, 1985, 1985]`, both
+`status=stuck`. The run log showed why: the agent read three files, then
+read the FIRST TWO again, then the cycle detector fired. Calls 3 and 4 being
+byte-identical at the same token count is the signature of a fixed point —
+eviction removing exactly as many new rounds as are added, because "keep
+whatever fits" under a tight enough window degenerates to keeping ONLY the
+current turn. The task's own "mechanism" line — "keep recent **rounds**
+verbatim" (plural) — was under-implemented: only ONE round was actually
+guaranteed.
+
+Fixed with a floor: `bound_messages_to_window` gained `min_recent_turns: int
+= 0` (default 0, so every Console call site is unaffected — `0` and `1` are
+both equivalent to the original "current turn alone" contract). It caps how
+far the binary search that drops oldest turns is even ALLOWED to go:
+`max_drop = max(0, len(kept_turns) - max(0, min_recent_turns - 1))` (the
+current turn already counts as 1 of the floor). `Agents/run_log_eviction.py`
+adds `[agents] run_log_evict_min_recent_rounds` (default **4**, chosen
+because the live reproduction — read four files, one round each, then
+answer — needs exactly that many rounds simultaneously visible to avoid
+re-reading any of them; smaller risked the same bug one round later,
+larger meaningfully narrows what eviction can save on a small-context
+model). Degenerate case, decided the same way as the pin's: if the pinned
+prefix plus the floor of recent rounds alone still exceed the window, the
+SAME existing "drop the most allowed" fallback governs — an over-budget send
+rather than ever shrinking below the floor. No new degenerate-case code was
+needed; both fixes reuse the one fallback the primitive already had.
+
+**Third live-verified finding, same day, with both fixes above in place:
+Phase 3's mechanism is correct, but its OUTCOME is model-dependent — this is
+a characterisation, not a defect, and is recorded here in full rather than
+softened, because a future reader deciding whether to enable this needs the
+failure mode, not just the feature description.** A further live run (same
+model, 10-file sequential task, declared window 6000) compared eviction off
+against eviction on:
+
+- **Eviction OFF:** payload grows `1426..6909`, OVERFLOWS the declared 6000
+  window, answer CORRECT.
+- **Eviction ON:** payload grows `1426..4501` then PLATEAUS, correctly
+  staying under the window, but the run ends `status=stuck` with an EMPTY
+  answer — the log shows the agent re-reading files it had already read.
+
+Raising `max_tokens` 700→2500 did not change the outcome (20 calls, a flat
+plateau around 4500 across 13 consecutive turns, still stuck), ruling out a
+completion-budget artifact. Raising the recent-rounds floor delays where the
+wall is hit; it does not remove it.
+
+The plateau is the mechanism working exactly as designed — the payload stays
+bounded, provably, per the fixes above. The gap is in the premise, not the
+implementation: PRO-LONG (and this design, §1–§2) assumes the agent
+*compensates* for evicted history by actively querying `search_run_log`. A
+26B local model on the fence protocol does not reliably do this — strip its
+recent turns and it re-attempts completed work rather than searching for
+what it already learned, until the cycle detector kills the run. The paper's
+own headline results are measured on frontier models, which are the ones
+actually capable of driving that recovery loop; nothing here contradicts
+those results, but they do not transfer unconditionally to a weak local
+model.
+
+There is a real irony worth stating plainly rather than glossing over: small-
+context local models were one of this phase's two motivating goals (§2.1),
+and they are the class of model LEAST likely to have the reasoning strength
+the recovery mechanism assumes. A frontier model behind a small declared
+window is the case most likely to benefit from eviction; a weak local model
+behind a small NATIVE window — the headline scenario this phase was framed
+around — is the case most likely to plateau into `stuck` instead of
+completing. This is precisely why `run_log_evict_enabled` defaults to
+`false` (§8): turning it on is a judgment call about the specific model in
+use, not a strict improvement to enable universally.
+
 ### 10.1 Which goals each phase actually delivers
 
 | Goal (§2.1) | Phase 1 | Phase 2 | Phase 3 |
 | --- | --- | --- | --- |
-| 1. Long-horizon runs unbounded by context | — | — | **Yes** |
-| 2. Small-context local models | — | — | **Yes** |
+| 1. Long-horizon runs unbounded by context | — | — | **Mechanism: yes. Outcome: model-dependent — see the finding above.** |
+| 2. Small-context local models | — | — | **Mechanism: yes. Outcome: model-dependent, and this is the class LEAST likely to benefit — see the finding above.** |
 | 3. Queryable, crash-durable run history | **Durability + per-run search** | Console reader, aggregation, cross-run search | — |
 | 4. 1:1 PRO-LONG reachable as config | Format and seams built for it | — | **Delivered** |
 
 Stated plainly so nobody mistakes Phase 1 for the whole thing: **Phase 1 does not
 reduce context usage.** It makes truncated content *recoverable* and run history
-*durable*. Goals 1 and 2 are delivered by Phase 3.
+*durable*. Phase 3 delivers the MECHANISM for goals 1 and 2 — the payload is
+correctly and provably bounded — but, per the finding above, whether that
+mechanism translates into completing more work than eviction-off depends on
+the model being strong enough to recover from the log rather than repeat
+itself. Do not read "Phase 3 ships" as "goals 1 and 2 are unconditionally
+achieved" for every model; they are achieved for models capable enough to use
+`search_run_log` the way the mechanism assumes.
 
 ### 10.2 A known Phase 1 failure mode
 
@@ -532,6 +679,18 @@ for not treating Phase 1 as the finished feature.
   reopened.
 - **Cross-run search.** The log is per-run; searching *across* runs is a natural
   Phase 2+ extension.
+- **A stronger nudge in the synthetic eviction note for weaker models.**
+  Recorded, not implemented, per the model-dependence finding in §10: the
+  note (`run_log_eviction._synthetic_note`) currently states a round count
+  and names `search_run_log` once. A weak model that does not reliably act
+  on that single mention re-attempts completed work instead (§10's live
+  finding). A more directive phrasing — e.g. naming the SPECIFIC tool
+  name(s) it already used in the dropped rounds, or an imperative
+  "before repeating a tool call, search for it first" — might raise the
+  odds of it querying the log instead of repeating itself, but this is
+  speculative and untested; it is not a substitute for the strength gap
+  §10 documents, only a possible mitigation worth trying live before
+  committing to any specific wording.
 
 ## 12. Testing
 

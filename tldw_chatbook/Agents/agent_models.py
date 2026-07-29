@@ -71,6 +71,13 @@ RUNTIME_TOOL_NAMES = frozenset(
 #: before any real work, on every single message.
 DIRECT_DISCLOSE_THRESHOLD = 16
 LOOP_DETECTION_N = 3
+#: Fence-protocol tool-result convention (`agent_runtime._append_tool_result`'s
+#: fence branch: `{"role": "user", "content": f"{FENCE_TOOL_RESULT_PREFIX}
+#: {call.name}: {content}"}`). Promoted to a shared constant (TASK-1272,
+#: Phase 3) so `run_log_eviction`'s protocol-aware turn grouping can match
+#: the exact same string rather than a re-typed copy that could silently
+#: drift from the one `_append_tool_result` actually writes.
+FENCE_TOOL_RESULT_PREFIX = "Tool result for "
 #: Default ceiling on provider turns (STEP_MODEL steps) in one run. Stays
 #: >= the default max_steps so it is provably unreachable at engine
 #: defaults; it only becomes the operative limiter for a caller that raises
