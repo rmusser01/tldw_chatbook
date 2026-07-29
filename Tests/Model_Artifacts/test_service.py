@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import builtins
+import dataclasses
 import hashlib
 import json
+import multiprocessing
 import os
 import shutil
 import stat
@@ -14,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from Tests.Model_Artifacts.lease_processes import hold_set
 from tldw_chatbook.Model_Artifacts import service as service_module
 from tldw_chatbook.Model_Artifacts import (
     ArtifactDescriptor,
@@ -145,6 +148,652 @@ def regular_tree_size(root: Path) -> int:
         elif stat.S_ISDIR(mode):
             total += regular_tree_size(Path(entry.path))
     return total
+
+
+def test_delete_and_reconcile_expose_stable_frozen_contracts() -> None:
+    assert issubclass(
+        service_module.ArtifactInUseError,
+        service_module.ArtifactStateError,
+    )
+    assert callable(service_module.ModelArtifactService.delete)
+    assert callable(service_module.ModelArtifactService.reconcile)
+
+    report = service_module.ReconcileReport(
+        readiness_created=0,
+        state_removed=0,
+        corrupt_artifacts=(Path("/a"), Path("/b")),
+        abandoned_staging=(Path("/c"),),
+    )
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        report.state_removed = 1  # type: ignore[misc]
+    with pytest.raises(ValueError):
+        service_module.ReconcileReport(-1, 0, (), ())
+    with pytest.raises(ValueError):
+        service_module.ReconcileReport(0, -1, (), ())
+    with pytest.raises(ValueError):
+        service_module.ReconcileReport(0, 0, (Path("/b"), Path("/a")), ())
+
+
+def test_loaded_root_blocks_delete_without_mutation_then_closes_cleanly(
+    tmp_path: Path,
+) -> None:
+    service, root, dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    leased = service.acquire(root.reference)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    ready_path = service.readiness_path(root.reference)
+    active_path = service.active_path(root.reference.artifact_id)
+    payload_path = service.artifact_path(root.reference) / root.files[0].path
+    before = (
+        ready_path.read_bytes(),
+        active_path.read_bytes(),
+        payload_path.read_bytes(),
+        tuple(sorted(service.artifact_path(root.reference).iterdir())),
+    )
+
+    with pytest.raises(service_module.ArtifactInUseError):
+        contender.delete(root.reference)
+
+    assert (
+        ready_path.read_bytes(),
+        active_path.read_bytes(),
+        payload_path.read_bytes(),
+        tuple(sorted(service.artifact_path(root.reference).iterdir())),
+    ) == before
+
+    leased.close()
+    contender.delete(root.reference)
+
+    assert service.artifact_path(root.reference).exists() is False
+    assert ready_path.exists() is False
+    assert active_path.exists() is False
+    assert service.artifact_path(dependency.reference).exists()
+
+
+def test_loaded_dependency_blocks_delete_then_invalidates_every_affected_root(
+    tmp_path: Path,
+) -> None:
+    service, root, dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    leased = service.acquire(root.reference)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+
+    with pytest.raises(service_module.ArtifactInUseError):
+        contender.delete(dependency.reference)
+    assert service.readiness_path(root.reference).exists()
+    assert service.active_path(root.reference.artifact_id).exists()
+    assert service.artifact_path(dependency.reference).exists()
+
+    leased.close()
+    contender.delete(dependency.reference)
+
+    assert service.readiness_path(root.reference).exists() is False
+    assert service.active_path(root.reference.artifact_id).exists() is False
+    assert service.artifact_path(dependency.reference).exists() is False
+    assert service.artifact_path(root.reference).exists()
+
+
+def test_delete_inactive_revision_preserves_other_active_revision(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    first_ref = ref("shared-root", "revision-one", "int8")
+    second_ref = ref("shared-root", "revision-two", "int8")
+    first = single_file_descriptor(first_ref, ArtifactRole.ROOT, b"first")
+    second = single_file_descriptor(second_ref, ArtifactRole.ROOT, b"second")
+    install_descriptor_payload(service, tmp_path, first, b"first")
+    install_descriptor_payload(service, tmp_path, second, b"second")
+    service.activate(first_ref)
+    service.activate(second_ref)
+    active_bytes = service.active_path(first_ref.artifact_id).read_bytes()
+
+    service.delete(first_ref)
+
+    assert service.artifact_path(first_ref).exists() is False
+    assert service.readiness_path(first_ref).exists() is False
+    assert service.artifact_path(second_ref).exists()
+    assert service.readiness_path(second_ref).exists()
+    assert service.active_path(second_ref.artifact_id).read_bytes() == active_bytes
+    assert service._read_active(second_ref.artifact_id) == second_ref
+
+
+def test_spawned_shared_closure_blocks_delete_until_forced_process_death(
+    tmp_path: Path,
+) -> None:
+    service, root, dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.1,
+    )
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    never_release = context.Event()
+    raw_keys = tuple(
+        (
+            reference.artifact_id,
+            reference.revision,
+            reference.variant,
+        )
+        for reference in sorted((root.reference, dependency.reference))
+    )
+    process = context.Process(
+        target=hold_set,
+        args=(
+            str(tmp_path / "store" / "locks"),
+            raw_keys,
+            service_module.LeaseMode.SHARED.value,
+            ready,
+            never_release,
+        ),
+    )
+    process.start()
+    try:
+        assert ready.wait(10.0)
+
+        with pytest.raises(service_module.ArtifactInUseError):
+            contender.delete(dependency.reference)
+        assert service.readiness_path(root.reference).exists()
+        assert service.active_path(root.reference.artifact_id).exists()
+        assert service.artifact_path(dependency.reference).exists()
+
+        process.terminate()
+        process.join(10.0)
+        assert process.is_alive() is False
+
+        contender.delete(dependency.reference)
+        assert service.artifact_path(dependency.reference).exists() is False
+        assert service.readiness_path(root.reference).exists() is False
+        assert service.active_path(root.reference.artifact_id).exists() is False
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join(5.0)
+        if process.is_alive():
+            process.kill()
+            process.join(5.0)
+        assert process.is_alive() is False
+
+
+def test_delete_corrupt_target_but_reject_missing_and_symlinked_target(
+    tmp_path: Path,
+) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    target = service.artifact_path(root.reference)
+    (target / "manifest.json").write_text("{", encoding="utf-8")
+
+    service.delete(root.reference)
+
+    assert target.exists() is False
+    with pytest.raises(service_module.ArtifactStateError, match="does not exist"):
+        service.delete(root.reference)
+
+    external = tmp_path / "external-target"
+    external.mkdir()
+    external_payload = external / "keep.bin"
+    external_payload.write_bytes(b"keep")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    symlink_or_skip(target, external, target_is_directory=True)
+
+    with pytest.raises(service_module.ArtifactPathError):
+        service.delete(root.reference)
+    assert external_payload.read_bytes() == b"keep"
+
+
+@pytest.mark.parametrize("failure", ("state", "payload"))
+def test_delete_failure_fails_closed_without_touching_unrelated_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    service, root, dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    unrelated_ref = ref("unrelated", "unrelated-revision", "int8")
+    unrelated = single_file_descriptor(
+        unrelated_ref,
+        ArtifactRole.ROOT,
+        b"unrelated",
+    )
+    install_descriptor_payload(service, tmp_path, unrelated, b"unrelated")
+    service.activate(unrelated_ref)
+    unrelated_ready = service.readiness_path(unrelated_ref).read_bytes()
+    unrelated_active = service.active_path(unrelated_ref.artifact_id).read_bytes()
+    unrelated_payload = (
+        service.artifact_path(unrelated_ref) / unrelated.files[0].path
+    ).read_bytes()
+    target = service.artifact_path(dependency.reference)
+
+    if failure == "state":
+        original_remove = service._remove_state_path
+
+        def fail_affected_state(path: Path, message: str) -> None:
+            if path == service.readiness_path(root.reference):
+                raise service_module.ArtifactStateError("injected state failure")
+            original_remove(path, message)
+
+        monkeypatch.setattr(service, "_remove_state_path", fail_affected_state)
+    else:
+        original_rmtree = shutil.rmtree
+
+        def fail_target(path: Path, *args: object, **kwargs: object) -> None:
+            if Path(path) == target:
+                raise OSError("injected payload failure")
+            original_rmtree(path, *args, **kwargs)
+
+        monkeypatch.setattr(shutil, "rmtree", fail_target)
+
+    with pytest.raises(service_module.ArtifactStateError):
+        service.delete(dependency.reference)
+
+    assert target.exists()
+    if failure == "state":
+        assert service.readiness_path(root.reference).exists()
+        assert service.active_path(root.reference.artifact_id).exists()
+    else:
+        assert service.readiness_path(root.reference).exists() is False
+        assert service.active_path(root.reference.artifact_id).exists() is False
+    assert service.readiness_path(unrelated_ref).read_bytes() == unrelated_ready
+    assert (
+        service.active_path(unrelated_ref.artifact_id).read_bytes() == unrelated_active
+    )
+    assert (
+        service.artifact_path(unrelated_ref) / unrelated.files[0].path
+    ).read_bytes() == unrelated_payload
+
+
+def test_delete_failure_before_target_exclusive_does_not_mutate_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    ready_path = service.readiness_path(root.reference)
+    active_path = service.active_path(root.reference.artifact_id)
+    target = service.artifact_path(root.reference)
+    before = (
+        ready_path.read_bytes(),
+        active_path.read_bytes(),
+        (target / root.files[0].path).read_bytes(),
+    )
+    original_lease = service_module.ArtifactOperationLease
+
+    def fail_target_construction(
+        lock_root: Path,
+        key: ArtifactLeaseKey,
+        mode: object,
+        **kwargs: object,
+    ) -> object:
+        if key == root.reference.lease_key():
+            raise service_module.ArtifactLeaseError("injected target lease failure")
+        return original_lease(lock_root, key, mode, **kwargs)
+
+    monkeypatch.setattr(
+        service_module,
+        "ArtifactOperationLease",
+        fail_target_construction,
+    )
+
+    with pytest.raises(service_module.ArtifactStateError, match="deletion leases"):
+        service.delete(root.reference)
+
+    assert (
+        ready_path.read_bytes(),
+        active_path.read_bytes(),
+        (target / root.files[0].path).read_bytes(),
+    ) == before
+
+
+def test_delete_preserves_body_error_over_target_release_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+    body_error = service_module.ArtifactStateError("injected deletion body failure")
+
+    class FailingTargetReleaseLease:
+        def __init__(
+            self,
+            _lock_root: Path,
+            key: ArtifactLeaseKey,
+            _mode: object,
+            **_kwargs: object,
+        ) -> None:
+            self.key = key
+
+        def __enter__(self) -> FailingTargetReleaseLease:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def acquire(self) -> FailingTargetReleaseLease:
+            return self
+
+        def release(self) -> None:
+            raise service_module.ArtifactLeaseError("injected target release failure")
+
+    monkeypatch.setattr(
+        service_module,
+        "ArtifactOperationLease",
+        FailingTargetReleaseLease,
+    )
+    monkeypatch.setattr(
+        service,
+        "_delete_under_leases",
+        lambda _reference: (_ for _ in ()).throw(body_error),
+    )
+
+    with pytest.raises(service_module.ArtifactStateError) as caught:
+        service.delete(root.reference)
+
+    assert caught.value is body_error
+    assert any(
+        "lease cleanup failed" in note and "target release failure" in note
+        for note in getattr(body_error, "__notes__", ())
+    )
+
+
+def test_reconcile_rebuilds_valid_readiness_without_creating_active_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    service, root, dependency = installed_root_and_dependency(tmp_path)
+    expected_closure = tuple(sorted((root.reference, dependency.reference)))
+
+    first = service.reconcile()
+
+    assert first == service_module.ReconcileReport(1, 0, (), ())
+    assert service._read_readiness(root.reference) == service_module._ReadinessRecord(
+        root=root.reference,
+        closure=expected_closure,
+        closure_fingerprint=closure_fingerprint(root.reference, expected_closure),
+    )
+    assert service.active_path(root.reference.artifact_id).exists() is False
+    leased = service.acquire(root.reference)
+    leased.close()
+
+    second = service.reconcile()
+
+    assert second == service_module.ReconcileReport(0, 0, (), ())
+
+
+def test_reconcile_corrupt_dependency_invalidates_state_without_deleting_payload(
+    tmp_path: Path,
+) -> None:
+    service, root, dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    corrupt_path = service.artifact_path(dependency.reference)
+    payload = corrupt_path / dependency.files[0].path
+    payload.write_bytes(b"x" * dependency.files[0].size_bytes)
+
+    report = service.reconcile()
+
+    assert report == service_module.ReconcileReport(
+        readiness_created=0,
+        state_removed=2,
+        corrupt_artifacts=(corrupt_path,),
+        abandoned_staging=(),
+    )
+    assert corrupt_path.exists()
+    assert payload.exists()
+    assert service.readiness_path(root.reference).exists() is False
+    assert service.active_path(root.reference.artifact_id).exists() is False
+    with pytest.raises(service_module.ArtifactNotReadyError):
+        service.acquire(root.reference)
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ("payload", "manifest", "symlink", "missing", "extra"),
+)
+def test_reconcile_reports_corrupt_root_variants_and_keeps_installed_bytes(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    service, item, _source, target = installed_artifact(tmp_path)
+    service.activate(item.reference)
+    payload = target / item.files[0].path
+    external = tmp_path / "external-payload"
+    external.write_bytes(b"external")
+    if corruption == "payload":
+        payload.write_bytes(b"x" * item.files[0].size_bytes)
+    elif corruption == "manifest":
+        (target / "manifest.json").write_text("{", encoding="utf-8")
+    elif corruption == "symlink":
+        payload.unlink()
+        symlink_or_skip(payload, external, target_is_directory=False)
+    elif corruption == "missing":
+        payload.unlink()
+    else:
+        (target / "undeclared.bin").write_bytes(b"extra")
+
+    report = service.reconcile()
+
+    assert report.corrupt_artifacts == (target,)
+    assert report.readiness_created == 0
+    assert report.state_removed == 2
+    assert target.exists()
+    assert any(entry.path == target for entry in service.list_installed())
+    assert service.readiness_path(item.reference).exists() is False
+    assert service.active_path(item.reference.artifact_id).exists() is False
+    assert external.read_bytes() == b"external"
+
+
+def test_reconcile_removes_all_malformed_derived_files_and_rebuilds_valid_root(
+    tmp_path: Path,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    ready_path = service.readiness_path(item.reference)
+    ready_path.parent.mkdir(parents=True)
+    ready_path.write_text("{", encoding="utf-8")
+    active_path = service.active_path(item.reference.artifact_id)
+    invalid_files = (
+        service._ready_path / "empty.json",
+        service._ready_path / "unsupported.json",
+        service._ready_path / "interrupted.tmp",
+        service._ready_path / "deep" / "duplicate" / "state.json",
+        active_path,
+        service._active_path / "empty.json",
+        service._active_path / "unsupported.json",
+        service._active_path / "interrupted.tmp",
+        service._active_path / "deep" / "duplicate" / "state.json",
+    )
+    for path in invalid_files:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            '{"schema_version":2}' if "unsupported" in path.name else "",
+            encoding="utf-8",
+        )
+
+    report = service.reconcile()
+
+    assert report == service_module.ReconcileReport(1, 10, (), ())
+    assert service._read_readiness(item.reference).root == item.reference
+    assert active_path.exists() is False
+    for path in invalid_files[1:]:
+        assert path.exists() is False
+
+
+def test_reconcile_removes_orphan_readiness_and_active_state(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    missing = ref("missing", "missing-revision", "int8")
+    ready_path = service.readiness_path(missing)
+    ready_path.parent.mkdir(parents=True)
+    ready_path.write_text(
+        json.dumps(readiness_state(missing, (missing,))),
+        encoding="utf-8",
+    )
+    active_path = service.active_path(missing.artifact_id)
+    active_path.write_text(
+        json.dumps({"schema_version": 1, "root": missing.to_dict()}),
+        encoding="utf-8",
+    )
+
+    report = service.reconcile()
+
+    assert report == service_module.ReconcileReport(0, 2, (), ())
+    assert ready_path.exists() is False
+    assert active_path.exists() is False
+
+
+@pytest.mark.parametrize("failure", ("missing", "cycle", "role"))
+def test_reconcile_does_not_ready_invalid_dependency_graphs(
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    root_ref = ref()
+    child_ref = ref("child", "child-revision", "int8")
+    root = single_file_descriptor(
+        root_ref,
+        ArtifactRole.ROOT,
+        b"root",
+        dependencies=(child_ref,),
+    )
+    install_descriptor_payload(service, tmp_path, root, b"root")
+    if failure == "cycle":
+        child = single_file_descriptor(
+            child_ref,
+            ArtifactRole.DEPENDENCY,
+            b"child",
+            dependencies=(root_ref,),
+        )
+        install_descriptor_payload(service, tmp_path, child, b"child")
+    elif failure == "role":
+        child = single_file_descriptor(child_ref, ArtifactRole.ROOT, b"child")
+        install_descriptor_payload(service, tmp_path, child, b"child")
+
+    report = service.reconcile()
+
+    assert report.readiness_created == (1 if failure == "role" else 0)
+    assert service.readiness_path(root_ref).exists() is False
+
+
+def test_reconcile_reports_abandoned_staging_entries_without_touching_them(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    directory = service.staging_path / "operation"
+    directory.mkdir()
+    nested = directory / "part"
+    nested.write_bytes(b"part")
+    file_path = service.staging_path / "interrupted.tmp"
+    file_path.write_bytes(b"temp")
+    external = tmp_path / "external-staging"
+    external.mkdir()
+    link = service.staging_path / "external-link"
+    symlink_or_skip(link, external, target_is_directory=True)
+    expected = tuple(
+        sorted((directory, file_path, link), key=lambda path: path.as_posix())
+    )
+
+    first = service.reconcile()
+    second = service.reconcile()
+
+    assert first == service_module.ReconcileReport(0, 0, (), expected)
+    assert second == first
+    assert nested.read_bytes() == b"part"
+    assert file_path.read_bytes() == b"temp"
+    assert link.is_symlink()
+
+
+@pytest.mark.parametrize(
+    "managed_root",
+    ("artifacts", "ready", "active", "staging", "locks"),
+)
+@pytest.mark.parametrize("replacement", ("symlink", "directory"))
+def test_reconcile_rejects_replaced_managed_roots_without_external_mutation(
+    tmp_path: Path,
+    managed_root: str,
+    replacement: str,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    path = tmp_path / "store" / managed_root
+    previous = tmp_path / f"previous-{managed_root}"
+    path.rename(previous)
+    external = tmp_path / f"external-{managed_root}"
+    external.mkdir()
+    keep = external / "keep"
+    keep.write_bytes(b"keep")
+    if replacement == "symlink":
+        symlink_or_skip(path, external, target_is_directory=True)
+    else:
+        path.mkdir()
+
+    with pytest.raises(service_module.ArtifactPathError):
+        service.reconcile()
+
+    assert keep.read_bytes() == b"keep"
+    if replacement == "directory":
+        assert tuple(path.iterdir()) == ()
+
+
+def test_reconcile_uses_shared_closure_leases_with_resident_handle(
+    tmp_path: Path,
+) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    leased = service.acquire(root.reference)
+
+    try:
+        report = service.reconcile()
+    finally:
+        leased.close()
+
+    assert report == service_module.ReconcileReport(0, 0, (), ())
+    assert service._read_active(root.reference.artifact_id) == root.reference
+
+
+@pytest.mark.parametrize("failure", ("verify", "write", "unlink"))
+def test_reconcile_injected_failures_are_stable_and_never_delete_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    service, item, _source, target = installed_artifact(tmp_path)
+    payload = target / item.files[0].path
+    payload_bytes = payload.read_bytes()
+    if failure == "verify":
+        monkeypatch.setattr(
+            service,
+            "_verify_payload",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                OSError("injected verification failure")
+            ),
+        )
+    elif failure == "write":
+        monkeypatch.setattr(
+            service_module,
+            "atomic_write_json",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                OSError("injected readiness write failure")
+            ),
+        )
+    else:
+        ready_path = service.readiness_path(item.reference)
+        ready_path.parent.mkdir(parents=True)
+        ready_path.write_text("{", encoding="utf-8")
+        monkeypatch.setattr(
+            service,
+            "_remove_state_path",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                service_module.ArtifactStateError("injected unlink failure")
+            ),
+        )
+
+    with pytest.raises(service_module.ArtifactStateError):
+        service.reconcile()
+
+    assert target.exists()
+    assert payload.read_bytes() == payload_bytes
 
 
 def install_descriptor_payload(

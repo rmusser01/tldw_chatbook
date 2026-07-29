@@ -24,6 +24,7 @@ from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 from .leases import (
     ArtifactLeaseError,
     ArtifactLeaseKey,
+    ArtifactLeaseTimeoutError,
     ArtifactOperationLease,
     ArtifactOperationLeaseSet,
     LeaseMode,
@@ -157,6 +158,10 @@ class ArtifactConflictError(ArtifactError):
 
 class ArtifactStateError(ArtifactError):
     """Raised when a managed-store operation cannot complete safely."""
+
+
+class ArtifactInUseError(ArtifactStateError):
+    """Raised when an artifact cannot be deleted while it is leased."""
 
 
 class ArtifactDependencyError(ArtifactStateError):
@@ -778,6 +783,34 @@ class ArtifactDiskUsage:
 
 
 @dataclass(frozen=True)
+class ReconcileReport:
+    """Deterministic results from an explicit managed-store reconciliation."""
+
+    readiness_created: int
+    state_removed: int
+    corrupt_artifacts: tuple[Path, ...]
+    abandoned_staging: tuple[Path, ...]
+
+    def __post_init__(self) -> None:
+        """Validate count and deterministic path ordering invariants."""
+
+        if (
+            type(self.readiness_created) is not int
+            or self.readiness_created < 0
+            or type(self.state_removed) is not int
+            or self.state_removed < 0
+        ):
+            raise ValueError("reconciliation counts must be nonnegative integers")
+        for paths in (self.corrupt_artifacts, self.abandoned_staging):
+            if type(paths) is not tuple or any(
+                not isinstance(path, Path) for path in paths
+            ):
+                raise ValueError("reconciliation paths must be tuples of Path values")
+            if paths != tuple(sorted(paths, key=lambda path: path.as_posix())):
+                raise ValueError("reconciliation paths must be sorted")
+
+
+@dataclass(frozen=True)
 class ArtifactHandle:
     """A verified exact artifact closure and its managed payload paths."""
 
@@ -965,6 +998,417 @@ class ModelArtifactService:
 
         _validate_canonical_component("artifact_id", artifact_id)
         return self._active_path / f"{artifact_id}.json"
+
+    def delete(self, reference: ArtifactRef) -> None:
+        """Delete one exact artifact after invalidating affected derived state."""
+
+        if type(reference) is not ArtifactRef:
+            raise TypeError("reference must be an ArtifactRef")
+        try:
+            self._assert_managed_path(self._locks_path)
+            with ArtifactOperationLease(
+                self._locks_path,
+                _LIFECYCLE_LEASE_KEY,
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=self._lease_timeout_seconds,
+            ):
+                self._assert_managed_path(self._locks_path)
+                try:
+                    target_lease = ArtifactOperationLease(
+                        self._locks_path,
+                        reference.lease_key(),
+                        LeaseMode.EXCLUSIVE,
+                        timeout_seconds=self._lease_timeout_seconds,
+                    )
+                    target_lease.acquire()
+                except ArtifactLeaseTimeoutError as error:
+                    raise ArtifactInUseError(
+                        "artifact is in use and cannot be deleted"
+                    ) from error
+                primary_error: BaseException | None = None
+                try:
+                    self._delete_under_leases(reference)
+                except BaseException as error:
+                    primary_error = error
+                    raise
+                finally:
+                    try:
+                        target_lease.release()
+                    except BaseException as cleanup_error:
+                        if primary_error is None:
+                            raise
+                        primary_error.add_note(
+                            f"target lease cleanup failed: {cleanup_error!r}"
+                        )
+                        for note in getattr(cleanup_error, "__notes__", ()):
+                            primary_error.add_note(note)
+        except ArtifactError:
+            raise
+        except ArtifactLeaseError as error:
+            raise ArtifactStateError(
+                "failed to acquire or release artifact deletion leases"
+            ) from error
+        except OSError as error:
+            raise ArtifactStateError("artifact deletion I/O failed") from error
+
+    def reconcile(self) -> ReconcileReport:
+        """Verify installed roots and reconcile derived state explicitly."""
+
+        try:
+            self._assert_managed_path(self._locks_path)
+            with ArtifactOperationLease(
+                self._locks_path,
+                _LIFECYCLE_LEASE_KEY,
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=self._lease_timeout_seconds,
+            ):
+                return self._reconcile_under_lifecycle()
+        except ArtifactError:
+            raise
+        except ArtifactLeaseError as error:
+            raise ArtifactStateError(
+                "failed to acquire or release artifact reconciliation leases"
+            ) from error
+        except OSError as error:
+            raise ArtifactStateError("artifact reconciliation I/O failed") from error
+
+    def _reconcile_under_lifecycle(self) -> ReconcileReport:
+        for root in (
+            self._locks_path,
+            self._artifacts_path,
+            self._ready_path,
+            self._active_path,
+            self._staging_path,
+        ):
+            self._assert_managed_path(root)
+
+        abandoned_staging = self._staging_entries()
+        corrupt_paths: set[Path] = set()
+        descriptors: dict[ArtifactRef, ArtifactDescriptor] = {}
+        for path, reference in self._installed_candidates():
+            if reference is None:
+                corrupt_paths.add(path)
+                continue
+            self._assert_managed_path(self._locks_path)
+            with ArtifactOperationLeaseSet(
+                self._locks_path,
+                (reference.lease_key(),),
+                LeaseMode.SHARED,
+                timeout_seconds=self._lease_timeout_seconds,
+            ):
+                try:
+                    item = self._read_manifest(path)
+                    if item.reference != reference:
+                        raise ArtifactConflictError(
+                            "manifest reference does not match its directory"
+                        )
+                except ArtifactError:
+                    corrupt_paths.add(path)
+                else:
+                    descriptors[reference] = item
+
+        verified: set[ArtifactRef] = set()
+        corrupt_references: set[ArtifactRef] = set()
+        expected_readiness: dict[ArtifactRef, _ReadinessRecord] = {}
+        roots = sorted(
+            reference
+            for reference, item in descriptors.items()
+            if item.role is ArtifactRole.ROOT
+        )
+        for root_reference in roots:
+            try:
+                closure = self._resolve_closure(root_reference)
+            except ArtifactError:
+                continue
+            self._assert_managed_path(self._locks_path)
+            with ArtifactOperationLeaseSet(
+                self._locks_path,
+                tuple(reference.lease_key() for reference in closure),
+                LeaseMode.SHARED,
+                timeout_seconds=self._lease_timeout_seconds,
+            ):
+                try:
+                    if self._resolve_closure(root_reference) != closure:
+                        raise ArtifactDependencyError(
+                            "dependency closure changed during reconciliation"
+                        )
+                    closure_valid = True
+                    for reference in closure:
+                        if reference in corrupt_references:
+                            closure_valid = False
+                            continue
+                        if reference in verified:
+                            continue
+                        expected_role = (
+                            ArtifactRole.ROOT
+                            if reference == root_reference
+                            else ArtifactRole.DEPENDENCY
+                        )
+                        try:
+                            self._verify_installed(reference, expected_role)
+                        except ArtifactError:
+                            corrupt_references.add(reference)
+                            corrupt_paths.add(self.artifact_path(reference))
+                            closure_valid = False
+                        else:
+                            verified.add(reference)
+                    if closure_valid:
+                        expected_readiness[root_reference] = _ReadinessRecord(
+                            root=root_reference,
+                            closure=closure,
+                            closure_fingerprint=closure_fingerprint(
+                                root_reference,
+                                closure,
+                            ),
+                        )
+                except ArtifactDependencyError:
+                    continue
+
+        for reference, item in sorted(descriptors.items()):
+            if reference in verified or reference in corrupt_references:
+                continue
+            self._assert_managed_path(self._locks_path)
+            with ArtifactOperationLeaseSet(
+                self._locks_path,
+                (reference.lease_key(),),
+                LeaseMode.SHARED,
+                timeout_seconds=self._lease_timeout_seconds,
+            ):
+                try:
+                    self._verify_installed(reference, item.role)
+                except ArtifactError:
+                    corrupt_references.add(reference)
+                    corrupt_paths.add(self.artifact_path(reference))
+                else:
+                    verified.add(reference)
+
+        state_removed = 0
+        readiness_created = 0
+        preserved_readiness: set[ArtifactRef] = set()
+        invalid_readiness: list[Path] = []
+        for path in self._state_files(self._ready_path):
+            reference = self._readiness_ref_from_path(path)
+            expected = (
+                expected_readiness.get(reference) if reference is not None else None
+            )
+            try:
+                current = (
+                    self._read_readiness(reference) if reference is not None else None
+                )
+            except ArtifactStateError:
+                current = None
+            if reference is not None and expected is not None and current == expected:
+                preserved_readiness.add(reference)
+            else:
+                invalid_readiness.append(path)
+        for path in invalid_readiness:
+            self._remove_state_path(path, "failed to remove invalid readiness state")
+            state_removed += 1
+        for reference, record in sorted(expected_readiness.items()):
+            if reference in preserved_readiness:
+                continue
+            path = self.readiness_path(reference)
+            if self._state_path_exists(path):
+                self._remove_state_path(
+                    path,
+                    "failed to remove invalid readiness state",
+                )
+                state_removed += 1
+            self._write_readiness(record)
+            readiness_created += 1
+
+        for path in self._state_files(self._active_path):
+            artifact_id = self._active_id_from_path(path)
+            try:
+                selected = (
+                    self._read_active(artifact_id) if artifact_id is not None else None
+                )
+            except ArtifactStateError:
+                selected = None
+            if selected not in expected_readiness:
+                self._remove_state_path(
+                    path,
+                    "failed to remove invalid active selector",
+                )
+                state_removed += 1
+
+        return ReconcileReport(
+            readiness_created=readiness_created,
+            state_removed=state_removed,
+            corrupt_artifacts=tuple(
+                sorted(corrupt_paths, key=lambda path: path.as_posix())
+            ),
+            abandoned_staging=abandoned_staging,
+        )
+
+    def _delete_under_leases(self, reference: ArtifactRef) -> None:
+        target = self.artifact_path(reference)
+        if not self._managed_path_exists(target):
+            raise ArtifactStateError("installed artifact does not exist")
+        self._assert_managed_path(target)
+
+        invalidated_roots: set[ArtifactRef] = {reference}
+        invalidated_paths: set[Path] = set()
+        own_readiness = self.readiness_path(reference)
+        if self._state_path_exists(own_readiness):
+            invalidated_paths.add(own_readiness)
+        for path in self._state_files(self._ready_path):
+            readiness_ref = self._readiness_ref_from_path(path)
+            if readiness_ref is None:
+                continue
+            try:
+                record = self._read_readiness(readiness_ref)
+            except ArtifactStateError:
+                continue
+            if reference in record.closure:
+                invalidated_roots.add(record.root)
+                invalidated_paths.add(path)
+
+        affected_artifact_ids = {
+            reference.artifact_id,
+            *(root.artifact_id for root in invalidated_roots),
+        }
+        active_paths: set[Path] = set()
+        for artifact_id in affected_artifact_ids:
+            path = self.active_path(artifact_id)
+            if not self._state_path_exists(path):
+                continue
+            try:
+                selected = self._read_active(artifact_id)
+            except ArtifactStateError:
+                active_paths.add(path)
+            else:
+                if selected == reference or selected in invalidated_roots:
+                    active_paths.add(path)
+
+        for path in sorted(invalidated_paths, key=lambda item: item.as_posix()):
+            self._remove_state_path(path, "failed to remove invalidated readiness")
+        for path in sorted(active_paths, key=lambda item: item.as_posix()):
+            self._remove_state_path(path, "failed to remove affected active selector")
+        try:
+            shutil.rmtree(target)
+        except OSError as error:
+            raise ArtifactStateError("failed to remove installed artifact") from error
+        for parent in (target.parent, target.parent.parent):
+            try:
+                self._assert_managed_path(parent)
+                parent.rmdir()
+            except OSError:
+                break
+
+    def _state_files(self, root: Path) -> tuple[Path, ...]:
+        self._assert_managed_path(root)
+        before = _path_snapshot(root.stat(follow_symlinks=False))
+        files: list[Path] = []
+
+        def scan(directory: Path) -> None:
+            try:
+                entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
+            except OSError as error:
+                raise ArtifactPathError("failed to scan derived state") from error
+            for entry in entries:
+                try:
+                    mode = entry.stat(follow_symlinks=False).st_mode
+                except OSError as error:
+                    raise ArtifactPathError(
+                        "failed to inspect derived state"
+                    ) from error
+                path = Path(entry.path)
+                if stat.S_ISDIR(mode) and not stat.S_ISLNK(mode):
+                    scan(path)
+                else:
+                    files.append(path)
+
+        scan(root)
+        self._assert_managed_path(root)
+        if _path_snapshot(root.stat(follow_symlinks=False)) != before:
+            raise ArtifactPathError("derived state changed during traversal")
+        return tuple(files)
+
+    def _installed_candidates(
+        self,
+    ) -> tuple[tuple[Path, ArtifactRef | None], ...]:
+        self._assert_managed_path(self._artifacts_path)
+        inventory = self.list_installed()
+        self._assert_managed_path(self._artifacts_path)
+        if any(item.path == self._artifacts_path for item in inventory):
+            raise ArtifactPathError("failed to scan artifacts during reconciliation")
+        candidates = []
+        for item in inventory:
+            try:
+                reference = (
+                    item.descriptor.reference
+                    if item.descriptor is not None
+                    else ArtifactRef(*item.path.relative_to(self._artifacts_path).parts)
+                )
+            except (ArtifactDescriptorValidationError, TypeError, ValueError):
+                reference = None
+            candidates.append((item.path, reference))
+        return tuple(candidates)
+
+    def _staging_entries(self) -> tuple[Path, ...]:
+        self._assert_managed_path(self._staging_path)
+        before = _path_snapshot(self._staging_path.stat(follow_symlinks=False))
+        try:
+            entries = tuple(
+                sorted(
+                    (Path(entry.path) for entry in os.scandir(self._staging_path)),
+                    key=lambda path: path.as_posix(),
+                )
+            )
+        except OSError as error:
+            raise ArtifactPathError("failed to scan staging entries") from error
+        self._assert_managed_path(self._staging_path)
+        if _path_snapshot(self._staging_path.stat(follow_symlinks=False)) != before:
+            raise ArtifactPathError("staging changed during reconciliation scan")
+        return entries
+
+    def _readiness_ref_from_path(self, path: Path) -> ArtifactRef | None:
+        try:
+            relative = path.relative_to(self._ready_path)
+            if len(relative.parts) != 3 or path.suffix != ".json":
+                return None
+            return ArtifactRef(
+                relative.parts[0],
+                relative.parts[1],
+                path.stem,
+            )
+        except (ArtifactDescriptorValidationError, ValueError):
+            return None
+
+    def _active_id_from_path(self, path: Path) -> str | None:
+        try:
+            relative = path.relative_to(self._active_path)
+            if len(relative.parts) != 1 or path.suffix != ".json":
+                return None
+            artifact_id = path.stem
+            _validate_canonical_component("artifact_id", artifact_id)
+            return artifact_id
+        except (ArtifactDescriptorValidationError, ValueError):
+            return None
+
+    def _remove_state_path(self, path: Path, message: str) -> None:
+        self._assert_managed_path(path.parent)
+        try:
+            mode = path.stat(follow_symlinks=False).st_mode
+            if stat.S_ISDIR(mode) and not stat.S_ISLNK(mode):
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            raise ArtifactStateError(message) from error
+
+    def _state_path_exists(self, path: Path) -> bool:
+        self._assert_managed_path(path.parent, allow_missing=True)
+        try:
+            path.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        except OSError as error:
+            raise ArtifactPathError("failed to inspect derived state path") from error
+        return True
 
     def activate(self, root_reference: ArtifactRef) -> ArtifactRef:
         """Verify or reuse one exact dependency closure, then select its root."""
