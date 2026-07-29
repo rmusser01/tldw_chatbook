@@ -9,6 +9,7 @@ from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Input, Select, Static
+from textual.widgets.data_table import CellDoesNotExist, ColumnKey
 
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .table_selection import highlight_is_user_driven
@@ -24,6 +25,25 @@ class ItemSelected(Message):
 
 class RefreshItemsRequested(Message):
     """Posted when the user requests a refresh of the items list."""
+
+
+class ItemsFilterChanged(Message):
+    """Posted whenever the status filter or the search query changes.
+
+    Same reason `SourcesPane.CreateFormDraftChanged` exists (see
+    `sources_pane.py`): this pane is rebuilt from scratch by
+    `_build_detail_pane` on every workbench recompose -- a `z`/`[`/`]`
+    keypress, a chevron click, or the `overview_data` recompose an
+    item-status refresh can trigger -- so `status_filter`/`search_query`
+    reset to their class defaults and the user's filter and half-typed
+    search silently vanish. The screen mirrors this into its own state and
+    seeds it back into the fresh pane.
+    """
+
+    def __init__(self, status_filter: str, search_query: str) -> None:
+        self.status_filter = status_filter
+        self.search_query = search_query
+        super().__init__()
 
 
 class ItemsPane(RecomposeCaptureGuard, Vertical):
@@ -51,6 +71,19 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
         ("Error", "error"),
     ]
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        #: The exact sequence `compose()` last turned into table rows, and the
+        #: column keys of the table it built. Both are the authority on what
+        #: is on screen right now: rows are added once, in `compose()`, and
+        #: `_update_item_status`'s `patch_item` path deliberately mutates item
+        #: dicts in place WITHOUT recomposing (Task 5's CRITICAL fix -- a
+        #: recompose destroys the live table), so re-deriving the displayed
+        #: sequence from `_filtered_items()` afterwards can disagree with the
+        #: rows the user is actually looking at.
+        self._rendered_items: list[dict[str, Any]] = []
+        self._column_keys: list[ColumnKey] = []
+
     def compose(self):
         with Horizontal(id="items-toolbar", classes="destination-filter-strip"):
             yield Button("Refresh", id="items-refresh-button", variant="primary")
@@ -72,8 +105,9 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
             )
 
         table = DataTable(id="items-table")
-        table.add_columns("Title", "Source", "Status", "Created")
+        self._column_keys = table.add_columns("Title", "Source", "Status", "Created")
         filtered = self._filtered_items()
+        self._rendered_items = filtered
         for item in filtered:
             table.add_row(
                 str(item.get("title") or "Untitled"),
@@ -85,10 +119,32 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
         yield table
 
     def _filtered_items(self) -> list[dict[str, Any]]:
+        """Apply the status filter and search query, pinning the open item.
+
+        The currently selected item is ALWAYS kept, whatever the filters say
+        (whole-branch review, CRITICAL). Opening an item marks it read
+        (`_mark_item_read_on_open`), and that write mutates the very dict
+        this list is built from, in place -- so under a "New" filter the
+        item the user just opened dropped out of its own list the instant it
+        was opened. Everything keyed off "where is the open item in the
+        displayed list" then failed at once: `j` walked backwards from a
+        not-found index and `k` was dead for the rest of the session.
+
+        Pinned by id rather than by object identity: `_load_items` rebuilds
+        the item dicts on every reload, so the selection the screen re-seeds
+        into a fresh pane is an equal-but-not-identical dict.
+        """
         status_filter = self.status_filter
         query = self.search_query.strip().lower()
+        selected = self.selected_item
+        selected_id: str | None = None
+        if isinstance(selected, dict) and selected.get("id") is not None:
+            selected_id = str(selected["id"])
         results: list[dict[str, Any]] = []
         for item in self.items:
+            if selected_id is not None and str(item.get("id")) == selected_id:
+                results.append(item)
+                continue
             if status_filter != "all" and str(item.get("status") or "").lower() != status_filter:
                 continue
             if query:
@@ -109,6 +165,48 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
         if event.select.id == "items-status-select":
             self.status_filter = str(event.value or "all")
         event.stop()
+
+    def watch_status_filter(self, status_filter: str) -> None:
+        self._post_filter_changed()
+
+    def watch_search_query(self, search_query: str) -> None:
+        self._post_filter_changed()
+
+    def _post_filter_changed(self) -> None:
+        """Mirror the filter state to the screen so a rebuild can restore it.
+
+        `is_mounted`-gated exactly like `SourcesPane.watch_show_create_form`:
+        `_build_detail_pane` seeds these reactives on a pane it has only just
+        constructed, and echoing that seed straight back at the screen is
+        noise at best.
+        """
+        if self.is_mounted:
+            self.post_message(ItemsFilterChanged(self.status_filter, self.search_query))
+
+    def update_item_status_cell(self, item_id: Any, status: str) -> None:
+        """Repaint one row's Status cell in place, without a recompose.
+
+        Whole-branch review (Important): rows are built once, in `compose()`,
+        and the mark-read-on-open path deliberately never recomposes (Task 5:
+        a recompose destroys the live table and drops focus), so mutating the
+        item dict left the Status column reading "new" for every item the
+        user had already opened until they left the tab entirely.
+        `DataTable.update_cell` repaints the single cell instead.
+        """
+        if item_id is None:
+            return
+        if len(self._column_keys) < 3:
+            return
+        try:
+            table = self.query_one("#items-table", DataTable)
+        except NoMatches:
+            return
+        try:
+            table.update_cell(str(item_id), self._column_keys[2], str(status))
+        except CellDoesNotExist:
+            # The row is not currently rendered (filtered out, or the table
+            # has been rebuilt since). Nothing to repaint; not an error.
+            return
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = str(event.button.id)
@@ -167,7 +265,16 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
         not the unfiltered one -- otherwise a keyboard press can open, and
         silently mark read, an item the user cannot currently see because a
         filter is hiding it.
+
+        Whole-branch review: returns the sequence `compose()` actually turned
+        into rows, not a fresh `_filtered_items()` call. The two diverge as
+        soon as an item's status is patched in place without a recompose (see
+        `_rendered_items` in `__init__`), and when they diverge it is the
+        rendered list that is on screen -- so navigating the re-derived list
+        skips rows the user can plainly see.
         """
+        if self.is_mounted and self._rendered_items:
+            return list(self._rendered_items)
         return self._filtered_items()
 
     def select_and_reveal(self, item: dict[str, Any] | None) -> None:
@@ -201,7 +308,9 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
             table = self.query_one("#items-table", DataTable)
         except NoMatches:
             return
-        for row_index, candidate in enumerate(self._filtered_items()):
+        # `displayed_items()`, not `_filtered_items()`: the cursor row index
+        # has to be an index into the rows the table actually holds.
+        for row_index, candidate in enumerate(self.displayed_items()):
             if str(candidate.get("id") or "") == item_id:
                 table.move_cursor(row=row_index, scroll=True, animate=False)
                 break

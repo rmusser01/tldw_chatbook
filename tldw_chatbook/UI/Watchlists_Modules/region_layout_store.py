@@ -80,6 +80,33 @@ def load_region_layout() -> RegionLayout:
     decision about the real reader. Every call after that honors CONTENT's
     collapse state exactly like any other region's.
 
+    That migration writes config SYNCHRONOUSLY, on the UI thread, from the
+    caller's `on_mount` -- deliberately, and unlike every ordinary collapse
+    toggle, which `WatchlistsCollectionsScreen._schedule_layout_persist`
+    pushes onto a thread worker precisely to keep
+    `save_setting_to_cli_config`'s whole-file read-modify-write off the event
+    loop. The exemption is not an oversight (whole-branch review, Minor):
+
+    * It is bounded at one write per user, for the entire life of the
+      install, not one per `z`/`Z`/`[`/`]` keypress. `_schedule_layout_persist`
+      exists because of the repeat rate; there is no repeat rate here.
+    * Deferring it would race the very mechanism it would be deferred onto.
+      `_schedule_layout_persist` writes the SAME config key from an
+      `exclusive=True` thread worker, and `_apply_layout(loaded_layout)` runs
+      immediately after this function returns. Two unordered background
+      writers on one key is how the correction silently loses to a toggle the
+      user makes a moment later -- and if the user leaves the screen before a
+      deferred worker ran, the correction is simply never written at all.
+      That is exactly the durability hole fix rounds 2 and 3 (below) closed;
+      reopening it to save a single one-off write would be a bad trade.
+    * The marker is gated on the correction's write actually succeeding
+      (round 3), which needs the write's result inline, here, before this
+      function can decide what to return.
+
+    If this ever needs to move off the UI thread, it has to move *with* an
+    ordering guarantee against `_schedule_layout_persist`, not merely onto
+    another worker.
+
     Returns:
         The collapse state to apply: the first-run default
         (`_FIRST_RUN_DEFAULT`) when the config key has never been saved, or

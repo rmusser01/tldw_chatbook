@@ -3,6 +3,25 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
+def _render_to_console(renderable, *, width: int = 100) -> tuple[str, str]:
+    """Render through a real `rich.console.Console` and return (plain, ansi).
+
+    Whole-branch review: `str(Text)` is not evidence about what a user sees.
+    It shows the characters but says nothing about which of them were
+    *interpreted* -- and interpretation is the entire question when the body
+    is remote text that happens to be bracket-shaped. Rendering through a
+    Console and reading both the painted characters and the style codes is
+    what actually distinguishes "rendered as text" from "parsed as markup".
+    """
+    from rich.console import Console
+
+    console = Console(
+        width=width, record=True, color_system="standard", force_terminal=True
+    )
+    console.print(renderable)
+    return console.export_text(clear=False), console.export_text(styles=True)
+
+
 def test_article_renders_title_source_and_body():
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
 
@@ -35,31 +54,41 @@ def test_article_with_no_body_explains_why():
     assert "re-check" in out.lower()
 
 
-def test_untrusted_body_markup_is_escaped():
-    """Remote content reaches a Textual renderable; it must not be markup.
+def test_markup_shaped_body_is_rendered_as_characters_not_interpreted():
+    """The property that actually matters: bracket-shaped remote text is
+    painted, not parsed -- and ordinary bracket-shaped prose is not mangled.
 
-    NOTE: these assertions require the *escaped* (backslash-prefixed) form
-    specifically, not `"...[bold red]..." in out or "\\[bold red]" in out`.
-    That "or" is a tautology: `rich.markup.escape` only prepends a
-    backslash before the bracket, so the unescaped substring is always
-    contained inside the escaped one too, and the assertion would pass
-    whether or not escaping actually ran. Verified empirically while
-    implementing this test (mutation check: deleting the `escape_markup`
-    call around the body left the original two-branch "or" assertions
-    green). Requiring the backslash form is what actually goes red when
-    the escaping is removed.
+    This replaces a pair of tests that asserted `"\\\\[bold red]" in out`,
+    i.e. that `rich.markup.escape` had run. Escaping protected nothing on
+    this path -- `Text.append` never parses markup and `Static(Text)` does
+    not re-parse it, so there was no parser to defend against -- while
+    `escape` prefixes a backslash on anything tag-shaped, so every markdown
+    link `[docs](url)` and every `[sic]` in a real feed reached the reader
+    with a stray backslash in it. Those tests pinned that corruption in
+    place. What must actually hold is asserted here instead, through a real
+    Console: the tag text arrives verbatim, and it styles nothing.
     """
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
 
-    out = str(render_article({
+    plain, ansi = _render_to_console(render_article({
         "title": "[bold red]not a style[/]",
         "source_name": "Hostile Feed",
-        "content": "[link=evil]click[/link]",
+        "content": "[link=evil]click[/link] then [docs](https://example.test)",
         "content_kind": "article",
+        "content_format": "text",
     }))
 
-    assert "\\[bold red]" in out
-    assert "\\[link=evil]" in out
+    # The characters reach the screen exactly as the feed wrote them...
+    assert "[bold red]not a style[/]" in plain
+    assert "[link=evil]click[/link]" in plain
+    # ...and nothing was interpreted: no red was applied by the `bold red`
+    # tag, and the `link=` tag emitted no OSC-8 hyperlink.
+    assert "\x1b[31m" not in ansi, "the [bold red] tag must not have styled anything"
+    assert "\x1b]8;;" not in ansi, "the [link=...] tag must not have become a link"
+    # And ordinary prose is not corrupted -- the regression the escaping
+    # caused for every markdown link and every "[sic]" on the common path.
+    assert "[docs](https://example.test)" in plain
+    assert "\\[" not in plain
 
 
 @pytest.mark.asyncio
@@ -108,7 +137,18 @@ def test_change_renders_percent_type_and_diff_lines():
 
 
 def test_dispatch_selects_the_renderer_by_kind():
-    """The two kinds must not render through the same arm by accident."""
+    """The two kinds must not render through the same arm by accident.
+
+    Whole-branch review: this test used to pin only ONE arm. Its article
+    assertion was `"%" not in article`, and `render_change` emits "%" only
+    when `change_percentage` is present -- which the article fixture has no
+    reason to carry -- so `_RENDERERS = {"article": render_change, "change":
+    render_change}` passed the whole suite. Use the same "words"
+    discriminator `test_unknown_kind_falls_back_to_article_without_raising`
+    below already had to adopt for exactly this reason: it comes from
+    `render_article`'s meta line and `render_change` never emits it under any
+    input, so both arms are now pinned in both directions.
+    """
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_for
 
     change = str(render_for({
@@ -119,9 +159,12 @@ def test_dispatch_selects_the_renderer_by_kind():
         "title": "post", "content": "prose", "content_kind": "article",
     }))
 
-    # A discriminator only the change arm emits.
+    # A discriminator only the change arm emits...
     assert "3" in change and "%" in change
     assert "%" not in article
+    # ...and one only the article arm emits.
+    assert "words" in article
+    assert "words" not in change
 
 
 def test_unknown_kind_falls_back_to_article_without_raising():
@@ -147,6 +190,65 @@ def test_unknown_kind_falls_back_to_article_without_raising():
     assert "words" in out
 
 
+def test_a_markdown_body_is_rendered_as_markdown_not_as_raw_source():
+    """Whole-branch review (Minor): `content_format` had no consumer, so a
+    body captured as markdown was shown to the reader as its source --
+    literal `#` heading marks and `[text](url)` link syntax.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
+
+    plain, _ansi = _render_to_console(render_article({
+        "title": "Release notes",
+        "source_name": "Anthropic News",
+        "content": "# Heading\n\nSee [the docs](https://example.test) for *more*.",
+        "content_kind": "article",
+        "content_format": "markdown",
+    }))
+
+    assert "Heading" in plain
+    assert "the docs" in plain
+    assert "#" not in plain, "the heading marker must be consumed, not shown"
+    assert "[the docs](https://example.test)" not in plain, (
+        "link syntax must be consumed, not shown"
+    )
+
+
+def test_a_plain_text_body_is_never_run_through_the_markdown_renderer():
+    """The other half of the same decision: a body that is NOT markdown must
+    keep every character it was captured with, `#` and all.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
+
+    plain, _ansi = _render_to_console(render_article({
+        "title": "Plain",
+        "source_name": "Feed",
+        "content": "# not a heading, just a hash",
+        "content_kind": "article",
+        "content_format": "text",
+    }))
+
+    assert "# not a heading, just a hash" in plain
+
+
+def test_change_headline_states_the_diff_summary():
+    """Whole-branch review (Minor): `diff_summary` was carried all the way
+    through normalization with no consumer at all. It is the engine's own
+    one-line account of the change, which is what this headline is for.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_change
+
+    out = str(render_change({
+        "title": "anthropic.com/news",
+        "content": "+ a\n- b",
+        "content_kind": "change",
+        "change_percentage": 12.0,
+        "change_type": "structural",
+        "diff_summary": "2 lines changed",
+    }))
+
+    assert "2 lines changed" in out
+
+
 def test_change_with_no_body_explains_why():
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_change
 
@@ -157,18 +259,15 @@ def test_change_with_no_body_explains_why():
     assert "no body captured" in out.lower()
 
 
-def test_diff_lines_with_hostile_markup_are_escaped():
-    """Diff lines are remote content too; styling them must not mean
-    interpreting them as markup.
-
-    Same reasoning as `test_untrusted_body_markup_is_escaped` above: the
-    assertion must require the *escaped* (backslash-prefixed) form, since the
-    unescaped substring is always contained inside the escaped one and a
-    looser assertion would pass either way.
+def test_diff_lines_with_markup_shaped_text_keep_our_colour_and_gain_none():
+    """Same property as the article case, for the one place this module does
+    apply a style: the diff line must be green because it starts with `+`,
+    and red must be entirely absent -- the `[bold red]` tag inside it styled
+    nothing, because nothing parsed it.
     """
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_change
 
-    out = str(render_change({
+    plain, ansi = _render_to_console(render_change({
         "title": "site",
         "content": "+ [bold red]injected[/]",
         "content_kind": "change",
@@ -176,7 +275,10 @@ def test_diff_lines_with_hostile_markup_are_escaped():
         "change_type": "text",
     }))
 
-    assert "\\[bold red]" in out
+    assert "+ [bold red]injected[/]" in plain
+    assert "\\[" not in plain
+    assert "\x1b[32m" in ansi, "a `+` diff line is still coloured green by us"
+    assert "\x1b[31m" not in ansi, "the [bold red] tag must not have styled anything"
 
 
 def test_content_region_is_not_collapsed_by_default_now_it_has_a_reader():
@@ -839,3 +941,434 @@ async def test_j_navigation_does_not_recompose_the_screen():
             is content_pane_before
         ), "the ContentPane instance must survive two j presses too"
         assert screen._selected_content_item["id"] == items[2]["id"]
+
+
+# --- Whole-branch review fixes ---------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_j_and_k_move_forward_and_back_under_a_status_filter():
+    """CRITICAL. A seam between Task 5 and Task 6, present in neither alone.
+
+    Reproduced live with the Items filter set to New and three items shown:
+    click the middle one, press `j`, and the reader jumped BACKWARDS -- and
+    `k` then did nothing for the rest of the session.
+
+    Task 5's `patch_item["status"] = "reviewed"` mutates the very dict
+    `ItemsPane.items` holds, so the item the user just opened stopped
+    matching the New filter the instant it was opened. Task 6's
+    `_navigate_item` then could not find the open item in the displayed list,
+    left `index = -1`, and used it anyway: `j` computed `-1 + 1 = 0` and
+    opened the FIRST item, `k` computed `-2` and silently no-opped -- for
+    every subsequent press, since every newly-opened item vanished the same
+    way.
+
+    The unfiltered path already passed, which is why this shipped.
+    """
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from textual.widgets import Static
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+
+        pane.status_filter = "new"
+        await pilot.pause(0.3)
+        displayed = pane.displayed_items()
+        assert len(displayed) == 3, "all three seeded items are still new"
+
+        middle = displayed[1]
+        pane.select_and_reveal(middle)
+        await pilot.pause(0.5)
+        assert screen._selected_content_item["id"] == middle["id"]
+
+        # The open item must not disappear from its own list just because
+        # opening it marked it read.
+        assert [item["id"] for item in pane.displayed_items()] == [
+            item["id"] for item in displayed
+        ], "opening an item must not remove it from the displayed list"
+
+        await pilot.press("j")
+        await pilot.pause(0.5)
+        assert screen._selected_content_item["id"] == displayed[2]["id"], (
+            "j must move FORWARD to the next displayed item, not back to the first"
+        )
+        body = content_pane.query_one("#content-body", Static)
+        assert displayed[2]["title"] in str(body.renderable)
+
+        await pilot.press("k")
+        await pilot.pause(0.5)
+        assert screen._selected_content_item["id"] == displayed[1]["id"], (
+            "k must still work after a j, not be dead for the session"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_open_item_survives_a_rebuild_of_the_filtered_table():
+    """The other half of the CRITICAL fix: the pin in `_filtered_items`.
+
+    A recompose (changing the search box, reloading items) re-derives the
+    rows from scratch. Without pinning the selection, the item the user is
+    reading is dropped out of the table under them the moment its status no
+    longer matches the active filter -- the reader shows an article that has
+    no row.
+    """
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+
+        pane.status_filter = "new"
+        await pilot.pause(0.3)
+        open_item = pane.displayed_items()[0]
+
+        pane.select_and_reveal(open_item)
+        await pilot.pause(0.5)
+        assert str(open_item.get("status")).lower() == "reviewed", (
+            "opening the item must have marked it read -- the precondition"
+        )
+
+        # Force a genuine rebuild of the rows while it is still open.
+        pane.search_query = "Nav item"
+        await pilot.pause(0.4)
+
+        assert open_item["id"] in {item["id"] for item in pane.displayed_items()}, (
+            "the item the reader is showing must still have a row"
+        )
+        assert screen._selected_content_item["id"] == open_item["id"]
+
+
+@pytest.mark.asyncio
+async def test_k_with_nothing_open_goes_to_the_last_item_not_nowhere():
+    """"The current item is not in the list" is its own case, not index -1.
+
+    With nothing open, the old code computed `-1 + delta`, so `k` produced
+    `-2`, failed the bounds check, and silently did nothing at all -- while
+    `j` produced `0` and opened the first item, which looked fine and hid the
+    real defect.
+    """
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+        assert screen._selected_content_item is None, "nothing open yet"
+
+        await pilot.press("k")
+        await pilot.pause(0.5)
+
+        displayed = pane.displayed_items()
+        assert screen._selected_content_item is not None, (
+            "k with nothing open must open something, not silently no-op"
+        )
+        assert screen._selected_content_item["id"] == displayed[-1]["id"], (
+            "with no current position, 'previous' means the last item"
+        )
+
+
+@pytest.mark.asyncio
+async def test_opening_an_item_repaints_its_status_cell_in_the_table():
+    """The Items table never showed what you had read.
+
+    Rows are built once, in `ItemsPane.compose()`, and the mark-read-on-open
+    path deliberately never recomposes (Task 5: a recompose destroys the live
+    table). So `patch_item`'s in-place mutation was invisible: the Status
+    column read "new" for every item the user had opened until they left the
+    tab. Visible with no filter at all.
+    """
+    from textual.widgets import DataTable
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+        items = screen._loaded_items
+        table = pane.query_one("#items-table", DataTable)
+        row_key = str(items[0]["id"])
+
+        assert table.get_row(row_key)[2] == "new"
+
+        pane.select_item_by_id(row_key)
+        await pilot.pause(0.6)
+
+        assert table.get_row(row_key)[2] == "reviewed", (
+            "the Status cell must show what the user has actually read"
+        )
+        # And it must have got there WITHOUT a recompose (Task 5's CRITICAL).
+        assert screen.query_one("#watchlists-items-pane", ItemsPane) is pane
+
+
+@pytest.mark.asyncio
+async def test_opening_an_item_does_not_cancel_unrelated_background_work():
+    """`run_worker(exclusive=True)` with no `group=` lands in the default
+    group, shared by ~25 call sites on this screen -- including the "Check
+    now" fetch. Since Phase D the mark-read worker fires on every selection
+    and every `j`/`k`, so reading an item cancelled a network fetch the user
+    had just been toasted about.
+    """
+    import asyncio
+
+    from textual.worker import WorkerState
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+        items = screen._loaded_items
+
+        async def _unrelated_long_fetch() -> None:
+            await asyncio.sleep(3)
+
+        # Exactly the shape of `_check_now_source`'s call site: exclusive,
+        # default group.
+        unrelated = screen.run_worker(_unrelated_long_fetch(), exclusive=True)
+        await pilot.pause(0.1)
+        assert unrelated.state is not WorkerState.CANCELLED
+
+        pane.select_item_by_id(str(items[0]["id"]))
+        await pilot.pause(0.6)
+
+        assert unrelated.state is not WorkerState.CANCELLED, (
+            "reading an item must not cancel unrelated in-flight work"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_content_chevron_off_the_read_tab_neither_collapses_nor_persists():
+    """The gate force-collapses CONTENT off the Read tab, which renders a
+    real, focusable `▸ Content` button. Clicking it (or pressing `z` with it
+    focused) ran the toggle against the REAL `region_layout` rather than the
+    derived view, so nothing visibly changed, the user's genuine preference
+    silently flipped to collapsed, and `"content"` was written to
+    `[watchlists].collapsed_regions` on disk -- honoured forever, since the
+    Phase D migration marker is already set. That permanently recreates the
+    exact state the migration exists to repair, from a control that looked
+    inert.
+    """
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        assert screen.query("#wl-header-content"), "the gate collapsed CONTENT"
+        assert not screen.region_layout.is_collapsed(Region.CONTENT), (
+            "the real preference is still expanded -- the precondition"
+        )
+
+        await pilot.click("#wl-header-content")
+        await pilot.pause(0.3)
+
+        assert not screen.region_layout.is_collapsed(Region.CONTENT), (
+            "clicking the gated chevron must not flip the real preference"
+        )
+        assert Region.CONTENT not in (screen._last_persisted_collapsed or frozenset()), (
+            "and it must never reach the persisted collapse set"
+        )
+
+        # `z` with CONTENT focused is the same action by another route.
+        screen.focused_region = Region.CONTENT
+        screen.action_toggle_region()
+        await pilot.pause(0.3)
+        assert not screen.region_layout.is_collapsed(Region.CONTENT)
+
+        # And back on Read the reader is still there.
+        screen.active_section = "items"
+        await pilot.pause(0.3)
+        assert screen.query("#wl-region-content")
+
+
+@pytest.mark.asyncio
+async def test_a_workbench_rebuild_keeps_the_items_filter_search_and_selection():
+    """`_build_detail_pane` seeded only `.items`, unlike the sibling Sources,
+    Runs and Notifications panes, which all re-seed their selection (and, for
+    Sources, the whole create-form draft).
+
+    So every workbench rebuild silently reset the user's view to "all items,
+    nothing selected, empty search box". `region_layout` is
+    `recompose=True`, so ANY collapse/expand -- `z`, `[`, `]`, a chevron
+    click -- rebuilds every region and constructs a brand new `ItemsPane`;
+    that is the deterministic trigger used here. The reported route was
+    "Mark unread", whose `refresh=True` ends in `_refresh_overview_data()`
+    setting `overview_data` (`reactive(recompose=True)`): same rebuild, but
+    it only fires when the overview counts actually change value, which is
+    why it is not what this test drives.
+    """
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+
+        pane.status_filter = "new"
+        pane.search_query = "Nav item"
+        await pilot.pause(0.4)
+        open_item = pane.displayed_items()[0]
+        pane.select_and_reveal(open_item)
+        await pilot.pause(0.5)
+
+        # A rail toggle -- nothing to do with Items at all.
+        screen.action_toggle_left_rail()
+        await pilot.pause(0.5)
+
+        rebuilt = screen.query_one("#watchlists-items-pane", ItemsPane)
+        assert rebuilt is not pane, (
+            "the precondition: the rail toggle really did rebuild the pane"
+        )
+        assert rebuilt.status_filter == "new", "the status filter must survive"
+        assert rebuilt.search_query == "Nav item", "the search box must survive"
+        assert rebuilt.selected_item is not None, "the selection must survive"
+        assert rebuilt.selected_item["id"] == open_item["id"]
+        assert open_item["id"] in {item["id"] for item in rebuilt.displayed_items()}, (
+            "and the open item must still have a row in the rebuilt table"
+        )
+
+
+@pytest.mark.asyncio
+async def test_mark_unread_refuses_to_overwrite_an_ingested_item():
+    """Data loss. `_mark_item_read_on_open` already declines to downgrade
+    anything but `new`; the unread toggle wrote `new` unconditionally, so a
+    user who ingested an item and then clicked it lost that record and the
+    Ingested filter could no longer find it.
+    """
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import UnreadToggleRequested
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, _pane = await _mount_items_screen(pilot, host)
+        item = screen._loaded_items[0]
+
+        await screen._update_item_status(
+            item["id"], "ingested", notify_toast=False, refresh=False, patch_item=item
+        )
+        await pilot.pause(0.3)
+        assert {row["id"] for row in db.get_new_items(status="ingested", limit=10)} == {
+            item["item_id"]
+        }, "the precondition: the item really is ingested"
+
+        screen.post_message(UnreadToggleRequested(dict(item)))
+        await pilot.pause(0.6)
+
+        assert {row["id"] for row in db.get_new_items(status="ingested", limit=10)} == {
+            item["item_id"]
+        }, "Mark unread must not overwrite an ingested item's status"
+        assert item["item_id"] not in {
+            row["id"] for row in db.get_new_items(status="new", limit=10)
+        }, "the ingested item must not have been pushed back to new"
+
+
+@pytest.mark.asyncio
+async def test_a_persisted_body_reaches_the_reader_end_to_end():
+    """Task 1's entire reason for existing, finally pinned.
+
+    Every other UI assertion on this branch checks only the TITLE, so
+    hard-coding `"content": None` in the normalizer leaves them all green --
+    the reader could render "no body captured" for every item, end to end,
+    and only one unit test in `Tests/Subscriptions/` would notice. Assert the
+    seeded BODY, through the real persist -> normalize -> load -> select ->
+    render path.
+    """
+    from textual.widgets import Static
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+        item = screen._loaded_items[0]
+        # `_seed_three_items` writes "body for nav item <n>" alongside
+        # "Nav item <n>", so the body is derivable from the title.
+        index = item["title"].rsplit(" ", 1)[-1]
+
+        pane.select_item_by_id(str(item["id"]))
+        await pilot.pause(0.5)
+
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        rendered, _ansi = _render_to_console(
+            content_pane.query_one("#content-body", Static).renderable, width=160
+        )
+
+        assert item["title"] in rendered
+        assert f"body for nav item {index}" in rendered, (
+            "the persisted body must reach the reader, not just the title"
+        )
+        assert "no body captured" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_the_mark_unread_button_is_compact():
+    """A default `Button` is three rows tall (border, label, border), and
+    CONTENT has about nine usable rows -- the same third of the pane the
+    tooltip fix reclaimed, spent again on chrome.
+    """
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+
+    class _PaneHost(App):
+        def compose(self):
+            pane = ContentPane()
+            pane.item = {"title": "x", "content": "y", "content_kind": "article"}
+            yield pane
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        button = app.query_one("#content-mark-unread-button", Button)
+        assert button.compact, "the reader's button must not cost three rows"
