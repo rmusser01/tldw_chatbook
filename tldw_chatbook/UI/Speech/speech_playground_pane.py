@@ -28,11 +28,20 @@ from textual import on
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical
+from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
+    STTSSettingsSaveEvent,
+)
+from tldw_chatbook.TTS import TTSPreferencesSnapshot
+from tldw_chatbook.UI.stts_playground_catalog import (
+    SERVER_DEFAULT_VOICE_ID,
+)
+
 from textual.widgets import (
     Button,
     Collapsible,
     ProgressBar,
     RichLog,
+    Input,
     Select,
     Static,
     TextArea,
@@ -42,7 +51,7 @@ from tldw_chatbook.UI.stts_playground_catalog import UNAVAILABLE_SELECT_VALUE
 
 from ..Workbench.workbench_state import WorkbenchAction
 from .speech_action_strip import SpeechActionStrip
-from .speech_axis_row import AXIS_EMPTY_PROMPTS, SpeechAxisRow
+from .speech_axis_row import AXIS_EMPTY_PROMPTS, DEFAULT_SPEED, SpeechAxisRow
 from .speech_catalog_mixin import SpeechCatalogMixin
 from .speech_playback_mixin import EXAMPLE_TEXTS, SpeechPlaybackMixin
 from .speech_synthesis_mixin import SpeechSynthesisMixin
@@ -81,13 +90,18 @@ PLAYGROUND_ACTIONS: tuple[WorkbenchAction, ...] = (
         primary=True,
     ),
     WorkbenchAction(
-        id="tts-random-text-btn", label="Random text", tooltip="Insert sample text"
+        id="tts-random-text-btn", label="Random", tooltip="Insert sample text"
     ),
     WorkbenchAction(id="tts-clear-text-btn", label="Clear", tooltip="Clear the text"),
     WorkbenchAction(
         id="tts-refresh-catalog-btn",
-        label="Refresh catalog",
+        label="Refresh",
         tooltip="Re-read available models and voices",
+    ),
+    WorkbenchAction(
+        id="tts-save-default-btn",
+        label="Save default",
+        tooltip="Keep these axes as the app-wide defaults",
     ),
 )
 
@@ -178,6 +192,20 @@ class SpeechPlaygroundPane(
         self.init_catalog_state()
         self.init_playback_state()
 
+    @on(Button.Pressed, "#tts-save-default-btn")
+    def _on_save_default_pressed(self, event: Button.Pressed) -> None:
+        """Commit the current axes as defaults.
+
+        Declared here rather than added to the shared `on_button_pressed`:
+        that dispatcher is the legacy playground's, and this action is new
+        to the rebuild.
+
+        Args:
+            event: The press.
+        """
+        event.stop()
+        self._save_axes_as_default()
+
     @on(Select.Changed)
     def on_tts_provider_select_changed(self, event: Select.Changed) -> None:
         """Delegate to the shared catalog mixin.
@@ -199,6 +227,62 @@ class SpeechPlaygroundPane(
         """
         if event.text_area.id == "tts-text-input":
             self._sync_generate_enabled()
+
+    def _save_axes_as_default(self) -> None:
+        """Persist the current axes as the app-wide defaults.
+
+        The one path by which the Playground writes a persisted value, and
+        it exists because the screen's purpose is to identify what works
+        best: a comparison you cannot keep is half a tool. Everything else
+        here stays session-scoped.
+
+        Reuses the snapshot and event Settings posts rather than writing
+        config directly, so both views commit defaults exactly one way.
+        """
+        provider = self._get_select_key(
+            self.query_one("#tts-provider-select", Select)
+        )
+        model = self._get_select_key(self.query_one("#tts-model-select", Select))
+        voice = self._get_select_key(self.query_one("#tts-voice-select", Select))
+        fmt = self._get_select_key(self.query_one("#tts-format-select", Select))
+
+        if not isinstance(provider, str) or not isinstance(fmt, str):
+            # Refuse rather than persist a sentinel as though it were a
+            # choice. Before a catalog loads there is nothing to commit.
+            self.app.notify(
+                "Choose a provider and format before saving them as default",
+                severity="warning",
+            )
+            return
+
+        try:
+            speed = float(
+                self.query_one("#tts-speed-input", Input).value or DEFAULT_SPEED
+            )
+        except ValueError:
+            speed = float(DEFAULT_SPEED)
+
+        preferences = TTSPreferencesSnapshot(
+            provider_id=provider,
+            model_mode="exact" if isinstance(model, str) else "first_available",
+            model_id=model if isinstance(model, str) else None,
+            voice_mode=(
+                "exact"
+                if isinstance(voice, str) and voice is not SERVER_DEFAULT_VOICE_ID
+                else "server_default"
+            ),
+            voice_id=(
+                voice
+                if isinstance(voice, str) and voice is not SERVER_DEFAULT_VOICE_ID
+                else None
+            ),
+            response_format=fmt,
+            speed=speed,
+        )
+        self.app.post_message(
+            STTSSettingsSaveEvent({}, preferences=preferences)
+        )
+        self.app.notify("Saved as default", severity="information")
 
     def _show_provider_specific_controls(self, provider: str) -> None:
         """Re-scope the parameter group and clip picker to `provider`.
