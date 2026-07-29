@@ -325,7 +325,7 @@ def isolated_benchmark_host_state(root: Path) -> Iterator[None]:
     data_root = root / "data"
     for path in (home, data_root):
         path.mkdir(parents=True, exist_ok=True)
-    config_directory.mkdir(parents=True, mode=0o700)
+    config_directory.mkdir(parents=True, mode=0o700, exist_ok=True)
     overrides = {
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(config_root),
