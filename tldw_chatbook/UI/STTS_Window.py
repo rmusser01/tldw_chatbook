@@ -206,9 +206,29 @@ class AudioBookGenerationWidget(Widget):
         self.generated_audiobook_path = None
 
     def compose(self) -> ComposeResult:
-        """Compose the AudioBook/Podcast UI"""
+        """Compose the AudioBook/Podcast UI.
+
+        The actions sit ABOVE the scroll region. Inside it, after eight
+        collapsible groups, `generate-audiobook-btn` measured at y=40 in a
+        26-row viewport -- the reason the view exists, four screens down.
+        The grouping itself is unchanged: the spec keeps it, as the closest
+        thing here to the Console grammar already.
+        """
+        yield Label("📚 AudioBook/Podcast Generation", classes="section-title")
+        with Horizontal(id="audiobook-actions", classes="workbench-command-strip"):
+            yield Button(
+                "🎙️ Generate AudioBook",
+                id="generate-audiobook-btn",
+                variant="primary",
+            )
+            yield Button(
+                "💾 Export AudioBook",
+                id="audiobook-export-btn",
+                variant="success",
+                disabled=True,
+            )
+
         with ScrollableContainer(classes="audiobook-container"):
-            yield Label("📚 AudioBook/Podcast Generation", classes="section-title")
 
             # Import section
             with Collapsible(title="Import Content", classes="settings-section"):
@@ -306,19 +326,6 @@ class AudioBookGenerationWidget(Widget):
 
             # Cost estimate
             yield Static("", id="cost-estimate", classes="cost-estimate")
-
-            # Generate button
-            yield Button(
-                "🎙️ Generate AudioBook", id="generate-audiobook-btn", variant="primary"
-            )
-
-            # Export button (initially disabled)
-            yield Button(
-                "💾 Export AudioBook",
-                id="audiobook-export-btn",
-                variant="success",
-                disabled=True,
-            )
 
             # Progress section
             yield Rule()
