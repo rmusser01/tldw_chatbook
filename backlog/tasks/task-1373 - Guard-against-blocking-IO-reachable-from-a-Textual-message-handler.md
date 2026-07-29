@@ -44,11 +44,11 @@ work into a worker introduces its own failure modes.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Opening the export folder from the Chatbook wizard cannot block the app, on any platform
-- [ ] #2 A repo-wide test fails when a new blocking call becomes reachable from a message handler
-- [ ] #3 The guard is proven to catch a known instance, not just to report a clean result
-- [ ] #4 Pre-existing accepted paths are baselined individually with a stated reason, not silenced wholesale
-- [ ] #5 The guard cannot be fooled by the same call name appearing in a comment or string
+- [x] #1 Opening the export folder from the Chatbook wizard cannot block the app, on any platform
+- [x] #2 A repo-wide test fails when a new blocking call becomes reachable from a message handler
+- [x] #3 The guard is proven to catch a known instance, not just to report a clean result
+- [x] #4 Pre-existing accepted paths are baselined individually with a stated reason, not silenced wholesale
+- [x] #5 The guard cannot be fooled by the same call name appearing in a comment or string
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -68,3 +68,50 @@ ADR required: no
 Reason: adds a test-suite guard and one localized fix; no policy, framework or
 storage contract changes.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed two live instances and added the repo-wide guard.
+
+**The fixes.** `ProgressStep.on_button_pressed` (Chatbook wizard) and
+`ChatbookExportManagementWindow._open_location` both called `subprocess.run` with
+no timeout on the message pump. Both now use `Popen` and never wait. The wizard
+also notifies on a missing launcher rather than failing silently.
+
+**The guard** (`Tests/Architecture/test_no_blocking_io_on_message_pump.py`) walks
+the intra-module call graph from each handler to a blocking leaf. Three
+correctness problems surfaced by testing the guard itself:
+
+1. A body-only scan returned **zero findings against the real pre-TASK-1320
+   chatbooks source** — the blocking call is a level below the handler. There is
+   now a self-test asserting the guard catches that shape, so it cannot decay
+   into a scan that always passes.
+2. Recognising hand-offs only at the call site produced a false positive for
+   `local_models_widget.on_button_pressed`, whose `_delete_model` is
+   `@work(thread=True)`. A hand-off is a property of the callee as well.
+3. Keying the baseline on `(file, handler)` left a hole precisely where it
+   mattered: the export window's `on_button_pressed` is baselined for a cheap
+   glob, so a re-introduced `subprocess.run` from that same handler would have
+   been accepted. The key now includes the blocking call; verified by mutation.
+
+**Scope.** Only user-visible costs are flagged. `mkdir`/`stat`/`read_text`/
+`write_text` are excluded on measurement — 0.049ms and 0.014ms against the
+1030ms/1140ms/300s cases TASK-1320 fixed. Flagging them would produce a noisy
+baseline and invite churn with real risk (deferring into a worker re-creates the
+`exit_on_error=True` crash path).
+
+**Baselined, each with a reason:** three handlers in the dead `Chatbooks_Window.py`
+(no importers); two in `ChatbookExportManagementWindow` (glob plus one stat per
+entry, no archive read); one in `settings_theme_editor` (one toml parse per
+hand-authored theme). A companion test fails if any baselined entry stops
+reporting, so the list cannot rot.
+
+Pre-existing and unrelated: `test_persistent_diagnostic_inventory` fails on clean
+dev too — isolated by removing this change's only new `logger` call and observing
+the same exit code.
+
+Modified: `ChatbookCreationWizard.py`, `ChatbookExportManagementWindow.py`,
+`Tests/Architecture/test_no_blocking_io_on_message_pump.py` (new),
+`Tests/UI/test_chatbook_wizard_open_folder.py` (new).
+<!-- SECTION:NOTES:END -->
