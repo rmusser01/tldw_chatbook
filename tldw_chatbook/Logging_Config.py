@@ -283,34 +283,41 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
             ):
                 existing_handler.addFilter(PersistentDiagnosticFilter())
             root_logger.info("Private rotating file logging is already installed.")
-            return True
-
-        max_bytes = int(get_cli_setting("logging", "log_max_bytes", 10485760))
-        backup_count = int(get_cli_setting("logging", "log_backup_count", 5))
-        file_log_level_name = str(
-            get_cli_setting("logging", "file_log_level", "INFO")
-        ).upper()
-        file_log_level = getattr(logging, file_log_level_name, logging.INFO)
-        file_handler = PrivateRotatingFileHandler(
-            log_file_path,
-            maxBytes=max_bytes,
-            backupCount=backup_count,
-            encoding="utf-8",
-        )
-        file_handler.setLevel(file_log_level)
-        file_handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
+            # TASK-1240 (M8). This path returns True exactly like the install
+            # path below, so it has to emit exactly like it too. An earlier
+            # revision returned here directly, which let a caller be told the
+            # sink is live while the log stayed empty -- the one state this
+            # design instructs a maintainer to read as "the sink did not
+            # install". The handler's own level is the gate to clear, since
+            # that is the handler the record must pass.
+            installed_level = existing_handler.level
+        else:
+            max_bytes = int(get_cli_setting("logging", "log_max_bytes", 10485760))
+            backup_count = int(get_cli_setting("logging", "log_backup_count", 5))
+            file_log_level_name = str(
+                get_cli_setting("logging", "file_log_level", "INFO")
+            ).upper()
+            file_log_level = getattr(logging, file_log_level_name, logging.INFO)
+            file_handler = PrivateRotatingFileHandler(
+                log_file_path,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding="utf-8",
             )
-        )
-        file_handler.addFilter(PersistentDiagnosticFilter())
-        root_logger.addHandler(file_handler)
-        root_logger.info(
-            "Private rotating file logging installed at level %s.",
-            logging.getLevelName(file_log_level),
-        )
-        installed_level = file_log_level
+            file_handler.setLevel(file_log_level)
+            file_handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S",
+                )
+            )
+            file_handler.addFilter(PersistentDiagnosticFilter())
+            root_logger.addHandler(file_handler)
+            root_logger.info(
+                "Private rotating file logging installed at level %s.",
+                logging.getLevelName(file_log_level),
+            )
+            installed_level = file_log_level
     except PrivatePathError as exc:
         root_logger.warning(
             "File logging disabled: unsafe persistent target (%s).",

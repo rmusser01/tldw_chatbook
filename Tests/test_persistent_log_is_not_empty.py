@@ -235,3 +235,72 @@ def test_the_install_event_clears_both_level_gates(
     assert "event=persistent_sink_installed" in written, (
         f"the install event was filtered out by the {binding_gate} gate"
     )
+
+
+def test_the_already_installed_path_also_emits_the_install_event(
+    tmp_path, monkeypatch
+):
+    """Returning True without emitting makes "installed" unprovable.
+
+    `_configure_private_file_logging` has two success paths: it builds the sink,
+    or it finds one already attached and returns early. Both return `True`, so
+    both make the same promise to their caller. An earlier revision emitted only
+    on the build path, which meant the early return could report a live sink
+    while the log stayed empty -- the exact state this design instructs a
+    maintainer to read as "the sink did not install".
+
+    Unreachable in production today, because `configure_application_logging`
+    clears root's handlers before calling this. Reachable from any test or
+    future caller that does not.
+    """
+    from tldw_chatbook.Logging_Config import (
+        PrivateRotatingFileHandler,
+        _configure_private_file_logging,
+    )
+
+    log_path = tmp_path / "tldw_cli_app.log"
+    monkeypatch.setattr(
+        "tldw_chatbook.Logging_Config.get_cli_log_file_path", lambda: log_path
+    )
+    _pin_file_log_level(monkeypatch)
+    root = logging.getLogger()
+    previous_level = root.level
+    root.setLevel(logging.INFO)
+    handler = None
+    try:
+        assert _configure_private_file_logging(root) is True
+        handler = _installed_handler(root, log_path)
+        handler.flush()
+
+        # Discard everything the first install wrote, so anything present below
+        # can only have come from the second call.
+        log_path.write_text("")
+
+        assert _configure_private_file_logging(root) is True
+        handler.flush()
+        written = log_path.read_text()
+
+        attached = [
+            item
+            for item in root.handlers
+            if isinstance(item, PrivateRotatingFileHandler)
+            and item.baseFilename == str(log_path)
+        ]
+    finally:
+        if handler is not None:
+            root.removeHandler(handler)
+            handler.close()
+        root.setLevel(previous_level)
+
+    # Proves the second call actually took the already-installed branch instead
+    # of building a second sink -- without this the test could pass while
+    # exercising the install path twice.
+    assert len(attached) == 1, (
+        "the second call built another sink, so this test never exercised the "
+        "already-installed path"
+    )
+
+    assert "event=persistent_sink_installed" in written, (
+        "the already-installed path returned True without emitting the install "
+        "event, so an empty log cannot be told apart from a failed install"
+    )
