@@ -14,6 +14,8 @@ harness reports the Select at ``width=1``; under the real stylesheet it is 16.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from textual.widgets import Button, Select
 
@@ -41,7 +43,12 @@ async def _open_form(pilot, host):
     await pilot.pause(0.2)
     pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
     screen.query_one("#sources-new-button", Button).press()
-    await pilot.pause(0.3)
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        controls = pane.query("#sources-create-frequency")
+        if controls and controls.first().region.width > 1:
+            break
+        await pilot.pause(0.01)
     return screen, pane
 
 
