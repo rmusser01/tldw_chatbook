@@ -1172,6 +1172,33 @@ git add \
 git commit -m "test(config): follow private atomic writer"
 ```
 
+### Task 4z: Align Console unknown-command hint copy
+
+**Files:**
+- Modify: `Tests/UI/test_console_command_composer.py`
+
+- [ ] **Step 1: Reproduce the stale expected hint**
+
+Run the module. Expected: the first unknown-command case renders the live
+registry list with `/generate-image` and `/rewind`, while both expected
+constants stop after `/prefill`.
+
+- [ ] **Step 2: Update the independent expected copy**
+
+Append `/generate-image, /rewind` to both curated expected strings in registry
+order. Keep every interaction and message-count assertion. Do not call the
+production formatter to manufacture the expected value.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest Tests/UI/test_console_command_composer.py -q
+../../.venv/bin/python -m ruff check Tests/UI/test_console_command_composer.py
+../../.venv/bin/python -m ruff format --check Tests/UI/test_console_command_composer.py
+git add Tests/UI/test_console_command_composer.py
+git commit -m "test(console): align unknown command hint"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -1252,6 +1279,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/TTS/test_profile_backup_integration.py \
   Tests/TTS/test_tts_preferences.py \
   Tests/UI/test_command_palette_providers.py \
+  Tests/UI/test_console_command_composer.py \
   Tests/integration/test_library_ingest_flow.py \
   Tests/test_config_delete_settings.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
@@ -1287,6 +1315,7 @@ Expected: all affected tests pass.
   Tests/TTS/test_profile_backup_integration.py \
   Tests/TTS/test_tts_preferences.py \
   Tests/UI/test_command_palette_providers.py \
+  Tests/UI/test_console_command_composer.py \
   Tests/integration/test_library_ingest_flow.py \
   Tests/test_config_delete_settings.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
@@ -1317,6 +1346,7 @@ Expected: all affected tests pass.
   Tests/TTS/test_profile_backup_integration.py \
   Tests/TTS/test_tts_preferences.py \
   Tests/UI/test_command_palette_providers.py \
+  Tests/UI/test_console_command_composer.py \
   Tests/integration/test_library_ingest_flow.py \
   Tests/test_config_delete_settings.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \

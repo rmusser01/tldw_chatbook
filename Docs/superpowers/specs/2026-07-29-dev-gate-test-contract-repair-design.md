@@ -256,6 +256,13 @@ Update the tests to describe current behavior:
     private writer because atomic replacement is their subject; do not restore
     the generic writer, hard-code the default path, or weaken the security
     assertions.
+29. In the Console command-composer regression constants, append
+    `/generate-image` and `/rewind` in the order returned by the live registry.
+    Preserve exact hint-copy assertions and all first-Enter interception,
+    second-Enter literal-send, edit-disarm, round-trip-edit, and system-message
+    count coverage. Do not derive the expected string by calling the production
+    hint formatter inside the test, and do not remove the two registered
+    commands from production.
 
 The only planned production behavior change outside an ADR-029 diagnostic
 correction is the three-name synchronization of the existing Library collision
@@ -344,6 +351,10 @@ fail-closed behavior. No compatibility shims. No broad deletion of live tests.
 - Removing config mutation write-count, failure, or lock assertions would lose
   the behavior those tests exist to prove. Wrapping the live private atomic
   writer retains that coverage while following the hardened config owner.
+- Building the expected unknown-command hint with the same production method
+  under test would hide copy or registry omissions. Updating the two curated
+  expected constants keeps the assertion independent and preserves the
+  Enter-again safety behavior.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
