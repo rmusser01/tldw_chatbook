@@ -200,10 +200,13 @@ async def test_actions_belong_to_the_deepest_level():
 
         assert inspector.query_one("#inspector-check-now-button", Button)
         assert inspector.query_one("#inspector-delete-button", Button)
-        assert not inspector.query("#inspector-mark-reviewed-button"), (
+        # "Mark reviewed" was removed entirely (Task 5 fix round 1), so an
+        # absence check for it here would no longer discriminate anything --
+        # Ingest/Ignore below are the item actions that still exist and must
+        # not show while a watchlist is the deepest selection.
+        assert not inspector.query("#inspector-ingest-button"), (
             "an item action must not show while a watchlist is the deepest selection"
         )
-        assert not inspector.query("#inspector-ingest-button")
         assert not inspector.query("#inspector-ignore-button")
         assert not inspector.query("#inspector-preview-button")
 
@@ -231,7 +234,10 @@ async def test_selected_entity_is_deeper_than_scope():
         # itself.
         assert inspector.query_one("#inspector-breadcrumb-0", Button)
         assert inspector.query_one("#inspector-breadcrumb-1", Button)
-        assert inspector.query_one("#inspector-mark-reviewed-button", Button)
+        # "Mark reviewed" was removed (Task 5 fix round 1); Ingest is the
+        # still-present item action used here to prove the item's action
+        # set is showing.
+        assert inspector.query_one("#inspector-ingest-button", Button)
         assert not inspector.query("#inspector-check-now-button")
 
 
@@ -363,7 +369,10 @@ async def test_changing_scope_clears_a_stale_entity_selection():
         await pilot.pause()
 
         inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
-        assert inspector.query_one("#inspector-mark-reviewed-button", Button)
+        # "Mark reviewed" was removed (Task 5 fix round 1); Ingest is the
+        # still-present item action used here to prove item-level actions
+        # are showing.
+        assert inspector.query_one("#inspector-ingest-button", Button)
 
         screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=2)))
         await pilot.pause()
@@ -372,7 +381,7 @@ async def test_changing_scope_clears_a_stale_entity_selection():
             "switching the tree scope must drop the now-stale entity selection"
         )
         assert inspector.breadcrumb_labels == ["Second Watchlist"]
-        assert not inspector.query("#inspector-mark-reviewed-button"), (
+        assert not inspector.query("#inspector-ingest-button"), (
             "the breadcrumb now names Watchlist 2 -- Watchlist 1's item "
             "actions must not still be showing beneath it"
         )
@@ -410,7 +419,10 @@ async def test_selecting_an_entity_clears_a_stale_watchlist_ancestor():
             "no breadcrumb ancestor is known for a pane-selected item in "
             "this slice -- it must not keep showing the tree's old one"
         )
-        assert inspector.query_one("#inspector-mark-reviewed-button", Button)
+        # "Mark reviewed" was removed (Task 5 fix round 1); Ingest is the
+        # still-present item action used here to prove the item's action
+        # set is showing.
+        assert inspector.query_one("#inspector-ingest-button", Button)
 
 
 @pytest.mark.asyncio

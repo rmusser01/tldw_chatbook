@@ -34,10 +34,17 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
     search_query = reactive("", recompose=True)
     runtime_backend = reactive("local", recompose=True)
 
+    # Task 5 fix round 1 (Minor): "Reviewed" -> "Read". The underlying value
+    # is still the "reviewed" status (no schema change -- see
+    # `WatchlistsCollectionsScreen._mark_item_read_on_open`), but opening an
+    # item in the reader now sets it automatically, on every item, not just
+    # ones a person deliberately reviewed. The old label promised a judgement
+    # ("someone looked this over and vouched for it") this filter no longer
+    # records; "Read" states only what actually happened.
     _STATUS_OPTIONS = [
         ("All statuses", "all"),
         ("New", "new"),
-        ("Reviewed", "reviewed"),
+        ("Read", "reviewed"),
         ("Ingested", "ingested"),
         ("Ignored", "ignored"),
         ("Error", "error"),

@@ -22,10 +22,11 @@ from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 # empty pane the reader will mistake for a bug.
 _NO_BODY = "no body captured for this item — re-check this source to fetch it"
 
-# Task 5: opening an item marks it read, and this note sits next to the
-# explicit unread toggle so the reversibility and the *scope* of both actions
-# are stated up front rather than discovered as a bug later. `mark_item_status`
-# (see `SubscriptionsDB`) updates one `subscription_items` row by its own id --
+# Task 5: opening an item marks it read, and this is the explicit unread
+# toggle's tooltip, so the *scope* of both actions is stated (fix round 1:
+# moved off the permanent body -- see the comment at its one call site)
+# rather than discovered as a bug later. `mark_item_status` (see
+# `SubscriptionsDB`) updates one `subscription_items` row by its own id --
 # there is no per-watchlist copy of an item's status -- so this must NOT read
 # as "in this watchlist"; it is the same article everywhere the source it
 # came from is included.
@@ -145,11 +146,16 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
             yield Static("Select an item to read it.", id="content-empty")
             return
         # Task 5: the reader marks an item read on open (see the screen's
-        # `_mark_item_read_on_open`); this button is the deliberate way back,
-        # and the note above it states the scope so it reads as intended
-        # behaviour rather than a bug report waiting to happen.
-        yield Button("Mark unread", id="content-mark-unread-button")
-        yield Static(_GLOBAL_STATUS_NOTE, id="content-status-note")
+        # `_mark_item_read_on_open`); this button is the deliberate way
+        # back. `_GLOBAL_STATUS_NOTE` states the scope on the tooltip
+        # (fix round 1, Important) rather than as a permanent line in the
+        # body: a permanent `Static` here measured 3 of CONTENT's 8 visible
+        # rows (max-height 12, minus the border and heading), leaving the
+        # actual article only 4 of 14 rows -- the note earned its point
+        # once, not on every single line of every item read afterward.
+        yield Button(
+            "Mark unread", id="content-mark-unread-button", tooltip=_GLOBAL_STATUS_NOTE
+        )
         yield Static(render_for(self.item), id="content-body")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

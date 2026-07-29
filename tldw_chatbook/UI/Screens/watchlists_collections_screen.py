@@ -47,7 +47,6 @@ from ..Watchlists_Modules.inspector_pane import (
     IgnoreRequested,
     IngestRequested,
     InspectorPane,
-    MarkReviewedRequested,
     PreviewRequested,
     StageInConsoleRequested,
 )
@@ -2832,14 +2831,29 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         must not clobber that back down to a bare "reviewed". Silent
         (`notify_toast=False`) because this fires on every selection, not on
         a deliberate user request for a status change -- a toast per click
-        would be noise, unlike the explicit `Mark reviewed`/unread actions.
+        would be noise, unlike the explicit unread toggle.
+
+        `refresh=False` + `patch_item=item` (Task 5 fix round 1, CRITICAL):
+        this fires on every single item SELECTION, not just a deliberate
+        button click. `_update_item_status`'s default refresh reloads
+        `ItemsPane.items` and calls `_refresh_overview_data()`, and
+        `overview_data` is `reactive({}, recompose=True)` -- a SCREEN-level
+        recompose, which rebuilds every region via its factory
+        (`_build_list_pane`/`_build_content_pane`/etc.), replacing the live
+        `ItemsPane`/`DataTable` instances wholesale. Proven live: with the
+        default refresh, one item selection detached the old `ItemsPane`,
+        reset the table cursor to 0, cleared screen focus, and a SECOND
+        arrow-key press did nothing at all. `patch_item` mutates the same
+        dict object already held by `ItemsPane.items`/
+        `_selected_content_item`/`ContentPane.item` in place instead, so a
+        later status check sees "reviewed" without forcing a rebuild.
 
         This reuses the exact status column `_update_item_status` already
-        writes for the Inspector's `Mark reviewed` button
-        (`SubscriptionsDB.mark_item_status`, keyed by the item's own row id,
-        not by any (watchlist, item) pair) -- so it is global by
-        construction: the same article read from "All sources" is read in
-        every watchlist whose sources include it.
+        writes for the deliberate item-status actions (Ingest/Ignore, the
+        unread toggle) -- `SubscriptionsDB.mark_item_status`, keyed by the
+        item's own row id, not by any (watchlist, item) pair -- so it is
+        global by construction: the same article read from "All sources" is
+        read in every watchlist whose sources include it.
         """
         if item is None:
             return
@@ -2849,7 +2863,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if item_id is None:
             return
         self.run_worker(
-            self._update_item_status(item_id, "reviewed", notify_toast=False),
+            self._update_item_status(
+                item_id,
+                "reviewed",
+                notify_toast=False,
+                refresh=False,
+                patch_item=item,
+            ),
             exclusive=True,
         )
 
@@ -2955,14 +2975,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         self.set_timer(0.05, open_edit_form)
 
-    @on(MarkReviewedRequested)
-    def handle_mark_reviewed_requested(self, event: MarkReviewedRequested) -> None:
-        event.stop()
-        entity = event.entity
-        if entity is None:
-            return
-        self.run_worker(self._update_item_status(entity.get("id"), "reviewed"), exclusive=True)
-
     @on(IngestRequested)
     def handle_ingest_requested(self, event: IngestRequested) -> None:
         event.stop()
@@ -2980,15 +2992,38 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.run_worker(self._update_item_status(entity.get("id"), "ignored"), exclusive=True)
 
     async def _update_item_status(
-        self, item_id: Any, status: str, *, notify_toast: bool = True
+        self,
+        item_id: Any,
+        status: str,
+        *,
+        notify_toast: bool = True,
+        refresh: bool = True,
+        patch_item: dict[str, Any] | None = None,
     ) -> None:
         """Move one item to `status` through the shared item-status API.
 
         `notify_toast` is False only for the Task 5 auto-mark-read-on-open
-        path -- every other caller (Mark reviewed/Ingest/Ignore, the unread
-        toggle) is a deliberate user action and keeps the toast. Failures are
-        always surfaced regardless, since a silently-broken status write is
-        worse than one extra toast.
+        path -- every other caller (Ingest/Ignore, the unread toggle) is a
+        deliberate user action and keeps the toast. The failure toast is
+        gated on `notify_toast` too (fix round 1, Minor): "Failed to mark
+        item reviewed" for a write the user never asked for reads as an
+        alarming report about nothing they did; the failure is still logged
+        unconditionally via `logger.opt(exception=True).warning` just below,
+        so it is not silent, just not toasted on the automatic path.
+
+        `refresh=False` (fix round 1, CRITICAL) skips the reload of
+        `ItemsPane.items` and `_refresh_overview_data()`. The latter sets
+        `overview_data`, `reactive({}, recompose=True)` on the screen, so
+        calling it after EVERY item selection forced a full screen
+        recompose -- proven live to detach the mounted `ItemsPane`, reset
+        the `DataTable` cursor, and drop keyboard focus, so a second arrow
+        key did nothing. Used only by the silent auto-mark-read-on-open
+        path; every deliberate action (Ingest/Ignore, the unread toggle)
+        keeps refreshing as before. When `refresh` is False and the write
+        succeeds, `patch_item` -- the same dict object already held by
+        `ItemsPane.items`/`_selected_content_item`/`ContentPane.item` -- is
+        mutated in place instead, so a later status check already sees the
+        new value without forcing a rebuild.
         """
         notify = getattr(self.app_instance, "notify", None)
         try:
@@ -2997,15 +3032,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 item_id=item_id,
                 status=status,
             )
+            if patch_item is not None:
+                patch_item["status"] = status
             if notify_toast and callable(notify):
                 label = "unread" if status == "new" else status
                 notify(f"Item marked {label}.", severity="information")
         except Exception:
             logger.opt(exception=True).warning(f"Failed to mark item {status}.")
-            if callable(notify):
+            if notify_toast and callable(notify):
                 notify(f"Failed to mark item {status}.", severity="error")
-        self.run_worker(self._load_items(), exclusive=True)
-        self._refresh_overview_data()
+        if refresh:
+            self.run_worker(self._load_items(), exclusive=True)
+            self._refresh_overview_data()
 
     async def _save_rule(self, payload: dict[str, Any]) -> None:
         notify = getattr(self.app_instance, "notify", None)

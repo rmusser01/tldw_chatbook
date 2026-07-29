@@ -62,14 +62,6 @@ class DeleteRequested(Message):
         super().__init__()
 
 
-class MarkReviewedRequested(Message):
-    """Posted when the user marks a watchlist item as reviewed."""
-
-    def __init__(self, entity: dict[str, Any] | None) -> None:
-        self.entity = entity
-        super().__init__()
-
-
 class IngestRequested(Message):
     """Posted when the user ingests a watchlist item."""
 
@@ -228,7 +220,15 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                 yield Button("Stage in Console", id="inspector-stage-console-button")
                 yield Button("Delete", id="inspector-delete-button", variant="error")
             elif deepest.kind == "item":
-                yield Button("Mark reviewed", id="inspector-mark-reviewed-button", variant="primary")
+                # No "Mark reviewed" button here (Task 5 fix round 1,
+                # Important): `selected_entity` is set by the same
+                # `ItemSelected` that now marks an item read on open
+                # (`WatchlistsCollectionsScreen._mark_item_read_on_open`),
+                # so by the time an item's actions could render here it has
+                # already been marked "reviewed" -- this button was only
+                # ever reachable on an item already at that status, i.e.
+                # dead in practice. Ingest/Ignore are unrelated deliberate
+                # actions and are unaffected.
                 yield Button("Ingest", id="inspector-ingest-button", variant="primary")
                 yield Button("Ignore", id="inspector-ignore-button", variant="error")
             elif deepest.kind == "rule":
@@ -407,8 +407,6 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             self.post_message(StageInConsoleRequested(entity))
         elif button_id == "inspector-delete-button":
             self.post_message(DeleteRequested(entity))
-        elif button_id == "inspector-mark-reviewed-button":
-            self.post_message(MarkReviewedRequested(entity))
         elif button_id == "inspector-ingest-button":
             self.post_message(IngestRequested(entity))
         elif button_id == "inspector-ignore-button":
