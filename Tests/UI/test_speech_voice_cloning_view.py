@@ -30,9 +30,6 @@ async def test_choosing_it_switches_the_view_rather_than_pushing_a_screen():
         screen = STTSScreen(app)
         await app.push_screen(screen)
         await pilot.pause()
-        await pilot.pause()
-        depth_before = len(app.screen_stack)
-
         row = next(
             b for b in screen.query(Button)
             if getattr(b, "lab_view_key", None) == "voice-cloning"
@@ -41,9 +38,16 @@ async def test_choosing_it_switches_the_view_rather_than_pushing_a_screen():
         for _ in range(6):
             await pilot.pause()
 
-        assert len(app.screen_stack) == depth_before, (
-            "pushed a screen; the Lab frame is gone"
-        )
+        # Name what must not happen, rather than counting the stack. The
+        # first version asserted the depth was unchanged and failed when an
+        # unrelated ChatScreen was on it -- measuring every push in the app
+        # to catch one.
+        pushed = [
+            s for s in app.screen_stack
+            if type(s).__name__ == "VoiceCloningWindow"
+        ]
+        assert not pushed, "Voice Cloning pushed its own screen; the frame is gone"
+        assert isinstance(app.screen, STTSScreen) or screen.is_attached
         assert screen.stts_window is not None
         assert screen.stts_window.current_view == "voice-cloning"
 

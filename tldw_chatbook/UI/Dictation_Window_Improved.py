@@ -100,16 +100,24 @@ class ImprovedDictationWindow(Widget):
         margin-bottom: 1;
     }
     
+    /* One line, not a block. Measured on the running screen: this rendered
+       as a padded, bordered, full-background box FOUR rows tall, and there
+       are two of them -- 8 of a 26-row viewport spent on notices, while 30
+       of 34 controls sat below the fold. State is carried by the text and a
+       foreground colour instead. */
     .privacy-notice {
-        background: $warning;
-        padding: 1;
-        margin: 1 0;
-        border: round $warning-darken-1;
+        height: 1;
+        padding: 0;
+        margin: 0;
+        border: none;
+        background: transparent;
+        color: $warning;
     }
-    
+
     .privacy-enabled {
-        background: $success;
-        border: round $success-darken-1;
+        background: transparent;
+        border: none;
+        color: $success;
     }
     
     .error-message {
