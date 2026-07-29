@@ -1197,10 +1197,11 @@ class ModelArtifactService:
                 )
             except ArtifactStateError:
                 current = None
-            if reference is not None and expected is not None and current == expected:
-                preserved_readiness.add(reference)
-            else:
-                invalid_readiness.append(path)
+            if reference is not None and expected is not None:
+                if current == expected:
+                    preserved_readiness.add(reference)
+                continue
+            invalid_readiness.append(path)
         for path in invalid_readiness:
             self._remove_state_path(path, "failed to remove invalid readiness state")
             state_removed += 1
@@ -1209,10 +1210,12 @@ class ModelArtifactService:
                 continue
             path = self.readiness_path(reference)
             if self._state_path_exists(path):
-                self._remove_state_path(
-                    path,
-                    "failed to remove invalid readiness state",
-                )
+                mode = path.stat(follow_symlinks=False).st_mode
+                if stat.S_ISDIR(mode) and not stat.S_ISLNK(mode):
+                    self._remove_state_path(
+                        path,
+                        "failed to remove invalid readiness state",
+                    )
                 state_removed += 1
             self._write_readiness(record)
             readiness_created += 1

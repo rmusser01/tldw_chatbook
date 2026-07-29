@@ -523,6 +523,90 @@ def test_reconcile_rebuilds_valid_readiness_without_creating_active_and_is_idemp
     assert second == service_module.ReconcileReport(0, 0, (), ())
 
 
+@pytest.mark.parametrize("prior_state", ("stale", "malformed", "symlink"))
+def test_reconcile_write_failure_preserves_replaceable_readiness_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    prior_state: str,
+) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+    ready_path = service.readiness_path(root.reference)
+    ready_path.parent.mkdir(parents=True)
+    external = tmp_path / "external-readiness.json"
+    external.write_bytes(b"external-state")
+    if prior_state == "stale":
+        ready_path.write_text(
+            json.dumps(readiness_state(root.reference, (root.reference,))),
+            encoding="utf-8",
+        )
+    elif prior_state == "malformed":
+        ready_path.write_bytes(b"{malformed")
+    else:
+        symlink_or_skip(ready_path, external, target_is_directory=False)
+    prior_bytes = ready_path.read_bytes()
+    prior_link = os.readlink(ready_path) if ready_path.is_symlink() else None
+    original_write = service_module.atomic_write_json
+
+    def fail_readiness_write(path: Path, value: dict[str, object]) -> None:
+        if Path(path) == ready_path:
+            raise OSError("injected replacement failure")
+        original_write(path, value)
+
+    monkeypatch.setattr(service_module, "atomic_write_json", fail_readiness_write)
+
+    with pytest.raises(service_module.ArtifactStateError, match="write"):
+        service.reconcile()
+
+    assert ready_path.read_bytes() == prior_bytes
+    assert ready_path.is_symlink() is (prior_state == "symlink")
+    if prior_link is not None:
+        assert os.readlink(ready_path) == prior_link
+    assert external.read_bytes() == b"external-state"
+
+
+def test_reconcile_atomically_replaces_readiness_symlink_with_consistent_counts(
+    tmp_path: Path,
+) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+    ready_path = service.readiness_path(root.reference)
+    ready_path.parent.mkdir(parents=True)
+    external = tmp_path / "external-readiness.json"
+    external.write_bytes(b"external-state")
+    symlink_or_skip(ready_path, external, target_is_directory=False)
+
+    report = service.reconcile()
+
+    assert report == service_module.ReconcileReport(1, 1, (), ())
+    assert ready_path.is_symlink() is False
+    assert service._read_readiness(root.reference).root == root.reference
+    assert external.read_bytes() == b"external-state"
+
+
+def test_reconcile_may_remove_directory_readiness_before_stable_write_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+    ready_path = service.readiness_path(root.reference)
+    ready_path.mkdir(parents=True)
+    (ready_path / "partial.json").write_bytes(b"partial")
+    payload = service.artifact_path(root.reference) / root.files[0].path
+    payload_bytes = payload.read_bytes()
+    monkeypatch.setattr(
+        service_module,
+        "atomic_write_json",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("injected directory replacement failure")
+        ),
+    )
+
+    with pytest.raises(service_module.ArtifactStateError, match="write"):
+        service.reconcile()
+
+    assert ready_path.exists() is False
+    assert payload.read_bytes() == payload_bytes
+
+
 def test_reconcile_corrupt_dependency_invalidates_state_without_deleting_payload(
     tmp_path: Path,
 ) -> None:
@@ -778,8 +862,7 @@ def test_reconcile_injected_failures_are_stable_and_never_delete_payload(
             ),
         )
     else:
-        ready_path = service.readiness_path(item.reference)
-        ready_path.parent.mkdir(parents=True)
+        ready_path = service._ready_path / "interrupted.tmp"
         ready_path.write_text("{", encoding="utf-8")
         monkeypatch.setattr(
             service,
