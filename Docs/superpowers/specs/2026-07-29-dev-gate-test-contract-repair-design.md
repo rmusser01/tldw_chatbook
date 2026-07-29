@@ -219,6 +219,12 @@ Update the tests to describe current behavior:
     unchanged. The mocked zero-frame test must prove the loader was not called,
     while the separate 10 ms empty-model test retains post-inference
     normalization coverage.
+25. In the Parakeet MLX no-SoundFile regression, patch the imported `sf` runtime
+    object to `None` as well as setting `SOUNDFILE_AVAILABLE` false. The runtime
+    module object is the actual branch input; changing only the flag while
+    SoundFile is installed lets the nonexistent `dummy.wav` case proceed to a
+    real Hugging Face model load. Retain the local `TranscriptionError`
+    assertion and do not alter production dependency probing.
 
 The only planned production behavior change outside an ADR-029 diagnostic
 correction is the three-name synchronization of the existing Library collision
@@ -293,6 +299,9 @@ fail-closed behavior. No compatibility shims. No broad deletion of live tests.
   the empty container before model load is deterministic, avoids needless
   downloads/resources, and returns the same empty transcription contract
   already expected by callers.
+- Treating the availability flag alone as the dependency seam makes the
+  no-SoundFile test host-dependent. Patching the imported module object too
+  exercises the intended branch and prevents an unrelated network download.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

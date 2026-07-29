@@ -1038,6 +1038,38 @@ git add \
 git commit -m "fix(stt): short-circuit empty Parakeet MLX input"
 ```
 
+### Task 4v: Isolate the no-SoundFile Parakeet regression
+
+**Files:**
+- Modify: `Tests/Transcription/test_mlx_parakeet_transcription.py`
+
+- [ ] **Step 1: Reproduce the host-dependent path**
+
+Run `TestMLXParakeetUnit::test_soundfile_not_available` with SoundFile and
+Parakeet MLX installed. Expected: patching only `SOUNDFILE_AVAILABLE` leaves
+the imported `sf` module live, so the nonexistent `dummy.wav` path bypasses the
+intended guard and attempts a real Hugging Face model load.
+
+- [ ] **Step 2: Patch the complete live dependency seam**
+
+Patch `tldw_chatbook.Local_Ingestion.transcription_service.sf` to `None` in
+the existing test alongside the false availability flag. Retain the
+`TranscriptionError` assertion. Do not modify production or contact the
+network.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Transcription/test_mlx_parakeet_transcription.py::TestMLXParakeetUnit::test_soundfile_not_available -q
+../../.venv/bin/python -m ruff check \
+  Tests/Transcription/test_mlx_parakeet_transcription.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/Transcription/test_mlx_parakeet_transcription.py
+git add Tests/Transcription/test_mlx_parakeet_transcription.py
+git commit -m "test(stt): isolate missing SoundFile path"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
