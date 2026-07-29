@@ -257,7 +257,7 @@ class TestMLXParakeetEdgeCases:
                 )
 
                 assert result["text"] == ""
-                assert len(result["segments"]) == 1
+                assert len(result["segments"]) == 0
 
             # Test very long audio (1 hour)
             with patch(

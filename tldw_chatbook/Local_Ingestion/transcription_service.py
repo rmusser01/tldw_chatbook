@@ -2836,9 +2836,8 @@ class _LegacyTranscriptionBackend:
                     }
                     segments.append(segment_dict)
             else:
-                # No sentence-level timing, create a single segment for any model result.
-                # This preserves short/empty audio as an addressable transcription span.
-                if text or audio_duration is not None:
+                # No sentence-level timing; synthesize a segment only for nonempty text.
+                if text:
                     segment_end = (
                         float(audio_duration)
                         if isinstance(audio_duration, (int, float))
