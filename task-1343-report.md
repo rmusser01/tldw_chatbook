@@ -222,3 +222,138 @@ against a pre-mutation copy and confirmed byte-identical before continuing.
 Mutation 6 is worth reading as the production consequence, not just a red test: the run's status
 became `failed` and every item it had collected was dropped. That is why the vocabulary is named
 constants imported from the module that owns the rule.
+
+---
+
+# Fix round 1
+
+All five points addressed. Baseline before this round: `ff4c10c50`.
+
+## 1. Important — the header filter deleted real change lines (fixed)
+
+Confirmed and reproduced exactly as reported. `line.startswith(("---", "+++"))` cannot distinguish
+a file header from content, because a **removed** segment beginning `--` becomes `---…` and an
+**added** one beginning `++` becomes `+++…`. A page dropping a literal `--- Deprecated notice`
+banner therefore persisted a change whose body showed nothing removed and whose headline read
+`0 line(s) added, 0 removed`. The reviewer is right that this is the worst class of the five: the
+stored record misrepresented the change, and nothing downstream could tell.
+
+Now dropped **positionally**: `_HEADER_LINES = 2`, applied as `emitted[_HEADER_LINES:]` on the
+materialized generator. `difflib.unified_diff` yields `--- <fromfile>` and `+++ <tofile>` together
+immediately before the first hunk, or yields nothing at all, so they are always exactly positions 0
+and 1 — there is no case where slicing removes content or leaves a header behind.
+
+`test_a_removed_line_that_looks_like_a_diff_header_is_not_deleted` covers both halves (a `--`
+removal and a `++` addition), asserts the summary counts are right (`0 added, 1 removed` /
+`1 added, 0 removed`), and asserts the body still starts at a `@@` hunk so the real headers are
+genuinely gone.
+
+## 2. Important — the truncation notice was unreachable (fixed)
+
+Correct, and a good catch: as line 401 of 401 in a pane about nine rows tall, the notice existed
+only for someone who scrolled a diff they did not know had been cut. **Both** remedies applied:
+
+* the notice is now `kept.insert(0, …)` — the **first** line of the body;
+* `diff_summary` gains `" (diff truncated)"`, so it appears in `render_change`'s headline, which
+  needs no scrolling at all.
+
+The `[`-prefix is unchanged. The test now asserts `"diff truncated" in lines[0]`, that line 0 is
+not `+`/`-` prefixed, that the stored `diff_summary` ends with `(diff truncated)`, and — through
+the real renderer — that the word "truncated" appears within the **first four rendered rows**.
+
+## 3. Important — rule scope: page-scoped behaviour preserved (fixed)
+
+Confirmed: `_apply_filters_and_alerts` runs before persistence on the raw item, and both services
+built their haystack from `item["content"]`, so this branch had silently narrowed every site rule
+from "matches anywhere on the page" to "matches a changed segment plus one line of `n=1` context".
+Shipping that as a side effect would have looked, to a user, like an alert that had worked for
+months just stopping.
+
+Fixed by separating the two concerns rather than choosing between them. `URLMonitor.check_url` now
+also carries the full page text as `rule_match_text`, and a new module
+`tldw_chatbook/Subscriptions/watchlist_rule_matching.py` owns the single haystack builder that
+**both** services now call:
+
+* the body used for matching is `rule_match_text` when present, else `content` (feed and API items
+  never set it — their `content` *is* the captured body, so nothing changes for them);
+* it **replaces** `content` rather than being appended to it. Appending would have introduced the
+  mirror-image bug: text that the change *removed* is in the diff but is no longer on the page, and
+  it must not start matching. A test pins that (`"opus 4.1" not in haystack`);
+* `rule_match_text` is deliberately **not** a persisted column — a test asserts it is absent from
+  `subscription_items` — because that would put a second copy of every page back in the item row
+  and undo the point of storing a diff. The full text is already durable in `url_snapshots`.
+
+The two services previously each held their own copy of the same key tuple, which is precisely how
+this drifted; the shared module removes that. Three tests cover it: an alert on unchanged page text
+still firing (with an explicit precondition that the phrase is *absent* from the stored diff, so it
+cannot pass via the context line), an **exclude** filter on unchanged page text still excluding
+(the destructive half — a narrowed filter admits items the user told the app to drop), and the
+helper in isolation.
+
+**My position, asked for explicitly.** Page-scoped is right as the default and I would not change
+it. For *filters* it is not even a close call: include/exclude classifies the item, a site item
+represents the page, and a narrowed exclude filter silently admits content. For *content alerts*
+there is a real argument that "tell me when this phrase appears" is the more useful semantic — but
+that is `changed_to`/`appeared` semantics, which needs to be a **per-rule opt-in with its own UI
+affordance** (and probably a distinction between "appeared" and "disappeared", both of which the
+diff can support and neither of which a keyword match expresses). It is a feature, not a default,
+and it should not arrive as a consequence of a storage change. Worth filing; not worth shipping
+silently.
+
+While writing these tests I hit a related detail worth recording: a *small* edit to a *long* page
+does not clear the default `change_threshold` of 0.1 at all — `calculate_change_percentage` is
+character-level over the whole page, so the filler text alone suppressed the item. The helper now
+takes an explicit `change_threshold`, and it is a reminder that the threshold is a whole-page
+similarity measure, not a per-region one.
+
+## 4. Minor — `_segment_for_diff` docstring (fixed)
+
+It cited `extraction_method` (full/auto), which the function never reads. It now describes the
+actual condition — whether the text already contains newlines — and notes that the extraction
+method is a *consequence* of that, not the switch. The module comment above `_SENTENCE_BOUNDARY`
+was corrected the same way.
+
+## 5. Minor — mutation table row 9 was wrong (corrected)
+
+Row 9 said "1 failed". Re-run on the full file: **3 failed**
+(`test_a_feed_item_is_stored_as_an_article_with_a_legal_format`,
+`test_no_producer_emits_a_pairing_persistence_would_reject`,
+`test_every_content_kind_literal_in_the_package_is_from_the_vocabulary`). The round-1 number came
+from a run I had narrowed with `-k "vocabulary"`, which deselected the other eleven tests — the
+number was real for that command and useless as a table row. All mutation runs in this round were
+made on the **whole file** with no `-k`, so every row is reproducible as written.
+
+## Round-1 verification
+
+```
+Tests/Subscriptions/ + Tests/Scheduling/   339 passed  (17 in the new file, up from 12)
+Tests/Watchlists/                          189 passed
+Tests/DB/ -k subscription                   47 passed, 563 deselected
+Tests/UI/ -k watchlist                     232 passed, 3 failed  (the same three as before)
+```
+
+The three `Tests/UI` failures are unchanged in identity and count from the pre-round-1 run: two
+tree-chevron assertions in `test_destination_visual_parity_correction.py` and the order-dependent
+`Select`/`Input` mount race in `test_watchlists_source_create_form.py` (TASK-1345).
+
+### Round-1 mutation outcomes
+
+| Mutation | Result |
+|---|---|
+| A — restore the pattern-match header filter | **1 failed** (`test_a_removed_line_that_looks_like_a_diff_header_is_not_deleted`) |
+| B — truncation notice back to last line, no summary suffix | **1 failed** (`test_an_oversized_change_is_truncated_and_says_so`) |
+| C — haystack body back to `content` (the diff) | **3 failed** (both rule-scope tests + the helper test) |
+| D — filter service drifts back to its own local haystack | **1 failed** (the exclude-filter test) |
+| 9 (re-run, whole file) — typo `"articl"` literal | **3 failed**, correcting the round-1 table |
+
+Each source file was restored from a pre-mutation copy and `diff`-verified byte-identical before
+the next mutation.
+
+### Files changed in this round
+
+* `tldw_chatbook/Subscriptions/monitoring_engine.py` — positional header slice, notice-first +
+  summary suffix, docstring/comment corrections, `rule_match_text` on the change item.
+* `tldw_chatbook/Subscriptions/watchlist_rule_matching.py` — **new**, the shared haystack.
+* `tldw_chatbook/Subscriptions/watchlist_filter_service.py`,
+  `watchlist_content_alert_service.py` — both call the shared haystack.
+* `Tests/Subscriptions/test_watchlist_content_kind_producer.py` — 12 → 17 tests.

@@ -50,6 +50,7 @@ from .item_persist import (
     CONTENT_KIND_ARTICLE,
     CONTENT_KIND_CHANGE,
 )
+from .watchlist_rule_matching import RULE_MATCH_TEXT_KEY
 from ..Utils.egress import (
     EgressBlockedError,
     EgressFetchError,
@@ -255,17 +256,31 @@ class ContentExtractor:
 # `---`/`+++` file headers `difflib.unified_diff` emits first are dropped
 # deliberately -- they begin with `-` and `+`, so the renderer would paint them
 # red and green as if the header itself were part of the change.
+#
+# They are dropped POSITIONALLY (see `_HEADER_LINES`), never by pattern. Fix
+# round 1, Important #1: filtering `line.startswith(("---", "+++"))` also
+# deletes real content, because a removed segment beginning `--` becomes
+# `---...` and an added one beginning `++` becomes `+++...`. A page dropping a
+# literal `--- Deprecated notice ---` banner produced a persisted change whose
+# body showed nothing removed and whose headline said "0 line(s) added, 0
+# removed": the stored record misrepresented the change, which is worse than a
+# rendering glitch.
 _DIFF_CONTEXT_SEGMENTS = 1
+
+# `difflib.unified_diff` yields `--- <fromfile>` and `+++ <tofile>` together,
+# immediately before the first hunk, or yields nothing at all -- so when there
+# is any output at all they are exactly positions 0 and 1.
+_HEADER_LINES = 2
 
 # `ContentExtractor.extract_text_from_html` joins every chunk of a page with a
 # single space, so the extracted text of a whole page is ONE line containing no
 # newlines at all. A line-based diff of two such snapshots is therefore always
 # exactly `-<the entire old page>` / `+<the entire new page>`: the full text
 # twice, which is simultaneously the least readable and the largest possible
-# thing to store. Both sides are re-segmented before diffing -- on real line
-# breaks when the text has any (`extraction_method` other than full/auto),
-# otherwise on sentence boundaries, which stay aligned under a local edit in a
-# way fixed-width chunking does not.
+# thing to store. Both sides are re-segmented before diffing -- see
+# `_segment_for_diff`, which splits on real line breaks when the text has any
+# and on sentence boundaries when it does not (sentences stay aligned under a
+# local edit in a way fixed-width chunking does not).
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
 
 # A segment longer than this is wrapped at word boundaries, so no single diff
@@ -286,11 +301,18 @@ _MAX_DIFF_CHARS = 20_000
 
 # Both notices are worded to start with `[` rather than `+`/`-`, so the
 # renderer does not colour them as though they were themselves a change.
+#
+# The truncation notice goes FIRST, not last (fix round 1, Important #2): as
+# the 401st line of 401 in a pane about nine rows tall it was unreachable
+# exactly when it mattered, so a reader saw the head of a cut-down diff with
+# nothing to say it had been cut. `_DIFF_TRUNCATION_SUMMARY_SUFFIX` puts it in
+# the headline too, which is on screen without any scrolling at all.
 _DIFF_TRUNCATION_NOTICE = (
     "[diff truncated: showing the first {kept} of {total} diff lines "
     "(cap {max_lines} lines / {max_chars} characters). This is a partial "
     "view of the change; the full page is in this source's snapshot history.]"
 )
+_DIFF_TRUNCATION_SUMMARY_SUFFIX = " (diff truncated)"
 _NO_TEXTUAL_CHANGE_NOTICE = (
     "[the page changed, but its extracted text is identical once whitespace "
     "is normalized -- the difference was in markup or spacing only]"
@@ -299,6 +321,18 @@ _NO_TEXTUAL_CHANGE_NOTICE = (
 
 def _segment_for_diff(text: str) -> List[str]:
     """Split one side of a comparison into diffable, pane-width segments.
+
+    Splits on real line breaks when ``text`` contains any, and on sentence
+    boundaries when it does not -- which is the case for a whole page captured
+    through ``extract_text_from_html``, since that collapses everything onto
+    one line. Segments longer than ``_MAX_DIFF_SEGMENT_CHARS`` are then wrapped
+    at word boundaries, and blank segments are dropped.
+
+    (Fix round 1, Minor #4: this used to be described in terms of the
+    subscription's ``extraction_method``, which it never reads -- the only
+    switch is whether the text already has newlines in it. A raw-extraction
+    page usually does and a text-extracted one never does, but that is a
+    consequence, not the condition.)
 
     Args:
         text: Extracted page text, which may be a single very long line.
@@ -338,21 +372,23 @@ def build_change_diff(previous_text: str, current_text: str) -> tuple[str, str]:
         body whose changed lines start with ``+``/``-`` for
         ``content_pane.render_change`` to colour; ``diff_summary`` is a single
         line naming how many lines were added and removed, counted over the
-        *whole* diff so it stays true even when the body is truncated.
+        *whole* diff so it stays true even when the body is truncated, and
+        saying so when it was.
     """
     old_segments = _segment_for_diff(previous_text)
     new_segments = _segment_for_diff(current_text)
-    lines = [
-        line
-        for line in unified_diff(
+    emitted = list(
+        unified_diff(
             old_segments,
             new_segments,
             n=_DIFF_CONTEXT_SEGMENTS,
             lineterm="",
         )
-        # See `_DIFF_CONTEXT_SEGMENTS`: the file headers would be coloured.
-        if not line.startswith(("---", "+++"))
-    ]
+    )
+    # Drop the two file headers by POSITION, never by pattern -- see
+    # `_HEADER_LINES` and `_DIFF_CONTEXT_SEGMENTS` for what a pattern match
+    # deletes along with them.
+    lines = emitted[_HEADER_LINES:]
     if not lines:
         # Reachable: the content hash is taken over the raw extracted text,
         # while segmentation trims and normalizes whitespace, so a
@@ -374,14 +410,18 @@ def build_change_diff(previous_text: str, current_text: str) -> tuple[str, str]:
         kept.append(line)
         chars += len(line) + 1
     if len(kept) < len(lines):
-        kept.append(
+        # First line, not last -- see `_DIFF_TRUNCATION_NOTICE`. And in the
+        # headline as well, which needs no scrolling to reach.
+        kept.insert(
+            0,
             _DIFF_TRUNCATION_NOTICE.format(
                 kept=len(kept),
                 total=len(lines),
                 max_lines=_MAX_DIFF_LINES,
                 max_chars=_MAX_DIFF_CHARS,
-            )
+            ),
         )
+        summary += _DIFF_TRUNCATION_SUMMARY_SUFFIX
     return "\n".join(kept), summary
 
 
@@ -985,6 +1025,16 @@ class URLMonitor:
                 ),
                 "diff_summary": diff_summary,
                 "published_date": datetime.now(timezone.utc).isoformat(),
+                # Filters and content-alert rules are evaluated on the raw
+                # fetched item, BEFORE persistence, and their haystack was
+                # built from `content`. With `content` now a diff, a rule that
+                # had matched a phrase anywhere on the page would silently have
+                # narrowed to "matches a changed segment" -- a user's alert
+                # quietly stopping after months, with nothing on screen to
+                # explain it. So the full page text travels alongside the diff
+                # for matching only; it is not a persisted column (see
+                # `watchlist_rule_matching`).
+                RULE_MATCH_TEXT_KEY: current_content["text"],
             }
 
             # Store new snapshot

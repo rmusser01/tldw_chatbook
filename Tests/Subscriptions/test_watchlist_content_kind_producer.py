@@ -17,6 +17,7 @@ renderer thoroughly and every one of its fixtures sets `content_kind` itself.
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -129,18 +130,27 @@ _RSS = """<?xml version="1.0" encoding="utf-8"?>
 </channel></rss>"""
 
 
-async def _site_source(tmp_path, monkeypatch, pages: list[str]):
-    """A real `url` source, its DB and service, with `pages` served in order."""
+async def _site_source(
+    tmp_path, monkeypatch, pages: list[str], *, change_threshold: float | None = None
+):
+    """A real `url` source, its DB and service, with `pages` served in order.
+
+    `change_threshold` defaults to the DB's own 0.1 (a 10% character-level
+    difference). Pass 0.0 when the point of the test is a *small* edit to a long
+    page, which is otherwise discarded by `check_url` before it ever produces an
+    item -- as happened while writing the rule-scope tests below.
+    """
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
     _serve(monkeypatch, pages)
-    source = await service.create_source(
-        {
-            "name": "Anthropic status",
-            "url": "https://example.com/page",
-            "source_type": "site",
-        }
-    )
+    payload = {
+        "name": "Anthropic status",
+        "url": "https://example.com/page",
+        "source_type": "site",
+    }
+    if change_threshold is not None:
+        payload["change_threshold"] = change_threshold
+    source = await service.create_source(payload)
     return db, service, int(source["source_id"])
 
 
@@ -418,6 +428,11 @@ async def test_an_oversized_change_is_truncated_and_says_so(tmp_path, monkeypatc
     The bound must hold, and the body must SAY it was cut -- a silently
     partial diff is a change presented as complete. The summary counts the
     whole diff, not the retained slice, so the headline stays true.
+
+    Fix round 1, Important #2: the notice must be the FIRST line, and must also
+    reach `diff_summary`. As line 401 of 401, in a pane about nine rows tall, it
+    was unreachable in exactly the case it exists for -- the reader saw the head
+    of a cut-down diff with nothing at all to say it had been cut.
     """
     from tldw_chatbook.Subscriptions.monitoring_engine import (
         _MAX_DIFF_CHARS,
@@ -433,18 +448,25 @@ async def test_an_oversized_change_is_truncated_and_says_so(tmp_path, monkeypatc
 
     assert "diff truncated" in body, "truncation must be stated in the content"
     assert "partial view" in body
-    # The notice is appended after the cap, so it is the one line allowed past
-    # it -- and it must not itself be coloured as a change.
+    # First line, where nine visible rows can actually reach it -- and not
+    # coloured as though the notice were itself a change.
+    assert "diff truncated" in lines[0], (
+        "the notice must lead the body, not sit past the end of a 400-line diff"
+    )
+    assert not lines[0].startswith(("+", "-"))
+    # It is the one line allowed past the cap.
     assert len(lines) <= _MAX_DIFF_LINES + 1
-    assert not lines[-1].startswith(("+", "-"))
-    assert len(body) <= _MAX_DIFF_CHARS + len(lines[-1]) + 1
+    assert len(body) <= _MAX_DIFF_CHARS + len(lines[0]) + 1
 
     # 900 removals and 900 additions really were produced; the summary must
-    # report those, not the ~400 lines that fit inside the cap.
-    assert summary == "900 line(s) added, 900 removed", summary
+    # report those, not the ~400 lines that fit inside the cap -- and it must
+    # say it was truncated, because the headline needs no scrolling at all.
+    assert summary == "900 line(s) added, 900 removed (diff truncated)", summary
     assert f"{len(lines)} line" not in summary
 
-    # And the same bound holds on the live path, not just in this helper.
+    # And the same bound holds on the live path, not just in this helper. The
+    # truncation must be visible to a reader who never scrolls: the summary is
+    # in `render_change`'s headline.
     db, service, source_id = await _site_source(
         tmp_path,
         monkeypatch,
@@ -453,9 +475,59 @@ async def test_an_oversized_change_is_truncated_and_says_so(tmp_path, monkeypatc
     )
     await _check(service, source_id)
     await _check(service, source_id)
-    stored = _stored_items(db, source_id)[0]["content"]
-    assert "diff truncated" in stored
+    item = _stored_items(db, source_id)[0]
+    stored = item["content"]
+    assert "diff truncated" in stored.splitlines()[0]
     assert len(stored.splitlines()) <= _MAX_DIFF_LINES + 1
+    assert item["diff_summary"].endswith("(diff truncated)")
+
+    plain, _ansi = _rendered(item)
+    head = "\n".join(plain.splitlines()[:4])
+    assert "truncated" in head, (
+        "a reader who never scrolls must still be told the diff was cut"
+    )
+
+
+def test_a_removed_line_that_looks_like_a_diff_header_is_not_deleted():
+    """Fix round 1, Important #1. The header filter ate real content.
+
+    The first implementation dropped any line matching `("---", "+++")`. A
+    REMOVED segment beginning `--` becomes `---...` and an ADDED one beginning
+    `++` becomes `+++...`, so a page dropping a literal `--- Deprecated notice`
+    banner produced a persisted change whose body showed nothing removed and
+    whose headline read "0 line(s) added, 0 removed". The stored record
+    misrepresented the change -- worse than a rendering glitch.
+
+    The headers are dropped by position instead: `unified_diff` yields both of
+    them together before the first hunk, or yields nothing at all.
+    """
+    from tldw_chatbook.Subscriptions.monitoring_engine import build_change_diff
+
+    # The exact case from the review.
+    body, summary = build_change_diff(
+        "Alpha stays. --- Deprecated notice text. Gamma end.",
+        "Alpha stays. Gamma end.",
+    )
+    assert any(
+        line.startswith("-") and "Deprecated notice text." in line
+        for line in body.splitlines()
+    ), f"the removed banner line was deleted as if it were a header: {body!r}"
+    assert summary == "0 line(s) added, 1 removed", summary
+    assert body.splitlines()[0].startswith("@@"), (
+        "the real file headers must still be gone -- the body starts at a hunk"
+    )
+
+    # And the `+++` half: an ADDED segment starting `++`.
+    body, summary = build_change_diff(
+        "Alpha stays. Gamma end.",
+        "Alpha stays. ++ Added banner text. Gamma end.",
+    )
+    assert any(
+        line.startswith("+") and "Added banner text." in line
+        for line in body.splitlines()
+    ), f"the added banner line was deleted as if it were a header: {body!r}"
+    assert summary == "1 line(s) added, 0 removed", summary
+    assert body.splitlines()[0].startswith("@@")
 
 
 @pytest.mark.asyncio
@@ -531,6 +603,153 @@ def test_the_diff_is_readable_in_a_narrow_pane():
     # The unified-diff file headers would be painted red and green by
     # `render_change` as though the header were the change.
     assert not any(line.startswith(("---", "+++")) for line in lines)
+
+
+# --- rules must still see the page, not the diff ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_site_alert_still_fires_on_text_the_change_did_not_touch(
+    tmp_path, monkeypatch
+):
+    """Fix round 1, Important #3. An undeclared narrowing of every site rule.
+
+    `WatchlistFilterService` and `WatchlistContentAlertService` build their
+    haystack from `item["content"]`, and `_apply_filters_and_alerts` runs
+    BEFORE persistence. So making `content` a diff silently narrowed every
+    site rule from "matches anywhere on the page" to "matches a changed segment
+    plus one line of context" -- a user's alert that had been firing for months
+    would just stop, with nothing on screen to explain it.
+
+    The phrase here ("All systems operational") sits in the UNCHANGED part of
+    the page and appears nowhere in the diff except as context; the assertion
+    below is deliberately stronger than that, checking the phrase really is
+    absent from the diff body, so the test cannot pass by accident through the
+    one line of context `n=1` happens to include.
+    """
+    db, service, source_id = await _site_source(
+        tmp_path,
+        monkeypatch,
+        # The unchanged sentence is moved far enough from the change that `n=1`
+        # context cannot reach it.
+        [
+            "<html><body><p>All systems operational.</p>"
+            "<p>Filler one. Filler two. Filler three.</p>"
+            "<p>Latest release: Opus 4.1 is available.</p></body></html>",
+            "<html><body><p>All systems operational.</p>"
+            "<p>Filler one. Filler two. Filler three.</p>"
+            "<p>Latest release: Opus 4.5 is available.</p></body></html>",
+        ],
+        change_threshold=0.0,
+    )
+    db.add_filter(
+        name="Status alert",
+        conditions={"type": "keyword", "pattern": "all systems operational"},
+        action="notify",
+        action_params={"severity": "warning"},
+        subscription_id=source_id,
+    )
+
+    await _check(service, source_id)
+    await _check(service, source_id)
+
+    item = _stored_items(db, source_id)[0]
+    assert "All systems operational" not in item["content"], (
+        "the precondition: the phrase is NOT in the stored diff, so a "
+        "diff-scoped haystack genuinely cannot match it"
+    )
+    assert item["alert_matches"] is not None, (
+        "a rule matching unchanged page text must still fire"
+    )
+    matches = json.loads(item["alert_matches"])
+    assert [match["rule_name"] for match in matches] == ["Status alert"]
+
+
+@pytest.mark.asyncio
+async def test_an_exclude_filter_on_unchanged_page_text_still_excludes(
+    tmp_path, monkeypatch
+):
+    """The same narrowing, on the other service.
+
+    A filter is the destructive half: narrowing it does not merely fail to
+    notify, it lets through items the user had told the app to drop.
+    """
+    db, service, source_id = await _site_source(
+        tmp_path,
+        monkeypatch,
+        [
+            "<html><body><p>Sponsored placement.</p>"
+            "<p>Filler one. Filler two. Filler three.</p>"
+            "<p>Latest release: Opus 4.1 is available.</p></body></html>",
+            "<html><body><p>Sponsored placement.</p>"
+            "<p>Filler one. Filler two. Filler three.</p>"
+            "<p>Latest release: Opus 4.5 is available.</p></body></html>",
+        ],
+        change_threshold=0.0,
+    )
+    db.add_filter(
+        name="Drop sponsored",
+        conditions={"type": "keyword", "pattern": "sponsored placement"},
+        action="exclude",
+        subscription_id=source_id,
+    )
+
+    await _check(service, source_id)
+    completed = await _check(service, source_id)
+
+    assert completed["stats"]["items_found"] == 1, "the change really was detected"
+    assert completed["stats"]["items_ingested"] == 0, (
+        "an exclude filter matching unchanged page text must still exclude"
+    )
+    assert _stored_items(db, source_id) == []
+
+
+def test_the_rule_haystack_is_the_page_when_content_is_a_diff():
+    """The shared helper, isolated -- and the drift guard.
+
+    Both services now build their haystack here, so a future edit to one cannot
+    silently diverge from the other. The full text REPLACES `content` rather
+    than being appended to it: a phrase that exists only in the text the change
+    removed must not start matching, which is the mirror-image regression.
+    """
+    from tldw_chatbook.Subscriptions.watchlist_rule_matching import (
+        RULE_MATCH_TEXT_KEY,
+        build_rule_haystack,
+    )
+
+    haystack = build_rule_haystack({
+        "title": "Change detected: Status",
+        "content": "@@ -1,2 +1,2 @@\n-Opus 4.1 available\n+Opus 4.5 available",
+        RULE_MATCH_TEXT_KEY: "All systems operational. Opus 4.5 available.",
+        "author": None,
+    })
+
+    assert "all systems operational" in haystack
+    assert "change detected: status" in haystack
+    assert "opus 4.1" not in haystack, (
+        "removed text must not become matchable -- it is not on the page"
+    )
+
+    # Feed and API items set no `rule_match_text`; `content` IS their body.
+    assert "the model is available" in build_rule_haystack(
+        {"title": "Opus 4.5", "content": "The model is available in the API today."}
+    )
+
+
+def test_the_rule_match_text_is_not_persisted_as_a_column(tmp_path):
+    """It is a matching-time field, not a second copy of every page in the DB.
+
+    The full text is already durable in `url_snapshots`; storing it on the item
+    row as well would undo the whole point of storing a diff.
+    """
+    from tldw_chatbook.Subscriptions.watchlist_rule_matching import RULE_MATCH_TEXT_KEY
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    columns = {
+        row[1] for row in db.conn.execute("PRAGMA table_info(subscription_items)")
+    }
+    assert "content_kind" in columns, "the table must have been introspected"
+    assert RULE_MATCH_TEXT_KEY not in columns
 
 
 # --- no path may emit an invalid pairing -----------------------------------
