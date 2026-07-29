@@ -46,6 +46,12 @@ _TOKEN_FIELDS = frozenset(
         "decision",
         "phase",
         "transport",
+        # TASK-1240. Names the subsystem an operational event came from
+        # (`scheduling`, `app`, `logging`). Code-side identifiers only, held to
+        # the same token regex as every other field here. Chosen to match the
+        # label vocabulary in Metrics/metrics_logger.py rather than inventing a
+        # second dialect for the same idea.
+        "component",
     }
 )
 _INTEGER_FIELDS = frozenset(
@@ -162,6 +168,43 @@ def log_persistent_metadata(
     )
 
 
+def persist_event(
+    component: str,
+    event: str,
+    *,
+    level: int = logging.INFO,
+    **fields: Any,
+) -> None:
+    """Record one operational event in the persistent log.
+
+    Uses stdlib logging deliberately. The persistent marker does not survive
+    `Logging_Config._forward_loguru_to_standard`, which rebuilds `extra` from
+    scratch -- and it must not: if the marker crossed that boundary, any code
+    could write `logger.bind(_tldw_metadata_only_record=True).info(secret)` and
+    bypass this module's schema entirely.
+
+    Since the rest of the codebase uses `from loguru import logger`, reaching for
+    the usual idiom at a persist site would silently write nothing. This wrapper
+    exists so no call site has to know that.
+
+    The logger is namespaced `tldw_chatbook.diagnostics.*` rather than the
+    caller's module: naming it after the module would interleave persisted
+    events with that module's descriptive records and expose them to any
+    per-logger level configuration aimed at it. The prefix still satisfies
+    `_is_chatbook_record`.
+    """
+
+    if "component" in fields:
+        raise TypeError("component is passed positionally, not as a field")
+    log_persistent_metadata(
+        logging.getLogger(f"tldw_chatbook.diagnostics.{component}"),
+        level,
+        event,
+        component=component,
+        **fields,
+    )
+
+
 class PersistentDiagnosticFilter(logging.Filter):
     """Admit only metadata-only Chatbook records to a persistent handler."""
 
@@ -177,5 +220,6 @@ class PersistentDiagnosticFilter(logging.Filter):
 __all__ = [
     "PersistentDiagnosticFilter",
     "log_persistent_metadata",
+    "persist_event",
     "safe_metadata_token",
 ]
