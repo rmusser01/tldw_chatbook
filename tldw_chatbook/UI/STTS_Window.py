@@ -1236,6 +1236,10 @@ class STTSWindow(Container):
             content_container.mount(SpeechSettingsPane(id="speech-settings-pane"))
         elif new_view == "audiobook":
             content_container.mount(AudioBookGenerationWidget())
+        elif new_view == "voice-cloning":
+            from tldw_chatbook.UI.Voice_Cloning_Window import VoiceCloningWindow
+
+            content_container.mount(VoiceCloningWindow())
         elif new_view == "effects":
             content_container.mount(SpeechEffectsPane(id="speech-effects-pane"))
         elif new_view == "dictation":
