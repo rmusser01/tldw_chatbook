@@ -867,6 +867,44 @@ git add Tests/TTS/test_profile_backup_integration.py
 git commit -m "test(backup): target secure manifest staging"
 ```
 
+### Task 4r: Inject backup sources through canonical resolvers
+
+**Files:**
+- Modify: `Tests/TTS/test_profile_backup_integration.py`
+
+- [ ] **Step 1: Reproduce RED and confirm resolver ownership**
+
+Run the full profile-backup integration module. Expected: the success manifest
+contains only Prompts plus TTS Profiles and both partial-failure manifests
+contain only Prompts. Confirm `_get_database_path()` intentionally ignores
+`db_config` and reads ChaChaNotes and Media resolvers from the window's
+`_DB_PATH_RESOLVERS` map. Confirm `_backup_worker` resolves Prompts directly
+through the imported `get_prompts_db_path` symbol, so the existing module patch
+is effective and must remain.
+
+- [ ] **Step 2: Inject isolated sources through the live seam**
+
+In both backup setup helpers, install instance-level resolver maps that retain
+the production map but replace ChaChaNotes and Media with callables returning
+the fixture's temporary databases. Retain the direct module-level Prompts
+resolver patch. Preserve real copying, profile backup, manifest contents,
+partial-failure behavior, and path/privacy assertions. Do not make production
+consult `db_config` again, route Prompts through a different production seam,
+or patch canonical config globally.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/TTS/test_profile_backup_integration.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/TTS/test_profile_backup_integration.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/TTS/test_profile_backup_integration.py
+git add Tests/TTS/test_profile_backup_integration.py
+git commit -m "test(backup): inject canonical source resolvers"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

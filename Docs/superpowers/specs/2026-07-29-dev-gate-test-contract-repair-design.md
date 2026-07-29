@@ -186,6 +186,14 @@ Update the tests to describe current behavior:
     narrow the replace-failure privacy assertion to the injected private
     manifest value rather than the entire test root, whose isolated config path
     is legitimately logged.
+21. In both profile-backup setup helpers, install the temporary ChaChaNotes and
+    Media database resolvers through the window's live `_DB_PATH_RESOLVERS`
+    map, while retaining the existing module-level `get_prompts_db_path` patch
+    because `_backup_worker` calls that symbol directly. Production
+    deliberately ignores `db_config` in `_get_database_path`; do not restore
+    that retired seam or pretend Prompts is routed through the map. Keep the
+    real resolver dispatch, copying, manifest-entry, success, and partial
+    profile-failure coverage.
 
 The only planned production behavior change outside an ADR-029 diagnostic
 correction is the three-name synchronization of the existing Library collision
@@ -242,6 +250,11 @@ fail-closed behavior. No compatibility shims. No broad deletion of live tests.
   serialization would bypass the secure exclusive-create helper. Wrapping that
   helper and injecting failures only after it succeeds preserves the intended
   concurrency and cleanup coverage under the current implementation.
+- Putting temporary paths back into `config_data` cannot drive ChaChaNotes or
+  Media backup resolution because canonical resolvers now own that boundary.
+  Overriding those two entries on the fixture window's resolver map while
+  retaining the direct Prompts patch uses the current seams and keeps host
+  databases out of the test without changing production.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
