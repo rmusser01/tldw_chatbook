@@ -836,6 +836,8 @@ class LeasedArtifactHandle:
     def __enter__(self) -> LeasedArtifactHandle:
         """Return this already acquired handle without reacquiring leases."""
 
+        if self._lease_set is None:
+            raise ArtifactStateError("leased artifact handle is closed")
         return self
 
     def __exit__(
@@ -970,6 +972,7 @@ class ModelArtifactService:
         if type(root_reference) is not ArtifactRef:
             raise TypeError("root_reference must be an ArtifactRef")
         try:
+            self._assert_managed_path(self._locks_path)
             with ArtifactOperationLease(
                 self._locks_path,
                 _LIFECYCLE_LEASE_KEY,
@@ -978,6 +981,7 @@ class ModelArtifactService:
             ):
                 closure = self._resolve_closure(root_reference)
                 keys = tuple(reference.lease_key() for reference in closure)
+                self._assert_managed_path(self._locks_path)
                 with ArtifactOperationLeaseSet(
                     self._locks_path,
                     keys,
@@ -1041,10 +1045,7 @@ class ModelArtifactService:
         if type(root_reference) is not ArtifactRef:
             raise TypeError("root_reference must be an ArtifactRef")
         record = self._read_readiness(root_reference)
-        if record.root != root_reference:
-            raise ArtifactNotReadyError(
-                "readiness record does not select the requested root"
-            )
+        self._assert_managed_path(self._locks_path)
         lease_set = ArtifactOperationLeaseSet(
             self._locks_path,
             tuple(reference.lease_key() for reference in record.closure),
@@ -1344,7 +1345,6 @@ class ModelArtifactService:
         self,
         root_reference: ArtifactRef,
     ) -> tuple[ArtifactRef, ...]:
-        descriptors: dict[ArtifactRef, ArtifactDescriptor] = {}
         references_by_id = {root_reference.artifact_id: root_reference}
         visiting: set[ArtifactRef] = set()
         visited: set[ArtifactRef] = set()
@@ -1357,7 +1357,6 @@ class ModelArtifactService:
             if reference in visited:
                 return
             descriptor = self._load_installed_descriptor(reference, role)
-            descriptors[reference] = descriptor
             visiting.add(reference)
             try:
                 for dependency in descriptor.dependencies:
@@ -1378,7 +1377,7 @@ class ModelArtifactService:
             visited.add(reference)
 
         visit(root_reference, ArtifactRole.ROOT)
-        return tuple(sorted(descriptors))
+        return tuple(sorted(visited))
 
     def _load_installed_descriptor(
         self,

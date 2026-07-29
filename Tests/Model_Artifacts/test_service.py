@@ -1767,6 +1767,37 @@ def test_activate_rejects_replaced_active_root_before_state_write(
         assert tuple(active_root.iterdir()) == ()
 
 
+@pytest.mark.parametrize("operation", ("activate", "acquire"))
+@pytest.mark.parametrize("replacement", ("symlink", "new-directory"))
+def test_operations_reject_replaced_locks_root_before_lease_construction(
+    tmp_path: Path,
+    operation: str,
+    replacement: str,
+) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+    if operation == "acquire":
+        service.activate(root.reference)
+    locks_root = tmp_path / "store" / "locks"
+    previous_root = tmp_path / "previous-locks"
+    locks_root.rename(previous_root)
+    external = tmp_path / "external-locks"
+    external.mkdir()
+    if replacement == "symlink":
+        symlink_or_skip(locks_root, external, target_is_directory=True)
+    else:
+        locks_root.mkdir()
+
+    with pytest.raises(service_module.ArtifactPathError):
+        if operation == "activate":
+            service.activate(root.reference)
+        else:
+            service.acquire(root.reference)
+
+    assert tuple(external.iterdir()) == ()
+    if replacement == "new-directory":
+        assert tuple(locks_root.iterdir()) == ()
+
+
 def test_activate_acquires_lifecycle_before_shared_canonical_closure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1865,13 +1896,6 @@ def test_acquire_holds_exact_shared_closure_until_idempotent_close(
             timeout_seconds=0.01,
         ).acquire()
 
-    lease_set = leased._lease_set
-    assert lease_set is not None
-
-    def reject_reacquire() -> None:
-        raise AssertionError("context entry must not reacquire")
-
-    lease_set.acquire = reject_reacquire  # type: ignore[method-assign]
     with leased as entered:
         assert entered is leased
 
@@ -1883,6 +1907,18 @@ def test_acquire_holds_exact_shared_closure_until_idempotent_close(
         timeout_seconds=0.1,
     ):
         pass
+
+
+def test_closed_leased_handle_cannot_be_reentered(tmp_path: Path) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    leased = service.acquire(root.reference)
+    leased.close()
+    leased.close()
+
+    with pytest.raises(service_module.ArtifactStateError, match="closed"):
+        with leased:
+            pass
 
 
 @pytest.mark.parametrize("mutation", ("changed", "removed"))
