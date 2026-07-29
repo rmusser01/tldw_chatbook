@@ -9,6 +9,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
+from typing import TypeVar
 from urllib.parse import urlsplit
 
 from .leases import ArtifactLeaseKey
@@ -45,6 +46,18 @@ _MANAGED_PATH_COMPONENTS = frozenset(
 _DESCRIPTOR_SCHEMA_VERSION = 1
 _REF_KEYS = frozenset({"artifact_id", "revision", "variant"})
 _FILE_KEYS = frozenset({"path", "size_bytes", "sha256"})
+_DESCRIPTOR_STRING_FIELDS = (
+    "model_id",
+    "consumer",
+    "model_family",
+    "upstream_repository",
+    "upstream_revision",
+    "precision",
+    "license_id",
+    "usage_notice",
+    "runtime_name",
+    "runtime_version_constraint",
+)
 _DESCRIPTOR_KEYS = frozenset(
     {
         "schema_version",
@@ -107,6 +120,14 @@ class ProvenanceClass(str, Enum):
     LOCAL_INTEGRITY_RECORDED = "local_integrity_recorded"
 
 
+_EnumT = TypeVar(
+    "_EnumT",
+    ArtifactRole,
+    ArtifactFormat,
+    ProvenanceClass,
+)
+
+
 def _is_windows_reserved(component: str) -> bool:
     basename = component.split(".", 1)[0]
     return basename.casefold() in _WINDOWS_RESERVED_BASENAMES
@@ -128,9 +149,9 @@ def _validate_nonempty_text(field_name: str, value: object) -> None:
         raise ArtifactDescriptorValidationError(
             f"{field_name} must be a non-empty canonical string"
         )
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+    if any(not character.isprintable() for character in value):
         raise ArtifactDescriptorValidationError(
-            f"{field_name} must not contain control characters"
+            f"{field_name} must not contain non-printable characters"
         )
 
 
@@ -354,18 +375,7 @@ class ArtifactDescriptor:
         if type(self.format) is not ArtifactFormat:
             raise ArtifactDescriptorValidationError("format must be an ArtifactFormat")
 
-        for field_name in (
-            "model_id",
-            "consumer",
-            "model_family",
-            "upstream_repository",
-            "upstream_revision",
-            "precision",
-            "license_id",
-            "usage_notice",
-            "runtime_name",
-            "runtime_version_constraint",
-        ):
+        for field_name in _DESCRIPTOR_STRING_FIELDS:
             _validate_nonempty_text(field_name, getattr(self, field_name))
         _validate_url("source_url", self.source_url)
         _validate_url("license_url", self.license_url)
@@ -534,18 +544,9 @@ class ArtifactDescriptor:
             string_fields = {
                 field_name: _require_string(raw[field_name], field_name)
                 for field_name in (
-                    "model_id",
-                    "consumer",
-                    "model_family",
-                    "upstream_repository",
-                    "upstream_revision",
+                    *_DESCRIPTOR_STRING_FIELDS,
                     "source_url",
-                    "precision",
-                    "license_id",
                     "license_url",
-                    "usage_notice",
-                    "runtime_name",
-                    "runtime_version_constraint",
                 )
             }
             expected_installed_bytes = raw["expected_installed_bytes"]
@@ -613,9 +614,9 @@ def _parse_string_list(raw: object, context: str) -> tuple[str, ...]:
 
 def _parse_enum(
     raw: object,
-    enum_type: type[ArtifactRole] | type[ArtifactFormat] | type[ProvenanceClass],
+    enum_type: type[_EnumT],
     context: str,
-) -> ArtifactRole | ArtifactFormat | ProvenanceClass:
+) -> _EnumT:
     value = _require_string(raw, context)
     try:
         return enum_type(value)

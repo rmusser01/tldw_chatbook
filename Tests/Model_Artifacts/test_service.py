@@ -221,6 +221,29 @@ def test_descriptor_accepts_valid_url_with_ipv6_hostname() -> None:
     assert ArtifactDescriptor.from_dict(item.to_dict()) == item
 
 
+def test_descriptor_accepts_printable_unicode_metadata() -> None:
+    item = descriptor(usage_notice="Modèle validé — prêt.")
+
+    assert item.usage_notice == "Modèle validé — prêt."
+
+
+@pytest.mark.parametrize("field", ("source_url", "license_url"))
+def test_descriptor_rejects_zero_width_url_hostname(field: str) -> None:
+    value = "https://exa\u200bmple.test/model"
+
+    with pytest.raises(ArtifactDescriptorValidationError, match=field):
+        descriptor(**{field: value})
+
+
+@pytest.mark.parametrize("field", ("source_url", "license_url"))
+def test_descriptor_parser_rejects_zero_width_url_hostname(field: str) -> None:
+    encoded = descriptor().to_dict()
+    encoded[field] = "https://exa\u200bmple.test/model"
+
+    with pytest.raises(ArtifactDescriptorParseError, match=field):
+        ArtifactDescriptor.from_dict(encoded)
+
+
 @pytest.mark.parametrize("field", ("source_url", "license_url"))
 @pytest.mark.parametrize(
     "value",
