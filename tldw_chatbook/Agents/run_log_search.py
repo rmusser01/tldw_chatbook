@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from .run_log_format import RunLogRecord, iter_records
@@ -427,3 +428,271 @@ def _window_start(*, total: int, max_chars: int, offset: int, match_pos: int | N
     half = max_chars // 2
     start = max(0, match_pos - half)
     return min(start, max_start)
+
+
+# == Phase 2: aggregation (`run_log_stats`) and slicing (`run_log_slice`) ====
+#
+# Design spec §10 phase table + task-1271. Both tools share this module's
+# central guarantee -- pure functions over an already-loaded record list,
+# no filesystem/I/O of their own -- and both are bounded the same way
+# `search_records`/`format_results` already are: by a caller-controlled
+# constant, never by the log's own size. `agent_service.py` wires the
+# `load_records(log_dir)` call and the run's own `max_tool_result_chars`
+# ceiling, exactly like it already does for `search_run_log`.
+
+#: `run_log_stats`' `group_by` is restricted to these four metadata fields
+#: ON PURPOSE: each has a small, LOG-INDEPENDENT number of distinct values
+#: (a handful of tool names, four record types, a few statuses, two
+#: kinds). Grouping by anything per-record-unique -- a record number, a
+#: `call_id` -- would turn an aggregation tool into an unbounded per-record
+#: dump wearing a different schema; that is exactly the shape task-1271
+#: forbids ("no call may return output that scales with log size").
+STATS_GROUP_BY_FIELDS = ("tool", "type", "status", "kind")
+
+#: `run_log_slice`'s default window width when the caller omits `to_record`.
+DEFAULT_SLICE_WIDTH = 20
+
+#: `run_log_slice`'s hard cap on records returned by ONE call, regardless of
+#: how wide `[from_record, to_record]` is or how large the log has grown.
+#: Matches `search_records`' own default `limit` so the two tools' worst-
+#: case per-call cost stays comparable.
+MAX_SLICE_RECORDS = 50
+
+
+@dataclass(frozen=True)
+class RunLogGroupStats:
+    """One group's aggregate counters, as returned by ``compute_stats``."""
+
+    key: str
+    count: int
+    error_count: int
+    content_bytes: int
+
+
+def compute_stats(
+    records: list[RunLogRecord],
+    *,
+    group_by: str = "tool",
+    tool: str = "",
+    type: str = "",
+    status: str = "",
+    kind: str = "",
+    from_record: int = 0,
+    to_record: int = 0,
+) -> list[RunLogGroupStats]:
+    """Aggregate ``records`` into per-group counts, error counts, and bytes.
+
+    Bounded by construction: the result has exactly one entry per DISTINCT
+    value of ``group_by`` present in the (optionally pre-filtered) records
+    -- never one entry per record. This is what lets ``run_log_stats``
+    answer "which tool have I called most, and how often did it fail?"
+    without paging the log itself through the model's context: the whole
+    log is scanned here (same O(records) cost ``search_records`` already
+    pays), but the RETURNED value is O(distinct group values), a quantity
+    that does not grow as the run gets longer.
+
+    No token totals are computed here. `RunLogRecord` does not carry a
+    per-record token count -- ``agent_runtime.run_agent_loop`` tracks a
+    running `total_tokens` in memory and the manifest records the whole
+    run's final total once the run ends, but neither is threaded into the
+    log's own record format (Phase 1, §4.1, deliberately fixed that
+    format). Fabricating a per-group estimate here (e.g. via a tokenizer
+    heuristic) would silently disagree with the run's own authoritative
+    accounting in `RunOutcome.total_tokens` / the budget check in the
+    loop, which is worse than not reporting it. `content_bytes` is the
+    honest, exact substitute available from what the log actually stores.
+
+    Args:
+        records: All loaded records, in order (as from ``load_records``).
+        group_by: One of ``STATS_GROUP_BY_FIELDS``. A value not in that
+            set (a model could send anything) falls back to ``"tool"``
+            rather than raising -- see the module's defensive-coercion
+            convention (``run_log_search.py``'s callers in
+            ``agent_service.py``).
+        tool: Optional exact tool-name pre-filter, applied before
+            grouping. Mirrors ``search_records``'s own filter.
+        type: Optional exact record-type pre-filter.
+        status: Optional exact status pre-filter.
+        kind: Optional exact agent-kind pre-filter (``primary``/
+            ``subagent``) -- a primary agent's own log holds its spawned
+            children's records too (spec §4.1), so this can answer "how
+            much of my log came from sub-agents".
+        from_record: Optional inclusive lower bound on record number.
+        to_record: Optional inclusive upper bound on record number.
+
+    Returns:
+        One ``RunLogGroupStats`` per distinct group value present after
+        filtering, sorted by descending ``count`` (ties broken
+        alphabetically by ``key``) so "which tool have I called most" is
+        always the first row. Empty when no record matches.
+    """
+    if group_by not in STATS_GROUP_BY_FIELDS:
+        group_by = "tool"
+    # key -> [count, error_count, content_bytes]; a plain dict of lists
+    # avoids importing collections.Counter/defaultdict for three counters.
+    groups: dict[str, list[int]] = {}
+    for record in records:
+        if from_record and record.number < from_record:
+            continue
+        if to_record and record.number > to_record:
+            continue
+        if tool and record.tool != tool:
+            continue
+        if type and record.type != type:
+            continue
+        if status and record.status != status:
+            continue
+        if kind and record.kind != kind:
+            continue
+        key = getattr(record, group_by) or "-"
+        bucket = groups.setdefault(key, [0, 0, 0])
+        bucket[0] += 1
+        if record.status == "error":
+            bucket[1] += 1
+        bucket[2] += len(record.content.encode("utf-8"))
+    return sorted(
+        (
+            RunLogGroupStats(key=key, count=c, error_count=e, content_bytes=b)
+            for key, (c, e, b) in groups.items()
+        ),
+        key=lambda g: (-g.count, g.key),
+    )
+
+
+def format_stats(
+    groups: list[RunLogGroupStats], *, group_by: str, total_records: int
+) -> str:
+    """Render ``compute_stats``' result for the model.
+
+    Args:
+        groups: ``compute_stats``'s return value.
+        group_by: The dimension grouped on (after its own fallback), named
+            in the header line.
+        total_records: Count of records considered after any pre-filters,
+            before grouping -- always equal to ``sum(g.count for g in
+            groups)``; reported separately so the model does not have to
+            sum the rows itself to sanity-check nothing was dropped.
+
+    Returns:
+        A header line plus one line per group -- bounded by the number of
+        DISTINCT ``group_by`` values, never by the number of records --
+        or a plain "No records matched." line when ``groups`` is empty.
+    """
+    if not groups:
+        return "No records matched."
+    lines = [f"{total_records} record(s) in this run's log, grouped by {group_by}:"]
+    for g in groups:
+        lines.append(
+            f"  {g.key}: count={g.count} errors={g.error_count} "
+            f"content_bytes={g.content_bytes}"
+        )
+    return "\n".join(lines)
+
+
+def slice_records(
+    records: list[RunLogRecord],
+    *,
+    from_record: int,
+    to_record: int = 0,
+    max_records: int = MAX_SLICE_RECORDS,
+) -> tuple[list[RunLogRecord], int, int, int]:
+    """Select a contiguous, count-capped range of records by record number.
+
+    Unlike ``search_records``, this never scans content -- it is a pure
+    range selection on ``record.number``, which is what makes "retrieve a
+    coherent stretch of my own reasoning" cheap and predictable rather
+    than an accidental content search with an empty query.
+
+    Args:
+        records: All loaded records, in order (as from ``load_records``).
+        from_record: Inclusive lower bound on record number. Coerced to at
+            least 1 (a caller could pass 0 or a negative number).
+        to_record: Inclusive upper bound. 0 (the default, meaning "not
+            given") resolves to ``from_record + DEFAULT_SLICE_WIDTH - 1``.
+            A value below the resolved ``from_record`` resolves to
+            ``from_record`` itself (a one-record slice) rather than an
+            empty range or an error.
+        max_records: Hard cap on how many records are RETURNED, regardless
+            of how wide ``[from_record, to_record]`` is. This is the
+            boundedness guarantee: a model requesting
+            ``from_record=1, to_record=999999`` on a long run gets
+            ``max_records`` records back, not the whole log.
+
+    Returns:
+        A 4-tuple ``(selected, total_matched, resolved_from,
+        resolved_to)``:
+
+        - ``selected``: the records to render, in order, capped at
+          ``max_records`` (taken from the LOW end of the range, so paging
+          forward from a returned ``to_record + 1`` always makes
+          progress).
+        - ``total_matched``: how many records actually fell in
+          ``[resolved_from, resolved_to]`` before the cap was applied --
+          lets a caller report when it clipped (``total_matched >
+          len(selected)``).
+        - ``resolved_from`` / ``resolved_to``: the bounds actually used,
+          after defaulting/clamping the raw input -- reported even when
+          ``selected`` is empty, so a caller can still say what range was
+          searched.
+    """
+    resolved_from = max(1, from_record)
+    resolved_to = to_record if to_record > 0 else resolved_from + DEFAULT_SLICE_WIDTH - 1
+    if resolved_to < resolved_from:
+        resolved_to = resolved_from
+    matched = [r for r in records if resolved_from <= r.number <= resolved_to]
+    return matched[:max_records], len(matched), resolved_from, resolved_to
+
+
+def format_slice(
+    records: list[RunLogRecord],
+    *,
+    from_record: int,
+    to_record: int,
+    total_matched: int,
+    max_chars: int = 400,
+) -> str:
+    """Render a contiguous record range as one coherent block.
+
+    Deliberately reuses ``format_results`` for the per-record rendering
+    rather than writing a second one: ``run_log_slice`` must bound its
+    output exactly the way ``search_run_log`` bounds its own (task-1271),
+    and a second renderer would be a second place for that bound -- and
+    the TASK-1250 "match not in the rendered window" class of bug -- to
+    drift out of sync. No ``contains``/``pattern`` is passed through here:
+    a slice has no query to centre a window on, so every record renders
+    from its own start, same as a plain (query-less) ``format_results``
+    call already does.
+
+    Args:
+        records: The already range-selected and count-capped records to
+            render, in order -- normally ``slice_records``'s ``selected``
+            return value.
+        from_record: The RESOLVED lower bound that was searched (i.e.
+            ``slice_records``'s ``resolved_from``, not the caller's raw,
+            possibly-defaulted input) -- used to report the range in the
+            header, including when ``records`` is empty.
+        to_record: The resolved upper bound, same provenance.
+        total_matched: ``slice_records``'s own ``total_matched`` -- lets
+            this note when the range was wider than what got returned.
+        max_chars: Per-record content ceiling, forwarded to
+            ``format_results`` unchanged.
+
+    Returns:
+        A header line stating the record-number range covered (plus a
+        clipping note when ``total_matched`` exceeds what was returned)
+        followed by ``format_results``'s rendering -- or a plain "No
+        records numbered ..." line when ``records`` is empty, so an empty
+        slice reads distinctly from "no search hits" (``format_results``'
+        own empty-input message) instead of looking identical to it.
+    """
+    if not records:
+        return f"No records numbered {from_record:06d}-{to_record:06d} in this run's log."
+    lo, hi = records[0].number, records[-1].number
+    header = f"records {lo:06d}-{hi:06d} of this run's log"
+    if total_matched > len(records):
+        header += (
+            f" (showing {len(records)} of {total_matched} records in the "
+            f"requested range {from_record:06d}-{to_record:06d}; continue "
+            f"with from_record={hi + 1} for the rest)"
+        )
+    return f"{header}:\n\n{format_results(records, max_chars=max_chars)}"

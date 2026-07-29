@@ -35,6 +35,14 @@ SKILL_FILE_TOOL_NAME = "skill_file"
 INSTALL_SKILL_TOOL_NAME = "install_skill"
 RUN_SKILL_SCRIPT_TOOL_NAME = "run_skill_script"
 SEARCH_RUN_LOG_TOOL_NAME = "search_run_log"
+# Phase 2 (run-log spec §10): the two aggregation/slicing runtime tools,
+# registered exactly like SEARCH_RUN_LOG_TOOL_NAME above -- same name-
+# constant + RUNTIME_TOOL_NAMES + tool_catalog schema + LoopDeps field +
+# dispatch-branch + primary-agent-only-service-gate pattern. See
+# agent_service.py's `log_active` gate and run_log_search.py's
+# `compute_stats`/`slice_records` for the implementations these dispatch to.
+RUN_LOG_STATS_TOOL_NAME = "run_log_stats"
+RUN_LOG_SLICE_TOOL_NAME = "run_log_slice"
 RUNTIME_TOOL_NAMES = frozenset(
     {
         SPAWN_TOOL_NAME,
@@ -44,6 +52,8 @@ RUNTIME_TOOL_NAMES = frozenset(
         INSTALL_SKILL_TOOL_NAME,
         RUN_SKILL_SCRIPT_TOOL_NAME,
         SEARCH_RUN_LOG_TOOL_NAME,
+        RUN_LOG_STATS_TOOL_NAME,
+        RUN_LOG_SLICE_TOOL_NAME,
     }
 )
 

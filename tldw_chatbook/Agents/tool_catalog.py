@@ -21,6 +21,8 @@ from .agent_models import (
     FIND_TOOLS_NAME,
     INSTALL_SKILL_TOOL_NAME,
     LOAD_TOOLS_NAME,
+    RUN_LOG_SLICE_TOOL_NAME,
+    RUN_LOG_STATS_TOOL_NAME,
     RUN_SKILL_SCRIPT_TOOL_NAME,
     RunBudget,
     SEARCH_RUN_LOG_TOOL_NAME,
@@ -30,6 +32,7 @@ from .agent_models import (
     ToolResult,
     ToolSchema,
 )
+from .run_log_search import MAX_SLICE_RECORDS, STATS_GROUP_BY_FIELDS
 
 SPAWN_TOOL_SCHEMA = ToolSchema(
     id="runtime:spawn_subagent",
@@ -216,6 +219,95 @@ SEARCH_RUN_LOG_TOOL_SCHEMA = ToolSchema(
             },
         },
         "required": [],
+    },
+)
+
+
+# Phase 2 (run-log spec §10, task-1271): two more runtime tools that COMPUTE
+# over the log rather than only retrieving from it -- registered exactly
+# like SEARCH_RUN_LOG_TOOL_SCHEMA above (same runtime-tool pattern, same
+# primary-agent-only gate in agent_service.py's `log_active` block).
+
+RUN_LOG_STATS_TOOL_SCHEMA = ToolSchema(
+    id="runtime:run_log_stats",
+    name=RUN_LOG_STATS_TOOL_NAME,
+    description=(
+        "Get bounded aggregate statistics over this run's own log WITHOUT "
+        "paging individual records through your context -- counts, error "
+        "counts, and content-byte totals grouped by tool, record type, "
+        "status, or agent kind (primary vs. sub-agent). Use this to answer "
+        "'which tool have I called most, and how often did it fail?' "
+        "Output is one line per distinct group value, never one line per "
+        "record, so it stays small no matter how long this run gets. "
+        "Per-record token counts are not tracked in this run's log -- only "
+        "the whole run's total token spend is recorded once the run "
+        "finishes -- so this tool cannot report a live token total; "
+        "content_bytes is reported instead as an exact, always-available "
+        "proxy for how much content each group has produced."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "group_by": {
+                "type": "string",
+                "description": "Dimension to group by: " + ", ".join(STATS_GROUP_BY_FIELDS)
+                + " (default: tool). An unrecognised value falls back to tool.",
+            },
+            "tool": {
+                "type": "string",
+                "description": "Restrict to records for this tool before grouping.",
+            },
+            "type": {
+                "type": "string",
+                "description": "Restrict to this record type before grouping: "
+                "model, tool_call, tool_result.",
+            },
+            "status": {
+                "type": "string",
+                "description": "Restrict to this status before grouping: ok or error.",
+            },
+            "kind": {
+                "type": "string",
+                "description": "Restrict to this agent kind before grouping: "
+                "primary or subagent.",
+            },
+            "from_record": {"type": "integer", "description": "Lowest record number."},
+            "to_record": {"type": "integer", "description": "Highest record number."},
+        },
+        "required": [],
+    },
+)
+
+RUN_LOG_SLICE_TOOL_SCHEMA = ToolSchema(
+    id="runtime:run_log_slice",
+    name=RUN_LOG_SLICE_TOOL_NAME,
+    description=(
+        "Retrieve a contiguous range of this run's own log records as one "
+        "coherent unit, so you can reconstruct a stretch of your own "
+        "reasoning instead of assembling it from separate search_run_log "
+        "hits. Bounded the same way search_run_log bounds its own output: "
+        f"at most {MAX_SLICE_RECORDS} records per call regardless of how "
+        "wide the requested range is, and each record's content is "
+        "windowed at this run's own tool-result limit. When the requested "
+        "range is wider than what one call returns, the rendering states "
+        "how many records were shown and the from_record to pass next to "
+        "continue."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "from_record": {
+                "type": "integer",
+                "description": "Lowest record number to include. Coerced to "
+                "1 if missing or invalid.",
+            },
+            "to_record": {
+                "type": "integer",
+                "description": "Highest record number to include. Omit for "
+                "a default-width window starting at from_record.",
+            },
+        },
+        "required": ["from_record"],
     },
 )
 

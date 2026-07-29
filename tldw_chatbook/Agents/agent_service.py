@@ -49,6 +49,8 @@ from .tool_catalog import (
     FIND_TOOLS_SCHEMA,
     INSTALL_SKILL_TOOL_SCHEMA,
     LOAD_TOOLS_SCHEMA,
+    RUN_LOG_SLICE_TOOL_SCHEMA,
+    RUN_LOG_STATS_TOOL_SCHEMA,
     RUN_SKILL_SCRIPT_TOOL_SCHEMA,
     SEARCH_RUN_LOG_TOOL_SCHEMA,
     SKILL_FILE_TOOL_SCHEMA,
@@ -67,7 +69,10 @@ TRUNCATION_NOTICE = "\n[truncated]"
 # Task 7: appended to config.system_prompt only when THIS run wired the
 # search_run_log tool (see the `log_active` gate in _run_one, reused
 # verbatim by _make_call_model) -- so the model is never told a log exists
-# when it can't actually search it.
+# when it can't actually search it. Phase 2 (task-1271): the same gate now
+# also wires run_log_stats/run_log_slice, so this section mentions all
+# three -- a model that only ever hears about search_run_log has no reason
+# to reach for the other two even though their schemas are disclosed.
 RUN_LOG_PROMPT_SECTION = (
     "Run log: every model turn, tool call, and tool result of this run is "
     "recorded in full to a log file. Your context holds a truncated view of "
@@ -77,7 +82,12 @@ RUN_LOG_PROMPT_SECTION = (
     "literal substring) over 'pattern' -- but note 'contains' and 'pattern' "
     "both match a record's CONTENT ONLY, never its metadata; use the "
     "'tool', 'type', 'status', and 'kind' arguments to filter by metadata. "
-    "Search for specific content you know you need rather than browsing."
+    "Search for specific content you know you need rather than browsing. "
+    "For a summary instead of individual records -- e.g. which tool you've "
+    "called most, or how often something failed -- call run_log_stats "
+    "instead of paging through search results. To reconstruct a stretch of "
+    "your own reasoning as one unit rather than assembling it from separate "
+    "hits, call run_log_slice with a record-number range."
 )
 
 
@@ -544,6 +554,15 @@ class AgentService:
         )
         if log_active:
             runtime_schemas.append(SEARCH_RUN_LOG_TOOL_SCHEMA)
+            # Phase 2 (task-1271): run_log_stats/run_log_slice compute over
+            # the same log search_run_log reads, so they share its EXACT
+            # gate rather than getting their own -- both need a bound,
+            # active writer (nothing to aggregate/slice otherwise) and the
+            # same primary-agent-only isolation argument (a child's log
+            # view would otherwise widen past its own short, already-in-
+            # context history into its parent's whole run tree).
+            runtime_schemas.append(RUN_LOG_STATS_TOOL_SCHEMA)
+            runtime_schemas.append(RUN_LOG_SLICE_TOOL_SCHEMA)
 
         def find_tools(query: str):
             # Q7(b): never surface a disallowed tool through find_tools,
@@ -904,6 +923,123 @@ class AgentService:
                 ),
             )
 
+        def run_log_stats(args: dict) -> ToolResult:
+            """Aggregate counts/errors/bytes over THIS run's log, grouped.
+
+            Phase 2 (task-1271) sibling of ``search_run_log`` immediately
+            above -- same coercion discipline (F2: raw-dict-plus-defensive-
+            cast, declined Pydantic for the same reason every other
+            runtime-tool closure in this module uses that shape), same
+            "never raise into the run" contract.
+
+            Args:
+                args: The model-supplied call arguments, straight off
+                    ``ToolCall.args`` (always a ``dict``, never validated
+                    by a schema here -- see ``search_run_log``'s own
+                    docstring for why). Recognised keys mirror
+                    ``run_log_search.compute_stats``'s parameters:
+                    ``group_by`` (``tool``/``type``/``status``/``kind``,
+                    default ``"tool"``; an unrecognised value falls back
+                    to ``"tool"`` inside ``compute_stats`` itself, never
+                    raises here), and the same structured pre-filters
+                    ``search_run_log`` accepts (``tool``, ``type``,
+                    ``status``, ``kind``, ``from_record``, ``to_record``)
+                    -- never ``contains``/``pattern``: this tool aggregates
+                    metadata, it does not search content.
+
+            Returns:
+                ``ToolResult(ok=True, content=...)`` with one line per
+                distinct group value -- bounded by the number of groups,
+                never by the number of records (``run_log_search.
+                compute_stats``'s own guarantee) -- or ``ok=False`` for a
+                missing log or a malformed numeric argument. Never raises.
+            """
+            from .run_log_search import compute_stats, format_stats, load_records
+
+            log_dir = self.run_log_writer.log_dir
+            if log_dir is None:
+                return ToolResult(ok=False, error="No run log is available.")
+            group_by = str(args.get("group_by") or "tool")
+            try:
+                records = load_records(log_dir)
+                groups = compute_stats(
+                    records,
+                    group_by=group_by,
+                    tool=str(args.get("tool", "")),
+                    type=str(args.get("type", "")),
+                    status=str(args.get("status", "")),
+                    kind=str(args.get("kind", "")),
+                    from_record=int(args.get("from_record") or 0),
+                    to_record=int(args.get("to_record") or 0),
+                )
+            except (TypeError, ValueError) as exc:
+                return ToolResult(ok=False, error=f"Invalid stats arguments: {exc}")
+            total = sum(g.count for g in groups)
+            return ToolResult(
+                ok=True,
+                content=format_stats(groups, group_by=group_by, total_records=total),
+            )
+
+        def run_log_slice(args: dict) -> ToolResult:
+            """Retrieve a contiguous range of THIS run's log as one unit.
+
+            Phase 2 (task-1271) sibling of ``search_run_log``/
+            ``run_log_stats`` above -- same coercion discipline, same
+            "never raise into the run" contract. Bounded the same way
+            ``search_run_log`` bounds its own output: this run's own
+            ``max_tool_result_chars`` ceiling per record (identical
+            ``render_max_chars`` computation, reused verbatim below), and
+            ``run_log_search.MAX_SLICE_RECORDS`` records per call
+            regardless of how wide the requested range is.
+
+            Args:
+                args: The model-supplied call arguments, straight off
+                    ``ToolCall.args`` (always a ``dict``). Recognised keys:
+                    ``from_record`` (coerced defensively; a missing or
+                    invalid value falls back to record 1 rather than
+                    erroring -- see ``run_log_search.slice_records``) and
+                    ``to_record`` (optional; a default-width window is
+                    applied when omitted).
+
+            Returns:
+                ``ToolResult(ok=True, content=...)`` rendering the
+                selected records via ``run_log_search.format_slice``
+                (which itself reuses ``format_results`` -- no second
+                renderer), or ``ok=False`` for a missing log or a
+                malformed numeric argument. Never raises.
+            """
+            from .run_log_search import format_slice, load_records, slice_records
+
+            log_dir = self.run_log_writer.log_dir
+            if log_dir is None:
+                return ToolResult(ok=False, error="No run log is available.")
+            try:
+                from_record = int(args.get("from_record") or 0)
+                to_record = int(args.get("to_record") or 0)
+            except (TypeError, ValueError) as exc:
+                return ToolResult(ok=False, error=f"Invalid slice arguments: {exc}")
+            records = load_records(log_dir)
+            selected, total_matched, resolved_from, resolved_to = slice_records(
+                records, from_record=from_record, to_record=to_record
+            )
+            # Same ceiling-translation as search_run_log immediately above:
+            # 0 (or negative) is the documented "unlimited" sentinel for
+            # max_tool_result_chars, which format_results has no sentinel
+            # for (max_chars=0 would render nothing), so translate it into
+            # a ceiling format_results' own truncation branch never trips.
+            ceiling = config.budget.max_tool_result_chars
+            render_max_chars = ceiling if ceiling > 0 else sys.maxsize
+            return ToolResult(
+                ok=True,
+                content=format_slice(
+                    selected,
+                    from_record=resolved_from,
+                    to_record=resolved_to,
+                    total_matched=total_matched,
+                    max_chars=render_max_chars,
+                ),
+            )
+
         def on_record(record_type: str, payload: dict) -> int | None:
             """Append one full-fidelity record to THIS run tree's log.
 
@@ -978,6 +1114,16 @@ class AgentService:
             run_skill_script=self._run_skill_script_tool,
             search_run_log=(
                 search_run_log if agent_kind == AGENT_KIND_PRIMARY else None
+            ),
+            # Phase 2 (task-1271): wired under the identical
+            # `agent_kind == AGENT_KIND_PRIMARY` gate as search_run_log
+            # immediately above -- a spawned sub-agent must never receive
+            # either, for the same isolation reason.
+            run_log_stats=(
+                run_log_stats if agent_kind == AGENT_KIND_PRIMARY else None
+            ),
+            run_log_slice=(
+                run_log_slice if agent_kind == AGENT_KIND_PRIMARY else None
             ),
             on_record=on_record,
         )

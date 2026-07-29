@@ -7,11 +7,17 @@ import pytest
 
 from tldw_chatbook.Agents.run_log_format import RunLogRecord
 from tldw_chatbook.Agents.run_log_search import (
+    DEFAULT_SLICE_WIDTH,
     MAX_REGEX_SCAN_CHARS,
+    MAX_SLICE_RECORDS,
     RunLogSearchPatternRejected,
     RunLogSearchTimeout,
+    compute_stats,
     format_results,
+    format_slice,
+    format_stats,
     search_records,
+    slice_records,
 )
 
 
@@ -297,3 +303,165 @@ def test_format_results_says_nothing_extra_for_an_uncapped_record():
     record = rec(1, "ordinary content")
     out = format_results([record])
     assert "cannot be recovered" not in out
+
+
+# == Phase 2 (task-1271): compute_stats / format_stats (run_log_stats) ======
+
+
+def test_compute_stats_groups_by_tool_by_default():
+    by_key = {g.key: g for g in compute_stats(CORPUS)}
+    # CORPUS: read_file(ok), web_search(error), model turn (tool=""), write_file(ok).
+    assert by_key["read_file"].count == 1
+    assert by_key["read_file"].error_count == 0
+    assert by_key["web_search"].count == 1
+    assert by_key["web_search"].error_count == 1
+    assert by_key["write_file"].count == 1
+
+
+def test_compute_stats_unrecognised_group_by_falls_back_to_tool():
+    default_groups = compute_stats(CORPUS, group_by="tool")
+    junk_groups = compute_stats(CORPUS, group_by="not_a_real_field")
+    assert junk_groups == default_groups
+
+
+def test_compute_stats_group_by_status_and_type():
+    by_status = {g.key: g.count for g in compute_stats(CORPUS, group_by="status")}
+    assert by_status.get("ok") == 2
+    assert by_status.get("error") == 1
+    by_type = {g.key: g.count for g in compute_stats(CORPUS, group_by="type")}
+    assert by_type.get("model") == 1
+    assert by_type.get("tool_result") == 3
+
+
+def test_compute_stats_pre_filters_compose_before_grouping():
+    groups = compute_stats(CORPUS, group_by="tool", status="ok")
+    assert {g.key for g in groups} == {"read_file", "write_file"}
+
+
+def test_compute_stats_from_to_record_bounds_compose_with_group_by():
+    groups = compute_stats(CORPUS, group_by="tool", from_record=2, to_record=3)
+    # Only records 2 (web_search) and 3 (model, tool="") fall in range.
+    assert {g.key for g in groups} == {"web_search", "-"}
+
+
+def test_compute_stats_content_bytes_sums_utf8_length_not_char_count():
+    # A multi-byte character makes UTF-8 byte length diverge from len().
+    single = [rec(1, "héllo", tool="x")]
+    groups = compute_stats(single, group_by="tool")
+    assert groups[0].content_bytes == len("héllo".encode("utf-8"))
+    assert groups[0].content_bytes != len("héllo")
+
+
+def test_compute_stats_sorted_by_descending_count_then_key():
+    many = [rec(i, "x", tool="a") for i in range(1, 4)] + [rec(4, "x", tool="b")]
+    groups = compute_stats(many, group_by="tool")
+    assert [g.key for g in groups] == ["a", "b"]
+    assert groups[0].count == 3 and groups[1].count == 1
+
+
+def test_compute_stats_empty_log_returns_no_groups():
+    assert compute_stats([]) == []
+    assert format_stats(compute_stats([]), group_by="tool", total_records=0) == (
+        "No records matched."
+    )
+
+
+def test_compute_stats_output_is_bounded_by_distinct_groups_not_record_count():
+    # A log "large enough that an unbounded implementation would blow up":
+    # thousands of records collapsing into a handful of tool names.
+    tools = ["alpha", "beta", "gamma", "delta", "epsilon"]
+    huge = [
+        rec(
+            i,
+            f"record body {i}",
+            tool=tools[i % len(tools)],
+            status="ok" if i % 7 else "error",
+        )
+        for i in range(1, 5001)
+    ]
+    groups = compute_stats(huge, group_by="tool")
+    assert len(groups) == len(tools)  # bounded by distinct tools, not 5000
+    assert sum(g.count for g in groups) == 5000
+    rendered = format_stats(groups, group_by="tool", total_records=5000)
+    assert rendered.count("\n") == len(tools)  # one header + one line/group
+    assert len(rendered) < 2000  # nowhere near what a 5000-record dump would be
+
+
+# == Phase 2 (task-1271): slice_records / format_slice (run_log_slice) ======
+
+
+def test_slice_records_selects_the_requested_range():
+    log = [rec(i, f"body {i}") for i in range(1, 11)]
+    selected, total, lo, hi = slice_records(log, from_record=3, to_record=5)
+    assert [r.number for r in selected] == [3, 4, 5]
+    assert (total, lo, hi) == (3, 3, 5)
+
+
+def test_slice_records_defaults_to_a_fixed_width_window():
+    log = [rec(i, f"body {i}") for i in range(1, 100)]
+    selected, total, lo, hi = slice_records(log, from_record=10)
+    assert lo == 10 and hi == 10 + DEFAULT_SLICE_WIDTH - 1
+    assert [r.number for r in selected] == list(range(10, hi + 1))
+
+
+def test_slice_records_clamps_a_below_range_from_record_to_1():
+    log = [rec(i, f"body {i}") for i in range(1, 5)]
+    selected, total, lo, hi = slice_records(log, from_record=-99, to_record=2)
+    assert lo == 1
+    assert [r.number for r in selected] == [1, 2]
+
+
+def test_slice_records_to_below_from_collapses_to_one_record():
+    log = [rec(i, f"body {i}") for i in range(1, 5)]
+    selected, total, lo, hi = slice_records(log, from_record=3, to_record=1)
+    assert (lo, hi) == (3, 3)
+    assert [r.number for r in selected] == [3]
+
+
+def test_slice_records_empty_log_returns_nothing_but_still_resolves_bounds():
+    selected, total, lo, hi = slice_records([], from_record=5, to_record=9)
+    assert selected == []
+    assert (total, lo, hi) == (0, 5, 9)
+
+
+def test_slice_records_output_is_bounded_regardless_of_requested_width_or_log_size():
+    # A log large enough, and a range wide enough, that an unbounded
+    # implementation would return everything.
+    huge = [rec(i, f"body {i}") for i in range(1, 10_001)]
+    selected, total, lo, hi = slice_records(huge, from_record=1, to_record=10_000)
+    assert len(selected) == MAX_SLICE_RECORDS
+    assert total == 10_000  # what WOULD have matched, before the cap
+    assert [r.number for r in selected] == list(range(1, MAX_SLICE_RECORDS + 1))
+
+
+def test_format_slice_reports_the_range_and_reuses_format_results_rendering():
+    log = [rec(i, f"content {i}") for i in range(1, 4)]
+    selected, total, lo, hi = slice_records(log, from_record=1, to_record=3)
+    rendered = format_slice(selected, from_record=lo, to_record=hi, total_matched=total)
+    # format_results' own "record NNNNNN [...]" header style is present --
+    # confirming reuse, not a second, divergent renderer.
+    assert "record 000001" in rendered and "record 000003" in rendered
+    assert "content 1" in rendered and "content 3" in rendered
+
+
+def test_format_slice_notes_clipping_and_the_next_from_record():
+    huge = [rec(i, f"body {i}") for i in range(1, 200)]
+    selected, total, lo, hi = slice_records(huge, from_record=1, to_record=100)
+    rendered = format_slice(selected, from_record=lo, to_record=hi, total_matched=total)
+    assert f"showing {len(selected)} of {total}" in rendered
+    assert f"from_record={selected[-1].number + 1}" in rendered
+
+
+def test_format_slice_no_clipping_note_when_everything_fit():
+    log = [rec(i, f"body {i}") for i in range(1, 4)]
+    selected, total, lo, hi = slice_records(log, from_record=1, to_record=3)
+    rendered = format_slice(selected, from_record=lo, to_record=hi, total_matched=total)
+    assert "continue with from_record" not in rendered
+
+
+def test_format_slice_empty_range_reads_distinctly_from_no_search_hits():
+    rendered = format_slice([], from_record=500, to_record=510, total_matched=0)
+    assert rendered == "No records numbered 000500-000510 in this run's log."
+    # Distinct wording from format_results' own empty message, so a model
+    # can tell "nothing in this range" apart from "no query hits".
+    assert rendered != format_results([])

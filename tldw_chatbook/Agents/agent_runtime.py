@@ -20,6 +20,8 @@ from .agent_models import (
     MAX_LOOP_PERIOD,
     RUN_CANCELLED,
     RUN_DONE,
+    RUN_LOG_SLICE_TOOL_NAME,
+    RUN_LOG_STATS_TOOL_NAME,
     RUN_SKILL_SCRIPT_TOOL_NAME,
     RUN_STUCK,
     SEARCH_RUN_LOG_TOOL_NAME,
@@ -263,6 +265,22 @@ class LoopDeps:
     # default) means the run is not wired for it and a call by that name
     # falls through to the generic deps.invoke_tool path.
     search_run_log: Callable[[dict], ToolResult] | None = None
+    # run_log_stats: Phase 2's aggregation runtime tool (design spec §10,
+    # task-1271). Wired ONLY for the top-level agent, under the SAME gate
+    # as search_run_log above and for the identical reason: a spawned
+    # child's own short history is already in its context, so offering it
+    # a tool that computes over the run TREE's shared log would only widen
+    # what a child can see -- past its parent's history, contradicting
+    # spawn_subagent's "sees only the task text" isolation promise. `None`
+    # (the default) means the run is not wired for it and a call by that
+    # name falls through to the generic deps.invoke_tool path.
+    run_log_stats: Callable[[dict], ToolResult] | None = None
+    # run_log_slice: Phase 2's contiguous-range retrieval runtime tool
+    # (design spec §10, task-1271). Same primary-agent-only gate and
+    # rationale as run_log_stats/search_run_log immediately above. `None`
+    # (the default) means the run is not wired for it and a call by that
+    # name falls through to the generic deps.invoke_tool path.
+    run_log_slice: Callable[[dict], ToolResult] | None = None
     # on_record: full-fidelity capture for the run log (run_log.py). Called
     # with (record_type, payload) at the two points where the COMPLETE value
     # exists -- which the step log does not carry, since `add()` truncates
@@ -780,6 +798,18 @@ def run_agent_loop(
                 ):
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.search_run_log(dict(call.args))
+                elif (
+                    call.name == RUN_LOG_STATS_TOOL_NAME
+                    and deps.run_log_stats is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.run_log_stats(dict(call.args))
+                elif (
+                    call.name == RUN_LOG_SLICE_TOOL_NAME
+                    and deps.run_log_slice is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.run_log_slice(dict(call.args))
                 else:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.invoke_tool(call)
