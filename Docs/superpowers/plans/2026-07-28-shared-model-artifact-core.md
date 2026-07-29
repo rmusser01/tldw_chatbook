@@ -743,15 +743,15 @@ def test_reconcile_removes_malformed_state_without_deleting_payload(
     assert service.artifact_path(root.reference).exists()
 
 
-def test_reconcile_reports_abandoned_staging_without_removing_it(
+def test_reconcile_reports_observed_staging_entries_without_removing_them(
     tmp_path: Path,
 ) -> None:
     service = ModelArtifactService(tmp_path / "store")
-    abandoned = service.staging_path / "interrupted"
-    abandoned.mkdir(parents=True)
+    observed = service.staging_path / "interrupted"
+    observed.mkdir(parents=True)
     report = service.reconcile()
-    assert report.abandoned_staging == (abandoned,)
-    assert abandoned.exists()
+    assert report.staging_entries == (observed,)
+    assert observed.exists()
 
 
 @pytest.mark.parametrize(
@@ -820,7 +820,7 @@ class ReconcileReport:
     readiness_created: int
     state_removed: int
     corrupt_artifacts: tuple[Path, ...]
-    abandoned_staging: tuple[Path, ...]
+    staging_entries: tuple[Path, ...]
 
 
 def delete(self, reference: ArtifactRef) -> None: ...
@@ -844,7 +844,8 @@ Reconciliation:
 - shared exact closure leases when valid references exist;
 - full verification before readiness reconstruction;
 - clear active state for missing/corrupt/unready roots;
-- never delete corrupt payload or abandoned staging automatically.
+- never delete corrupt payload or observed staging entries automatically;
+  observed entries may include active pre-lifecycle installs.
 
 - [ ] **Step 4: Run GREEN including process tests**
 

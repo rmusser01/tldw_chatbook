@@ -193,7 +193,8 @@ runtimes or hashing model payloads.
   payload-corrupt artifacts;
 - reconstructs readiness only after full size and hash verification succeeds;
 - leaves corrupt installed directories visible but unloadable;
-- reports abandoned staging instead of deleting it automatically.
+- reports observed staging entries, which may include an active pre-lifecycle
+  install, and never deletes them automatically.
 
 `disk_usage()` returns logical installed bytes, staging bytes, and filesystem
 free bytes. It does not claim portable physical-allocation or quota accuracy.

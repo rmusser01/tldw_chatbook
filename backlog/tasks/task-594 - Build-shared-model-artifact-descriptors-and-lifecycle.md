@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:02'
-updated_date: '2026-07-29 03:52'
+updated_date: '2026-07-29 04:10'
 labels:
   - stt
   - artifacts
@@ -49,7 +49,7 @@ Reason: TASK-594 directly implements the accepted provider-neutral artifact boun
 1. Add typed immutable descriptor contracts and canonical closure fingerprints with strict portable validation.
 2. Add verified same-filesystem promotion, fast inventory, and exact disk accounting under lifecycle/target leases.
 3. Add strict versioned readiness and active records, dependency closure activation, and leased handles.
-4. Add lease-safe deletion and crash reconciliation without deleting corrupt payload or abandoned staging.
+4. Add lease-safe deletion and crash reconciliation without deleting corrupt payload or observed staging entries, which may include active pre-lifecycle installs.
 5. Verify runtime-import boundaries, update lease documentation, run focused tests/static checks, and complete task hygiene.
 
 Implementation remains one production module and explicitly excludes download clients, UI, inference runtimes, catalogs, deduplication, LLM migration, and first-run-wizard work.

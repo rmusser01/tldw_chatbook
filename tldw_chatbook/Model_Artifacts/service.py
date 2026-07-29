@@ -789,7 +789,7 @@ class ReconcileReport:
     readiness_created: int
     state_removed: int
     corrupt_artifacts: tuple[Path, ...]
-    abandoned_staging: tuple[Path, ...]
+    staging_entries: tuple[Path, ...]
 
 
 @dataclass(frozen=True)
@@ -1064,7 +1064,7 @@ class ModelArtifactService:
         ):
             self._assert_managed_path(root)
 
-        abandoned_staging = self._staging_entries()
+        staging_entries = self._staging_entries()
         corrupt_paths: set[Path] = set()
         descriptors: dict[ArtifactRef, ArtifactDescriptor] = {}
         for path, reference in self._installed_candidates():
@@ -1223,7 +1223,7 @@ class ModelArtifactService:
             corrupt_artifacts=tuple(
                 sorted(corrupt_paths, key=lambda path: path.as_posix())
             ),
-            abandoned_staging=abandoned_staging,
+            staging_entries=staging_entries,
         )
 
     def _delete_under_leases(self, reference: ArtifactRef) -> None:

@@ -12,6 +12,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -229,7 +230,7 @@ def test_delete_and_reconcile_expose_stable_frozen_contracts() -> None:
         readiness_created=0,
         state_removed=0,
         corrupt_artifacts=(Path("/a"), Path("/b")),
-        abandoned_staging=(Path("/c"),),
+        staging_entries=(Path("/c"),),
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         report.state_removed = 1  # type: ignore[misc]
@@ -683,7 +684,7 @@ def test_reconcile_corrupt_dependency_invalidates_state_without_deleting_payload
         readiness_created=0,
         state_removed=2,
         corrupt_artifacts=(corrupt_path,),
-        abandoned_staging=(),
+        staging_entries=(),
     )
     assert corrupt_path.exists()
     assert payload.exists()
@@ -858,7 +859,7 @@ def test_reconcile_does_not_ready_invalid_dependency_graphs(
     assert service.readiness_path(root_ref).exists() is False
 
 
-def test_reconcile_reports_abandoned_staging_entries_without_touching_them(
+def test_reconcile_reports_observed_staging_entries_without_touching_them(
     tmp_path: Path,
 ) -> None:
     service = service_module.ModelArtifactService(tmp_path / "store")
@@ -884,6 +885,57 @@ def test_reconcile_reports_abandoned_staging_entries_without_touching_them(
     assert nested.read_bytes() == b"part"
     assert file_path.read_bytes() == b"temp"
     assert link.is_symlink()
+
+
+def test_reconcile_reports_live_pre_lifecycle_install_staging_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, source = install_inputs(tmp_path)
+    copy_finished = threading.Event()
+    release_install = threading.Event()
+    original_copy = service._copy_payload
+    installed: list[ArtifactRef] = []
+    failures: list[BaseException] = []
+
+    def blocking_copy(
+        copied_item: ArtifactDescriptor,
+        copied_source: Path,
+        staging: Path,
+    ) -> None:
+        original_copy(copied_item, copied_source, staging)
+        copy_finished.set()
+        if not release_install.wait(10.0):
+            raise AssertionError("test did not release staged install")
+
+    def run_install() -> None:
+        try:
+            installed.append(service.install(item, source))
+        except BaseException as error:
+            failures.append(error)
+
+    monkeypatch.setattr(service, "_copy_payload", blocking_copy)
+    install_thread = threading.Thread(target=run_install)
+    install_thread.start()
+    try:
+        assert copy_finished.wait(10.0)
+        expected = tuple(
+            sorted(service.staging_path.iterdir(), key=lambda path: path.as_posix())
+        )
+        assert len(expected) == 1
+
+        report = service.reconcile()
+
+        assert report.staging_entries == expected
+        assert expected[0].is_dir()
+    finally:
+        release_install.set()
+        install_thread.join(10.0)
+
+    assert install_thread.is_alive() is False
+    assert failures == []
+    assert installed == [item.reference]
+    assert tuple(service.staging_path.iterdir()) == ()
 
 
 @pytest.mark.parametrize(
