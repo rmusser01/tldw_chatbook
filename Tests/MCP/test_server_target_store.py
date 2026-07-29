@@ -4,7 +4,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timezone
-from threading import Barrier, BrokenBarrierError
+from threading import Barrier, BrokenBarrierError, Event
 from uuid import UUID
 
 import pytest
@@ -41,6 +41,25 @@ def _legacy_target_payload(
     if authority_scope_id is not None:
         payload["authority_scope_id"] = authority_scope_id
     return payload
+
+
+def _pause_first_load_after_read(store, monkeypatch) -> Event:
+    first_read_complete = Event()
+    release_first_read = Event()
+    real_load = store.load
+    is_first_load = True
+
+    def paused_load():
+        nonlocal is_first_load
+        targets = real_load()
+        if is_first_load:
+            is_first_load = False
+            first_read_complete.set()
+            release_first_read.wait(timeout=0.25)
+        return targets
+
+    monkeypatch.setattr(store, "load", paused_load)
+    return first_read_complete
 
 
 def test_bootstrap_from_legacy_config_only_when_registry_is_empty(tmp_path):
@@ -212,6 +231,79 @@ def test_ensure_authority_scope_serializes_same_process_store_instances(
     assert ConfiguredServerTargetStore(path).get_target(
         "server-a"
     ).authority_scope_id == scopes[0]
+
+
+def test_status_update_cannot_erase_concurrently_admitted_scope(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "server_targets.json"
+    _write_target_payload(path, [_legacy_target_payload()])
+    status_store = ConfiguredServerTargetStore(path)
+    authority_store = ConfiguredServerTargetStore(path)
+    status_read_complete = _pause_first_load_after_read(status_store, monkeypatch)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        status_future = executor.submit(
+            status_store.update_target_status,
+            "server-a",
+            last_known_reachability="reachable",
+        )
+        assert status_read_complete.wait(timeout=1)
+        scope_future = executor.submit(
+            authority_store.ensure_authority_scope_id,
+            "server-a",
+        )
+        status_future.result(timeout=2)
+        returned_scope = scope_future.result(timeout=2)
+
+    restored = ConfiguredServerTargetStore(path).get_target("server-a")
+    assert restored is not None
+    assert restored.last_known_reachability == "reachable"
+    assert restored.authority_scope_id == returned_scope
+
+
+def test_legacy_upsert_cannot_erase_concurrently_admitted_scope(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "server_targets.json"
+    _write_target_payload(
+        path,
+        [
+            {
+                "server_id": "https://example.com/api",
+                "label": "Legacy",
+                "base_url": "https://example.com/api",
+            }
+        ],
+    )
+    upsert_store = ConfiguredServerTargetStore(path)
+    authority_store = ConfiguredServerTargetStore(path)
+    upsert_read_complete = _pause_first_load_after_read(upsert_store, monkeypatch)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        upsert_future = executor.submit(
+            upsert_store.upsert_legacy_config_target,
+            {
+                "tldw_api": {
+                    "base_url": "https://example.com/api",
+                    "bearer_token": "rotated-token",
+                }
+            },
+        )
+        assert upsert_read_complete.wait(timeout=1)
+        scope_future = executor.submit(
+            authority_store.ensure_authority_scope_id,
+            "https://example.com/api",
+        )
+        upsert_future.result(timeout=2)
+        returned_scope = scope_future.result(timeout=2)
+
+    restored = ConfiguredServerTargetStore(path).get_target(
+        "https://example.com/api"
+    )
+    assert restored is not None
+    assert restored.auth_mode == "bearer"
+    assert restored.authority_scope_id == returned_scope
 
 
 def test_authority_scope_survives_mutable_target_and_status_updates(tmp_path):
