@@ -759,6 +759,40 @@ git add Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py
 git commit -m "test(rag): publish fixture runtime state"
 ```
 
+### Task 4o: Accept complete legacy-backup cleanup
+
+**Files:**
+- Modify: `Tests/TTS/test_profile_backup_integration.py`
+
+- [ ] **Step 1: Reproduce RED and confirm the live contract**
+
+Run
+`test_real_worker_cancellation_before_legacy_publication_leaves_no_artifact`.
+Expected: the `.db` and `.tmp` no-artifact assertions pass, while an
+unconditional `backup_root.iterdir()` raises `FileNotFoundError` because
+production successfully removed the empty directory. Confirm the later legacy
+worker-failure regression has the same stale directory-presence assumption.
+
+- [ ] **Step 2: Assert absence or emptiness**
+
+Change only those two empty-root assertions to accept either a missing backup
+root or an existing root with no children. Retain the artifact, manifest,
+notification, privacy, cancellation, and in-progress-state assertions. Do not
+edit production backup cleanup or create a directory solely for the tests.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/TTS/test_profile_backup_integration.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/TTS/test_profile_backup_integration.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/TTS/test_profile_backup_integration.py
+git add Tests/TTS/test_profile_backup_integration.py
+git commit -m "test(backup): accept removed empty root"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -835,6 +869,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/RAG/test_rag_ui_integration.py \
   Tests/RAG/test_local_citation_capture.py \
   Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
+  Tests/TTS/test_profile_backup_integration.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -861,6 +896,7 @@ Expected: all affected tests pass.
   Tests/ProductionApp/test_provider_selection_ownership.py \
   Tests/RAG/test_rag_ui_integration.py \
   Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
+  Tests/TTS/test_profile_backup_integration.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -882,6 +918,7 @@ Expected: all affected tests pass.
   Tests/ProductionApp/test_provider_selection_ownership.py \
   Tests/RAG/test_rag_ui_integration.py \
   Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
+  Tests/TTS/test_profile_backup_integration.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \

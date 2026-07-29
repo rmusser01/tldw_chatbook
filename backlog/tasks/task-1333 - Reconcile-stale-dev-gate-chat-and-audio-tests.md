@@ -45,6 +45,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #17 RAG UI integration coverage no longer expects a recognized canonical media candidate to enter prompt context when current authority cannot be established; the dedicated citation-capture suite retains both fail-closed authority coverage and the unsupported-source legacy fallback contract, and the public capture docstring describes that boundary accurately.
 - [ ] #18 The lazy RAG-admin app fixture publishes its fake local runtime state through the live runtime-policy projection owner instead of assigning deleted writable compatibility fields, while retaining lazy-construction and service-wiring coverage.
 - [ ] #19 The affected modules and repository-wide suite collect and run without these baseline failures.
+- [ ] #20 Legacy bulk-backup cancellation and worker-failure regressions accept either an absent backup root or an existing empty root while continuing to prove that no database, temporary, manifest, success-notification, or in-progress artifact survives.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -71,6 +72,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 13. Await the recomposed provider controls and boundedly observe staging and persistence around their live Settings handlers.
 14. Remove the obsolete DB-free RAG UI fixture and assertion that bypass current prompt authority, retain the dedicated live citation-capture contracts, and align the public capture docstring with that accepted boundary.
 15. Publish the lazy RAG-admin fixture's fake runtime state through the current runtime-policy owner.
-16. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-17. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+16. Align legacy bulk-backup cleanup assertions with the live no-artifact contract without requiring an empty parent directory to survive cleanup.
+17. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+18. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

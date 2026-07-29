@@ -168,6 +168,11 @@ Update the tests to describe current behavior:
     seam used by current mounted-app fixtures. Keep the fake policy state and
     all lazy service construction, caching, fallback, and wiring assertions
     unchanged. Do not add a setter or compatibility shim to production.
+19. In the two legacy bulk-backup cleanup regressions, accept either a missing
+    backup root or an existing empty root after cancellation or worker failure.
+    Keep the stronger no-artifact, no-success-notification, and cleared
+    in-progress-state assertions. Do not change production cleanup or require
+    its best-effort directory removal to preserve an otherwise unused parent.
 
 The only planned production behavior change outside an ADR-029 diagnostic
 correction is the three-name synchronization of the existing Library collision
@@ -211,6 +216,11 @@ fail-closed behavior. No compatibility shims. No broad deletion of live tests.
   runtime authority. Updating the stale fixture to publish its state through
   the existing owner preserves the architectural boundary and the test's real
   lazy-wiring purpose.
+- Requiring `backup_root.iterdir()` to succeed after failed-backup cleanup
+  treats the presence of an empty implementation directory as product
+  behavior. Accepting either absence or emptiness proves the actual
+  no-artifact contract without weakening the database, temporary-file,
+  manifest, notification, or worker-state assertions.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
