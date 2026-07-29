@@ -220,9 +220,14 @@ async def test_read_status_is_global_across_watchlists():
             if db.get_new_items(status="reviewed", limit=10):
                 break
 
-    row_count = db.conn.execute(
-        "SELECT COUNT(*) FROM subscription_items WHERE id = ?", (item_id,)
-    ).fetchone()[0]
+    # Through `transaction()` like every other DB access in this repo
+    # (CLAUDE.md), not `db.conn` directly: the context manager is what owns
+    # commit/rollback on this connection, and a test that reaches around it
+    # is quietly asserting that reaching around it is fine.
+    with db.transaction() as conn:
+        row_count = conn.execute(
+            "SELECT COUNT(*) FROM subscription_items WHERE id = ?", (item_id,)
+        ).fetchone()[0]
     assert row_count == 1, (
         "there must be exactly one canonical item row -- a per-watchlist "
         "copy would defeat the global-status guarantee even if both copies "
@@ -230,14 +235,15 @@ async def test_read_status_is_global_across_watchlists():
     )
 
     for watchlist_id in watchlist_ids:
-        scoped = db.conn.execute(
-            """
-            SELECT si.status FROM subscription_items si
-            JOIN watchlist_sources ws ON ws.subscription_id = si.subscription_id
-            WHERE ws.watchlist_id = ? AND si.id = ?
-            """,
-            (watchlist_id, item_id),
-        ).fetchone()
+        with db.transaction() as conn:
+            scoped = conn.execute(
+                """
+                SELECT si.status FROM subscription_items si
+                JOIN watchlist_sources ws ON ws.subscription_id = si.subscription_id
+                WHERE ws.watchlist_id = ? AND si.id = ?
+                """,
+                (watchlist_id, item_id),
+            ).fetchone()
         assert scoped is not None, (
             f"watchlist {watchlist_id} shares this source and must still see the item"
         )

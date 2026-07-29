@@ -1386,6 +1386,39 @@ class SubscriptionsDB(BaseDB):
 
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_item_status(self, item_id: int) -> str:
+        """Read one item's current status by its own row id.
+
+        The counterpart to `mark_item_status`: a single-row read, so it is
+        authoritative regardless of how many items share a status. A caller
+        that instead scans `get_new_items` per candidate status is answering
+        "is this item `ingested`?" from a page of at most `limit` rows, and
+        an item beyond that page is indistinguishable from an item that is
+        not there at all -- see
+        `WatchlistsCollectionsScreen._blocking_status_for`, which used to do
+        exactly that.
+
+        Args:
+            item_id: The `subscription_items` row id.
+
+        Returns:
+            The row's status, defaulting to ``"new"`` when the column is
+            NULL -- matching `normalize_watchlist_item`.
+
+        Raises:
+            KeyError: If no item has that id. Callers deciding whether a
+                destructive write is safe must treat a missing row as an
+                unanswered question rather than as permission.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT status FROM subscription_items WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Subscription item not found: {item_id}")
+        return str(row["status"] or "new")
+
     def mark_item_status(
         self,
         item_id: int,

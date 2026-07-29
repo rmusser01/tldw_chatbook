@@ -170,6 +170,33 @@ class LocalWatchlistsService:
     #: `ItemsPane._STATUS_OPTIONS` minus its "all" filter entry.
     ITEM_STATUSES = ("new", "reviewed", "ingested", "ignored", "error")
 
+    async def get_item_status(self, item_id: Any) -> str:
+        """Read one item's current status, authoritatively.
+
+        Added for the reader's `Mark unread` guard (PR #1091 review, F1). The
+        guard previously inferred a status by listing each candidate status
+        and looking for the item in the result, which is a paged query: an
+        `ingested` item beyond the page depth simply was not in the list, and
+        "absent from a truncated page" was read as "does not hold this
+        status", so the guard let the destructive write through. This reads
+        the one row instead, so page size cannot enter into it.
+
+        Args:
+            item_id: The item's local row id (bare, not namespaced).
+
+        Returns:
+            The item's current status.
+
+        Raises:
+            ValueError: If `item_id` is not an integer id.
+            KeyError: If no item has that id.
+        """
+        try:
+            row_id = int(item_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
+        return self._db().get_item_status(row_id)
+
     async def update_item(self, *, item_id: Any, status: str) -> dict[str, Any]:
         """Move one watchlist item to a new status.
 

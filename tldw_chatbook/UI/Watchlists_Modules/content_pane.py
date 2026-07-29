@@ -36,6 +36,32 @@ _GLOBAL_STATUS_NOTE = (
     "everywhere it appears, in every watchlist that includes its source."
 )
 
+# Remote markdown bodies must not produce real terminal hyperlinks (PR #1091
+# review, F3; TASK-1348 AC#2 -- this is that decision, recorded).
+#
+# `rich.markdown.Markdown` defaults to `hyperlinks=True`, which emits OSC-8
+# escape sequences: `[Anthropic docs](https://evil.test/steal)` from a feed
+# becomes a clickable "Anthropic docs" whose real destination the reader
+# cannot see. The label is attacker-chosen and the destination is hidden --
+# the terminal equivalent of a phishing anchor, in content this app fetched
+# from a URL the user subscribed to years ago and no longer thinks about.
+#
+# `hyperlinks=False` is the whole fix: the label renders, and the URL renders
+# beside it as ordinary visible text. Nothing is lost -- a terminal reader
+# still has the address and can copy it -- and the user judges the
+# destination they can actually read.
+#
+# The alternative, sanitizing or allow-listing URLs before rendering, was
+# rejected: it means owning a URL policy inside a renderer (which schemes,
+# which hosts, punycode, redirectors), it fails open on every case the list
+# did not anticipate, and even a perfectly-filtered `https://` link still
+# hides its destination behind an attacker's label. This also keeps the rule
+# `render_article` already states: defend at the boundary where the parser
+# actually is. `Markdown` IS that parser, so the argument goes here rather
+# than as escaping upstream, which was removed from this file for corrupting
+# ordinary content while protecting nothing.
+_MARKDOWN_HYPERLINKS = False
+
 
 def _is_markdown(item: dict[str, Any]) -> bool:
     """Whether this item's body was captured as markdown source.
@@ -44,6 +70,14 @@ def _is_markdown(item: dict[str, Any]) -> bool:
     the `content_kind`/`content_format` pairing) and, until this fix, nothing
     read it back -- so a markdown body was shown to the user as raw `##` /
     `[text](url)` / `*emphasis*` source (whole-branch review, Minor).
+
+    Args:
+        item: A normalized watchlist item (see `normalize_watchlist_item`).
+
+    Returns:
+        `True` when `content_format` is `"markdown"`, case- and
+        whitespace-insensitively; `False` for anything else, including a
+        missing or NULL format.
     """
     return str(item.get("content_format") or "").strip().lower() == "markdown"
 
@@ -67,6 +101,15 @@ def render_article(item: dict[str, Any]) -> RenderableType:
     ever added (a `DataTable` `str` cell, a tooltip, a `Button` label), escape
     at THAT boundary, where the parser actually is.
 
+    The markdown branch below is the one place on this path where a parser
+    genuinely is, and it is defended there rather than upstream -- see
+    `_MARKDOWN_HYPERLINKS`.
+
+    Args:
+        item: A normalized watchlist item. `title`, `source_name`,
+            `published_date`, `content` and `content_format` are read; all
+            may be missing or NULL.
+
     Returns:
         A `Text` for a plain-text body, or a `Group` whose body half is a
         `rich.markdown.Markdown` when `content_format` says markdown.
@@ -87,14 +130,26 @@ def render_article(item: dict[str, Any]) -> RenderableType:
         # `Text` above -- group the two instead. `Markdown` does not evaluate
         # Rich markup either; it parses CommonMark, and `[bold red]x[/]` is
         # just link-shaped text to it.
-        return Group(out, Markdown(str(body)))
+        return Group(out, Markdown(str(body), hyperlinks=_MARKDOWN_HYPERLINKS))
     out.append("\n")
     out.append(str(body) if body else _NO_BODY)
     return out
 
 
 def render_change(item: dict[str, Any]) -> Text:
-    """Render a site item: what changed, by how much, and the diff lines."""
+    """Render a site item: what changed, by how much, and the diff lines.
+
+    Args:
+        item: A normalized watchlist item. `title`, `change_percentage`,
+            `change_type`, `diff_summary` and `content` are read; all may be
+            missing or NULL, and a non-numeric `change_percentage` is
+            dropped from the headline rather than raised.
+
+    Returns:
+        A `Text` with the title, a one-line headline, and the diff body
+        coloured by leading `+`/`-`; `_NO_BODY` in place of the diff when the
+        item carries no content.
+    """
     out = Text()
     out.append(str(item.get("title") or "Untitled"), style="bold")
     out.append("\n")
@@ -181,6 +236,13 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
     item: reactive[dict[str, Any] | None] = reactive(None, recompose=True)
 
     def compose(self):
+        """Build the reader for `item`, or the empty-state placeholder.
+
+        Yields:
+            A single `#content-empty` `Static` when no item is selected;
+            otherwise the `#content-mark-unread-button` and a
+            `#content-body` `Static` holding `render_for(self.item)`.
+        """
         if self.item is None:
             yield Static("Select an item to read it.", id="content-empty")
             return

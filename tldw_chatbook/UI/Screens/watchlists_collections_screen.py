@@ -123,16 +123,10 @@ WC_SNAPSHOT_TIMEOUT_SECONDS = 1.5
 _ITEM_STATUS_WORKER_GROUP = "wl-item-status"
 
 #: Item statuses the reader's "Mark unread" button must never overwrite: they
-#: are not read/unread states at all, and `new` would destroy the record. A
-#: tuple, not a set, so the lookup in `_blocking_status_for` runs in a fixed
-#: order and its result is reproducible.
-_NON_READ_STATE_STATUSES: tuple[str, ...] = ("ingested", "ignored", "error")
-
-#: How deep to look when asking the backend whether one item currently holds
-#: one of the statuses above. The lookup is narrowed to the item's own source
-#: whenever the item carries one, so this is a per-feed depth, not a global
-#: one -- see `_blocking_status_for`.
-_ITEM_STATUS_LOOKUP_LIMIT = 500
+#: are not read/unread states at all, and `new` would destroy the record.
+#: A frozenset, since `_blocking_status_for` now asks the backend for the
+#: item's one status and only has to decide whether it is in this set.
+_NON_READ_STATE_STATUSES: frozenset[str] = frozenset({"ingested", "ignored", "error"})
 
 
 def watchlist_delete_consequence(source_count: int) -> str:
@@ -1460,14 +1454,40 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         on disk just because they happened to be looking at Sources when
         some unrelated toggle fired a save.
 
+        A CONTENT solo is derived from the PRE-SOLO baseline, not from the
+        solo view (PR #1091 review, F2). Soloing CONTENT sets `collapsed` to
+        `{FEEDS, ITEMS}`; adding CONTENT to that off the Read tab collapsed
+        all three centre regions at once, and the workbench mounted three
+        header buttons with no expanded centre at all -- recoverable only by
+        clicking a chevron the user has no reason to suspect. Deriving from
+        `collapsed_for_persistence()` (which is exactly "the collapsed set
+        before the solo") with solo cleared for the rendered view leaves
+        whatever the user had expanded before soloing, and leaves
+        `self.region_layout` itself untouched -- so returning to Read
+        restores the solo they set.
+
         `FEEDS` has the identical spec violation -- it is unconditionally
         built by `_build_list_pane` regardless of `active_section`, so it
         also occupies space on every tab the spec says should be full-width.
-        That predates this change (Phase C) and is NOT fixed here; scoping
-        this fix to CONTENT only, since that is what Task 4 introduced.
+        That predates this change (Phase C) and is NOT fixed here (TASK-1344
+        AC#1); scoping this fix to CONTENT only, since that is what Task 4
+        introduced.
+
+        Returns:
+            The layout to render: `region_layout` verbatim on the Read tab,
+            otherwise a derived copy with CONTENT collapsed -- rebased onto
+            the pre-solo baseline when CONTENT is the soloed region.
         """
         if self.active_section == "items":
             return self.region_layout
+        if self.region_layout.solo_region is Region.CONTENT:
+            # Solo is dropped from the DERIVED view only: `self.region_layout`
+            # keeps `solo_region`, so the user's solo comes back on Read.
+            return RegionLayout(
+                collapsed=frozenset(
+                    self.region_layout.collapsed_for_persistence() | {Region.CONTENT}
+                )
+            )
         return replace(
             self.region_layout,
             collapsed=frozenset(self.region_layout.collapsed | {Region.CONTENT}),
@@ -1550,7 +1570,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             save_region_layout(layout)
 
     def _content_toggle_is_blocked(self, region: Region) -> bool:
-        """Whether a CONTENT collapse/expand must be refused right now.
+        """Whether a CONTENT layout change must be refused right now.
 
         Whole-branch review (Important): off the Read (Items) tab,
         `_visible_region_layout` force-collapses CONTENT, which renders a
@@ -1567,12 +1587,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         The header stays focusable (a collapsed region must be), so refusing
         the toggle here, with an explanation, is the fix rather than removing
         the affordance.
+
+        Also gates SOLO (PR #1091 review, F2 / TASK-1344 AC#2). `Z` on the
+        same focused header collapsed FEEDS and ITEMS around a region the
+        user cannot see on this tab, so the centre went empty -- the same
+        class of harm as the chevron, through the one route that was still
+        open.
+
+        Args:
+            region: The region the user's gesture targets.
+
+        Returns:
+            `True` when the gesture must be refused (and the user has been
+            told why), `False` when it may proceed.
         """
         if region is not Region.CONTENT or self.active_section == "items":
             return False
         self.notify(
             "The reader is only shown on the Read tab. Switch to Read to "
-            "expand or collapse it."
+            "change its layout."
         )
         return True
 
@@ -1584,9 +1617,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._apply_layout(self.region_layout.toggle(region))
 
     def action_solo_region(self) -> None:
-        """Isolate the focused centre pane; press again to restore."""
+        """Isolate the focused centre pane; press again to restore.
+
+        Refused for CONTENT off the Read tab, exactly as the chevron and `z`
+        already are -- see `_content_toggle_is_blocked`.
+        """
         if self.focused_region not in CENTRE_REGIONS:
             self.notify("Solo applies to the Feeds, Items, or Content panes.")
+            return
+        if self._content_toggle_is_blocked(self.focused_region):
             return
         self._apply_layout(self.region_layout.solo(self.focused_region))
 
@@ -2993,12 +3032,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if item_id is None:
             return
         self.run_worker(
-            self._mark_item_unread(item_id, item.get("source_id")),
+            self._mark_item_unread(item_id),
             exclusive=True,
             group=_ITEM_STATUS_WORKER_GROUP,
         )
 
-    async def _mark_item_unread(self, item_id: Any, source_id: Any) -> None:
+    async def _mark_item_unread(self, item_id: Any) -> None:
         """Ask the backend for the item's real status, then refuse or write.
 
         Deciding here, from a live query, rather than keeping the screen's
@@ -3030,11 +3069,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         Args:
             item_id: Normalized id of the item to mark unread.
-            source_id: The item's own source, used to narrow the lookup. May
-                be None, in which case the lookup is unscoped.
         """
         try:
-            blocking = await self._blocking_status_for(item_id, source_id)
+            blocking = await self._blocking_status_for(item_id)
         except Exception:
             logger.opt(exception=True).warning(
                 "Could not confirm an item's status before marking it unread."
@@ -3054,33 +3091,45 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         await self._update_item_status(item_id, "new")
 
-    async def _blocking_status_for(self, item_id: Any, source_id: Any) -> str | None:
+    async def _blocking_status_for(self, item_id: Any) -> str | None:
         """Which `_NON_READ_STATE_STATUSES` value the backend holds for this item.
 
-        One bounded query per candidate status, because the backend's item
-        listing is status-filtered by construction (see `_mark_item_unread`)
-        and there is no single-item read on the controller. An item holds one
-        status, so the first hit is the answer.
+        One authoritative single-item read
+        (`WatchlistsBackendController.get_item_status`, down to
+        `SubscriptionsDB.get_item_status`), not an inference from a listing.
 
-        Scoped to the item's own source when it has one, which turns
-        `_ITEM_STATUS_LOOKUP_LIMIT` into a per-feed depth rather than a
-        global one.
+        An earlier version asked `list_items` once per candidate status with
+        `limit=500` and looked for the item in each result (PR #1091 review,
+        F1). `LocalWatchlistsService.list_items` slices to the requested
+        window, so an `ingested`/`ignored`/`error` item outside the first page
+        was simply absent from the answer -- and absence from a truncated page
+        is not proof of absence. The guard returned `None`, and `Mark unread`
+        overwrote the ingest: exactly the data loss the guard exists to
+        prevent, for any source with more than 500 items in a blocking
+        status. Adding pagination would only have moved the boundary; reading
+        the item's own row removes the boundary.
+
+        Args:
+            item_id: Normalized id of the item to check.
+
+        Returns:
+            The blocking status the backend holds for this item, or `None`
+            when its status is a read/unread state (`new`/`reviewed`) that
+            `Mark unread` may legitimately overwrite.
 
         Raises:
-            Exception: Whatever the controller raises. The caller treats an
-                unanswerable question as a refusal, not as a green light.
+            Exception: Whatever the controller raises -- including `KeyError`
+                for an item that is no longer there, and
+                `NotImplementedError` for a backend with no single-item read.
+                The caller treats an unanswerable question as a refusal, not
+                as a green light.
         """
-        target = str(item_id)
-        for status in _NON_READ_STATE_STATUSES:
-            rows = await self._controller.list_items(
-                runtime_backend=self.runtime_backend,
-                source_id=source_id,
-                status=status,
-                limit=_ITEM_STATUS_LOOKUP_LIMIT,
-            )
-            if any(str(row.get("id")) == target for row in rows):
-                return status
-        return None
+        status = await self._controller.get_item_status(
+            runtime_backend=self.runtime_backend,
+            item_id=item_id,
+        )
+        normalized = str(status or "").strip().lower()
+        return normalized if normalized in _NON_READ_STATE_STATUSES else None
 
     @on(ItemsFilterChanged)
     def handle_items_filter_changed(self, event: ItemsFilterChanged) -> None:

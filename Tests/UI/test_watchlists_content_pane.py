@@ -1397,6 +1397,11 @@ async def test_mark_unread_fails_closed_when_the_status_cannot_be_confirmed():
     Marking unread is a convenience the user can simply repeat; overwriting an
     ingest is not recoverable. So if the backend cannot be asked what the item
     currently is, the write is refused rather than attempted.
+
+    Stubs `get_item_status`, the single-item read the guard now uses (PR #1091
+    review, F1). It used to stub `list_items`, which the guard no longer calls
+    at all -- so left as it was, this test would have gone on passing while
+    testing nothing.
     """
     from textual.widgets import Button
 
@@ -1423,7 +1428,7 @@ async def test_mark_unread_fails_closed_when_the_status_cannot_be_confirmed():
         async def _unavailable(**_kwargs):
             raise RuntimeError("backend unavailable")
 
-        screen._controller.list_items = _unavailable
+        screen._controller.get_item_status = _unavailable
 
         screen.query_one("#content-mark-unread-button", Button).press()
         await pilot.pause(0.8)
@@ -1502,3 +1507,270 @@ async def test_the_mark_unread_button_is_compact():
         await pilot.pause()
         button = app.query_one("#content-mark-unread-button", Button)
         assert button.compact, "the reader's button must not cost three rows"
+
+
+# --- PR #1091 review ---------------------------------------------------------
+
+
+#: The page depth the unread guard's old lookup used
+#: (`_ITEM_STATUS_LOOKUP_LIMIT`, deleted along with that lookup). Written as a
+#: literal here on purpose: the seeding below has to be provably deeper than
+#: the window that used to truncate the guard's answer, and importing a
+#: constant that no longer exists would just make the test unrunnable.
+_LEGACY_STATUS_LOOKUP_LIMIT = 500
+
+
+@pytest.mark.asyncio
+async def test_mark_unread_refuses_an_ingest_that_sits_beyond_a_lookup_page():
+    """PR #1091 review, F1: the guard must not be defeated by a page size.
+
+    The guard used to answer "is this item ingested?" by calling
+    `list_items(status="ingested", limit=500)` once per blocking status and
+    looking for the item in the result.
+    `LocalWatchlistsService.list_items` slices to the requested window, so an
+    ingested item outside the first page was simply not in the answer -- and
+    the guard read that absence as "not ingested" and let `Mark unread`
+    overwrite the ingest. Absence from a truncated page is not proof of
+    absence.
+
+    So this seeds one source with more ingested items than that window held,
+    arranges for the target to be the OLDEST of them (`get_new_items` orders
+    `created_at DESC`, so it lands past the end of the first page), and then
+    drives the real gestures: open the item, Ingest it through the
+    Inspector's own message, press the real `Mark unread` button. The DB must
+    be untouched.
+    """
+    from textual.widgets import Button
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import IngestRequested
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    source_id = db.add_subscription(
+        name="Busy Feed", type="rss", source="https://busy.test/feed.xml"
+    )
+
+    filler_ids = []
+    with db.transaction() as conn:
+        # The target is seeded FIRST and dated oldest, so once it is ingested
+        # it sorts last in the `created_at DESC` listing the old lookup paged
+        # through. It stays "new" for now -- that is the only status the Items
+        # pane lists, and the test has to reach it through the real UI.
+        target_id = persist_subscription_item(
+            conn,
+            source_id,
+            {
+                "url": "https://busy.test/the-one-that-matters/",
+                "title": "The one that matters",
+                "content": "body of the item that must survive",
+                "content_hash": "hash-beyond-page-target",
+            },
+            run_id=None,
+            now="2020-01-01T00:00:00.0000+00:00",
+        )
+        # Zero-padded counter in the timestamp: `created_at` is TEXT, so
+        # ORDER BY compares lexicographically and every filler must sort
+        # above the target deterministically, not by insertion luck.
+        for index in range(_LEGACY_STATUS_LOOKUP_LIMIT + 20):
+            filler_ids.append(
+                persist_subscription_item(
+                    conn,
+                    source_id,
+                    {
+                        "url": f"https://busy.test/filler-{index}/",
+                        "title": f"Filler {index}",
+                        "content_hash": f"hash-beyond-page-{index}",
+                    },
+                    run_id=None,
+                    now=f"2026-07-28T09:00:00.{index:04d}+00:00",
+                )
+            )
+    # `persist_subscription_item` always writes "new" on insert, so the
+    # fillers are moved to the blocking status separately.
+    db.bulk_update_items(filler_ids, "ingested")
+    assert (
+        len(db.get_new_items(subscription_id=source_id, status="ingested", limit=10_000))
+        > _LEGACY_STATUS_LOOKUP_LIMIT
+    ), "the fixture must be deeper than the page the old lookup could see"
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host, expected_count=1)
+        item = screen._loaded_items[0]
+        assert item["item_id"] == target_id, "only the target is still unread"
+
+        pane.select_item_by_id(str(item["id"]))
+        await pilot.pause(0.5)
+        assert screen.selected_entity is not None
+
+        screen.post_message(IngestRequested(screen.selected_entity))
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if db.get_item_status(target_id) == "ingested":
+                break
+        assert db.get_item_status(target_id) == "ingested", (
+            "the precondition: the real Ingest gesture wrote `ingested`"
+        )
+        # And it really is out of reach of a single 500-row page.
+        page = db.get_new_items(
+            subscription_id=source_id,
+            status="ingested",
+            limit=_LEGACY_STATUS_LOOKUP_LIMIT,
+        )
+        assert target_id not in {row["id"] for row in page}, (
+            "the target must fall outside the page the old lookup read, or "
+            "this test proves nothing about the truncation bug"
+        )
+
+        screen.query_one("#content-mark-unread-button", Button).press()
+        await pilot.pause(0.8)
+
+    assert db.get_item_status(target_id) == "ingested", (
+        "Mark unread must not overwrite an ingest just because the item sits "
+        "beyond the first page of a status listing"
+    )
+
+
+@pytest.mark.asyncio
+async def test_soloing_content_then_leaving_read_leaves_a_centre_region_expanded():
+    """PR #1091 review, F2: the workbench must never render an empty centre.
+
+    Soloing CONTENT sets `collapsed` to `{FEEDS, ITEMS}`. Off the Read tab
+    `_visible_region_layout` force-collapses CONTENT as well, and it used to
+    add that to the SOLO view -- collapsing all three centre regions, so the
+    workbench mounted three header buttons and nothing else. Deriving from
+    the pre-solo baseline instead leaves the user's real layout showing, and
+    their solo is still there when they come back to Read.
+    """
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import (
+        CENTRE_REGIONS,
+        Region,
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen.active_section = "items"
+        await pilot.pause(0.3)
+        screen.focused_region = Region.CONTENT
+        screen.action_solo_region()
+        await pilot.pause(0.3)
+        assert screen.region_layout.solo_region is Region.CONTENT, (
+            "the precondition: CONTENT really is soloed"
+        )
+        assert screen.query("#wl-region-content")
+
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+
+        rendered = screen._visible_region_layout()
+        expanded = [r for r in CENTRE_REGIONS if not rendered.is_collapsed(r)]
+        assert expanded, (
+            "leaving Read with CONTENT soloed collapsed every centre region: "
+            f"rendered layout was {sorted(r.value for r in rendered.collapsed)}"
+        )
+        # Not just the derived value -- what actually mounted.
+        assert screen.query("#wl-region-feeds") or screen.query("#wl-region-items"), (
+            "at least one centre region must be mounted expanded, not three "
+            "header buttons over an empty centre"
+        )
+
+        screen.active_section = "items"
+        await pilot.pause(0.3)
+        assert screen.region_layout.solo_region is Region.CONTENT, (
+            "the gate is display-only: the user's solo must survive the trip"
+        )
+        assert screen.query("#wl-region-content")
+        assert not screen.query("#wl-region-feeds"), "and it must still be a solo"
+
+
+@pytest.mark.asyncio
+async def test_solo_on_content_off_the_read_tab_is_refused():
+    """PR #1091 review, F2 (second half) / TASK-1344 AC#2.
+
+    The collapsed `▸ Content` header is focusable on every tab, so `Z` could
+    still solo a region the user cannot see -- collapsing FEEDS and ITEMS
+    around it and leaving nothing on screen. The chevron and `z` are already
+    refused there; `Z` must be too.
+    """
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        before = screen.region_layout
+
+        screen.focused_region = Region.CONTENT
+        screen.action_solo_region()
+        await pilot.pause(0.3)
+
+        assert screen.region_layout is before or screen.region_layout == before, (
+            "solo on the gated CONTENT region must not touch the real layout"
+        )
+        assert screen.region_layout.solo_region is None
+        assert screen.query("#wl-region-feeds") or screen.query("#wl-region-items"), (
+            "and the centre must still have something in it"
+        )
+
+
+def test_a_hostile_markdown_body_never_emits_a_terminal_hyperlink():
+    """PR #1091 review, F3: `Markdown` is a parser, so defend at it.
+
+    `rich.markdown.Markdown` defaults to `hyperlinks=True`, which turns
+    `[label](url)` from a remote feed into a real OSC-8 terminal hyperlink:
+    an attacker-chosen label over a destination the reader cannot see. The
+    reader passes `hyperlinks=False`, so the label renders and the URL
+    renders beside it as ordinary visible text.
+
+    Asserts through a real Console, since the question is what was
+    *interpreted*, not what characters exist. Also pins that the markdown
+    branch was actually taken -- otherwise a regression that stopped
+    rendering markdown at all would leave this test green for the wrong
+    reason.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
+
+    plain, ansi = _render_to_console(
+        render_article(
+            {
+                "title": "Fresh drop",
+                "source_name": "Hostile Feed",
+                "content": (
+                    "[Anthropic docs](https://evil.test/steal)\n\n"
+                    "[click](javascript:alert)\n\n"
+                    '<a href="https://evil.test/raw">raw html</a>\n\n'
+                    "<script>alert(1)</script>\n\n"
+                    "<https://evil.test/autolink>"
+                ),
+                "content_kind": "article",
+                "content_format": "markdown",
+            }
+        ),
+        width=200,
+    )
+
+    assert "\x1b]8;" not in ansi, (
+        "no markdown link may become a real terminal hyperlink -- the label "
+        "is attacker-chosen and would hide its destination"
+    )
+    # The markdown branch really did run: a plain-text render would still
+    # show the raw link syntax.
+    assert "[Anthropic docs](" not in plain, "the body must have been parsed as markdown"
+    # And the destination is disclosed rather than hidden behind the label.
+    assert "https://evil.test/steal" in plain
+    assert "https://evil.test/autolink" in plain
