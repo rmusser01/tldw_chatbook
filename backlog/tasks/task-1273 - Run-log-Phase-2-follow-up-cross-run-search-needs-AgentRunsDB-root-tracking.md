@@ -25,3 +25,45 @@ task-1271 (run-log Phase 2: aggregation, slicing, cross-run search) investigated
 - [ ] #3 Runs written before this migration (no recorded root) degrade gracefully -- reported as unlocatable rather than raising or silently skipped without explanation
 - [ ] #4 Cross-run search remains primary-agent only, mirroring search_run_log/run_log_stats/run_log_slice's own isolation gate
 <!-- AC:END -->
+
+## Revised analysis (2026-07-28, after TASK-870 landed)
+
+The original deferral said locating a historical run's log "needs either an unsafe
+assumption or a schema change". That was more pessimistic than the code warrants.
+Two pieces that already exist close most of the gap:
+
+1. **Runs ARE queryable by conversation.** `agent_runs` carries an indexed
+   `conversation_id` column, and `AgentRunsDB.list_runs(conversation_id, ...)`
+   already returns a conversation's runs newest-first. So enumerating which runs
+   belong to a conversation needs no new schema at all.
+2. **A run's log directory is already resolvable by id.** TASK-870 added
+   `run_log.resolve_existing_log_dir(run_id)`, the read-only counterpart to
+   `RunLogWriter.bind()`: it resolves the current root and returns that run's log
+   directory if it exists, without creating anything.
+
+Composing those two gives working cross-run search today:
+`list_runs(conversation_id)` -> `resolve_existing_log_dir(run_id)` ->
+`load_records` -> `search_records`.
+
+**The one real gap** is narrower than "we cannot find the logs": nothing records
+which ROOT a given run's log was written under. So if the log root changed between
+runs — the user bound, rebound or unbound a workspace folder — older logs are not
+under the current root and will not be found. That is a graceful degradation (those
+runs report as unavailable), not a correctness hazard: a run whose log IS found is
+always genuinely that run's log, because the directory is keyed by run id.
+
+So there are two honest options rather than one blocker:
+
+- **(a) Best-effort, no schema change.** Search every run whose log resolves under
+  the current root; report the rest as unavailable rather than silently omitting
+  them. Ships now, correct for the common case where the root is stable.
+- **(b) Exact, with a migration.** Record the resolved log path (or root) on the
+  run record at write time, so a run's log is locatable regardless of later
+  workspace changes. Completes the feature; costs a schema version bump.
+
+(a) does not preclude (b) — a stored path can be preferred when present and the
+current-root probe kept as the fallback for runs predating the column.
+
+**Dependency worth noting:** this builds on `resolve_existing_log_dir`, which is on
+the TASK-870 branch (PR #1082), and on the Phase 2 query tools (PR #1078). Both must
+land before this can be implemented.
