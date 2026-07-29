@@ -14,6 +14,7 @@ from __future__ import annotations
 # `monkeypatch.setattr(cvi.sys, "platform", ...)` both mutate the real module
 # objects, which the detection helpers then read).
 import importlib.util  # noqa: F401 - patched seam; see comment above
+import string
 import sys  # noqa: F401 - patched seam; see comment above
 import threading
 from dataclasses import dataclass
@@ -279,6 +280,22 @@ class VoiceFinal:
 
 
 @dataclass(frozen=True)
+class VoiceCommand:
+    """A finalized segment that matched the spoken-command grammar.
+
+    Kept as dumb as its `VoiceFinal`/`VoicePartial` siblings: it will later
+    cross a thread boundary through the same `post_message` wrappers, so it
+    carries nothing beyond the resolved command name.
+
+    Attributes:
+        name: One of `COMMAND_PHRASES`' values (e.g. `"send"`,
+            `"new-paragraph"`).
+    """
+
+    name: str
+
+
+@dataclass(frozen=True)
 class VoiceStateChanged:
     """The controller's state machine transitioned to `state`."""
 
@@ -352,6 +369,88 @@ class CaptureOutcome:
 
     captured_bytes: int | None = None
     transcription_complete: bool = True
+
+
+# --- Spoken-command grammar -------------------------------------------------
+#
+# A finalized segment is either a command ("Console, send.") or dictated text
+# -- there is no third option, and an ambiguous segment always resolves to
+# text. Whole-segment match only, against the *normalized* segment: matching
+# on a substring or a prefix would make "Console send button is broken" (a
+# sentence a user might actually dictate) fire the send command.
+DEFAULT_COMMAND_PREFIX = "console"
+
+#: Normalized phrase (after `normalize_spoken`, prefix stripped) -> command
+#: name. Command names are kebab-case, independent of the spoken phrasing.
+COMMAND_PHRASES: dict[str, str] = {
+    "new paragraph": "new-paragraph",
+    "new line": "new-line",
+    "stop": "stop",
+    "send": "send",
+    "discard": "discard",
+    "read that back": "read-that-back",
+    "new session": "new-session",
+}
+
+
+def normalize_spoken(text: str) -> str:
+    """Fold recognizer output down to the shape the grammar matches against.
+
+    Lowercases, removes every character in `string.punctuation`, and
+    collapses whitespace. Punctuation is stripped entirely rather than just
+    trimmed from the ends: recognizers commonly emit an internal comma after
+    the command prefix ("Console, send."), and preserving it would mean that
+    -- the single most natural phrasing -- could never match.
+
+    Args:
+        text: Raw recognizer output for one finalized segment.
+
+    Returns:
+        The normalized text, e.g. `"Console, send."` -> `"console send"`.
+    """
+    stripped = text.lower().translate(str.maketrans("", "", string.punctuation))
+    return " ".join(stripped.split())
+
+
+def command_prefix() -> str:
+    """Return the configured wake phrase that precedes every voice command.
+
+    Reads `dictation.command_prefix`. A blank (empty or whitespace-only)
+    value is treated the same as unset, since it would otherwise make every
+    normalized segment match every command phrase.
+
+    Returns:
+        The configured prefix, lowercased and stripped, or
+        `DEFAULT_COMMAND_PREFIX` when unset or blank.
+    """
+    configured = get_cli_setting("dictation", "command_prefix", None)
+    prefix = str(configured or "").strip().lower()
+    return prefix or DEFAULT_COMMAND_PREFIX
+
+
+def classify_segment(text: str) -> "VoiceCommand | VoiceFinal":
+    """Classify one finalized segment as a spoken command or dictated text.
+
+    Matches only the whole normalized segment against
+    `f"{command_prefix()} {phrase}"` for each phrase in `COMMAND_PHRASES`.
+    Anything else -- including a correctly prefixed typo, or the prefix
+    followed by unrelated words -- fails open to `VoiceFinal` with the
+    original, unmodified text, since misrecognizing dictated text as a
+    command silently discards what the user said.
+
+    Args:
+        text: Raw recognizer output for one finalized segment.
+
+    Returns:
+        A `VoiceCommand` when the segment matches the grammar exactly,
+        otherwise a `VoiceFinal` carrying `text` unchanged.
+    """
+    normalized = normalize_spoken(text)
+    prefix = command_prefix()
+    for phrase, name in COMMAND_PHRASES.items():
+        if normalized == f"{prefix} {phrase}":
+            return VoiceCommand(name)
+    return VoiceFinal(text)
 
 
 #: (provider, model) pairs already warmed *in this process*. Only drives which
@@ -679,7 +778,7 @@ class ConsoleVoiceInputController:
         try:
             started = service.start_dictation(
                 on_partial_transcript=lambda text: self._emit(VoicePartial(text)),
-                on_final_transcript=lambda text: self._emit(VoiceFinal(text)),
+                on_final_transcript=lambda text: self._emit(classify_segment(text)),
                 on_state_change=lambda _state: None,  # our state machine is authoritative
                 on_error=self._report_service_error,
                 save_audio=self.save_audio_requested,

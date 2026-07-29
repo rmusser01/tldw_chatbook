@@ -2104,3 +2104,61 @@ def test_a_raising_stop_dictation_still_releases_the_microphone(monkeypatch):
     assert controller.state == cvi.STATE_IDLE
     failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
     assert len(failures) == 1
+
+
+# --------------------------------------------------------------------------
+# Spoken-command grammar: a finalized segment is either a command or text
+# --------------------------------------------------------------------------
+
+
+def test_console_comma_send_period_matches(monkeypatch):
+    """Recognizers emit 'Console, send.' — punctuation must not block the match."""
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Console, send.")
+    assert isinstance(result, cvi.VoiceCommand) and result.name == "send"
+
+
+def test_trailing_words_fail_open_to_text(monkeypatch):
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Console send button is broken")
+    assert isinstance(result, cvi.VoiceFinal)
+    assert result.text == "Console send button is broken"
+
+
+def test_prefixed_typo_fails_open_to_text(monkeypatch):
+    _stub_settings(monkeypatch, {})
+    assert isinstance(cvi.classify_segment("console sned"), cvi.VoiceFinal)
+
+
+def test_every_command_phrase_matches(monkeypatch):
+    _stub_settings(monkeypatch, {})
+    for phrase, name in cvi.COMMAND_PHRASES.items():
+        result = cvi.classify_segment(f"Console, {phrase}!")
+        assert isinstance(result, cvi.VoiceCommand) and result.name == name
+
+
+def test_custom_prefix(monkeypatch):
+    _stub_settings(monkeypatch, {"dictation.command_prefix": "hey app"})
+    assert isinstance(cvi.classify_segment("Hey app, stop."), cvi.VoiceCommand)
+    assert isinstance(cvi.classify_segment("Console, stop."), cvi.VoiceFinal)
+
+
+def test_blank_prefix_falls_back_to_default(monkeypatch):
+    _stub_settings(monkeypatch, {"dictation.command_prefix": "   "})
+    assert isinstance(cvi.classify_segment("Console, stop."), cvi.VoiceCommand)
+
+
+def test_plain_segments_are_untouched(monkeypatch):
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("hello world")
+    assert isinstance(result, cvi.VoiceFinal) and result.text == "hello world"
+
+
+def test_controller_emits_voice_command_for_command_segment(monkeypatch):
+    """End-to-end through the controller's on_final seam."""
+    controller, events, service = _controller(monkeypatch)
+    controller.start()
+    service.emit_final("Console, stop.")
+    commands = [e for e in events if isinstance(e, cvi.VoiceCommand)]
+    finals = [e for e in events if isinstance(e, cvi.VoiceFinal)]
+    assert [c.name for c in commands] == ["stop"] and finals == []
