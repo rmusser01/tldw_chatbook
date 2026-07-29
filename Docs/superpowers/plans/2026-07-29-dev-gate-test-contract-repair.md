@@ -20,9 +20,10 @@
 
 Do not restore `StreamDone` or `TabState`. Do not replace the latest `dev`
 chat-shell fixture or duplicate the streaming-rejection test already present in
-`Tests/Event_Handlers/test_retained_worker_adapter.py`. Do not edit production
-files unless diagnostic review finds an actual ADR-029 violation, and never
-regenerate the inventory before reviewing its changed owners and sink topology.
+`Tests/Event_Handlers/test_retained_worker_adapter.py`. The only non-diagnostic
+production edit allowed is adding the three missing registered run-log names to
+the existing Library skill shadow set. Never regenerate the inventory before
+reviewing its changed owners and sink topology.
 
 ## File map
 
@@ -50,6 +51,8 @@ regenerate the inventory before reviewing its changed owners and sink topology.
   coverage without host-dependent wall-clock assertions.
 - Modify `Tests/Event_Handlers/test_eval_db_operations_path.py`: create its
   fixture-owned retargeted profile directory before config selection.
+- Modify `tldw_chatbook/Library/library_skills_state.py`: synchronize the fixed
+  skill collision set with the three registered run-log runtime tools.
 - Modify `Docs/security/production-diagnostic-inventory.json`: only after
   reviewing every generated owner/topology change against ADR-029.
 - Modify TASK-1333 and this plan only for closeout evidence.
@@ -469,6 +472,39 @@ git add Tests/Event_Handlers/test_eval_db_operations_path.py
 git commit -m "test(evals): create retargeted profile root"
 ```
 
+### Task 4g: Synchronize Library skill shadow names
+
+**Files:**
+- Modify: `tldw_chatbook/Library/library_skills_state.py`
+- Verify: `Tests/Library/test_library_skills_state.py`
+
+- [ ] **Step 1: Reproduce RED**
+
+Run `test_shadow_name_set_stays_in_sync_with_real_sources`. Expected: the
+subset assertion reports `search_run_log`, `run_log_stats`, and
+`run_log_slice` missing from `_SHADOWED_BUILTIN_NAMES`.
+
+- [ ] **Step 2: Add only registered collision names**
+
+Add those three runtime tool names to the fixed literal shadow set with one
+brief comment tying them to the drift guard. Do not import agent runtime
+modules or refactor the collision boundary.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Library/test_library_skills_state.py -q
+../../.venv/bin/python -m ruff check \
+  tldw_chatbook/Library/library_skills_state.py \
+  Tests/Library/test_library_skills_state.py
+../../.venv/bin/python -m ruff format --check \
+  tldw_chatbook/Library/library_skills_state.py \
+  Tests/Library/test_library_skills_state.py
+git add tldw_chatbook/Library/library_skills_state.py
+git commit -m "fix(library): reserve run-log tool names"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -535,6 +571,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/Chat/test_chat_functions.py \
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
+  Tests/Library/test_library_skills_state.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -554,22 +591,26 @@ Expected: all affected tests pass.
   Tests/Chat/test_chat_functions.py \
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
+  Tests/Library/test_library_skills_state.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
   Tests/Audio/test_audio_integration.py \
-  Tests/Audio/test_recording_service.py
+  Tests/Audio/test_recording_service.py \
+  tldw_chatbook/Library/library_skills_state.py
 ../../.venv/bin/python -m ruff format --check \
   Tests/Event_Handlers/test_worker_events_contract.py \
   Tests/Event_Handlers/test_eval_db_operations_path.py \
   Tests/Chat/test_chat_functions.py \
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
+  Tests/Library/test_library_skills_state.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
   Tests/Audio/test_audio_integration.py \
-  Tests/Audio/test_recording_service.py
+  Tests/Audio/test_recording_service.py \
+  tldw_chatbook/Library/library_skills_state.py
 ../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
 git diff --check origin/dev...HEAD
 git diff --check

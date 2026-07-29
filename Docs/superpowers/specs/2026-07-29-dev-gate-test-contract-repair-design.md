@@ -55,6 +55,10 @@ The failures reproduce on an exact `origin/dev` checkout:
   `TLDW_CONFIG_PATH` beneath a nonexistent `profile-two` directory. The
   private-path boundary correctly rejects that missing trusted parent before
   config or database creation.
+- The Library skill-name collision guard reports that the newer runtime tools
+  `search_run_log`, `run_log_stats`, and `run_log_slice` are absent from
+  `_SHADOWED_BUILTIN_NAMES`, allowing a local skill to collide with a real
+  built-in runtime name.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -111,10 +115,13 @@ Update the tests to describe current behavior:
     selecting its config file, and explicitly close the test-owned Evals
     database connection during teardown. Do not make production config loading
     create or trust a missing security-sensitive parent.
+11. Add exactly the three registered run-log runtime tool names to the existing
+    fixed Library skill shadow set. Keep the literal collision boundary; do not
+    import the agent runtime registry into the pure display-state module.
 
-No planned production file changes. No compatibility shims. No broad test
-deletion. A production diagnostic may change only if the required ADR-029
-review identifies an actual privacy violation.
+The only planned production change outside an ADR-029 diagnostic correction is
+the three-name synchronization of the existing Library collision boundary. No
+compatibility shims. No broad deletion of live tests.
 
 ## Alternatives
 
@@ -130,6 +137,9 @@ review identifies an actual privacy violation.
 - Blindly regenerating the diagnostic inventory would defeat its review gate.
 - Raising the indexing test's timeout would retain a machine-dependent failure
   with a different arbitrary threshold.
+- Deriving the Library shadow set dynamically from the agent registry would
+  couple a pure display-state module to runtime ownership and replace the
+  intentional fixed collision boundary.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

@@ -36,7 +36,8 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #8 Every changed diagnostic owner is reviewed against ADR-029, no unsafe payload logging is admitted, persistent sink topology remains unchanged, and the checked inventory matches production.
 - [ ] #9 The large-batch RAG indexing regression retains its 1,000-item persistence and retrieval coverage without host-dependent wall-clock assertions.
 - [ ] #10 The retargeted Evals profile regression creates its temporary trusted profile directory as owner-only before selecting the config path and closes its test-owned database connection, without weakening production path verification.
-- [ ] #11 The affected modules and repository-wide suite collect and run without these baseline failures.
+- [ ] #11 Local skill names cannot shadow the registered `search_run_log`, `run_log_stats`, or `run_log_slice` runtime tools, and the existing shadow-set drift guard passes.
+- [ ] #12 The affected modules and repository-wide suite collect and run without these baseline failures.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -55,6 +56,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 5. Create temporary trusted Notes roots in each stale real-seam fixture.
 6. Remove host-dependent timing assertions from the large-batch indexing test while retaining its functional coverage.
 7. Create the retargeted Evals profile fixture directory before selecting its config path.
-8. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-9. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+8. Synchronize the fixed Library skill collision set with registered run-log runtime names.
+9. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+10. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
