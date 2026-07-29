@@ -233,6 +233,7 @@ PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
 #: Rows per library page. ``page_offset`` is always kept a multiple of this so
 #: the pane's "start-end of N" label math stays exact.
 PERSONAS_LIBRARY_PAGE_SIZE = 50
+_SERVER_CHARACTER_SEARCH_MAX_RESULTS = 100
 _MAX_CHARACTER_ID = (1 << 63) - 1
 #: Display labels for the library sort keys (shared by the character sort cycle
 #: and the persona render path).
@@ -951,6 +952,7 @@ class PersonasScreen(BaseAppScreen):
         self._sync_personas_rails()
         self._set_persona_editor_runtime_source(self.persona_handler.current_mode())
         self.query_one(PersonasLibraryPane).set_mode(self.state.active_mode)
+        self._sync_local_character_actions()
         self._show_center(None)
         self.run_worker(
             self._load_after_mount(),
@@ -1014,7 +1016,22 @@ class PersonasScreen(BaseAppScreen):
         self.character_handler.current_character_data = {}
         self.state.reset_for_runtime_source_change(normalized)
         self._set_persona_editor_runtime_source(normalized)
+        self._count_cache_key = None
+        self._characters = []
+        self._character_total = 0
+        self._update_status_row()
+        self._sync_local_character_actions()
         if self.is_mounted:
+            if active_mode == "characters":
+                await self._display_character_page(
+                    [],
+                    total=0,
+                    offset=0,
+                    sort_label=(
+                        "Sort: Server order" if normalized == "server" else "Sort: Name"
+                    ),
+                    tag_label="Tag: All",
+                )
             await self._apply_mode(active_mode)
 
     async def on_unmount(self) -> None:
@@ -1194,6 +1211,71 @@ class PersonasScreen(BaseAppScreen):
             return value
         return None
 
+    def _local_character_actions_allowed(self) -> bool:
+        """Return whether local character editor/DB seams still own this screen."""
+        return self.state.runtime_source == "local"
+
+    def _sync_local_character_actions(self) -> None:
+        """Disable every local-only character action while browsing the server."""
+        if not self.is_mounted:
+            return
+        server_characters = (
+            self.state.active_mode == "characters"
+            and not self._local_character_actions_allowed()
+        )
+        try:
+            for selector in (
+                "#personas-library-new",
+                "#personas-library-import",
+                "#personas-library-duplicate",
+            ):
+                self.query_one(selector, Button).disabled = server_characters
+
+            edit = self.query_one("#personas-card-edit-character", Button)
+            if server_characters:
+                edit.disabled = True
+            else:
+                edit.disabled = not (
+                    self.state.selected_entity_kind == "character"
+                    and self.state.selected_entity_id is not None
+                )
+
+            inspector = self.query_one(PersonasInspectorPane)
+            if server_characters:
+                for selector in (
+                    "#personas-export-json",
+                    "#personas-export-png",
+                    "#personas-delete",
+                ):
+                    inspector.query_one(selector, Button).disabled = True
+            else:
+                # Restore the inspector's existing selection/unsaved gates after
+                # leaving server Characters mode.
+                inspector.set_unsaved(self.state.has_unsaved_changes)
+        except QueryError:
+            return
+
+    def _server_character_request_is_current(
+        self,
+        *,
+        expected_server_id: str | None,
+        mode: str,
+        query: str,
+        sort_key: str,
+        tag: str | None,
+        offset: int,
+    ) -> bool:
+        """Return whether one server page request still owns the library."""
+        return (
+            self.state.runtime_source == "server"
+            and self._active_server_target() == expected_server_id
+            and self.state.active_mode == mode
+            and self.state.search_query == query
+            and self.state.sort_key == sort_key
+            and self.state.tag_filter == tag
+            and self.state.page_offset == offset
+        )
+
     @staticmethod
     def _character_record_mapping(value: Any) -> dict | None:
         """Return one detached character DTO mapping, if structurally valid."""
@@ -1286,6 +1368,14 @@ class PersonasScreen(BaseAppScreen):
         tag = self.state.tag_filter
         offset = self.state.page_offset
         expected_server_id = self._active_server_target()
+        self._count_cache_key = None
+        await self._display_character_page(
+            [],
+            total=0,
+            offset=offset,
+            sort_label="Sort: Server order",
+            tag_label="Tag: All",
+        )
         if expected_server_id is None:
             return
 
@@ -1301,7 +1391,10 @@ class PersonasScreen(BaseAppScreen):
                 response = await load_characters(
                     query,
                     mode="server",
-                    limit=offset + PERSONAS_LIBRARY_PAGE_SIZE + 1,
+                    limit=min(
+                        offset + PERSONAS_LIBRARY_PAGE_SIZE + 1,
+                        _SERVER_CHARACTER_SEARCH_MAX_RESULTS,
+                    ),
                 )
                 page_start = offset
             else:
@@ -1319,26 +1412,35 @@ class PersonasScreen(BaseAppScreen):
             raise
         except Exception:
             logger.warning("Server character page load failed.")
-            self._notify("Could not load server characters.", "error")
+            if self._server_character_request_is_current(
+                expected_server_id=expected_server_id,
+                mode=mode,
+                query=query,
+                sort_key=sort_key,
+                tag=tag,
+                offset=offset,
+            ):
+                self._notify("Could not load server characters.", "error")
             return
 
-        if (
-            self.state.runtime_source != "server"
-            or self._active_server_target() != expected_server_id
-            or self.state.active_mode != mode
-            or self.state.search_query != query
-            or self.state.sort_key != sort_key
-            or self.state.tag_filter != tag
-            or self.state.page_offset != offset
+        if not self._server_character_request_is_current(
+            expected_server_id=expected_server_id,
+            mode=mode,
+            query=query,
+            sort_key=sort_key,
+            tag=tag,
+            offset=offset,
         ):
             return
 
         inferred_total = offset + len(page_records) + (1 if has_more else 0)
         total = exact_total if exact_total is not None else inferred_total
-        self._count_cache_key = None
+        display_total = max(total, inferred_total)
+        if query:
+            display_total = min(display_total, _SERVER_CHARACTER_SEARCH_MAX_RESULTS)
         await self._display_character_page(
             page_records,
-            total=max(total, inferred_total),
+            total=display_total,
             offset=offset,
             sort_label="Sort: Server order",
             tag_label="Tag: All",
@@ -1355,6 +1457,7 @@ class PersonasScreen(BaseAppScreen):
         if self.state.runtime_source == "server":
             await self._reload_server_character_page()
             return
+        runtime_source = self.state.runtime_source
         mode = self.state.active_mode
         query = self.state.search_query
         sort_key = self.state.sort_key
@@ -1398,7 +1501,8 @@ class PersonasScreen(BaseAppScreen):
         # still False while the initial on-mount refresh runs; teardown is
         # tolerated instead by catching the pane QueryError below.)
         if (
-            self.state.active_mode != mode
+            self.state.runtime_source != runtime_source
+            or self.state.active_mode != mode
             or self.state.search_query != query
             or self.state.sort_key != sort_key
             or self.state.tag_filter != tag
@@ -1943,6 +2047,7 @@ class PersonasScreen(BaseAppScreen):
         )
         library = self.query_one(PersonasLibraryPane)
         library.set_mode(mode)
+        self._sync_local_character_actions()
         is_dictionaries = mode == "dictionaries"
         is_lore = mode == "lore"
         self.query_one(PersonasPreviewPane).display = not (is_dictionaries or is_lore)
@@ -2203,6 +2308,7 @@ class PersonasScreen(BaseAppScreen):
         if server_record is None:
             await self._refresh_character_dictionaries()
             await self._refresh_character_worldbooks()
+        self._sync_local_character_actions()
 
     async def _select_profile(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(
@@ -2808,6 +2914,8 @@ class PersonasScreen(BaseAppScreen):
         self, message: CharacterDictionaryAttachRequested
     ) -> None:
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         if (
             self.state.selected_entity_kind != "character"
             or not self.state.selected_entity_id
@@ -2820,6 +2928,8 @@ class PersonasScreen(BaseAppScreen):
 
     async def _character_dictionary_attach_worker(self) -> None:
         try:
+            if not self._local_character_actions_allowed():
+                return
             entity_id = self.state.selected_entity_id
             service = self._dictionary_scope_service()
             if service is None or not entity_id:
@@ -2843,6 +2953,8 @@ class PersonasScreen(BaseAppScreen):
                 return
             if not picked:
                 return
+            if not self._local_character_actions_allowed():
+                return
             try:
                 await service.attach_to_character(int(picked), char_id, mode="local")
             except ConflictError:
@@ -2863,6 +2975,8 @@ class PersonasScreen(BaseAppScreen):
 
     def _list_attachable_dictionaries(self, character_id: int) -> list[dict]:
         """Local dictionaries NOT already attached to this character (sync DB read)."""
+        if not self._local_character_actions_allowed():
+            return []
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
             return []
@@ -2885,6 +2999,8 @@ class PersonasScreen(BaseAppScreen):
 
     async def _sync_character_editor_dictionaries(self, character_id: int) -> None:
         """Keep the editor's base coherent after an out-of-band attach/detach."""
+        if not self._local_character_actions_allowed():
+            return
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
             return
@@ -2915,6 +3031,8 @@ class PersonasScreen(BaseAppScreen):
         self, message: CharacterDictionaryDetachRequested
     ) -> None:
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         entity_id = self.state.selected_entity_id
         service = self._dictionary_scope_service()
         if (
@@ -2947,6 +3065,8 @@ class PersonasScreen(BaseAppScreen):
         self, message: CharacterWorldBookAttachRequested
     ) -> None:
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         if (
             self.state.selected_entity_kind != "character"
             or not self.state.selected_entity_id
@@ -2959,6 +3079,8 @@ class PersonasScreen(BaseAppScreen):
 
     async def _character_worldbook_attach_worker(self) -> None:
         try:
+            if not self._local_character_actions_allowed():
+                return
             entity_id = self.state.selected_entity_id
             manager = self._lore_manager()
             if manager is None or not entity_id:
@@ -2982,6 +3104,8 @@ class PersonasScreen(BaseAppScreen):
                 )
                 return
             if picked is None:
+                return
+            if not self._local_character_actions_allowed():
                 return
             try:
                 await asyncio.to_thread(
@@ -3007,6 +3131,8 @@ class PersonasScreen(BaseAppScreen):
 
     def _list_attachable_world_books(self, character_id: int) -> list[dict]:
         """Standalone world books NOT already attached to this character (sync DB read)."""
+        if not self._local_character_actions_allowed():
+            return []
         manager = self._lore_manager()
         if manager is None:
             return []
@@ -3024,6 +3150,8 @@ class PersonasScreen(BaseAppScreen):
 
     async def _sync_character_editor_worldbooks(self, character_id: int) -> None:
         """Keep the editor's base coherent after an out-of-band attach/detach."""
+        if not self._local_character_actions_allowed():
+            return
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
             return
@@ -3054,6 +3182,8 @@ class PersonasScreen(BaseAppScreen):
         self, message: CharacterWorldBookDetachRequested
     ) -> None:
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         entity_id = self.state.selected_entity_id
         if (
             self.state.selected_entity_kind != "character"
@@ -4077,6 +4207,8 @@ class PersonasScreen(BaseAppScreen):
         message.stop()
         if message.action == "create":
             if self.state.active_mode == "characters":
+                if not self._local_character_actions_allowed():
+                    return
                 await self._run_guarded(self._begin_create_character)
             elif self.state.active_mode == "personas":
                 await self._run_guarded(self._begin_create_profile)
@@ -4087,6 +4219,8 @@ class PersonasScreen(BaseAppScreen):
             # Creation in the remaining modes is wired in follow-up tasks.
         elif message.action == "import":
             if self.state.active_mode == "characters":
+                if not self._local_character_actions_allowed():
+                    return
                 await self._run_guarded(self._open_import_dialog)
             elif self.state.active_mode == "dictionaries":
                 await self._run_guarded(self._open_dictionary_import_dialog)
@@ -4094,6 +4228,8 @@ class PersonasScreen(BaseAppScreen):
                 await self._run_guarded(self._open_lore_import_dialog)
         elif message.action == "duplicate":
             if self.state.active_mode == "characters":
+                if not self._local_character_actions_allowed():
+                    return
                 await self._run_guarded(self._duplicate_selected_character)
             elif self.state.active_mode == "dictionaries":
                 await self._run_guarded(self._duplicate_selected_dictionary)
@@ -4108,6 +4244,8 @@ class PersonasScreen(BaseAppScreen):
         # tasks.
 
     async def _begin_create_character(self) -> None:
+        if not self._local_character_actions_allowed():
+            return
         self._character_editor_generation += 1
         # A picked image-gen style is scoped to the editor session that
         # picked it (fix round 1) - must not bleed into this new one.
@@ -4206,6 +4344,8 @@ class PersonasScreen(BaseAppScreen):
         the same helper Save-as-new-character already calls) rather than a
         new duplication engine.
         """
+        if not self._local_character_actions_allowed():
+            return
         entity_id = self.state.selected_entity_id
         if self.state.selected_entity_kind != "character" or not entity_id:
             self._notify("Select a character to duplicate.", "warning")
@@ -4224,6 +4364,8 @@ class PersonasScreen(BaseAppScreen):
             self._notify(
                 f"Could not load character {entity_id} to duplicate.", "error"
             )
+            return
+        if not self._local_character_actions_allowed():
             return
         base_name = str(source.get("name") or "Character")
         base = f"{base_name} (copy)"
@@ -4253,6 +4395,8 @@ class PersonasScreen(BaseAppScreen):
             "extensions": source.get("extensions"),
         }
         try:
+            if not self._local_character_actions_allowed():
+                return
             new_id = await asyncio.to_thread(
                 ccp_character_handler.create_character, payload
             )
@@ -4265,6 +4409,8 @@ class PersonasScreen(BaseAppScreen):
             return
         if not new_id:
             self._notify("Duplicate failed: character creation returned no id.", "error")
+            return
+        if not self._local_character_actions_allowed():
             return
         await self.character_handler.refresh_character_list()
         await self._select_character(str(new_id), name)
@@ -4494,6 +4640,8 @@ class PersonasScreen(BaseAppScreen):
     @on(EditCharacterRequested)
     def _handle_edit_requested(self, message: EditCharacterRequested) -> None:
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         if str(message.character_id) != (self.state.selected_entity_id or ""):
             self._notify("Selection out of sync; reselect the character.", "warning")
             return
@@ -4639,6 +4787,8 @@ class PersonasScreen(BaseAppScreen):
         return data
 
     async def _stage_character_avatar_from_path(self, path: str) -> None:
+        if not self._local_character_actions_allowed():
+            return
         session_token = self._character_editor_session_token()
         if session_token is None:
             self._notify(
@@ -4662,6 +4812,8 @@ class PersonasScreen(BaseAppScreen):
                 f"changed. path={path!r}, original_session={session_token!r}, "
                 f"current_session={self._character_editor_session_token()!r}"
             )
+            return
+        if not self._local_character_actions_allowed():
             return
         try:
             self.query_one(PersonasCharacterEditorWidget).set_avatar_image(image_data)
@@ -4712,6 +4864,8 @@ class PersonasScreen(BaseAppScreen):
         The field itself is never written here: the editor shows the result and
         the author accepts or discards it.
         """
+        if not self._local_character_actions_allowed():
+            return
         editor = self._editor_or_none()
         if editor is None:
             return
@@ -4750,6 +4904,8 @@ class PersonasScreen(BaseAppScreen):
     def _generate_field_pressed(self, event: Button.Pressed) -> None:
         """Start a generation for the field whose button was pressed."""
         event.stop()
+        if not self._local_character_actions_allowed():
+            return
         field = PersonasCharacterEditorWidget.field_for_generate_button(
             str(event.button.id or "")
         )
@@ -4763,6 +4919,8 @@ class PersonasScreen(BaseAppScreen):
 
     async def _run_whole_character_generation(self, concept: str) -> None:
         """Draft a whole character and fill the editor's empty fields."""
+        if not self._local_character_actions_allowed():
+            return
         editor = self._editor_or_none()
         if editor is None:
             return
@@ -4791,6 +4949,8 @@ class PersonasScreen(BaseAppScreen):
     def _concept_run_pressed(self, event: Button.Pressed) -> None:
         """Draft a whole character from the concept the author typed."""
         event.stop()
+        if not self._local_character_actions_allowed():
+            return
         editor = self._editor_or_none()
         concept = editor.concept_text if editor is not None else ""
         if not concept:
@@ -4806,6 +4966,8 @@ class PersonasScreen(BaseAppScreen):
     def _regenerate_pressed(self, event: Button.Pressed) -> None:
         """Re-run the generation for the field currently being previewed."""
         event.stop()
+        if not self._local_character_actions_allowed():
+            return
         editor = self._editor_or_none()
         field = editor.pending_generation_field if editor is not None else None
         if field is None:
@@ -5171,6 +5333,8 @@ class PersonasScreen(BaseAppScreen):
         self, message: CharacterImageRemoveRequested
     ) -> None:
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         try:
             editor = self.query_one(PersonasCharacterEditorWidget)
         except QueryError:
@@ -5218,6 +5382,9 @@ class PersonasScreen(BaseAppScreen):
             apply_expression_images_to_db,
             ExpressionSetApplyResult,
         )
+
+        if not self._local_character_actions_allowed():
+            return ExpressionSetApplyResult(applied=[], skipped=[])
         applied: list[str] = []
         skipped: list = []
         db = getattr(self.app_instance, "chachanotes_db", None)
@@ -5265,6 +5432,8 @@ class PersonasScreen(BaseAppScreen):
             overstated its count even though the user already saw this
             method's own error notify.
         """
+        if not self._local_character_actions_allowed():
+            return False
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
             self._notify("Database is not available.", "error")
@@ -5287,6 +5456,8 @@ class PersonasScreen(BaseAppScreen):
 
     async def _clear_expression_slot(self, character_id: int, state: str) -> None:
         """Soft-delete an expression-state image and clear its slot's thumbnail."""
+        if not self._local_character_actions_allowed():
+            return
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
             self._notify("Database is not available.", "error")
@@ -5314,6 +5485,8 @@ class PersonasScreen(BaseAppScreen):
         self, message: CharacterExpressionUploadRequested
     ) -> None:
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         if not self._character_editor_is_active():
             self._notify(
                 "Open a character editor before uploading an expression image.",
@@ -5376,6 +5549,8 @@ class PersonasScreen(BaseAppScreen):
         (same check + copy as the Console's ``/generate-image`` command).
         """
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         if not self._character_editor_is_active():
             self._notify(
                 "Open a character editor before generating an expression image.",
@@ -5441,6 +5616,8 @@ class PersonasScreen(BaseAppScreen):
         than requiring it non-``None``.
         """
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         if not self._character_editor_is_active():
             self._notify(
                 "Open a character editor before generating an avatar image.",
@@ -5491,6 +5668,8 @@ class PersonasScreen(BaseAppScreen):
         click is refused independent of any individual slot's own key.
         """
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         if not self._character_editor_is_active():
             self._notify(
                 "Open a character editor before generating expression images.",
@@ -5535,6 +5714,8 @@ class PersonasScreen(BaseAppScreen):
         by the next generation.
         """
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         if not self._character_editor_is_active():
             return
         if self._io_dialog_active:
@@ -5555,6 +5736,8 @@ class PersonasScreen(BaseAppScreen):
         self, message: CharacterExpressionClearRequested
     ) -> None:
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         if not self._character_editor_is_active():
             return
         editor = self.query_one(PersonasCharacterEditorWidget)
@@ -5573,6 +5756,8 @@ class PersonasScreen(BaseAppScreen):
         from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
 
         try:
+            if not self._local_character_actions_allowed():
+                return
             picker = EnhancedFileOpen(
                 title=f"Upload {state.capitalize()} Expression Image",
                 filters=Filters(
@@ -5595,6 +5780,8 @@ class PersonasScreen(BaseAppScreen):
                 )
                 return
             if file_path:
+                if not self._local_character_actions_allowed():
+                    return
                 await self._stage_character_expression_from_path(
                     character_id, state, str(file_path)
                 )
@@ -5604,6 +5791,8 @@ class PersonasScreen(BaseAppScreen):
     async def _stage_character_expression_from_path(
         self, character_id: int, state: str, path: str
     ) -> None:
+        if not self._local_character_actions_allowed():
+            return
         session_token = self._character_editor_session_token()
         if session_token is None:
             self._notify(
@@ -5632,6 +5821,8 @@ class PersonasScreen(BaseAppScreen):
                 f"original_session={session_token!r}, "
                 f"current_session={self._character_editor_session_token()!r}"
             )
+            return
+        if not self._local_character_actions_allowed():
             return
         import mimetypes
 
@@ -5689,6 +5880,8 @@ class PersonasScreen(BaseAppScreen):
         """
         key = (character_id, state)
         try:
+            if not self._local_character_actions_allowed():
+                return False
             editor = self.query_one(PersonasCharacterEditorWidget)
             name = editor._input("name").value
             description = editor._area("description").text
@@ -5728,6 +5921,8 @@ class PersonasScreen(BaseAppScreen):
                     f"state={state!r}, original_session={session_token!r}, "
                     f"current_session={self._character_editor_session_token()!r}"
                 )
+                return False
+            if not self._local_character_actions_allowed():
                 return False
             if state == "avatar":
                 if len(result.content) > PERSONAS_AVATAR_MAX_BYTES:
@@ -5820,6 +6015,9 @@ class PersonasScreen(BaseAppScreen):
         body - this method's behavior is unchanged, only its
         implementation moved).
         """
+        if not self._local_character_actions_allowed():
+            self._expression_generate_inflight.discard((character_id, state))
+            return
         await self._generate_one_slot(
             character_id, state, getattr(self, "_expression_generate_style", None)
         )
@@ -5864,6 +6062,9 @@ class PersonasScreen(BaseAppScreen):
         (which would misleadingly read as an attempt that under-performed
         rather than a request the user actively withdrew).
         """
+        if not self._local_character_actions_allowed():
+            self._expression_generate_inflight.discard((character_id, "all"))
+            return
         style_template = getattr(self, "_expression_generate_style", None)
         succeeded = 0
         cancelled = False
@@ -5911,6 +6112,8 @@ class PersonasScreen(BaseAppScreen):
         (mirrors ``_render_character_expression_slot``'s own read) -
         stopping at the first hit.
         """
+        if not self._local_character_actions_allowed():
+            return True
         if editor.has_avatar_image():
             return True
         db = getattr(self.app_instance, "chachanotes_db", None)
@@ -5977,6 +6180,8 @@ class PersonasScreen(BaseAppScreen):
         exception here only kills this dialog's worker instead of the app.
         """
         try:
+            if not self._local_character_actions_allowed():
+                return
             try:
                 choice = await self.app.push_screen_wait(ConsoleStylePickerModal())
             except Exception:
@@ -6039,6 +6244,8 @@ class PersonasScreen(BaseAppScreen):
     @on(CharacterExpressionSetImportRequested)
     def _handle_expression_set_import_requested(self, message) -> None:
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         if not self._character_editor_is_active():
             self._notify(
                 "Open a character editor before importing an expression set.",
@@ -6066,6 +6273,8 @@ class PersonasScreen(BaseAppScreen):
         from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
 
         try:
+            if not self._local_character_actions_allowed():
+                return
             picker = EnhancedFileOpen(
                 title="Import Expression Set (.zip / .tldw-persona-vpack)",
                 filters=Filters(
@@ -6081,6 +6290,8 @@ class PersonasScreen(BaseAppScreen):
                 )
                 return
             if file_path:
+                if not self._local_character_actions_allowed():
+                    return
                 await self._import_expression_set_from_path(character_id, str(file_path))
         finally:
             self._io_dialog_active = False
@@ -6098,6 +6309,8 @@ class PersonasScreen(BaseAppScreen):
         delegates to ``_apply_expression_set`` (Task 3) for the actual
         idle-staged/three-immediate application.
         """
+        if not self._local_character_actions_allowed():
+            return
         from ...Character_Chat.expression_set_io import resolve_local_expression_set
 
         try:
@@ -6107,6 +6320,8 @@ class PersonasScreen(BaseAppScreen):
             return
 
         res = await asyncio.to_thread(resolve_local_expression_set, [candidate])
+        if not self._local_character_actions_allowed():
+            return
         if not res.images:
             reason = (
                 "; ".join(n for n, _ in res.skipped[:2])
@@ -6123,6 +6338,8 @@ class PersonasScreen(BaseAppScreen):
     @on(CharacterExpressionSetExportRequested)
     def _handle_expression_set_export_requested(self, message) -> None:
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         if not self._character_editor_is_active():
             return
         editor = self.query_one(PersonasCharacterEditorWidget)
@@ -6150,6 +6367,8 @@ class PersonasScreen(BaseAppScreen):
 
     async def _export_expression_set_worker(self, character_id: int, name: str) -> None:
         try:
+            if not self._local_character_actions_allowed():
+                return
             target = await self._export_expression_set(character_id, name)
             if target:
                 self._notify(f"Expression set exported to {target}.", "information")
@@ -6174,6 +6393,8 @@ class PersonasScreen(BaseAppScreen):
             The written file's path, or ``None`` when there is nothing to
             export (already surfaced via ``_notify``).
         """
+        if not self._local_character_actions_allowed():
+            return None
         from ...Character_Chat.expression_set_io import build_expression_set_zip
 
         images: dict[str, bytes] = {}
@@ -6226,6 +6447,8 @@ class PersonasScreen(BaseAppScreen):
         self, message: CharacterImageUploadRequested
     ) -> None:
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         if not self._character_editor_is_active():
             self._notify(
                 "Open a character editor before uploading an avatar.", "warning"
@@ -6243,6 +6466,8 @@ class PersonasScreen(BaseAppScreen):
         from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
 
         try:
+            if not self._local_character_actions_allowed():
+                return
             picker = EnhancedFileOpen(
                 title="Upload Character Avatar",
                 filters=Filters(
@@ -6265,12 +6490,16 @@ class PersonasScreen(BaseAppScreen):
                 )
                 return
             if file_path:
+                if not self._local_character_actions_allowed():
+                    return
                 await self._stage_character_avatar_from_path(str(file_path))
         finally:
             self._io_dialog_active = False
 
     async def _open_import_dialog(self) -> None:
         """Continuation for the guarded import action: launch the dialog worker."""
+        if not self._local_character_actions_allowed():
+            return
         if self._active_character_import_worker() is not None:
             self._notify("A character import is already in progress.", "information")
             return
@@ -6289,6 +6518,8 @@ class PersonasScreen(BaseAppScreen):
 
         durable_import_started = False
         try:
+            if not self._local_character_actions_allowed():
+                return
             picker = EnhancedFileOpen(
                 title="Import Character Card",
                 filters=_character_import_filters(),
@@ -6302,13 +6533,16 @@ class PersonasScreen(BaseAppScreen):
                 )
                 return
             if file_path:
+                if not self._local_character_actions_allowed():
+                    return
                 if self._active_character_import_worker() is not None:
                     self._notify(
                         "A character import is already in progress.", "information"
                     )
                     return
-                self._start_character_import(str(file_path))
-                durable_import_started = True
+                durable_import_started = (
+                    self._start_character_import(str(file_path)) is not None
+                )
         finally:
             if not durable_import_started:
                 self._io_dialog_active = False
@@ -6324,7 +6558,7 @@ class PersonasScreen(BaseAppScreen):
                 return worker
         return None
 
-    def _start_character_import(self, path: str) -> Worker[None]:
+    def _start_character_import(self, path: str) -> Worker[None] | None:
         """Launch one durable character import owned by the application.
 
         The worker carries the path in its coroutine; no domain payload or
@@ -6332,6 +6566,8 @@ class PersonasScreen(BaseAppScreen):
         the durable operation alive while ``switch_screen`` unmounts the
         initiating Personas screen.
         """
+        if not self._local_character_actions_allowed():
+            return None
         active_worker = self._active_character_import_worker()
         if active_worker is not None:
             return active_worker
@@ -6343,12 +6579,16 @@ class PersonasScreen(BaseAppScreen):
     async def _run_durable_character_import(self, path: str) -> None:
         """Complete a character import and release the initiating dialog slot."""
         try:
+            if not self._local_character_actions_allowed():
+                return
             await self._import_character_from_path(path)
         finally:
             self._io_dialog_active = False
 
     async def _import_character_from_path(self, path: str) -> None:
         """Import a character card file, then refresh, select, and reveal it."""
+        if not self._local_character_actions_allowed():
+            return
         # On a name conflict the importer returns the EXISTING character's id
         # WITHOUT adding a row; on a new import it creates one. ``_characters``
         # now holds only one page, so decide "existed vs imported" from the
@@ -6363,6 +6603,8 @@ class PersonasScreen(BaseAppScreen):
                 logger.opt(exception=True).debug(
                     "Pre-import character count failed; message will assume new."
                 )
+        if not self._local_character_actions_allowed():
+            return
         try:
             # Sync DB call; see the section comment for the threading choice.
             imported_id = await asyncio.to_thread(
@@ -6389,6 +6631,8 @@ class PersonasScreen(BaseAppScreen):
             )
             return
         imported_id = str(imported_id)
+        if not self._local_character_actions_allowed():
+            return
         if (
             not self.is_mounted
             or self.app.screen is not self
@@ -6404,6 +6648,8 @@ class PersonasScreen(BaseAppScreen):
                 post_import_count = await asyncio.to_thread(count_character_page, db)
             except Exception:
                 logger.opt(exception=True).debug("Post-import character count failed.")
+        if not self._local_character_actions_allowed():
+            return
         existed_before = (
             pre_import_count is not None
             and post_import_count is not None
@@ -6418,6 +6664,8 @@ class PersonasScreen(BaseAppScreen):
         except Exception:
             pass
         await self.character_handler.refresh_character_list()
+        if not self._local_character_actions_allowed():
+            return
         if (
             not self.is_mounted
             or self.app.screen is not self
@@ -6436,6 +6684,8 @@ class PersonasScreen(BaseAppScreen):
             logger.opt(exception=True).debug(
                 "Could not resolve imported character name by id."
             )
+        if not self._local_character_actions_allowed():
+            return
         if (
             not self.is_mounted
             or self.app.screen is not self
@@ -6469,6 +6719,8 @@ class PersonasScreen(BaseAppScreen):
     async def _imported_lorebook_note(self, character_id: str) -> str:
         """Return a " Lorebook 'X' attached (N entries)." suffix, or "" when
         the just-imported character has no embedded world book (task-429)."""
+        if not self._local_character_actions_allowed():
+            return ""
         try:
             record = await asyncio.to_thread(
                 ccp_character_handler.fetch_character_by_id, character_id
@@ -6759,16 +7011,25 @@ class PersonasScreen(BaseAppScreen):
     @on(Button.Pressed, "#personas-export-json")
     async def _handle_export_json_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        if (
+            self.state.selected_entity_kind == "character"
+            and not self._local_character_actions_allowed()
+        ):
+            return
         self._open_export_dialog("json")
 
     @on(Button.Pressed, "#personas-export-png")
     async def _handle_export_png_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        if not self._local_character_actions_allowed():
+            return
         self._open_export_dialog("png")
 
     def _open_export_dialog(self, fmt: str) -> None:
         """Validate the selection and launch the save-dialog worker."""
         kind = self.state.selected_entity_kind
+        if kind == "character" and not self._local_character_actions_allowed():
+            return
         if not self.state.selected_entity_id or kind not in (
             "character",
             "persona",
@@ -6793,6 +7054,11 @@ class PersonasScreen(BaseAppScreen):
         from ...Widgets.enhanced_file_picker import EnhancedFileSave, Filters
 
         try:
+            if (
+                self.state.selected_entity_kind == "character"
+                and not self._local_character_actions_allowed()
+            ):
+                return
             name = self.state.selected_entity_name or "export"
             # Filename sanitization mirrors the legacy CCP export route.
             safe_name = "".join(c for c in name if c.isalnum() or c in " -_").rstrip()
@@ -6821,6 +7087,11 @@ class PersonasScreen(BaseAppScreen):
                 )
                 return
             if target_path:
+                if (
+                    self.state.selected_entity_kind == "character"
+                    and not self._local_character_actions_allowed()
+                ):
+                    return
                 await self._export_selected_character(str(target_path), fmt=fmt)
         finally:
             self._io_dialog_active = False
@@ -6829,6 +7100,8 @@ class PersonasScreen(BaseAppScreen):
         """Export the current selection to ``target_path`` as JSON or PNG."""
         kind = self.state.selected_entity_kind
         entity_id = self.state.selected_entity_id
+        if kind == "character" and not self._local_character_actions_allowed():
+            return
         if not entity_id:
             self._notify("Select a saved item before exporting.", "warning")
             return
@@ -6863,6 +7136,8 @@ class PersonasScreen(BaseAppScreen):
 
     def _export_character_json_sync(self, character_id: int, target_path: str) -> None:
         """Sync JSON export; raises on failure (runs off the UI thread)."""
+        if not self._local_character_actions_allowed():
+            raise RuntimeError("Local character export is unavailable in server mode.")
         db = ccp_character_handler._default_character_db()
         content = export_character_card_to_json(db, character_id, include_image=True)
         if content is None:
@@ -6876,6 +7151,8 @@ class PersonasScreen(BaseAppScreen):
         base directory (defaulting to its own exports folder), so the chosen
         path's parent is passed to keep user-selected destinations valid.
         """
+        if not self._local_character_actions_allowed():
+            raise RuntimeError("Local character export is unavailable in server mode.")
         db = ccp_character_handler._default_character_db()
         target = Path(target_path).expanduser()
         ok = export_character_card_to_png(
@@ -6910,6 +7187,11 @@ class PersonasScreen(BaseAppScreen):
     @on(Button.Pressed, "#personas-delete")
     async def _handle_delete_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        if (
+            self.state.selected_entity_kind == "character"
+            and not self._local_character_actions_allowed()
+        ):
+            return
         # The inspector enables Delete whenever a selection exists, even with
         # unsaved edits - deleting discards them by definition. The flow still
         # routes through the unsaved guard so a dirty session shows the
@@ -6920,6 +7202,8 @@ class PersonasScreen(BaseAppScreen):
     async def _begin_delete_selection(self) -> None:
         """Validate the selection and launch the delete-confirm dialog worker."""
         kind = self.state.selected_entity_kind
+        if kind == "character" and not self._local_character_actions_allowed():
+            return
         entity_id = str(self.state.selected_entity_id or "")
         if not entity_id or kind not in (
             "character",
@@ -6976,7 +7260,11 @@ class PersonasScreen(BaseAppScreen):
         self, kind: str, entity_id: str, name: str, version: int | None
     ) -> None:
         try:
+            if kind == "character" and not self._local_character_actions_allowed():
+                return
             if not await self._confirm_delete(name):
+                return
+            if kind == "character" and not self._local_character_actions_allowed():
                 return
             await self._delete_entity(kind, entity_id, version)
         finally:
@@ -7007,6 +7295,8 @@ class PersonasScreen(BaseAppScreen):
             "Reselect and try again."
         )
         if kind == "character":
+            if not self._local_character_actions_allowed():
+                return
             try:
                 # Sync DB call; same threading choice as import/export.
                 ok = await asyncio.to_thread(
@@ -7134,6 +7424,8 @@ class PersonasScreen(BaseAppScreen):
         await self._after_delete(kind)
 
     async def _after_delete(self, kind: str) -> None:
+        if kind == "character" and not self._local_character_actions_allowed():
+            return
         if kind == "character":
             # The handler still holds the deleted card; drop it so
             # _full_character_record cannot serve stale data.
@@ -7194,6 +7486,8 @@ class PersonasScreen(BaseAppScreen):
     @on(CharacterSaveRequested)
     def _handle_save_requested(self, message: CharacterSaveRequested) -> None:
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         if self._character_save_inflight:
             # A save for this session is already persisting (re-entrant
             # Save click / Ctrl+S); ignore the duplicate rather than firing
@@ -7225,6 +7519,9 @@ class PersonasScreen(BaseAppScreen):
         self, data: dict, selected_id: str | None, edit_mode: str
     ) -> None:
         """Persist via the legacy module-level helpers off the UI thread."""
+        if not self._local_character_actions_allowed():
+            self._character_save_inflight = False
+            return
         try:
 
             def persist_character() -> str:
@@ -7250,6 +7547,9 @@ class PersonasScreen(BaseAppScreen):
     async def _after_character_save(
         self, saved_id: str, submitted_name: str = ""
     ) -> None:
+        if not self._local_character_actions_allowed():
+            self._character_save_inflight = False
+            return
         if not self.is_mounted or self.state.active_mode != "characters":
             # The save completed after the user left the screen or switched
             # modes; refresh the cached list but leave the selection,
@@ -7945,6 +8245,7 @@ class PersonasScreen(BaseAppScreen):
         """
         self._update_title()
         self._sync_inspector_console_actions()
+        self._sync_local_character_actions()
         try:
             footer = self.query_one("AppFooterStatus")
         except QueryError:

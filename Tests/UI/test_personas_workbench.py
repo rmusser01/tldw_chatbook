@@ -3677,6 +3677,501 @@ class TestConsoleActions:
             assert screen._console_action_allowed() is True
 
 
+class TestServerCharacterSourceIsolation:
+    """Server Characters never exposes or crosses into local character seams."""
+
+    @staticmethod
+    def _server_service(
+        *,
+        rows: list[dict] | None = None,
+        detail: dict | None = None,
+    ) -> SimpleNamespace:
+        records = rows if rows is not None else [{"id": 7, "name": "Remote Elara"}]
+        card = (
+            detail
+            if detail is not None
+            else {
+                "id": 7,
+                "name": "Remote Elara",
+                "description": "Server-owned card",
+                "first_message": "Hello from the server.",
+            }
+        )
+        return SimpleNamespace(
+            list_characters=AsyncMock(
+                return_value={
+                    "items": [dict(row) for row in records],
+                    "total": len(records),
+                }
+            ),
+            search_characters=AsyncMock(
+                return_value={
+                    "items": [dict(row) for row in records],
+                    "total": len(records),
+                }
+            ),
+            get_character=AsyncMock(return_value=dict(card)),
+        )
+
+    async def test_source_switch_clears_local_rows_before_server_load_and_gates_actions(
+        self, mock_app_instance, stub_characters
+    ):
+        """A blocked server fetch cannot leave the local page or local controls live."""
+        import asyncio
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        service = self._server_service()
+
+        async def blocked_list(*, mode, limit, offset):
+            assert mode == "server"
+            started.set()
+            await release.wait()
+            return {"items": [{"id": 7, "name": "Remote Elara"}], "total": 1}
+
+        service.list_characters.side_effect = blocked_list
+        mock_app_instance.runtime_backend = "local"
+        mock_app_instance.active_server_id = "server-a"
+        mock_app_instance.character_persona_scope_service = service
+        mock_app_instance.app_config = {
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+            "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8181"}},
+        }
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            assert screen.query_one("#personas-library-row-character-1")
+
+            switch = asyncio.create_task(
+                screen.handle_runtime_backend_changed("server")
+            )
+            await started.wait()
+            await pilot.pause()
+
+            assert screen._characters == []
+            assert screen._character_total == 0
+            assert not list(screen.query("#personas-library-row-character-1"))
+
+            release.set()
+            await switch
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-7")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            for control_id in (
+                "#personas-library-new",
+                "#personas-library-import",
+                "#personas-library-duplicate",
+                "#personas-card-edit-character",
+                "#personas-export-json",
+                "#personas-export-png",
+                "#personas-delete",
+            ):
+                control = screen.query_one(control_id, Button)
+                assert control.disabled or not control.display
+            assert (
+                screen.query_one("#personas-attach-to-console", Button).disabled
+                is False
+            )
+            assert screen.query_one("#personas-start-chat", Button).disabled is False
+
+    async def test_server_action_dispatch_and_direct_local_seams_fail_closed(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """Queued events and worker continuations are harmless after a source flip."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            CharacterSaveRequested,
+            EditCharacterRequested,
+        )
+
+        service = self._server_service()
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "server-a"
+        mock_app_instance.character_persona_scope_service = service
+        app = PersonasTestApp(mock_app_instance)
+
+        local_fetch = Mock(return_value=dict(CHARACTERS[0]))
+        local_create = Mock(return_value=99)
+        local_update = Mock(return_value=True)
+        local_import = Mock(return_value=99)
+        local_delete = Mock(return_value=True)
+        monkeypatch.setattr(
+            character_handler_module, "fetch_character_by_id", local_fetch
+        )
+        monkeypatch.setattr(character_handler_module, "create_character", local_create)
+        monkeypatch.setattr(character_handler_module, "update_character", local_update)
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card", local_import
+        )
+        monkeypatch.setattr(character_handler_module, "delete_character", local_delete)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.click("#personas-library-row-character-7")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            begin_create_impl = screen._begin_create_character
+            open_import_impl = screen._open_import_dialog
+            duplicate_impl = screen._duplicate_selected_character
+            begin_create = AsyncMock()
+            open_import = AsyncMock()
+            duplicate = AsyncMock()
+            screen._begin_create_character = begin_create
+            screen._open_import_dialog = open_import
+            screen._duplicate_selected_character = duplicate
+            for action in ("create", "import", "duplicate"):
+                await screen._handle_action_requested(
+                    PersonaActionRequested(action=action)
+                )
+            begin_create.assert_not_awaited()
+            open_import.assert_not_awaited()
+            duplicate.assert_not_awaited()
+            screen._begin_create_character = begin_create_impl
+            screen._open_import_dialog = open_import_impl
+            screen._duplicate_selected_character = duplicate_impl
+
+            run_worker = Mock()
+            screen.run_worker = run_worker
+            await begin_create_impl()
+            await open_import_impl()
+            await duplicate_impl()
+            assert screen._edit_mode == "view"
+            run_worker.assert_not_called()
+
+            full_record = Mock(return_value=dict(CHARACTERS[0]))
+            save_worker = Mock()
+            screen._full_character_record = full_record
+            screen._save_character_worker = save_worker
+            screen._handle_edit_requested(EditCharacterRequested("7"))
+            screen._handle_save_requested(
+                CharacterSaveRequested({"name": "Must stay remote"})
+            )
+            full_record.assert_not_called()
+            save_worker.assert_not_called()
+
+            await PersonasScreen._save_character_worker.__wrapped__(
+                screen,
+                {"name": "Must stay remote"},
+                "7",
+                "edit",
+            )
+            await screen._import_character_from_path("/tmp/remote-card.json")
+            await screen._export_selected_character("/tmp/remote-card.json", fmt="json")
+            await screen._export_selected_character("/tmp/remote-card.png", fmt="png")
+            await screen._delete_entity("character", "7", 1)
+
+        local_fetch.assert_not_called()
+        local_create.assert_not_called()
+        local_update.assert_not_called()
+        local_import.assert_not_called()
+        local_delete.assert_not_called()
+
+    async def test_server_source_blocks_attachment_and_editor_mutation_messages(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """Hidden card/editor controls also fail closed when their messages race."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_character_dictionaries import (
+            CharacterDictionaryAttachRequested,
+            CharacterDictionaryDetachRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_character_world_books import (
+            CharacterWorldBookAttachRequested,
+            CharacterWorldBookDetachRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            CharacterAvatarGenerateRequested,
+            CharacterExpressionClearRequested,
+            CharacterExpressionGenerateAllRequested,
+            CharacterExpressionGenerateRequested,
+            CharacterExpressionSetExportRequested,
+            CharacterExpressionSetImportRequested,
+            CharacterExpressionStylePickRequested,
+            CharacterExpressionUploadRequested,
+            CharacterImageRemoveRequested,
+            CharacterImageUploadRequested,
+        )
+
+        dictionary_service = SimpleNamespace(
+            attach_to_character=AsyncMock(),
+            detach_from_character=AsyncMock(),
+        )
+        lore_manager = SimpleNamespace(
+            attach_world_book_to_character=Mock(),
+            detach_world_book_from_character=Mock(),
+        )
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "server-a"
+        mock_app_instance.character_persona_scope_service = self._server_service()
+        mock_app_instance.chat_dictionary_scope_service = dictionary_service
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.click("#personas-library-row-character-7")
+            await pilot.pause()
+            screen.run_worker = Mock()
+            monkeypatch.setattr(
+                PersonasScreen, "_lore_manager", lambda self: lore_manager
+            )
+
+            await screen._handle_character_dictionary_attach(
+                CharacterDictionaryAttachRequested()
+            )
+            await screen._handle_character_dictionary_detach(
+                CharacterDictionaryDetachRequested("facts")
+            )
+            await screen._handle_character_worldbook_attach(
+                CharacterWorldBookAttachRequested()
+            )
+            await screen._handle_character_worldbook_detach(
+                CharacterWorldBookDetachRequested("setting")
+            )
+            for message, handler in (
+                (
+                    CharacterImageUploadRequested(),
+                    screen._handle_character_image_upload_requested,
+                ),
+                (
+                    CharacterImageRemoveRequested(),
+                    screen._handle_character_image_remove,
+                ),
+                (
+                    CharacterExpressionUploadRequested("thinking"),
+                    screen._handle_character_expression_upload_requested,
+                ),
+                (
+                    CharacterExpressionGenerateRequested("thinking"),
+                    screen._handle_character_expression_generate_requested,
+                ),
+                (
+                    CharacterAvatarGenerateRequested(),
+                    screen._handle_character_avatar_generate_requested,
+                ),
+                (
+                    CharacterExpressionGenerateAllRequested(),
+                    screen._handle_character_expression_generate_all_requested,
+                ),
+                (
+                    CharacterExpressionStylePickRequested(),
+                    screen._handle_expression_style_pick_requested,
+                ),
+                (
+                    CharacterExpressionClearRequested("thinking"),
+                    screen._handle_character_expression_clear_requested,
+                ),
+                (
+                    CharacterExpressionSetImportRequested(),
+                    screen._handle_expression_set_import_requested,
+                ),
+                (
+                    CharacterExpressionSetExportRequested(),
+                    screen._handle_expression_set_export_requested,
+                ),
+            ):
+                handler(message)
+
+            screen.run_worker.assert_not_called()
+            dictionary_service.attach_to_character.assert_not_awaited()
+            dictionary_service.detach_from_character.assert_not_awaited()
+            lore_manager.attach_world_book_to_character.assert_not_called()
+            lore_manager.detach_world_book_from_character.assert_not_called()
+
+    async def test_local_page_result_is_dropped_after_source_switch(
+        self, mock_app_instance, monkeypatch
+    ):
+        """A local DB read already in flight cannot publish into server mode."""
+        import asyncio
+
+        screen = PersonasScreen(mock_app_instance)
+        screen.state.runtime_source = "local"
+        screen._character_db = lambda: object()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocked_to_thread(function, *args, **kwargs):
+            if function is personas_screen_module.count_character_page:
+                started.set()
+                await release.wait()
+                return 1
+            return [{"id": 1, "name": "Late local row"}]
+
+        monkeypatch.setattr(
+            personas_screen_module.asyncio, "to_thread", blocked_to_thread
+        )
+        display = AsyncMock()
+        screen._display_character_page = display
+
+        load = asyncio.create_task(screen._reload_character_page())
+        await started.wait()
+        screen.state.runtime_source = "server"
+        release.set()
+        await load
+
+        display.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        "changed_dimension",
+        ("source", "target", "mode", "query", "sort", "tag", "offset"),
+    )
+    async def test_server_page_result_is_dropped_after_request_snapshot_changes(
+        self, mock_app_instance, changed_dimension
+    ):
+        """Every source/target/view facet fences an in-flight server result."""
+        import asyncio
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocked_list(*, mode, limit, offset):
+            assert mode == "server"
+            started.set()
+            await release.wait()
+            return {"items": [{"id": 9, "name": "Late server row"}], "total": 1}
+
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "target-a"
+        mock_app_instance.character_persona_scope_service = SimpleNamespace(
+            list_characters=AsyncMock(side_effect=blocked_list)
+        )
+        screen = PersonasScreen(mock_app_instance)
+        screen._characters = [{"id": 1, "name": "Old row"}]
+        screen._character_total = 1
+
+        load = asyncio.create_task(screen._reload_server_character_page())
+        await started.wait()
+        if changed_dimension == "source":
+            screen.state.runtime_source = "local"
+        elif changed_dimension == "target":
+            mock_app_instance.active_server_id = "target-b"
+        elif changed_dimension == "mode":
+            screen.state.active_mode = "personas"
+        elif changed_dimension == "query":
+            screen.state.search_query = "new query"
+        elif changed_dimension == "sort":
+            screen.state.sort_key = "date"
+        elif changed_dimension == "tag":
+            screen.state.tag_filter = "new-tag"
+        else:
+            screen.state.page_offset = (
+                personas_screen_module.PERSONAS_LIBRARY_PAGE_SIZE
+            )
+        release.set()
+        await load
+
+        assert screen._characters == []
+        assert screen._character_total == 0
+
+    async def test_target_b_winner_survives_stale_target_a_failure(
+        self, mock_app_instance
+    ):
+        """A failed A request cannot clear the newer B page."""
+        import asyncio
+
+        started_a = asyncio.Event()
+        release_a = asyncio.Event()
+
+        async def list_characters(*, mode, limit, offset):
+            assert mode == "server"
+            if mock_app_instance.active_server_id == "target-a":
+                started_a.set()
+                await release_a.wait()
+                raise RuntimeError("target A went away")
+            return {"items": [{"id": 2, "name": "Target B"}], "total": 1}
+
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "target-a"
+        mock_app_instance.character_persona_scope_service = SimpleNamespace(
+            list_characters=AsyncMock(side_effect=list_characters)
+        )
+        screen = PersonasScreen(mock_app_instance)
+        screen._characters = [{"id": 1, "name": "Old A"}]
+        screen._character_total = 1
+
+        load_a = asyncio.create_task(screen._reload_server_character_page())
+        await started_a.wait()
+        mock_app_instance.active_server_id = "target-b"
+        await screen._reload_server_character_page()
+        assert screen._characters == [{"id": 2, "name": "Target B"}]
+
+        release_a.set()
+        await load_a
+        assert screen._characters == [{"id": 2, "name": "Target B"}]
+        assert screen._character_total == 1
+
+    @pytest.mark.parametrize(
+        "failure",
+        ("missing-target", "missing-service", "network"),
+    )
+    async def test_server_load_failures_replace_old_rows_with_empty_page(
+        self, mock_app_instance, failure
+    ):
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = (
+            None if failure == "missing-target" else "target-a"
+        )
+        if failure == "missing-service":
+            service = SimpleNamespace()
+        elif failure == "network":
+            service = SimpleNamespace(
+                list_characters=AsyncMock(side_effect=RuntimeError("offline"))
+            )
+        else:
+            service = SimpleNamespace(
+                list_characters=AsyncMock(return_value={"items": [], "total": 0})
+            )
+        mock_app_instance.character_persona_scope_service = service
+        screen = PersonasScreen(mock_app_instance)
+        screen._characters = [{"id": 1, "name": "Stale row"}]
+        screen._character_total = 1
+        screen._count_cache_key = ("stale", None)
+
+        await screen._reload_server_character_page()
+
+        assert screen._characters == []
+        assert screen._character_total == 0
+        assert screen._count_cache_key is None
+
+    async def test_server_search_pages_at_api_limit_without_third_page(
+        self, mock_app_instance
+    ):
+        rows = [{"id": index, "name": f"Remote {index:03d}"} for index in range(1, 121)]
+
+        async def search_characters(query, *, mode, limit):
+            assert query == "remote"
+            assert mode == "server"
+            return {"items": rows[:limit], "total": len(rows)}
+
+        service = self._server_service(rows=[])
+        service.search_characters.side_effect = search_characters
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "target-a"
+        mock_app_instance.character_persona_scope_service = service
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            screen.state.search_query = "remote"
+            await screen._reload_character_page(reset_offset=True)
+            assert [row["id"] for row in screen._characters] == list(range(1, 51))
+
+            await screen._on_page_changed_delta(1)
+            assert [row["id"] for row in screen._characters] == list(range(51, 101))
+            assert screen._character_total == 100
+            assert screen.query_one("#personas-library-next", Button).disabled is True
+
+            await screen._on_page_changed_delta(1)
+            assert screen.state.page_offset == 50
+
+        assert [
+            call.kwargs["limit"] for call in service.search_characters.await_args_list
+        ] == [51, 100]
+
+
 class _FakePreviewGateway:
     """In-memory gateway double: ready resolution + scripted stream.
 
