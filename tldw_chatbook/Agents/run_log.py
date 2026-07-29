@@ -265,6 +265,50 @@ def resolve_log_root() -> Path | None:
     return roots[0]
 
 
+def resolve_existing_log_dir(run_id: str) -> Path | None:
+    """Locate an already-written run log directory for ``run_id``, if any.
+
+    TASK-870: the Console's "read the full result" affordance needs to
+    check, for an ARBITRARY (possibly long-finished, possibly from a prior
+    process) run, whether a log exists at all -- distinct from
+    ``RunLogWriter.log_dir``, which only ever answers that question for the
+    ONE run tree a given writer instance is currently bound to. This is the
+    read-only counterpart to ``RunLogWriter.bind()``: it resolves the same
+    root via ``resolve_log_root()`` and tries both directory-name
+    candidates ``bind()`` can produce (undotted, and dotted under the
+    sandbox-fallback naming -- see ``bind()``'s own "Final-review CRITICAL
+    2" comment), without creating anything. Deliberately NOT routed through
+    ``Utils/path_validation.validate_path``: that rejects any hidden
+    (dotted) path component outright, which would make the sandbox-fallback
+    ``.agent-runs`` case unreadable by design -- see ``_coerce_dir_name``'s
+    own docstring for the same point.
+
+    Args:
+        run_id: The run's id (matches ``RunLogRecord.run_id`` and the
+            ``AgentRunsDB`` run id -- ``AgentService._run_one`` binds the
+            writer to this same id via ``self.db.create_run()``'s return
+            value).
+
+    Returns:
+        The run's log directory when it exists and holds at least one
+        segment file, else ``None`` -- including when no root can be
+        resolved at all (logging off, or nothing in ``allowed_file_roots``).
+    """
+    root = resolve_log_root()
+    if root is None:
+        return None
+    configured = _setting("run_log_dir_name", DEFAULT_DIR_NAME)
+    dir_name = _coerce_dir_name(configured, DEFAULT_DIR_NAME)
+    for candidate_dir_name in (dir_name, f".{dir_name}"):
+        run_dir = root / candidate_dir_name / run_id
+        try:
+            if run_dir.is_dir() and any(run_dir.glob("logs.*.txt")):
+                return run_dir
+        except OSError:
+            continue
+    return None
+
+
 class RunLogRecordNumber(int):
     """A record number that also reports whether the LOG capped this record.
 
