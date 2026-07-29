@@ -13,9 +13,11 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     FirstRunSetupWizard,
     ModelStep,
     NotesSyncStep,
+    ProtectKeysStep,
     ProviderStep,
     RagStep,
     SetupWizardContainer,
+    SummaryStep,
     ToolsStep,
 )
 from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
@@ -705,6 +707,253 @@ async def test_notes_step_disabled_commits_nothing():
         ok, _ = await step.commit()
         assert ok
         wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_protect_keys_enables_encryption_via_injected_callable():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    calls = []
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = ProtectKeysStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="protect-keys", title="Protect keys", step_number=8),
+        enable_encryption=lambda pw: calls.append(pw) or True,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        ok = await step.apply_password("hunter2-long-password")
+        assert ok is True
+        assert calls == ["hunter2-long-password"]
+
+
+@pytest.mark.asyncio
+async def test_protect_keys_failure_leaves_step_skippable_with_inline_error():
+    """Failure must not raise nor block Next -- keys stay plaintext, skippable."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = ProtectKeysStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="protect-keys", title="Protect keys", step_number=8),
+        enable_encryption=lambda pw: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        ok = await step.apply_password("hunter2-long-password")
+        assert ok is False
+        ok2, error = await step.commit()
+        assert ok2, error  # the step itself never blocks Next
+
+
+def test_protect_keys_password_worker_uses_dedicated_group_not_wizard_advance():
+    """Parked Task-5 finding (deviation from the task-10 brief's pseudocode):
+    "setup-wizard-advance" is the CONTAINER's own advance/finalize worker
+    group. Reusing it here for the password-apply worker would let a slow
+    password-hash operation race the container's own commit-on-Next worker
+    (both exclusive=True on the same group cancels/blocks the other). Use a
+    dedicated group instead; the config RLock inside enable_config_encryption
+    is what actually serializes writes, not this group name."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = ProtectKeysStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="protect-keys", title="Protect keys", step_number=8),
+        enable_encryption=lambda pw: True,
+    )
+    calls = []
+
+    def _fake_run_worker(coro, **kwargs):
+        coro.close()
+        calls.append(kwargs)
+
+    step.run_worker = _fake_run_worker
+    step._on_password_result("hunter2-long-password")
+    assert calls, "expected a worker to be scheduled for the password result"
+    assert calls[0]["group"] == "setup-protect-encrypt"
+    assert calls[0]["group"] != "setup-wizard-advance"
+
+
+@pytest.mark.asyncio
+async def test_summary_step_renders_rows_from_read_back():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "quick"}},
+    )
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {
+            "api_settings": {"openai": {"api_key": "sk-x"}},
+            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        },
+        rag_deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause()
+        rendered = str(step.query_one("#setup-summary-rows", Static).render())
+        assert "Provider" in rendered
+        assert "✓" in rendered and "✗" in rendered
+
+
+@pytest.mark.asyncio
+async def test_summary_quick_track_shows_defaults_note():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "quick"}},
+    )
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {},
+        rag_deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause()
+        note = str(step.query_one("#setup-summary-defaults-note", Static).render())
+        assert "recommended defaults" in note.lower()
+
+
+@pytest.mark.asyncio
+async def test_summary_first_run_exit_buttons_set_expected_routes():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "quick"}},
+        advance_programmatically=MagicMock(),
+    )
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {},
+        rag_deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert {b.id for b in step.query(Button)} == {
+            "setup-exit-chat", "setup-exit-home",
+        }
+        # Direct handler call, not pilot.click(): the actions row sits below
+        # what fits in this fixed 120x40 test viewport (same clipping the
+        # provider-catalog tests above hit -- see _on_keep's comment), so a
+        # click here actually lands on the docked WizardNavigation bar
+        # instead of this button. The test is about the handler's effect.
+        step._exit_home()
+        await pilot.pause()
+        assert step.get_step_data() == {"exit_route": TAB_HOME}
+        wizard.advance_programmatically.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_summary_rerun_exit_buttons_are_done_and_go_to_chat():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Constants import TAB_CHAT
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
+        wizard_data={"welcome": {"track": "quick"}},
+        advance_programmatically=MagicMock(),
+    )
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {},
+        rag_deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert {b.id for b in step.query(Button)} == {
+            "setup-exit-done", "setup-exit-chat",
+        }
+        # See the comment in the first-run-exit test above: direct handler
+        # call, not pilot.click() -- the actions row is clipped below this
+        # fixed test viewport.
+        step._exit_chat()
+        await pilot.pause()
+        assert step.get_step_data() == {"exit_route": TAB_CHAT}
+        wizard.advance_programmatically.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_summary_exit_button_advances_the_wizard_without_an_event():
+    """SummaryStep's own exit buttons must drive the SAME advance/finalize
+    path as the wizard-level Next button (Summary is the last active step),
+    but they have no Button.Pressed event targeting "#wizard-next" to hand
+    to SetupWizardContainer.handle_next(event) -- which requires one to call
+    event.prevent_default(). Exercises the real container end to end (not a
+    stub wizard) so a regression back to calling handle_next() with no/None
+    event would fail loudly instead of being masked by a mock.
+
+    Reaches Summary via real "#wizard-next" clicks (that button is clear of
+    the viewport), then calls the exit handler directly rather than
+    pilot.click("#setup-exit-chat") -- the actions row sits below what fits
+    in this fixed 120x40 viewport, same as the provider-catalog tests above
+    (see _on_keep's comment): a click there actually lands on the docked
+    WizardNavigation bar. This test is about advance_programmatically()'s
+    wiring, not click hit-regions.
+    """
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        await pilot.click("#setup-track-quick")
+        await pilot.pause(0.1)
+        for _ in range(10):
+            if app.wizard_result != "UNSET":
+                break
+            step = container.steps[container.current_step]
+            if isinstance(step, SummaryStep):
+                step._exit_chat()
+            else:
+                await pilot.click("#wizard-next")
+            await pilot.pause(0.2)
+        from tldw_chatbook.Constants import TAB_CHAT
+
+        assert app.wizard_result == {"completed": True, "exit_route": TAB_CHAT}
 
 
 @pytest.mark.asyncio

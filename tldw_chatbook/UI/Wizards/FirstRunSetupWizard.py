@@ -771,6 +771,226 @@ class WelcomeStep(SetupStep):
         return wizard_state.TRACK_FULL if full else wizard_state.TRACK_QUICK
 
 
+class ProtectKeysStep(SetupStep):
+    """Offer config encryption for any keys entered this run.
+
+    Encryption goes only through the existing mechanism: PasswordDialog
+    (setup mode) collects the password, enable_config_encryption(password)
+    does the actual rewrite under the config RLock. This step never rolls
+    its own crypto.
+    """
+
+    def __init__(self, wizard=None, config=None, *, enable_encryption=None, **kwargs):
+        super().__init__(wizard=wizard, config=config, **kwargs)
+        self._enable_encryption = enable_encryption
+        self.encryption_enabled = False
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="setup-protect"):
+            yield Static("Protect your keys", classes="setup-title")
+            yield Static(
+                "Encrypt the API keys in your config file with a password. "
+                "You'll be asked for this password each time chatbook starts. "
+                "Skip to leave keys as plain text (you can enable this later "
+                "in Settings ▸ Privacy & Security).",
+                classes="setup-subtitle",
+            )
+            yield Button("Set a password", id="setup-protect-set-password",
+                        variant="primary")
+            yield Static("", id="setup-protect-status", classes="setup-probe-status")
+            yield Static("", classes="setup-step-error")
+
+    @on(Button.Pressed, "#setup-protect-set-password")
+    def _on_set_password(self) -> None:
+        from tldw_chatbook.Widgets.password_dialog import PasswordDialog
+
+        # Mirrors the only other setup-mode caller,
+        # Tools_Settings_Window.py's _setup_encryption (~line 7309):
+        #   PasswordDialog(mode="setup", on_submit=lambda p: None,
+        #                  on_cancel=lambda: None)
+        # That caller does not override title/message -- it relies on
+        # PasswordDialog's own mode="setup" defaults ("Setup Master
+        # Password" / "Create a master password to encrypt your API keys
+        # and sensitive configuration data."). Its on_submit/on_cancel are
+        # no-ops (the real work happens after dismiss, same as here), so
+        # they add nothing; this uses the push_screen(dialog, callback)
+        # idiom already established in this module (see
+        # FirstRunSetupWizard.action_cancel's ConfirmationDialog) instead of
+        # that caller's await/wait_for_dismiss=True style -- both dispatch
+        # through the same ModalScreen.dismiss(password), so the two forms
+        # are behaviorally identical here.
+        dialog = PasswordDialog(mode="setup")
+        self.app.push_screen(dialog, self._on_password_result)
+
+    def _on_password_result(self, password: str | None) -> None:
+        if not password:
+            return
+        # Deviation from the task brief: the brief's pseudocode runs this
+        # worker in group "setup-wizard-advance", but that group name is
+        # SetupWizardContainer's OWN commit-on-Next / finalize worker
+        # (handle_next, _skip_entirely, _finalize all use it, each
+        # exclusive=True). Reusing it here would let this step's worker
+        # collide with the container's -- exclusive=True workers in the same
+        # group cancel/replace each other, so a password-apply in flight
+        # could be cancelled by a Next click, or vice versa. A dedicated
+        # group avoids that; the actual serialization guarantee against
+        # concurrent config writes is enable_config_encryption's own config
+        # RLock, not the worker group name.
+        self.run_worker(
+            self._apply_password_worker(password),
+            exclusive=True,
+            group="setup-protect-encrypt",
+        )
+
+    async def _apply_password_worker(self, password: str) -> None:
+        ok = await self.apply_password(password)
+        status = self.query_one("#setup-protect-status", Static)
+        if ok:
+            status.update("✓ Encryption enabled.")
+        else:
+            self.show_step_error(
+                "Enabling encryption failed — your keys are unchanged (plain text)."
+            )
+
+    async def apply_password(self, password: str) -> bool:
+        import asyncio
+
+        enable = self._enable_encryption
+        if enable is None:
+            from tldw_chatbook.config import enable_config_encryption
+
+            enable = enable_config_encryption
+        ok = bool(
+            await asyncio.get_running_loop().run_in_executor(None, enable, password)
+        )
+        self.encryption_enabled = ok
+        return ok
+
+    def get_step_data(self) -> Dict[str, Any]:
+        return {"encryption_enabled": self.encryption_enabled}
+
+
+class SummaryStep(SetupStep):
+    """Read-back ✓/✗ matrix plus mode-dependent exits.
+
+    Always re-reads the persisted config (never step memory) so the summary
+    reflects what actually landed on disk, not what the in-memory steps
+    think they committed.
+    """
+
+    def __init__(self, wizard=None, config=None, *, load_config=None,
+                 rag_deps_installed=None, **kwargs):
+        super().__init__(wizard=wizard, config=config, **kwargs)
+        self._load_config = load_config
+        self._rag_deps_installed = rag_deps_installed
+        self.exit_route: Optional[str] = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="setup-summary"):
+            yield Static("Setup summary", classes="setup-title")
+            yield Static("", id="setup-summary-defaults-note", classes="setup-subtitle")
+            # markup=False: row labels/details come from persisted config data
+            # (embedding model ids, notes directories, ...) which may contain
+            # literal "[...]" -- Static.update() otherwise parses that as Rich
+            # markup and silently drops it from the rendered text.
+            yield Static("", id="setup-summary-rows", markup=False)
+            yield Static("", id="setup-summary-footer", classes="setup-subtitle",
+                        markup=False)
+            with Horizontal(classes="setup-summary-actions"):
+                if getattr(self.wizard, "rerun", False):
+                    yield Button("Done", id="setup-exit-done", variant="primary")
+                    yield Button("Go to Chat", id="setup-exit-chat")
+                else:
+                    yield Button("Start chatting", id="setup-exit-chat", variant="primary")
+                    yield Button("Explore on my own", id="setup-exit-home")
+
+    def on_show(self) -> None:
+        super().on_show()
+        track = (self.wizard.wizard_data or {}).get(
+            wizard_state.STEP_WELCOME, {}
+        ).get("track")
+        if track == wizard_state.TRACK_QUICK:
+            self.query_one("#setup-summary-defaults-note", Static).update(
+                "Left at recommended defaults: tools off, RAG off, default theme, "
+                "notes sync off — each lives in Settings when you want it."
+            )
+        self.run_worker(self._render_rows(), exclusive=True, group="setup-summary-load")
+
+    async def _render_rows(self) -> None:
+        import asyncio
+
+        load = self._load_config
+        if load is None:
+            from tldw_chatbook.config import load_cli_config_and_ensure_existence
+
+            def load():
+                return load_cli_config_and_ensure_existence(force_reload=True)
+
+        deps = self._rag_deps_installed
+        if deps is None:
+            from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed
+
+            deps = embeddings_rag_deps_installed
+        config = await asyncio.get_running_loop().run_in_executor(None, load)
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import build_summary_rows
+
+        rows = build_summary_rows(config, dict(os.environ), rag_deps_installed=deps())
+        # Static.update() parses "[...]" as Rich markup by default, so any
+        # bracketed literal in a label/detail (e.g. a package extra name)
+        # must be escaped or it silently vanishes from the rendered text.
+        lines = [
+            f"{'✓' if row.ok else '✗'} {row.label}"
+            + (f" — {row.detail}" if row.detail else "")
+            for row in rows
+        ]
+        self.query_one("#setup-summary-rows", Static).update("\n".join(lines))
+        from tldw_chatbook.config import get_cli_config_path
+
+        try:
+            self.query_one("#setup-summary-footer", Static).update(
+                f"Config file: {get_cli_config_path()}\n"
+                "Re-run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard."
+            )
+        except Exception:
+            pass
+
+    @on(Button.Pressed, "#setup-exit-chat")
+    def _exit_chat(self) -> None:
+        from tldw_chatbook.Constants import TAB_CHAT
+
+        self._finish(TAB_CHAT)
+
+    @on(Button.Pressed, "#setup-exit-home")
+    def _exit_home(self) -> None:
+        from tldw_chatbook.Constants import TAB_HOME
+
+        self._finish(TAB_HOME)
+
+    @on(Button.Pressed, "#setup-exit-done")
+    def _exit_done(self) -> None:
+        self._finish(None)
+
+    def _finish(self, exit_route: Optional[str]) -> None:
+        self.exit_route = exit_route
+        # Deviation from the task brief: the brief calls
+        # self.wizard.handle_next() directly, but SetupWizardContainer's
+        # handle_next is the @on(Button.Pressed, "#wizard-next") override
+        # documented above -- it takes the Button.Pressed event and calls
+        # event.prevent_default() on it (required so the base class's own
+        # handle_next() doesn't ALSO fire per Textual's whole-MRO @on
+        # dispatch; see that method's docstring/comment). Calling
+        # handle_next() with no event, or with None, would raise on
+        # event.prevent_default(). advance_programmatically() is the
+        # extracted body (guard + worker dispatch) with no event
+        # dependency, used by both the real button handler and this
+        # programmatic exit path, so the dispatch semantics for the actual
+        # Next button are unchanged.
+        self.wizard.advance_programmatically()
+
+    def get_step_data(self) -> Dict[str, Any]:
+        return {"exit_route": self.exit_route}
+
+
 class SetupWizardContainer(WizardContainer):
     """Navigates over the active-step subset; commits on Next via one worker."""
 
@@ -812,10 +1032,10 @@ class SetupWizardContainer(WizardContainer):
             AppearanceStep(
                 wizard=self, config=cfg(wizard_state.STEP_APPEARANCE, "Appearance", 7)
             ),
-            SetupStep(
+            ProtectKeysStep(
                 wizard=self, config=cfg(wizard_state.STEP_PROTECT, "Protect keys", 8)
             ),
-            SetupStep(wizard=self, config=cfg(wizard_state.STEP_SUMMARY, "Summary", 9)),
+            SummaryStep(wizard=self, config=cfg(wizard_state.STEP_SUMMARY, "Summary", 9)),
         ]
 
     # -- active-step navigation --------------------------------------------
@@ -902,6 +1122,20 @@ class SetupWizardContainer(WizardContainer):
         # step. prevent_default() is the documented way to suppress handlers
         # in base classes for this exact message.
         event.prevent_default()
+        self.advance_programmatically()
+
+    def advance_programmatically(self) -> None:
+        """Same commit-and-advance path as clicking Next, without an event.
+
+        SummaryStep's own exit buttons ("Start chatting", "Explore on my
+        own", "Done", "Go to Chat") are not the "#wizard-next" button, so
+        they have no Button.Pressed event to hand to handle_next() above --
+        which requires one, to call event.prevent_default() (see that
+        method's docstring for why). This is the extracted guard + worker
+        dispatch body, shared by both callers; the real Next button's
+        dispatch semantics (the prevent_default() suppression) are
+        unchanged.
+        """
         if self._advancing or not self.can_proceed:
             return
         self._advancing = True
