@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, cast
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CONVERSATION_SCOPE_ALL
+
+_ASSISTANT_AUTHORITY_UNSET = cast(str | None, object())
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.citation_legacy_migration import (
@@ -361,7 +363,7 @@ class ChatConversationService:
         character_id: int | None = None,
         assistant_kind: str | None = None,
         assistant_id: str | None = None,
-        assistant_authority_id: str | None = None,
+        assistant_authority_id: str | None = _ASSISTANT_AUTHORITY_UNSET,
         persona_memory_mode: str | None = None,
         runtime_backend: str | None = None,
         discovery_owner: str | None = None,
@@ -397,7 +399,7 @@ class ChatConversationService:
             "source": source,
             "external_ref": external_ref,
         }
-        if assistant_authority_id is not None:
+        if assistant_authority_id is not _ASSISTANT_AUTHORITY_UNSET:
             conversation_data["assistant_authority_id"] = assistant_authority_id
         conversation_id = self.db.add_conversation(conversation_data)
         if conversation_id is None:
@@ -519,9 +521,10 @@ class ChatConversationService:
         for key, value in update_data.items():
             if key == "assistant_kind":
                 normalized_update[key] = _normalize_assistant_kind(value)
+            elif key == "assistant_authority_id":
+                normalized_update[key] = value
             elif key in {
                 "assistant_id",
-                "assistant_authority_id",
                 "persona_memory_mode",
                 "topic_label",
                 "topic_label_source",

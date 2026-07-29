@@ -10,7 +10,7 @@ import pytest
 
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.citation_legacy_migration import LegacyCitationReadState
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
 
 
 @dataclass
@@ -344,18 +344,34 @@ def test_create_conversation_exposes_and_threads_assistant_authority_id():
     )
 
 
-def test_create_conversation_omits_unspecified_authority_for_database_inference():
-    db = FakeDB()
-    service = ChatConversationService(db)
+def test_create_conversation_preserves_omitted_and_explicit_null_authority(
+    tmp_path,
+):
+    db = CharactersRAGDB(tmp_path / "conversation-authority.sqlite", "test-client")
+    try:
+        character_id = db.add_character_card({"name": "Authority Character"})
+        service = ChatConversationService(db)
 
-    service.create_conversation(
-        character_id=7,
-        assistant_kind="character",
-        assistant_id="7",
-        runtime_backend="local",
-    )
+        inferred_conversation_id = service.create_conversation(
+            character_id=character_id,
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            runtime_backend="local",
+        )
+        unproven_conversation_id = service.create_conversation(
+            character_id=character_id,
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            assistant_authority_id=None,
+            runtime_backend="local",
+        )
 
-    assert "assistant_authority_id" not in db.created_conversations[0]
+        inferred = db.get_conversation_by_id(inferred_conversation_id)
+        unproven = db.get_conversation_by_id(unproven_conversation_id)
+        assert inferred["assistant_authority_id"] == db.get_local_authority_id()
+        assert unproven["assistant_authority_id"] is None
+    finally:
+        db.close_connection()
 
 
 def test_list_conversations_normalizes_pagination_and_enforces_global_defaults():
@@ -616,7 +632,7 @@ def test_get_and_update_conversation_metadata_routes_normalized_fields():
     assert db.updates == [
         (
             "conv-1",
-            {"assistant_authority_id": authority_id},
+            {"assistant_authority_id": f"  {authority_id}  "},
             9,
         ),
         (
@@ -638,6 +654,61 @@ def test_get_and_update_conversation_metadata_routes_normalized_fields():
             9,
         )
     ]
+
+
+def test_update_conversation_authority_leaves_validation_to_database(tmp_path):
+    db = CharactersRAGDB(tmp_path / "authority-update.sqlite", "test-client")
+    try:
+        character_id = db.add_character_card({"name": "Authority Character"})
+        conversation_id = db.add_conversation(
+            {
+                "character_id": character_id,
+                "assistant_kind": "character",
+                "assistant_id": str(character_id),
+                "runtime_backend": "local",
+            }
+        )
+        authority_id = db.get_local_authority_id()
+        service = ChatConversationService(db)
+
+        created = db.get_conversation_by_id(conversation_id)
+        assert service.update_conversation_metadata(
+            conversation_id,
+            {"assistant_authority_id": f"  {authority_id}  "},
+            expected_version=created["version"],
+        )
+        canonical = db.get_conversation_by_id(conversation_id)
+        assert canonical["assistant_authority_id"] == authority_id
+
+        assert service.update_conversation_metadata(
+            conversation_id,
+            {"assistant_authority_id": None},
+            expected_version=canonical["version"],
+        )
+        unproven = db.get_conversation_by_id(conversation_id)
+        assert unproven["assistant_authority_id"] is None
+
+        with pytest.raises(InputError, match="non-empty"):
+            service.update_conversation_metadata(
+                conversation_id,
+                {"assistant_authority_id": "   "},
+                expected_version=unproven["version"],
+            )
+        after_blank = db.get_conversation_by_id(conversation_id)
+        assert after_blank["version"] == unproven["version"]
+
+        with pytest.raises(InputError, match="must be text"):
+            service.update_conversation_metadata(
+                conversation_id,
+                {"assistant_authority_id": 123},
+                expected_version=after_blank["version"],
+            )
+        assert (
+            db.get_conversation_by_id(conversation_id)["version"]
+            == after_blank["version"]
+        )
+    finally:
+        db.close_connection()
 
 
 def test_update_conversation_metadata_merges_scope_from_current_state_before_validation():

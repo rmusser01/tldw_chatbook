@@ -78,17 +78,26 @@ class TestChatPersistenceService:
         service = ChatPersistenceService(db_instance)
         character_id = db_instance.add_character_card({"name": "Bob"})
 
-        conversation_id = service.create_conversation(
+        inferred_conversation_id = service.create_conversation(
             character_id=character_id,
             assistant_kind="character",
             assistant_id=str(character_id),
             runtime_backend="local",
         )
+        unproven_conversation_id = service.create_conversation(
+            character_id=character_id,
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            assistant_authority_id=None,
+            runtime_backend="local",
+        )
 
-        conversation = db_instance.get_conversation_by_id(conversation_id)
-        assert conversation["assistant_authority_id"] == (
+        inferred = db_instance.get_conversation_by_id(inferred_conversation_id)
+        unproven = db_instance.get_conversation_by_id(unproven_conversation_id)
+        assert inferred["assistant_authority_id"] == (
             db_instance.get_local_authority_id()
         )
+        assert unproven["assistant_authority_id"] is None
 
     def test_canonical_citation_writes_ready_requires_matching_ready_repository(
         self,
