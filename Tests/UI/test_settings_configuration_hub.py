@@ -2873,6 +2873,28 @@ async def test_settings_long_detail_and_inspector_panes_are_scrollable_container
         assert detail_pane.scroll_y > 0
 
 
+def _assert_field_guide_row_painted(host, widget) -> None:
+    """Compositor-honest visibility check (mirrors the sibling helper in
+    ``test_console_parallel_runs.py``, task-1140): a widget below a
+    scrollable ancestor's fold still reports a ``region``, just one that
+    ancestor never actually paints, so a raw ``region.y`` comparison
+    cannot tell "below THIS pane's fold" apart from "on screen". This asks
+    the compositor what is ACTUALLY drawn at the widget's own top-left
+    cell -- the same bar a live terminal renders against.
+    """
+    region = widget.region
+    try:
+        hit_widget, _hit_region = host.get_widget_at(region.x + 1, region.y)
+    except Exception as exc:  # textual.errors.NoWidget
+        pytest.fail(
+            f"nothing is painted at {widget!r}'s own region {region!r}: {exc}"
+        )
+    assert hit_widget is widget, (
+        f"the compositor paints {hit_widget!r} at {region!r}, not {widget!r} "
+        "itself -- it is not actually visible on screen"
+    )
+
+
 @pytest.mark.asyncio
 async def test_settings_console_behavior_focus_auto_scrolls_to_field_guide():
     """Fleet-UX expert review F6 (task-1234): focusing "Max parallel" must
@@ -2921,19 +2943,115 @@ async def test_settings_console_behavior_focus_auto_scrolls_to_field_guide():
         guide_row = screen.query_one("#settings-console-behavior-field-guide-0")
         assert pane.max_scroll_y > 0, "test setup: the pane must need scrolling"
         assert pane.scroll_y > 0, "focusing the field must have scrolled the pane"
+        _assert_field_guide_row_painted(host, guide_row)
 
-        region = guide_row.region
-        try:
-            hit_widget, _hit_region = host.get_widget_at(region.x + 1, region.y)
-        except Exception as exc:  # textual.errors.NoWidget
-            pytest.fail(
-                f"nothing is painted at the field guide's own region {region!r}: {exc}"
-            )
-        assert hit_widget is guide_row, (
-            f"the compositor paints {hit_widget!r} at {region!r}, not the "
-            "Focused field guide's first row -- focusing the field did not "
-            "scroll the Scope Inspector to reveal it"
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_starts_flush_with_bottom_fold():
+    """Qodo PR #1074 finding 2 (task-1230/1234 external review): the F6 fix
+    above only ever targeted the guide's FIRST row. ``scroll_to_widget``
+    no-ops once its target is already fully inside the viewport, so a
+    PRIOR scroll position that already leaves "Purpose" sitting flush with
+    the pane's own bottom edge (fully visible, technically) short-circuits
+    the whole call -- Consequences/Saved as/Applies (everything after it)
+    stay clipped below the fold and NO scroll happens at all. This is
+    distinct from the sibling test above, which starts scrolled to the
+    very top (nothing of the guide visible yet) rather than with the first
+    row already parked at the bottom -- exactly the arrangement Qodo's
+    review reported.
+
+    The precondition is built from a direct scroll computation (not a
+    guessed constant) so it holds regardless of how the guidance copy
+    changes later: it places the FALLBACK guide's row 0 (the content
+    showing before "Max parallel" is ever focused) with its bottom edge
+    exactly flush with the pane's own bottom edge.
+
+    The pane is sized tall enough to hold the ENTIRE focused guide
+    (measured from the real rendered content) so a correct fix has room to
+    reveal every row simultaneously -- a too-short pane would make "all
+    rows visible" mathematically impossible regardless of the fix, which
+    the sibling test above already covers (it only requires the first row,
+    deliberately using a too-short pane).
+
+    Must fail against the pre-fix implementation (which only ever scrolls
+    to the first row, and only when that row isn't already "in window");
+    reverting the ``_scroll_impact_pane_to_field_guide`` change confirms
+    this.
+    """
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        pane = screen.query_one("#settings-impact-pane", VerticalScroll)
+        field = screen.query_one("#settings-console-max-parallel-runs", Input)
+        other_field = screen.query_one("#settings-console-default-streaming", Input)
+        guide_ids = [f"#settings-console-behavior-field-guide-{i}" for i in range(4)]
+
+        # Measure the REAL (focused) guide's total span first, so the pane
+        # can be grown to hold it end to end.
+        field.focus()
+        await pilot.pause()
+        await pilot.pause()
+        first_measured = screen.query_one(guide_ids[0])
+        last_measured = screen.query_one(guide_ids[-1])
+        guide_span = (
+            last_measured.virtual_region.y + last_measured.virtual_region.height
+        ) - first_measured.virtual_region.y
+        # +8, not the guide's span alone: `scrollable_content_region` (the
+        # interior window scrolling actually targets) is smaller than
+        # `styles.height` by the pane's own border + padding overhead
+        # (2 + 2 rows here) -- pad past that so the interior window itself
+        # ends up taller than the guide, not just the outer style value.
+        pane.styles.height = guide_span + 8
+        await pilot.pause()
+        viewport_height = pane.scrollable_content_region.height
+        assert viewport_height >= guide_span, (
+            "test setup: the pane's interior viewport must be tall enough "
+            f"to hold the whole guide (viewport={viewport_height}, "
+            f"guide_span={guide_span})"
         )
+
+        # Return to the FALLBACK guide (the content shown before "Max
+        # parallel" is ever focused) and reset scroll to a known baseline.
+        other_field.focus()
+        await pilot.pause()
+        await pilot.pause()
+        pane.scroll_to(y=0, animate=False, force=True)
+        await pilot.pause()
+
+        fallback_row0 = screen.query_one(guide_ids[0])
+        target_scroll_y = max(
+            0,
+            fallback_row0.virtual_region.y
+            + fallback_row0.virtual_region.height
+            - viewport_height,
+        )
+        pane.scroll_to(y=target_scroll_y, animate=False, force=True)
+        await pilot.pause()
+
+        # Precondition: row 0 ("Purpose", fallback text) is fully painted,
+        # flush with the pane's own INTERIOR bottom edge -- the setup must
+        # actually need scrolling, or this test proves nothing.
+        assert pane.max_scroll_y > 0, "test setup: the pane must need scrolling"
+        _assert_field_guide_row_painted(host, fallback_row0)
+        interior_bottom = pane.scrollable_content_region.bottom
+        assert fallback_row0.region.bottom == interior_bottom, (
+            "test setup: row 0 must start flush with the viewport's "
+            f"interior bottom edge, got row0={fallback_row0.region!r} "
+            f"interior_bottom={interior_bottom!r}"
+        )
+
+        # Trigger: focusing "Max parallel runs" swaps the guide's CONTENT
+        # in place (same 4 ids) to the real Purpose/Consequences/Saved as/
+        # Applies text and must re-scroll to reveal all of it.
+        field.focus()
+        await pilot.pause()
+        await pilot.pause()
+
+        for guide_id in guide_ids:
+            _assert_field_guide_row_painted(host, screen.query_one(guide_id))
 
 
 @pytest.mark.asyncio

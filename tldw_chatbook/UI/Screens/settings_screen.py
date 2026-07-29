@@ -11617,6 +11617,24 @@ class SettingsScreen(BaseAppScreen):
         Purpose:". Same disease task-1140 fixed for the fleet line, in a
         second location.
 
+        Qodo PR #1074 finding 2: scrolling to only the FIRST row was
+        insufficient on its own -- ``scroll_to_widget`` no-ops once its
+        target is already fully inside the viewport, so a prior scroll
+        position that happens to leave the first row sitting flush with
+        the pane's own bottom edge (fully visible, technically) short-
+        circuits the whole call, leaving every row after it (Consequences/
+        Saved as/Applies, etc.) below the fold. Two passes fix this:
+        first reveal the LAST row (pulls the whole guide into view when it
+        fits the viewport), then re-target the FIRST row with ``top=True``
+        to force-pin it to the pane's top edge regardless of whether
+        anything actually needed to move. When the guide is short enough
+        to fit the viewport this second pass is a no-op in effect (the
+        first pass already made the whole block visible); when the guide
+        is TALLER than the viewport, it deliberately re-prioritizes the
+        first rows -- Purpose/Focused setting, the most load-bearing
+        content -- over the tail, maximizing visible coverage starting
+        from the top rather than the bottom.
+
         ``call_after_refresh`` + ``force=True`` mirrors the pattern proven
         in ``library_screen.LibraryScreen._preserve_library_rail_scroll``:
         an unforced ``scroll_to_widget`` clamps to 0 when a container's
@@ -11633,14 +11651,35 @@ class SettingsScreen(BaseAppScreen):
         row_id = _FIELD_GUIDE_FIRST_ROW_ID.get(category)
         if row_id is None:
             return
+        row_prefix = row_id.rsplit("-", 1)[0]
 
         def _scroll() -> None:
             try:
                 pane = self.query_one("#settings-impact-pane")
-                row = self.query_one(f"#{row_id}")
+                first_row = self.query_one(f"#{row_id}")
             except Exception:
                 return
-            pane.scroll_to_widget(row, animate=False, force=True)
+            # Guide rows are a fixed-length, contiguous block of Static
+            # widgets rendered unconditionally (see the per-category
+            # ``*_field_guidance_rows`` methods) -- find the last one by
+            # probing sequential ids rather than hardcoding a row count a
+            # future guidance edit would silently drift out of sync with.
+            last_row = first_row
+            index = 1
+            while True:
+                try:
+                    last_row = self.query_one(f"#{row_prefix}-{index}")
+                except Exception:
+                    break
+                index += 1
+            # Pass 1: reveal the guide's tail. If the whole guide fits the
+            # viewport this already brings every row into view.
+            pane.scroll_to_widget(last_row, animate=False, force=True)
+            # Pass 2: force the first row to the pane's top edge -- see the
+            # docstring above for why this must run unconditionally (not
+            # only when pass 1 left it hidden) and why ``top=True`` beats a
+            # plain minimal-scroll re-target.
+            pane.scroll_to_widget(first_row, animate=False, force=True, top=True)
 
         self.call_after_refresh(_scroll)
 

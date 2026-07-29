@@ -74,6 +74,43 @@ def test_rejection_teaches_the_recovery_route(tmp_path: Path) -> None:
     assert "Default workspace cannot hold folder bindings" in message
 
 
+def test_recovery_pointer_is_accurate_for_a_non_default_workspace(
+    tmp_path: Path,
+) -> None:
+    """Qodo PR #1074 finding 3: this denial fires identically whether the
+    run's workspace is Default or an already-named workspace that simply
+    has no folder bound yet -- `validate_path_multi` has no workspace
+    context to tell the two apart (see `ROOT_DENIAL_RECOVERY_POINTER`'s own
+    docstring for why threading it in would be invasive). Pre-fix, the
+    pointer unconditionally said "create a workspace + bind a folder",
+    which is actively wrong advice for a run already in a normal
+    workspace -- it only needs a folder bound to the one it already has.
+
+    The pointer must therefore read correctly on its own regardless of
+    which workspace the run is in (just "bind a folder"); the
+    Default-specific advice is confined to the HINT and phrased as an
+    explicit conditional ("if this run is in Default"), never asserted as
+    fact.
+    """
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("x")
+
+    with pytest.raises(ValueError) as excinfo:
+        validate_path_multi(outside, [root])
+    message = str(excinfo.value)
+
+    assert "bind a folder" in ROOT_DENIAL_RECOVERY_POINTER
+    assert "create a workspace" not in ROOT_DENIAL_RECOVERY_POINTER.lower()
+    assert "if this run is in default" in ROOT_DENIAL_RECOVERY_HINT.lower()
+    # The pointer alone (before any Default-specific caveat) must already
+    # be present and correct in the composed message.
+    assert message.index(ROOT_DENIAL_RECOVERY_POINTER) < message.index(
+        ROOT_DENIAL_RECOVERY_HINT
+    )
+
+
 def test_recovery_pointer_precedes_everything_else(tmp_path: Path) -> None:
     """TASK-1231/F3 AC1 (round 1 review CRITICAL 2): the SHORT pointer must
     be the first thing after the bare denial acknowledgement -- before the
