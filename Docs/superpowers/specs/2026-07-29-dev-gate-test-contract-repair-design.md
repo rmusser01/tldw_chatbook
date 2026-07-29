@@ -240,6 +240,22 @@ Update the tests to describe current behavior:
     `save_setting_to_cli_config`, restore per-key persistence, or change
     production; submission deliberately batches these settings to avoid
     repeated config reads, writes, and cache invalidations.
+28. In the structured config-mutation module, replace every reference to the
+    deleted `config.atomic_write_text` seam with the live
+    `config.atomic_private_write_text` owner. Preserve the existing assertions
+    for one replacement, zero writes on overlap, contained pre-replacement
+    failure, lock serialization, batch-save delegation, delete-wrapper
+    delegation, resulting content, and owner-only permissions. In the Phase
+    6.6 packaging/data-safety source-seam regression, replace the obsolete
+    positive assertion for `atomic_write_text(DEFAULT_CONFIG_PATH` with
+    positive assertions scoped to `_write_raw_cli_config_unlocked` for
+    `atomic_private_write_text` and its `application_owned_directory` posture;
+    retain the existing effective-path assertions. Whole-file substring checks
+    are insufficient because unrelated snapshot and bootstrap paths contain
+    the same tokens. These tests intentionally instrument or inspect the
+    private writer because atomic replacement is their subject; do not restore
+    the generic writer, hard-code the default path, or weaken the security
+    assertions.
 
 The only planned production behavior change outside an ADR-029 diagnostic
 correction is the three-name synchronization of the existing Library collision
@@ -325,6 +341,9 @@ fail-closed behavior. No compatibility shims. No broad deletion of live tests.
   single-write behavior just to satisfy a stale mock. Observing the batch seam
   directly preserves both the user-facing persistence contract and the current
   write-efficiency boundary.
+- Removing config mutation write-count, failure, or lock assertions would lose
+  the behavior those tests exist to prove. Wrapping the live private atomic
+  writer retains that coverage while following the hardened config owner.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

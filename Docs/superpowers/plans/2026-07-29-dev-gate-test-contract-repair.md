@@ -1129,6 +1129,49 @@ git add Tests/integration/test_library_ingest_flow.py
 git commit -m "test(library): observe batched ingest settings"
 ```
 
+### Task 4y: Follow the private config replacement owner
+
+**Files:**
+- Modify: `Tests/test_config_delete_settings.py`
+- Modify: `Tests/UI/test_product_maturity_phase6_packaging_data_safety.py`
+
+- [ ] **Step 1: Reproduce the deleted writer seam**
+
+Run the module. Expected: the first structured-mutation regression fails while
+reading deleted `config.atomic_write_text`; later write-count, failure, lock,
+batch-save, and delete-wrapper tests reference the same retired symbol. The
+Phase 6.6 source-seam regression separately requires that deleted generic
+writer against the hard-coded default path.
+
+- [ ] **Step 2: Retarget all replacement instrumentation**
+
+Wrap or replace `config.atomic_private_write_text` in each affected regression.
+Keep all existing call-count, no-write, failure-phase, lock-order, file-content,
+and permission assertions. In the Phase 6.6 source-seam regression, require the
+private writer and its application-owned-directory argument within the
+`_write_raw_cli_config_unlocked` function block while retaining the
+effective-path checks; do not use independent whole-file substring assertions
+that unrelated snapshot/bootstrap calls could satisfy. Do not restore
+`atomic_write_text`, hard-code `DEFAULT_CONFIG_PATH`, or modify production.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/test_config_delete_settings.py \
+  Tests/UI/test_product_maturity_phase6_packaging_data_safety.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/test_config_delete_settings.py \
+  Tests/UI/test_product_maturity_phase6_packaging_data_safety.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/test_config_delete_settings.py \
+  Tests/UI/test_product_maturity_phase6_packaging_data_safety.py
+git add \
+  Tests/test_config_delete_settings.py \
+  Tests/UI/test_product_maturity_phase6_packaging_data_safety.py
+git commit -m "test(config): follow private atomic writer"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -1202,6 +1245,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/ProductionApp/test_media_state_ownership.py \
   Tests/ProductionApp/test_provider_selection_ownership.py \
+  Tests/UI/test_product_maturity_phase6_packaging_data_safety.py \
   Tests/RAG/test_rag_ui_integration.py \
   Tests/RAG/test_local_citation_capture.py \
   Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
@@ -1209,6 +1253,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/TTS/test_tts_preferences.py \
   Tests/UI/test_command_palette_providers.py \
   Tests/integration/test_library_ingest_flow.py \
+  Tests/test_config_delete_settings.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
   Tests/Transcription/test_mlx_parakeet_edge_cases.py \
   Tests/Transcription/test_mlx_parakeet_transcription.py \
@@ -1236,12 +1281,14 @@ Expected: all affected tests pass.
   Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/ProductionApp/test_media_state_ownership.py \
   Tests/ProductionApp/test_provider_selection_ownership.py \
+  Tests/UI/test_product_maturity_phase6_packaging_data_safety.py \
   Tests/RAG/test_rag_ui_integration.py \
   Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
   Tests/TTS/test_profile_backup_integration.py \
   Tests/TTS/test_tts_preferences.py \
   Tests/UI/test_command_palette_providers.py \
   Tests/integration/test_library_ingest_flow.py \
+  Tests/test_config_delete_settings.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
   Tests/Transcription/test_mlx_parakeet_edge_cases.py \
   Tests/Transcription/test_mlx_parakeet_transcription.py \
@@ -1264,12 +1311,14 @@ Expected: all affected tests pass.
   Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/ProductionApp/test_media_state_ownership.py \
   Tests/ProductionApp/test_provider_selection_ownership.py \
+  Tests/UI/test_product_maturity_phase6_packaging_data_safety.py \
   Tests/RAG/test_rag_ui_integration.py \
   Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
   Tests/TTS/test_profile_backup_integration.py \
   Tests/TTS/test_tts_preferences.py \
   Tests/UI/test_command_palette_providers.py \
   Tests/integration/test_library_ingest_flow.py \
+  Tests/test_config_delete_settings.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
   Tests/Transcription/test_mlx_parakeet_edge_cases.py \
   Tests/Transcription/test_mlx_parakeet_transcription.py \
