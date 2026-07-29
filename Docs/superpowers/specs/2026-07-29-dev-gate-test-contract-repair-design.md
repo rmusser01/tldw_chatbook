@@ -168,11 +168,24 @@ Update the tests to describe current behavior:
     seam used by current mounted-app fixtures. Keep the fake policy state and
     all lazy service construction, caching, fallback, and wiring assertions
     unchanged. Do not add a setter or compatibility shim to production.
-19. In the two legacy bulk-backup cleanup regressions, accept either a missing
-    backup root or an existing empty root after cancellation or worker failure.
-    Keep the stronger no-artifact, no-success-notification, and cleared
-    in-progress-state assertions. Do not change production cleanup or require
-    its best-effort directory removal to preserve an otherwise unused parent.
+19. Replace every retired unscoped `tmp_path/.local/share/tldw_cli/backups`
+    expectation in the profile-backup integration module with the live
+    profile-aware user-data root selected by production. This includes both
+    legacy cleanup regressions, which must accept either a missing backup root
+    or an existing empty root after cancellation or worker failure. Keep the
+    stronger distinct-directory, manifest, partial-failure, no-artifact,
+    no-success-notification, and cleared in-progress-state assertions. Do not
+    change production cleanup or hard-code the current test profile path.
+20. Observe real manifest staging by wrapping the imported
+    `create_private_text` owner seam rather than `Path.open`, which the secure
+    helper no longer uses on guarded platforms. To exercise cleanup precedence,
+    let serialization and secure stage creation complete, then inject the
+    ordinary or control-flow failure at the second worker-cancellation check so
+    a stage actually exists before unlinking. Keep the exclusive-create,
+    worker-thread, control-flow, value-free diagnostic, and cleanup contracts;
+    narrow the replace-failure privacy assertion to the injected private
+    manifest value rather than the entire test root, whose isolated config path
+    is legitimately logged.
 
 The only planned production behavior change outside an ADR-029 diagnostic
 correction is the three-name synchronization of the existing Library collision
@@ -221,6 +234,14 @@ fail-closed behavior. No compatibility shims. No broad deletion of live tests.
   behavior. Accepting either absence or emptiness proves the actual
   no-artifact contract without weakening the database, temporary-file,
   manifest, notification, or worker-state assertions.
+- Continuing to inspect the retired unscoped root would make no-artifact checks
+  pass without observing production and make successful-backup tests fail for
+  the wrong reason. Deriving the root from the live owner keeps the assertions
+  profile-aware without duplicating its path algorithm.
+- Restoring `Path.open` staging or creating a partial disk file during JSON
+  serialization would bypass the secure exclusive-create helper. Wrapping that
+  helper and injecting failures only after it succeeds preserves the intended
+  concurrency and cleanup coverage under the current implementation.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

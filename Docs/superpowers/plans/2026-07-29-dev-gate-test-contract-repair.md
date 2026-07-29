@@ -793,6 +793,80 @@ git add Tests/TTS/test_profile_backup_integration.py
 git commit -m "test(backup): accept removed empty root"
 ```
 
+### Task 4p: Follow the profile-aware backup root
+
+**Files:**
+- Modify: `Tests/TTS/test_profile_backup_integration.py`
+
+- [ ] **Step 1: Reproduce RED and identify vacuous checks**
+
+Run the full profile-backup integration module. Expected: successful and
+partial backups are written below the live profile-aware user-data root, while
+tests inspect the retired unscoped path. Confirm all seven hard-coded
+`tmp_path/.local/share/tldw_cli/backups` assignments and the one equivalent
+destination-parent comparison, including the two Task 4o assertions.
+
+- [ ] **Step 2: Derive expectations from the live owner**
+
+Replace those retired path expectations with
+`tools_settings_module.get_user_data_dir() / "backups"`. Keep each test's
+existing distinct-directory, manifest-content, partial-failure, publication,
+cancellation, notification, and cleanup assertions. Do not duplicate the
+profile-path algorithm, patch production path selection, or create a test-only
+compatibility root.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/TTS/test_profile_backup_integration.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/TTS/test_profile_backup_integration.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/TTS/test_profile_backup_integration.py
+git add Tests/TTS/test_profile_backup_integration.py
+git commit -m "test(backup): follow profile-aware root"
+```
+
+### Task 4q: Retarget secure manifest staging regressions
+
+**Files:**
+- Modify: `Tests/TTS/test_profile_backup_integration.py`
+
+- [ ] **Step 1: Reproduce RED and confirm the secure seam**
+
+Confirm real stage creation calls the imported `create_private_text` helper
+inside the manifest worker and no longer calls `Path.open` on guarded
+platforms. Confirm JSON serialization failures occur before any stage is
+created, so the two cleanup-precedence tests currently never reach unlink.
+Confirm the replace-failure privacy test rejects unrelated isolated config
+bootstrap paths rather than an exposed injected backup value.
+
+- [ ] **Step 2: Exercise the live boundaries**
+
+Wrap `tools_settings_module.create_private_text` to record its stage path,
+thread, and active task while delegating to the real helper. Assert one
+`.backup_info.json.tmp` creation off the owner thread with no asyncio task.
+For cleanup precedence, allow serialization and secure creation to complete,
+then raise the intended ordinary or control-flow exception from the second
+`_raise_if_textual_worker_cancelled` call so cleanup receives an existing
+stage. Narrow the replace-failure privacy check to the injected private
+manifest path. Do not edit production, emulate `Path.open`, or weaken the
+exclusive-create, cleanup, notification, and value-free diagnostic contracts.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/TTS/test_profile_backup_integration.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/TTS/test_profile_backup_integration.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/TTS/test_profile_backup_integration.py
+git add Tests/TTS/test_profile_backup_integration.py
+git commit -m "test(backup): target secure manifest staging"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
