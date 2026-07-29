@@ -285,6 +285,99 @@ Control how your voice data is handled:
 - Look for the "🎤 Voice" button next to text fields
 - Click to add voice input anywhere in the app
 
+### Console Voice Commands (V2)
+
+The Console's dictation capture (the composer's mic button) recognizes a
+small set of spoken commands while the microphone is open, so a capture can
+be controlled — and, with spoken feedback on, operated — without touching
+the keyboard, the mouse, or the screen. This is separate from the generic
+"Voice Commands" list below, which applies to the standalone Dictation
+window.
+
+**Activation.** Say the configured prefix word (`dictation.command_prefix`,
+default `"console"`) immediately followed by one of the command phrases
+below, as the *entire* spoken segment — nothing before it, nothing after.
+For example: "Console, stop." A segment that only starts with the prefix but
+goes on to say other things — "console send button is broken" — is not a
+command; it fails the match and lands in the transcript as ordinary text.
+
+**Fail-open, not fail-silent.** Normalization lowercases the segment,
+strips all punctuation (leading, trailing, and internal), and collapses
+whitespace, then checks the result against `<prefix> <phrase>`. Anything
+that isn't an exact whole-segment match — plain dictation, a misheard
+command like "console sned" — is emitted as ordinary text into the draft,
+never dropped and never actioned silently. There is no error for an
+unrecognized command; the words simply appear where you can read, edit, or
+delete them.
+
+**Command table:**
+
+| Say (after the prefix) | Kind | Effect |
+|---|---|---|
+| "new paragraph" | inline | Inserts a paragraph break (`\n\n`); capture keeps running. |
+| "new line" | inline | Inserts a line break (`\n`); capture keeps running. |
+| "stop" | capture-ending | Ends the capture and inserts the accumulated text at the caret — the same as pressing the mic button again. |
+| "send" | capture-ending | Ends the capture, inserts the text, and sends the message once insertion has completed. |
+| "discard" | capture-ending | Ends the capture without inserting anything — the same as pressing Cancel. No confirmation is asked; saying it is treated as explicit intent. |
+| "read that back" | capture-ending | Ends the capture (inserting the text first), then speaks the latest **completed** assistant reply. If the reply is still streaming, or there is none yet, it acknowledges instead of speaking a partial answer. |
+| "new session" | capture-ending | Ends the capture (inserting the text first), then opens a new session tab. |
+
+Inline commands leave the capture open; every other command in the table
+ends it. A capture whose spoken segments were entirely commands — for
+example, dictating nothing but "console, stop" — is not treated as a failed
+or empty capture: it produces no error and inserts no stray text.
+
+**Choreography and latency.** A command only fires once its segment
+finalizes, and a segment finalizes on a pause in speech — so **pause
+briefly both before and after speaking a command**. A command executes
+roughly `dictation.silence_threshold_seconds` (default 2.0 s) after you
+stop talking. In practice the effective latency runs a little past the bare
+threshold: the voice-activity detector carries a short "hangover" — the
+chunk immediately following speech still classifies as speech — so the
+realistic budget is threshold + one buffer cycle (~500 ms). This is expected
+behavior, not a bug, and lowering the threshold shortens it (at the cost of
+finalizing plain dictation into more, shorter segments). Because the pause
+*before* the command and the pause *after* it must each complete before
+their segments finalize, a full "pause, command, pause" round trip costs
+roughly **two** threshold intervals, not one — budget for that rather than
+reading it as lag.
+
+**Configuring the prefix.** `dictation.command_prefix` accepts multi-word
+prefixes and is normalized the same way as spoken commands. Leaving it
+blank (or whitespace-only) falls back to the default `"console"` rather
+than matching every segment as prefixed.
+
+**A known, accepted false-fire.** Because punctuation is stripped before
+matching, staccato dictated prose that finalizes as one segment can
+normalize to the same text as a real command and fire it — the canonical
+example is "Console. Send." finalizing as a single segment and firing
+`send`. This trade-off is deliberate: keeping punctuation would let the
+comma that recognizers almost universally insert after a vocative prefix
+("Console, send.") break every real command, i.e. the feature would never
+fire at all. The false-fire is rare and visible — watch the composer's
+voice chip for the command acknowledgement — and is one of the checks in
+live verification before every release.
+
+**Spoken feedback (opt-in).** `dictation.spoken_feedback` (default
+`false`) — when on, the Console speaks capture-ending acknowledgements
+("Sent.", "Discarded.", "New session.") and dictation error messages,
+through the same speech pipeline as per-message Speak. **"Capture started"
+is deliberately never spoken:** the microphone is already open by the time
+a capture starts, so speaking it would talk over the open mic and get
+transcribed straight back into the draft. With the toggle off, none of this
+speaks; "read that back" is the one exception and always speaks, since it's
+an explicit request rather than ambient feedback.
+
+Status speech never overlaps an open microphone: inline commands only
+acknowledge via the voice chip (never spoken), and capture-ending commands
+speak only after the capture has fully closed. **Starting a new capture
+always stops any speech that is currently playing first** — a status ack or
+an in-flight "read that back" — because the single-slot audio player only
+stops a clip when a *new* one starts, and opening the microphone plays
+nothing on its own. Without this rule, playback still running at capture
+start would be picked up by the open mic and transcribed into the new
+draft.
+
 ## Voice Commands
 
 ### Built-in Commands
@@ -553,6 +646,25 @@ stop_join_timeout_seconds = 30.0
 # Set to false to skip it: the model then loads during the capture, as it used
 # to. Default true.
 warm_model_before_capture = true
+# Prefix word(s) that activate a spoken command mid-capture in the Console,
+# e.g. "console, stop". Normalized the same way as spoken segments (lowercase,
+# all punctuation stripped, whitespace collapsed). A blank or whitespace-only
+# value falls back to this default rather than treating every segment as
+# prefixed. See "Console Voice Commands" below.
+command_prefix = "console"
+# Speak capture-ending acknowledgements ("Sent.", "Discarded.", "New
+# session.") and dictation error messages aloud, through the same speech
+# pipeline as per-message Speak. Off by default. "Capture started" is never
+# spoken (the microphone is already open by then); "read that back" always
+# speaks regardless of this setting, since it is an explicit request rather
+# than ambient feedback.
+spoken_feedback = false
+# Pause length, in seconds, that finalizes a spoken dictation segment -- and
+# therefore the delay before a spoken command executes. Must be a finite,
+# positive number; invalid or non-positive values fall back to this 2.0s
+# default. Lowering it shortens command latency at the cost of shorter,
+# choppier dictation segments.
+silence_threshold_seconds = 2.0
 
 [dictation.privacy]
 save_history = false
@@ -603,5 +715,5 @@ max_identifier_characters = 256
 
 ---
 
-**Last Updated**: 2026-07-27
-**Version**: 2.3 (Native audio.cpp voice profiles)
+**Last Updated**: 2026-07-29
+**Version**: 2.4 (Console voice control V2: spoken commands and spoken feedback)
