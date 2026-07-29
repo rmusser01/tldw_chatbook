@@ -237,9 +237,9 @@ def _join_segments(segments: list[str]) -> str:
     return out
 ```
 
-**Capture-outcome correction:** in `stop_and_transcribe`, when the transcript is empty but `self.commands_consumed > 0`, return `""` instead of raising — the screen skips insertion for an empty return (add that skip if absent: empty transcript + commands consumed → no insert, no error, no whitespace). The V1 silent-capture errors still fire for genuinely empty captures (`commands_consumed == 0`).
+**Capture-outcome correction:** in `stop_and_transcribe`, when the transcript **strips to empty** but `self.commands_consumed > 0` (inline and capture-ending commands both count), return `""` instead of raising — the screen skips insertion for an empty return (add that skip if absent: empty transcript + commands consumed → no insert, no error, no whitespace). The V1 silent-capture errors still fire for genuinely empty captures (`commands_consumed == 0`).
 
-- [ ] **Step 1: Failing tests** — break entries join unpadded (`["one.", "\n\n", "two"]` → `"one.\n\ntwo"`); inline `VoiceCommand("new-paragraph")` appends a break and increments nothing; capture-ending `VoiceCommand("stop")` increments `commands_consumed` and adds nothing to `_segments`; command-only capture returns `""` and raises nothing; genuinely empty capture still raises the V1 message.
+- [ ] **Step 1: Failing tests** — break entries join unpadded (`["one.", "\n\n", "two"]` → `"one.\n\ntwo"`); inline `VoiceCommand("new-paragraph")` appends a break AND increments `commands_consumed` (a capture of only inline commands joins to whitespace and must not raise); capture-ending `VoiceCommand("stop")` increments `commands_consumed` and adds nothing to `_segments`; command-only capture returns `""` and raises nothing; genuinely empty capture still raises the V1 message.
 - [ ] **Step 2: Run to verify failure.**
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the streaming file + the four contract tests — green, contract unmodified.
