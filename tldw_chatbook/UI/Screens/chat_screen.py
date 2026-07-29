@@ -2851,6 +2851,16 @@ class ChatScreen(BaseAppScreen):
         #: is superseded by the next one or by its segment's final, and must
         #: never reach the draft.
         self._console_dictation_partial = ""
+        #: Task 3: the single action a capture-ending `VoiceCommand` (`send`,
+        #: `new-session`, `read-that-back`) queued for AFTER the stop path
+        #: (`_stop_console_dictation`) finishes successfully -- never in the
+        #: same tick as the stop request, so it always runs on the capture's
+        #: own inserted transcript. A single field, not one bool per command:
+        #: the grammar is one capture-ending command per capture, so at most
+        #: one of these is ever pending at a time. `_notify_console_dictation_error`
+        #: clears it without acting -- a failed dictation must never ship the
+        #: message, open a new tab, or speak a reply.
+        self._console_pending_voice_action: str | None = None
         self._console_provider_gateway: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
         self._console_command_registry: ConsoleCommandRegistry = (
@@ -4972,6 +4982,11 @@ class ChatScreen(BaseAppScreen):
         self._console_dictation_origin_session_id = None
         self._console_dictation_session = None
         self._console_dictation_partial = ""
+        # A spoken "send"/"new session"/"read that back" queued its action
+        # for after a successful stop -- this is every failure exit, so the
+        # queued action must be dropped here rather than surviving to fire
+        # on whatever capture succeeds next.
+        self._console_pending_voice_action = None
         self._set_console_dictation_state("idle")
         self.app_instance.notify(f"Dictation failed: {exc}", severity="error")
 
@@ -5025,6 +5040,30 @@ class ChatScreen(BaseAppScreen):
             composer = self._console_composer_or_none()
             if composer is not None:
                 composer.set_voice_partial("")
+            return
+        if isinstance(event, VoiceCommand):
+            # Only a capture-ending command name ever reaches here --
+            # `new-paragraph`/`new-line` are the adapter's own to act on
+            # (Task 2's `_INLINE_BREAK_COMMANDS`) and never leave it as a
+            # `VoiceCommand`. Same as `VoiceFinal` above: the command is
+            # itself a finalized segment, so its own utterance ("console
+            # send") can be the last thing sitting in the chip -- clear it
+            # here, before dispatch below changes the dictation state out
+            # from under `set_voice_partial`'s own recording-only guard.
+            self._console_dictation_partial = ""
+            composer = self._console_composer_or_none()
+            if composer is not None:
+                composer.set_voice_partial("")
+            if event.name == "stop":
+                self._request_console_dictation_stop()
+            elif event.name == "discard":
+                self._request_console_dictation_cancel()
+            elif event.name in ("send", "new-session", "read-that-back"):
+                # Queued, not acted on immediately: `_stop_console_dictation`
+                # runs it once the capture's own transcript has actually
+                # landed (see `_console_pending_voice_action`'s docstring).
+                self._console_pending_voice_action = event.name
+                self._request_console_dictation_stop()
             return
         if isinstance(event, VoiceModelPreparing):
             # The speech model is loading, before the microphone opens. On a
@@ -5561,6 +5600,68 @@ class ChatScreen(BaseAppScreen):
         self._console_dictation_origin_session_id = None
         self._console_dictation_partial = ""
         self._set_console_dictation_state("idle")
+        await self._run_pending_console_voice_action()
+
+    async def _run_pending_console_voice_action(self) -> None:
+        """Fire the action a capture-ending `VoiceCommand` queued, if any.
+
+        Only ever reached from `_stop_console_dictation`'s success tail --
+        after the transcript (if any) has already been inserted and dictation
+        is back at `idle` -- never from the exception branch above, which
+        routes through `_notify_console_dictation_error` and drops the
+        pending action instead of acting on it. This is what keeps `send`
+        from ever shipping a message for a capture that failed to transcribe.
+        """
+        pending_action, self._console_pending_voice_action = (
+            self._console_pending_voice_action,
+            None,
+        )
+        if pending_action == "send":
+            try:
+                send_button = self.query_one("#console-send-message", Button)
+            except QueryError:
+                logger.debug(
+                    "Console voice send skipped; the send button is not mounted"
+                )
+                return
+            send_button.press()
+        elif pending_action == "new-session":
+            self.action_new_console_tab()
+        elif pending_action == "read-that-back":
+            await self._console_read_last_response_back()
+
+    async def _console_read_last_response_back(self) -> None:
+        """Speak the last completed assistant reply for "Console, read that back."
+
+        Mirrors `handle_console_message_action`'s "speak" branch (task-559)
+        exactly rather than inventing a second TTS path: post
+        `TTSRequestEvent`, track the message as the one currently driving
+        speech, and resync so the transcript's action row reflects it. Only
+        the completed target selection and the two ack cases are new here.
+        """
+        if self._console_run_active():
+            self.app_instance.notify("Still responding.", severity="warning")
+            return
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        message = None
+        if session_id:
+            for candidate in reversed(store.messages_for_session(session_id)):
+                if candidate.role == "assistant" and candidate.status == "complete":
+                    message = candidate
+                    break
+        if message is None:
+            self.app_instance.notify("Nothing to read yet.", severity="warning")
+            return
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+            TTSRequestEvent,
+        )
+
+        self.app_instance.post_message(
+            TTSRequestEvent(text=message.content, message_id=message.id)
+        )
+        self._console_speaking_message_id = message.id
+        await self._sync_native_console_chat_ui()
 
     def _request_console_dictation_stop(self) -> None:
         if self._console_dictation_state != "recording":
@@ -5599,7 +5700,7 @@ class ChatScreen(BaseAppScreen):
             )
 
     def _request_console_dictation_cancel(self) -> None:
-        """Abandon a capture that is still preparing, without waiting for it.
+        """Abandon a capture that is `starting` or `recording`, without waiting.
 
         The `starting` phase now covers a speech-model load, which is a
         multi-gigabyte download on a fresh machine. `abandon()` returns
@@ -5612,8 +5713,17 @@ class ChatScreen(BaseAppScreen):
         toast on its way out. The release itself is handed to a worker: the UI
         is already back at idle by then, so nothing the user can see is waiting
         on the audio backend letting go of the device.
+
+        Task 3: also the target for a spoken "Console, discard." mid-capture --
+        the body below has never depended on which of the two states it is
+        torn down from (both stop the same two timers and hand the same
+        session to the same worker), so `recording` needed no separate path,
+        only this guard admitting it. The manual mic button still never
+        reaches this method for `recording` (it routes there to
+        `_request_console_dictation_stop`, which inserts); only the spoken
+        command does.
         """
-        if self._console_dictation_state != "starting":
+        if self._console_dictation_state not in ("starting", "recording"):
             return
         session = self._console_dictation_session
         self._cancel_console_dictation_timer()
