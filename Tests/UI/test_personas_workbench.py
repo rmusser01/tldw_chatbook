@@ -3266,6 +3266,8 @@ class TestConsoleActions:
             "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
             "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8181"}},
         }
+        mock_app_instance.runtime_backend = "local"
+        mock_app_instance.active_server_id = "configured-but-not-selected"
         app = PersonasTestApp(mock_app_instance)
         app.open_chat_with_handoff = Mock()
         async with app.run_test(size=(160, 50)) as pilot:
@@ -3275,9 +3277,43 @@ class TestConsoleActions:
         app.open_chat_with_handoff.assert_called_once()
         payload = app.open_chat_with_handoff.call_args.args[0]
         assert payload.source == "personas"
+        assert payload.runtime_backend == "local"
+        assert payload.source_owner == "local"
+        assert payload.source_selector_state == "local"
+        assert payload.active_server_profile_id is None
         assert payload.metadata["intent"] == "start_chat"
         assert payload.metadata["selected_target_id"] == "local:character:1"
+        assert payload.metadata["backend"] == "local"
         assert payload.suggested_prompt == "Respond as Detective Sam."
+
+    async def test_server_start_chat_carries_exact_source_and_active_target(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Server Start Chat captures the selected target in the handoff."""
+        mock_app_instance.app_config = {
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+            "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8181"}},
+        }
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "configured-target-7"
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.query_one("#personas-start-chat", Button).press()
+            await pilot.pause()
+
+        app.open_chat_with_handoff.assert_called_once()
+        payload = app.open_chat_with_handoff.call_args.args[0]
+        assert payload.source == "personas"
+        assert payload.runtime_backend == "server"
+        assert payload.source_owner == "server"
+        assert payload.source_selector_state == "server"
+        assert payload.active_server_profile_id == "configured-target-7"
+        assert payload.metadata["intent"] == "start_chat"
+        assert payload.metadata["selected_target_id"] == "server:character:1"
+        assert payload.metadata["backend"] == "server"
 
     async def test_start_chat_action_guard_blocks_unready_provider(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -5341,31 +5377,45 @@ class TestPersonaHumanIdentityRemoval:
         server_profile_service.list_persona_profiles = AsyncMock(
             return_value={"items": [dict(PROFILE)], "total": 1}
         )
-
-        class _CardDB:
-            @staticmethod
-            def get_character_card_by_id(character_id):
-                assert character_id == 7
-                return {
-                    "id": 7,
-                    "name": "Elara",
-                    "first_message": "Hello {{user}}, I am {{char}}.",
-                    "system_prompt": "Stay curious.",
-                }
+        server_profile_service.get_character = AsyncMock(
+            return_value={
+                "id": 7,
+                "name": "Elara",
+                "first_message": "Hello {{user}}, I am {{char}}.",
+                "system_prompt": "Stay curious.",
+            }
+        )
+        db = SimpleNamespace(
+            get_local_authority_id=Mock(return_value="local-authority"),
+            get_character_card_by_id=Mock(
+                side_effect=AssertionError(
+                    "Start Chat must use the source-aware scope service"
+                )
+            ),
+        )
+        server_target_id = "configured-target-7"
+        server_authority_id = "server-user-v1:" + ("d" * 64)
+        authority_resolver = AsyncMock(return_value=server_authority_id)
 
         class _CapturingStore:
             def __init__(self):
                 self.session = None
                 self.messages = []
 
-            def create_session(self, *, title, workspace_id, settings):
+            def create_session(
+                self,
+                *,
+                title,
+                workspace_id,
+                settings,
+                **identity,
+            ):
                 self.session = SimpleNamespace(
                     id="session-1",
                     title=title,
                     workspace_id=workspace_id,
                     settings=settings,
-                    character_id=None,
-                    character_name=None,
+                    **identity,
                 )
                 return self.session
 
@@ -5381,10 +5431,15 @@ class TestPersonaHumanIdentityRemoval:
 
         runtime_app = SimpleNamespace(
             app_config=legacy_human_config.mapping,
-            chachanotes_db=_CardDB(),
+            active_server_id=(
+                server_target_id if runtime_source == "server" else None
+            ),
+            chachanotes_db=db,
             character_persona_scope_service=server_profile_service,
             local_character_persona_service=local_profile_service,
-            get_authoritative_runtime_source=lambda: runtime_source,
+            server_context_provider=SimpleNamespace(
+                resolve_character_authority_id=authority_resolver
+            ),
         )
         screen = ChatScreen(runtime_app)
         store = _CapturingStore()
@@ -5418,11 +5473,19 @@ class TestPersonaHumanIdentityRemoval:
             item_type="character-card",
             title="Elara",
             body="Character summary",
+            runtime_backend=runtime_source,
+            source_owner=runtime_source,
+            source_selector_state=runtime_source,
+            active_server_profile_id=(
+                server_target_id if runtime_source == "server" else None
+            ),
             metadata={
                 "intent": "start_chat",
                 "selected_kind": "character",
                 "selected_record_id": "7",
                 "selected_name": "Elara",
+                "selected_target_id": f"{runtime_source}:character:7",
+                "backend": runtime_source,
             },
         )
 
@@ -5434,6 +5497,20 @@ class TestPersonaHumanIdentityRemoval:
         ]
         local_profile_service.list_persona_profiles.assert_not_called()
         server_profile_service.list_persona_profiles.assert_not_awaited()
+        server_profile_service.get_character.assert_awaited_once_with(
+            7, mode=runtime_source
+        )
+        db.get_character_card_by_id.assert_not_called()
+        if runtime_source == "local":
+            db.get_local_authority_id.assert_called_once_with()
+            authority_resolver.assert_not_awaited()
+            assert store.session.assistant_authority_id == "local-authority"
+        else:
+            db.get_local_authority_id.assert_not_called()
+            authority_resolver.assert_awaited_once_with(
+                expected_server_id=server_target_id
+            )
+            assert store.session.assistant_authority_id == server_authority_id
         legacy_human_config.assert_unchanged()
 
     async def test_profile_rename_does_not_follow_legacy_pointer(

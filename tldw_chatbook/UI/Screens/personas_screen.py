@@ -3595,16 +3595,28 @@ class PersonasScreen(BaseAppScreen):
     ) -> bool:
         """Single seam for staging Personas context into Console.
 
-        Builds a ``ChatHandoffPayload`` with the workbench's fixed
-        source/runtime identity ("personas" / local) and the selection
-        metadata from ``PersonasWorkbenchState.selected_metadata()``, then
-        hands it to the app's ``open_chat_with_handoff``. Returns ``True``
-        when a payload was staged.
+        Builds a ``ChatHandoffPayload`` with the workbench source/runtime
+        identity and the selection metadata from
+        ``PersonasWorkbenchState.selected_metadata()``, then hands it to the
+        app's ``open_chat_with_handoff``. Returns ``True`` when a payload was
+        staged.
         """
         open_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
         if not callable(open_handoff):
             self._notify("Console handoff is unavailable.", "warning")
             return False
+        runtime_source = self.state.runtime_source
+        if runtime_source not in {"local", "server"}:
+            runtime_source = (
+                self.runtime_backend
+                if self.runtime_backend in {"local", "server"}
+                else "local"
+            )
+        active_server_profile_id = None
+        if runtime_source == "server":
+            active_server_id = getattr(self.app_instance, "active_server_id", None)
+            if type(active_server_id) is str and active_server_id:
+                active_server_profile_id = active_server_id
         payload = ChatHandoffPayload.from_source_content(
             source="personas",
             item_type=item_type,
@@ -3614,12 +3626,13 @@ class PersonasScreen(BaseAppScreen):
             source_id=source_id,
             suggested_prompt=suggested_prompt,
             display_summary=display_summary,
-            runtime_backend="local",
-            source_owner="local",
-            source_selector_state="local",
+            runtime_backend=runtime_source,
+            source_owner=runtime_source,
+            source_selector_state=runtime_source,
+            active_server_profile_id=active_server_profile_id,
             metadata={
                 **self.state.selected_metadata(),
-                "backend": "local",
+                "backend": runtime_source,
                 **(extra_metadata or {}),
             },
         )

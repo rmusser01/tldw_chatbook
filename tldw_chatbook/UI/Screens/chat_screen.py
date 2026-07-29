@@ -989,38 +989,47 @@ def _is_empty_select_value(value: Any) -> bool:
 
 def _character_session_identity_from_handoff(
     payload: ChatHandoffPayload,
-) -> tuple[int, str, str] | None:
+) -> tuple[str, int, str, str] | None:
     """Return character session identity for Personas Start Chat handoffs.
 
     Args:
         payload: Handoff payload staged by a source screen.
 
     Returns:
-        A tuple of `(character_id, character_name, assistant_id)` when the
-        payload represents a Personas character Start Chat handoff; otherwise
-        `None`.
+        A tuple of `(runtime_backend, character_id, character_name,
+        assistant_id)` when the payload represents a source-aware Personas
+        character Start Chat handoff; otherwise `None`.
     """
     metadata = payload.metadata or {}
     if (
-        str(metadata.get("intent") or "").strip() != "start_chat"
+        payload.source != "personas"
+        or str(metadata.get("intent") or "").strip() != "start_chat"
         or str(metadata.get("selected_kind") or "").strip() != "character"
     ):
+        return None
+    runtime_backend = payload.runtime_backend
+    if runtime_backend not in {"local", "server"}:
         return None
 
     raw_record_id = metadata.get("selected_record_id")
     character_id_text = "" if raw_record_id is None else str(raw_record_id).strip()
     if not character_id_text:
         target_id = str(metadata.get("selected_target_id") or "").strip()
-        match = re.search(r"(?:^|:)character:(\d+)$", target_id)
+        match = re.fullmatch(
+            rf"{re.escape(runtime_backend)}:character:([0-9]+)",
+            target_id,
+        )
         if match:
             character_id_text = match.group(1)
-    if not character_id_text.isdecimal():
+    if not character_id_text.isascii() or not character_id_text.isdecimal():
         return None
 
     character_id = int(character_id_text)
+    if character_id < 1:
+        return None
     character_name = str(metadata.get("selected_name") or payload.title or "").strip()
     assistant_id = str(character_id)
-    return character_id, character_name, assistant_id
+    return runtime_backend, character_id, character_name, assistant_id
 
 
 def _is_personas_preview_handoff(payload: ChatHandoffPayload) -> bool:
@@ -12170,26 +12179,102 @@ class ChatScreen(BaseAppScreen):
         identity = _character_session_identity_from_handoff(payload)
         if identity is None:
             return False
-        character_id, _name_hint, _assistant_id = identity
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if db is None:
+        runtime_backend, character_id, name_hint, assistant_id = identity
+        scope_service = getattr(
+            self.app_instance,
+            "character_persona_scope_service",
+            None,
+        )
+        get_character = getattr(scope_service, "get_character", None)
+        if not callable(get_character):
             return False
+
+        assistant_authority_id: str | None
+        local_character_id: int | None
+        if runtime_backend == "local":
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            get_local_authority_id = getattr(db, "get_local_authority_id", None)
+            if not callable(get_local_authority_id):
+                return False
+            try:
+                local_authority_id = get_local_authority_id()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return False
+            if (
+                type(local_authority_id) is not str
+                or not local_authority_id
+                or local_authority_id != local_authority_id.strip()
+            ):
+                return False
+            assistant_authority_id = local_authority_id
+            local_character_id = character_id
+        else:
+            expected_server_id = payload.active_server_profile_id
+            if (
+                type(expected_server_id) is not str
+                or not expected_server_id
+                or expected_server_id != expected_server_id.strip()
+            ):
+                return False
+            if getattr(self.app_instance, "active_server_id", None) != expected_server_id:
+                return False
+
+            assistant_authority_id = None
+            provider = getattr(self.app_instance, "server_context_provider", None)
+            resolver = getattr(provider, "resolve_character_authority_id", None)
+            if callable(resolver):
+                try:
+                    resolved_authority_id = await resolver(
+                        expected_server_id=expected_server_id
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    resolved_authority_id = None
+                if (
+                    type(resolved_authority_id) is str
+                    and resolved_authority_id
+                    and resolved_authority_id == resolved_authority_id.strip()
+                ):
+                    assistant_authority_id = resolved_authority_id
+
+            # This is both the post-resolver fence and the immediately
+            # pre-card-fetch fence. No card from a newly active target may be
+            # used for the ID carried by the handoff.
+            if getattr(self.app_instance, "active_server_id", None) != expected_server_id:
+                return False
+            local_character_id = None
+
         try:
-            card = await asyncio.to_thread(db.get_character_card_by_id, character_id)
+            card = await get_character(character_id, mode=runtime_backend)
+            if hasattr(card, "model_dump"):
+                card = card.model_dump(mode="json")
+        except asyncio.CancelledError:
+            raise
         except Exception:
-            logger.opt(exception=True).warning(
-                "Start Chat: character card fetch failed; staging context instead."
+            logger.warning(
+                "Start Chat: character card unavailable; staging context instead "
+                "(source={}).",
+                runtime_backend,
             )
             return False
-        if not card:
+        if not isinstance(card, Mapping) or not card:
             return False
+        card = dict(card)
+
+        if runtime_backend == "server":
+            expected_server_id = payload.active_server_profile_id
+            if getattr(self.app_instance, "active_server_id", None) != expected_server_id:
+                return False
 
         # Local import matches this module's existing convention of
         # deferring Character_Chat submodule imports (they pull in Pillow
         # and CharactersRAGDB) rather than importing them at module scope.
         from ...Character_Chat.Character_Chat_Lib import replace_placeholders
 
-        name = str(card.get("name") or _name_hint or "").strip() or "Character"
+        name = str(card.get("name") or name_hint or "").strip() or "Character"
         parts = [
             str(card.get(key) or "").strip()
             for key in ("system_prompt", "personality", "description", "scenario")
@@ -12209,16 +12294,13 @@ class ChatScreen(BaseAppScreen):
             title=f"Chat with {name}",
             workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
             settings=settings,
+            runtime_backend=runtime_backend,
+            assistant_kind="character",
+            assistant_id=assistant_id,
+            assistant_authority_id=assistant_authority_id,
+            character_id=local_character_id,
+            character_name=name,
         )
-        # This local-only handoff has no proven authority. Record its basic
-        # source/kind/id for direct-chat compatibility while authority-scoped
-        # features continue to fail closed.
-        session.runtime_backend = "local"
-        session.assistant_kind = "character"
-        session.assistant_id = _assistant_id
-        session.assistant_authority_id = None
-        session.character_id = character_id
-        session.character_name = name
         if greeting:
             try:
                 store.append_message(
