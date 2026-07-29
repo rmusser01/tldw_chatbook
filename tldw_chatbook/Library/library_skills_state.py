@@ -58,6 +58,9 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # The run_skill_script runtime tool (same drift-guard rationale as
         # skill_file/install_skill above).
         "run_skill_script",
+        # The agent run-log search runtime tool must not be shadowed by an
+        # installed skill with the same invocation name.
+        "search_run_log",
         # task-580: console commands from the /rewind and image-generation
         # features. These were added to the command registry without updating
         # this set, so the drift guard below failed and was carried as an
