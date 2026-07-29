@@ -138,6 +138,12 @@ Update the tests to describe current behavior:
     cancellation plus preservation of the stopped partial response; do not
     bypass the UI through direct controller calls or weaken production
     cancellation behavior.
+15. In both production Media lifecycle regressions, wait boundedly through the
+    existing Textual pilot until the outgoing `MediaWindow` is both closed and
+    detached. Keep the fresh replacement-instance assertion, stale-owner
+    exclusion, and durable last-edit-wins behavior unchanged. Do not change
+    production screen teardown or replace lifecycle checks with an arbitrary
+    sleep.
 
 The only planned production change outside an ADR-029 diagnostic correction is
 the three-name synchronization of the existing Library collision boundary. No
@@ -163,6 +169,10 @@ compatibility shims. No broad deletion of live tests.
 - Replacing the visible Console click with a direct controller call would no
   longer prove that the user-facing Stop control is wired. Merely increasing
   the timeout would not render the control before hit testing.
+- Asserting Media closure immediately after the incoming screen becomes active
+  conflates two asynchronous Textual lifecycle milestones. Removing the
+  closure checks would lose the stale-owner contract; a bounded predicate wait
+  preserves it without assuming those milestones complete atomically.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

@@ -611,6 +611,41 @@ git add Tests/ProductionApp/test_chat_root_state_removal.py
 git commit -m "test(console): render stop control before click"
 ```
 
+### Task 4k: Wait for replaced Media owners to finish teardown
+
+**Files:**
+- Modify: `Tests/ProductionApp/test_media_state_ownership.py`
+
+- [ ] **Step 1: Reproduce RED**
+
+Run
+`test_real_metadata_ordering_survives_media_window_replacement` and
+`test_real_metadata_mutation_survives_media_screen_teardown`. Expected: each
+reaches the incoming Settings screen before the outgoing `MediaWindow` has
+finished Textual's asynchronous close/detach lifecycle, so the immediate
+`_closed` assertion fails.
+
+- [ ] **Step 2: Await the lifecycle contract**
+
+Replace each immediate close assertion with the existing bounded
+`_wait_until(pilot, ...)` helper, waiting until the outgoing window is both
+closed and detached. Retain the fresh replacement-instance assertion, the
+blocked-old/new-write ordering, and the durable last-edit-wins result. Do not
+edit production, add an arbitrary sleep, or remove stale-owner checks.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/ProductionApp/test_media_state_ownership.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/ProductionApp/test_media_state_ownership.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/ProductionApp/test_media_state_ownership.py
+git add Tests/ProductionApp/test_media_state_ownership.py
+git commit -m "test(media): await replaced owner teardown"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -682,6 +717,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/Local_Ingestion/test_local_file_ingestion.py \
   Tests/Performance/test_rag_citation_provenance_benchmark.py \
   Tests/ProductionApp/test_chat_root_state_removal.py \
+  Tests/ProductionApp/test_media_state_ownership.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -704,6 +740,7 @@ Expected: all affected tests pass.
   Tests/Library/test_library_skills_state.py \
   Tests/Local_Ingestion/test_quick_ingest_db_path.py \
   Tests/ProductionApp/test_chat_root_state_removal.py \
+  Tests/ProductionApp/test_media_state_ownership.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -720,6 +757,7 @@ Expected: all affected tests pass.
   Tests/Library/test_library_skills_state.py \
   Tests/Local_Ingestion/test_quick_ingest_db_path.py \
   Tests/ProductionApp/test_chat_root_state_removal.py \
+  Tests/ProductionApp/test_media_state_ownership.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
