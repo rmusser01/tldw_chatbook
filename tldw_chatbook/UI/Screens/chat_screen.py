@@ -9805,7 +9805,10 @@ class ChatScreen(BaseAppScreen):
     @staticmethod
     def _hidden_static(text: str, *, id: str, classes: str = "") -> Static:
         widget = Static(
-            text, id=id, classes=f"{classes} console-hidden-control".strip()
+            text,
+            id=id,
+            classes=f"{classes} console-hidden-control".strip(),
+            markup=False,
         )
         widget.styles.display = "none"
         widget.styles.height = 0

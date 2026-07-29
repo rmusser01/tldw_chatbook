@@ -608,6 +608,8 @@ class LocalPersonaProfileUpdate(BaseModel):
 
 
 class PersonaProfileCreate(BaseModel):
+    """Server request contract for creating a persona profile."""
+
     model_config = ConfigDict(extra="forbid")
 
     id: StrictStr | None = Field(default=None, min_length=1, max_length=200)
@@ -623,6 +625,8 @@ class PersonaProfileCreate(BaseModel):
 
 
 class PersonaProfileUpdate(BaseModel):
+    """Server request contract for updating a persona profile."""
+
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
