@@ -99,9 +99,14 @@ segment.
 `Chat/console_voice_input.py` gains a command matcher applied to each
 finalized segment **before** it is emitted as `VoiceFinal`:
 
-- **Normalization:** lowercase; strip leading/trailing whitespace and
-  punctuation (`.,!?;:`); collapse internal whitespace. Whisper emits
-  "Console, send." — it must match.
+- **Normalization:** lowercase; remove **all** punctuation (leading, trailing,
+  and internal); collapse whitespace. This is a deliberate tradeoff, decided
+  here so the plan does not relitigate it: recognizers near-universally emit a
+  comma after a vocative prefix ("Console, send.") — preserving internal
+  punctuation would make the command never match, i.e. the feature would ship
+  broken. The cost is that staccato dictated prose ("Console. Send.") that
+  finalizes as one segment can false-fire; that is rare, visible (chip ack),
+  and a named check in the live verification below.
 - **Whole-segment match only.** A segment is a command **iff** the normalized
   segment is exactly `<prefix> <command phrase>` — nothing before, nothing
   after. "Console send button is broken" has trailing words, fails the match,
@@ -114,6 +119,16 @@ finalized segment **before** it is emitted as `VoiceFinal`:
   is no `VoiceCommandUnrecognized` event; YAGNI.
 - **Prefix:** config `dictation.command_prefix`, default `"console"`,
   normalized the same way. Multi-word prefixes are permitted by construction.
+  A blank or whitespace-only configured prefix falls back to the default —
+  an empty prefix would make every segment "prefixed" (the nan-timeout
+  lesson: validate config at the seam).
+- **Latency, stated honestly:** a command executes ~`silence_threshold`
+  (default 2.0 s) after you finish saying it, because the pause is what
+  finalizes the segment. Task 0 makes the threshold config-backed
+  (`dictation.silence_threshold_seconds`, default 2.0, finite-and-positive
+  validated) so users who lean on voice control can shorten it. The full
+  choreography — pause, command, pause — costs roughly two thresholds; the
+  docs and the F1 help must say so rather than letting it read as lag.
 - **Emission:** a matched command emits `VoiceCommand(name: str)` (frozen
   dataclass, same family and threading rules as the existing events) instead
   of `VoiceFinal`. The segment text is consumed — it never reaches the draft.
@@ -124,6 +139,10 @@ finalized segment **before** it is emitted as `VoiceFinal`:
 |---|---|---|
 | `new paragraph` | inline | append `\n\n` to the accumulating transcript; capture continues; chip-only ack |
 | `new line` | inline | append `\n`; capture continues; chip-only ack |
+
+Inline breaks interact with the adapter's `" ".join(self._segments)`
+(`chat_screen.py:824`): a naive break-as-segment yields `"para. \n\n para"`.
+The join must be break-aware — no space padding around inserted breaks.
 | `stop` | capture-ending | end capture, insert accumulated text at caret (identical to pressing the button) |
 | `send` | capture-ending | end capture, insert, then press `#console-send-message` once insertion has completed |
 | `discard` | capture-ending | end capture, insert nothing (existing cancel semantics; **no confirmation** — explicit intent, same as pressing cancel) |
@@ -151,7 +170,10 @@ A small dispatch table maps `VoiceCommand.name` to existing paths:
 - `send` → request stop, set a pending-send flag, and press
   `#console-send-message` only after insertion completes (the stop path is
   asynchronous; pressing in the same tick would send a draft missing its last
-  segment — the same race V1's review history documents).
+  segment — the same race V1's review history documents). **The flag is
+  cleared without sending if the stop path fails** — a failed dictation must
+  never ship the user's message. This ordering is why `VoiceFailed` precedes
+  `VoiceStateChanged(idle)` in the first place.
 - `new session` → the existing new-tab action (`ctrl+t` path).
 - `read that back` → latest assistant message of the active session; post
   `TTSRequestEvent(text=..., message_id=...)`; update
@@ -172,14 +194,22 @@ parameterized spoken commands are out of scope). The dispatch table and
 - Config `dictation.spoken_feedback`, default `false`, read with the existing
   `dictation.*` conventions.
 - When on, a thin `_speak_status(text)` posts `TTSRequestEvent(text)` for:
-  capture started / capture ended, command acknowledgements ("Sent.",
-  "Discarded.", "New session."), and dictation errors (the same reason
-  strings the toasts carry).
+  capture ended, command acknowledgements ("Sent.", "Discarded.",
+  "New session."), and dictation errors (the same reason strings the toasts
+  carry). **"Capture started" is deliberately NOT spoken** — the microphone is
+  already open at that moment, so speaking it would violate the mutual
+  exclusion below and transcribe itself into the draft. This is a real gap
+  for a screen-free user (they must trust the keypress); a pre-capture earcon
+  is the V3-era answer, not more TTS.
 - **Mutual exclusion (constraint 2):** `_speak_status` never fires while the
   microphone is open. Inline commands ack via the chip only. Capture-ending
   commands speak *after* the capture has fully closed (state `idle`, recorder
-  released). If a capture starts while status speech is playing, the speech
-  is stopped first (single-slot player makes this the default behavior).
+  released). **Starting a capture explicitly stops any in-flight TTS playback
+  first** by posting `TTSPlaybackEvent(action="stop")` — the single-slot
+  player does NOT do this on its own (it only stops the previous clip when a
+  *new clip starts*; opening the microphone plays nothing), so without this
+  rule a status ack or read-back still playing at capture start would be
+  transcribed straight into the new draft.
 - "Read that back" is independent of the toggle (it is an explicit request,
   not ambient feedback).
 
@@ -187,8 +217,9 @@ parameterized spoken commands are out of scope). The dispatch table and
 
 | Key | Default | Meaning |
 |---|---|---|
-| `dictation.command_prefix` | `"console"` | prefix word(s) for spoken commands |
+| `dictation.command_prefix` | `"console"` | prefix word(s) for spoken commands; blank falls back to default |
 | `dictation.spoken_feedback` | `false` | speak status/acks/errors via TTS |
+| `dictation.silence_threshold_seconds` | `2.0` | pause length that finalizes a segment (and thus fires a command); finite-and-positive validated |
 
 Both live in the established `dictation.*` namespace beside
 `buffer_duration_ms`, `max_session_seconds`, `stop_join_timeout_seconds`,
@@ -215,7 +246,11 @@ Both live in the established `dictation.*` namespace beside
 - The four contract tests pass unmodified throughout. Mutation-check every
   behavioral change. Any chip-text assertion uses the painted line.
 - **Live verification before merge** (the V1 lesson, non-negotiable): a real
-  microphone run covering — a command executing mid-capture ("console, stop");
+  microphone run covering — a command executing mid-capture ("console, stop")
+  and its latency feeling acceptable at the default threshold;
+  staccato prose ("Console. Send.") checked for the documented false-fire;
+  starting a capture while a read-back plays, confirming the playback stops
+  and nothing self-transcribes;
   prose beginning with "console" landing in the draft; "console, send"
   shipping the full utterance including the last segment; a command-only
   capture producing no error; spoken feedback audible with the toggle on and
