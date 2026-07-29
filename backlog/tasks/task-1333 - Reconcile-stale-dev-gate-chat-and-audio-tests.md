@@ -32,8 +32,9 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #4 The PyAudio flow regression invokes one synchronous recording loop without VAD or thread races and proves exactly three callbacks, stream closure, and stopped state.
 - [ ] #5 The SoundDevice flow regression disables VAD for its synthetic callback, waits boundedly for the mocked stream callback, and cleans up its recording thread even on failure before proving audio was queued.
 - [ ] #6 The Llama.cpp and DeepSeek request tests patch the live runtime-config snapshot seam without restoring or emulating deleted mutable module-level settings.
-- [ ] #7 Every changed diagnostic owner is reviewed against ADR-029, no unsafe payload logging is admitted, persistent sink topology remains unchanged, and the checked inventory matches production.
-- [ ] #8 The affected modules and repository-wide suite collect and run without these baseline failures.
+- [ ] #7 Every real-seam Notes fixture creates its temporary trusted base directory as owner-only before constructing `NotesInteropService` and closes per-user Notes DB connections during teardown, without weakening production path verification.
+- [ ] #8 Every changed diagnostic owner is reviewed against ADR-029, no unsafe payload logging is admitted, persistent sink topology remains unchanged, and the checked inventory matches production.
+- [ ] #9 The affected modules and repository-wide suite collect and run without these baseline failures.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -49,6 +50,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 2. Preserve the current dev chat-shell repair rather than carrying a superseded branch edit.
 3. Make both PyAudio loop tests synchronous, VAD-independent, and exact; keep the SoundDevice fixture VAD-independent with explicit cleanup.
 4. Patch provider request tests through the live runtime-config snapshot seam instead of deleted module globals.
-5. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-6. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+5. Create temporary trusted Notes roots in each stale real-seam fixture.
+6. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+7. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

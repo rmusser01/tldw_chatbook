@@ -32,6 +32,9 @@ The failures reproduce on an exact `origin/dev` checkout:
   module-level `settings` objects. The live Llama.cpp and DeepSeek adapters
   deliberately resolve `get_runtime_config_snapshot()` at each request
   boundary under ADR-029.
+- Three real-seam Notes fixtures pass a nonexistent `tmp_path/notes_base` to
+  `NotesInteropService`. ADR-029's trusted-directory boundary correctly
+  rejects missing directories instead of creating them implicitly.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -67,7 +70,12 @@ Update the tests to describe current behavior:
    `get_runtime_config_snapshot()` with a `RuntimeConfigSnapshot` containing
    their test configuration. Do not restore or emulate mutable module-level
    settings.
-7. Generate the candidate diagnostic inventory, inspect every changed owner and
+7. Create each fixture-owned temporary Notes base directory with mode `0700`
+   before constructing `NotesInteropService`, and close all per-user Notes
+   connections before the template DB during fixture teardown. Do not weaken
+   production path verification or make the service create a security-sensitive
+   root implicitly.
+8. Generate the candidate diagnostic inventory, inspect every changed owner and
    sink-topology entry against ADR-029's metadata-only boundary, and refresh the
    checked artifact only if the changes are safe. If review finds an unsafe log
    value, correct that violation under ADR-029 before regenerating; do not bless

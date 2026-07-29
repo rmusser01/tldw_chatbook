@@ -36,6 +36,10 @@ regenerate the inventory before reviewing its changed owners and sink topology.
   behavior synchronous, VAD-independent, and exact.
 - Modify `Tests/Chat/test_chat_functions.py`: patch the live runtime-config
   snapshot seam instead of deleted module-level settings.
+- Modify `Tests/Chat/test_scope_picker_listers.py`: create its fixture-owned
+  trusted Notes base before service construction.
+- Modify `Tests/Library/test_library_rag_scope.py`: create both fixture-owned
+  trusted Notes bases before service construction.
 - Modify `Docs/security/production-diagnostic-inventory.json`: only after
   reviewing every generated owner/topology change against ADR-029.
 - Modify TASK-1333 and this plan only for closeout evidence.
@@ -282,6 +286,44 @@ git add Tests/Chat/test_chat_functions.py
 git commit -m "test(chat): patch runtime config snapshots"
 ```
 
+### Task 4d: Create fixture-owned trusted Notes roots
+
+**Files:**
+- Modify: `Tests/Chat/test_scope_picker_listers.py`
+- Modify: `Tests/Library/test_library_rag_scope.py`
+
+- [ ] **Step 1: Reproduce RED**
+
+Run the first lister test plus one test using each Library Notes fixture.
+Expected: all three fail during setup because `NotesInteropService` correctly
+rejects a missing `notes_base` directory.
+
+- [ ] **Step 2: Satisfy the security contract in the fixtures**
+
+In each of the three fixtures, assign `notes_base = tmp_path / "notes_base"`,
+call `notes_base.mkdir(mode=0o700)`, and pass that existing path to
+`NotesInteropService`. In each fixture teardown, call
+`close_all_user_connections()` before closing the template
+`CharactersRAGDB`. Do not change production directory verification.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Chat/test_scope_picker_listers.py \
+  Tests/Library/test_library_rag_scope.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/Chat/test_scope_picker_listers.py \
+  Tests/Library/test_library_rag_scope.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/Chat/test_scope_picker_listers.py \
+  Tests/Library/test_library_rag_scope.py
+git add \
+  Tests/Chat/test_scope_picker_listers.py \
+  Tests/Library/test_library_rag_scope.py
+git commit -m "test(notes): create trusted fixture roots"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -345,6 +387,8 @@ Include any conditionally required focused test/production files in that commit.
   Tests/Event_Handlers/test_retained_worker_adapter.py \
   Tests/UI/test_chat_shell_bar.py \
   Tests/Chat/test_chat_functions.py \
+  Tests/Chat/test_scope_picker_listers.py \
+  Tests/Library/test_library_rag_scope.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py \
   Tests/Architecture/test_persistent_diagnostic_inventory.py -q
@@ -358,11 +402,15 @@ Expected: all affected tests pass.
 ../../.venv/bin/python -m ruff check \
   Tests/Event_Handlers/test_worker_events_contract.py \
   Tests/Chat/test_chat_functions.py \
+  Tests/Chat/test_scope_picker_listers.py \
+  Tests/Library/test_library_rag_scope.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py
 ../../.venv/bin/python -m ruff format --check \
   Tests/Event_Handlers/test_worker_events_contract.py \
   Tests/Chat/test_chat_functions.py \
+  Tests/Chat/test_scope_picker_listers.py \
+  Tests/Library/test_library_rag_scope.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py
 ../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
