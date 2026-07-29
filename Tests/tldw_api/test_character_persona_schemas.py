@@ -247,14 +247,12 @@ class TestCharacterPersonaSchemas:
 class TestLocalPersonaProfileMutationDTOs:
     def test_local_persona_create_has_exact_local_fields(self):
         assert (
-            set(LocalPersonaProfileCreate.model_fields)
-            == LOCAL_PERSONA_CREATE_FIELDS
+            set(LocalPersonaProfileCreate.model_fields) == LOCAL_PERSONA_CREATE_FIELDS
         )
 
     def test_local_persona_update_has_exact_local_fields(self):
         assert (
-            set(LocalPersonaProfileUpdate.model_fields)
-            == LOCAL_PERSONA_UPDATE_FIELDS
+            set(LocalPersonaProfileUpdate.model_fields) == LOCAL_PERSONA_UPDATE_FIELDS
         )
 
     @pytest.mark.parametrize(
@@ -312,9 +310,7 @@ class TestLocalPersonaProfileMutationDTOs:
         update = LocalPersonaProfileUpdate(**{field_name: None})
 
         assert update.model_fields_set == {field_name}
-        assert update.model_dump(exclude_unset=True, mode="json") == {
-            field_name: None
-        }
+        assert update.model_dump(exclude_unset=True, mode="json") == {field_name: None}
 
     def test_local_persona_create_tracks_explicit_nullable_field(self):
         create = LocalPersonaProfileCreate(name="Guide", description=None)
@@ -327,7 +323,9 @@ class TestServerPersonaProfileDTOs:
     def test_server_persona_models_have_exact_wire_fields(self):
         assert set(PersonaProfileCreate.model_fields) == SERVER_PERSONA_CREATE_FIELDS
         assert set(PersonaProfileUpdate.model_fields) == SERVER_PERSONA_UPDATE_FIELDS
-        assert set(PersonaProfileResponse.model_fields) == SERVER_PERSONA_RESPONSE_FIELDS
+        assert (
+            set(PersonaProfileResponse.model_fields) == SERVER_PERSONA_RESPONSE_FIELDS
+        )
 
     @pytest.mark.parametrize(
         "model_type, valid_payload",

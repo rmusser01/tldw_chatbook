@@ -331,9 +331,7 @@ class PersonasLibraryPane(Vertical):
                 items.append(item)
             else:
                 items.append(
-                    ListItem(
-                        Static(row.name, markup=False), id=dom_id, classes=classes
-                    )
+                    ListItem(Static(row.name, markup=False), id=dom_id, classes=classes)
                 )
         await list_view.extend(items)
         pagebar = self.query_one("#personas-library-pagebar")

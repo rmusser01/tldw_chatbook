@@ -700,9 +700,7 @@ def build_console_settings_summary_state(
 
     character_label = _string_value(settings.character_label)
     identity_row = (
-        f"Character: {character_label}"
-        if character_label
-        else "Assistant: General"
+        f"Character: {character_label}" if character_label else "Assistant: General"
     )
 
     return ConsoleSettingsSummaryState(

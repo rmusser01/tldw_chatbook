@@ -295,9 +295,7 @@ class TestCharacterPersonaClient:
             "persona-1", PersonaProfileUpdate(name="Guide")
         )
 
-        assert mocked.await_args_list[0].kwargs["json_data"] == {
-            "system_prompt": None
-        }
+        assert mocked.await_args_list[0].kwargs["json_data"] == {"system_prompt": None}
         assert mocked.await_args_list[1].kwargs["json_data"] == {"name": "Guide"}
 
     async def test_persona_archetype_endpoint_wiring(self, monkeypatch):
