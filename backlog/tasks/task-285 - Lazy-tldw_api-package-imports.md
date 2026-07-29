@@ -1,7 +1,7 @@
 ---
 id: TASK-285
 title: Lazy tldw_api package imports (~469ms of startup)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-16 14:30'
 labels: [performance, startup]
@@ -101,3 +101,20 @@ That loop mattered: round 1 (the original 40-file inventory) took loaded submodu
 **Verification run:** `Tests/tldw_api/` 402 passed; `Tests/Utils/` 192 passed (incl. the 4 new); `Tests/Chat/` 905 passed, 69 skipped; broad sweep of every touched subsystem's test dir (Sync_Interop, Sync_Tests, Skills, Kanban, Feedback, Research_Interop, Research, RuntimePolicy, Chatbooks, Character_Chat, MCP, MCP_Governance, Audio_Services, Auth_Account, Claims, Companion, Evaluations_Interop, External_Connectors, Meetings, Notes, Notifications, Prompt_Management, Prompt_Studio, RAG_Admin, Study_Interop, Text2SQL_Interop, Tools_Interop, Translation, Voice_Assistant, Writing_Interop, Outputs, Sharing): **2,013 passed, 2 skipped, 0 failed**; full `Tests/` `--collect-only`: 10,742 tests, zero collection errors; `python -m py_compile` clean on all 69 changed source files; `git diff origin/dev --diff-filter=M --name-only -- Tests/` empty (no existing test file modified).
 
 **Files changed:** 69 source files across `tldw_chatbook/` (see commit history for the 5 logical batches: the original 36-file mechanical conversion, 3 hand-fixed edge cases from the original inventory, 5 files found by the sys.modules re-measurement loop, 12 direct-submodule-import sites, and the 13-file Sync_Interop domain-adapter sweep) plus `Tests/Utils/test_tldw_api_schema_deferral.py` (new).
+
+## Close-out — reconciling the stale conclusions above (2026-07-28)
+
+The two "AC #1 not met / still unchecked" verdicts in the notes above are **superseded and no longer accurate**. Both predate the PHASE-2 work recorded in AC #1 itself, which converted the `Server*Service` schema imports (the ~290 runtime-use sites the continuation section called a "sprawling rewrite" and stopped short of). They are left in place as the incident trail — the task genuinely reached "structurally lazy but only ~25 ms faster" twice before the schema surface was addressed — but the task's own notes contradicting its own ACs is why the status was never flipped.
+
+**Independently re-verified before closing** (not taken from the notes):
+
+- `import tldw_chatbook.app` in a fresh interpreter under a scratch HOME/XDG loads exactly **2** `tldw_api` submodules — `tldw_chatbook.tldw_api` and the deliberately-allowlisted `tldw_chatbook.tldw_api.kanban_schemas`. This matches AC #1's PHASE-2 claim exactly and directly contradicts the continuation section's "46 schema submodules still load eagerly".
+- `Tests/Utils/test_tldw_api_lazy.py`: 8 passed, including `test_app_import_does_not_load_tldw_api_client`, the permanent subprocess regression net for the `client.py` chain.
+- `Tests/tldw_api/`: 429 passed.
+- Lazy layer and its test file both confirmed present on `origin/dev`.
+
+Wall-time was not re-measured here; the sys.modules count is the structural fact the AC rests on, and timing on this machine is unreliable (`lessons-testing-evidence.md`: this repo regularly has 10+ concurrent pytest processes, and the audit's own A/B needed 6 interleaved rounds with outlier trimming).
+
+**Residual, deliberately not in scope:** the description's longer-term note that `TldwCli.__init__` constructs ~30 `Server*Service` objects even in local-only mode. AC #1 covers the *import* cost of that surface (construction adds zero further `tldw_api` submodule loads, verified), not the object-construction cost itself. That remains an open observation in `Docs/Design/2026-07-16-performance-audit.md`, not an unmet criterion here.
+
+All three acceptance criteria are met. Status moved To Do -> In Progress -> **Done**.
