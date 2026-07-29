@@ -63,6 +63,10 @@ The failures reproduce on an exact `origin/dev` checkout:
   `tldw_cli_media_v2.db` fallback filename even though `quick_ingest()` now
   delegates to the canonical profile-aware `get_media_db_path()`, whose default
   filename is `tldw_chatbook_media_v2.db`.
+- The RAG citation benchmark harness creates its isolated `config/` root but
+  selects `config/tldw_cli/config.toml` without creating the intermediate
+  trusted profile directory, so its host-secret isolation subprocess fails
+  before the benchmark runs.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -125,6 +129,9 @@ Update the tests to describe current behavior:
 12. Update the one stale Local Ingestion fallback assertion to the canonical
     media database filename. Preserve configured-path and traversal-rejection
     coverage; do not change production path resolution.
+13. Create the benchmark harness's isolated `config/tldw_cli` directory as
+    owner-only before overriding `TLDW_CONFIG_PATH`. Do not relax private-path
+    verification or expose host environment values.
 
 The only planned production change outside an ADR-029 diagnostic correction is
 the three-name synchronization of the existing Library collision boundary. No

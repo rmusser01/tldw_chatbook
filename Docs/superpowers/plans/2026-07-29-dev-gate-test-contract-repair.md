@@ -55,6 +55,8 @@ reviewing its changed owners and sink topology.
   skill collision set with the three registered run-log runtime tools.
 - Modify `Tests/Local_Ingestion/test_quick_ingest_db_path.py`: expect the
   canonical profile-aware media database fallback filename.
+- Modify `Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py`:
+  create its isolated trusted config profile before application imports.
 - Modify `Docs/security/production-diagnostic-inventory.json`: only after
   reviewing every generated owner/topology change against ADR-029.
 - Modify TASK-1333 and this plan only for closeout evidence.
@@ -538,6 +540,40 @@ git add Tests/Local_Ingestion/test_quick_ingest_db_path.py
 git commit -m "test(ingest): expect canonical media DB fallback"
 ```
 
+### Task 4i: Create the benchmark's isolated config profile
+
+**Files:**
+- Modify: `Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py`
+- Verify: `Tests/Performance/test_rag_citation_provenance_benchmark.py`
+
+- [ ] **Step 1: Reproduce RED**
+
+Run `test_cli_never_reads_or_writes_host_config_data_or_secrets`. Expected: the
+subprocess exits with `unsafe_parent: missing_parent` because
+`isolated_benchmark_host_state()` does not create `config/tldw_cli`.
+
+- [ ] **Step 2: Satisfy the trusted-profile contract**
+
+Create `config_root / "tldw_cli"` with mode `0o700` before building the
+environment overrides, then derive `TLDW_CONFIG_PATH` from that directory. Do
+not change application private-path behavior or the benchmark's environment
+redaction.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Performance/test_rag_citation_provenance_benchmark.py -q
+../../.venv/bin/python -m ruff check \
+  Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
+  Tests/Performance/test_rag_citation_provenance_benchmark.py
+../../.venv/bin/python -m ruff format --check \
+  Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
+  Tests/Performance/test_rag_citation_provenance_benchmark.py
+git add Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py
+git commit -m "test(benchmark): create isolated config profile"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -607,6 +643,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/Library/test_library_skills_state.py \
   Tests/Local_Ingestion/test_quick_ingest_db_path.py \
   Tests/Local_Ingestion/test_local_file_ingestion.py \
+  Tests/Performance/test_rag_citation_provenance_benchmark.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -633,6 +670,7 @@ Expected: all affected tests pass.
   Tests/DB/test_rag_indexing_db.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py \
+  Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
   tldw_chatbook/Library/library_skills_state.py
 ../../.venv/bin/python -m ruff format --check \
   Tests/Event_Handlers/test_worker_events_contract.py \
@@ -647,6 +685,7 @@ Expected: all affected tests pass.
   Tests/DB/test_rag_indexing_db.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py \
+  Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
   tldw_chatbook/Library/library_skills_state.py
 ../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
 git diff --check origin/dev...HEAD

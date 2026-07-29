@@ -38,7 +38,8 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #10 The retargeted Evals profile regression creates its temporary trusted profile directory as owner-only before selecting the config path and closes its test-owned database connection, without weakening production path verification.
 - [ ] #11 Local skill names cannot shadow the registered `search_run_log`, `run_log_stats`, or `run_log_slice` runtime tools, and the existing shadow-set drift guard passes.
 - [ ] #12 The `quick_ingest()` fallback-path regression expects the canonical profile-aware `tldw_chatbook_media_v2.db` filename while retaining configured-path and traversal-rejection coverage.
-- [ ] #13 The affected modules and repository-wide suite collect and run without these baseline failures.
+- [ ] #13 The RAG citation benchmark creates an owner-only isolated config profile before selecting `TLDW_CONFIG_PATH`, runs without reading or mutating host config/data/secrets, and retains its existing output-privacy assertions.
+- [ ] #14 The affected modules and repository-wide suite collect and run without these baseline failures.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,6 +60,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 7. Create the retargeted Evals profile fixture directory before selecting its config path.
 8. Synchronize the fixed Library skill collision set with registered run-log runtime names.
 9. Align the Local Ingestion fallback assertion with the canonical media database filename.
-10. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-11. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+10. Create the isolated RAG benchmark's trusted config profile directory before application imports.
+11. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+12. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
