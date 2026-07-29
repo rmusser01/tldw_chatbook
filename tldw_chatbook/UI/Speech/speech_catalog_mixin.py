@@ -568,16 +568,57 @@ class SpeechCatalogMixin:
             format_select.tooltip = None
             speed_input.tooltip = None
 
-        catalog = self._catalogs[controls.provider_id]
+        catalog = self._catalogs.get(controls.provider_id)
         self._displayed_provider_id = controls.provider_id
-        self._catalog_generation_allowed = (
-            controls.generation_allowed
-            and controls.provider_id not in self._stale_providers
-            and self._catalog_configuration_revisions.get(controls.provider_id)
-            == self._tts_service.configuration_revision(controls.provider_id)
-        )
-        self._set_provider_status(self._catalog_health_copy(catalog))
+        preset = self._profile_preset
+        if preset is not None and preset.provider_id != controls.provider_id:
+            preset = None
+        if preset is not None:
+            model_select.add_class("profile-exact-select")
+            voice_select.add_class("profile-exact-select")
+            model_select.tooltip = Text(preset.model_id)
+            voice_select.tooltip = Text(
+                preset.voice_id
+                if preset.voice_id is not None
+                else SERVER_DEFAULT_VOICE_LABEL
+            )
+            availability = self._profile_effective_availability
+            self._catalog_generation_allowed = bool(
+                controls.generation_allowed and availability != "unavailable"
+            )
+            if availability == "unavailable":
+                self._set_provider_status(
+                    "The exact profile selection is unavailable. Return to Voice "
+                    "profiles and choose Edit."
+                )
+            elif availability == "unverified":
+                self._set_provider_status(
+                    "Profile availability is unverified. Generate makes one exact "
+                    "attempt without fallback and shows a warning."
+                )
+            else:
+                self._set_provider_status(
+                    "Profile preview loaded with its exact persisted selection."
+                )
+        else:
+            model_select.remove_class("profile-exact-select")
+            voice_select.remove_class("profile-exact-select")
+            model_select.tooltip = None
+            voice_select.tooltip = None
+            service = self._tts_service
+            self._catalog_generation_allowed = (
+                controls.generation_allowed
+                and service is not None
+                and catalog is not None
+                and controls.provider_id not in self._stale_providers
+                and self._catalog_configuration_revisions.get(controls.provider_id)
+                == service.configuration_revision(controls.provider_id)
+            )
+            if catalog is not None:
+                self._set_provider_status(self._catalog_health_copy(catalog))
         self._remember_current_controls(controls.provider_id)
+        if preset is not None:
+            self._profile_controls_applied = True
         self._sync_generate_enabled()
         if controls.selection_changed:
             self.app.notify(
@@ -793,6 +834,7 @@ class SpeechCatalogMixin:
 
     def _set_provider_status(self, copy: str) -> None:
         self.query_one("#tts-provider-status", Static).update(Text(copy))
+        self._sync_profile_preview_status()
 
     def _show_provider_specific_controls(self, provider_id: str) -> None:
         language_row = self.query_one("#kokoro-language-row", Horizontal)

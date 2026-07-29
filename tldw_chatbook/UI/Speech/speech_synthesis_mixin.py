@@ -64,19 +64,34 @@ class SpeechSynthesisMixin:
         text_present = bool(self.query_one("#tts-text-input", TextArea).text.strip())
         provider_id = self._selected_provider_id
         revision_matches = False
-        if (
-            provider_id is not None
-            and self._tts_service is not None
-            and provider_id in self._catalog_configuration_revisions
-        ):
-            revision_matches = self._catalog_configuration_revisions[
-                provider_id
-            ] == self._tts_service.configuration_revision(provider_id)
+        service = self._tts_service
+        if provider_id is not None and service is not None:
+            preset = self._profile_preset
+            expected_revision = (
+                self._profile_configuration_revision
+                if preset is not None and preset.provider_id == provider_id
+                else self._catalog_configuration_revisions.get(provider_id)
+            )
+            try:
+                revision_matches = (
+                    expected_revision is not None
+                    and expected_revision == service.configuration_revision(provider_id)
+                )
+            except (KeyError, TTSRegistryClosedError):
+                revision_matches = False
         self.query_one("#tts-generate-btn", Button).disabled = not (
             text_present
             and self._catalog_generation_allowed
             and revision_matches
+            and (
+                provider_id not in self._stale_providers
+                or (
+                    self._profile_preset is not None
+                    and self._profile_preset.provider_id == provider_id
+                )
+            )
             and self._generation_operation_id is None
+            and self._profile_voice_validation_token is None
             and not getattr(self.app, "_is_generating", False)
         )
 

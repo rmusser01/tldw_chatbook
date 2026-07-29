@@ -55,6 +55,7 @@ from .speech_action_strip import SpeechActionStrip
 from .speech_axis_row import AXIS_EMPTY_PROMPTS, DEFAULT_SPEED, SpeechAxisRow
 from .speech_catalog_mixin import SpeechCatalogMixin
 from .speech_playback_mixin import EXAMPLE_TEXTS, SpeechPlaybackMixin
+from .speech_profile_mixin import SpeechProfileMixin
 from .speech_synthesis_mixin import SpeechSynthesisMixin
 from .speech_param_group import SpeechParamGroup
 from .speech_result_history import SpeechResultHistory, SpeechTake
@@ -142,7 +143,11 @@ class SpeechChip(Static):
 
 
 class SpeechPlaygroundPane(
-    SpeechSynthesisMixin, SpeechCatalogMixin, SpeechPlaybackMixin, Vertical
+    SpeechSynthesisMixin,
+    SpeechCatalogMixin,
+    SpeechPlaybackMixin,
+    SpeechProfileMixin,
+    Vertical,
 ):
     """The TTS Playground body: title, actions, input, settings, status.
 
@@ -170,6 +175,7 @@ class SpeechPlaygroundPane(
         self,
         *,
         provider: str = "audio_cpp",
+        profile_preset: Any = None,
         axis_values: dict[str, str] | None = None,
         axis_defaults: dict[str, str] | None = None,
         takes: Any = None,
@@ -205,6 +211,7 @@ class SpeechPlaygroundPane(
         self.init_synthesis_state()
         self.init_catalog_state()
         self.init_playback_state()
+        self.init_profile_state(profile_preset)
 
     @on(Button.Pressed, "#tts-save-default-btn")
     def _on_save_default_pressed(self, event: Button.Pressed) -> None:
@@ -448,6 +455,15 @@ class SpeechPlaygroundPane(
             and the capability line.
         """
         yield Static("🎤 TTS Playground", classes="speech-pane-title")
+        # dev's profile-preview status line and save action. Both start
+        # hidden and are revealed by `SpeechProfileMixin`, which queries
+        # them by these exact ids -- so the rebuild mounts them unchanged.
+        yield Static(
+            "",
+            id="tts-profile-preview-status",
+            classes="speech-status-line hidden",
+            markup=False,
+        )
 
         yield SpeechActionStrip(PLAYGROUND_ACTIONS, id="speech-playground-actions")
 
@@ -615,6 +631,13 @@ class SpeechPlaygroundPane(
                     markup=False,
                 )
             yield SpeechActionStrip(PLAYER_ACTIONS, id="speech-result-actions")
+            yield Button(
+                "Save result as profile",
+                id="audio-save-profile-btn",
+                classes="workbench-action hidden",
+                disabled=True,
+                compact=True,
+            )
 
     def _compose_generation_status(self) -> ComposeResult:
         """Yield the generation status line, progress, and the log.
