@@ -727,6 +727,38 @@ git add \
 git commit -m "test(rag): remove fail-open UI fallback"
 ```
 
+### Task 4n: Publish the lazy RAG-admin fixture's runtime state
+
+**Files:**
+- Modify: `Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py`
+
+- [ ] **Step 1: Reproduce RED**
+
+Run `Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py`. Expected:
+`fake_runtime_policy` raises `AttributeError` while assigning the read-only
+`TldwCli.current_runtime_backend` property before the lazy-service assertions
+can run.
+
+- [ ] **Step 2: Use the live runtime-policy owner**
+
+Replace the two direct compatibility-field assignments with
+`app._publish_runtime_policy_projection(context.state)`. Keep the fake state
+and every lazy construction, cache, fallback, and wiring assertion unchanged.
+Do not edit production or restore a writable compatibility projection.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py
+git add Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py
+git commit -m "test(rag): publish fixture runtime state"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -802,6 +834,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/ProductionApp/test_provider_selection_ownership.py \
   Tests/RAG/test_rag_ui_integration.py \
   Tests/RAG/test_local_citation_capture.py \
+  Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -827,6 +860,7 @@ Expected: all affected tests pass.
   Tests/ProductionApp/test_media_state_ownership.py \
   Tests/ProductionApp/test_provider_selection_ownership.py \
   Tests/RAG/test_rag_ui_integration.py \
+  Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -847,6 +881,7 @@ Expected: all affected tests pass.
   Tests/ProductionApp/test_media_state_ownership.py \
   Tests/ProductionApp/test_provider_selection_ownership.py \
   Tests/RAG/test_rag_ui_integration.py \
+  Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \

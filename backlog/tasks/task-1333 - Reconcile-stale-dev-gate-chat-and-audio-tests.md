@@ -43,7 +43,8 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #15 The production Media lifecycle regressions wait boundedly for replaced windows to become closed and detached before exercising stale-owner and cross-window write ordering, without weakening the fresh-screen or durable last-edit-wins contracts.
 - [ ] #16 The production provider-selection ownership regression waits for the recomposed Settings controls, deterministically stages and saves the selected provider/model through their live handlers, and retains per-session preservation plus subsequent handoff coverage.
 - [ ] #17 RAG UI integration coverage no longer expects a recognized canonical media candidate to enter prompt context when current authority cannot be established; the dedicated citation-capture suite retains both fail-closed authority coverage and the unsupported-source legacy fallback contract, and the public capture docstring describes that boundary accurately.
-- [ ] #18 The affected modules and repository-wide suite collect and run without these baseline failures.
+- [ ] #18 The lazy RAG-admin app fixture publishes its fake local runtime state through the live runtime-policy projection owner instead of assigning deleted writable compatibility fields, while retaining lazy-construction and service-wiring coverage.
+- [ ] #19 The affected modules and repository-wide suite collect and run without these baseline failures.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -69,6 +70,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 12. Wait for outgoing Media windows to finish Textual's asynchronous close/detach lifecycle before asserting replacement behavior.
 13. Await the recomposed provider controls and boundedly observe staging and persistence around their live Settings handlers.
 14. Remove the obsolete DB-free RAG UI fixture and assertion that bypass current prompt authority, retain the dedicated live citation-capture contracts, and align the public capture docstring with that accepted boundary.
-15. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-16. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+15. Publish the lazy RAG-admin fixture's fake runtime state through the current runtime-policy owner.
+16. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+17. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

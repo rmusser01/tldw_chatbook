@@ -162,6 +162,12 @@ Update the tests to describe current behavior:
     candidates require completed current authority regardless of builder
     availability and that only unsupported results retain raw legacy context;
     do not change runtime behavior.
+18. In the lazy RAG-admin app fixture, replace direct assignments to the
+    retired runtime compatibility fields with
+    `_publish_runtime_policy_projection(context.state)`, the same live owner
+    seam used by current mounted-app fixtures. Keep the fake policy state and
+    all lazy service construction, caching, fallback, and wiring assertions
+    unchanged. Do not add a setter or compatibility shim to production.
 
 The only planned production behavior change outside an ADR-029 diagnostic
 correction is the three-name synchronization of the existing Library collision
@@ -201,6 +207,10 @@ fail-closed behavior. No compatibility shims. No broad deletion of live tests.
   focused citation-capture suite while retaining a misleading DB-free fixture.
   Deleting that fixture and test preserves the authoritative security coverage
   in its actual owner without restoring raw recognized candidates to prompts.
+- Restoring a setter for `current_runtime_backend` would reintroduce competing
+  runtime authority. Updating the stale fixture to publish its state through
+  the existing owner preserves the architectural boundary and the test's real
+  lazy-wiring purpose.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
