@@ -51,13 +51,19 @@ class ImprovedDictationWindow(Widget):
     ]
 
     DEFAULT_CSS = """
+    /* `1fr`, not `100%`. A percentage height is measured against the
+       parent and ignores siblings, so the container claimed a full
+       viewport's worth beside the Lab chrome and everything below it was
+       squeezed: the transcript -- the thing this view exists to show --
+       measured FOUR rows of 26, starting at y=24, which is where the
+       viewport ends. */
     ImprovedDictationWindow {
-        height: 100%;
+        height: 1fr;
         width: 100%;
     }
-    
+
     .dictation-container {
-        height: 100%;
+        height: 1fr;
         layout: vertical;
     }
     
@@ -70,6 +76,15 @@ class ImprovedDictationWindow(Widget):
     .dictation-content {
         height: 1fr;
         layout: horizontal;
+    }
+
+    /* The status readouts are a few lines of text, but the container had no
+       height, so it split the body with the content: measured at 200x60,
+       the header and status took 30 of 54 rows and the transcript -- the
+       thing this view exists to show -- got 10. */
+    #status-container {
+        height: auto;
+        max-height: 4;
     }
     
     .transcript-area {
