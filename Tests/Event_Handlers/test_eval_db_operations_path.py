@@ -36,8 +36,11 @@ def test_default_db_path_tracks_a_retargeted_profile(monkeypatch, tmp_path):
 
     ops = EvalDBOperations()
 
-    assert Path(ops.db.db_path) == get_evals_db_path()
-    assert str(tmp_path) in str(ops.db.db_path)
+    try:
+        assert Path(ops.db.db_path) == get_evals_db_path()
+        assert str(tmp_path) in str(ops.db.db_path)
+    finally:
+        ops.db.close()
 
 
 def test_explicit_db_path_is_unaffected(tmp_path):
