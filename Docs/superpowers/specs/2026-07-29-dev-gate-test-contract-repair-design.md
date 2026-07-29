@@ -14,29 +14,31 @@ The failures reproduce on an exact `origin/dev` checkout:
   although TASK-577 deliberately removed that event and made the retained
   adapter reject streaming.
 - `Tests/UI/test_chat_shell_bar.py` imports `TabState`, although the legacy tab
-  model was deliberately retired. The shell context still accepts state-shaped
-  objects through its compatibility-shaped helper.
+  model was deliberately retired. Its `from_tab_state` helper has no live
+  production caller and should not gain replacement fixture coverage.
 - `Tests/Audio/test_audio_integration.py` starts a recorder thread and then
   calls the same recording loop repeatedly on the test thread. It also leaves
   VAD enabled, so the assertion depends on installed optional dependencies and
   whether synthetic bytes are classified as speech.
 
-TASK-627 remains the inventory ledger for broader baseline failures. TASK-1333
-owns only these deterministic repairs.
+TASK-1333 owns only these deterministic repairs.
 
 ## Decision
 
 Update the tests to describe current behavior:
 
-1. Keep the non-streaming worker failure regression. Replace the retired
-   streaming-sentinel assertion with the live contract: streaming raises
-   `ValueError` and posts no application message.
-2. Replace the `TabState` import with a tiny local state-shaped fixture while
-   retaining coverage of `ChatShellContext.from_tab_state`.
-3. Run the PyAudio stream-error test synchronously with VAD disabled. Assert
-   that the two chunks before the error reach the callback, the stream closes,
-   and recording stops. Rename the test so it no longer claims automatic
-   recovery that production does not implement.
+1. Keep the non-streaming worker failure regression and delete its obsolete
+   streaming-sentinel case. The existing
+   `Tests/Event_Handlers/test_retained_worker_adapter.py` already pins the live
+   streaming-rejection contract, so TASK-1333 adds no duplicate.
+2. Remove the `TabState` import and the retired-state half of the combined
+   shell-context test. Keep the live `ChatSessionData` label assertions. Do not
+   add a replacement fixture for the unused `from_tab_state` helper.
+3. Run `_pyaudio_recording_loop()` exactly once with `is_recording = True` and
+   VAD disabled, without calling `start_recording()`. Assert the exact two-chunk
+   callback sequence, `stop_stream()`, `close()`, and final stopped state.
+   Rename the test so it no longer claims automatic recovery that production
+   does not implement.
 
 No production file changes. No compatibility shims. No broad test deletion.
 
@@ -44,9 +46,12 @@ No production file changes. No compatibility shims. No broad test deletion.
 
 - Restoring `StreamDone` or `TabState` would contradict the accepted retirement
   architecture and revive dead ownership.
-- Deleting the tests would make collection green but discard useful retained
-  adapter, shell-label, and audio-error coverage.
-- The selected rewrite keeps that coverage with the smallest honest contract.
+- Deleting whole test files would make collection green but discard useful
+  retained non-streaming, shell-label, and audio-error coverage.
+- Replacing retired models with local fixtures or duplicating the existing
+  streaming-rejection test would keep dead or redundant coverage alive.
+- The selected edits remove only obsolete assertions and make the remaining
+  audio contract deterministic.
 
 ## Verification
 
