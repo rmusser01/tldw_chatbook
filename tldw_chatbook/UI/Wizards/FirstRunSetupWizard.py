@@ -630,16 +630,32 @@ class ToolsStep(SetupStep):
         return ""
 
     async def commit(self) -> tuple[bool, str]:
-        from tldw_chatbook.UI.Wizards.first_run_setup_state import build_tools_commit
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            build_tools_commit,
+            read_wizard_prefill,
+            tools_commit_delta,
+        )
 
+        # Every switch's current value, on or off -- delta-aware commit
+        # needs to see OFF switches too, to catch an ON->OFF transition
+        # against a re-run's prefilled config (Task 11 prefills these
+        # switches from persisted gates; a bare "only persist enables"
+        # filter can never write a disable, so re-run could not turn a
+        # gate back off).
         gate_values: dict[str, bool] = {}
         for switch in self.query(Switch):
             gate_key = self.gate_key_for(switch)
-            if gate_key and switch.value:  # only persist enables; absent == off
-                gate_values[gate_key] = True
-        if not gate_values:
+            if gate_key:
+                gate_values[gate_key] = bool(switch.value)
+        current_gates = dict(
+            read_wizard_prefill(
+                getattr(self.wizard.app_instance, "app_config", {}) or {}
+            ).tool_gates
+        )
+        delta = tools_commit_delta(gate_values=gate_values, current_gates=current_gates)
+        if not delta:
             return True, ""
-        ok = await self.wizard.commit_config(build_tools_commit(gate_values=gate_values))
+        ok = await self.wizard.commit_config(build_tools_commit(gate_values=delta))
         return (True, "") if ok else (False, "Saving tool settings failed.")
 
     def get_step_data(self) -> Dict[str, Any]:
@@ -675,17 +691,31 @@ class NotesSyncStep(SetupStep):
             yield Static("", classes="setup-step-error")
 
     async def commit(self) -> tuple[bool, str]:
-        from tldw_chatbook.UI.Wizards.first_run_setup_state import build_notes_commit
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            build_notes_commit,
+            read_wizard_prefill,
+        )
 
         enabled = self.query_one("#setup-notes-enable", Switch).value
         directory = self.query_one("#setup-notes-directory", Input).value.strip()
-        if not enabled:
-            return True, ""
-        if not directory:
-            return False, "Pick a directory or turn sync off."
-        ok = await self.wizard.commit_config(
-            build_notes_commit(sync_directory=directory, auto_sync_enabled=True)
+        if enabled:
+            if not directory:
+                return False, "Pick a directory or turn sync off."
+            ok = await self.wizard.commit_config(
+                build_notes_commit(sync_directory=directory, auto_sync_enabled=True)
+            )
+            return (True, "") if ok else (False, "Saving notes sync settings failed.")
+        # Toggle is off. Task 11's prefill can start this switch ON on
+        # re-run, so an OFF-transition is reachable here -- only write the
+        # disable when the persisted config currently says ON (fresh config
+        # stays a true no-op); sync_directory is deliberately left out of
+        # the commit so it survives untouched (see build_notes_commit).
+        prefill = read_wizard_prefill(
+            getattr(self.wizard.app_instance, "app_config", {}) or {}
         )
+        if not prefill.auto_sync_enabled:
+            return True, ""
+        ok = await self.wizard.commit_config(build_notes_commit(auto_sync_enabled=False))
         return (True, "") if ok else (False, "Saving notes sync settings failed.")
 
     def get_step_data(self) -> Dict[str, Any]:
@@ -1203,6 +1233,38 @@ class SetupWizardContainer(WizardContainer):
         # there. WizardContainer.handle_back() would otherwise also fire and
         # flat-decrement current_step, ignoring the active-id subset.
         event.prevent_default()
+        previous = self._previous_active_index(self.current_step)
+        if previous is not None:
+            self.show_step(previous)
+
+    # -- keyboard shortcuts (BINDINGS ctrl+n / ctrl+b are inherited from
+    # BaseWizard, which this module's own docstring above documents as
+    # never modified -- these actions are overridden here instead) --------
+    def action_next(self) -> None:
+        """ctrl+n: same guarded, commit-and-advance path as clicking Next.
+
+        BaseWizard.action_next() calls self.handle_next() with NO
+        arguments, but this class's handle_next() override above requires a
+        Button.Pressed event (to call event.prevent_default() -- see its
+        docstring). Left un-overridden, pressing ctrl+n on a mounted
+        SetupWizardContainer raises TypeError. advance_programmatically() is
+        the same event-free body handle_next() and SummaryStep's exit
+        buttons already share; routing the action there keeps active-id
+        navigation, per-step commit, and the on-Welcome track selection
+        (self.select_track(...) inside _advance()) all working from the
+        keyboard exactly as they do from the mouse.
+        """
+        self.advance_programmatically()
+
+    def action_back(self) -> None:
+        """ctrl+b: same active-subset Back navigation as clicking Back.
+
+        BaseWizard.action_back() calls self.handle_back() with NO
+        arguments, which likewise crashes against this class's
+        handle_back(event) override. This mirrors that override's body
+        exactly, minus the event.prevent_default() call action dispatch has
+        no event for.
+        """
         previous = self._previous_active_index(self.current_step)
         if previous is not None:
             self.show_step(previous)

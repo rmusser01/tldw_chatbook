@@ -663,6 +663,57 @@ async def test_tools_step_commits_only_changed_gates():
 
 
 @pytest.mark.asyncio
+async def test_tools_step_fresh_config_no_changes_commits_nothing():
+    """Pin the no-op: on a fresh config every switch starts and stays False,
+    so the delta-aware commit added by the final-review fix wave must not regress the
+    original "commits nothing when nothing changed" behavior."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = ToolsStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="tools", title="Tools", step_number=5),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        ok, _ = await step.commit()
+        assert ok
+        wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tools_step_on_to_off_transition_writes_false():
+    """Re-run prefills a previously-enabled gate ON; turning it back off in
+    the UI must persist False, not silently no-op (final-review finding 3)."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={"tools": {"read_file_enabled": True}}),
+        commit_config=AsyncMock(return_value=True), rerun=True,
+    )
+    step = ToolsStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="tools", title="Tools", step_number=5),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        switch = step.query_one("#setup-tool-read_file", Switch)
+        assert switch.value is True  # prefilled ON from config
+        switch.value = False  # user turns it back off
+        ok, _ = await step.commit()
+        assert ok
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed == {"tools": {"read_file_enabled": False}}
+
+
+@pytest.mark.asyncio
 async def test_notes_step_commit_writes_directory_and_toggle():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -707,6 +758,36 @@ async def test_notes_step_disabled_commits_nothing():
         ok, _ = await step.commit()
         assert ok
         wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_notes_step_enabled_to_disabled_writes_auto_sync_false():
+    """Re-run prefills the toggle ON from a previously-enabled sync;
+    turning it off must persist auto_sync_enabled=False while leaving
+    sync_directory untouched (final-review finding 3)."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={"notes": {"sync_directory": "~/Notes", "auto_sync_enabled": True}}
+        ),
+        commit_config=AsyncMock(return_value=True), rerun=True,
+    )
+    step = NotesSyncStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="notes", title="Notes sync", step_number=6),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        switch = step.query_one("#setup-notes-enable", Switch)
+        assert switch.value is True  # prefilled ON from config
+        switch.value = False  # user disables sync
+        ok, _ = await step.commit()
+        assert ok
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed == {"notes": {"auto_sync_enabled": False}}
 
 
 @pytest.mark.asyncio
@@ -1143,9 +1224,15 @@ class TestCommandPaletteReentry:
         provider.handle_setup_wizard_action("run_setup_wizard")
 
         screen.app.push_screen.assert_called_once()
-        (pushed_wizard,), _kwargs = screen.app.push_screen.call_args
+        (pushed_wizard, callback), _kwargs = screen.app.push_screen.call_args
         assert isinstance(pushed_wizard, FirstRunSetupWizard)
         assert pushed_wizard.rerun is True
+        # Final-review finding 2: this push must wire the app-level result
+        # callback, exactly like the Settings button and the auto-offer
+        # path (app.py's _push_first_run_wizard) already do -- without it,
+        # a truthy exit_route off the Summary step's "Go to Chat" button is
+        # silently dropped instead of navigating anywhere.
+        assert callback == screen.app.handle_first_run_wizard_result
 
     def test_unknown_action_id_is_a_no_op(self):
         from tldw_chatbook.app import SetupWizardProvider

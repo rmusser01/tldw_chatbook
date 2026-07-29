@@ -1454,7 +1454,10 @@ class SetupWizardProvider(Provider):
                     FirstRunSetupWizard,
                 )
 
-                self.app.push_screen(FirstRunSetupWizard(self.app, rerun=True))
+                self.app.push_screen(
+                    FirstRunSetupWizard(self.app, rerun=True),
+                    self.app.handle_first_run_wizard_result,
+                )
         except Exception as e:
             self.app.notify(f"Failed to open setup wizard: {e}", severity="error")
 
@@ -7214,6 +7217,19 @@ class TldwCli(
             from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
             self.post_message(NavigateToScreen(str(exit_route)))
+
+    def handle_first_run_wizard_result(self, result: dict | None) -> None:
+        """Public alias for ``_handle_first_run_wizard_result``.
+
+        The wizard's re-entry points outside this module -- Settings'
+        "Run setup wizard" button and the command-palette provider below --
+        need a non-private way to wire this callback into their own
+        ``push_screen(FirstRunSetupWizard(...), ...)`` calls, so a truthy
+        exit_route from the Summary step still navigates on re-run instead
+        of silently being dropped (the auto-offer path already wires
+        ``_push_first_run_wizard`` with this same handler).
+        """
+        self._handle_first_run_wizard_result(result)
 
     def hide_inactive_windows(self) -> None:
         """Hides all windows that are not the current active tab."""

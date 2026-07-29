@@ -107,6 +107,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     build_wizard_state_commit,
     commit_sections_allowed,
     invalidate_model_for_provider_change,
+    tools_commit_delta,
 )
 
 
@@ -158,6 +159,14 @@ class TestCommitBuilders:
         commit = build_notes_commit(sync_directory="~/Notes", auto_sync_enabled=True)
         assert commit == {"notes": {"sync_directory": "~/Notes", "auto_sync_enabled": True}}
 
+    def test_notes_commit_disable_only_omits_directory(self):
+        """No sync_directory passed -> not present in the commit at all, so
+        a merge-only writer never clobbers the persisted directory with an
+        empty string when only the enabled flag flips off."""
+        commit = build_notes_commit(auto_sync_enabled=False)
+        assert commit == {"notes": {"auto_sync_enabled": False}}
+        assert "sync_directory" not in commit["notes"]
+
     def test_appearance_commit_with_splash(self):
         commit = build_appearance_commit(default_theme="textual-dark", splash_card="matrix")
         assert commit == {
@@ -176,6 +185,38 @@ class TestCommitBuilders:
     def test_state_commit(self):
         assert build_wizard_state_commit(started=True) == {"first_run": {"setup_started": True}}
         assert build_wizard_state_commit(completed=True) == {"first_run": {"setup_completed": True}}
+
+
+class TestToolsCommitDelta:
+    def test_no_changes_yields_empty_delta(self):
+        assert tools_commit_delta(
+            gate_values={"read_file_enabled": False, "write_file_enabled": False},
+            current_gates={},
+        ) == {}
+
+    def test_absent_current_key_defaults_to_false(self):
+        """A gate never persisted before is treated as effectively False --
+        matching BuiltinToolProvider's own get_cli_setting(..., False) gate
+        check -- so turning it on is reported, unchanged is not."""
+        delta = tools_commit_delta(
+            gate_values={"read_file_enabled": True, "write_file_enabled": False},
+            current_gates={},
+        )
+        assert delta == {"read_file_enabled": True}
+
+    def test_on_to_off_transition_is_reported(self):
+        delta = tools_commit_delta(
+            gate_values={"read_file_enabled": False},
+            current_gates={"read_file_enabled": True},
+        )
+        assert delta == {"read_file_enabled": False}
+
+    def test_unchanged_on_gate_is_not_reported(self):
+        delta = tools_commit_delta(
+            gate_values={"read_file_enabled": True},
+            current_gates={"read_file_enabled": True},
+        )
+        assert delta == {}
 
 
 class TestDependencyInvalidation:

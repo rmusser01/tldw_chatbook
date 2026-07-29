@@ -195,10 +195,41 @@ def build_tools_commit(*, gate_values: Mapping[str, bool]) -> dict[str, dict[str
     return {"tools": {key: bool(value) for key, value in gate_values.items()}}
 
 
+def tools_commit_delta(
+    *, gate_values: Mapping[str, bool], current_gates: Mapping[str, bool]
+) -> dict[str, bool]:
+    """Keys whose desired value differs from the currently persisted gate.
+
+    ``current_gates`` should hold the EFFECTIVE value for every key present
+    in ``gate_values`` (False when the ``[tools]`` section has no entry for
+    it -- the same default ``BuiltinToolProvider``'s own gate check uses).
+    A fresh config where every switch starts and stays False therefore
+    produces an empty delta (no write), while flipping a previously-True
+    gate back to False is still reported -- unlike a naive "only ever
+    persist True" filter, which silently drops OFF-transitions on re-run.
+    """
+    return {
+        key: bool(value)
+        for key, value in gate_values.items()
+        if bool(value) != bool(current_gates.get(key, False))
+    }
+
+
 def build_notes_commit(
-    *, sync_directory: str, auto_sync_enabled: bool
+    *, sync_directory: str | None = None, auto_sync_enabled: bool
 ) -> dict[str, dict[str, Any]]:
-    return {"notes": {"sync_directory": sync_directory, "auto_sync_enabled": auto_sync_enabled}}
+    """Mutation for the notes-sync step.
+
+    ``sync_directory`` is optional: omit it (leave as None) to commit only
+    the enabled flag -- e.g. an OFF-transition on re-run, where the
+    directory should survive untouched. ``save_settings_to_cli_config``
+    merges per-key within a section, so a dict missing "sync_directory"
+    never clobbers the persisted value; passing an empty string here would.
+    """
+    values: dict[str, Any] = {"auto_sync_enabled": auto_sync_enabled}
+    if sync_directory is not None:
+        values["sync_directory"] = sync_directory
+    return {"notes": values}
 
 
 def build_appearance_commit(

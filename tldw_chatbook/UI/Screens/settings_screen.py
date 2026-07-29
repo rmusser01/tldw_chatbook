@@ -13785,7 +13785,13 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
 
-        self.app.push_screen(FirstRunSetupWizard(self.app_instance, rerun=True))
+        # Wire the app-level result callback so a truthy exit_route off the
+        # Summary step ("Go to Chat") still navigates -- without it, the
+        # exit_route is silently dropped and re-run's "Go to Chat" is dead.
+        self.app.push_screen(
+            FirstRunSetupWizard(self.app_instance, rerun=True),
+            self.app_instance.handle_first_run_wizard_result,
+        )
 
     @on(Button.Pressed, "#settings-advanced-validate-config")
     def handle_advanced_validate_config(self, event: Button.Pressed) -> None:
