@@ -310,23 +310,51 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
             "Private rotating file logging installed at level %s.",
             logging.getLevelName(file_log_level),
         )
-        # TASK-1240. Written the moment the sink is live, so an empty file means
-        # "the sink did not install" rather than "nothing has happened yet".
-        # This function swallows install failures (it warns and returns False),
-        # so without this line those two states are indistinguishable.
-        persist_event("logging", "persistent_sink_installed", status="ok")
-        return True
+        installed_level = file_log_level
     except PrivatePathError as exc:
         root_logger.warning(
             "File logging disabled: unsafe persistent target (%s).",
             exc.result.status.value,
         )
+        return False
     except Exception as exc:
         root_logger.warning(
             "File logging disabled: persistent sink setup failed (%s).",
             type(exc).__name__,
         )
-    return False
+        return False
+
+    # TASK-1240. Written the moment the sink is live, so an empty file means
+    # "the sink did not install" rather than "nothing has happened yet". This
+    # function swallows install failures (it warns and returns False), so
+    # without this line those two states are indistinguishable.
+    #
+    # Emitted OUTSIDE the try above (M7): that try's handlers report "install
+    # failed" and return False, so a future failure originating in this call --
+    # after the handler is built, filtered and attached -- would misreport a
+    # working sink as a broken one.
+    #
+    # Emitted at the handler's OWN level, not INFO (I3). `file_log_level` is
+    # user-configurable and the shipped config comment offers WARNING/ERROR/
+    # CRITICAL; at any of those an INFO install line is dropped by the very
+    # handler it is meant to prove installed, and the user sends a zero-byte
+    # log -- which the paragraph above tells a maintainer to read as "the sink
+    # did not install". Logging it at `file_log_level` means it always clears
+    # its own gate. Note the corollary: the *other* events in this design are
+    # still level-gated, so under `file_log_level = "WARNING"` a log containing
+    # only this line means "installed, and everything below WARNING was
+    # filtered" -- not "nothing happened".
+    try:
+        persist_event(
+            "logging",
+            "persistent_sink_installed",
+            level=installed_level,
+            status="ok",
+        )
+    except Exception:
+        # Diagnostics must never be the reason the sink reports failure.
+        pass
+    return True
 
 
 def _forward_loguru_to_standard(message) -> None:

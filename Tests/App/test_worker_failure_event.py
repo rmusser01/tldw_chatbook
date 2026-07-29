@@ -61,7 +61,9 @@ async def test_successful_worker_records_nothing(monkeypatch):
     recorded: list[dict] = []
     monkeypatch.setattr(
         "tldw_chatbook.app.persist_event",
-        lambda component, event, **fields: recorded.append({"event": event}),
+        lambda component, event, **fields: recorded.append(
+            {"component": component, "event": event, **fields}
+        ),
     )
 
     app = _build_test_app()
@@ -76,4 +78,17 @@ async def test_successful_worker_records_nothing(monkeypatch):
         )
         await pilot.pause()
 
-    assert not [r for r in recorded if r["event"] in {"worker_failed", "worker_started"}]
+    # Select by identity, exactly as the sibling above does, and for exactly
+    # the same reason: real background workers started by _build_test_app
+    # (scheduler_loop.run, model-catalog refresh, FTS backfill) route through
+    # this same hook during pilot.pause() and may append their own entries. A
+    # blanket "no worker_failed anywhere in the recorder" assertion passes only
+    # while none of them happens to fail -- it asserts what its own sibling
+    # documents as false. The recorder therefore keeps **fields, so `operation`
+    # is available to discriminate on.
+    assert not [
+        r
+        for r in recorded
+        if r["event"] in {"worker_failed", "worker_started"}
+        and r.get("operation") == "some_worker"
+    ], f"the successful worker recorded an event: {recorded}"

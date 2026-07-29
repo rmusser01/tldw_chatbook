@@ -27,6 +27,30 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
+def _pin_file_log_level(monkeypatch, level_name: str = "INFO") -> None:
+    """Pin `[logging] file_log_level` for the duration of a test.
+
+    Without this these tests read the ambient user/CI setting. The shipped
+    config comment offers `WARNING, ERROR, CRITICAL`, and under any of those
+    the handler's own level drops every INFO record -- including
+    `app_started` -- so the assertions below would fail for a reason that has
+    nothing to do with what they are testing. `_configure_private_file_logging`
+    reads the value through the `get_cli_setting` name bound in
+    `Logging_Config`, so that is what is replaced; every other key delegates to
+    the real function.
+    """
+    from tldw_chatbook import config as _config
+
+    real_get_cli_setting = _config.get_cli_setting
+
+    def _pinned(section, key, default=None, *args, **kwargs):
+        if section == "logging" and key == "file_log_level":
+            return level_name
+        return real_get_cli_setting(section, key, default, *args, **kwargs)
+
+    monkeypatch.setattr("tldw_chatbook.Logging_Config.get_cli_setting", _pinned)
+
+
 def _installed_handler(root: logging.Logger, log_path):
     """Find the handler `_configure_private_file_logging` just installed.
 
@@ -66,6 +90,7 @@ def test_persist_event_reaches_the_persistent_log_through_the_real_sink(
     monkeypatch.setattr(
         "tldw_chatbook.Logging_Config.get_cli_log_file_path", lambda: log_path
     )
+    _pin_file_log_level(monkeypatch)
     root = logging.getLogger()
     previous_level = root.level
     root.setLevel(logging.INFO)
@@ -115,6 +140,7 @@ def test_no_message_text_reaches_the_persistent_log(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "tldw_chatbook.Logging_Config.get_cli_log_file_path", lambda: log_path
     )
+    _pin_file_log_level(monkeypatch)
     root = logging.getLogger()
     previous_level = root.level
     root.setLevel(logging.INFO)
@@ -139,3 +165,44 @@ def test_no_message_text_reaches_the_persistent_log(tmp_path, monkeypatch):
     assert "event=app_started" in written
 
     assert "PRIVATE-SENTINEL-VALUE" not in written
+
+
+def test_the_install_event_clears_its_own_gate_at_a_raised_file_log_level(
+    tmp_path, monkeypatch
+):
+    """`persistent_sink_installed` must survive whatever `file_log_level` is.
+
+    The whole point of the event is that an empty persistent log means "the
+    sink did not install". Emitted at INFO, it is dropped by its own handler
+    whenever the user sets `file_log_level` to any of the values the shipped
+    `config.py` comment offers -- `WARNING, ERROR, CRITICAL` -- so a user on
+    that config sends a zero-byte log and the maintainer reads it as a failed
+    install. Emitting at the handler's own level makes the claim true at every
+    setting. This test pins the highest of them.
+    """
+    from tldw_chatbook.Logging_Config import _configure_private_file_logging
+
+    log_path = tmp_path / "tldw_cli_app.log"
+    monkeypatch.setattr(
+        "tldw_chatbook.Logging_Config.get_cli_log_file_path", lambda: log_path
+    )
+    _pin_file_log_level(monkeypatch, "CRITICAL")
+    root = logging.getLogger()
+    previous_level = root.level
+    root.setLevel(logging.DEBUG)
+    handler = None
+    try:
+        assert _configure_private_file_logging(root) is True
+        handler = _installed_handler(root, log_path)
+        assert handler.level == logging.CRITICAL
+        handler.flush()
+        written = log_path.read_text()
+    finally:
+        if handler is not None:
+            root.removeHandler(handler)
+            handler.close()
+        root.setLevel(previous_level)
+
+    assert "event=persistent_sink_installed" in written, (
+        "the install event was filtered out by the handler it proves installed"
+    )

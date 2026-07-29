@@ -20,6 +20,18 @@ def sink(tmp_path):
     path = tmp_path / "app.log"
     handler = logging.FileHandler(path)
     handler.addFilter(PersistentDiagnosticFilter())
+    # The same formatter `_configure_private_file_logging` installs. It matters:
+    # `%(name)s` puts the *logger name* on disk, and `persist_event` builds that
+    # name from its `component` argument. A default-formatted handler writes
+    # only `%(message)s`, so it cannot see what `component` does to the record's
+    # second, unvalidated destination -- which is exactly the hole Critical-1
+    # closed.
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
     handler.setLevel(logging.INFO)
     root = logging.getLogger()
     root.addHandler(handler)
@@ -56,6 +68,50 @@ def test_unknown_fields_are_still_rejected(sink):
     """The schema is the guarantee; persist_event must not bypass it."""
     with pytest.raises(ValueError):
         persist_event("app", "app_started", prompt="secret user text")
+
+
+@pytest.mark.parametrize(
+    "component",
+    [
+        # Both of these are natural readings of the docstring's "component"
+        # and both carry caller-supplied text.
+        "tool.read_file(path='/home/u/notes/secret.txt')",
+        "provider.acme api-key sk-live-abcdef",
+        # Non-token shapes generally.
+        "",
+        "  ",
+        "component with spaces",
+        "\n".join(["multi", "line"]),
+        None,
+        object(),
+    ],
+)
+def test_non_token_component_raises_and_writes_nothing(sink, component):
+    """`component` is used raw to build the logger name, so it must be a token.
+
+    The persistent formatter is `... %(name)s:%(lineno)d - %(message)s`, so the
+    logger name lands on disk. Validating `component` only as a schema field
+    would degrade the *field* to `component=invalid` while the *logger name*
+    carried the caller's text verbatim -- every guard reporting success.
+    `persist_event` therefore rejects it outright rather than substituting: a
+    non-token component means the caller misunderstood the contract, and
+    quietly writing `invalid` would hide that.
+    """
+    path, handler = sink
+    with pytest.raises(ValueError, match="bounded metadata token"):
+        persist_event(component, "app_started")
+    handler.flush()
+    assert path.read_text() == "", "a rejected component still reached the file"
+
+
+def test_a_token_component_is_still_accepted(sink):
+    """The guard must reject only non-tokens -- dotted namespaces are fine."""
+    path, handler = sink
+    persist_event("scheduling.watchlists", "scheduler_configured", status="ok")
+    handler.flush()
+    written = path.read_text()
+    assert "component=scheduling.watchlists" in written
+    assert "tldw_chatbook.diagnostics.scheduling.watchlists" in written
 
 
 def test_forward_loguru_to_standard_drops_the_metadata_marker():
@@ -98,7 +154,14 @@ def test_forward_loguru_to_standard_drops_the_metadata_marker():
     target_logger.setLevel(logging.DEBUG)
     target_logger.propagate = False
 
-    loguru_logger.remove()
+    # Deliberately NOT `loguru_logger.remove()` first. That bare call drops
+    # *every* sink process-wide, while the `finally` below removes only
+    # `sink_id`; conftest's autouse cleanup removes handlers *added* during a
+    # test and cannot restore ones a test removed, so Loguru would be left with
+    # zero sinks for the remainder of the session -- and `Tests/Utils/` is
+    # collected before the root `Tests/test_*.py` files. Adding a sink beside
+    # whatever is already installed mutates nothing global; the assertions
+    # below are written to tolerate the extra forwarders that implies.
     sink_id = loguru_logger.add(_forward_loguru_to_standard, level="TRACE")
     try:
         loguru_logger.bind(_tldw_metadata_only_record=True).info(
@@ -110,5 +173,9 @@ def test_forward_loguru_to_standard_drops_the_metadata_marker():
         target_logger.setLevel(previous_level)
         target_logger.propagate = previous_propagate
 
-    assert len(captured) == 1
-    assert not hasattr(captured[0], "_tldw_metadata_only_record")
+    # Stronger than `len(captured) == 1`: if a second forwarder is already
+    # installed the record arrives twice, and *every* copy must be clean. A
+    # count assertion would fail on an irrelevant detail while saying nothing
+    # about the security property.
+    assert captured, "the forwarder produced no stdlib record"
+    assert all(not hasattr(r, "_tldw_metadata_only_record") for r in captured)

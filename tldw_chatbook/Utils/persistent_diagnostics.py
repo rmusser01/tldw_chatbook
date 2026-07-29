@@ -192,13 +192,31 @@ def persist_event(
     events with that module's descriptive records and expose them to any
     per-logger level configuration aimed at it. The prefix still satisfies
     `_is_chatbook_record`.
+
+    `component` must be a bounded metadata token -- a code-side subsystem name
+    such as `app`, `logging` or `scheduling`. It is used twice: as a schema
+    field *and* raw, to build the logger name. The persistent formatter writes
+    `%(name)s`, so an unvalidated `component` would put its text on disk while
+    the schema field beside it read `invalid` and every guard reported success.
+    A caller-derived value -- `persist_event(f"tool.{tool_name}", ...)` or
+    `persist_event(f"provider.{provider}", ...)` -- is therefore rejected with
+    `ValueError` rather than substituted: a non-token `component` means the
+    caller has misunderstood the contract, and silently writing `invalid` would
+    hide that.
+
+    Raises:
+        ValueError: If `component` is not a bounded metadata token, or if
+            `event`/`fields` violate the persistent metadata schema.
     """
 
+    safe_component = safe_metadata_token(component)
+    if safe_component == "invalid":
+        raise ValueError("persist_event component must be a bounded metadata token")
     log_persistent_metadata(
-        logging.getLogger(f"tldw_chatbook.diagnostics.{component}"),
+        logging.getLogger(f"tldw_chatbook.diagnostics.{safe_component}"),
         level,
         event,
-        component=component,
+        component=safe_component,
         **fields,
     )
 
