@@ -372,6 +372,27 @@ dropping anything else still fails.
 
 ### Task 5: Wire, verify live, retire
 
+**Measured before starting** (Tasks 1-4 are committed; this is what remains):
+
+| | |
+| --- | --- |
+| Behaviour closure, excluding `compose()` | **21 methods, 1190 lines** |
+| `_save_settings` | 311 lines — **writes user config** |
+| `_set_initial_values` | 238 lines — fills the pane's `values` |
+| Decorated methods | `_discover_audio_cpp` (`@work`), `_normalize_openai_base_url` (`@classmethod`) |
+| Module names the tests patch | `get_cli_setting`, `get_tts_service` |
+| Test files still patching `STTS_Window` | 1 |
+
+`@work` survives a mixin move — Textual resolves it at call time. `@on` would
+not, but this closure has none.
+
+**Persistence is the risk here, and it is different in kind from phases 1-4.**
+Everything so far has been layout: wrong, but recoverable by looking at it.
+`_save_settings` writes the user's real config. Verify it against a scratch
+`TLDW_CONFIG_PATH` profile and diff the written file before and after — do
+not test it against the live config, and do not judge it by "no exception
+was raised".
+
 **Files:**
 - Modify: `tldw_chatbook/UI/STTS_Window.py` (the `settings` view branch)
 - Modify: `tldw_chatbook/UI/Screens/stts_screen.py` if the rail needs it
