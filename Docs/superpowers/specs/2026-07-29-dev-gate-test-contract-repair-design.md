@@ -26,6 +26,12 @@ The failures reproduce on an exact `origin/dev` checkout:
 - `Tests/Audio/test_recording_service.py` repeats the same thread-and-direct-loop
   race with VAD enabled, so synthetic audio may never reach the callback that
   stops the loop.
+- The adjacent SoundDevice flow fixture also leaves VAD enabled for a
+  four-sample synthetic callback, so no audio reaches its queue assertion.
+- Four `Tests/Chat/test_chat_functions.py` cases monkeypatch deleted
+  module-level `settings` objects. The live Llama.cpp and DeepSeek adapters
+  deliberately resolve `get_runtime_config_snapshot()` at each request
+  boundary under ADR-029.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -53,7 +59,15 @@ Update the tests to describe current behavior:
    disable VAD, set the callback and recording state directly, invoke one loop,
    and assert exactly three chunks plus cleanup. Do not start a background
    recorder.
-5. Generate the candidate diagnostic inventory, inspect every changed owner and
+5. Keep the SoundDevice flow through its public start/stop contract, but disable
+   VAD for its tiny synthetic callback. Use a bounded event set by the mocked
+   `InputStream` constructor before reading the captured callback, and stop the
+   mocked recorder in `finally` before asserting that audio was queued.
+6. Update the stale provider request tests to patch
+   `get_runtime_config_snapshot()` with a `RuntimeConfigSnapshot` containing
+   their test configuration. Do not restore or emulate mutable module-level
+   settings.
+7. Generate the candidate diagnostic inventory, inspect every changed owner and
    sink-topology entry against ADR-029's metadata-only boundary, and refresh the
    checked artifact only if the changes are safe. If review finds an unsafe log
    value, correct that violation under ADR-029 before regenerating; do not bless

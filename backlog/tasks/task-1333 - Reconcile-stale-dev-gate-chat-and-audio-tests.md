@@ -30,8 +30,10 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #2 The current dev chat-shell regression retains live session/persona label coverage without importing or replacing the retired `TabState` model.
 - [ ] #3 The audio stream-error regression invokes one synchronous recording loop without VAD or thread races and proves the exact pre-error callback sequence, stream closure, and stopped state.
 - [ ] #4 The PyAudio flow regression invokes one synchronous recording loop without VAD or thread races and proves exactly three callbacks, stream closure, and stopped state.
-- [ ] #5 Every changed diagnostic owner is reviewed against ADR-029, no unsafe payload logging is admitted, persistent sink topology remains unchanged, and the checked inventory matches production.
-- [ ] #6 The affected modules and repository-wide suite collect and run without these baseline failures.
+- [ ] #5 The SoundDevice flow regression disables VAD for its synthetic callback, waits boundedly for the mocked stream callback, and cleans up its recording thread even on failure before proving audio was queued.
+- [ ] #6 The Llama.cpp and DeepSeek request tests patch the live runtime-config snapshot seam without restoring or emulating deleted mutable module-level settings.
+- [ ] #7 Every changed diagnostic owner is reviewed against ADR-029, no unsafe payload logging is admitted, persistent sink topology remains unchanged, and the checked inventory matches production.
+- [ ] #8 The affected modules and repository-wide suite collect and run without these baseline failures.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -45,7 +47,8 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 
 1. Remove the retired StreamDone import and duplicate streaming assertion while preserving unique non-streaming failure coverage.
 2. Preserve the current dev chat-shell repair rather than carrying a superseded branch edit.
-3. Make both PyAudio loop tests synchronous, VAD-independent, and exact.
-4. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-5. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+3. Make both PyAudio loop tests synchronous, VAD-independent, and exact; keep the SoundDevice fixture VAD-independent with explicit cleanup.
+4. Patch provider request tests through the live runtime-config snapshot seam instead of deleted module globals.
+5. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+6. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

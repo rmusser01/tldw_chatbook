@@ -34,6 +34,8 @@ regenerate the inventory before reviewing its changed owners and sink topology.
   synchronous, VAD-independent, and exact.
 - Modify `Tests/Audio/test_recording_service.py`: make PyAudio happy-flow
   behavior synchronous, VAD-independent, and exact.
+- Modify `Tests/Chat/test_chat_functions.py`: patch the live runtime-config
+  snapshot seam instead of deleted module-level settings.
 - Modify `Docs/security/production-diagnostic-inventory.json`: only after
   reviewing every generated owner/topology change against ADR-029.
 - Modify TASK-1333 and this plan only for closeout evidence.
@@ -217,6 +219,69 @@ git add Tests/Audio/test_recording_service.py
 git commit -m "test(audio): make pyaudio flow deterministic"
 ```
 
+### Task 4b: Keep the SoundDevice fixture independent of VAD
+
+**Files:**
+- Modify: `Tests/Audio/test_recording_service.py`
+
+- [ ] **Step 1: Reproduce RED**
+
+Run the full recording-service module after Task 4. Expected: only
+`test_sounddevice_recording_flow` fails because VAD discards its four-sample
+synthetic callback.
+
+- [ ] **Step 2: Make the fixture exact**
+
+Construct the SoundDevice service with `use_vad=False`, retain its public
+`start_recording()` path, and configure the `InputStream` mock with a side
+effect that captures its callback and sets a `threading.Event`. Assert that
+event becomes ready within a bounded timeout before invoking the callback.
+Always call `stop_recording()` in `finally` so an assertion failure cannot leak
+the background thread, then assert that the audio queue is non-empty.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Audio/test_recording_service.py::TestAudioRecordingIntegration::test_sounddevice_recording_flow \
+  -q
+../../.venv/bin/python -m pytest Tests/Audio/test_recording_service.py -q
+git add Tests/Audio/test_recording_service.py
+git commit -m "test(audio): make sounddevice flow vad-independent"
+```
+
+### Task 4c: Patch the live provider-config seam
+
+**Files:**
+- Modify: `Tests/Chat/test_chat_functions.py`
+
+- [ ] **Step 1: Reproduce RED**
+
+Run the three parametrized Llama.cpp endpoint cases and
+`test_deepseek_uses_refreshed_handler_fallback_model`. Expected: each fails
+because the test tries to patch a deleted module-level `settings` object.
+
+- [ ] **Step 2: Use the request-boundary contract**
+
+Import `RuntimeConfigSnapshot`. For each test, construct a snapshot containing
+the existing test's `api_settings` values and monkeypatch that adapter module's
+`get_runtime_config_snapshot` function to return it. Remove comments claiming
+the adapter reads module-level settings. Do not change production.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Chat/test_chat_functions.py::test_chat_with_llama_posts_to_v1_chat_completions_regardless_of_suffix \
+  Tests/Chat/test_chat_functions.py::TestProviderRequestPayloads::test_deepseek_uses_refreshed_handler_fallback_model \
+  -q
+../../.venv/bin/python -m pytest Tests/Chat/test_chat_functions.py -q
+../../.venv/bin/python -m ruff check Tests/Chat/test_chat_functions.py
+../../.venv/bin/python -m ruff format --check Tests/Chat/test_chat_functions.py
+git add Tests/Chat/test_chat_functions.py
+git commit -m "test(chat): patch runtime config snapshots"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -279,6 +344,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/Event_Handlers/test_worker_events_contract.py \
   Tests/Event_Handlers/test_retained_worker_adapter.py \
   Tests/UI/test_chat_shell_bar.py \
+  Tests/Chat/test_chat_functions.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py \
   Tests/Architecture/test_persistent_diagnostic_inventory.py -q
@@ -291,10 +357,12 @@ Expected: all affected tests pass.
 ```bash
 ../../.venv/bin/python -m ruff check \
   Tests/Event_Handlers/test_worker_events_contract.py \
+  Tests/Chat/test_chat_functions.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py
 ../../.venv/bin/python -m ruff format --check \
   Tests/Event_Handlers/test_worker_events_contract.py \
+  Tests/Chat/test_chat_functions.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py
 ../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
