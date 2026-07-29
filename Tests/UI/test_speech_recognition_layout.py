@@ -21,11 +21,12 @@ from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 #: Ids composed unconditionally. Frozen as the yardstick: the behaviour
 #: queries these by id, so a dropped one is a dead handler.
 #:
-#: `history-list` and `clear-history-button` are deliberately NOT here. They
-#: are composed only `if settings["privacy"]["save_history"]`, and that
-#: whole feature is a shell -- `_add_to_history` is a `pass` stub, so nothing
-#: is ever recorded. See task-1331; asserting they mount would be asserting
-#: that a non-feature is present.
+#: `history-list`, `clear-history-button` and `save-history-switch` are gone
+#: on purpose. The whole history feature was a shell -- `_add_to_history` was
+#: a `pass` stub, so no transcript was ever recorded -- and a switch telling
+#: the user their speech is being kept, when it is not, is a privacy claim
+#: the code did not honour. Removed rather than left as controls that do
+#: nothing (task-1331).
 RECOGNITION_CONTROLS = (
     "auto-clear-switch",
     "buffer-duration-input",
@@ -40,7 +41,6 @@ RECOGNITION_CONTROLS = (
     "privacy-status",
     "provider-select",
     "punctuation-switch",
-    "save-history-switch",
     "save-md-button",
     "save-text-button",
     "speed-display",
