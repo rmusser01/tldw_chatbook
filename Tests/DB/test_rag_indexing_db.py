@@ -301,7 +301,7 @@ class TestRAGIndexingDB:
         assert abs((retrieved_time - precise_time).total_seconds()) < 0.000001
 
     def test_large_batch_persists_all_items(self, temp_db):
-        """Test persistence and repeatable retrieval for a large batch."""
+        """Test exact persistence for a large batch."""
         item_type = "media"
         batch_size = 1000
         now = datetime.now(timezone.utc)
@@ -315,12 +315,10 @@ class TestRAGIndexingDB:
                 chunk_count=1,
             )
 
-        # Verify all indexed
+        # Verify every item was indexed with the expected timestamp
         indexed_items = temp_db.get_indexed_items_by_type(item_type)
-        assert len(indexed_items) == batch_size
-
-        # Verify repeated retrieval is consistent
-        assert temp_db.get_indexed_items_by_type(item_type) == indexed_items
+        expected_items = {f"item_{i}": now for i in range(batch_size)}
+        assert indexed_items == expected_items
 
 
 if __name__ == "__main__":
