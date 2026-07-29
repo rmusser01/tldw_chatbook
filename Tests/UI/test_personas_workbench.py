@@ -3765,6 +3765,7 @@ class TestServerCharacterSourceIsolation:
                 "#personas-library-new",
                 "#personas-library-import",
                 "#personas-library-duplicate",
+                "#personas-library-tag",
                 "#personas-card-edit-character",
                 "#personas-export-json",
                 "#personas-export-png",
@@ -3777,6 +3778,46 @@ class TestServerCharacterSourceIsolation:
                 is False
             )
             assert screen.query_one("#personas-start-chat", Button).disabled is False
+
+    async def test_server_footer_does_not_advertise_local_character_creation(
+        self, mock_app_instance, stub_characters
+    ):
+        """Switching to server Characters removes the unsupported Ctrl+N hint."""
+        mock_app_instance.runtime_backend = "local"
+        mock_app_instance.active_server_id = "server-a"
+        mock_app_instance.character_persona_scope_service = self._server_service()
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            footer = screen.query_one(AppFooterStatus)
+            assert "ctrl+n new" in footer.shortcut_text.lower()
+
+            await screen.handle_runtime_backend_changed("server")
+            await pilot.pause()
+            rendered = screen._shortcut_context().render().lower()
+            footer_copy = footer.shortcut_text.lower()
+
+            assert "ctrl+n new" not in rendered
+            assert "ctrl+n new" not in footer_copy
+
+    async def test_server_tag_request_does_not_schedule_local_worker(
+        self, mock_app_instance
+    ):
+        """A queued Tag event cannot start local tag discovery on the server."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
+            PersonaTagFilterRequested,
+        )
+
+        screen = PersonasScreen(mock_app_instance)
+        screen.state.runtime_source = "server"
+        screen.state.active_mode = "characters"
+        screen.run_worker = Mock()
+
+        await screen._handle_tag_filter(PersonaTagFilterRequested())
+
+        screen.run_worker.assert_not_called()
+        assert screen._io_dialog_active is False
 
     async def test_server_action_dispatch_and_direct_local_seams_fail_closed(
         self, mock_app_instance, stub_characters, monkeypatch
@@ -4013,6 +4054,44 @@ class TestServerCharacterSourceIsolation:
         await load
 
         display.assert_not_awaited()
+
+    async def test_local_page_failure_is_silent_after_source_switch(
+        self, mock_app_instance, monkeypatch
+    ):
+        """A stale local failure cannot notify or restore rows after server switch."""
+        import asyncio
+
+        screen = PersonasScreen(mock_app_instance)
+        screen.state.runtime_source = "local"
+        screen._character_db = lambda: object()
+        screen._characters = [{"id": 1, "name": "Old local row"}]
+        screen._character_total = 1
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def failing_to_thread(function, *args, **kwargs):
+            started.set()
+            await release.wait()
+            raise RuntimeError("stale local failure")
+
+        monkeypatch.setattr(
+            personas_screen_module.asyncio, "to_thread", failing_to_thread
+        )
+        notify = Mock()
+        screen._notify = notify
+
+        load = asyncio.create_task(screen._reload_character_page())
+        await started.wait()
+        await screen.handle_runtime_backend_changed("server")
+        assert screen._characters == []
+        assert screen._character_total == 0
+
+        release.set()
+        await load
+
+        notify.assert_not_called()
+        assert screen._characters == []
+        assert screen._character_total == 0
 
     @pytest.mark.parametrize(
         "changed_dimension",

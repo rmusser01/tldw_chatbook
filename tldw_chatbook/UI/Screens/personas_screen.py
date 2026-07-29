@@ -1033,6 +1033,7 @@ class PersonasScreen(BaseAppScreen):
                     tag_label="Tag: All",
                 )
             await self._apply_mode(active_mode)
+            self._sync_title_and_console_actions()
 
     async def on_unmount(self) -> None:
         super().on_unmount()
@@ -1228,6 +1229,7 @@ class PersonasScreen(BaseAppScreen):
                 "#personas-library-new",
                 "#personas-library-import",
                 "#personas-library-duplicate",
+                "#personas-library-tag",
             ):
                 self.query_one(selector, Button).disabled = server_characters
 
@@ -1269,6 +1271,27 @@ class PersonasScreen(BaseAppScreen):
         return (
             self.state.runtime_source == "server"
             and self._active_server_target() == expected_server_id
+            and self.state.active_mode == mode
+            and self.state.search_query == query
+            and self.state.sort_key == sort_key
+            and self.state.tag_filter == tag
+            and self.state.page_offset == offset
+        )
+
+    def _local_character_request_is_current(
+        self,
+        *,
+        runtime_source: str,
+        mode: str,
+        query: str,
+        sort_key: str,
+        tag: str | None,
+        offset: int,
+    ) -> bool:
+        """Return whether one local page request still owns the library."""
+        return (
+            runtime_source == "local"
+            and self.state.runtime_source == runtime_source
             and self.state.active_mode == mode
             and self.state.search_query == query
             and self.state.sort_key == sort_key
@@ -1493,6 +1516,15 @@ class PersonasScreen(BaseAppScreen):
                 tag=tag,
             )
         except Exception as exc:
+            if not self._local_character_request_is_current(
+                runtime_source=runtime_source,
+                mode=mode,
+                query=query,
+                sort_key=sort_key,
+                tag=tag,
+                offset=offset,
+            ):
+                return
             logger.opt(exception=True).warning("Character page load failed.")
             self._notify(f"Could not load characters: {exc}", "error")
             return
@@ -1500,13 +1532,13 @@ class PersonasScreen(BaseAppScreen):
         # supersedes this render. (is_mounted is deliberately NOT checked: it is
         # still False while the initial on-mount refresh runs; teardown is
         # tolerated instead by catching the pane QueryError below.)
-        if (
-            self.state.runtime_source != runtime_source
-            or self.state.active_mode != mode
-            or self.state.search_query != query
-            or self.state.sort_key != sort_key
-            or self.state.tag_filter != tag
-            or self.state.page_offset != offset
+        if not self._local_character_request_is_current(
+            runtime_source=runtime_source,
+            mode=mode,
+            query=query,
+            sort_key=sort_key,
+            tag=tag,
+            offset=offset,
         ):
             return
         # Commit shared count state only after the guard passes, so a
@@ -1704,7 +1736,11 @@ class PersonasScreen(BaseAppScreen):
     async def _handle_tag_filter(self, message: PersonaTagFilterRequested) -> None:
         """Open the tag-filter picker (characters only)."""
         message.stop()
-        if self.state.active_mode != "characters" or self._io_dialog_active:
+        if (
+            self.state.active_mode != "characters"
+            or not self._local_character_actions_allowed()
+            or self._io_dialog_active
+        ):
             return
         self._io_dialog_active = True
         self.run_worker(
@@ -8224,7 +8260,14 @@ class PersonasScreen(BaseAppScreen):
         return ShortcutContext(
             source="personas",
             actions=(
-                ShortcutAction("ctrl+n", "new"),
+                ShortcutAction(
+                    "ctrl+n",
+                    "new",
+                    available=(
+                        self.state.active_mode != "characters"
+                        or self._local_character_actions_allowed()
+                    ),
+                ),
                 ShortcutAction("ctrl+f", "search"),
                 ShortcutAction("ctrl+s", "save", available=editing),
                 ShortcutAction("esc", "back", available=editing or transcript_open),
