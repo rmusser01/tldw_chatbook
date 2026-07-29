@@ -59,6 +59,10 @@ The failures reproduce on an exact `origin/dev` checkout:
   `search_run_log`, `run_log_stats`, and `run_log_slice` are absent from
   `_SHADOWED_BUILTIN_NAMES`, allowing a local skill to collide with a real
   built-in runtime name.
+- `Tests/Local_Ingestion/test_quick_ingest_db_path.py` expects the retired
+  `tldw_cli_media_v2.db` fallback filename even though `quick_ingest()` now
+  delegates to the canonical profile-aware `get_media_db_path()`, whose default
+  filename is `tldw_chatbook_media_v2.db`.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -118,6 +122,9 @@ Update the tests to describe current behavior:
 11. Add exactly the three registered run-log runtime tool names to the existing
     fixed Library skill shadow set. Keep the literal collision boundary; do not
     import the agent runtime registry into the pure display-state module.
+12. Update the one stale Local Ingestion fallback assertion to the canonical
+    media database filename. Preserve configured-path and traversal-rejection
+    coverage; do not change production path resolution.
 
 The only planned production change outside an ADR-029 diagnostic correction is
 the three-name synchronization of the existing Library collision boundary. No

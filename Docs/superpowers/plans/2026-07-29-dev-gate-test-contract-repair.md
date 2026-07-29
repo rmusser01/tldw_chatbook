@@ -53,6 +53,8 @@ reviewing its changed owners and sink topology.
   fixture-owned retargeted profile directory before config selection.
 - Modify `tldw_chatbook/Library/library_skills_state.py`: synchronize the fixed
   skill collision set with the three registered run-log runtime tools.
+- Modify `Tests/Local_Ingestion/test_quick_ingest_db_path.py`: expect the
+  canonical profile-aware media database fallback filename.
 - Modify `Docs/security/production-diagnostic-inventory.json`: only after
   reviewing every generated owner/topology change against ADR-029.
 - Modify TASK-1333 and this plan only for closeout evidence.
@@ -505,6 +507,37 @@ git add tldw_chatbook/Library/library_skills_state.py
 git commit -m "fix(library): reserve run-log tool names"
 ```
 
+### Task 4h: Align quick-ingest fallback filename coverage
+
+**Files:**
+- Modify: `Tests/Local_Ingestion/test_quick_ingest_db_path.py`
+
+- [ ] **Step 1: Reproduce RED**
+
+Run the module. Expected: only
+`test_fallback_applies_only_when_the_key_is_absent` fails because it expects the
+retired `tldw_cli_media_v2.db` basename.
+
+- [ ] **Step 2: Update only the canonical expectation**
+
+Assert the fallback path uses `tldw_chatbook_media_v2.db`. Keep the configured
+custom path, expanded-home, and traversal-rejection assertions unchanged. Do
+not change production.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Local_Ingestion/test_quick_ingest_db_path.py \
+  Tests/Local_Ingestion/test_local_file_ingestion.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/Local_Ingestion/test_quick_ingest_db_path.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/Local_Ingestion/test_quick_ingest_db_path.py
+git add Tests/Local_Ingestion/test_quick_ingest_db_path.py
+git commit -m "test(ingest): expect canonical media DB fallback"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -572,6 +605,8 @@ Include any conditionally required focused test/production files in that commit.
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
   Tests/Library/test_library_skills_state.py \
+  Tests/Local_Ingestion/test_quick_ingest_db_path.py \
+  Tests/Local_Ingestion/test_local_file_ingestion.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -592,6 +627,7 @@ Expected: all affected tests pass.
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
   Tests/Library/test_library_skills_state.py \
+  Tests/Local_Ingestion/test_quick_ingest_db_path.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -605,6 +641,7 @@ Expected: all affected tests pass.
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
   Tests/Library/test_library_skills_state.py \
+  Tests/Local_Ingestion/test_quick_ingest_db_path.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
