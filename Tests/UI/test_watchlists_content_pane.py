@@ -62,8 +62,103 @@ def test_untrusted_body_markup_is_escaped():
     assert "\\[link=evil]" in out
 
 
-def test_content_pane_shows_placeholder_with_no_item():
+@pytest.mark.asyncio
+async def test_content_pane_shows_placeholder_with_no_item():
+    """The pane must actually compose the placeholder `Static`, not merely
+    start with `item is None`.
+
+    The original version of this test asserted only `pane.item is None` --
+    true the instant a `ContentPane` is constructed, and true whether or not
+    `compose()` ever runs or produces the right widget. Mount it for real and
+    read back the rendered text.
+    """
+    from textual.app import App
+    from textual.widgets import Static
+
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 
-    pane = ContentPane()
-    assert pane.item is None
+    class _PaneHost(App):
+        def compose(self):
+            yield ContentPane()
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        placeholder = app.query_one("#content-empty", Static)
+        assert str(placeholder.renderable) == "Select an item to read it."
+
+
+def test_change_renders_percent_type_and_diff_lines():
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_change
+
+    out = str(render_change({
+        "title": "anthropic.com/news",
+        "source_name": "Anthropic",
+        "content": "+ Opus 4.5 available\n- Opus 4.1 available",
+        "content_kind": "change",
+        "content_format": "diff",
+        "change_percentage": 12.0,
+        "change_type": "structural",
+    }))
+
+    assert "12" in out and "%" in out
+    assert "structural" in out
+    assert "+ Opus 4.5 available" in out
+    assert "- Opus 4.1 available" in out
+
+
+def test_dispatch_selects_the_renderer_by_kind():
+    """The two kinds must not render through the same arm by accident."""
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_for
+
+    change = str(render_for({
+        "title": "site", "content": "+ x", "content_kind": "change",
+        "change_percentage": 3.0, "change_type": "text",
+    }))
+    article = str(render_for({
+        "title": "post", "content": "prose", "content_kind": "article",
+    }))
+
+    # A discriminator only the change arm emits.
+    assert "3" in change and "%" in change
+    assert "%" not in article
+
+
+def test_unknown_kind_falls_back_to_article_without_raising():
+    """An escaping exception in compose() exits the whole app."""
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_for
+
+    out = str(render_for({"title": "odd", "content": "x", "content_kind": "wat"}))
+    assert "odd" in out
+
+
+def test_change_with_no_body_explains_why():
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_change
+
+    out = str(render_change({
+        "title": "site", "content": None, "content_kind": "change",
+        "change_percentage": 5.0, "change_type": "text",
+    }))
+    assert "no body captured" in out.lower()
+
+
+def test_diff_lines_with_hostile_markup_are_escaped():
+    """Diff lines are remote content too; styling them must not mean
+    interpreting them as markup.
+
+    Same reasoning as `test_untrusted_body_markup_is_escaped` above: the
+    assertion must require the *escaped* (backslash-prefixed) form, since the
+    unescaped substring is always contained inside the escaped one and a
+    looser assertion would pass either way.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_change
+
+    out = str(render_change({
+        "title": "site",
+        "content": "+ [bold red]injected[/]",
+        "content_kind": "change",
+        "change_percentage": 1.0,
+        "change_type": "text",
+    }))
+
+    assert "\\[bold red]" in out

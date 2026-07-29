@@ -47,9 +47,45 @@ def render_article(item: dict[str, Any]) -> Text:
     return out
 
 
+def render_change(item: dict[str, Any]) -> Text:
+    """Render a site item: what changed, by how much, and the diff lines."""
+    out = Text()
+    out.append(escape_markup(str(item.get("title") or "Untitled")), style="bold")
+    out.append("\n")
+
+    headline: list[str] = []
+    pct = item.get("change_percentage")
+    if pct is not None:
+        headline.append(f"{float(pct):.0f}% changed")
+    if item.get("change_type"):
+        headline.append(str(item["change_type"]))
+    out.append(escape_markup(" · ".join(headline) or "changed"), style="dim")
+    out.append("\n\n")
+
+    body = item.get("content")
+    if not body:
+        out.append(_NO_BODY)
+        return out
+
+    # Colour the diff, but escape each line first: these lines are remote
+    # content, and styling them must not mean interpreting them as markup.
+    for line in str(body).splitlines():
+        style = "green" if line.startswith("+") else "red" if line.startswith("-") else None
+        out.append(escape_markup(line), style=style)
+        out.append("\n")
+    return out
+
+
+_RENDERERS = {"article": render_article, "change": render_change}
+
+
 def render_for(item: dict[str, Any]) -> Text:
-    """Dispatch on `content_kind`. Task 3 adds the `change` arm."""
-    return render_article(item)
+    """Dispatch on `content_kind`, falling back rather than raising.
+
+    An exception escaping `compose()` exits the application, so an unexpected
+    kind degrades to the article renderer instead of taking the app down.
+    """
+    return _RENDERERS.get(str(item.get("content_kind") or ""), render_article)(item)
 
 
 class ContentPane(RecomposeCaptureGuard, Vertical):
