@@ -35,6 +35,11 @@ The failures reproduce on an exact `origin/dev` checkout:
 - Three real-seam Notes fixtures pass a nonexistent `tmp_path/notes_base` to
   `NotesInteropService`. ADR-029's trusted-directory boundary correctly
   rejects missing directories instead of creating them implicitly.
+- `Tests/DB/test_rag_indexing_db.py::test_large_batch_operations` combines
+  useful 1,000-item persistence coverage with hard wall-clock limits. The
+  unchanged `origin/dev` test took 24.98 seconds inside a loaded full-suite run
+  but 1.25 seconds in isolation, proving the timing assertion depends on host
+  contention rather than database behavior.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -80,6 +85,10 @@ Update the tests to describe current behavior:
    checked artifact only if the changes are safe. If review finds an unsafe log
    value, correct that violation under ADR-029 before regenerating; do not bless
    it as inventory drift.
+9. Keep the large-batch indexing test's 1,000-item write and retrieval
+   assertions, but remove its host-dependent elapsed-time measurements. This
+   default functional gate must prove persistence correctness, not benchmark a
+   contended workstation.
 
 No planned production file changes. No compatibility shims. No broad test
 deletion. A production diagnostic may change only if the required ADR-029
@@ -94,8 +103,11 @@ review identifies an actual privacy violation.
 - Replacing retired models with local fixtures or duplicating the existing
   streaming-rejection test would keep dead or redundant coverage alive.
 - Blindly regenerating the diagnostic inventory would defeat its review gate.
+- Raising the indexing test's timeout would retain a machine-dependent failure
+  with a different arbitrary threshold.
 - The selected edits remove only obsolete assertions, make the audio contracts
-  deterministic, and preserve the existing privacy boundary.
+  deterministic, retain large-batch correctness coverage, and preserve the
+  existing privacy boundary.
 
 ## Verification
 

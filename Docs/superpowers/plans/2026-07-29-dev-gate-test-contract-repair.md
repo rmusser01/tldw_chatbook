@@ -40,6 +40,8 @@ regenerate the inventory before reviewing its changed owners and sink topology.
   trusted Notes base before service construction.
 - Modify `Tests/Library/test_library_rag_scope.py`: create both fixture-owned
   trusted Notes bases before service construction.
+- Modify `Tests/DB/test_rag_indexing_db.py`: retain large-batch correctness
+  coverage without host-dependent wall-clock assertions.
 - Modify `Docs/security/production-diagnostic-inventory.json`: only after
   reviewing every generated owner/topology change against ADR-029.
 - Modify TASK-1333 and this plan only for closeout evidence.
@@ -324,6 +326,38 @@ git add \
 git commit -m "test(notes): create trusted fixture roots"
 ```
 
+### Task 4e: Remove host-dependent timing from large-batch correctness coverage
+
+**Files:**
+- Modify: `Tests/DB/test_rag_indexing_db.py`
+
+- [ ] **Step 1: Record RED and contention evidence**
+
+Use the repository-wide fail-fast run as RED: the unchanged test indexed all
+1,000 items correctly but failed because elapsed wall time was 24.98 seconds
+under concurrent test load. Run the exact test alone and record that it passes
+without a code change, demonstrating a load-sensitive assertion.
+
+- [ ] **Step 2: Keep behavior coverage and remove the benchmark**
+
+Rename the test to describe large-batch persistence, retain its 1,000 writes,
+full-count assertion, and retrieval assertion, and delete only the elapsed-time
+measurements and thresholds. Do not change `RAGIndexingDB` production code or
+replace the limits with a different arbitrary timeout.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/DB/test_rag_indexing_db.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/DB/test_rag_indexing_db.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/DB/test_rag_indexing_db.py
+git add Tests/DB/test_rag_indexing_db.py
+git commit -m "test(db): remove load-sensitive timing gate"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -389,6 +423,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/Chat/test_chat_functions.py \
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
+  Tests/DB/test_rag_indexing_db.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py \
   Tests/Architecture/test_persistent_diagnostic_inventory.py -q
@@ -404,6 +439,7 @@ Expected: all affected tests pass.
   Tests/Chat/test_chat_functions.py \
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
+  Tests/DB/test_rag_indexing_db.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py
 ../../.venv/bin/python -m ruff format --check \
@@ -411,6 +447,7 @@ Expected: all affected tests pass.
   Tests/Chat/test_chat_functions.py \
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
+  Tests/DB/test_rag_indexing_db.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py
 ../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
