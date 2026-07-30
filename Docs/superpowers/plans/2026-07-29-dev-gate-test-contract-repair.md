@@ -2536,7 +2536,11 @@ Across the seven modules, replace every `pending_study_scope_context` and
 Update the direct `TldwCli.open_study_screen` unit fixture to own a real store
 and inspect its typed claim. Update the restored-section precedence test to
 call `_apply_pending_section_handoff()` and assert the visible/current section
-plus consumed pending state. Retain all existing behavior assertions.
+plus consumed pending state. In
+`test_handle_runtime_backend_changed_recomputes_workspace_scope_state`, remove
+only the obsolete assertion that the screen handler mutates
+`app_instance.current_runtime_backend`; retain every scope-state and
+controller-refresh assertion. Retain all other behavior assertions.
 
 - [ ] **Step 4: Verify the Study boundary**
 

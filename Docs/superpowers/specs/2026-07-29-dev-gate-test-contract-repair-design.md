@@ -168,7 +168,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   required `PendingHandoffStore`, and scope/section tests still assign retired
   `pending_study_*` fields. A seven-module inventory runs 82 tests: 64 fail,
   with all but one failure rooted in the missing store or obsolete staging
-  seam. The remaining runtime-callback fixture failure is independent.
+  seam. Once those fixtures use the store, one additional in-scope assertion
+  still expects `StudyScreen.handle_runtime_backend_changed()` to mutate
+  app-root runtime fields that the current method deliberately treats as
+  composition-owner state. The remaining app-level runtime-callback fixture
+  failure is independent.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -629,7 +633,10 @@ Update the tests to describe current behavior:
     `STUDY_INITIAL_SECTION`; update direct consumption assertions and method
     calls to the current store/screen seam. In the lower-level Study screen
     module, use one small test-local store builder to avoid repeating channel
-    staging while keeping each input explicit. Preserve all behavior
+    staging while keeping each input explicit. In the screen-level
+    backend-change regression, remove only the stale assertion that the handler
+    mutates `app_instance.current_runtime_backend`; retain its complete
+    scope-state and controller-refresh proof. Preserve all other behavior
     assertions. Do not teach production or test apps to translate legacy
     fields, and do not fold the separate runtime-policy callback failure into
     this migration.
