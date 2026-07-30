@@ -242,10 +242,20 @@ class FileNotesRootDetailsDialog(ModalScreen[None]):
     """
 
     def __init__(self, detail: str) -> None:
+        """Initialize the dialog with the exact linked-root detail.
+
+        Args:
+            detail: Full linked-root path or warning text to display.
+        """
         super().__init__(id="file-notes-root-details-dialog-screen")
         self._detail = detail
 
     def compose(self) -> ComposeResult:
+        """Compose the read-only detail surface and close control.
+
+        Returns:
+            The widgets that make up the dialog.
+        """
         with Vertical(id="file-notes-root-details-dialog"):
             yield Static(
                 "File Notes folder details",
@@ -265,6 +275,7 @@ class FileNotesRootDetailsDialog(ModalScreen[None]):
             )
 
     def on_mount(self) -> None:
+        """Focus the detail text when the dialog opens."""
         self.query_one("#file-notes-root-details-text", TextArea).focus()
 
     @on(Button.Pressed, "#file-notes-root-details-close")
