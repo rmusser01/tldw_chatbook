@@ -257,6 +257,9 @@ ocr_docext = [
 dev = [
     "pytest",
     "pytest-timeout",  # For handling hanging tests
+    "pytest-xdist",  # Parallel test execution: pytest -n auto --dist loadscope
+    "pytest-mock",  # Used throughout Tests/; was only in requirements-test.txt
+    "pytest-cov",  # Coverage runs documented in Tests/README.md
     "textual-dev", # For Textual development tools
     "hypothesis",
     "pytest-asyncio",

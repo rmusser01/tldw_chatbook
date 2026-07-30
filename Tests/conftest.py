@@ -21,8 +21,19 @@ _SANDBOXED_ENV_NAMES = (
 )
 _PREVIOUS_TEST_ENV = {name: os.environ.get(name) for name in _SANDBOXED_ENV_NAMES}
 _existing_test_config_root = os.environ.get(_TEST_CONFIG_ROOT_ENV)
+# Under pytest-xdist the controller creates the sandbox root and workers
+# inherit it via the env; give each worker its own subtree so concurrent
+# workers never share a config/home/data dir (task-1453). The name guard keeps
+# re-entrant loads (Tests/UI/conftest.py, subprocess children) from suffixing
+# twice — the suffixed path is republished to the env below. The controller
+# owns the unsuffixed root and its sessionfinish rmtree removes the worker
+# subtrees with it.
+_XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
 if _existing_test_config_root:
     _BOOTSTRAP_CONFIG_ROOT = Path(_existing_test_config_root)
+    if _XDIST_WORKER and _BOOTSTRAP_CONFIG_ROOT.name != _XDIST_WORKER:
+        _BOOTSTRAP_CONFIG_ROOT = _BOOTSTRAP_CONFIG_ROOT / _XDIST_WORKER
+        _BOOTSTRAP_CONFIG_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
     _OWNS_BOOTSTRAP_CONFIG_ROOT = False
 else:
     _BOOTSTRAP_CONFIG_ROOT = Path(tempfile.mkdtemp(prefix="tldw_test_config_"))
