@@ -288,6 +288,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   but fails under full-suite load when one millisecond-scale import is delayed
   by the host scheduler. Its maximum-deviation assertion measures any isolated
   variance rather than the sustained late-import slowdown named by the test.
+- The ChaChaNotes thread-local connection regression stores only `id(conn)` and
+  lets each worker's connection reference die immediately. A worker can finish
+  before the last one starts, allowing both its OS thread id and freed Python
+  object address to be reused; the logs show five connection creations but the
+  stale assertion observes only four distinct integer addresses.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -878,6 +883,10 @@ Update the tests to describe current behavior:
     allowing a small absolute jitter floor while retaining a relative
     degradation bound. Keep all ten real exports/imports and success
     assertions; do not change production or hide sustained slowdown.
+85. Retain every worker's returned SQLite connection in a test-owned list
+    until all five threads join, then compare their object identities. Keep the
+    existing real threads and thread-local production path; do not add sleeps,
+    retries, or production connection tracking.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1235,6 +1244,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   would discard the test's performance purpose. Early-versus-late medians use
   the existing samples to detect a sustained regression without a benchmark
   framework or retries.
+- Sleeping or synchronizing all five ChaChaNotes workers would make scheduling
+  part of a test that only needs to prove distinct returned objects. Comparing
+  transient integer ids permits allocator reuse; retaining the objects until
+  the existing join boundary preserves the intended identity assertion with
+  no new coordination mechanism.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

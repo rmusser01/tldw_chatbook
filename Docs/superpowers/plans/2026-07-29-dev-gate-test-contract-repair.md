@@ -3406,6 +3406,40 @@ Chatbooks performance module, Ruff/format, and `git diff --check`.
 Expected: normal import variability passes, sustained late-import degradation
 remains bounded, and no production file changes.
 
+### Task 4cc: Retain thread-local connection identities
+
+**Files:**
+- Modify: `Tests/ChaChaNotesDB/test_chachanotes_db_properties.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This removes object-lifetime ambiguity from an existing
+thread-local identity test without changing storage or connection ownership.
+
+- [x] **Step 1: Confirm object-id reuse**
+
+Record the full-suite failure and inspect the captured connection logs.
+Expected: five connections are created, but one short-lived worker/thread id
+and one freed Python object address are reused before the final assertion.
+
+- [x] **Step 2: Retain returned connection objects**
+
+Append each worker's real connection object to a locked test-owned list and
+derive object identities only after all threads join. Do not add scheduling
+delays, retries, barriers, or production state.
+
+- [x] **Step 3: Verify focused and adjacent concurrency coverage**
+
+Run the exact node, the full ChaChaNotes property module, Ruff/format, and
+`git diff --check`.
+
+Expected: five distinct retained connection objects are observed under normal
+thread scheduling and all adjacent property tests remain green.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

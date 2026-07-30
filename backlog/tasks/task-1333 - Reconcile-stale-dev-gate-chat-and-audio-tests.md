@@ -114,6 +114,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #84 Console schema ownership coverage distinguishes durable assistant identity from persona presentation: identity remains absent from session settings and required on native sessions, while user/persona labels and `assistant_name` remain absent from both, consistent with ADR-037.
 - [ ] #85 Every remaining ChaChaNotes regression that synthesizes a pre-v28 database from the current schema removes the v28 conversation authority column before replay, preserving the v16 local-marks and v20/v21 world-book migration assertions without weakening production migration validation.
 - [ ] #86 Incremental Chatbook import performance compares robust early and late medians so sustained slowdown still fails while a single millisecond-scale host scheduling outlier cannot fail an otherwise successful import sequence.
+- [ ] #87 The ChaChaNotes thread-local connection regression retains each returned connection object through its identity assertion, so short-lived thread and object-id reuse cannot collapse five distinct connections into four.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -205,6 +206,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 78. Align the Console schema ownership regression with ADR-037's durable assistant identity versus persona presentation boundary.
 79. Remove the v28 conversation authority column from the remaining v16, v20, and v21 synthetic rollback fixtures before replaying migrations to the current schema.
 80. Replace the incremental Chatbook import test's single-sample maximum-deviation assertion with an early-versus-late median degradation check.
-81. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-82. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+81. Retain live connection objects in the thread-local ChaChaNotes identity regression until all worker results have been asserted.
+82. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+83. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
