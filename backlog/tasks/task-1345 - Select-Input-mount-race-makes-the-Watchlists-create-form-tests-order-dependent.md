@@ -22,6 +22,16 @@ Symptoms are a `Select`/`Input` mount race — `NoMatches` on `SelectCurrent`, a
 (`'orning' == 'Morning'`) indicating the input was read while still mounting.
 
 The failures are intermittent across runs, so a green CI run is not evidence the race is gone.
+
+**Corrected 2026-07-30 (TASK-1343):** the race is **not confined to a named test**. Three
+consecutive runs of `Tests/UI/ -k watchlist` produced three different failing sets: it moved among
+three tests in `test_watchlists_source_create_form.py` and surfaced once in
+`test_watchlists_source_frequency_control.py`. Both files pass in isolation (15/15 and 19/19,
+reproduced). Only the two tree-chevron failures are constant.
+
+Consequence for anyone reading a test run: **do not quote a fixed test name as the expected
+baseline** for this race. Doing so generates false regression reports when it moves, and false
+all-clear when it lands somewhere unlisted. Characterise it by file and by ordering instead.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

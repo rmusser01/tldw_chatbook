@@ -157,12 +157,15 @@ def render_change(item: dict[str, Any]) -> Text:
     headline: list[str] = []
     pct = item.get("change_percentage")
     if pct is not None:
-        # `change_percentage` is always written as a Python float by
-        # `baseline_manager.py`/`monitoring_engine.py`, never parsed from raw
-        # remote text, so this cast is not currently reachable with a
-        # non-numeric value. Guard it anyway: a raise here would escape
-        # `compose()` and exit the whole application over a single headline
-        # field, so degrade by omitting the percent rather than raising.
+        # `change_percentage` has exactly one producer:
+        # `monitoring_engine.URLMonitor.check_url`, which writes a Python
+        # float on a 0-100 scale, never text parsed from a remote page, so
+        # this cast is not currently reachable with a non-numeric value.
+        # (This comment used to name `baseline_manager.py` as a producer too.
+        # It writes nothing -- nothing in the repo imports it; see TASK-1360.)
+        # Guard the cast anyway: a raise here would escape `compose()` and
+        # exit the whole application over a single headline field, so degrade
+        # by omitting the percent rather than raising.
         try:
             headline.append(f"{float(pct):.0f}% changed")
         except (TypeError, ValueError):

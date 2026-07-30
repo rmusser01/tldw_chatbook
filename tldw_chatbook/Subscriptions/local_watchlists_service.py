@@ -18,7 +18,11 @@ from ..Utils.egress import (
     guarded_fetch_httpx_async,
     origin_set,
 )
-from .item_persist import persist_subscription_item
+from .item_persist import (
+    CONTENT_FORMAT_TEXT,
+    CONTENT_KIND_ARTICLE,
+    persist_subscription_item,
+)
 from .watchlist_content_alert_service import WatchlistContentAlertService
 from .watchlist_filter_service import WatchlistFilterService
 from .watchlist_normalizers import (
@@ -1015,6 +1019,19 @@ class LocalWatchlistsService:
             "published_date": published_date,
             "author": author,
             "extracted_data": item if isinstance(item, Mapping) else {"value": item},
+            # TASK-1343. An API source produces articles, not site changes, so
+            # it must dispatch to `render_article` explicitly rather than rely
+            # on `render_for`'s fallback -- which is what silently rendered
+            # every kind the same way. `content` here is whatever JSON field
+            # the source's `field_map` points at, in whatever format the API
+            # chose; nothing converts it, and `_VALID_PAIRINGS` permits only
+            # "text" or "markdown" for an article, so "text" is the honest
+            # answer. Written even when the API supplied no content at all:
+            # the kind is still `article` (`render_article` then explains the
+            # missing body), and both values are non-None so they survive the
+            # filter below.
+            "content_kind": CONTENT_KIND_ARTICLE,
+            "content_format": CONTENT_FORMAT_TEXT,
         }
         return {key: value for key, value in normalized.items() if value is not None}
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
+from .watchlist_rule_matching import build_rule_haystack
+
 
 class WatchlistContentAlertService:
     """Evaluate per-item content-alert rules."""
@@ -13,9 +15,10 @@ class WatchlistContentAlertService:
         rules: list[Mapping[str, Any]],
     ) -> list[dict[str, Any]]:
         matched: list[dict[str, Any]] = []
-        haystack = " ".join(
-            str(item.get(key) or "") for key in ("title", "summary", "content", "author")
-        ).lower()
+        # Shared with `WatchlistFilterService` so the two cannot drift, and
+        # page-scoped rather than diff-scoped for a site change -- see
+        # `watchlist_rule_matching`.
+        haystack = build_rule_haystack(item)
         for rule in rules:
             conditions = dict(rule.get("conditions") or {})
             pattern = str(conditions.get("pattern") or "")
