@@ -14,6 +14,7 @@ opening a folder is fire-and-forget.
 
 from __future__ import annotations
 
+import ast
 import io
 import textwrap
 import tokenize
@@ -60,18 +61,35 @@ def test_open_folder_does_not_wait_on_the_child_process():
 
 @pytest.mark.unit
 def test_open_folder_still_launches_the_platform_handler():
-    """Not blocking must not mean not working."""
-    source = _handler_source()
+    """Not blocking must not mean not working.
 
-    # The launcher names are string literals, so this half reads the raw source.
+    The launcher names are read from actual string LITERALS in the parsed
+    handler, not from its raw text. Searching the raw source let the assertions
+    be satisfied by the explanatory comment -- which names `open` and `xdg-open`
+    while explaining why `subprocess.run` was wrong -- so a dropped platform
+    branch would still have passed. Same trap as the check above, opposite
+    direction.
+    """
+    literals = _string_literals(_handler_source())
+
     for expected in ("open", "xdg-open", "explorer"):
-        assert expected in source, (
-            f"the {expected!r} platform branch disappeared: the handler must "
-            "still open the folder, just without waiting for it"
+        assert expected in literals, (
+            f"the {expected!r} platform branch disappeared from the executable "
+            "code: the handler must still open the folder, just without waiting"
         )
-    assert "Popen" in _code_only(source), (
+    assert "Popen" in _code_only(_handler_source()), (
         "expected a non-waiting launch (Popen) after dropping subprocess.run"
     )
+
+
+def _string_literals(source: str) -> set[str]:
+    """Every string literal in the parsed source, ignoring comments and prose."""
+    tree = ast.parse(textwrap.dedent(source))
+    return {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
 
 
 def _handler_source() -> str:

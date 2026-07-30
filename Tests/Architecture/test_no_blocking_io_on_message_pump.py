@@ -106,6 +106,24 @@ BASELINE: dict[tuple[str, str, str], str] = {
         "action_refresh",
         "self._export_path.glob",
     ): "dead file, no importers",
+    # The archive opens in the same function, previously hidden behind the glob
+    # above -- surfaced only once the walk started reporting every blocking call
+    # per function rather than the first.
+    (
+        "UI/Chatbooks_Window.py",
+        "on_mount",
+        "zipfile.ZipFile",
+    ): "dead file, no importers",
+    (
+        "UI/Chatbooks_Window.py",
+        "on_button_pressed",
+        "zipfile.ZipFile",
+    ): "dead file, no importers",
+    (
+        "UI/Chatbooks_Window.py",
+        "action_refresh",
+        "zipfile.ZipFile",
+    ): "dead file, no importers",
     # `glob("*.zip")` plus one `stat` per entry -- no per-file archive open or
     # parse, unlike the pre-TASK-1320 scan that measured 1030ms. A stat per
     # chatbook is sub-millisecond for any realistic export directory.
@@ -226,7 +244,12 @@ def _paths_to_blocking(functions: dict[str, _Function], entry: str) -> list[list
         if info is None or name in seen:
             return
         if info.blocking:
-            found.append(path + [f"<{info.blocking[0]}>"])
+            # EVERY blocking call, not just the first. Reporting one per function
+            # would let a newly added expensive call hide behind an
+            # already-baselined cheap one in the same function -- reopening the
+            # hole that keying the baseline on the call was meant to close.
+            for call in dict.fromkeys(info.blocking):
+                found.append(path + [f"<{call}>"])
             return
         # Anything handed to a worker/thread is no longer on the pump.
         for callee in sorted(info.calls - info.deferred):
@@ -349,4 +372,34 @@ class Thing:
     functions, _ = _analyse(source)
     assert not _paths_to_blocking(functions, "on_button_pressed"), (
         "a @work-decorated callee runs off the pump and must not be reported"
+    )
+
+
+@pytest.mark.unit
+def test_guard_reports_every_blocking_call_in_a_function():
+    """One function with two blockers must report both, not just the first.
+
+    This is what makes the per-call baseline key mean anything. Reporting only
+    the first blocking call in a function lets a newly added expensive call hide
+    behind an already-baselined cheap one in the same function -- reintroducing
+    exactly the hole that keying on the call was meant to close. The shape is
+    real: the pre-TASK-1320 chatbook scan held a `glob` and a `ZipFile` open in
+    one function.
+    """
+    source = """
+class Thing:
+    def on_mount(self):
+        self._scan()
+
+    def _scan(self):
+        for item in self._dir.glob("*.zip"):
+            with ZipFile(item) as archive:
+                pass
+"""
+    functions, _ = _analyse(source)
+    calls = {chain[-1].strip("<>") for chain in _paths_to_blocking(functions, "on_mount")}
+
+    assert calls == {"self._dir.glob", "ZipFile"}, (
+        f"expected both blocking calls to be reported, got {sorted(calls)}: a new "
+        "expensive call can hide behind a baselined cheap one in the same function"
     )
