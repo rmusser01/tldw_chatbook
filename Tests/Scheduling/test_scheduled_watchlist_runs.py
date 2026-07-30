@@ -27,6 +27,7 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -34,6 +35,8 @@ from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler import (
     WatchlistCheckHandler,
 )
+from tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop
+from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
 from tldw_chatbook.Subscriptions.local_watchlists_service import (
     EXECUTABLE_SOURCE_TYPES,
@@ -153,6 +156,17 @@ def _task(subscription_id: int) -> dict:
 
 def _service(subs_db: SubscriptionsDB) -> LocalWatchlistsService:
     return LocalWatchlistsService(db_factory=lambda: subs_db)
+
+
+def _loop(subs_db: SubscriptionsDB, handler: WatchlistCheckHandler) -> SchedulerLoop:
+    """A real loop whose only source of work is the watchlist projection."""
+    tasks_db = MagicMock()
+    tasks_db.list_reminder_tasks.return_value = []
+    return SchedulerLoop(
+        tasks_db,
+        handlers={"watchlist_job": handler},
+        watchlist_projection=WatchlistProjection(subs_db),
+    )
 
 
 def _run_rows(subs_db: SubscriptionsDB) -> list[dict]:
@@ -352,7 +366,7 @@ async def test_failed_fetch_marks_run_failed_and_bumps_failures_once(
     implementation is `record_check_result`'s error branch,
     `DB/Subscriptions_DB.py:1318-1341`). The handler used to bump that counter
     via `record_check_error`; the service path reaches the identical call from
-    `record_run_failure` (`local_watchlists_service.py:492`), so the counter
+    `record_run_failure` (`local_watchlists_service.py:509`), so the counter
     must still advance -- exactly once, not twice.
     """
     subs_db = SubscriptionsDB(tmp_path / "subs.db")
@@ -413,6 +427,48 @@ async def test_failure_around_execution_still_records_run_and_error(
     row = subs_db.get_subscription(subscription_id)
     assert row["consecutive_failures"] == 1
     assert "source vanished mid-run" in (row["last_error"] or "")
+
+
+@pytest.mark.asyncio
+async def test_failure_recorder_itself_raising_still_records_the_check_error(
+    tmp_path, monkeypatch
+):
+    """The last-resort fallback: even the failure recorder can fail.
+
+    `_record_failure` prefers `record_run_failure` so the launched row is
+    marked, and falls back to `record_check_error` when that call itself
+    raises. Without the fallback the original error reaches no durable surface
+    at all -- the exact swallowed-failure shape this whole path exists to
+    prevent -- and the exception would escape `handle` into the scheduler loop.
+    """
+    subs_db = SubscriptionsDB(tmp_path / "subs.db")
+    subscription_id = _add_due_source(
+        subs_db, name="Watched page", type="url", source="https://example.com/watched"
+    )
+    service = _service(subs_db)
+
+    async def exploding_execute_run(run_id):
+        raise RuntimeError("source vanished mid-run")
+
+    async def exploding_record_run_failure(run_id, **kwargs):
+        raise RuntimeError("the run table is unwritable")
+
+    monkeypatch.setattr(service, "execute_run", exploding_execute_run)
+    monkeypatch.setattr(service, "record_run_failure", exploding_record_run_failure)
+
+    handler = _handler(subs_db, watchlists_service=service)
+    loop = _loop(subs_db, handler)
+    loop.queue.load()
+
+    # Through the real loop: an escaping exception here is what stops the
+    # scheduler dispatching every later task in the tick.
+    await loop.tick()
+
+    row = subs_db.get_subscription(subscription_id)
+    assert "source vanished mid-run" in (row["last_error"] or ""), (
+        "the ORIGINAL error must survive, not the recorder's own failure"
+    )
+    assert row["consecutive_failures"] == 1
 
 
 # --- guards the handler keeps ----------------------------------------------

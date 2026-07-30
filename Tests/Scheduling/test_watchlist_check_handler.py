@@ -299,8 +299,12 @@ async def test_handler_is_callable(handler):
     handler.watchlists_service.execute_run.assert_awaited_once_with(7)
 
 
-@pytest.mark.asyncio
-async def test_default_monitors_are_constructed():
+def test_default_monitors_are_built_lazily_not_at_construction():
+    """The monitors serve the shadow path alone, so the normal path skips them.
+
+    Shadow mode is off by default, so building both at construction meant every
+    handler paid -- at app start -- for two objects it never touched.
+    """
     db = MagicMock()
     with (
         patch(
@@ -311,10 +315,30 @@ async def test_default_monitors_are_constructed():
         ) as url_cls,
     ):
         handler = WatchlistCheckHandler(subscriptions_db=db)
+        feed_cls.assert_not_called()
+        url_cls.assert_not_called()
+
         assert handler.feed_monitor is feed_cls.return_value
         assert handler.url_monitor is url_cls.return_value
         feed_cls.assert_called_once_with()
         url_cls.assert_called_once_with(db=db, persist_snapshots=True)
+
+        # Cached, not rebuilt per access.
+        assert handler.feed_monitor is feed_cls.return_value
+        assert handler.url_monitor is url_cls.return_value
+        feed_cls.assert_called_once_with()
+        url_cls.assert_called_once_with(db=db, persist_snapshots=True)
+
+
+def test_shadow_url_monitor_does_not_persist_snapshots():
+    """`persist_snapshots` follows the mode actually in force at first use."""
+    db = MagicMock()
+    with patch(
+        "tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler.URLMonitor"
+    ) as url_cls:
+        handler = WatchlistCheckHandler(subscriptions_db=db, shadow_mode=True)
+        assert handler.url_monitor is url_cls.return_value
+        url_cls.assert_called_once_with(db=db, persist_snapshots=False)
 
 
 def test_default_service_is_bound_to_the_handlers_db():

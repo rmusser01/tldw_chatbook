@@ -76,23 +76,24 @@ class WatchlistCheckHandler:
             subscriptions_db: Persistent subscription store used to read
                 subscriptions and record run results/errors.
             feed_monitor: Monitor for RSS/Atom/JSON feed checks, used by the
-                shadow path only. A default ``FeedMonitor`` is created when
-                ``None``.
+                shadow path only. Built on first use when ``None``.
             url_monitor: Monitor for URL change checks, used by the shadow path
-                only. A default ``URLMonitor`` bound to ``subscriptions_db`` is
-                created when ``None``.
+                only. Built on first use, bound to ``subscriptions_db``, when
+                ``None``.
             shadow_mode: When ``True``, execute checks without mutating
                 ``subscriptions_db`` and emit metrics with a ``shadow`` label.
             watchlists_service: The service that owns run execution. A default
                 bound to ``subscriptions_db`` is created when ``None``.
         """
         self.subscriptions_db = subscriptions_db
-        self.feed_monitor = feed_monitor if feed_monitor is not None else FeedMonitor()
-        self.url_monitor = (
-            url_monitor
-            if url_monitor is not None
-            else URLMonitor(db=subscriptions_db, persist_snapshots=not shadow_mode)
-        )
+        # Held unbuilt: since TASK-1383 the monitors serve the shadow path
+        # alone, and shadow mode is off by default, so the normal path used to
+        # construct -- on every handler, at app start -- two objects it never
+        # touched. `URLMonitor.__init__` in particular takes the db and builds
+        # per-subscription circuit-breaker state. The properties below build
+        # them on first use, which is the shadow path or an injected test.
+        self._feed_monitor = feed_monitor
+        self._url_monitor = url_monitor
         self.shadow_mode = shadow_mode
         # A constructor parameter rather than a lookup inside `handle`, for the
         # same reason `feed_monitor`/`url_monitor` are: a test can hand in a
@@ -104,6 +105,26 @@ class WatchlistCheckHandler:
             if watchlists_service is not None
             else LocalWatchlistsService(db_factory=lambda: self.subscriptions_db)
         )
+
+    @property
+    def feed_monitor(self) -> FeedMonitor:
+        """The shadow path's feed monitor, built on first use."""
+        if self._feed_monitor is None:
+            self._feed_monitor = FeedMonitor()
+        return self._feed_monitor
+
+    @property
+    def url_monitor(self) -> URLMonitor:
+        """The shadow path's URL monitor, built on first use.
+
+        ``persist_snapshots`` is read from ``shadow_mode`` here rather than at
+        construction, so it cannot disagree with the mode actually in force.
+        """
+        if self._url_monitor is None:
+            self._url_monitor = URLMonitor(
+                db=self.subscriptions_db, persist_snapshots=not self.shadow_mode
+            )
+        return self._url_monitor
 
     async def handle(self, task: dict[str, Any]) -> None:
         """Process a single watchlist check task.
@@ -202,7 +223,7 @@ class WatchlistCheckHandler:
 
         Auto-pause parity: the run-failure path ends in
         ``SubscriptionsDB.record_check_error`` (``local_watchlists_service.py``
-        ``:492``), which is the exact call this handler used to make itself, so
+        ``:509``), which is the exact call this handler used to make itself, so
         ``consecutive_failures`` is bumped identically either way. Calling it
         again here would double-count it, so the ``run_id`` branch does not.
         """

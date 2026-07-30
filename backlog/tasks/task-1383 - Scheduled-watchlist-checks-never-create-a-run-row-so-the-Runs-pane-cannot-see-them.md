@@ -93,10 +93,18 @@ no caller — the sole production caller (`local_watchlists_service.py:448`) nev
 `record_check_error` (`:1391-1411`) bumps `consecutive_failures` but writes `is_paused = 1 if
 should_pause else 0`, defaulting to `False`. The old handler called
 `record_check_error(subscription_id, str(exc))`; the service reaches the *identical* call from
-`record_run_failure` (`local_watchlists_service.py:492`). So the counter advances exactly as
+`record_run_failure` (`local_watchlists_service.py:509`). So the counter advances exactly as
 before — and adding a compensating call in the handler's `except` would have double-bumped it.
 The latent bug (nothing ever auto-pauses; every failure actively clears `is_paused`) is out of
 scope here and filed as TASK-1410.
+
+**Intended behaviour change.** Scheduled checks now also run filter and content-alert
+*evaluation*, because that is part of `execute_run` and unifying onto it is the point — a
+scheduled check and a manual one should not disagree about which items survive filtering or which
+alert rules matched. No notification is *dispatched*: the handler's service is constructed with
+`notification_dispatcher=None`, so evaluation results are recorded against the run and nothing is
+sent. Wiring a dispatcher into the scheduled path is a separate decision, not a side effect of
+this one.
 
 **No double-write.** `execute_run` calls `record_check_result` itself, and it does not re-raise a
 fetch failure — so the handler neither records a second time nor expects an exception for the
