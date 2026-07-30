@@ -33,6 +33,22 @@ RUN_REAL_EMBEDDINGS = os.environ.get(
 
 
 @pytest.fixture(autouse=True)
+def _warm_transformers(request):
+    """Pull the session-scoped transformers warm-up only when real models will load.
+
+    The warm-up (torch cpu default + tiny-bert preload) is the meta-tensor guard the
+    old autouse conftest fixture provided; it is only needed when
+    TLDW_RUN_REAL_EMBEDDINGS actually enables real model loads (task-1451).
+
+    Args:
+        request: The pytest fixture request, used to lazily resolve the
+            session-scoped ``real_transformers_session`` fixture.
+    """
+    if RUN_REAL_EMBEDDINGS:
+        request.getfixturevalue("real_transformers_session")
+
+
+@pytest.fixture(autouse=True)
 def reset_circuit_breakers():
     """Reset all circuit breakers before each test."""
     # Clear the global circuit breaker registry before each test

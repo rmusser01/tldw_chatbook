@@ -150,9 +150,17 @@ class TestEmbeddingPerformance:
             service.close()
 
     @requires_embeddings
-    def test_real_model_performance(self):
-        """Benchmark performance with real embedding model"""
+    def test_real_model_performance(self, request):
+        """Benchmark performance with real embedding model.
+
+        Args:
+            request: The pytest fixture request, used to pull the session-scoped
+                ``real_transformers_session`` warm-up (torch cpu default +
+                tiny-bert preload) before a real model load — the guard the old
+                autouse fixture provided implicitly (task-1451 review).
+        """
         # This test uses actual model if available
+        request.getfixturevalue("real_transformers_session")
         try:
             service = EmbeddingsServiceWrapper(
                 model_name="sentence-transformers/all-MiniLM-L6-v2"
