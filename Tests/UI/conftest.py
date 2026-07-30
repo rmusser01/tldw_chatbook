@@ -12,8 +12,18 @@ from pathlib import Path
 _TEST_CONFIG_ROOT_ENV = "TLDW_TEST_CONFIG_ROOT"
 _TEST_CONFIG_OWNER_ENV = "TLDW_TEST_CONFIG_ROOT_OWNER"
 _existing_test_config_root = os.environ.get(_TEST_CONFIG_ROOT_ENV)
+# Per-xdist-worker sandbox subtree; see Tests/conftest.py for the rationale
+# (task-1453). Needed here too for runs rooted at Tests/UI, where the root
+# conftest is not loaded.
+_XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
+if _XDIST_WORKER and not __import__("re").fullmatch(r"[A-Za-z0-9_-]+", _XDIST_WORKER):
+    _XDIST_WORKER = None  # never join an unexpected id into a path
 if _existing_test_config_root:
     _BOOTSTRAP_CONFIG_ROOT = Path(_existing_test_config_root)
+    if _XDIST_WORKER and _BOOTSTRAP_CONFIG_ROOT.name != _XDIST_WORKER:
+        _BOOTSTRAP_CONFIG_ROOT = _BOOTSTRAP_CONFIG_ROOT / _XDIST_WORKER
+        _BOOTSTRAP_CONFIG_ROOT.mkdir(parents=True, exist_ok=True)
+        os.environ[_TEST_CONFIG_ROOT_ENV] = str(_BOOTSTRAP_CONFIG_ROOT)
     _OWNS_BOOTSTRAP_CONFIG_ROOT = False
 else:
     _BOOTSTRAP_CONFIG_ROOT = Path(tempfile.mkdtemp(prefix="tldw_test_config_"))

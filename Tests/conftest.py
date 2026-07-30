@@ -21,8 +21,25 @@ _SANDBOXED_ENV_NAMES = (
 )
 _PREVIOUS_TEST_ENV = {name: os.environ.get(name) for name in _SANDBOXED_ENV_NAMES}
 _existing_test_config_root = os.environ.get(_TEST_CONFIG_ROOT_ENV)
+# Under pytest-xdist the controller creates the sandbox root and workers
+# inherit it via the env; give each worker its own subtree so concurrent
+# workers never share a config/home/data dir (task-1453). The name guard keeps
+# re-entrant loads (Tests/UI/conftest.py, subprocess children) from suffixing
+# twice — the suffixed path is republished to the env below. The controller
+# owns the unsuffixed root and its sessionfinish rmtree removes the worker
+# subtrees with it.
+# The worker id is only ever xdist's own "gw<N>"; the strict pattern makes the
+# env-derived path join traversal-proof without pulling app-level path
+# validation into this pre-sys.path bootstrap (an id that fails the pattern is
+# ignored, falling back to the shared root).
+_XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
+if _XDIST_WORKER and not __import__("re").fullmatch(r"[A-Za-z0-9_-]+", _XDIST_WORKER):
+    _XDIST_WORKER = None
 if _existing_test_config_root:
     _BOOTSTRAP_CONFIG_ROOT = Path(_existing_test_config_root)
+    if _XDIST_WORKER and _BOOTSTRAP_CONFIG_ROOT.name != _XDIST_WORKER:
+        _BOOTSTRAP_CONFIG_ROOT = _BOOTSTRAP_CONFIG_ROOT / _XDIST_WORKER
+        _BOOTSTRAP_CONFIG_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
     _OWNS_BOOTSTRAP_CONFIG_ROOT = False
 else:
     _BOOTSTRAP_CONFIG_ROOT = Path(tempfile.mkdtemp(prefix="tldw_test_config_"))
@@ -467,7 +484,16 @@ def pytest_configure(config):
 
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
-    """Restore caller config variables and remove only an owned sandbox."""
+    """Restore caller config variables and remove only an owned sandbox.
+
+    In xdist workers the pre-suffix snapshot points at the controller's SHARED
+    sandbox, so restoring it here would aim HOME/XDG/TLDW_* back at shared
+    directories for the late-shutdown window (atexit hooks) — exactly the
+    isolation this sandboxing exists to provide. Workers are about to exit and
+    own nothing; skip both the restore and the (already owner-gated) cleanup.
+    """
+    if _XDIST_WORKER:
+        return
     for name, previous in _PREVIOUS_TEST_ENV.items():
         if previous is None:
             os.environ.pop(name, None)
