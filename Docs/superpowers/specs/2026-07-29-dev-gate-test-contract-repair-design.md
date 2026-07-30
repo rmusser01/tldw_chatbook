@@ -221,8 +221,13 @@ The failures reproduce on an exact `origin/dev` checkout:
   Pilot waits 30 seconds and raises `WaitForScreenTimeout` before the bounded
   predicate can be checked again. Replacing only that yield with
   `asyncio.sleep()` makes the same exact action/refresh predicate pass in under
-  a second; production behavior and the paired bulk-stage test are already
+  a second; production behavior and the paired bulk-stage semantics are already
   correct.
+- The required paired bulk-stage verification reproduces the same
+  `WaitForScreenTimeout` both with the bulk-unstage test and alone. Its
+  `stage_calls == [(1, 2)]` and second status-refresh predicate is already
+  satisfied by the real retained action; only the generic helper's global
+  screen-idle yield prevents the test from observing that completion.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -747,6 +752,11 @@ Update the tests to describe current behavior:
     settle. Retain the complete `_git_last_action` text assertion and the
     adjacent bulk-stage regression unchanged. Do not increase Textual's global
     screen timeout, change the shared helper, or alter production scheduling.
+71. After the required paired verification reproduces the identical timeout,
+    apply the same bounded event-loop loop to the bulk-stage summary regression.
+    Check the existing exact `stage_calls == [(1, 2)]` and `status_calls == 2`
+    predicate, retain its complete `_git_last_action` assertion, and leave the
+    shared helper and production unchanged.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1036,6 +1046,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   the event loop for this retained-worker predicate preserves its two-second
   bound and exact service evidence while avoiding a one-off helper or
   production test hook.
+- Leaving the paired bulk-stage test on the global-idle helper would preserve a
+  deterministic 30-second failure discovered by the required 4bn verification.
+  Generalizing the shared helper would widen the scheduler contract for
+  unrelated tests; the same local loop is the smaller correction.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

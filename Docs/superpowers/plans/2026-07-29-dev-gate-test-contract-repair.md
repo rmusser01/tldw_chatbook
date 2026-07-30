@@ -2836,7 +2836,54 @@ yielding via `asyncio.sleep(0.01)` between checks. Keep the exact
 Leave the shared helper, bulk-stage test, summary text, and production
 unchanged.
 
-- [ ] **Step 3: Verify File Notes Git coverage**
+- [ ] **Step 3: Verify the bulk-unstage repair and preserve the paired RED**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_library_file_notes_git.py::test_unstage_all_summary_counts_the_complete_displayed_snapshot \
+  -q
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_library_file_notes_git.py::test_stage_all_summary_counts_the_complete_displayed_snapshot \
+  -q
+../../.venv/bin/python -m ruff check Tests/UI/test_library_file_notes_git.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_library_file_notes_git.py
+git diff --check
+```
+
+Expected at this checkpoint: bulk Unstage passes; the unchanged paired Stage
+test reproduces `WaitForScreenTimeout` at the same generic helper and becomes
+Task 4bo's focused RED. Static checks pass and there are no production changes.
+Defer the full-module green expectation until Task 4bo.
+
+### Task 4bo: Settle the paired File Notes bulk-stage action
+
+**Files:**
+- Modify: `Tests/UI/test_library_file_notes_git.py`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This applies the same test-only scheduler boundary to the paired
+retained action after its required verification exposed the identical timeout.
+
+- [ ] **Step 1: Preserve the focused RED**
+
+Run `test_stage_all_summary_counts_the_complete_displayed_snapshot` alone.
+Expected before repair: the exact service predicate completes, but the generic
+helper's `pilot.pause(0.02)` requires global Textual idleness and raises
+`WaitForScreenTimeout` after 30 seconds.
+
+- [ ] **Step 2: Poll only the existing stage predicate**
+
+Replace that one `_wait_until()` call with at most 200 direct checks of the
+existing `stage_calls == [(1, 2)]` and `status_calls == 2` predicate, yielding
+with `asyncio.sleep(0.01)`. Raise
+`AssertionError("Stage All did not settle and refresh")` on exhaustion. Leave
+the shared helper, summary text, and production unchanged.
+
+- [ ] **Step 3: Verify both actions and the module**
 
 ```bash
 ../../.venv/bin/python -m pytest \
@@ -2852,8 +2899,8 @@ unchanged.
 git diff --check
 ```
 
-Expected: both bulk summary regressions and the full File Notes Git module
-pass, static checks pass, and no production file changes.
+Expected: both actions and the full module pass, static checks introduce no new
+debt, and there are no production changes.
 
 ### Task 5: Review and refresh the diagnostic inventory
 
