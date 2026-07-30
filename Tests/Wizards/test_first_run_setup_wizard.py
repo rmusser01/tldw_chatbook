@@ -20,7 +20,11 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     SummaryStep,
     ToolsStep,
 )
-from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+from tldw_chatbook.UI.Wizards.BaseWizard import (
+    WizardNavigation,
+    WizardProgress,
+    WizardStepConfig,
+)
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_PROTECT,
     STEP_PROVIDER,
@@ -65,6 +69,29 @@ async def test_welcome_track_choice_activates_quick_steps():
         assert STEP_PROVIDER in container.active_ids
         assert STEP_RAG not in container.active_ids
         assert container.active_ids[-1] == STEP_SUMMARY
+
+
+@pytest.mark.asyncio
+async def test_select_track_rebuilds_progress_in_original_slot():
+    """F-C regression (live-verified via tmux screenshot): _rebuild_progress
+    replaces the WizardProgress widget wholesale on every track change, but
+    ``parent.mount(fresh)`` with no ``before=``/``after=`` appends at the
+    container's END -- after WizardNavigation -- so the whole progress bar
+    rendered BELOW the Back/Next buttons instead of staying in its original
+    slot right after the title."""
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        await pilot.pause(0.2)
+        children = list(container.children)
+        progress = container.query_one(".wizard-progress", WizardProgress)
+        nav = container.query_one(".wizard-navigation", WizardNavigation)
+        steps_container = container.query_one(".wizard-steps-container")
+        assert children.index(progress) < children.index(steps_container)
+        assert children.index(progress) < children.index(nav)
 
 
 @pytest.mark.asyncio
@@ -211,6 +238,74 @@ async def test_provider_step_commit_writes_key_and_notes_key_entered():
         committed = wizard.commit_config.call_args.args[0]
         assert committed["api_settings.openai"]["api_key"] == "sk-new"
         wizard.note_key_entered.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_provider_step_commit_reads_pressed_radio_without_changed_event():
+    """F-A regression (UAT): ProviderStep relied solely on RadioSet.Changed
+    to set selected_provider_key. Textual's RadioSet distinguishes the
+    merely-*highlighted* button (arrow-key navigation, see
+    RadioSet.action_next_button) from the *pressed* one (pressed_button,
+    only set by an explicit toggle or an initial value=True at mount --
+    RadioSet._on_mount's "switched_on" handling never fires Changed). This
+    test simulates exactly that: a button IS pressed per the RadioSet's own
+    bookkeeping, but Changed genuinely never fired, so ProviderStep's own
+    handler never ran. commit() must still recover the real choice instead
+    of silently skipping (which is what left chat_defaults untouched during
+    live UAT)."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        radio_set = step.query_one("#setup-provider-choice", RadioSet)
+        target = step.query_one("#setup-provider-anthropic", RadioButton)
+        # Simulate the mount-time "switched_on" bookkeeping (or any other
+        # path) that leaves a button pressed without ever posting
+        # RadioButton.Changed / RadioSet.Changed.
+        radio_set._pressed_button = target
+        assert step.selected_provider_key == ""  # sanity: Changed truly never fired
+
+        ok, error = await step.commit()
+        assert ok, error
+        assert step.selected_provider_key == "anthropic"
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed["chat_defaults"]["provider"] == "anthropic"
+
+
+@pytest.mark.asyncio
+async def test_provider_step_nothing_pressed_still_legitimately_skips():
+    """The other half of the F-A fix: when the RadioSet genuinely reports no
+    pressed_button (nothing was ever toggled -- just the default focus
+    highlight), commit() must still skip, not fabricate a selection."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        radio_set = step.query_one("#setup-provider-choice", RadioSet)
+        assert radio_set.pressed_button is None  # sanity: nothing pressed
+
+        ok, error = await step.commit()
+        assert ok, error
+        assert step.selected_provider_key == ""
+        wizard.commit_config.assert_not_called()
 
 
 def test_provider_grouping_orders_cloud_then_local_then_custom():
@@ -702,6 +797,67 @@ async def test_model_step_clearing_custom_input_falls_back_to_radio_selection():
 
 
 @pytest.mark.asyncio
+async def test_model_step_commit_reads_pressed_radio_without_changed_event():
+    """F-A regression, same pattern as ProviderStep: a RadioButton pressed
+    without ever firing Changed must still be recovered at commit time."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard, discover_models=AsyncMock(return_value=["radio-model-a"]))
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.1)
+        radio_set = step.query_one("#setup-model-choice", RadioSet)
+        target = radio_set.query_one(RadioButton)
+        radio_set._pressed_button = target
+        assert step.selected_model_id == ""  # sanity: Changed truly never fired
+
+        ok, error = await step.commit()
+        assert ok, error
+        assert step.selected_model_id == "radio-model-a"
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed == {
+            "chat_defaults": {"provider": "OpenAI", "model": "radio-model-a"}
+        }
+
+
+@pytest.mark.asyncio
+async def test_model_step_no_provider_shows_pick_a_provider_copy():
+    """F-F regression: with no provider chosen yet, on_show must not leave
+    the initial "(loading models...)" placeholder forever -- there is
+    nothing to discover against, so the old code's ``if provider_key:``
+    guard just skipped the load entirely and the placeholder never got
+    replaced."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={},  # no "provider" entry at all -- provider_key is ""
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard, discover_models=AsyncMock(return_value=[]))
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.1)
+        radio_set = step.query_one("#setup-model-choice", RadioSet)
+        labels = [str(b.label) for b in radio_set.query(RadioButton)]
+        assert "(loading models…)" not in labels
+        assert any("pick a provider" in label.lower() for label in labels)
+
+
+@pytest.mark.asyncio
 async def test_model_step_curated_fallback_bridges_raw_provider_key(monkeypatch):
     """Task-6/7 finding: ProviderStep persists chat_defaults.provider as the
     RAW provider_key (e.g. "openai"), but config.toml's curated [providers]
@@ -866,6 +1022,41 @@ async def test_rag_step_missing_deps_shows_install_copy_and_commits_nothing():
         ok, _ = await step.commit()
         assert ok
         wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rag_step_commit_reads_pressed_radio_without_changed_event():
+    """F-A regression, same pattern as ProviderStep/ModelStep, applied to
+    RagStep's embedding-model RadioSet."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={"embedding_config": {"models": {"embed-a": {}, "embed-b": {}}}}
+        ),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = RagStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="rag", title="RAG", step_number=4),
+        deps_installed=lambda: True,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        radio_set = step.query_one("#setup-rag-model-choice", RadioSet)
+        target = step.query_one(RadioButton)
+        radio_set._pressed_button = target
+        assert step.selected_embedding_model == ""  # sanity: Changed never fired
+
+        ok, error = await step.commit()
+        assert ok, error
+        assert step.selected_embedding_model == str(target.label)
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed == {
+            "embedding_config": {"default_model_id": str(target.label)}
+        }
 
 
 @pytest.mark.asyncio
@@ -1133,6 +1324,39 @@ async def test_summary_step_renders_rows_from_read_back():
 
 
 @pytest.mark.asyncio
+async def test_summary_footer_shows_the_effective_config_path(monkeypatch, tmp_path):
+    """F-D regression (UAT): the footer's "Config file:" line must show the
+    REAL effective path -- resolved fresh via get_cli_config_path(), which
+    honors a TLDW_CONFIG_PATH override -- not an empty value."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    scratch_config = tmp_path / "scratch-config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(scratch_config))
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "quick"}},
+    )
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {},
+        rag_deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause()
+        footer = str(step.query_one("#setup-summary-footer", Static).render())
+        assert str(scratch_config) in footer
+        assert "Config file:" in footer
+
+
+@pytest.mark.asyncio
 async def test_summary_quick_track_shows_defaults_note():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -1267,6 +1491,143 @@ async def test_summary_exit_button_advances_the_wizard_without_an_event():
         from tldw_chatbook.Constants import TAB_CHAT
 
         assert app.wizard_result == {"completed": True, "exit_route": TAB_CHAT}
+
+
+@pytest.mark.asyncio
+async def test_ctrl_n_on_summary_dismisses_and_completes():
+    """F-B regression (UAT): pressing ctrl+n while ON the Summary step (the
+    last active step) must finish the wizard exactly like clicking its own
+    exit buttons or the WizardNavigation "Finish" button does -- dismiss the
+    screen and persist first_run.setup_completed.
+
+    Reaches Summary directly via select_track + show_step (not by clicking
+    through every prior step) so this test isolates ctrl+n's own dispatch
+    and _advance()/complete_wizard()/_handle_complete()'s worker wiring from
+    anything upstream."""
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        summary_index = container._step_index_for_id(STEP_SUMMARY)
+        container.show_step(summary_index)
+        await pilot.pause(0.2)
+        assert isinstance(container.steps[container.current_step], SummaryStep)
+
+        await pilot.press("ctrl+n")
+        await pilot.pause(0.3)
+
+        assert app.wizard_result == {"completed": True, "exit_route": None}
+
+
+@pytest.mark.asyncio
+async def test_ctrl_n_still_works_after_focus_was_on_a_now_hidden_widget():
+    """F-B ROOT CAUSE (found via live tmux repro + diagnostic instrumentation,
+    not the worker-group theory below): Textual's own focus-recovery when
+    the currently-focused widget becomes hidden (Screen._reset_focus, run
+    when a step's container gets `display: none` on every step change --
+    BaseWizard.show_step()'s `current.add_class("hidden")`) is unreliable:
+    depending on what else happens to sit in the global focus chain at that
+    moment, it can land back on None, OR on some OTHER incidentally-hidden
+    widget from the very step that just got hidden (observed live and
+    reproduced here: with nothing else to fall back to it goes fully None;
+    with an unrelated hidden sibling button present as a candidate, Textual
+    quietly refocuses THAT non-interactive widget instead -- neither is a
+    real focus target). Either way, a user whose last interaction was with a
+    control INSIDE a step's own content (a RadioButton, an Input -- as
+    opposed to the persistent WizardNavigation bar, which is never hidden)
+    ends up with no RELIABLE focus target; ctrl+n/ctrl+b (bound several
+    ancestors up from wherever the user last interacted) then have no
+    guaranteed focus chain to resolve bindings through and can go silently
+    inert -- confirmed live: a diagnostic log line inside
+    advance_programmatically() fired for three consecutive successful
+    ctrl+n presses and produced NOTHING on the fourth (Summary -> Finish),
+    while clicking the same "Finish" button worked immediately after and
+    also proved app.focused had indeed become None by then.
+
+    The fix (SetupWizardContainer.show_step()) makes this deterministic by
+    always explicitly re-focusing the persistent nav bar's own Next/Cancel
+    button after every step change, regardless of what Textual's own
+    fallback would have picked. Pin exactly that invariant -- "not None" is
+    too weak a check, since Textual's incidental fallback can accidentally
+    satisfy it without the wizard being reliably keyboard-navigable."""
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        await pilot.pause(0.1)
+
+        def _assert_focus_on_nav_bar() -> None:
+            nav_next = container.query_one("#wizard-next", Button)
+            nav_cancel = container.query_one("#wizard-cancel", Button)
+            assert app.focused in (nav_next, nav_cancel), (
+                f"expected focus on the persistent nav bar, got {app.focused!r}"
+            )
+
+        await pilot.press("ctrl+n")  # Welcome -> Provider
+        await pilot.pause(0.2)
+        _assert_focus_on_nav_bar()
+        provider_step = container.steps[container.current_step]
+        assert isinstance(provider_step, ProviderStep)
+        radio_set = provider_step.query_one("#setup-provider-choice", RadioSet)
+        radio_set.focus()
+        await pilot.pause(0.1)
+        assert app.focused is radio_set  # sanity: focus really is inside the step
+
+        await pilot.press("ctrl+n")  # Provider -> Model
+        await pilot.pause(0.2)
+        _assert_focus_on_nav_bar()
+
+        model_step = container.steps[container.current_step]
+        assert isinstance(model_step, ModelStep)
+        custom_input = model_step.query_one("#setup-model-custom", Input)
+        custom_input.focus()
+        await pilot.pause(0.1)
+        assert app.focused is custom_input  # sanity: focus is inside Model's own Input
+
+        for _ in range(10):
+            if app.wizard_result != "UNSET":
+                break
+            await pilot.press("ctrl+n")
+            await pilot.pause(0.2)
+            # Once the wizard has actually completed, the screen is
+            # dismissed and app.focused legitimately going None reflects
+            # that there is no more wizard to hold it -- only check the
+            # nav-bar-focus invariant while the wizard is still open.
+            if app.wizard_result == "UNSET":
+                _assert_focus_on_nav_bar()
+
+        assert app.wizard_result == {"completed": True, "exit_route": None}
+
+
+def test_finalize_worker_uses_a_dedicated_group_not_wizard_advance():
+    """F-B fix pin: _handle_complete() runs synchronously from inside
+    complete_wizard(), itself called synchronously from _advance() -- the
+    body of the CURRENTLY-RUNNING "setup-wizard-advance" worker whenever the
+    step being advanced past has no real await in its own commit() (true for
+    SummaryStep, which never overrides SetupStep's trivial default commit).
+    Scheduling _finalize into that same exclusive group asks Textual to
+    cancel_group() the group it is currently executing from inside itself --
+    confirmed harmless only by scheduling luck (a separately-created task
+    survives regardless), not by design. Pin the dedicated group so this
+    does not regress back to relying on that accident."""
+    app_instance = MagicMock()
+    app_instance.app_config = {}
+    real_container = SetupWizardContainer(app_instance)
+    calls = []
+
+    def _fake_run_worker(coro, **kwargs):
+        coro.close()  # never actually scheduled; avoid a "never awaited" warning
+        calls.append(kwargs)
+
+    real_container.run_worker = _fake_run_worker
+    real_container._handle_complete({"summary": {"exit_route": None}})
+    assert calls, "expected _handle_complete to schedule the finalize worker"
+    assert calls[0]["group"] == "setup-wizard-finalize"
+    assert calls[0]["group"] != "setup-wizard-advance"
 
 
 @pytest.mark.asyncio

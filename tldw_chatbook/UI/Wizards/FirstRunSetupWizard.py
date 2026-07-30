@@ -199,6 +199,44 @@ class ProviderStep(SetupStep):
         pressed_id = event.pressed.id or ""
         self.select_provider(pressed_id.removeprefix("setup-provider-"))
 
+    def _effective_provider_key(self) -> str:
+        """F-A fix: the RadioSet's own ``pressed_button`` is the source of
+        truth at commit time, not just the ``Changed``-driven instance
+        attribute.
+
+        ``self.selected_provider_key`` is set by ``select_provider()``, which
+        runs from two places: the ``RadioSet.Changed`` handler above (a real
+        keyboard-toggle/click), and ``_on_use_detected`` (the one-click
+        "Use this server" path, which never presses a RadioButton in
+        ``#setup-provider-choice`` at all). Textual's RadioSet distinguishes
+        the merely-*highlighted* button (arrow-key navigation moves this,
+        see ``RadioSet.action_next_button``/``action_previous_button``) from
+        the *pressed* one (``RadioSet.pressed_button``, only set by an
+        explicit toggle -- Enter/Space/click, or an initial ``value=True`` at
+        mount, see ``RadioSet._on_mount``'s ``switched_on`` handling) --
+        which never fires ``Changed``. No button in this step's catalog sets
+        ``value=True`` today, so this fallback is currently a no-op guard
+        against a future default selection (mirroring how WelcomeStep reads
+        its RadioButton's live ``.value`` instead of trusting an instance
+        attribute) or any other path that presses a radio without routing
+        through ``select_provider()``.
+
+        Preferring ``self.selected_provider_key`` when it is already set
+        keeps the "Use this server" one-click path correct even if an
+        earlier, different radio press left a stale ``pressed_button``
+        behind; the RadioSet is consulted only when this step's own
+        bookkeeping has nothing.
+        """
+        if self.selected_provider_key:
+            return self.selected_provider_key
+        try:
+            pressed = self.query_one("#setup-provider-choice", RadioSet).pressed_button
+        except Exception:
+            return ""
+        if pressed is None:
+            return ""
+        return (pressed.id or "").removeprefix("setup-provider-")
+
     @on(Button.Pressed, "#setup-provider-key-replace")
     def _on_replace(self) -> None:
         """Reveal the masked input so the user can type a new key.
@@ -328,8 +366,10 @@ class ProviderStep(SetupStep):
             read_wizard_prefill,
         )
 
-        if not self.selected_provider_key:
-            return True, ""  # skipping the step entirely is legal
+        provider_key = self._effective_provider_key()
+        if not provider_key:
+            return True, ""  # legitimately nothing pressed -- skip is correct
+        self.selected_provider_key = provider_key
         key_input = self.query_one("#setup-provider-key-input", Input)
         typed_key = (
             key_input.value.strip() if key_input.display and key_input.value else None
@@ -433,7 +473,16 @@ class ModelStep(SetupStep):
             yield Static("Pick a default model", classes="setup-title")
             yield Static("", id="setup-model-provider-line", classes="setup-subtitle")
             with RadioSet(id="setup-model-choice"):
-                yield RadioButton("(loading models…)", id="setup-model-loading")
+                # disabled=True: an un-disabled placeholder is a real,
+                # toggleable RadioButton -- pressing Enter/Space while it is
+                # the only/highlighted option (e.g. an impatient user, or
+                # discovery that never resolves) would fire RadioSet.Changed
+                # and commit the literal placeholder text as the model id
+                # (see _on_model_chosen). Same reasoning applies to the two
+                # other placeholders this step ever mounts, below.
+                yield RadioButton(
+                    "(loading models…)", id="setup-model-loading", disabled=True
+                )
             yield Label("Or enter a model name", classes="setup-field-label")
             yield Input(id="setup-model-custom", placeholder="model-id")
             yield Static("", classes="setup-step-error")
@@ -485,6 +534,18 @@ class ModelStep(SetupStep):
                 exclusive=True,
                 group="setup-model-load",
             )
+        else:
+            # F-F fix: with no provider chosen yet there is nothing to
+            # discover against, so the old code simply skipped this branch
+            # and left the initial "(loading models…)" RadioButton in place
+            # forever -- a permanently-stuck loading indicator for a state
+            # that was never actually loading. Replace it with copy that
+            # tells the user what to do instead.
+            self.run_worker(
+                self._render_models([], no_provider=True),
+                exclusive=True,
+                group="setup-model-load",
+            )
 
     async def _load_models(self, provider_key: str, provider_value: str) -> None:
         import asyncio
@@ -522,7 +583,9 @@ class ModelStep(SetupStep):
             )
         await self._render_models(models[:20])
 
-    async def _render_models(self, models: list[str]) -> None:
+    async def _render_models(
+        self, models: list[str], *, no_provider: bool = False
+    ) -> None:
         try:
             radio_set = self.query_one("#setup-model-choice", RadioSet)
         except Exception:
@@ -538,6 +601,14 @@ class ModelStep(SetupStep):
             await radio_set.mount_all(
                 RadioButton(model_id, id=f"setup-model-option-{index}")
                 for index, model_id in enumerate(models)
+            )
+        elif no_provider:
+            await radio_set.mount(
+                RadioButton(
+                    "Pick a provider first — or type a model name below",
+                    id="setup-model-no-provider",
+                    disabled=True,
+                )
             )
         else:
             await radio_set.mount(
@@ -576,15 +647,35 @@ class ModelStep(SetupStep):
         self.selected_model_id = model_id
         self._model_id_from_custom_input = False
 
+    def _effective_model_id(self) -> str:
+        """F-A fix: fall back to the RadioSet's own ``pressed_button`` when
+        this step's own bookkeeping (``selected_model_id``, updated only by
+        ``_on_model_chosen``/``_on_custom_model``) has nothing -- same
+        reasoning as ``ProviderStep._effective_provider_key``. The three
+        placeholder rows this step ever mounts (loading / no-provider /
+        no-models-found) are all ``disabled=True`` and so can never actually
+        become ``pressed_button``.
+        """
+        if self.selected_model_id:
+            return self.selected_model_id
+        try:
+            pressed = self.query_one("#setup-model-choice", RadioSet).pressed_button
+        except Exception:
+            return ""
+        return str(pressed.label) if pressed is not None else ""
+
     async def commit(self) -> tuple[bool, str]:
         _, provider_value = self._current_provider()
-        if not (provider_value and self.selected_model_id):
+        model_id = self._effective_model_id()
+        if not (provider_value and model_id):
             return True, ""  # skip-safe
         ok = await self.wizard.commit_config(
             wizard_state.build_model_commit(
-                provider_value=provider_value, model_id=self.selected_model_id
+                provider_value=provider_value, model_id=model_id
             )
         )
+        if ok:
+            self.selected_model_id = model_id
         return (True, "") if ok else (False, "Saving the model choice failed.")
 
     def get_step_data(self) -> Dict[str, Any]:
@@ -640,14 +731,27 @@ class RagStep(SetupStep):
     def _on_model(self, event: RadioSet.Changed) -> None:
         self.selected_embedding_model = str(event.pressed.label)
 
+    def _effective_embedding_model(self) -> str:
+        """F-A fix: same pressed-radio fallback as ProviderStep/ModelStep."""
+        if self.selected_embedding_model:
+            return self.selected_embedding_model
+        try:
+            pressed = self.query_one("#setup-rag-model-choice", RadioSet).pressed_button
+        except Exception:
+            return ""
+        return str(pressed.label) if pressed is not None else ""
+
     async def commit(self) -> tuple[bool, str]:
         from tldw_chatbook.UI.Wizards.first_run_setup_state import build_rag_commit
 
-        if not (self._deps_installed() and self.selected_embedding_model):
+        model_id = self._effective_embedding_model()
+        if not (self._deps_installed() and model_id):
             return True, ""
         ok = await self.wizard.commit_config(
-            build_rag_commit(default_model_id=self.selected_embedding_model)
+            build_rag_commit(default_model_id=model_id)
         )
+        if ok:
+            self.selected_embedding_model = model_id
         return (True, "") if ok else (False, "Saving the embedding model failed.")
 
     def get_step_data(self) -> Dict[str, Any]:
@@ -1114,13 +1218,29 @@ class SummaryStep(SetupStep):
         self.query_one("#setup-summary-rows", Static).update("\n".join(lines))
         from tldw_chatbook.config import get_cli_config_path
 
+        # F-D fix: resolving the path and updating the widget were one bare
+        # try/except Exception: pass -- ANY failure in either half (a
+        # get_cli_config_path() error, or the query_one below) left the
+        # footer exactly as compose() first rendered it (""), so the label
+        # itself never even appeared, and any real failure vanished with no
+        # trace. Resolve the path in its own guarded step with a visible
+        # fallback string, so the footer's "Config file:" line always shows
+        # SOMETHING and a genuine resolution failure is at least logged
+        # instead of silently producing an empty-looking row.
+        try:
+            config_path_text = str(get_cli_config_path())
+        except Exception:
+            logger.warning(
+                "Summary footer could not resolve the config path", exc_info=True
+            )
+            config_path_text = "(unknown — see Settings ▸ Diagnostics)"
         try:
             self.query_one("#setup-summary-footer", Static).update(
-                f"Config file: {get_cli_config_path()}\n"
+                f"Config file: {config_path_text}\n"
                 "Re-run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard."
             )
         except Exception:
-            pass
+            logger.debug("Summary footer widget unavailable to update", exc_info=True)
 
     @on(Button.Pressed, "#setup-exit-chat")
     def _exit_chat(self) -> None:
@@ -1258,6 +1378,36 @@ class SetupWizardContainer(WizardContainer):
             return None
         return self._step_index_for_id(self.active_ids[position - 1])
 
+    def show_step(self, step_index: int) -> None:
+        """F-B root cause fix: BaseWizard.show_step() (never modified --
+        this overrides it in the subclass, same pattern as update_progress/
+        handle_next/handle_back/action_next/action_back below) hides the
+        OUTGOING step via ``current.add_class("hidden")``, which sets
+        ``display: none`` on it. Textual clears focus to None once the
+        widget that held it is no longer displayed -- confirmed live via
+        diagnostic instrumentation across a real tmux session: a user whose
+        last interaction was with a control INSIDE a step's own content (a
+        RadioButton, an Input -- not the persistent WizardNavigation bar,
+        which is never hidden) loses ALL focus the instant that step is
+        hidden. With ``app.focused`` None, ctrl+n/ctrl+b (bound on THIS
+        container, several ancestors up from wherever the user last
+        interacted) have no focus chain left to resolve bindings through
+        and go silently inert -- the wizard "stays open" with no error or
+        indication anything happened. Re-focus a widget on the persistent
+        nav bar after every step change so a valid focus target always
+        exists, regardless of what the just-hidden step's own controls were
+        doing.
+        """
+        super().show_step(step_index)
+        try:
+            next_button = self.query_one("#wizard-next", Button)
+            if not next_button.disabled:
+                next_button.focus()
+            else:
+                self.query_one("#wizard-cancel", Button).focus()
+        except Exception:
+            logger.debug("Wizard step-change focus fix skipped", exc_info=True)
+
     def update_progress(self) -> None:
         """Recount against the ACTIVE subset, not the full step list."""
         try:
@@ -1272,9 +1422,26 @@ class SetupWizardContainer(WizardContainer):
 
     def _rebuild_progress(self) -> None:
         # WizardProgress has no watchers; replace it wholesale on track change.
+        #
+        # F-C fix: mount() with no before=/after= appends at the PARENT's
+        # END. BaseWizard.compose() yields WizardProgress as the container's
+        # SECOND child (right after the title, before the steps container
+        # and WizardNavigation) -- a plain parent.mount(fresh) re-inserted
+        # the replacement AFTER WizardNavigation instead, rendering the
+        # whole progress bar below the Back/Next buttons on every track
+        # change (live-verified via tmux screenshot). Capture the sibling
+        # that immediately followed the old widget and mount the
+        # replacement in that exact slot instead of just appending.
         try:
             old = self.query_one(".wizard-progress", WizardProgress)
             parent = old.parent
+            siblings = list(parent.children) if parent is not None else []
+            old_index = siblings.index(old) if old in siblings else None
+            next_sibling = (
+                siblings[old_index + 1]
+                if old_index is not None and old_index + 1 < len(siblings)
+                else None
+            )
             old.remove()
             fresh = WizardProgress(classes="wizard-progress")
             fresh.total_steps = len(self.active_ids)
@@ -1285,7 +1452,10 @@ class SetupWizardContainer(WizardContainer):
                 if self._step_index_for_id(step_id) is not None
             ]
             if parent is not None:
-                parent.mount(fresh)
+                if next_sibling is not None:
+                    parent.mount(fresh, before=next_sibling)
+                else:
+                    parent.mount(fresh)
         except Exception:
             logger.debug("Wizard progress rebuild skipped", exc_info=True)
 
@@ -1434,8 +1604,27 @@ class SetupWizardContainer(WizardContainer):
     def _handle_complete(self, wizard_data: Dict[str, Any]) -> None:
         summary_data = wizard_data.get(wizard_state.STEP_SUMMARY, {})
         exit_route = summary_data.get("exit_route")
+        # F-B fix: BaseWizard.complete_wizard() calls this callback
+        # SYNCHRONOUSLY (self.on_complete(self.wizard_data)), and it is
+        # itself invoked synchronously from _advance() -- which is the body
+        # of the currently-RUNNING "setup-wizard-advance" worker (Summary's
+        # own commit() has no real await, so nothing yields control back to
+        # the event loop between _advance() starting and reaching here).
+        # Scheduling _finalize into that SAME exclusive group from inside it
+        # asks Textual's WorkerManager.add_worker to cancel_group() the
+        # group it is currently executing -- i.e. cancel its own in-flight
+        # worker (confirmed via CPython's Task.__step_run_and_handle_result:
+        # a task whose coro returns normally while _must_cancel is set gets
+        # forced into the CANCELLED state anyway, "Task is cancelled right
+        # before coro stops"). A separately-created task happens to survive
+        # that regardless, which is why this was not visibly broken in
+        # testing -- but it is the same "worker schedules another worker
+        # into its own exclusive group" hazard ProtectKeysStep's
+        # _on_password_result already reasons about avoiding (see its
+        # comment) by using a dedicated group; do the same here rather than
+        # relying on a scheduling accident.
         self.run_worker(
-            self._finalize(exit_route), exclusive=True, group="setup-wizard-advance"
+            self._finalize(exit_route), exclusive=True, group="setup-wizard-finalize"
         )
 
     async def _finalize(self, exit_route: Optional[str]) -> None:

@@ -109,6 +109,41 @@ class TestFreshTemplateOfferGuard:
         assert wizard_state.should_offer_wizard(config, {}) is False
 
 
+class TestLoadSettingsProjectsFirstRun:
+    """UAT regression pin (F-E): ``app.py`` repoints ``self.app_config`` at
+    ``load_settings()`` (a differently-shaped, hand-curated projection of the
+    raw TOML), not at ``load_cli_config_and_ensure_existence()`` directly.
+    ``load_settings`` builds its return dict section-by-section (see
+    ``config.py``'s ``config_dict = {...}`` literal) and, before this fix,
+    never listed ``first_run`` among the sections it passes through -- every
+    other section the wizard depends on (``chat_defaults``, ``notes``,
+    ``console``, ...) IS listed. Every other test in this module reads back
+    via ``load_cli_config_and_ensure_existence`` (the raw loader), which does
+    carry ``first_run`` -- masking this exact gap. In the live app, the
+    dropped section meant ``should_offer_wizard``/``should_show_resume_toast``
+    never saw the persisted flags, so the wizard re-offered on every launch
+    even after a real completion."""
+
+    def test_completed_flag_survives_the_load_settings_projection(self, temp_config):
+        from tldw_chatbook.config import load_settings
+
+        _write(wizard_state.build_wizard_state_commit(completed=True))
+        settings = load_settings(force_reload=True)
+        assert settings["first_run"]["setup_completed"] is True
+        assert wizard_state.should_offer_wizard(settings, {}) is False
+
+    def test_started_only_flag_still_gates_offer_and_shows_resume_toast(
+        self, temp_config
+    ):
+        from tldw_chatbook.config import load_settings
+
+        _write(wizard_state.build_wizard_state_commit(started=True))
+        settings = load_settings(force_reload=True)
+        assert settings["first_run"]["setup_started"] is True
+        assert wizard_state.should_offer_wizard(settings, {}) is False
+        assert wizard_state.should_show_resume_toast(settings, {}) is True
+
+
 class TestEncryptionAtRest:
     def test_enable_encryption_encrypts_stored_key(self, temp_config):
         from tldw_chatbook.config import enable_config_encryption
