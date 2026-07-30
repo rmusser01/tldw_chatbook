@@ -107,6 +107,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #78 Transcription rejects a nonexistent local audio path before format conversion, provider setup, or model loading, returning `TranscriptionError` without attempting a Parakeet MLX download while preserving existing-file behavior for every provider.
 - [ ] #79 Model-artifact regressions that observe `os.scandir` scope their process-wide monkeypatches to the service call, preserving the traversal and directory-identity assertions without intercepting pytest's integer-file-descriptor cleanup.
 - [ ] #80 Full-app runtime-policy regressions suppress the unrelated startup model-catalog refresh through their existing startup helper, retaining exact action-owned notification assertions without filtering informational notifications or changing production behavior.
+- [ ] #81 Provider Settings regressions wait for the current Textual `Select` to mount its public `OptionList` descendant before assigning a value, instead of treating the earlier private `#label` child as readiness, while retaining exact save, placeholder, session-preservation, and handoff coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -192,6 +193,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 72. Validate the shared local-audio input boundary before conversion or provider dispatch so a missing WAV cannot trigger Parakeet model loading.
 73. Scope both Model Artifacts `os.scandir` monkeypatches to their service calls so pytest cleanup sees the original standard-library function.
 74. Disable unrelated startup model-catalog refresh work in the full-app runtime-policy startup helper while preserving exact notification coverage.
-75. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-76. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+75. Replace the two stale provider-Select `#label` readiness waits with the mounted public `OptionList` boundary and re-query the live Select after recomposition.
+76. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+77. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

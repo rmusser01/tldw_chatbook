@@ -261,6 +261,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   invoking the coordinator, but the unrelated asynchronous model-catalog
   refresh can finish afterward and append an informational notification. The
   exact coordinator-warning assertion then fails only under full-suite timing.
+- Two provider Settings regressions treat Textual `Select`'s private `#label`
+  child as the readiness boundary before assigning `Select.value`. During
+  category recomposition the label can be absent, or it can exist on a partial
+  Select before the required overlay `OptionList` mounts, producing
+  `NoMatches`.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -824,6 +829,10 @@ Update the tests to describe current behavior:
     `_refresh_model_catalogs()` coroutine with an async no-op before
     `run_test()`. Keep exact action-owned notification assertions and all
     runtime-policy behavior unchanged.
+79. In the two provider Settings regressions with a `#label` wait, wait for the
+    current screen's `#settings-provider-value OptionList` descendant instead,
+    then query the live `Select` before assigning its value. Preserve all
+    provider/model save, placeholder, session, and handoff assertions.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1153,6 +1162,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   real catalog refresh would add network/cache timing to a runtime-policy test.
   Disabling that single startup coroutine in the existing test helper preserves
   the exact assertion and keeps catalog behavior covered by its own suites.
+- Removing every Select readiness boundary would reintroduce the partial-mount
+  race, while importing Textual's private `SelectOverlay` class would couple
+  the tests to another internal name. Its public `OptionList` base is the child
+  that value assignment requires; waiting for it in the current screen DOM and
+  then re-querying the Select handles recomposition without a new helper.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

@@ -3191,6 +3191,42 @@ production.
 Expected: notification assertions remain exact, all runtime-policy coverage
 passes, and no startup catalog worker can append unrelated messages.
 
+### Task 4bw: Wait for the live provider Select overlay boundary
+
+**Files:**
+- Modify: `Tests/ProductionApp/test_provider_selection_ownership.py`
+- Modify: `Tests/UI/test_settings_configuration_hub.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This aligns two tests with the current Textual mount lifecycle and
+does not change production architecture or behavior.
+
+- [x] **Step 1: Confirm the stale readiness boundary**
+
+The full gate and focused production-app node show that private `#label`
+readiness is insufficient: the label can be absent, or present before the
+`Select`'s required overlay exists, so assigning `value` raises `NoMatches`.
+
+- [x] **Step 2: Wait on the required public child**
+
+In both provider Settings regressions that wait for `#label`, wait for the
+current screen's `#settings-provider-value OptionList` descendant and then
+query the live `Select`. Remove the now-unused generic `Widget` import. Keep
+all existing behavior assertions and production code unchanged.
+
+- [x] **Step 3: Verify focused and adjacent coverage**
+
+Run the two exact regressions, both changed modules, Ruff, format checks, and
+`git diff --check`.
+
+Expected: value assignment occurs only after the live Select is fully composed,
+and all existing save, placeholder, session, and handoff assertions pass.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

@@ -5975,7 +5975,11 @@ async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch
             SettingsCategoryId.PROVIDERS_MODELS,
             selector="#settings-provider-endpoint-value",
         )
-        await _wait_for_selector(screen, pilot, "#settings-provider-value #label")
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-provider-value OptionList",
+        )
         provider = screen.query_one("#settings-provider-value", Select)
         provider.value = "llama_cpp"
         screen.handle_provider_value_changed(Select.Changed(provider, "llama_cpp"))
