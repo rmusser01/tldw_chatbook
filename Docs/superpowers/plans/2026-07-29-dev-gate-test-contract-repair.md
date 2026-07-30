@@ -2087,6 +2087,43 @@ git diff --check
 Expected: Collections remain visibly blocked, their buttons remain pressable,
 and dedicated recovery behavior remains green.
 
+### Task 4ax: Tolerate Library rail remount during ingest completion
+
+**Files:**
+- Modify: `Tests/UI/test_library_shell.py`
+
+- [ ] **Step 1: Preserve the transient failure**
+
+Run `test_library_shell_ingest_canvas_different_canvas_isolation`. Expected
+under the failing interleaving: ingest completion schedules a rail recompose
+and the loop's unconditional Media-row `query_one()` raises during the
+temporary teardown frame.
+
+- [ ] **Step 2: Observe the remounted current row**
+
+Add a test-local `current_media_label()` that returns `None` while the row is
+absent, then use the existing bounded `_wait_for_condition` until the current
+label contains `Media (1)`. Include final label, selected row, and visible text
+in the callable timeout message. Keep the final Notes selection and
+ingest-widget absence assertions unchanged. Do not change production or add a
+wait helper.
+
+- [ ] **Step 3: Verify focused ingest lifecycle**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_library_shell.py::test_library_shell_ingest_canvas_different_canvas_isolation \
+  Tests/UI/test_library_shell.py::test_library_shell_ingest_canvas_live_updates_without_manual_recompose \
+  Tests/UI/test_library_shell.py::test_library_shell_ingest_canvas_registry_listener_removed_on_unmount \
+  -q
+../../.venv/bin/python -m ruff check Tests/UI/test_library_shell.py
+../../.venv/bin/python -m ruff format --check Tests/UI/test_library_shell.py
+git diff --check
+```
+
+Expected: completion survives the rail remount, publishes Media count 1, and
+does not change the selected Notes canvas or leak ingest controls.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

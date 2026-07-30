@@ -99,6 +99,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   handoff buttons pressable so their handler can emit the recovery warning,
   while `library-source-action-blocked` carries the blocked visual/state
   contract; dedicated tests already cover that press and tooltip behavior.
+- Completing a Library ingest refreshes the local-source snapshot and
+  intentionally recomposes the rail. The different-canvas isolation regression
+  calls `query_one("#library-row-browse-media")` on every poll, so it raises
+  during a legitimate teardown frame before it can observe the remounted
+  `Media (1)` row while Notes remains selected.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -475,6 +480,11 @@ Update the tests to describe current behavior:
     class assertion. Preserve selection, copy, item counts, empty guidance,
     geometry, and the dedicated blocked-press coverage without changing
     production or duplicating the handler test.
+54. In the different-canvas ingest isolation regression, read the current Media
+    label through a test-local nullable helper and use the existing bounded
+    `_wait_for_condition` until it remounts with count 1. Preserve the final
+    Notes selection and ingest-widget absence assertions; do not change
+    production or add another wait abstraction.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -670,6 +680,9 @@ behavior. No compatibility shims. No broad deletion of live tests.
   unreachable, while deleting the assertion would lose blocked-state coverage.
   Asserting pressable plus the established blocked class preserves both parts
   of the accepted interaction.
+- Catching `NoMatches` broadly or increasing sleeps would obscure whether the
+  Media row ever returns. Treating only temporary row absence as a false
+  bounded predicate keeps the count and canvas-isolation contracts exact.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
