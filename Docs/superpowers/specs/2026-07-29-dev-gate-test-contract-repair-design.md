@@ -804,8 +804,9 @@ Update the tests to describe current behavior:
     not exist before `_ensure_wav_format()` or provider dispatch. Raise the
     existing `TranscriptionError` with the missing path, retain conversion and
     provider behavior for existing inputs, and pin the Parakeet regression so
-    model loading cannot run. Remove the now-unreachable conditional Parakeet
-    check rather than retaining two competing validators.
+    model loading cannot run. Retain the private Parakeet helper's existing
+    conditional defense because direct helper coverage depends on it to avoid
+    initializing MLX when SoundFile is unavailable and the path is missing.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1121,7 +1122,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   `_ensure_wav_format()` to validate would mix path validation into a conversion
   helper and still leave direct provider helpers inconsistent. The public
   `transcribe()` entry is the smallest shared boundary and already documents a
-  local audio path.
+  local audio path. Removing the existing private Parakeet defense would make
+  direct helper calls initialize MLX for an input that is already known to be
+  invalid, so it remains as a narrow defense rather than a competing public
+  owner.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

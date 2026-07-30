@@ -3084,10 +3084,10 @@ the loader sentinel proves invalid input reaches model setup.
 - [ ] **Step 2: Validate the shared local-file boundary**
 
 Before conversion and provider dispatch, reject an audio path that does not
-exist with `TranscriptionError`. Remove the conditional Parakeet-only
-missing-file check because the public boundary now owns this invariant. Do not
-change existing-file, conversion, empty-file, routing, or managed-download
-behavior.
+exist with `TranscriptionError`. Retain the conditional Parakeet-only
+missing-file defense for direct helper calls that explicitly exercise the
+SoundFile-unavailable path. Do not change existing-file, conversion, empty-file,
+routing, or managed-download behavior.
 
 - [ ] **Step 3: Verify the focused and provider-adjacent coverage**
 
