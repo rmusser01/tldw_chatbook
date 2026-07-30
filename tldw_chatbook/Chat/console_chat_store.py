@@ -218,6 +218,15 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _invalid_runtime_backend_diagnostic(value: Any) -> str:
+    """Return bounded diagnostic context without invoking custom ``repr``."""
+    if type(value) is str:
+        truncated = value[:120]
+        suffix = "..." if len(value) > len(truncated) else ""
+        return f"{truncated!r}{suffix}"
+    return f"<{type(value).__name__[:120]}>"
+
+
 @dataclass
 class ConsoleChatSession:
     """A native Console chat session."""
@@ -1964,7 +1973,16 @@ class ConsoleChatStore:
         return self._snapshot(message)
 
     def persist_session_if_needed(self, session_id: str) -> str | None:
-        """Persist a session once, returning its persisted conversation ID."""
+        """Persist a session once, returning its persisted conversation ID.
+
+        Returns:
+            The persisted conversation ID, or ``None`` when no persistence
+            adapter is configured.
+
+        Raises:
+            ValueError: If ``runtime_backend`` is not exactly ``"local"`` or
+                ``"server"``.
+        """
         session = self._session_or_raise(session_id)
         if session.persisted_conversation_id is not None:
             return session.persisted_conversation_id
@@ -1974,7 +1992,16 @@ class ConsoleChatStore:
             type(session.runtime_backend) is not str
             or session.runtime_backend not in {"local", "server"}
         ):
-            return None
+            logger.bind(
+                session_id=session_id,
+                runtime_backend=_invalid_runtime_backend_diagnostic(
+                    session.runtime_backend
+                ),
+            ).error("Cannot persist Console session with invalid runtime backend.")
+            raise ValueError(
+                "Cannot persist Console session: runtime_backend must be "
+                "'local' or 'server'."
+            )
         scope_type, persisted_workspace_id = self._persistence_scope(session)
         local_character_id = session.local_character_id()
         identity_kwargs = {

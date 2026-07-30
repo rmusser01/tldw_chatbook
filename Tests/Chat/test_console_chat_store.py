@@ -711,6 +711,83 @@ def test_persist_session_if_needed_passes_none_system_prompt_without_settings():
     assert persistence.created_conversations[0]["system_prompt"] is None
 
 
+def test_persist_session_if_needed_reports_invalid_runtime_backend():
+    """Invalid provenance must fail visibly without any durable writes."""
+    from loguru import logger as loguru_logger
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Malformed chat", runtime_backend="invalid")
+    diagnostics: list[str] = []
+    sink_id = loguru_logger.add(
+        diagnostics.append,
+        level="ERROR",
+        format="{extra[session_id]} {extra[runtime_backend]} {message}",
+    )
+    try:
+        with pytest.raises(
+            ValueError, match="runtime_backend must be 'local' or 'server'"
+        ):
+            store.persist_session_if_needed(session.id)
+        with pytest.raises(
+            ValueError, match="runtime_backend must be 'local' or 'server'"
+        ):
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.USER,
+                content="Keep this message in memory",
+                persist=True,
+            )
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert persistence.created_conversations == []
+    assert persistence.created_messages == []
+    assert any(
+        session.id in diagnostic
+        and "'invalid'" in diagnostic
+        and "persist" in diagnostic.lower()
+        for diagnostic in diagnostics
+    ), diagnostics
+
+
+def test_persist_session_if_needed_handles_invalid_backend_with_raising_repr():
+    """Diagnostic formatting cannot replace the stable invalid-backend error."""
+    from loguru import logger as loguru_logger
+
+    class ExplodingBackend:
+        def __repr__(self):
+            raise RuntimeError("repr must not run")
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(
+        title="Malformed chat", runtime_backend=ExplodingBackend()
+    )
+    diagnostics: list[str] = []
+    sink_id = loguru_logger.add(
+        diagnostics.append,
+        level="ERROR",
+        format="{extra[session_id]} {extra[runtime_backend]} {message}",
+    )
+    try:
+        with pytest.raises(
+            ValueError, match="runtime_backend must be 'local' or 'server'"
+        ):
+            store.persist_session_if_needed(session.id)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert persistence.created_conversations == []
+    assert persistence.created_messages == []
+    assert any(
+        session.id in diagnostic
+        and "ExplodingBackend" in diagnostic
+        and "persist" in diagnostic.lower()
+        for diagnostic in diagnostics
+    ), diagnostics
+
+
 @pytest.mark.parametrize(
     ("session_kwargs", "expected"),
     [
@@ -1427,15 +1504,21 @@ def test_invalid_runtime_source_never_reaches_real_chat_persistence(
             character_name="Injected local card",
         )
 
-        conversation_id = store.persist_session_if_needed(session.id)
-        message = store.append_message(
-            session.id,
-            role=ConsoleMessageRole.USER,
-            content="Keep this message in memory",
-            persist=True,
-        )
+        with pytest.raises(
+            ValueError, match="runtime_backend must be 'local' or 'server'"
+        ):
+            store.persist_session_if_needed(session.id)
+        with pytest.raises(
+            ValueError, match="runtime_backend must be 'local' or 'server'"
+        ):
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.USER,
+                content="Keep this message in memory",
+                persist=True,
+            )
 
-        assert conversation_id is None
+        message = store.messages_for_session(session.id)[-1]
         assert session.persisted_conversation_id is None
         assert message.persisted_message_id is None
         assert create_calls == []

@@ -344,6 +344,23 @@ def test_create_conversation_exposes_and_threads_assistant_authority_id():
     )
 
 
+def test_create_conversation_documents_public_contract():
+    method = ChatConversationService.create_conversation
+    doc = inspect.getdoc(method)
+
+    assert doc is not None
+    assert "Args:" in doc
+    for name in inspect.signature(method).parameters:
+        if name != "self":
+            assert f"{name}:" in doc
+    assert "Omitting" in doc
+    assert "``None`` explicitly" in doc
+    assert "conversation_title or title" in doc
+    assert "Raw truthy" in doc
+    assert "Returns:" in doc
+    assert "Raises:" in doc
+
+
 def test_create_conversation_preserves_omitted_and_explicit_null_authority(
     tmp_path,
 ):

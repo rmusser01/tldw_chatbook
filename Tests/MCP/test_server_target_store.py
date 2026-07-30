@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -16,6 +17,22 @@ from tldw_chatbook.MCP.server_target_store import (
 from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
 
 _CANONICAL_SCOPE = "123e4567-e89b-42d3-a456-426614174000"
+
+
+def test_target_store_rejects_dangerous_path():
+    with pytest.raises(ValueError, match="dangerous pattern"):
+        ConfiguredServerTargetStore("../../mcp_server_targets.json")
+
+
+def test_configured_server_target_serialization_documents_public_contract():
+    to_dict_doc = inspect.getdoc(ConfiguredServerTarget.to_dict)
+    from_dict_doc = inspect.getdoc(ConfiguredServerTarget.from_dict)
+
+    assert to_dict_doc is not None
+    assert "Returns:" in to_dict_doc
+    assert from_dict_doc is not None
+    assert "Args:" in from_dict_doc
+    assert "Returns:" in from_dict_doc
 
 
 def _assert_canonical_uuid4(value: str) -> None:

@@ -235,6 +235,11 @@ class ConfiguredServerTarget:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the public JSON-compatible target mapping.
+
+        Returns:
+            Routing, authority, auth-reference, and status data.
+        """
         return {
             "server_id": self.server_id,
             "authority_scope_id": self.authority_scope_id,
@@ -252,6 +257,14 @@ class ConfiguredServerTarget:
 
     @classmethod
     def from_dict(cls, data: Any) -> "ConfiguredServerTarget":
+        """Normalize a configured target mapping.
+
+        Args:
+            data: Serialized target data; a non-mapping yields an empty legacy target.
+
+        Returns:
+            A normalized configured server target.
+        """
         if not isinstance(data, Mapping):
             return cls(
                 server_id="",

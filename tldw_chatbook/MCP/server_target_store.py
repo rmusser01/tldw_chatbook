@@ -8,6 +8,7 @@ from threading import RLock
 from typing import Any, Mapping, Sequence
 from uuid import UUID, uuid4
 
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 from .unified_control_models import ConfiguredServerTarget, TargetStatusMetadata
 
 _SERVER_TARGETS_FILENAME = "mcp_server_targets.json"
@@ -46,7 +47,18 @@ class ConfiguredServerTargetStore:
     _mutation_lock = RLock()
 
     def __init__(self, path: str | Path | None = None) -> None:
-        self.path = Path(path) if path else _default_server_targets_path()
+        """Initialize the configured target store.
+
+        Args:
+            path: Optional JSON file path for persisted server targets. ``None``
+                lazily selects ``mcp_server_targets.json`` in the current user
+                data directory.
+
+        Raises:
+            ValueError: If the selected path contains a dangerous pattern.
+        """
+        selected_path = Path(path) if path else _default_server_targets_path()
+        self.path = validate_path_simple(selected_path, require_exists=False)
 
     def load(self) -> list[ConfiguredServerTarget]:
         payload = self._read_payload()

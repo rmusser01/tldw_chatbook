@@ -50,6 +50,22 @@ def db_instance(db_path, client_id):
 
 @pytest.mark.integration
 class TestChatPersistenceService:
+    def test_create_conversation_documents_public_contract(self):
+        method = ChatPersistenceService.create_conversation
+        doc = inspect.getdoc(method)
+
+        assert doc is not None
+        assert "Args:" in doc
+        for name in inspect.signature(method).parameters:
+            if name != "self":
+                assert f"{name}:" in doc
+        assert "Omitting" in doc
+        assert "``None`` explicitly" in doc
+        assert "explicit normalized" in doc
+        assert "best-effort" in doc
+        assert "Returns:" in doc
+        assert "Raises:" in doc
+
     def test_persistence_service_never_uses_display_name_as_assistant_id(
         self, db_instance: CharactersRAGDB
     ):

@@ -2737,20 +2737,24 @@ UPDATE db_schema_version
     def get_local_authority_id(self) -> str:
         """Return this database's stable, bounded local character authority.
 
+        Returns:
+            The database-owned local authority identifier.
+
         Raises:
             CharactersRAGDBError: If the default identity is absent, ambiguous,
                 malformed, or cannot be read.
         """
 
         try:
-            rows = self.get_connection().execute(
-                """
-                SELECT local_authority_id
-                FROM rag_identity_context
-                WHERE context_name = 'default'
-                LIMIT 2
-                """
-            ).fetchall()
+            with self.transaction() as cursor:
+                rows = cursor.execute(
+                    """
+                    SELECT local_authority_id
+                    FROM rag_identity_context
+                    WHERE context_name = 'default'
+                    LIMIT 2
+                    """
+                ).fetchall()
         except sqlite3.Error as exc:
             raise CharactersRAGDBError(
                 "Local authority identity is unavailable or invalid."
@@ -3069,8 +3073,15 @@ UPDATE db_schema_version
         Usage:
             with db.transaction() as conn:
                 # Database operations using conn.execute(...)
-                # Commit is handled automatically on successful exit,
-                # rollback on exception.
+                # A manager-owned outer transaction commits on successful exit
+                # and rolls back on exception.
+
+        At managed depth zero, if the native SQLite connection already has an
+        active transaction, this context borrows that caller-owned transaction.
+        On either successful or exceptional exit, it does not commit or roll
+        back borrowed work; the caller retains transaction ownership. Nested
+        managed contexts only track depth and defer completion to their outer
+        transaction.
 
         Returns:
             TransactionContextManager: An object to be used in a `with` statement.
@@ -12848,6 +12859,7 @@ class TransactionContextManager:
         self.db = db_instance
         self.conn: Optional[sqlite3.Connection] = None
         self.is_outermost_transaction = False
+        self.borrows_native_transaction = False
 
     def __enter__(self):
         # Ensure transaction_depth is initialized for this thread
@@ -12865,10 +12877,18 @@ class TransactionContextManager:
         else:
             # This is the outermost transaction
             self.conn = self.db.get_connection()
+            if self.conn.in_transaction:
+                self.borrows_native_transaction = True
+                self.db._local.transaction_depth = 1
+                logger.debug(
+                    f"Borrowed caller-owned SQLite transaction on thread {threading.get_ident()}."
+                )
+                return self.conn.cursor()
+
+            # Set depth only after BEGIN succeeds so a failed BEGIN cannot corrupt it.
+            self.conn.execute("BEGIN")
             self.is_outermost_transaction = True
             self.db._local.transaction_depth = 1
-            # SQLite doesn't support nested transactions directly, but we use SAVEPOINTs for nested behavior
-            self.conn.execute("BEGIN")
             logger.debug(
                 f"Started outermost transaction on thread {threading.get_ident()}."
             )
@@ -12878,9 +12898,14 @@ class TransactionContextManager:
         """
         Handles the exit of the transaction context.
 
-        - If this is the outermost transaction and no exception occurred, commits the transaction.
-        - If this is the outermost transaction and an exception occurred, rolls back the transaction.
-        - If this is a nested transaction, decrements the depth counter and does nothing else.
+        - A manager-owned outermost transaction commits on successful exit and
+          rolls back on exceptional exit.
+        - At managed depth zero, a native SQLite transaction already active on
+          entry is borrowed. On successful or exceptional exit, this context
+          does not commit or roll back that caller-owned work; the caller
+          retains ownership.
+        - A nested managed transaction decrements the depth counter and defers
+          completion to its outer transaction.
 
         Args:
             exc_type: The type of the exception raised in the with block, if any.
@@ -12942,6 +12967,13 @@ class TransactionContextManager:
                     raise CharactersRAGDBError(
                         f"Rollback failed after exception: {rollback_err}. Original exception: {exc_val}"
                     ) from rollback_err
+        elif self.borrows_native_transaction:
+            if exc_type:
+                logger.debug(
+                    f"Exception in caller-owned transaction block on thread "
+                    f"{threading.get_ident()}: {exc_type.__name__}. Caller retains "
+                    "rollback ownership."
+                )
         elif exc_type:
             # If an exception occurred in a nested block, we don't do anything here.
             # The outermost block will handle the rollback.

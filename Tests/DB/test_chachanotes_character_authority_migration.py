@@ -1,6 +1,8 @@
+import inspect
 import json
 import re
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -134,6 +136,69 @@ def test_fresh_database_reaches_v28_and_local_authority_survives_reopen(
     reopened = CharactersRAGDB(path, client_id="authority-test")
     assert reopened.get_local_authority_id() == authority_id
     reopened.close_connection()
+
+
+def test_local_authority_accessor_uses_shared_transaction_seam(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / "authority-transaction.sqlite",
+        client_id="authority-transaction-test",
+    )
+    real_transaction = db.transaction
+    transaction_calls = 0
+
+    @contextmanager
+    def recording_transaction():
+        nonlocal transaction_calls
+        transaction_calls += 1
+        with real_transaction() as cursor:
+            yield cursor
+
+    monkeypatch.setattr(db, "transaction", recording_transaction)
+    try:
+        assert db.get_local_authority_id()
+        assert transaction_calls == 1
+    finally:
+        db.close_connection()
+
+
+def test_local_authority_accessor_borrows_caller_owned_sqlite_transaction(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / "authority-caller-transaction.sqlite",
+        client_id="authority-caller-transaction-test",
+    )
+    conn = db.get_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE rag_identity_context
+            SET local_authority_id = local_authority_id
+            WHERE context_name = 'default'
+            """
+        )
+        assert conn.in_transaction
+        assert db._local.transaction_depth == 0
+
+        assert db.get_local_authority_id()
+
+        assert conn.in_transaction
+        assert db._local.transaction_depth == 0
+    finally:
+        if conn.in_transaction:
+            conn.rollback()
+        db.close_connection()
+
+
+def test_local_authority_accessor_documents_public_contract() -> None:
+    doc = inspect.getdoc(CharactersRAGDB.get_local_authority_id)
+
+    assert doc is not None
+    assert "Returns:" in doc
+    assert "Raises:" in doc
 
 
 @pytest.mark.parametrize(
