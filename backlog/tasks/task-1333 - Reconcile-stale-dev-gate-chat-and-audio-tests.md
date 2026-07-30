@@ -84,7 +84,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #56 When an ingest completes while Notes is selected, the transiently recomposed Library rail eventually remounts its Media row with count 1, Notes remains selected, and ingest-path plus ingest-job widgets remain absent.
 - [ ] #57 MCP import-file regressions override only the workbench's import-containment-root seam, so temporary picked files remain valid without replacing process-wide home expansion or redirecting the isolated application config path to a directory; picker loading, unreadable-file, outside-home rejection, and size-cap coverage remain intact.
 - [ ] #58 MCP audit-detail fixtures use the current metadata-only execution-record schema; the rendered inspector retains identity, decision, duration, argument-name/count, result-type/size, and drill-through control coverage while proving raw argument values, result excerpts, and exception text are absent.
-- [ ] #59 Current Media browsing-shell regressions await the Textual worker manager after background search dispatch before inspecting results, resetting the search mock, selecting a result, or asserting query/pagination calls; list population, detail loading, filter propagation, and pagination coverage remain intact without sleeps or production changes.
+- [ ] #59 Current Media browsing-shell regressions identify the isolated mounted widget as the active screen-owned Media destination and await the Textual worker manager after background search dispatch before inspecting results, resetting the search mock, selecting a result, or asserting query/pagination calls; list population, detail loading, filter propagation, and pagination coverage remain intact without sleeps or production changes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -148,7 +148,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 50. Make the different-canvas ingest isolation regression tolerate the current Library rail remount while still requiring the updated Media count.
 51. Retarget MCP import-file path fixtures from process-wide `os.path.expanduser` replacement to the workbench's existing import-root seam.
 52. Align MCP audit-detail fakes and assertions with the current metadata-only execution-log schema.
-53. Settle current Media browsing-shell search workers before dependent fixture actions and assertions.
+53. Give current Media browsing-shell fixtures a live screen owner and settle their search workers before dependent actions and assertions.
 54. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
 55. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

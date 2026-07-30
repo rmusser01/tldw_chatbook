@@ -120,7 +120,10 @@ The failures reproduce on an exact `origin/dev` checkout:
   `Widget.run_worker()` but use only one `pilot.pause()` before reading rows,
   resetting the async service mock, or inspecting the next search call. The
   result-loading and item-selection nodes reproducibly reach those assertions
-  before `_run_media_search()` publishes the mocked results.
+  with an empty list. Waiting for workers reveals the deeper fixture defect:
+  `search_media` completes, but `_is_current_media_owner()` correctly rejects
+  presentation because the isolated mock app has no screen stack and the
+  mounted host screen does not name this widget as its `media_window`.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -515,12 +518,15 @@ Update the tests to describe current behavior:
     metadata. Inject legacy payload fields only in the two privacy regressions
     and assert their values/excerpts/text never render. Do not extract a new
     production helper or restore payload display.
-57. In the four Media tests that activate a type, await the widget host app's
-    existing worker manager before any action that depends on the initial
-    search. In the search-button and pagination tests, also await the newly
-    dispatched worker before inspecting its call. Retain the existing pilot
-    pause for reactive presentation; do not add sleeps, a polling helper, or a
-    production return-value seam.
+57. In each of the four Media tests that activate a type, publish the isolated
+    host screen through the mock app's `screen_stack` and set that screen's
+    `media_window` to the mounted widget before dispatch. Then await the widget
+    host app's existing worker manager before any action that depends on the
+    initial search. In the search-button and pagination tests, also await the
+    newly dispatched worker before inspecting its call. Retain the existing
+    pilot pause for reactive presentation; do not bypass
+    `_is_current_media_owner()`, add sleeps or a polling helper, or change
+    production.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -731,6 +737,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   scheduler-dependent, while changing `_perform_search()` solely to return a
   test handle would alter production for fixture convenience. Textual's worker
   manager already owns the exact completion boundary these tests need.
+- Monkeypatching `_is_current_media_owner()` to return true would skip the
+  route-ownership contract that protects replacement Media windows from stale
+  writes. Wiring the already-mounted screen and mock stack makes the isolated
+  fixture satisfy the real contract without another test abstraction.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

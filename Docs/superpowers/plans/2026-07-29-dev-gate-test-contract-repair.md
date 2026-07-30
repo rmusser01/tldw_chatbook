@@ -2203,7 +2203,7 @@ Expected: the rendered inspector exposes useful bounded metadata and no
 payload-bearing legacy fields. Existing full-file Ruff debt must remain
 unchanged; do not broadly reformat this test module under this repair.
 
-### Task 4ba: Settle Media browsing-shell search workers
+### Task 4ba: Restore Media browsing-shell ownership and settle search workers
 
 **Files:**
 - Modify: `Tests/UI/test_media_window_v88_textual.py`
@@ -2212,16 +2212,22 @@ unchanged; do not broadly reformat this test module under this repair.
 
 Run the result-loading and item-selection nodes independently. Expected before
 repair: both fail after one `pilot.pause()` because the background search has
-not populated `list_panel.items`.
+not populated `list_panel.items`. A worker-only repair remains red because the
+isolated mock app does not identify the mounted widget as its current
+screen-owned Media destination.
 
-- [ ] **Step 2: Await the existing worker owner**
+- [ ] **Step 2: Publish the existing owner and await its worker manager**
 
-After each of the four `activate_media_type()` calls, await
+Before each of the four `activate_media_type()` calls, set
+`mock_app_instance.screen_stack` to the mounted `window.screen` and set that
+screen's `media_window` to `window`, matching `_is_current_media_owner()`'s
+live contract. After each activation, await
 `pilot.app.workers.wait_for_complete()` before the test reads results, resets
-the search mock, or selects a row. In the search-button and pagination tests,
-also await worker completion after the user action and before inspecting the
-new service call. Keep the existing pilot pauses and all assertions. Do not add
-sleeps, a helper, or production behavior.
+the search mock, or selects a row, then keep the existing pilot pause. In the
+search-button and pagination tests, also await worker completion after the
+user action and before inspecting the new service call. Keep all assertions.
+Do not monkeypatch the ownership guard, add sleeps or a helper, or change
+production behavior.
 
 - [ ] **Step 3: Verify the current Media shell**
 
