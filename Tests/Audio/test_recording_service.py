@@ -441,9 +441,14 @@ class TestAudioRecordingIntegration:
 
                 # Simulate audio data
                 test_audio = b"\x00\x01" * 512
-                mock_stream.read.return_value = test_audio
 
-                service = AudioRecordingService(backend="pyaudio")
+                # use_vad=False: with webrtcvad installed, VAD classifies this
+                # synthetic buffer as non-speech, the callback below never
+                # fires, is_recording never flips, and the loop spins until
+                # pytest-timeout kills the whole run (task-1466). This test
+                # exercises the recording FLOW; VAD behavior is not its
+                # subject.
+                service = AudioRecordingService(backend="pyaudio", use_vad=False)
 
                 # Record for a short time
                 chunks_received = []
@@ -452,6 +457,18 @@ class TestAudioRecordingIntegration:
                     chunks_received.append(chunk)
                     if len(chunks_received) >= 3:
                         service.is_recording = False
+
+                # Belt and braces: bound the loop at the read() source too, so
+                # no future change to chunk handling can make it unbounded.
+                reads = {"n": 0}
+
+                def fake_read(*args, **kwargs):
+                    reads["n"] += 1
+                    if reads["n"] >= 10:
+                        service.is_recording = False
+                    return test_audio
+
+                mock_stream.read.side_effect = fake_read
 
                 service.start_recording(callback=callback)
 
@@ -475,7 +492,14 @@ class TestAudioRecordingIntegration:
                     mock_stream_class.return_value.__enter__.return_value = mock_stream
                     mock_stream_class.return_value.__exit__.return_value = None
 
-                    service = AudioRecordingService(backend="sounddevice")
+                    # use_vad=False for the same reason as the pyaudio flow test
+                    # above (task-1466): the 4-sample chunk below is smaller
+                    # than one 20ms VAD frame, so with VAD on the frame loop
+                    # never executes and nothing reaches the queue — the
+                    # assertion fails whenever webrtcvad is installed.
+                    service = AudioRecordingService(
+                        backend="sounddevice", use_vad=False
+                    )
 
                     # Start recording
                     service.start_recording()
