@@ -74,12 +74,29 @@ if str(PROJECT_ROOT) not in sys.path:
 try:  # pragma: no cover - hypothesis is a test-only dependency
     from hypothesis import HealthCheck, settings as _hypothesis_settings
 
+    # Example counts are env-scaled (task-1452): 'dev' keeps routine runs fast,
+    # CI sets TLDW_HYPOTHESIS_PROFILE=ci, and the scheduled deep run uses
+    # 'thorough' so the reduced dev depth has a compensating control.
+    # Hypothesis binds settings.default at DECORATION time, so this profile
+    # must be active whenever a test module is imported. Property modules that
+    # need extra health-check suppressions register a child profile with
+    # parent=settings.default and MUST restore this one at end of module —
+    # a leaked load_profile() silently reconfigures every later-imported
+    # module's unannotated @given tests (the pre-task-1452 state).
+    _pt_profile = os.environ.get("TLDW_HYPOTHESIS_PROFILE", "dev")
+    _pt_scale = {
+        "dev": {"max_examples": 25, "stateful_step_count": 20},
+        "ci": {"max_examples": 50, "stateful_step_count": 30},
+        "thorough": {"max_examples": 300, "stateful_step_count": 100},
+    }.get(_pt_profile, {"max_examples": 25, "stateful_step_count": 20})
+
     _hypothesis_settings.register_profile(
         "tldw",
         deadline=None,
         # `too_slow` fires for the same reason the deadline does: machine load,
         # not a slow strategy.
         suppress_health_check=[HealthCheck.too_slow],
+        **_pt_scale,
     )
     _hypothesis_settings.load_profile("tldw")
 except ImportError:

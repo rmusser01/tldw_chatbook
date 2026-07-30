@@ -28,12 +28,14 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import (
 #
 # --- Hypothesis Settings ---
 
-# A custom profile for database-intensive tests.
-# It increases the deadline and suppresses health checks that are common
-# but expected in I/O-heavy testing scenarios.
+# Child of the central 'tldw' profile (Tests/conftest.py, task-1452): inherits
+# deadline=None and the env-scaled max_examples, adds the health-check
+# suppressions these I/O-heavy tests need. The central profile is restored at
+# the END of this module — Hypothesis binds settings at decoration time, so an
+# unrestored load_profile leaks into every module imported after this one.
 settings.register_profile(
     "db_test_suite",
-    deadline=2000,
+    parent=settings.default,
     suppress_health_check=[
         HealthCheck.too_slow,
         HealthCheck.function_scoped_fixture,
@@ -616,6 +618,11 @@ class TestLargeMediaIdsFilterUsesJsonEach:
         assert captured_sql, "expected search_media_db to execute at least one query"
         assert all("json_each" not in q for q in captured_sql)
 
+
+# Restore the central profile: everything above bound "db_test_suite" at
+# decoration time; without this, every module imported after this one binds
+# "db_test_suite" too (task-1452).
+settings.load_profile("tldw")
 
 #
 # End of test_media_db_properties.py
