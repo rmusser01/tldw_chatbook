@@ -201,7 +201,8 @@ async def test_store_snapshot_prunes_within_its_own_transaction(monkeypatch):
     """
     n = _cap()
     db, _service, source_id = await _site_source(monkeypatch, [_page("seed")])
-    db.conn.execute("DELETE FROM url_snapshots")
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM url_snapshots")
 
     for i in range(n + 5):
         await _monitor_store(db, source_id, _URL_A, f"revision {i}")
@@ -230,7 +231,8 @@ async def test_a_pre_existing_backlog_collapses_on_the_very_next_write(monkeypat
     """
     n = _cap()
     db, _service, source_id = await _site_source(monkeypatch, [_page("seed")])
-    db.conn.execute("DELETE FROM url_snapshots")
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM url_snapshots")
 
     with db.transaction() as conn:
         for i in range(50):
@@ -275,7 +277,8 @@ async def test_shadow_mode_writes_nothing_and_therefore_prunes_nothing(monkeypat
 
     n = _cap()
     db, _service, source_id = await _site_source(monkeypatch, [_page("seed")])
-    db.conn.execute("DELETE FROM url_snapshots")
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM url_snapshots")
     for i in range(n + 4):
         await _monitor_store(db, source_id, _URL_A, f"revision {i}")
 
@@ -386,7 +389,8 @@ async def test_pruning_one_url_never_touches_another_urls_rows(monkeypatch):
     """
     n = _cap()
     db, _service, source_id = await _site_source(monkeypatch, [_page("seed")])
-    db.conn.execute("DELETE FROM url_snapshots")
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM url_snapshots")
 
     for i in range(n + 3):
         await _monitor_store(db, source_id, _URL_A, f"alpha {i}")
@@ -504,7 +508,8 @@ async def test_two_snapshots_sharing_a_created_at_both_survive_under_the_cap(
     one of them.
     """
     db, _service, source_id = await _site_source(monkeypatch, [_page("seed")])
-    db.conn.execute("DELETE FROM url_snapshots")
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM url_snapshots")
 
     tied = "2026-07-30 00:00:00"
     with db.transaction() as conn:
@@ -539,7 +544,8 @@ async def test_the_tie_break_decides_which_tied_row_is_pruned(monkeypatch):
     """
     n = _cap()
     db, _service, source_id = await _site_source(monkeypatch, [_page("seed")])
-    db.conn.execute("DELETE FROM url_snapshots")
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM url_snapshots")
 
     tied = "2026-07-30 00:00:00"
     with db.transaction() as conn:

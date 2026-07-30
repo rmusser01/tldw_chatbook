@@ -1505,10 +1505,19 @@ class URLMonitor:
             )
             pruned = cursor.rowcount
             if pruned > 0:
+                # Qodo/PR #1100: URLs can embed credentials
+                # (https://user:pass@host); the repo's log sanitizer redacts
+                # exactly that, so route the value through it rather than
+                # logging it raw.
+                from ..Utils.log_sanitizer import sanitize_string as _sanitize_log
+
                 logger.debug(
-                    f"Pruned {pruned} snapshot(s) for subscription "
-                    f"{subscription_id} url {url}, keeping the newest "
-                    f"{_SNAPSHOTS_KEPT_PER_URL}"
+                    "Pruned {} snapshot(s) for subscription {} url {}, "
+                    "keeping the newest {}",
+                    pruned,
+                    subscription_id,
+                    _sanitize_log(url),
+                    _SNAPSHOTS_KEPT_PER_URL,
                 )
 
 
