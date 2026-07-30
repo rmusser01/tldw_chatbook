@@ -54,9 +54,9 @@ from ...DB.Evals_DB import EvalsDB
 from ...Evals.word_bench.capture_client import WordBenchCaptureClient
 from ...Evals.word_bench.models import BenchConfig, Snippet, Target
 from ...Evals.word_bench.runner import CancelToken, CaptureClientLike, ProgressFn, WordBenchRunner
-from ...Evals.word_bench.storage import save_bench
+from ...Evals.word_bench.storage import load_bench, save_bench
 from .evals_state import EvalsViewModel
-from .snippet_editor import import_snippets_into_dataset
+from .snippet_editor import dataset_snippets, import_snippets_into_dataset
 
 #: The spec's own worked example (design doc "Empty states and first run" +
 #: its Δ-baseline mockup): two minimal pairs differing by exactly one loaded
@@ -466,3 +466,178 @@ async def create_and_run_sample_bench(
         target_id=target.id,
         run_group_id=outcome.group_id,
     )
+
+
+@dataclass(frozen=True)
+class RunBenchResult:
+    """What running an existing bench produced."""
+
+    task_id: str
+    run_group_id: str
+
+
+def _resolve_targets(db: EvalsDB, config: BenchConfig) -> list[Target]:
+    """The bench's target columns, resolved from their ``eval_models`` rows.
+
+    Uses the same lookup ``bench_editor.py``'s target table renders from
+    (``db.get_model``) -- the row a deleted ``eval_models`` row leaves
+    dangling there as ``"(deleted target <id>) — unresolvable"``. This
+    function raises instead of rendering a placeholder: a run cannot
+    proceed with a target it cannot resolve to real provider/model_id
+    values.
+
+    Raises:
+        RuntimeError: Naming the first ``target_id`` that no longer
+            resolves to a live, non-deleted ``eval_models`` row.
+    """
+    targets: list[Target] = []
+    for target_id in config.target_ids:
+        model = db.get_model(target_id)
+        if model is None:
+            raise RuntimeError(
+                f"Target {target_id!r} could not be resolved -- its "
+                "eval_models row is missing or was deleted."
+            )
+        targets.append(
+            Target(
+                id=model["id"],
+                name=model["name"],
+                provider=model["provider"],
+                model_id=model["model_id"],
+            )
+        )
+    return targets
+
+
+def _load_snippets(db: EvalsDB, dataset_id: str) -> list[Snippet]:
+    """The bench's dataset snippets, via the same inline-storage reader
+    ``snippet_editor.py``'s read path uses (``dataset_snippets``) rather
+    than a second query against ``eval_datasets.metadata``.
+
+    Raises:
+        RuntimeError: If the dataset no longer exists, or exists but has
+            no snippets to run against -- an empty grid is never a valid
+            run.
+    """
+    dataset = db.get_dataset(dataset_id)
+    if dataset is None:
+        raise RuntimeError(f"Dataset {dataset_id!r} was not found.")
+    raw_snippets = dataset_snippets(dataset)
+    if not raw_snippets:
+        name = dataset.get("name") or dataset_id
+        raise RuntimeError(f"Dataset {name!r} has no snippets to run.")
+    return [
+        Snippet(
+            id=str(snippet["id"]),
+            text=str(snippet.get("text") or ""),
+            group=snippet.get("group"),
+            note=snippet.get("note"),
+        )
+        for snippet in raw_snippets
+    ]
+
+
+async def run_existing_bench(
+    view_model: EvalsViewModel,
+    app_config: Optional[Mapping[str, Any]],
+    task_id: str,
+    *,
+    client_factory: Optional[Callable[[Target], CaptureClientLike]] = None,
+    progress: Optional[ProgressFn] = None,
+    cancel_token: Optional[CancelToken] = None,
+) -> RunBenchResult:
+    """Runs an already-saved bench -- the engine call behind the Run Bench
+    button.
+
+    Sibling of ``create_and_run_sample_bench``: that function creates a
+    dataset, bench, and (if needed) target before running them; this one
+    runs a bench that already exists (its dataset, target(s), and
+    ``eval_tasks`` row were all created earlier, e.g. by a bench author
+    using ``bench_editor.py``), resolving everything it needs from the
+    database rather than building it fresh. Shares
+    ``_default_client_factory`` and ``_mark_orphaned_runs_cancelled`` with
+    that function, so both entry points behave identically in production
+    and under a hard cancellation.
+
+    Args:
+        view_model: The screen's read side; ``view_model.db`` must be a
+            real ``EvalsDB`` (callers should already know this from the
+            screen being usable at all, but this function re-checks and
+            raises rather than silently no-op-ing if called directly
+            against a wiring-failed service).
+        app_config: The app's loaded settings (``TldwCli.app_config``),
+            read only for ``api_settings.llama_cpp`` when
+            ``client_factory`` is not supplied.
+        task_id: The bench's ``eval_tasks`` row id (``storage.save_bench``'s
+            return value).
+        client_factory: Overrides the real HTTP client -- tests inject a
+            fake here, mirroring ``create_and_run_sample_bench``'s own
+            parameter (and ``Tests/Evals/word_bench/test_runner.py``'s
+            ``FakeClient`` convention) so this function never makes a real
+            network call under test. ``None`` (the default, production
+            path) builds a real ``WordBenchCaptureClient`` against the
+            configured llama.cpp endpoint.
+        progress: Forwarded verbatim to ``WordBenchRunner.run`` -- lets a
+            caller drive a visible "N/M" running state.
+        cancel_token: Forwarded verbatim to ``WordBenchRunner.run`` -- lets
+            a caller request COOPERATIVE cancellation (checked once per
+            cell; the runner itself then marks its rows ``"cancelled"`` and
+            returns normally). A caller relying on a HARD cancellation
+            instead (e.g. an exclusive Textual worker being superseded)
+            should not expect this token to help -- see
+            ``_mark_orphaned_runs_cancelled``, used below for that case,
+            same as ``create_and_run_sample_bench``.
+
+    Returns:
+        The bench's task id and the resulting run group id -- the run has
+        already completed (or failed target-by-target; see
+        ``WordBenchRunner.run``, which persists ``CellError`` rows rather
+        than raising on an unreachable target) by the time this returns.
+        Each call creates a NEW run group: there is no cross-run cache, so
+        re-running a bench after a failed attempt leaves the failed run
+        group's rows untouched and produces a second, independent one.
+
+    Raises:
+        RuntimeError: If the evaluation service is unavailable, ``task_id``
+            does not name an existing, readable bench, any of its targets
+            no longer resolve to a live ``eval_models`` row, or its dataset
+            is missing or has no snippets.
+        asyncio.CancelledError: If this coroutine itself is hard-cancelled
+            (e.g. by Textual's ``exclusive=True`` worker mechanism) while
+            ``runner.run`` is in flight. Re-raised after marking any
+            already-created run rows for this bench ``"cancelled"`` (see
+            ``_mark_orphaned_runs_cancelled``) -- never swallowed, since a
+            caller (and Textual's own worker bookkeeping) needs to see the
+            real cancellation.
+    """
+    db = view_model.db
+    if db is None:
+        raise RuntimeError("The evaluation service is unavailable.")
+
+    try:
+        config = load_bench(db, task_id)
+    except Exception as exc:
+        # load_bench raises TypeError for a task_id with no matching row
+        # (get_task returns None) and can raise KeyError for a task_id
+        # that exists but isn't a word bench (its config_data lacks
+        # prompt_mode/top_k) -- both are "this isn't a runnable bench",
+        # collapsed here into one RuntimeError naming the id, mirroring
+        # bench_editor.py's own broad `except Exception` around this same
+        # call.
+        raise RuntimeError(f"Bench {task_id!r} could not be read: {exc}") from exc
+
+    targets = _resolve_targets(db, config)
+    snippets = _load_snippets(db, config.dataset_id)
+
+    factory = client_factory or _default_client_factory(app_config)
+    runner = WordBenchRunner(db, factory)
+    try:
+        outcome = await runner.run(
+            config, targets, snippets, task_id,
+            progress=progress, cancel_token=cancel_token,
+        )
+    except asyncio.CancelledError:
+        _mark_orphaned_runs_cancelled(db, task_id)
+        raise
+
+    return RunBenchResult(task_id=task_id, run_group_id=outcome.group_id)
