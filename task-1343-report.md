@@ -357,3 +357,145 @@ the next mutation.
 * `tldw_chatbook/Subscriptions/watchlist_filter_service.py`,
   `watchlist_content_alert_service.py` — both call the shared haystack.
 * `Tests/Subscriptions/test_watchlist_content_kind_producer.py` — 12 → 17 tests.
+
+---
+
+# Fix round 2 (PR #1092 / Qodo)
+
+Baseline before this round: `3c3fec30e`.
+
+## 1. Bug — the diff bound protected storage but not memory (fixed)
+
+Correct, and the mechanism is exactly as described: `emitted = list(unified_diff(...))` bounded what
+was *stored* while leaving peak allocation proportional to the whole diff, on a path that runs
+inside a scheduled fetch over pages the egress layer admits up to `MAX_FETCH_BYTES_PAGE` (10 MB).
+
+`build_change_diff` now consumes the generator **once**, in a single pass:
+
+* the first `_HEADER_LINES` yielded items are skipped by index (the positional header rule from
+  round 1 is unchanged, just applied during iteration instead of by slicing);
+* `total_lines`, `added` and `removed` accumulate as lines go past;
+* `kept` grows only while both caps hold; when a cap is hit, a `truncated` flag is set and
+  iteration **continues** so the counters keep describing the whole change rather than the retained
+  slice;
+* the post-processing (no-textual-change notice, notice-first, summary suffix) is unchanged, and
+  `total` in the notice now comes from `total_lines`.
+
+Verified output-preserving: the same input through the shipped code and through a materialising
+stand-in produces byte-identical body and summary (asserted in the test, not just observed).
+
+**Measured, differentially, in-process** (4,000 segments per side → 8,001 diff lines):
+
+| | peak allocation |
+|---|---|
+| streaming (shipped) | 1,289 KiB |
+| `list(...)` materialised | 1,945 KiB |
+| ratio | **1.51×**, stable at 1.50–1.55× across 4k/12k/20k segments and repeat runs |
+
+### What the tests do and do not prove
+
+Two tests, deliberately separated because they prove different things.
+
+`test_a_diff_far_larger_than_the_cap_is_bounded_with_accurate_counts` — the **behavioural** half.
+On a diff twenty times the line cap it proves: the body is exactly `_MAX_DIFF_LINES + 1` lines, the
+char bound holds, the summary reports all 4,000 additions and 4,000 removals, the notice's own
+total equals `added + removed + 1` (the single `@@` header these disjoint inputs produce), and the
+retained body contains **far fewer** `+` lines than the count reports — which is what shows the
+counters cannot have come from the retained slice, i.e. that iteration really continued past the
+cap. **It proves nothing about memory**; it passes identically under the materialising mutation.
+
+`test_the_diff_generator_is_not_materialised` — the **memory** half, and the honest limits of it:
+
+* it is a **differential** measurement (shipped vs a materialising stand-in, same input, same
+  process), not an absolute budget — an absolute threshold would be a machine-specific magic
+  number;
+* it asserts `peak_streamed < peak_listed * 0.85` against a measured 0.65, deliberately wide so it
+  does not become a flaky allocation assertion;
+* it does **not** prove "peak memory is proportional to the caps, not the input", and I want to be
+  explicit that the stronger claim is **not achievable here**: `_segment_for_diff` must build both
+  segment lists in full, because `difflib.SequenceMatcher` needs random access to both sequences,
+  and its internal `b2j` index is O(len(b)) as well. Those terms remain proportional to the page.
+  What the change removes is the diff-output term *on top* of them — about a third of peak — and
+  what it guarantees is that the only term scaling with the **diff** is now the one bounded by
+  `_MAX_DIFF_LINES`/`_MAX_DIFF_CHARS`. Making the whole function O(caps) would mean not using
+  `difflib`, which is a different task.
+
+## 2. Rule violation — file-backed test DB (fixed)
+
+All four `SubscriptionsDB(tmp_path / "subscriptions.db", "test")` sites are now
+`SubscriptionsDB(":memory:", "test")`. The whole file passes (19/19), so nothing depended on the DB
+being on disk. `tmp_path` became unused in twelve signatures and the `_site_source` helper, and was
+removed rather than left as a dead parameter — which, incidentally, disposes of most of item 3.
+
+Worth recording *why* `:memory:` is safe here rather than leaving it as a compliance change:
+`SubscriptionsDB` keeps a **thread-local** connection and builds the schema on the constructing
+thread's connection only — `SubscriptionsDB._initialize_schema` documents this, because every
+`sqlite3.connect(":memory:")` opens a fresh empty database, so an in-memory instance touched from a
+second thread finds zero tables. These tests are single-threaded (the service is awaited directly;
+no worker, no `call_from_thread`), so the caveat does not apply. It is now stated in the helper's
+docstring, so a future test that adds a thread has the trap in front of it.
+
+## 3. `Args:` in test docstrings — judgment applied, not blanket compliance
+
+I measured the precedent independently and reproduce the coordinator's figure exactly: **50 of
+1,392** `.py` files under `Tests/` contain an `Args:` section — 3.6%. (Narrowed to `test_*.py`
+files only it is 43 of 1,315, 3.3%.) So the convention exists but is a small minority, and Qodo
+itself rates the item "unclear" for tests.
+
+Decision: **`Args:` only where a parameter is genuinely non-obvious; bare pytest fixtures stay
+undocumented.** Applied as:
+
+* `_serve` — documented. `pages` has real semantics a reader cannot guess (one body per fetch, in
+  order, last entry repeated on exhaustion), and `content_type` selects which parser
+  `_fetch_and_parse_feed` uses.
+* `_site_source` — documented, and this is the case that justifies the policy: `change_threshold`
+  is not merely non-obvious, it is a **trap**. It is a whole-page character-level similarity
+  measure, so a small edit to a long page never clears the 0.1 default and the test silently gets
+  zero items — which is exactly what happened to the round-1 rule-scope tests on their first run.
+  That belongs in an `Args:` entry; "tmp_path: the pytest temporary directory fixture" does not.
+* every test function — not documented. After item 2 they take at most `monkeypatch`, and several
+  take nothing at all. Twenty repetitions of a boilerplate fixture description would dilute
+  docstrings whose value is explaining *why the test exists*.
+
+## Round-2 verification
+
+```
+Tests/Subscriptions/ + Tests/Scheduling/   341 passed  (19 in the new file, up from 17)
+Tests/Watchlists/                          189 passed
+Tests/DB/ -k subscription                   47 passed, 563 deselected
+Tests/UI/ -k watchlist                       3 failed, 232 passed   (see below)
+```
+
+### A note on the `Tests/UI/ -k watchlist` baseline — it is wider than one test
+
+Three runs of the identical command in this round produced three different failing sets:
+
+| run | failures |
+|---|---|
+| 1 | 2 × chevron, `test_watchlists_source_create_form::test_clicking_any_row_of_the_name_input_focuses_it[size0]`, `test_watchlists_source_frequency_control::test_frequency_options_are_reachable_when_expanded[size1]` (**4**) |
+| 2 | 2 × chevron, `test_watchlists_source_create_form::test_a_source_can_be_created_end_to_end_through_the_form[size1]` (**3**) |
+| pre-round-2 | 2 × chevron, `test_watchlists_source_create_form::test_typing_straight_after_opening_the_form_lands_in_name[size1]` (**3**) |
+
+The two chevron failures are constant. The rest is the TASK-1345 order-dependent mount race, and
+the finding worth recording is that **it is not confined to one named test**: it moves between tests
+within `test_watchlists_source_create_form.py` and has also surfaced once in
+`test_watchlists_source_frequency_control.py`. Both files pass **19/19 in isolation**, and neither
+can be reached by anything in this round (the source change is confined to `build_change_diff`,
+which no UI test in this selection exercises; the test-file change is under `Tests/Subscriptions/`,
+which `-k watchlist` over `Tests/UI/` does not collect). Quoting a fixed name for this baseline will
+keep producing false regressions.
+
+### Round-2 mutation outcome
+
+| Mutation | Result |
+|---|---|
+| E — restore `list(unified_diff(...))` materialisation | **1 failed** (`test_the_diff_generator_is_not_materialised`); the other 18 stayed green, which is the point: the behavioural test correctly does not claim to cover memory |
+
+Source restored from a pre-mutation copy and `diff`-verified byte-identical afterwards.
+
+### Files changed in this round
+
+* `tldw_chatbook/Subscriptions/monitoring_engine.py` — single-pass streaming diff with
+  continue-past-cap counters.
+* `Tests/Subscriptions/test_watchlist_content_kind_producer.py` — 17 → 19 tests; `:memory:` DB;
+  `tmp_path` removed throughout; `Args:` added to the two helpers that earn it.

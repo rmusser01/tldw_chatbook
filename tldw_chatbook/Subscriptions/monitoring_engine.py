@@ -377,19 +377,50 @@ def build_change_diff(previous_text: str, current_text: str) -> tuple[str, str]:
     """
     old_segments = _segment_for_diff(previous_text)
     new_segments = _segment_for_diff(current_text)
-    emitted = list(
+
+    # The generator is consumed ONCE and never materialized (PR #1092 review,
+    # Bug #1): `list(unified_diff(...))` bounded what was *stored* but left peak
+    # memory proportional to the whole diff. The fetch layer admits pages up to
+    # `MAX_FETCH_BYTES_PAGE` (10 MB) and 110-char segmentation turns one of
+    # those into a very long segment list, so the intermediate diff of two of
+    # them can be enormous -- and this runs inside a scheduled fetch, where
+    # memory pressure is both least visible and least welcome. Counters are
+    # accumulated as the lines go past, and iteration DELIBERATELY continues
+    # after a cap is hit so `total_lines`, `added` and `removed` still describe
+    # the whole change rather than the retained slice.
+    kept: List[str] = []
+    chars = 0
+    total_lines = 0
+    added = 0
+    removed = 0
+    truncated = False
+    for index, line in enumerate(
         unified_diff(
             old_segments,
             new_segments,
             n=_DIFF_CONTEXT_SEGMENTS,
             lineterm="",
         )
-    )
-    # Drop the two file headers by POSITION, never by pattern -- see
-    # `_HEADER_LINES` and `_DIFF_CONTEXT_SEGMENTS` for what a pattern match
-    # deletes along with them.
-    lines = emitted[_HEADER_LINES:]
-    if not lines:
+    ):
+        # Drop the two file headers by POSITION, never by pattern -- see
+        # `_HEADER_LINES` and `_DIFF_CONTEXT_SEGMENTS` for what a pattern match
+        # deletes along with them.
+        if index < _HEADER_LINES:
+            continue
+        total_lines += 1
+        if line.startswith("+"):
+            added += 1
+        elif line.startswith("-"):
+            removed += 1
+        if truncated:
+            continue
+        if len(kept) >= _MAX_DIFF_LINES or chars + len(line) + 1 > _MAX_DIFF_CHARS:
+            truncated = True
+            continue
+        kept.append(line)
+        chars += len(line) + 1
+
+    if not total_lines:
         # Reachable: the content hash is taken over the raw extracted text,
         # while segmentation trims and normalizes whitespace, so a
         # whitespace-only or markup-only change hashes differently and diffs
@@ -398,25 +429,15 @@ def build_change_diff(previous_text: str, current_text: str) -> tuple[str, str]:
         # content was never captured, when in fact it was and it matched.
         return _NO_TEXTUAL_CHANGE_NOTICE, "no textual change after normalization"
 
-    added = sum(1 for line in lines if line.startswith("+"))
-    removed = sum(1 for line in lines if line.startswith("-"))
     summary = f"{added} line(s) added, {removed} removed"
-
-    kept: List[str] = []
-    chars = 0
-    for line in lines:
-        if len(kept) >= _MAX_DIFF_LINES or chars + len(line) + 1 > _MAX_DIFF_CHARS:
-            break
-        kept.append(line)
-        chars += len(line) + 1
-    if len(kept) < len(lines):
+    if truncated:
         # First line, not last -- see `_DIFF_TRUNCATION_NOTICE`. And in the
         # headline as well, which needs no scrolling to reach.
         kept.insert(
             0,
             _DIFF_TRUNCATION_NOTICE.format(
                 kept=len(kept),
-                total=len(lines),
+                total=total_lines,
                 max_lines=_MAX_DIFF_LINES,
                 max_chars=_MAX_DIFF_CHARS,
             ),

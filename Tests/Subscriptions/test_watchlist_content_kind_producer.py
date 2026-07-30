@@ -55,8 +55,15 @@ def _response(text: str, *, content_type: str = "text/html") -> SimpleNamespace:
 def _serve(monkeypatch, pages: list[str], *, content_type: str = "text/html") -> None:
     """Serve `pages` in order from the monitoring engine's guarded fetch.
 
-    The last page is repeated once the list is exhausted, so a test can do any
-    number of extra checks without the fetch running out.
+    Args:
+        pages: One body per fetch, in order. The last entry is repeated once
+            the list is exhausted, so a test can make extra checks (e.g. a
+            third one that must detect nothing) without the fetch running out.
+        content_type: Returned as the `content-type` header, which
+            `_fetch_and_parse_feed` branches on to choose its parser.
+
+    (`monkeypatch` is a bare pytest fixture and is deliberately not documented
+    here -- see the report on this file's `Args:` policy.)
     """
     remaining = list(pages)
 
@@ -131,16 +138,30 @@ _RSS = """<?xml version="1.0" encoding="utf-8"?>
 
 
 async def _site_source(
-    tmp_path, monkeypatch, pages: list[str], *, change_threshold: float | None = None
+    monkeypatch, pages: list[str], *, change_threshold: float | None = None
 ):
     """A real `url` source, its DB and service, with `pages` served in order.
 
-    `change_threshold` defaults to the DB's own 0.1 (a 10% character-level
-    difference). Pass 0.0 when the point of the test is a *small* edit to a long
-    page, which is otherwise discarded by `check_url` before it ever produces an
-    item -- as happened while writing the rule-scope tests below.
+    The database is `:memory:` per CLAUDE.md. It is safe here specifically
+    because these tests are single-threaded: `SubscriptionsDB` keeps a
+    *thread-local* connection and builds the schema on the constructing
+    thread's, so an in-memory instance touched from a second thread would find
+    zero tables (documented in `SubscriptionsDB._initialize_schema`). Nothing
+    below crosses a thread -- the service is awaited directly, with no worker.
+
+    Args:
+        pages: Passed straight to `_serve`.
+        change_threshold: The source's `change_threshold`, or `None` to keep the
+            DB default of 0.1 -- a 10% *character-level* difference over the
+            whole page. Pass 0.0 when the point of a test is a *small* edit to a
+            long page: `check_url` otherwise discards it before producing any
+            item at all, which is what silently emptied the rule-scope tests
+            below on their first run.
+
+    Returns:
+        `(db, service, source_id)`.
     """
-    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    db = SubscriptionsDB(":memory:", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
     _serve(monkeypatch, pages)
     payload = {
@@ -158,9 +179,7 @@ async def _site_source(
 
 
 @pytest.mark.asyncio
-async def test_a_real_site_change_is_dispatched_to_the_change_renderer(
-    tmp_path, monkeypatch
-):
+async def test_a_real_site_change_is_dispatched_to_the_change_renderer(monkeypatch):
     """AC#3, driven end to end: fetch, detect, persist, normalize, dispatch.
 
     The first check only stores a baseline (`check_url` returns `None` with no
@@ -174,7 +193,7 @@ async def test_a_real_site_change_is_dispatched_to_the_change_renderer(
     assignment in `check_url` reddens this test.
     """
     db, service, source_id = await _site_source(
-        tmp_path, monkeypatch, [_PAGE_BEFORE, _PAGE_AFTER]
+        monkeypatch, [_PAGE_BEFORE, _PAGE_AFTER]
     )
 
     first = await _check(service, source_id)
@@ -201,9 +220,7 @@ async def test_a_real_site_change_is_dispatched_to_the_change_renderer(
 
 
 @pytest.mark.asyncio
-async def test_the_stored_change_content_is_a_diff_not_the_whole_new_page(
-    tmp_path, monkeypatch
-):
+async def test_the_stored_change_content_is_a_diff_not_the_whole_new_page(monkeypatch):
     """`content` used to be `current_content["text"]` -- the entire new page.
 
     So the reader could see what the page says now but never what changed,
@@ -213,7 +230,7 @@ async def test_the_stored_change_content_is_a_diff_not_the_whole_new_page(
     twice, and that `render_change` actually colours those lines.
     """
     db, service, source_id = await _site_source(
-        tmp_path, monkeypatch, [_PAGE_BEFORE, _PAGE_AFTER]
+        monkeypatch, [_PAGE_BEFORE, _PAGE_AFTER]
     )
     await _check(service, source_id)
     await _check(service, source_id)
@@ -250,9 +267,7 @@ async def test_the_stored_change_content_is_a_diff_not_the_whole_new_page(
 
 
 @pytest.mark.asyncio
-async def test_the_change_headline_carries_a_diff_summary_and_a_real_percentage(
-    tmp_path, monkeypatch
-):
+async def test_the_change_headline_carries_a_diff_summary_and_a_real_percentage(monkeypatch):
     """AC#4, plus the scale of `change_percentage`.
 
     `diff_summary` is rendered by `render_change` and had no producer at all.
@@ -262,7 +277,7 @@ async def test_the_change_headline_carries_a_diff_summary_and_a_real_percentage(
     unscaled 25% change would have printed "0% changed".
     """
     db, service, source_id = await _site_source(
-        tmp_path, monkeypatch, [_PAGE_BEFORE, _PAGE_AFTER]
+        monkeypatch, [_PAGE_BEFORE, _PAGE_AFTER]
     )
     await _check(service, source_id)
     await _check(service, source_id)
@@ -288,9 +303,7 @@ async def test_the_change_headline_carries_a_diff_summary_and_a_real_percentage(
 
 
 @pytest.mark.asyncio
-async def test_change_type_is_derived_from_the_snapshots_not_hardcoded(
-    tmp_path, monkeypatch
-):
+async def test_change_type_is_derived_from_the_snapshots_not_hardcoded(monkeypatch):
     """`change_type` was the literal `"content"` for every change ever.
 
     Only the distinctions the two snapshots actually support are claimed:
@@ -307,7 +320,6 @@ async def test_change_type_is_derived_from_the_snapshots_not_hardcoded(
 
     # And it reaches the DB from a real check: this page loses all of its text.
     db, service, source_id = await _site_source(
-        tmp_path,
         monkeypatch,
         [_PAGE_BEFORE, "<html><body><script>x=1</script></body></html>"],
     )
@@ -326,9 +338,7 @@ async def test_change_type_is_derived_from_the_snapshots_not_hardcoded(
 
 
 @pytest.mark.asyncio
-async def test_a_feed_item_is_stored_as_an_article_with_a_legal_format(
-    tmp_path, monkeypatch
-):
+async def test_a_feed_item_is_stored_as_an_article_with_a_legal_format(monkeypatch):
     """AC#2. The RSS path wrote neither field, so it relied on `render_for`'s
     fallback -- which is what made the dispatch untestable in the first place.
 
@@ -336,7 +346,7 @@ async def test_a_feed_item_is_stored_as_an_article_with_a_legal_format(
     plain text or HTML and nothing on this path converts it to markdown.
     Claiming `"markdown"` would hand publisher HTML to a CommonMark parser.
     """
-    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    db = SubscriptionsDB(":memory:", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
     _serve(monkeypatch, [_RSS], content_type="application/rss+xml")
 
@@ -364,9 +374,7 @@ async def test_a_feed_item_is_stored_as_an_article_with_a_legal_format(
 
 
 @pytest.mark.asyncio
-async def test_an_api_item_is_stored_as_an_article_with_a_legal_format(
-    tmp_path, monkeypatch
-):
+async def test_an_api_item_is_stored_as_an_article_with_a_legal_format(monkeypatch):
     """The API path is normalized in the service, not the monitoring engine,
     and had the same gap. Its body is whatever JSON field the source's
     `field_map` points at, in whatever format the API chose and unconverted,
@@ -397,7 +405,7 @@ async def test_an_api_item_is_stored_as_an_article_with_a_legal_format(
         fake_guarded,
     )
 
-    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    db = SubscriptionsDB(":memory:", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
     source = await service.create_source(
         {
@@ -421,7 +429,7 @@ async def test_an_api_item_is_stored_as_an_article_with_a_legal_format(
 
 
 @pytest.mark.asyncio
-async def test_an_oversized_change_is_truncated_and_says_so(tmp_path, monkeypatch):
+async def test_an_oversized_change_is_truncated_and_says_so(monkeypatch):
     """A large page can produce an enormous diff, and this goes into a TEXT
     column and a pane about nine rows tall.
 
@@ -468,7 +476,6 @@ async def test_an_oversized_change_is_truncated_and_says_so(tmp_path, monkeypatc
     # truncation must be visible to a reader who never scrolls: the summary is
     # in `render_change`'s headline.
     db, service, source_id = await _site_source(
-        tmp_path,
         monkeypatch,
         [f"<html><body><p>{before}</p></body></html>",
          f"<html><body><p>{after}</p></body></html>"],
@@ -485,6 +492,122 @@ async def test_an_oversized_change_is_truncated_and_says_so(tmp_path, monkeypatc
     head = "\n".join(plain.splitlines()[:4])
     assert "truncated" in head, (
         "a reader who never scrolls must still be told the diff was cut"
+    )
+
+
+def test_a_diff_far_larger_than_the_cap_is_bounded_with_accurate_counts():
+    """PR #1092 review, Bug #1: the caps bound the body, the counters do not.
+
+    `build_change_diff` consumes `unified_diff` as a generator and stops
+    *appending* once a cap is hit, but deliberately keeps *iterating* so
+    `total_lines`, `added` and `removed` describe the whole change rather than
+    the retained slice. That is the behavioural half of the streaming fix, and
+    it is what this test pins: a diff twenty times the line cap still yields a
+    capped body whose headline and notice tell the truth about what was cut.
+
+    What this test does NOT prove is the memory property itself -- see
+    `test_the_diff_generator_is_not_materialised` for that, and the report for
+    what is and is not achievable.
+    """
+    import re
+
+    from tldw_chatbook.Subscriptions.monitoring_engine import (
+        _MAX_DIFF_CHARS,
+        _MAX_DIFF_LINES,
+        build_change_diff,
+    )
+
+    segments = 4000
+    before = " ".join(f"Paragraph {i} says the old thing." for i in range(segments))
+    after = " ".join(
+        f"Paragraph {i} says the new thing instead." for i in range(segments)
+    )
+
+    body, summary = build_change_diff(before, after)
+    lines = body.splitlines()
+
+    # Bounded: the notice is the single line allowed past the line cap.
+    assert len(lines) == _MAX_DIFF_LINES + 1
+    assert len(body) <= _MAX_DIFF_CHARS + len(lines[0]) + 1
+
+    # Accurate: every one of the 4000 removals and 4000 additions is counted,
+    # though only ~400 lines were retained.
+    assert summary == f"{segments} line(s) added, {segments} removed (diff truncated)"
+
+    retained_additions = sum(1 for line in lines if line.startswith("+"))
+    assert retained_additions < segments / 4, (
+        "the precondition: the body holds far fewer additions than the count "
+        f"reports ({retained_additions} retained vs {segments} counted), so the "
+        "counters cannot have come from the retained slice"
+    )
+
+    # The notice's own total must be the whole diff too.
+    match = re.search(r"first (\d+) of (\d+) diff lines", lines[0])
+    assert match, lines[0]
+    kept_count, total = int(match.group(1)), int(match.group(2))
+    assert kept_count == _MAX_DIFF_LINES
+    # 4000 `-` + 4000 `+` + the one `@@` hunk header these disjoint inputs
+    # produce. Asserted relative to the counts rather than hardcoded, so this
+    # states the relationship rather than a magic number.
+    assert total == segments * 2 + 1
+
+
+def test_the_diff_generator_is_not_materialised():
+    """PR #1092 review, Bug #1: peak memory, measured differentially.
+
+    `list(unified_diff(...))` bounded what was *stored* while leaving peak
+    memory proportional to the whole diff -- inside a scheduled fetch, over
+    pages the egress layer admits up to 10 MB. This measures the real
+    allocation peak of the shipped implementation against the same input run
+    through a materialising stand-in, in the same process.
+
+    It is a DIFFERENTIAL check, not an absolute budget: an absolute threshold
+    would be a machine-specific magic number, and peak does still grow with the
+    input, because `_segment_for_diff` must build both segment lists in full
+    (`difflib.SequenceMatcher` needs random access to both sequences). What the
+    streaming change removes is the diff-output term on top of that -- measured
+    at a stable ~33% of peak across input sizes -- and what it guarantees is
+    that the term bounded by `_MAX_DIFF_LINES`/`_MAX_DIFF_CHARS` is the only
+    one that scales with the diff. The threshold below leaves wide headroom
+    (asserting 0.85 against a measured 0.65) precisely so it does not become a
+    flaky allocation assertion.
+    """
+    import tracemalloc
+
+    from tldw_chatbook.Subscriptions import monitoring_engine
+
+    segments = 4000
+    before = " ".join(f"Paragraph {i} says the old thing." for i in range(segments))
+    after = " ".join(
+        f"Paragraph {i} says the new thing instead." for i in range(segments)
+    )
+
+    tracemalloc.start()
+    streamed_body, streamed_summary = monitoring_engine.build_change_diff(before, after)
+    _current, peak_streamed = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    real_unified_diff = monitoring_engine.unified_diff
+    try:
+        monitoring_engine.unified_diff = (
+            lambda *args, **kwargs: iter(list(real_unified_diff(*args, **kwargs)))
+        )
+        tracemalloc.start()
+        listed_body, listed_summary = monitoring_engine.build_change_diff(before, after)
+        _current, peak_listed = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+    finally:
+        monitoring_engine.unified_diff = real_unified_diff
+
+    # The refactor must be output-preserving: the only intended difference
+    # between the two runs is what was held in memory.
+    assert streamed_body == listed_body
+    assert streamed_summary == listed_summary
+
+    assert peak_streamed < peak_listed * 0.85, (
+        f"streaming peak {peak_streamed / 1024:.0f} KiB is not meaningfully "
+        f"below the materialising peak {peak_listed / 1024:.0f} KiB -- the "
+        "generator is being held somewhere"
     )
 
 
@@ -531,7 +654,7 @@ def test_a_removed_line_that_looks_like_a_diff_header_is_not_deleted():
 
 
 @pytest.mark.asyncio
-async def test_the_whole_stored_diff_body_is_exactly_this(tmp_path, monkeypatch):
+async def test_the_whole_stored_diff_body_is_exactly_this(monkeypatch):
     """Pin the body a real check produces, in full.
 
     The individual `in content` assertions above cannot show that the result is
@@ -540,7 +663,7 @@ async def test_the_whole_stored_diff_body_is_exactly_this(tmp_path, monkeypatch)
     diff's shape has to come through here and be looked at.
     """
     db, service, source_id = await _site_source(
-        tmp_path, monkeypatch, [_PAGE_BEFORE, _PAGE_AFTER]
+        monkeypatch, [_PAGE_BEFORE, _PAGE_AFTER]
     )
     await _check(service, source_id)
     await _check(service, source_id)
@@ -609,9 +732,7 @@ def test_the_diff_is_readable_in_a_narrow_pane():
 
 
 @pytest.mark.asyncio
-async def test_a_site_alert_still_fires_on_text_the_change_did_not_touch(
-    tmp_path, monkeypatch
-):
+async def test_a_site_alert_still_fires_on_text_the_change_did_not_touch(monkeypatch):
     """Fix round 1, Important #3. An undeclared narrowing of every site rule.
 
     `WatchlistFilterService` and `WatchlistContentAlertService` build their
@@ -628,7 +749,6 @@ async def test_a_site_alert_still_fires_on_text_the_change_did_not_touch(
     one line of context `n=1` happens to include.
     """
     db, service, source_id = await _site_source(
-        tmp_path,
         monkeypatch,
         # The unchanged sentence is moved far enough from the change that `n=1`
         # context cannot reach it.
@@ -666,16 +786,13 @@ async def test_a_site_alert_still_fires_on_text_the_change_did_not_touch(
 
 
 @pytest.mark.asyncio
-async def test_an_exclude_filter_on_unchanged_page_text_still_excludes(
-    tmp_path, monkeypatch
-):
+async def test_an_exclude_filter_on_unchanged_page_text_still_excludes(monkeypatch):
     """The same narrowing, on the other service.
 
     A filter is the destructive half: narrowing it does not merely fail to
     notify, it lets through items the user had told the app to drop.
     """
     db, service, source_id = await _site_source(
-        tmp_path,
         monkeypatch,
         [
             "<html><body><p>Sponsored placement.</p>"
@@ -736,7 +853,7 @@ def test_the_rule_haystack_is_the_page_when_content_is_a_diff():
     )
 
 
-def test_the_rule_match_text_is_not_persisted_as_a_column(tmp_path):
+def test_the_rule_match_text_is_not_persisted_as_a_column():
     """It is a matching-time field, not a second copy of every page in the DB.
 
     The full text is already durable in `url_snapshots`; storing it on the item
@@ -744,7 +861,7 @@ def test_the_rule_match_text_is_not_persisted_as_a_column(tmp_path):
     """
     from tldw_chatbook.Subscriptions.watchlist_rule_matching import RULE_MATCH_TEXT_KEY
 
-    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    db = SubscriptionsDB(":memory:", "test")
     columns = {
         row[1] for row in db.conn.execute("PRAGMA table_info(subscription_items)")
     }
@@ -756,9 +873,7 @@ def test_the_rule_match_text_is_not_persisted_as_a_column(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_no_producer_emits_a_pairing_persistence_would_reject(
-    tmp_path, monkeypatch
-):
+async def test_no_producer_emits_a_pairing_persistence_would_reject(monkeypatch):
     """`persist_subscription_item` RAISES on an invalid pairing, and that raise
     lands inside a scheduled fetch, where `execute_run` converts it into a
     failed run and drops every item the run collected.
@@ -794,7 +909,7 @@ async def test_no_producer_emits_a_pairing_persistence_would_reject(
     produced.append((api_item.get("content_kind"), api_item.get("content_format")))
 
     db, service, source_id = await _site_source(
-        tmp_path, monkeypatch, [_PAGE_BEFORE, _PAGE_AFTER]
+        monkeypatch, [_PAGE_BEFORE, _PAGE_AFTER]
     )
     await _check(service, source_id)
     await _check(service, source_id)
