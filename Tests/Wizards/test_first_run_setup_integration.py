@@ -85,6 +85,30 @@ class TestCommitRoundTrip:
         assert rows["Notes sync"].ok is True
 
 
+class TestFreshTemplateOfferGuard:
+    """UAT regression pin (root cause of the live-app bug): every other test
+    in this module builds its ``app_config`` from scratch as a Python dict.
+    The shipped ``config.toml`` template (``config.py``'s
+    ``CONFIG_TOML_CONTENT``) additionally pre-populates ~12
+    ``[api_settings.*]`` blocks with default endpoint URLs (llama.cpp
+    ``http://localhost:8080``, Ollama, vLLM, the HuggingFace router, etc.)
+    that no synthetic-dict test ever reproduced. Loading the REAL generated
+    template via ``temp_config``/``load_cli_config_and_ensure_existence`` is
+    the only way to catch a regression where those default endpoints get
+    miscounted as "configured" and the wizard silently never auto-offers."""
+
+    def test_fresh_template_offers_wizard(self, temp_config):
+        config = _reload()
+        assert wizard_state.should_offer_wizard(config, {}) is True
+
+    def test_template_with_one_real_inline_key_does_not_offer(self, temp_config):
+        _write(wizard_state.build_provider_commit(
+            provider_key="openai", api_key="wizard-test-key-epsilon", api_url=None
+        ))
+        config = _reload()
+        assert wizard_state.should_offer_wizard(config, {}) is False
+
+
 class TestEncryptionAtRest:
     def test_enable_encryption_encrypts_stored_key(self, temp_config):
         from tldw_chatbook.config import enable_config_encryption

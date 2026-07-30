@@ -3,6 +3,13 @@
 No Textual imports, no I/O — every function is a pure transform over the
 in-memory app config, mirroring Chat/console_onboarding_state.py. The wizard
 Screen owns rendering and persistence; this module owns every decision.
+
+Note on ``any_provider_configured``: it checks api_key / api_key_env_var
+only, never endpoint-URL keys (api_url, api_base_url, ...). See that
+function's docstring for the UAT incident that made endpoint-checking
+actively wrong -- the shipped config.toml template ships ~12 default
+[api_settings.*] endpoint URLs, which made every fresh install look
+"configured" and the wizard never auto-offered.
 """
 
 from __future__ import annotations
@@ -13,10 +20,6 @@ from typing import Any, Mapping
 WIZARD_STATE_SECTION = "first_run"
 SETUP_STARTED_KEY = "setup_started"
 SETUP_COMPLETED_KEY = "setup_completed"
-
-# Endpoint keys a local provider may use (mirrors
-# Chat/local_server_discovery._ENDPOINT_CONFIG_KEYS).
-_ENDPOINT_KEYS = ("api_url", "api_base_url", "api_base", "base_url", "api_endpoint", "endpoint")
 
 _PLACEHOLDER_MARKERS = ("<", ">")
 
@@ -50,11 +53,29 @@ def _is_real_secret(value: Any) -> bool:
 def any_provider_configured(
     app_config: Mapping[str, object], environ: Mapping[str, str]
 ) -> bool:
-    """Return True when any provider has usable credentials or an endpoint.
+    """Return True when any provider has a real, user-supplied credential.
 
     Walks the NESTED ``app_config["api_settings"]`` dict. Do not replace this
     with config.get_detected_api_providers(): that helper matches
     "api_settings.<p>" as a top-level key and always returns [].
+
+    Deliberately does NOT check endpoint-URL keys (api_url, api_base_url,
+    etc.). UAT incident: the shipped config.toml template (config.py's
+    CONFIG_TOML_CONTENT) pre-populates roughly a dozen [api_settings.*]
+    blocks with default local-server endpoint URLs -- llama.cpp
+    http://localhost:8080, Ollama, vLLM, the HuggingFace router, and more --
+    on EVERY fresh install, none of them entered by the user. Counting those
+    template defaults as "configured" made a truly fresh install
+    indistinguishable from an already-configured one, so the wizard never
+    auto-offered in the real app (confirmed live via tmux UAT; every
+    existing unit test used a synthetic config and missed it because none
+    reproduced the template's baked-in endpoint defaults).
+
+    Consequence accepted deliberately: a user who has hand-configured a
+    local endpoint only (no API key at all) will still get exactly ONE
+    auto-offer of the wizard. Skipping it persists ``setup_completed``, so
+    it never re-offers -- the same one-time-then-never-again behavior the
+    upgrader path already relies on.
     """
     api_settings = app_config.get("api_settings")
     if not isinstance(api_settings, Mapping):
@@ -67,9 +88,6 @@ def any_provider_configured(
         env_var = settings.get("api_key_env_var")
         if isinstance(env_var, str) and env_var.strip() and environ.get(env_var.strip()):
             return True
-        for endpoint_key in _ENDPOINT_KEYS:
-            if _is_real_secret(settings.get(endpoint_key)):
-                return True
     return False
 
 

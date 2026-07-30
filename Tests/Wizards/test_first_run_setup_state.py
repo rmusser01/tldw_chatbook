@@ -50,9 +50,17 @@ class TestAnyProviderConfigured:
         cfg = _config(api_settings={"openai": {"api_key_env_var": "OPENAI_API_KEY"}})
         assert any_provider_configured(cfg, {}) is False
 
-    def test_local_endpoint_url_counts(self):
+    def test_template_default_endpoint_urls_do_not_count(self):
+        """UAT regression: the shipped config.toml template (config.py's
+        CONFIG_TOML_CONTENT) pre-populates ~12 [api_settings.*] blocks with
+        default endpoint URLs (llama.cpp http://localhost:8080, Ollama,
+        vLLM, HuggingFace router, etc.) on every fresh install -- none of
+        them entered by the user. Counting an endpoint URL as "configured"
+        therefore made a truly fresh install look configured and the wizard
+        never auto-offered in the real app (confirmed live via tmux UAT).
+        An endpoint alone (no real key) must NOT count."""
         cfg = _config(api_settings={"llama_cpp": {"api_url": "http://127.0.0.1:8080"}})
-        assert any_provider_configured(cfg, {}) is True
+        assert any_provider_configured(cfg, {}) is False
 
 
 class TestShouldOfferWizard:
