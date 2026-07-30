@@ -279,15 +279,39 @@ class _CommitPostflight:
 
 
 @dataclass(frozen=True, slots=True)
-class _UncertainCommitEvidence:
-    """Task-5 retained evidence; Task 6 may inspect but never rerun it."""
+class _CommitRecoveryProof:
+    """Path-free immutable facts needed to classify one uncertain commit."""
 
-    snapshot: _CommitReviewSnapshot
-    capture: CommitAuthorityCapture
+    binding: SessionBinding
+    repository: RepositoryIdentity
+    old_head: HeadIdentity
+    complete_proof: _CompleteCommitProof
+    message: bytes
+    author: GitIdentity
+    committer: GitIdentity
+
+
+@dataclass(frozen=True, slots=True)
+class _UncertainCommitEvidence:
+    """Exact process-memory proof retained for one uncertain commit."""
+
+    proof: _CommitRecoveryProof
     recovery_capability: CommitRecoveryCapability | None
     retained_child: RetainedGitChildToken | None
     hooks_directory: Path | None
     mutation_lease: GitMutationLease | None
+    termination_known: bool = False
+    known_normal_returncode: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _OrphanedCommitLifecycle:
+    """Opaque resources retained after commit proof loses its binding."""
+
+    retained_child: RetainedGitChildToken | None
+    hooks_directory: Path | None
+    mutation_lease: GitMutationLease | None
+    termination_known: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1638,8 +1662,11 @@ class FileNotesGitService:
         self._commit_review_snapshots: dict[object, _CommitReviewSnapshot] = {}
         self._commit_cycle: asyncio.Task[CommitOutcome] | None = None
         self._commit_waiter: asyncio.Task[CommitOutcome] | None = None
+        self._commit_recovery_cycle: asyncio.Task[CommitOutcome] | None = None
+        self._commit_recovery_waiter: asyncio.Task[CommitOutcome] | None = None
         self._commit_child_started = False
         self._uncertain_commit: _UncertainCommitEvidence | None = None
+        self._orphaned_commit: _OrphanedCommitLifecycle | None = None
         self._pending_hooks_cleanup: set[Path] = set()
         self._shutdown_runner_confirmed: bool | None = None
         self._shutdown_settlement: Awaitable[None] | None = None
@@ -1654,6 +1681,7 @@ class FileNotesGitService:
                 "unavailable",
                 message="File Notes Git service is shut down",
             )
+        self._observe_commit_rebinding()
         if binding != self._owner.current_binding():
             return DiscoveryResult(
                 "unavailable",
@@ -1761,6 +1789,7 @@ class FileNotesGitService:
         repository: RepositoryIdentity,
     ) -> bool:
         """Rediscover repository mapping, then restat its trusted identities."""
+        self._observe_commit_rebinding()
         valid = False
         root = self._safe_root(binding)
         if (
@@ -1791,6 +1820,7 @@ class FileNotesGitService:
         binding: SessionBinding,
     ) -> asyncio.Task[SessionGitStatus] | None:
         """Return matching active status work without requesting a rerun."""
+        self._observe_commit_rebinding()
         cycle = self._status_cycle
         waiter = self._status_waiter
         if (
@@ -1819,6 +1849,7 @@ class FileNotesGitService:
                 "shutdown",
                 "File Notes Git service is shut down",
             )
+        self._observe_commit_rebinding()
         snapshot = self._owner.snapshot(binding)
         repository = snapshot.trusted_repository
         if binding != self._owner.current_binding():
@@ -1924,11 +1955,17 @@ class FileNotesGitService:
                 "shutdown",
                 "File Notes Git service is shut down",
             )
+        orphaned_commit = self._observe_commit_rebinding()
         snapshot = self._owner.snapshot(binding)
         if binding != self._owner.current_binding():
             raise GitMutationAdmissionError(
                 "stale_binding",
                 "File Notes root binding is stale",
+            )
+        if orphaned_commit:
+            raise GitMutationAdmissionError(
+                "mutation_active",
+                "A retained guarded commit child is still settling",
             )
         repository = snapshot.trusted_repository
         if repository is None:
@@ -1981,11 +2018,17 @@ class FileNotesGitService:
                 "shutdown",
                 "File Notes Git service is shut down",
             )
+        orphaned_commit = self._observe_commit_rebinding()
         snapshot = self._owner.snapshot(binding)
         if binding != self._owner.current_binding():
             raise GitMutationAdmissionError(
                 "stale_binding",
                 "File Notes root binding is stale",
+            )
+        if orphaned_commit:
+            raise GitMutationAdmissionError(
+                "mutation_active",
+                "A retained guarded commit child is still settling",
             )
         repository = snapshot.trusted_repository
         if repository is None:
@@ -2038,11 +2081,17 @@ class FileNotesGitService:
                 "shutdown",
                 "File Notes Git service is shut down",
             )
+        orphaned_commit = self._observe_commit_rebinding()
         snapshot = self._owner.snapshot(binding)
         if binding != self._owner.current_binding():
             raise GitMutationAdmissionError(
                 "stale_binding",
                 "File Notes root binding is stale",
+            )
+        if orphaned_commit:
+            raise GitMutationAdmissionError(
+                "mutation_active",
+                "A retained guarded commit child is still settling",
             )
         repository = snapshot.trusted_repository
         if repository is None:
@@ -2111,10 +2160,16 @@ class FileNotesGitService:
                 "shutdown",
                 "File Notes Git service is shut down",
             )
+        orphaned_commit = self._observe_commit_rebinding()
         if binding != self._owner.current_binding():
             raise GitMutationAdmissionError(
                 "stale_binding",
                 "File Notes root binding is stale",
+            )
+        if orphaned_commit:
+            raise GitMutationAdmissionError(
+                "mutation_active",
+                "A retained guarded commit child is still settling",
             )
         if self._commit_cycle is not None and not self._commit_cycle.done():
             raise GitMutationAdmissionError(
@@ -2191,6 +2246,159 @@ class FileNotesGitService:
             self._commit_child_started = False
         if not cycle.cancelled():
             cycle.exception()
+
+    def check_commit_again(
+        self,
+        binding: SessionBinding,
+    ) -> asyncio.Task[CommitOutcome]:
+        """Retain one exact proof-only recovery cycle for an uncertain commit."""
+        if self._sealed:
+            raise GitMutationAdmissionError(
+                "shutdown",
+                "File Notes Git service is shut down",
+            )
+        self._observe_commit_rebinding()
+        if binding != self._owner.current_binding():
+            raise GitMutationAdmissionError(
+                "stale_binding",
+                "File Notes root binding is stale",
+            )
+        evidence = self._uncertain_commit
+        if (
+            evidence is None
+            or evidence.proof.binding != binding
+            or evidence.recovery_capability is None
+        ):
+            raise GitMutationAdmissionError(
+                "invalid_capability",
+                "No exact uncertain commit is available to check",
+            )
+        if (
+            self._commit_recovery_cycle is not None
+            and not self._commit_recovery_cycle.done()
+        ):
+            raise GitMutationAdmissionError(
+                "mutation_active",
+                "A guarded commit recovery is already active",
+            )
+
+        cycle: asyncio.Task[CommitOutcome] | None = None
+        try:
+            loop = asyncio.get_running_loop()
+            cycle = loop.create_task(
+                self._run_commit_recovery_cycle(binding, evidence)
+            )
+            waiter = loop.create_task(
+                self._shield_commit_recovery_cycle(cycle)
+            )
+        except BaseException:
+            if cycle is not None:
+                cycle.cancel()
+            raise
+        self._commit_recovery_cycle = cycle
+        self._commit_recovery_waiter = waiter
+        cycle.add_done_callback(self._commit_recovery_cycle_completed)
+        return waiter
+
+    async def _shield_commit_recovery_cycle(
+        self,
+        cycle: asyncio.Task[CommitOutcome],
+    ) -> CommitOutcome:
+        return await asyncio.shield(cycle)
+
+    def _commit_recovery_cycle_completed(
+        self,
+        cycle: asyncio.Task[CommitOutcome],
+    ) -> None:
+        if self._commit_recovery_cycle is cycle:
+            self._commit_recovery_cycle = None
+            self._commit_recovery_waiter = None
+        if not cycle.cancelled():
+            cycle.exception()
+
+    async def _run_commit_recovery_cycle(
+        self,
+        binding: SessionBinding,
+        admitted_evidence: _UncertainCommitEvidence,
+    ) -> CommitOutcome:
+        """Prove one retained attempt without ever starting another commit."""
+        evidence = self._uncertain_commit
+        if evidence is not admitted_evidence:
+            return _uncertain_commit_outcome()
+        evidence, child_is_certain = self._settle_commit_recovery_child(evidence)
+        if not child_is_certain:
+            return _uncertain_commit_outcome()
+        capability = evidence.recovery_capability
+        if capability is None:
+            return _uncertain_commit_outcome()
+        admission = self._owner.admit_commit_recovery(binding, capability)
+        lease = admission.lease
+        capture = admission.capture
+        if lease is None or capture is None:
+            if admission.reason in {"stale_binding", "invalid_capability"}:
+                self._observe_commit_rebinding()
+            return _uncertain_commit_outcome()
+
+        try:
+            proof = evidence.proof
+            repository = proof.repository
+            if (
+                not self._repository_identity_matches(binding, repository)
+                or not await self._commit_local_state_is_supported(repository)
+            ):
+                return self._keep_commit_recovery_uncertain(
+                    lease,
+                    capture,
+                    evidence,
+                    can_check_again=False,
+                )
+            postflight = await self._read_commit_postflight(
+                binding,
+                repository,
+            )
+            if self._recovery_postflight_is_success(
+                proof,
+                capture,
+                postflight,
+            ):
+                outcome = await self._publish_successful_commit(
+                    binding,
+                    None,
+                    capture,
+                    lease,
+                    postflight,
+                    recovery_evidence=evidence,
+                )
+                if outcome.state == "succeeded":
+                    self._uncertain_commit = None
+                return outcome
+            if (
+                evidence.known_normal_returncode is not None
+                and evidence.known_normal_returncode > 0
+                and self._recovery_postflight_is_unchanged(
+                    proof,
+                    postflight,
+                )
+            ):
+                outcome = await self._publish_failed_commit(
+                    binding,
+                    None,
+                    capture,
+                    lease,
+                    normal_returncode=evidence.known_normal_returncode,
+                    recovery_evidence=evidence,
+                )
+                if outcome.state == "failed_unchanged":
+                    self._uncertain_commit = None
+                return outcome
+            return self._keep_commit_recovery_uncertain(
+                lease,
+                capture,
+                evidence,
+                can_check_again=postflight.local_state_supported,
+            )
+        finally:
+            lease.release()
 
     async def _run_commit_cycle(
         self,
@@ -2284,9 +2492,13 @@ class FileNotesGitService:
                         output_overflow=settlement.output_overflow,
                     )
                     retained_child = None
-            child_is_natural = (
+            child_termination_known = (
                 retained_child is None
                 and child_result.returncode is not None
+            )
+            child_is_natural = (
+                child_termination_known
+                and child_result.returncode >= 0
                 and not child_result.termination_uncertain
                 and not child_result.stop_requested
                 and not child_result.force_stopped
@@ -2297,12 +2509,17 @@ class FileNotesGitService:
                         self._runner.claim_retained_child(retained_child)
                     except (RuntimeError, ValueError):
                         retained_child = None
+                if child_termination_known:
+                    self._remove_hooks_directory(hooks_directory)
+                    hooks_directory = None
                 outcome = self._retain_uncertain_commit(
                     snapshot,
                     confirmation.capture,
                     lease,
                     retained_child=retained_child,
                     hooks_directory=hooks_directory,
+                    termination_known=child_termination_known,
+                    can_check_again=child_termination_known,
                 )
                 hooks_directory = None
                 return outcome
@@ -2334,11 +2551,18 @@ class FileNotesGitService:
                     snapshot,
                     confirmation.capture,
                     lease,
+                    normal_returncode=child_result.returncode,
                 )
             return self._retain_uncertain_commit(
                 snapshot,
                 confirmation.capture,
                 lease,
+                termination_known=True,
+                known_normal_returncode=child_result.returncode,
+                can_check_again=(
+                    postflight.repository_matches
+                    and postflight.local_state_supported
+                ),
             )
         except asyncio.CancelledError:
             return CommitOutcome(
@@ -2559,13 +2783,67 @@ class FileNotesGitService:
             and postflight.tree_object_id == snapshot.proof.expected_tree
         )
 
+    @staticmethod
+    def _recovery_postflight_is_success(
+        proof: _CommitRecoveryProof,
+        capture: CommitAuthorityCapture,
+        postflight: _CommitPostflight,
+    ) -> bool:
+        """Match exact success without retaining captured staging ownership."""
+        head = postflight.head
+        raw = postflight.raw_commit
+        return (
+            postflight.repository_matches
+            and postflight.local_state_supported
+            and head is not None
+            and head.kind == "attached"
+            and head.branch == capture.head.branch
+            and head.object_id is not None
+            and head.object_id != proof.old_head.object_id
+            and raw is not None
+            and raw.parent_object_id == proof.old_head.object_id
+            and raw.tree_object_id == proof.complete_proof.expected_tree
+            and postflight.tree_object_id == raw.tree_object_id
+            and raw.message == proof.message
+            and raw.author == proof.author
+            and raw.committer == proof.committer
+            and not raw.has_signature
+            and postflight.delta_signature == hashlib.sha256(b"").hexdigest()
+        )
+
+    @staticmethod
+    def _recovery_postflight_is_unchanged(
+        proof: _CommitRecoveryProof,
+        postflight: _CommitPostflight,
+    ) -> bool:
+        """Match the exact captured old branch and complete logical index."""
+        return (
+            postflight.repository_matches
+            and postflight.local_state_supported
+            and postflight.head == proof.old_head
+            and (
+                postflight.index_signature
+                == proof.complete_proof.index_signature
+            )
+            and (
+                postflight.delta_signature
+                == proof.complete_proof.delta_signature
+            )
+            and (
+                postflight.tree_object_id
+                == proof.complete_proof.expected_tree
+            )
+        )
+
     async def _publish_successful_commit(
         self,
         binding: SessionBinding,
-        snapshot: _CommitReviewSnapshot,
+        snapshot: _CommitReviewSnapshot | None,
         capture: CommitAuthorityCapture,
         lease: GitMutationLease,
         postflight: _CommitPostflight,
+        *,
+        recovery_evidence: _UncertainCommitEvidence | None = None,
     ) -> CommitOutcome:
         head = postflight.head
         assert head is not None and head.object_id is not None
@@ -2576,6 +2854,23 @@ class FileNotesGitService:
             capture.repository,
             publish_ownership_changes=False,
         )
+        if status.state != "ready":
+            if recovery_evidence is not None:
+                return self._keep_commit_recovery_uncertain(
+                    lease,
+                    capture,
+                    recovery_evidence,
+                    can_check_again=True,
+                )
+            assert snapshot is not None
+            return self._retain_uncertain_commit(
+                snapshot,
+                capture,
+                lease,
+                termination_known=True,
+                known_normal_returncode=0,
+                can_check_again=True,
+            )
         clean_groups = {row.group_id for row in status.rows if row.state == "clean"}
         retired: list[int] = []
         divergent: list[int] = []
@@ -2607,12 +2902,26 @@ class FileNotesGitService:
             ),
         )
         if not publication.published:
+            if recovery_evidence is not None:
+                self._uncertain_commit = recovery_evidence
+                return _uncertain_commit_outcome()
+            assert snapshot is not None
             return self._retain_uncertain_commit(
                 snapshot,
                 capture,
                 lease,
+                termination_known=True,
+                known_normal_returncode=0,
+                can_check_again=True,
             )
-        count = len(snapshot.proof.included_group_ids)
+        if recovery_evidence is not None:
+            included_group_ids = (
+                recovery_evidence.proof.complete_proof.included_group_ids
+            )
+        else:
+            assert snapshot is not None
+            included_group_ids = snapshot.proof.included_group_ids
+        count = len(included_group_ids)
         short_oid = head.object_id[:12]
         return CommitOutcome(
             "succeeded",
@@ -2629,9 +2938,12 @@ class FileNotesGitService:
     async def _publish_failed_commit(
         self,
         binding: SessionBinding,
-        snapshot: _CommitReviewSnapshot,
+        snapshot: _CommitReviewSnapshot | None,
         capture: CommitAuthorityCapture,
         lease: GitMutationLease,
+        *,
+        normal_returncode: int,
+        recovery_evidence: _UncertainCommitEvidence | None = None,
     ) -> CommitOutcome:
         status = await self._query_status(
             binding,
@@ -2639,6 +2951,23 @@ class FileNotesGitService:
             capture.repository,
             publish_ownership_changes=False,
         )
+        if status.state != "ready":
+            if recovery_evidence is not None:
+                return self._keep_commit_recovery_uncertain(
+                    lease,
+                    capture,
+                    recovery_evidence,
+                    can_check_again=True,
+                )
+            assert snapshot is not None
+            return self._retain_uncertain_commit(
+                snapshot,
+                capture,
+                lease,
+                termination_known=True,
+                known_normal_returncode=normal_returncode,
+                can_check_again=True,
+            )
         publication = self._owner.publish_commit_outcome(
             lease,
             capture,
@@ -2648,10 +2977,17 @@ class FileNotesGitService:
             ),
         )
         if not publication.published:
+            if recovery_evidence is not None:
+                self._uncertain_commit = recovery_evidence
+                return _uncertain_commit_outcome()
+            assert snapshot is not None
             return self._retain_uncertain_commit(
                 snapshot,
                 capture,
                 lease,
+                termination_known=True,
+                known_normal_returncode=normal_returncode,
+                can_check_again=True,
             )
         return CommitOutcome(
             "failed_unchanged",
@@ -2666,18 +3002,31 @@ class FileNotesGitService:
         *,
         retained_child: RetainedGitChildToken | None = None,
         hooks_directory: Path | None = None,
+        termination_known: bool = False,
+        known_normal_returncode: int | None = None,
+        can_check_again: bool = False,
     ) -> CommitOutcome:
         recovery_capability = self._publish_uncertain_commit(
             lease,
             capture,
+            can_check_again=can_check_again,
         )
         self._uncertain_commit = _UncertainCommitEvidence(
-            snapshot,
-            capture,
-            recovery_capability,
-            retained_child,
-            hooks_directory,
-            lease if recovery_capability is None else None,
+            proof=_CommitRecoveryProof(
+                binding=capture.binding,
+                repository=capture.repository,
+                old_head=capture.head,
+                complete_proof=snapshot.proof,
+                message=snapshot.message,
+                author=snapshot.author,
+                committer=snapshot.committer,
+            ),
+            recovery_capability=recovery_capability,
+            retained_child=retained_child,
+            hooks_directory=hooks_directory,
+            mutation_lease=lease if recovery_capability is None else None,
+            termination_known=termination_known,
+            known_normal_returncode=known_normal_returncode,
         )
         return _uncertain_commit_outcome()
 
@@ -2685,6 +3034,8 @@ class FileNotesGitService:
         self,
         lease: GitMutationLease,
         capture: CommitAuthorityCapture,
+        *,
+        can_check_again: bool,
     ) -> CommitRecoveryCapability | None:
         publication = self._owner.publish_commit_outcome(
             lease,
@@ -2693,11 +3044,166 @@ class FileNotesGitService:
                 state="uncertain",
                 recovery_projection=CommitRecoveryProjection(
                     _UNCERTAIN_COMMIT_MESSAGE,
-                    False,
+                    can_check_again,
                 ),
             ),
         )
         return publication.recovery_capability
+
+    def _settle_commit_recovery_child(
+        self,
+        evidence: _UncertainCommitEvidence,
+    ) -> tuple[_UncertainCommitEvidence, bool]:
+        """Consume only certain termination from the exact retained child."""
+        retained_child = evidence.retained_child
+        if retained_child is None:
+            return evidence, evidence.termination_known
+        try:
+            settlement = self._runner.read_retained_child(retained_child)
+        except (RuntimeError, ValueError):
+            return evidence, False
+        if settlement.state in {"alive", "uncertain"}:
+            return evidence, False
+        try:
+            released = self._runner.release_retained_child(retained_child)
+        except (RuntimeError, ValueError):
+            return evidence, False
+        if not released:
+            return evidence, False
+
+        known_normal_returncode = (
+            settlement.returncode
+            if (
+                settlement.state == "natural"
+                and settlement.returncode is not None
+                and settlement.returncode >= 0
+                and not settlement.stop_requested
+                and not settlement.force_stopped
+            )
+            else None
+        )
+        hooks_directory = evidence.hooks_directory
+        if (
+            hooks_directory is not None
+            and self._remove_hooks_directory(hooks_directory)
+        ):
+            hooks_directory = None
+        settled = replace(
+            evidence,
+            retained_child=None,
+            hooks_directory=hooks_directory,
+            termination_known=True,
+            known_normal_returncode=known_normal_returncode,
+        )
+        self._uncertain_commit = settled
+        return settled, True
+
+    def _keep_commit_recovery_uncertain(
+        self,
+        lease: GitMutationLease,
+        capture: CommitAuthorityCapture,
+        evidence: _UncertainCommitEvidence,
+        *,
+        can_check_again: bool,
+    ) -> CommitOutcome:
+        """Keep the same quarantine without inventing fresh ownership."""
+        projection = CommitRecoveryProjection(
+            _UNCERTAIN_COMMIT_MESSAGE,
+            can_check_again,
+        )
+        if self._owner.snapshot(capture.binding).commit_recovery == projection:
+            self._uncertain_commit = replace(
+                evidence,
+                mutation_lease=None,
+            )
+            return _uncertain_commit_outcome()
+        publication = self._owner.publish_commit_outcome(
+            lease,
+            capture,
+            CommitPublication(
+                state="uncertain",
+                recovery_projection=projection,
+            ),
+        )
+        capability = (
+            publication.recovery_capability
+            if publication.published
+            else evidence.recovery_capability
+        )
+        self._uncertain_commit = replace(
+            evidence,
+            recovery_capability=capability,
+            mutation_lease=None,
+        )
+        return _uncertain_commit_outcome()
+
+    def _observe_commit_rebinding(self) -> bool:
+        """Drop rebound proof and retain only exact child lifecycle resources."""
+        evidence = self._uncertain_commit
+        current_binding = self._owner.current_binding()
+        if evidence is not None and current_binding is not None:
+            current_repository = self._owner.snapshot(
+                current_binding
+            ).trusted_repository
+            if (
+                evidence.proof.binding != current_binding
+                or (
+                    current_repository is not None
+                    and current_repository != evidence.proof.repository
+                )
+            ):
+                self._orphaned_commit = _OrphanedCommitLifecycle(
+                    retained_child=evidence.retained_child,
+                    hooks_directory=evidence.hooks_directory,
+                    mutation_lease=evidence.mutation_lease,
+                    termination_known=evidence.termination_known,
+                )
+                self._uncertain_commit = None
+        self._settle_orphaned_commit()
+        return self._orphaned_commit is not None
+
+    def _settle_orphaned_commit(self) -> None:
+        """Settle one rebound child without recovering discarded commit proof."""
+        lifecycle = self._orphaned_commit
+        if lifecycle is None:
+            return
+        retained_child = lifecycle.retained_child
+        if retained_child is not None:
+            try:
+                settlement = self._runner.read_retained_child(retained_child)
+            except (RuntimeError, ValueError):
+                return
+            if settlement.state in {"alive", "uncertain"}:
+                return
+            try:
+                released = self._runner.release_retained_child(retained_child)
+            except (RuntimeError, ValueError):
+                return
+            if not released:
+                return
+            lifecycle = replace(
+                lifecycle,
+                retained_child=None,
+                termination_known=True,
+            )
+            self._orphaned_commit = lifecycle
+        if not lifecycle.termination_known:
+            return
+
+        hooks_directory = lifecycle.hooks_directory
+        if (
+            hooks_directory is not None
+            and self._remove_hooks_directory(hooks_directory)
+        ):
+            lifecycle = replace(lifecycle, hooks_directory=None)
+            self._orphaned_commit = lifecycle
+        mutation_lease = lifecycle.mutation_lease
+        if mutation_lease is not None:
+            mutation_lease.release()
+            lifecycle = replace(lifecycle, mutation_lease=None)
+            self._orphaned_commit = lifecycle
+        if lifecycle.hooks_directory is None:
+            self._orphaned_commit = None
 
     async def _run_commit_review_cycle(
         self,
@@ -3363,6 +3869,8 @@ class FileNotesGitService:
         review_waiter = self._commit_review_waiter
         commit_cycle = self._commit_cycle
         commit_waiter = self._commit_waiter
+        recovery_cycle = self._commit_recovery_cycle
+        recovery_waiter = self._commit_recovery_waiter
         active_task = next(
             (
                 task
@@ -3375,6 +3883,8 @@ class FileNotesGitService:
                     review_waiter,
                     commit_cycle,
                     commit_waiter,
+                    recovery_cycle,
+                    recovery_waiter,
                 )
                 if task is not None and not task.done()
             ),
@@ -3406,6 +3916,8 @@ class FileNotesGitService:
             and (review_waiter is None or review_waiter.done())
             and (commit_cycle is None or commit_cycle.done())
             and (commit_waiter is None or commit_waiter.done())
+            and (recovery_cycle is None or recovery_cycle.done())
+            and (recovery_waiter is None or recovery_waiter.done())
             and (
                 runner_settlement is None
                 or isinstance(runner_settlement, _ImmediateSettlement)
@@ -3426,6 +3938,8 @@ class FileNotesGitService:
             self._commit_review_waiter = None
             self._commit_cycle = None
             self._commit_waiter = None
+            self._commit_recovery_cycle = None
+            self._commit_recovery_waiter = None
             self._commit_child_started = False
             self._commit_review_snapshots.clear()
             if binding is not None:
@@ -3446,6 +3960,8 @@ class FileNotesGitService:
                     review_waiter,
                     commit_cycle,
                     commit_waiter,
+                    recovery_cycle,
+                    recovery_waiter,
                     runner_settlement,
                 )
             )
@@ -3464,6 +3980,8 @@ class FileNotesGitService:
         review_waiter: asyncio.Task[CommitReviewResult] | None,
         commit_cycle: asyncio.Task[CommitOutcome] | None,
         commit_waiter: asyncio.Task[CommitOutcome] | None,
+        recovery_cycle: asyncio.Task[CommitOutcome] | None,
+        recovery_waiter: asyncio.Task[CommitOutcome] | None,
         runner_settlement: Awaitable[bool] | None,
     ) -> None:
         """Join every retained task and preserve fail-closed shutdown state."""
@@ -3478,6 +3996,8 @@ class FileNotesGitService:
                 review_waiter,
                 commit_cycle,
                 commit_waiter,
+                recovery_cycle,
+                recovery_waiter,
             )
             if task is not None and not task.done()
         )
@@ -3508,6 +4028,8 @@ class FileNotesGitService:
         self._commit_review_waiter = None
         self._commit_cycle = None
         self._commit_waiter = None
+        self._commit_recovery_cycle = None
+        self._commit_recovery_waiter = None
         self._commit_child_started = False
         self._commit_review_snapshots.clear()
         self._pending_status = None
@@ -3522,6 +4044,7 @@ class FileNotesGitService:
         runner_confirmed: bool,
     ) -> None:
         """Release only exact terminal evidence after bounded shutdown proof."""
+        self._settle_orphaned_commit_shutdown(runner_confirmed)
         evidence = self._uncertain_commit
         if evidence is None or not runner_confirmed:
             return
@@ -3551,6 +4074,46 @@ class FileNotesGitService:
             mutation_lease=None,
         )
 
+    def _settle_orphaned_commit_shutdown(
+        self,
+        runner_confirmed: bool,
+    ) -> None:
+        """Settle rebound lifecycle resources after the runner proves exit."""
+        lifecycle = self._orphaned_commit
+        if lifecycle is None or not runner_confirmed:
+            return
+        retained_child = lifecycle.retained_child
+        if retained_child is not None:
+            try:
+                released = self._runner.release_retained_child(retained_child)
+            except (RuntimeError, ValueError):
+                return
+            if not released:
+                return
+            lifecycle = replace(
+                lifecycle,
+                retained_child=None,
+                termination_known=True,
+            )
+            self._orphaned_commit = lifecycle
+        elif not lifecycle.termination_known:
+            lifecycle = replace(lifecycle, termination_known=True)
+            self._orphaned_commit = lifecycle
+        hooks_directory = lifecycle.hooks_directory
+        if (
+            hooks_directory is not None
+            and self._remove_hooks_directory(hooks_directory)
+        ):
+            lifecycle = replace(lifecycle, hooks_directory=None)
+            self._orphaned_commit = lifecycle
+        mutation_lease = lifecycle.mutation_lease
+        if mutation_lease is not None:
+            mutation_lease.release()
+            lifecycle = replace(lifecycle, mutation_lease=None)
+            self._orphaned_commit = lifecycle
+        if lifecycle.hooks_directory is None:
+            self._orphaned_commit = None
+
     def _remove_hooks_directory(self, directory: Path) -> bool:
         if _remove_private_hooks_directory(directory):
             self._pending_hooks_cleanup.discard(directory)
@@ -3560,9 +4123,17 @@ class FileNotesGitService:
 
     def _retry_pending_hooks_cleanup(self) -> None:
         evidence = self._uncertain_commit
-        retained_hooks = None if evidence is None else evidence.hooks_directory
+        orphaned = self._orphaned_commit
+        retained_hooks = {
+            hooks
+            for hooks in (
+                None if evidence is None else evidence.hooks_directory,
+                None if orphaned is None else orphaned.hooks_directory,
+            )
+            if hooks is not None
+        }
         for directory in tuple(self._pending_hooks_cleanup):
-            if directory == retained_hooks:
+            if directory in retained_hooks:
                 continue
             self._remove_hooks_directory(directory)
 

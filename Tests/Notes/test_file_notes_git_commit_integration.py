@@ -12,6 +12,7 @@ import pytest
 
 import tldw_chatbook.Notes.file_notes_git_service as git_service
 from tldw_chatbook.Notes.file_notes_git_commit import (
+    CommitReviewHandle,
     CommitReviewResult,
     GitIdentity,
     parse_raw_commit_object,
@@ -329,10 +330,22 @@ class _ControlledCommitRunner(_RecordingRunner):
             return GitCommandResult(1, b"", b"commit refused")
         if self.mode == "zero_without_commit":
             return GitCommandResult(0, b"", b"")
+        if self.mode == "signal":
+            return GitCommandResult(-9, b"", b"terminated by signal")
+        if self.mode in {"terminal_stop", "terminal_force"}:
+            return GitCommandResult(
+                -9 if self.mode == "terminal_force" else -15,
+                b"",
+                b"commit child was stopped",
+                termination_uncertain=True,
+                stop_requested=True,
+                force_stopped=self.mode == "terminal_force",
+            )
         if self.mode == "oserror":
             raise OSError("commit launch outcome is unknown")
         if self.mode in {
             "uncertain",
+            "uncertain_signal",
             "retained_natural_failure",
             "uncertain_confirmed_shutdown",
             "uncertain_unconfirmed_shutdown",
@@ -407,7 +420,10 @@ class _ControlledCommitRunner(_RecordingRunner):
                 stop_requested=True,
             )
         if self.terminal:
-            return RetainedGitChildSettlement("natural", returncode=1)
+            return RetainedGitChildSettlement(
+                "natural",
+                returncode=-9 if self.mode == "uncertain_signal" else 1,
+            )
         return RetainedGitChildSettlement("alive")
 
     def claim_retained_child(self, token: RetainedGitChildToken) -> bool:
@@ -675,6 +691,64 @@ async def _prepare_owned_review(
         service_capture.append((service, binding))
     result = await service.start_commit_review(binding, "Review subject", "Body")
     return service, binding, result
+
+
+async def _prepare_uncertain_commit_recovery(
+    repository: Path,
+    *,
+    mode: str,
+) -> tuple[
+    FileNotesGitService,
+    object,
+    CommitReviewResult,
+    _ControlledCommitRunner,
+]:
+    """Create one exact quarantined commit attempt for recovery tests."""
+    runner = _ControlledCommitRunner(mode)
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    outcome = await service.start_commit(binding, review.handle)
+    assert outcome.state == "uncertain"
+    assert runner.commit_calls == 1
+    return service, binding, review, runner
+
+
+def _commit_reviewed_index(
+    repository: Path,
+    review: CommitReviewResult,
+) -> str:
+    """Create the exact reviewed commit outside Chatbook for recovery proof."""
+    projection = review.projection
+    assert projection is not None
+    subprocess.run(
+        (
+            "git",
+            "--no-replace-objects",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "--no-gpg-sign",
+            "--cleanup=verbatim",
+            "-F",
+            "-",
+        ),
+        cwd=repository,
+        input=projection.message.encode("utf-8"),
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={
+            **os.environ,
+            "GIT_AUTHOR_NAME": projection.author.name,
+            "GIT_AUTHOR_EMAIL": projection.author.email,
+            "GIT_COMMITTER_NAME": projection.committer.name,
+            "GIT_COMMITTER_EMAIL": projection.committer.email,
+        },
+    )
+    return _git(repository, "rev-parse", "HEAD").decode().strip()
 
 
 @pytest.mark.asyncio
@@ -2286,6 +2360,556 @@ async def test_commit_outcome_raw_commit_contradictions_are_uncertain(
     assert outcome.state == "uncertain"
     assert service._owner.snapshot(binding).commit_recovery is not None
     await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_check_again_refuses_live_exact_child_without_new_commit(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, _review, runner = (
+        await _prepare_uncertain_commit_recovery(
+            repository,
+            mode="uncertain",
+        )
+    )
+    evidence = service._uncertain_commit
+    assert evidence is not None
+    hooks_directory = evidence.hooks_directory
+    assert hooks_directory is not None and hooks_directory.is_dir()
+
+    checked = await service.check_commit_again(binding)
+
+    assert checked.state == "uncertain"
+    assert runner.commit_calls == 1
+    assert service._uncertain_commit is not None
+    assert service._uncertain_commit.retained_child is runner.token
+    assert hooks_directory.is_dir()
+    projection = service._owner.snapshot(binding).commit_recovery
+    assert projection is not None
+    assert projection.can_check_again is False
+
+    runner.terminal = True
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_recovery_evidence_drops_captured_staging_ownership(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, _binding, _review, runner = (
+        await _prepare_uncertain_commit_recovery(
+            repository,
+            mode="uncertain",
+        )
+    )
+
+    evidence = service._uncertain_commit
+
+    assert evidence is not None
+    assert not hasattr(evidence, "snapshot")
+    assert not hasattr(evidence, "capture")
+    assert "note.md" not in repr(evidence)
+    runner.terminal = True
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocker", ["index.lock", "MERGE_HEAD"])
+async def test_commit_check_again_waits_for_lock_or_special_state(
+    tmp_path: Path,
+    blocker: str,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, _review, runner = (
+        await _prepare_uncertain_commit_recovery(
+            repository,
+            mode="uncertain",
+        )
+    )
+    runner.terminal = True
+    blocker_path = repository / ".git" / blocker
+    blocker_path.touch()
+
+    blocked = await service.check_commit_again(binding)
+
+    assert blocked.state == "uncertain"
+    assert runner.commit_calls == 1
+    assert runner.released is True
+    assert service._uncertain_commit is not None
+    assert service._uncertain_commit.retained_child is None
+    assert not runner.hooks_directory.exists()
+    blocked_snapshot = service._owner.snapshot(binding)
+    assert dict(blocked_snapshot.staging_ownership) == {}
+    assert blocked_snapshot.commit_recovery is not None
+    assert blocked_snapshot.commit_recovery.can_check_again is False
+
+    blocker_path.unlink()
+    recovered = await service.check_commit_again(binding)
+
+    assert recovered.state == "failed_unchanged"
+    assert runner.commit_calls == 1
+    snapshot = service._owner.snapshot(binding)
+    assert snapshot.commit_recovery is None
+    assert snapshot.staging_ownership
+    assert service._uncertain_commit is None
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_check_again_converges_to_exact_delayed_success(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode="uncertain",
+    )
+    new_head = _commit_reviewed_index(repository, review)
+    runner.terminal = True
+
+    recovered = await service.check_commit_again(binding)
+
+    assert recovered.state == "succeeded"
+    assert recovered.commit_object_id == new_head
+    assert recovered.committed_note_count == 1
+    assert runner.commit_calls == 1
+    snapshot = service._owner.snapshot(binding)
+    assert snapshot.commit_recovery is None
+    assert snapshot.changes == ()
+    assert dict(snapshot.staging_ownership) == {}
+    assert service._uncertain_commit is None
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_check_again_keeps_unchanged_state_without_natural_failure(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, _review, runner = (
+        await _prepare_uncertain_commit_recovery(
+            repository,
+            mode="zero_without_commit",
+        )
+    )
+    initial_projection = service._owner.snapshot(binding).commit_recovery
+    assert initial_projection is not None
+    assert initial_projection.can_check_again is True
+    initial_generation = service._owner.snapshot(
+        binding
+    ).git_authority_generation
+
+    first = await service.check_commit_again(binding)
+    first_generation = service._owner.snapshot(
+        binding
+    ).git_authority_generation
+    second = await service.check_commit_again(binding)
+    second_generation = service._owner.snapshot(
+        binding
+    ).git_authority_generation
+
+    assert first.state == second.state == "uncertain"
+    assert first == second
+    assert first_generation == second_generation == initial_generation
+    assert runner.commit_calls == 1
+    assert dict(service._owner.snapshot(binding).staging_ownership) == {}
+    projection = service._owner.snapshot(binding).commit_recovery
+    assert projection is not None
+    assert projection.can_check_again is True
+    assert service._uncertain_commit is not None
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["signal", "uncertain_signal"])
+async def test_commit_check_again_does_not_restore_after_signal_exit(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, _review, runner = (
+        await _prepare_uncertain_commit_recovery(
+            repository,
+            mode=mode,
+        )
+    )
+    if mode == "uncertain_signal":
+        runner.terminal = True
+
+    recovered = await service.check_commit_again(binding)
+
+    assert recovered.state == "uncertain"
+    assert runner.commit_calls == 1
+    snapshot = service._owner.snapshot(binding)
+    assert snapshot.commit_recovery is not None
+    assert dict(snapshot.staging_ownership) == {}
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["terminal_stop", "terminal_force"])
+async def test_commit_check_again_accepts_terminal_stopped_result_without_token(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, _review, runner = (
+        await _prepare_uncertain_commit_recovery(
+            repository,
+            mode=mode,
+        )
+    )
+    hooks_directory = runner.hooks_directory
+    evidence = service._uncertain_commit
+
+    assert hooks_directory is not None
+    assert evidence is not None
+    assert evidence.retained_child is None
+    assert evidence.termination_known is True
+    assert evidence.known_normal_returncode is None
+    assert evidence.hooks_directory is None
+    assert not hooks_directory.exists()
+    projection = service._owner.snapshot(binding).commit_recovery
+    assert projection is not None
+    assert projection.can_check_again is True
+
+    recovered = await service.check_commit_again(binding)
+
+    assert recovered.state == "uncertain"
+    assert runner.commit_calls == 1
+    snapshot = service._owner.snapshot(binding)
+    assert snapshot.commit_recovery is not None
+    assert dict(snapshot.staging_ownership) == {}
+    assert service._uncertain_commit is not None
+    assert service._uncertain_commit.known_normal_returncode is None
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_check_again_requires_fresh_status_before_restoring_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, _review, runner = (
+        await _prepare_uncertain_commit_recovery(
+            repository,
+            mode="uncertain",
+        )
+    )
+    runner.terminal = True
+    original_query = service._query_status
+
+    async def unavailable_status(*args, **kwargs):
+        status = await original_query(*args, **kwargs)
+        return replace(status, state="error", message="injected status failure")
+
+    monkeypatch.setattr(service, "_query_status", unavailable_status)
+
+    recovered = await service.check_commit_again(binding)
+
+    assert recovered.state == "uncertain"
+    assert runner.commit_calls == 1
+    snapshot = service._owner.snapshot(binding)
+    assert snapshot.commit_recovery is not None
+    assert dict(snapshot.staging_ownership) == {}
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_check_again_keeps_repository_differing_from_both_states(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, _review, runner = (
+        await _prepare_uncertain_commit_recovery(
+            repository,
+            mode="uncertain",
+        )
+    )
+    runner.terminal = True
+    (repository / "note.md").write_text("different staged state\n", encoding="utf-8")
+    _git(repository, "add", "note.md")
+
+    first = await service.check_commit_again(binding)
+    second = await service.check_commit_again(binding)
+
+    assert first.state == second.state == "uncertain"
+    assert runner.commit_calls == 1
+    snapshot = service._owner.snapshot(binding)
+    assert snapshot.commit_recovery is not None
+    assert snapshot.commit_recovery.can_check_again is True
+    assert dict(snapshot.staging_ownership) == {}
+    assert service._uncertain_commit is not None
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_recovery_rebinding_discards_terminal_exact_evidence(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, _review, runner = (
+        await _prepare_uncertain_commit_recovery(
+            repository,
+            mode="zero_without_commit",
+        )
+    )
+    rebound = service._owner.select_root(tmp_path / "other")
+
+    with pytest.raises(git_service.GitMutationAdmissionError) as refusal:
+        service.check_commit_again(binding)
+
+    assert refusal.value.reason == "stale_binding"
+    assert service._owner.snapshot(rebound).commit_recovery is None
+    assert service._uncertain_commit is None
+    assert runner.commit_calls == 1
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_live_commit_child_rebind_discards_proof_and_blocks_new_mutations(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, _binding, _review, runner = (
+        await _prepare_uncertain_commit_recovery(
+            repository,
+            mode="uncertain",
+        )
+    )
+    evidence = service._uncertain_commit
+    assert evidence is not None
+    hooks_directory = evidence.hooks_directory
+    assert hooks_directory is not None and hooks_directory.is_dir()
+    rebound_parent = tmp_path / "rebound"
+    rebound_parent.mkdir()
+    rebound_repository = _init_repository(rebound_parent)
+
+    rebound = service._owner.select_root(rebound_repository)
+    discovery = await service.discover(rebound)
+
+    assert discovery.state == "ready"
+    assert discovery.repository is not None
+    assert service._uncertain_commit is None
+    orphaned = service._orphaned_commit
+    assert orphaned is not None
+    assert not hasattr(orphaned, "proof")
+    assert "Review subject" not in repr(orphaned)
+    assert str(repository) not in repr(orphaned)
+    assert hooks_directory.is_dir()
+    assert runner.released is False
+
+    assert service._owner.publish_trust(rebound, discovery.repository)
+    assert service._owner.record_change(
+        rebound,
+        SessionChange("modified", "note.md"),
+    )
+    (rebound_repository / "note.md").write_text(
+        "rebound edit\n",
+        encoding="utf-8",
+    )
+    status = await service.start_status(
+        rebound,
+        service._owner.snapshot(rebound).changes,
+    )
+    assert status.state == "ready"
+    assert len(status.rows) == 1
+
+    actions = (
+        lambda: service.start_stage(rebound, (status.rows[0].group_id,)),
+        lambda: service.start_unstage(rebound, (status.rows[0].group_id,)),
+        lambda: service.start_commit_review(rebound, "New root commit"),
+        lambda: service.start_commit(
+            rebound,
+            CommitReviewHandle(object()),
+        ),
+    )
+    for action in actions:
+        with pytest.raises(git_service.GitMutationAdmissionError) as refusal:
+            action()
+        assert refusal.value.reason == "mutation_active"
+
+    assert runner.commit_calls == 1
+    runner.terminal = True
+    await service.discover(rebound)
+
+    assert runner.released is True
+    assert not hooks_directory.exists()
+    assert service._orphaned_commit is None
+    staged = await service.start_stage(
+        rebound,
+        (status.rows[0].group_id,),
+    )
+    assert staged.state == "success"
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_terminal_commit_child_rebind_settles_without_stale_check(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, _binding, _review, runner = (
+        await _prepare_uncertain_commit_recovery(
+            repository,
+            mode="uncertain",
+        )
+    )
+    evidence = service._uncertain_commit
+    assert evidence is not None
+    hooks_directory = evidence.hooks_directory
+    assert hooks_directory is not None and hooks_directory.is_dir()
+    runner.terminal = True
+    rebound_parent = tmp_path / "rebound"
+    rebound_parent.mkdir()
+    rebound_repository = _init_repository(rebound_parent)
+
+    rebound = service._owner.select_root(rebound_repository)
+    discovery = await service.discover(rebound)
+
+    assert discovery.state == "ready"
+    assert discovery.repository is not None
+    assert service._uncertain_commit is None
+    assert service._orphaned_commit is None
+    assert runner.released is True
+    assert not hooks_directory.exists()
+    assert runner.commit_calls == 1
+
+    assert service._owner.publish_trust(rebound, discovery.repository)
+    assert service._owner.record_change(
+        rebound,
+        SessionChange("modified", "note.md"),
+    )
+    (rebound_repository / "note.md").write_text(
+        "rebound edit\n",
+        encoding="utf-8",
+    )
+    status = await service.start_status(
+        rebound,
+        service._owner.snapshot(rebound).changes,
+    )
+    assert status.state == "ready"
+    staged = await service.start_stage(
+        rebound,
+        (status.rows[0].group_id,),
+    )
+    assert staged.state == "success"
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_check_again_caller_cancellation_keeps_recovery_owned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, _review, runner = (
+        await _prepare_uncertain_commit_recovery(
+            repository,
+            mode="zero_without_commit",
+        )
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original_postflight = service._read_commit_postflight
+
+    async def delayed_postflight(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return await original_postflight(*args, **kwargs)
+
+    monkeypatch.setattr(
+        service,
+        "_read_commit_postflight",
+        delayed_postflight,
+    )
+    waiter = service.check_commit_again(binding)
+    await asyncio.wait_for(started.wait(), 1.0)
+
+    waiter.cancel("panel unmounted")
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+    cycle = service._commit_recovery_cycle
+    assert cycle is not None and not cycle.done()
+    assert service._owner.mutation_active(binding)
+    release.set()
+    outcome = await asyncio.wait_for(asyncio.shield(cycle), 1.0)
+
+    assert outcome.state == "uncertain"
+    assert runner.commit_calls == 1
+    assert not service._owner.mutation_active(binding)
+    assert service._owner.snapshot(binding).commit_recovery is not None
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_recovery_process_exit_discards_quarantine_after_settlement(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, _review, runner = (
+        await _prepare_uncertain_commit_recovery(
+            repository,
+            mode="uncertain",
+        )
+    )
+    service._owner.attach_git_service(service)
+    runner.terminal = True
+
+    await service._owner.shutdown_async()
+
+    assert runner.commit_calls == 1
+    assert runner.released is True
+    assert service._owner.snapshot(binding).commit_recovery is None
+    assert dict(service._owner.snapshot(binding).staging_ownership) == {}
+    assert not service._owner.mutation_active(binding)
+    assert not runner.hooks_directory.exists()
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_shutdown_publishes_before_hooks_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("shutdown_stop")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    events: list[str] = []
+    original_publish = FileNotesSessionOwner.publish_commit_outcome
+    original_rmdir = Path.rmdir
+
+    def recording_publish(self, lease, capture, publication):
+        events.append(f"publish:{publication.state}")
+        return original_publish(self, lease, capture, publication)
+
+    def recording_rmdir(path: Path) -> None:
+        if path.name.startswith(".chatbook-hooks-"):
+            events.append("hooks-cleanup")
+        original_rmdir(path)
+
+    monkeypatch.setattr(
+        FileNotesSessionOwner,
+        "publish_commit_outcome",
+        recording_publish,
+    )
+    monkeypatch.setattr(Path, "rmdir", recording_rmdir)
+    waiter = service.start_commit(binding, review.handle)
+    await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+
+    await service.shutdown()
+    outcome = await waiter
+
+    assert outcome.state == "uncertain"
+    assert runner.commit_calls == 1
+    assert events.index("publish:uncertain") < events.index("hooks-cleanup")
 
 
 @pytest.mark.asyncio
