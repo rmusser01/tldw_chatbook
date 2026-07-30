@@ -69,10 +69,13 @@ _ZWJ_EMOJI_STRING = "".join(
 )  # "tREm<emoji> <ZWJ><ZWJ>ey" -- reviewer's Finding 3 counterexample.
 # A genuine width>=8 (the production floor) counterexample for the
 # join-boundary cell-arithmetic bug in `_cell_wrap_line`'s hard-break path,
-# found by differential fuzzing during the fix (the reviewer's own Finding 3
-# string does not reproduce against this file's exact chunking -- see the
-# fix-round-2 report section): a run of short chunks ending in a ZWJ
-# followed by a chunk starting with a variation selector + emoji.
+# found by differential fuzzing during the fix. (The reviewer's Finding 3
+# string above was an over-width row EMITTED by the round-1 code while
+# windowing a larger fuzz draft, not a standalone input -- fed back in
+# directly it happens to split legally, which is why this separate
+# counterexample was needed; see the review's round-2 adjudication.)
+# A run of short chunks ending in a ZWJ followed by a chunk starting with
+# a variation selector + emoji.
 _ZWJ_JOIN_BOUNDARY_TEXT = "".join(
     chr(c)
     for c in (
@@ -295,13 +298,16 @@ def test_cell_wrap_line_matches_pinned_output_for_the_boundary_fixture():
     ],
 )
 def test_cell_wrap_line_stays_within_width_for_the_reviewers_fuzz_strings(text, width):
-    """Reviewer's Finding 2/3 counterexamples, pinned as an explicit
-    invariant check. Neither actually exceeds `width` against this file's
-    exact whitespace-chunking, against the reviewed commit or after this
-    fix (verified directly -- see the report's fix-round-2 section for the
-    per-chunk cell_len breakdown), so this pins "stays correct", not a RED
-    reproduction. `test_prefix_trim_uses_the_zwj_fuzz_counterexample_...`
-    above and `test_cell_wrap_line_does_not_hang_at_width_one_...` below are
+    """Reviewer's Finding 2/3 counterexample strings, pinned as an explicit
+    invariant check. Both were over-width rows EMITTED by the reviewed
+    commit's code while windowing larger fuzz drafts (the findings were
+    real); fed back in as standalone inputs they happen to split legally
+    under both the reviewed commit and this fix -- see the review's
+    round-2 adjudication of exactly this input-vs-emitted-row distinction.
+    So this pins "stays correct", not a RED reproduction.
+    `test_prefix_trim_uses_the_zwj_fuzz_counterexample_...` above,
+    `test_cell_wrap_line_does_not_hang_at_width_one_...` below, and
+    `test_cell_wrap_line_hard_break_pin_against_the_reviewed_commit` are
     the ones that actually fail against the reviewed commit.
     """
     rows = ConsoleComposerBar._cell_wrap_line(text, width)
@@ -333,6 +339,32 @@ def test_cell_wrap_line_stays_within_width_at_the_join_boundary():
     # The row-joining round-trips to the source content -- no characters
     # silently dropped by the hard-break's forced-progress path.
     assert "".join(rows) == _ZWJ_JOIN_BOUNDARY_TEXT.expandtabs(8)
+
+
+# "<ZWJ><ZWJ>dExfvMbzW" -- found by the reviewer's round-2 differential
+# search between the reviewed and current `_cell_wrap_line`. Codepoints,
+# per this file's invisible-character convention.
+_ZWJ_HARD_BREAK_PIN = "".join(
+    chr(c)
+    for c in (0x200D, 0x200D, 0x64, 0x45, 0x78, 0x66, 0x76, 0x4D, 0x62, 0x7A, 0x57)
+)
+
+
+def test_cell_wrap_line_hard_break_pin_against_the_reviewed_commit():
+    """Committed regression pin for the join-boundary fix at the production
+    width floor (8), not only the synthetic width-1 hang case.
+
+    The reviewed commit's `chop_cells`-based hard break emits
+    `['<ZWJ><ZWJ>dExfvMbzW']` -- one row of 9 cells at width 8 -- because
+    `cell_len` is not additive across a trailing ZWJ. The current
+    join-aware hard break splits it within budget. Reverting
+    `_cell_wrap_line` to the reviewed implementation fails here.
+    """
+    width = 8
+    rows = ConsoleComposerBar._cell_wrap_line(_ZWJ_HARD_BREAK_PIN, width)
+    for row in rows:
+        assert cell_len(row) <= width, (row, cell_len(row))
+    assert "".join(rows) == _ZWJ_HARD_BREAK_PIN
 
 
 def test_cell_wrap_line_does_not_hang_at_width_one_with_double_width_text():
