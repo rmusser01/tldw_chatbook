@@ -851,6 +851,9 @@ async def test_console_consumes_pending_prompt_insert_large_body_appends_as_coll
         assert composer.draft_text() == f"abc\n{large_body}"
         assert "Pasted Text:" in composer._display_draft_text()
         assert large_body not in composer._display_draft_text()
+        assert not app.pending_handoffs.has_pending(
+            HandoffChannel.CONSOLE_PROMPT_INSERT
+        )
 
 
 @pytest.mark.asyncio
@@ -907,6 +910,9 @@ async def test_console_consumes_pending_prompt_insert_noop_when_nothing_pending(
 
         assert composer.draft_text() == "abc"
         notify_spy.assert_not_called()
+        assert not app.pending_handoffs.has_pending(
+            HandoffChannel.CONSOLE_PROMPT_INSERT
+        )
 
 
 @pytest.mark.asyncio
