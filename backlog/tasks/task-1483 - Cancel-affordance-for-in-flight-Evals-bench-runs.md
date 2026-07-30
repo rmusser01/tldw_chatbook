@@ -17,6 +17,8 @@ priority: medium
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Follow-up from live UAT (2026-07-30). There is no way to cancel a running bench from the UI. The engine already has cooperative cancellation (`CancelToken`, checked per row/cell; cancelled cells persist and the grid renders partial per the spec's "Execution" section), and the sample-bench worker already holds a token — nothing exposes it. Matters more once task-1476 wires arbitrary benches and task-1482 allows larger grids.
+
+Addendum (2026-07-30 whole-branch review, N6): the sample-bench worker and the bench-run worker are now co-startable (independent guard flags, different worker groups) — data-safe but producing interleaved toasts and last-wins completion selects. When building the cancel affordance, decide whether the two workers should be mutually exclusive or the cancel scope covers both.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
