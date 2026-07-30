@@ -94,6 +94,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #65 The completed first-run character-chat UAT task record has valid unique `TASK-672` YAML frontmatter and a matching task heading, while its acceptance criteria, plan, implementation notes, and history remain unchanged.
 - [ ] #66 Focused Study screen, dashboard, quizzes, flashcards, and product-maturity harnesses provide the current typed pending-handoff store; tests that stage Study scope or initial sections use the corresponding typed channels, screen-level runtime changes recompute Study scope without claiming app-root mutation, and existing application-order, restored-state precedence, workspace/global scope, dashboard, quiz, flashcard, and source-generation behavior remains covered without production compatibility state.
 - [ ] #67 The app-level Study runtime callback regression commits the requested source through a real `RuntimePolicyContext`, invalidates the server-context cache, and forwards the committed source to the active screen without constructing or asserting retired writable app-root backend fields.
+- [ ] #68 The first-time character-chat UAT observes the typed Chat payload at the real handoff store's staging boundary, forwards it unchanged for live Console consumption, and proves settlement by the absence of pending/in-flight work plus a character-bound Console session, without polling the retired app-root handoff field or weakening the import, recovery, send, reply, and persistence journey.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -166,6 +167,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 59. Repair the renumbered first-run character-chat UAT task's missing YAML identity and stale heading without rewriting its completed record.
 60. Migrate the focused Study test harnesses and their staged scope/section inputs to the current typed pending-handoff store without adding production fallbacks.
 61. Retarget the remaining app-level Study runtime callback fixture to the current runtime-policy owner and server-context invalidation seam.
-62. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-63. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+62. Observe the first-time character-chat UAT payload and settlement through the typed Chat handoff owner.
+63. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+64. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

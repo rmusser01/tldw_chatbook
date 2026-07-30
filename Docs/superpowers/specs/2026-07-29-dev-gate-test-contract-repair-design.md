@@ -180,6 +180,12 @@ The failures reproduce on an exact `origin/dev` checkout:
   server transition, and forwards the committed source to the active screen.
   The fixture fails before the callback because it provides none of those
   current owners.
+- The first-time character-chat UAT still polls the deleted
+  `app.pending_chat_handoff` field both to capture the staged payload and to
+  infer consumption. Production now stages a detached value through
+  `PendingHandoffStore` and the Console may claim it before the next Pilot
+  tick, so the old observation always times out even though the real journey
+  creates a character-bound conversation and reaches Chat.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -656,6 +662,18 @@ Update the tests to describe current behavior:
     retired app-root field assertions and rename the test to describe policy
     commit plus forwarding. Do not instantiate the full application, add a
     compatibility projection, or change production.
+66. In the first-time character-chat UAT, wrap the real
+    `PendingHandoffStore.stage()` method before pressing Start Chat. Record a
+    detached `ChatHandoffPayload` only for `HandoffChannel.CHAT`, then forward
+    every call to the original method. Assert the existing intent, selected
+    kind, and record-id metadata against that captured payload. Replace the
+    retired consumption predicate with the store's public pending state, the
+    Console's in-progress flag, and the presence of a Console session bound to
+    the selected character id. Update only the related diagnostic output and
+    remove the now-unused `asyncio` import. Retain the real card import,
+    provider-readiness recovery, network seam, reply, and database-persistence
+    assertions. Do not add a store peek API, delay production consumption, or
+    restore app-root compatibility state.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -912,6 +930,13 @@ behavior. No compatibility shims. No broad deletion of live tests.
   integration suite and add unrelated lifecycle cost. A real policy context
   plus the handler's two direct collaborators exercises this unit boundary
   without a new harness abstraction.
+- Reintroducing `pending_chat_handoff` or adding a store peek operation would
+  create a second payload-observation authority solely for tests. Polling only
+  `has_pending()` cannot prove payload metadata and may miss a fast claim;
+  intercepting the existing public staging call while forwarding it unchanged
+  captures the producer contract without changing lifecycle timing. Requiring
+  no pending value alone is also ambiguous before staging, so the bound
+  character session and idle consumer state provide the settlement proof.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

@@ -2622,6 +2622,49 @@ git diff --check
 Expected: the focused test and all 82 Study-boundary tests pass, static checks
 pass, and no production file changes.
 
+### Task 4bj: Follow typed Chat handoff ownership in first-run UAT
+
+**Files:**
+- Modify: `Tests/UI/test_uat_first_time_character_chat.py`
+
+**Existing ADR:** `backlog/decisions/033-application-session-state-ownership.md`
+
+- [ ] **Step 1: Preserve the end-to-end RED**
+
+Run
+`Tests/UI/test_uat_first_time_character_chat.py::test_first_time_user_character_chat_journey`.
+Expected before repair: card import, provider setup, conversation creation, and
+Chat navigation occur, but the test times out polling the deleted
+`app.pending_chat_handoff` field.
+
+- [ ] **Step 2: Observe and settle through the live store**
+
+Before the Start Chat press, wrap the real `app.pending_handoffs.stage` method.
+For `HandoffChannel.CHAT`, detach and record the `ChatHandoffPayload`, then
+forward the same channel/value to the original method. Use that recorded value
+for the existing metadata assertions. Prove consumption only when the Chat
+channel has no pending value, the Console consumer is idle, and its store owns
+a session whose character id matches the handoff metadata. Update the related
+failure diagnostic and remove the unused `asyncio` import. Do not change
+production or weaken the remaining UAT assertions.
+
+- [ ] **Step 3: Verify the UAT boundary**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_uat_first_time_character_chat.py::test_first_time_user_character_chat_journey \
+  -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_uat_first_time_character_chat.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_uat_first_time_character_chat.py
+git diff --check
+```
+
+Expected: the full UAT passes with its import, recovery, handoff, send, reply,
+and persistence assertions intact; static checks pass and no production file
+changes.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
