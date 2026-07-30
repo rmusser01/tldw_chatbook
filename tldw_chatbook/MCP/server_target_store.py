@@ -51,7 +51,9 @@ class ConfiguredServerTargetStore:
         """Initialize the configured target store.
 
         Args:
-            path: Optional JSON file path for persisted server targets.
+            path: Optional JSON file path for persisted server targets. ``None``
+                lazily selects ``mcp_server_targets.json`` in the current user
+                data directory.
 
         Raises:
             ValueError: If the selected path contains a dangerous pattern.
