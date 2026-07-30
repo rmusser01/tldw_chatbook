@@ -412,6 +412,48 @@ person who happens to touch that screen.
 
 ---
 
+## A hung test under timeout_method="thread" kills the whole run — and a hang can be an optional-dep condition
+
+**TASK-1466, 2026-07-30.** The full-suite baseline run for the test-suite audit died
+at ~3% progress, twice. `test_pyaudio_recording_flow` stops its recording loop from
+inside the chunk callback, but the callback is gated behind webrtcvad speech
+detection and the test's synthetic buffer is silence: with `webrtcvad` installed
+(it is, locally and in CI), the callback never fires and the loop never exits.
+After the 300s timeout, pytest-timeout's `thread` method — the repo's configured
+method, and the only one that works for threaded/async tests — cannot cancel the
+test, so it dumps stacks and **terminates the entire pytest process**. One hung
+test cost the whole run, every run, on every webrtcvad machine; on machines
+without the extra the callback fires per chunk and the test is green, which is why
+it survived review. Its sibling `test_sounddevice_recording_flow` failed on clean
+dev for the same root cause (a 4-sample chunk is smaller than one 20ms VAD frame,
+so the VAD loop body never executes) — masked because serial runs died at the hang
+before reaching it.
+
+**What to do.** A test that stops its own loop from inside a callback must also
+bound the loop at the *source* (here: the mocked `stream.read` flips the stop flag
+after N reads) so no gating change can make it unbounded. When a test's behavior
+depends on an optional dependency, run it in both installed and absent
+configurations before trusting green. And treat "the run died at N%" as possibly
+ONE test: the timeout stack dump names it.
+
+---
+
+## `--deselect` with a wrong nodeid is silently ignored
+
+**2026-07-30, same audit.** A full baseline attempt was relaunched with
+`--deselect "Tests/Audio/test_recording_service.py::test_pyaudio_recording_flow"` —
+missing the `TestAudioRecordingIntegration::` class qualifier. pytest does not
+error, does not warn, and does not report `1 deselected`; the run simply hung on
+the very test the flag was meant to exclude, and the mistake was only visible ~15
+minutes later when progress stalled at the same file.
+
+**What to do.** After launching a run with `--deselect`, confirm the header line
+says `N deselected` before walking away. Copy nodeids from pytest's own output
+(`--collect-only -q` or a failure line), never reconstruct them by hand — class
+nesting is invisible in the source-file mental model.
+
+---
+
 ## Related
 
 - `lessons-live-verification.md` — why the suite could not see seven of these defects
