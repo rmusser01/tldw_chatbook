@@ -5552,12 +5552,12 @@ class ConsoleChatController:
             # no-op since nothing will ever read a closed session's state.
             return self._session_closed_result()
         owner = next((s for s in self.store.sessions() if s.id == owner_id), None)
-        # task-427: a character session always takes the plain-provider
+        # A character session always takes the plain-provider
         # path, even with the global agent runtime enabled and a bridge
         # present. Keyed on the message's OWNING session (looked up here,
         # not the controller's active session) so a session switch racing
         # this send can't flip which branch a still-in-flight message uses.
-        force_plain = owner is not None and owner.character_id is not None
+        force_plain = owner is not None and owner.assistant_kind == "character"
         # SP2 /rewind "summarize up to here": at the SINGLE dispatch choke point
         # (agent + direct both flow through here), fold the session's boundary
         # summary into the payload -- but ONLY when the boundary message is

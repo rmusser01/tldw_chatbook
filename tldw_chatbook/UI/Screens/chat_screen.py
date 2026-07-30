@@ -987,40 +987,83 @@ def _is_empty_select_value(value: Any) -> bool:
     return value is None or value == Select.BLANK or str(value).startswith("Select.")
 
 
+_MAX_CANONICAL_CHARACTER_ID = (1 << 63) - 1
+_MAX_CANONICAL_CHARACTER_ID_TEXT = str(_MAX_CANONICAL_CHARACTER_ID)
+_CANONICAL_CHARACTER_ID_PATTERN = re.compile(r"[1-9][0-9]{0,18}")
+_SERVER_CHARACTER_AUTHORITY_PATTERN = re.compile(
+    r"server-user-v1:[0-9a-f]{64}"
+)
+
+
+def _canonical_character_id_text(value: Any) -> str | None:
+    """Return an exact signed-64 positive decimal wire ID."""
+    if type(value) is not str:
+        return None
+    if _CANONICAL_CHARACTER_ID_PATTERN.fullmatch(value) is None:
+        return None
+    if (
+        len(value) == len(_MAX_CANONICAL_CHARACTER_ID_TEXT)
+        and value > _MAX_CANONICAL_CHARACTER_ID_TEXT
+    ):
+        return None
+    return value
+
+
+def _canonical_card_character_id(value: Any) -> int | None:
+    """Return a canonical signed-64 positive ID from a card response."""
+    if type(value) is int:
+        return value if 1 <= value <= _MAX_CANONICAL_CHARACTER_ID else None
+    value_text = _canonical_character_id_text(value)
+    return int(value_text) if value_text is not None else None
+
+
 def _character_session_identity_from_handoff(
     payload: ChatHandoffPayload,
-) -> tuple[int, str, str] | None:
+) -> tuple[str, int, str, str] | None:
     """Return character session identity for Personas Start Chat handoffs.
 
     Args:
         payload: Handoff payload staged by a source screen.
 
     Returns:
-        A tuple of `(character_id, character_name, assistant_id)` when the
-        payload represents a Personas character Start Chat handoff; otherwise
-        `None`.
+        A tuple of `(runtime_backend, character_id, character_name,
+        assistant_id)` when the payload represents a source-aware Personas
+        character Start Chat handoff; otherwise `None`.
     """
-    metadata = payload.metadata or {}
+    metadata = payload.metadata
+    if not isinstance(metadata, Mapping):
+        return None
     if (
-        str(metadata.get("intent") or "").strip() != "start_chat"
-        or str(metadata.get("selected_kind") or "").strip() != "character"
+        payload.source != "personas"
+        or payload.item_type != "character-card"
+        or metadata.get("intent") != "start_chat"
+        or metadata.get("selected_kind") != "character"
+    ):
+        return None
+    runtime_backend = payload.runtime_backend
+    if runtime_backend not in {"local", "server"}:
+        return None
+    if (
+        payload.source_owner != runtime_backend
+        or payload.source_selector_state != runtime_backend
+        or metadata.get("backend") != runtime_backend
     ):
         return None
 
-    raw_record_id = metadata.get("selected_record_id")
-    character_id_text = "" if raw_record_id is None else str(raw_record_id).strip()
-    if not character_id_text:
-        target_id = str(metadata.get("selected_target_id") or "").strip()
-        match = re.search(r"(?:^|:)character:(\d+)$", target_id)
-        if match:
-            character_id_text = match.group(1)
-    if not character_id_text.isdecimal():
+    character_id_text = _canonical_character_id_text(
+        metadata.get("selected_record_id")
+    )
+    if character_id_text is None:
+        return None
+    if (
+        metadata.get("selected_target_id")
+        != f"{runtime_backend}:character:{character_id_text}"
+    ):
         return None
 
     character_id = int(character_id_text)
     character_name = str(metadata.get("selected_name") or payload.title or "").strip()
-    assistant_id = str(character_id)
-    return character_id, character_name, assistant_id
+    return runtime_backend, character_id, character_name, character_id_text
 
 
 def _is_personas_preview_handoff(payload: ChatHandoffPayload) -> bool:
@@ -5723,11 +5766,7 @@ class ChatScreen(BaseAppScreen):
         native_session = self._active_native_console_session()
         if native_session is None:
             return None
-        character_id = getattr(native_session, "character_id", None)
-        try:
-            return int(character_id) if character_id is not None else None
-        except (TypeError, ValueError):
-            return None
+        return native_session.local_character_id()
 
     def _current_console_rail_character_name(self) -> Optional[str]:
         """Active native Console session's character name, or None."""
@@ -6405,6 +6444,35 @@ class ChatScreen(BaseAppScreen):
         active_leaf_id = getattr(db, "get_conversation_active_leaf", lambda _c: None)(
             target
         )
+        raw_runtime_backend = conversation.get("runtime_backend")
+        if type(raw_runtime_backend) is str:
+            runtime_backend = raw_runtime_backend
+        else:
+            runtime_backend = ""
+        raw_assistant_kind = conversation.get("assistant_kind")
+        assistant_kind = (
+            raw_assistant_kind if type(raw_assistant_kind) is str else None
+        )
+        raw_assistant_id = conversation.get("assistant_id")
+        assistant_id = raw_assistant_id if type(raw_assistant_id) is str else None
+        raw_assistant_authority_id = conversation.get("assistant_authority_id")
+        assistant_authority_id = (
+            raw_assistant_authority_id
+            if type(raw_assistant_authority_id) is str
+            else None
+        )
+        raw_character_id = conversation.get("character_id")
+        character_id = (
+            raw_character_id
+            if (
+                runtime_backend == "local"
+                and assistant_kind == "character"
+                and type(raw_character_id) is int
+                and raw_character_id > 0
+                and assistant_id == str(raw_character_id)
+            )
+            else None
+        )
         session = store.restore_persisted_session(
             title=title,
             workspace_id=workspace_id,
@@ -6412,6 +6480,11 @@ class ChatScreen(BaseAppScreen):
             all_nodes=all_nodes,
             active_leaf_persisted_id=active_leaf_id,
             settings=self._console_session_settings_for_resume(conversation),
+            runtime_backend=runtime_backend,
+            assistant_kind=assistant_kind,
+            assistant_id=assistant_id,
+            assistant_authority_id=assistant_authority_id,
+            character_id=character_id,
         )
         # Re-derive display-only agent TOOL markers from AgentRunsDB and overlay
         # them onto the restored active-path VIEW (markers are never tree nodes;
@@ -6423,38 +6496,30 @@ class ChatScreen(BaseAppScreen):
                 store.messages_for_session(session.id), target
             ),
         )
-        # TASK-427: the plain-provider gate (task-3) keys off the active
-        # session's ``character_id`` -- restore it from the persisted
-        # conversation row so a character conversation resumed after an
-        # app restart keeps routing sends off the agent loop.
-        raw_character_id = conversation.get("character_id")
-        if raw_character_id is not None:
-            try:
-                character_id = int(raw_character_id)
-            except (TypeError, ValueError):
-                character_id = None
-            session.character_id = character_id
-            if character_id is not None:
-                # The persisted conversation row carries only the id, so
-                # rehydrate the character name/label from the card. This keeps
-                # the settings identity row reading "Character: <name>" after
-                # resume instead of the Persona fallback. Best-effort: a
-                # missing/failed card leaves ``character_id`` (and the routing
-                # gate) intact.
-                character_name = await self._resolve_resumed_character_name(
-                    character_id
+        # Local presentation remains keyed only by the numeric local
+        # projection. Opaque server identity never enters local card/avatar/
+        # dictionary lookup paths.
+        if (
+            session.runtime_backend == "local"
+            and session.assistant_kind == "character"
+            and session.character_id is not None
+        ):
+            character_name = await self._resolve_resumed_character_name(
+                session.character_id
+            )
+            if character_name:
+                session.character_name = character_name
+            # Always (re)set the label on a local character resume -- to the
+            # resolved name, or clear it when unresolved. ``settings`` are
+            # otherwise inherited from the currently active session, so
+            # leaving an inherited ``character_label`` in place would make
+            # a card-less resume show a *different* character's name.
+            if session.settings is not None:
+                session.settings = replace(
+                    session.settings, character_label=character_name
                 )
-                if character_name:
-                    session.character_name = character_name
-                # Always (re)set the label on a character resume -- to the
-                # resolved name, or clear it when unresolved. ``settings`` are
-                # otherwise inherited from the currently active session, so
-                # leaving an inherited ``character_label`` in place would make
-                # a card-less resume show a *different* character's name.
-                if session.settings is not None:
-                    session.settings = replace(
-                        session.settings, character_label=character_name
-                    )
+        elif session.settings is not None:
+            session.settings = replace(session.settings, character_label="")
         self._set_active_workspace_for_console_session(session.id)
         # task-9/task-13: warm the EFFECTIVE (conversation ∩ workspace)
         # scope cache for this session now (off-loop) so the Inspector row
@@ -11798,10 +11863,11 @@ class ChatScreen(BaseAppScreen):
                     "draft": session.draft,
                     "settings": self._serialize_console_settings(session.settings),
                     "updated_at": session.updated_at,
-                    # task-427: round-trip the character binding so a screen-
-                    # state restore keeps a character session on the plain-
-                    # provider gate instead of reverting it to a generic one.
-                    "character_id": session.character_id,
+                    "runtime_backend": session.runtime_backend,
+                    "assistant_kind": session.assistant_kind,
+                    "assistant_id": session.assistant_id,
+                    "assistant_authority_id": session.assistant_authority_id,
+                    "character_id": session.local_character_id(),
                     "character_name": session.character_name,
                 }
                 for session in store.sessions()
@@ -11857,15 +11923,53 @@ class ChatScreen(BaseAppScreen):
             raw_updated_at = raw_session.get("updated_at")
             if raw_updated_at:
                 session_kwargs["updated_at"] = str(raw_updated_at)
-            # task-427: restore the character binding when present. Legacy
-            # payloads (saved before these keys existed) simply omit them and
-            # keep the ConsoleChatSession ``None`` defaults.
+            identity_keys = (
+                "runtime_backend",
+                "assistant_kind",
+                "assistant_id",
+                "assistant_authority_id",
+            )
+            has_source_aware_identity = any(
+                key in raw_session for key in identity_keys
+            )
+            if has_source_aware_identity:
+                raw_runtime_backend = raw_session.get("runtime_backend")
+                session_kwargs["runtime_backend"] = (
+                    raw_runtime_backend
+                    if type(raw_runtime_backend) is str
+                    else ""
+                )
+                for key in (
+                    "assistant_kind",
+                    "assistant_id",
+                    "assistant_authority_id",
+                ):
+                    value = raw_session.get(key)
+                    session_kwargs[key] = value if type(value) is str else None
+
             raw_character_id = raw_session.get("character_id")
-            if raw_character_id is not None:
-                try:
-                    session_kwargs["character_id"] = int(raw_character_id)
-                except (TypeError, ValueError):
-                    pass
+            character_id: int | None = None
+            if type(raw_character_id) is int and raw_character_id > 0:
+                if not has_source_aware_identity:
+                    character_id = raw_character_id
+                elif (
+                    session_kwargs.get("runtime_backend") == "local"
+                    and session_kwargs.get("assistant_kind") == "character"
+                    and session_kwargs.get("assistant_id") == str(raw_character_id)
+                ):
+                    character_id = raw_character_id
+            if character_id is not None:
+                session_kwargs["character_id"] = character_id
+            if not has_source_aware_identity and character_id is not None:
+                # Pre-provenance screen state used the numeric local character
+                # projection as its direct-chat routing marker. Preserve that
+                # behavior without inventing a proven authority.
+                session_kwargs.update(
+                    runtime_backend="local",
+                    assistant_kind="character",
+                    assistant_id=str(character_id),
+                    assistant_authority_id=None,
+                )
             raw_character_name = raw_session.get("character_name")
             if raw_character_name is not None:
                 session_kwargs["character_name"] = str(raw_character_name)
@@ -12109,26 +12213,153 @@ class ChatScreen(BaseAppScreen):
         identity = _character_session_identity_from_handoff(payload)
         if identity is None:
             return False
-        character_id, _name_hint, _assistant_id = identity
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if db is None:
+        runtime_backend, character_id, name_hint, assistant_id = identity
+        scope_service = getattr(
+            self.app_instance,
+            "character_persona_scope_service",
+            None,
+        )
+        get_character = getattr(scope_service, "get_character", None)
+        if not callable(get_character):
             return False
+
+        assistant_authority_id: str | None
+        local_character_id: int | None
+        server_context_capture: object | None = None
+        server_context_is_current: Callable[[object], bool] | None = None
+
+        def exact_server_context_is_current() -> bool:
+            if (
+                server_context_capture is None
+                or server_context_is_current is None
+            ):
+                return False
+            try:
+                return server_context_is_current(server_context_capture) is True
+            except Exception:
+                return False
+
+        if runtime_backend == "local":
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            get_local_authority_id = getattr(db, "get_local_authority_id", None)
+            if not callable(get_local_authority_id):
+                return False
+            try:
+                local_authority_id = get_local_authority_id()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return False
+            if (
+                type(local_authority_id) is not str
+                or not local_authority_id
+                or local_authority_id != local_authority_id.strip()
+            ):
+                return False
+            assistant_authority_id = local_authority_id
+            local_character_id = character_id
+        else:
+            expected_server_id = payload.active_server_profile_id
+            if (
+                type(expected_server_id) is not str
+                or not expected_server_id
+                or expected_server_id != expected_server_id.strip()
+            ):
+                return False
+            if getattr(self.app_instance, "active_server_id", None) != expected_server_id:
+                return False
+
+            assistant_authority_id = None
+            provider = getattr(self.app_instance, "server_context_provider", None)
+            capture_context = getattr(
+                provider,
+                "capture_character_authority_context",
+                None,
+            )
+            server_context_is_current = getattr(
+                provider,
+                "is_character_authority_context_current",
+                None,
+            )
+            resolver = getattr(provider, "resolve_character_authority_id", None)
+            if not callable(capture_context) or not callable(
+                server_context_is_current
+            ):
+                return False
+            try:
+                server_context_capture = capture_context(
+                    expected_server_id=expected_server_id
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return False
+            if not exact_server_context_is_current():
+                return False
+            if callable(resolver):
+                try:
+                    resolved_authority_id = await resolver(
+                        expected_server_id=expected_server_id,
+                        context_capture=server_context_capture,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    resolved_authority_id = None
+                if (
+                    type(resolved_authority_id) is str
+                    and _SERVER_CHARACTER_AUTHORITY_PATTERN.fullmatch(
+                        resolved_authority_id
+                    )
+                    is not None
+                ):
+                    assistant_authority_id = resolved_authority_id
+
+            # This is both the post-resolver fence and the immediately
+            # pre-card-fetch fence. No card from a newly active target may be
+            # used for the ID carried by the handoff.
+            if (
+                not exact_server_context_is_current()
+                or getattr(self.app_instance, "active_server_id", None)
+                != expected_server_id
+            ):
+                return False
+            local_character_id = None
+
         try:
-            card = await asyncio.to_thread(db.get_character_card_by_id, character_id)
+            card = await get_character(character_id, mode=runtime_backend)
+            if hasattr(card, "model_dump"):
+                card = card.model_dump(mode="json")
+        except asyncio.CancelledError:
+            raise
         except Exception:
-            logger.opt(exception=True).warning(
-                "Start Chat: character card fetch failed; staging context instead."
+            logger.warning(
+                "Start Chat: character card unavailable; staging context instead "
+                "(source={}).",
+                runtime_backend,
             )
             return False
-        if not card:
+        if not isinstance(card, Mapping) or not card:
             return False
+        card = dict(card)
+        if _canonical_card_character_id(card.get("id")) != character_id:
+            return False
+
+        if runtime_backend == "server":
+            expected_server_id = payload.active_server_profile_id
+            if (
+                not exact_server_context_is_current()
+                or getattr(self.app_instance, "active_server_id", None)
+                != expected_server_id
+            ):
+                return False
 
         # Local import matches this module's existing convention of
         # deferring Character_Chat submodule imports (they pull in Pillow
         # and CharactersRAGDB) rather than importing them at module scope.
         from ...Character_Chat.Character_Chat_Lib import replace_placeholders
 
-        name = str(card.get("name") or _name_hint or "").strip() or "Character"
+        name = str(card.get("name") or name_hint or "").strip() or "Character"
         parts = [
             str(card.get(key) or "").strip()
             for key in ("system_prompt", "personality", "description", "scenario")
@@ -12144,13 +12375,23 @@ class ChatScreen(BaseAppScreen):
             system_prompt=system_prompt,
             character_label=name,
         )
+        if runtime_backend == "server" and (
+            not exact_server_context_is_current()
+            or getattr(self.app_instance, "active_server_id", None)
+            != payload.active_server_profile_id
+        ):
+            return False
         session = store.create_session(
             title=f"Chat with {name}",
             workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
             settings=settings,
+            runtime_backend=runtime_backend,
+            assistant_kind="character",
+            assistant_id=assistant_id,
+            assistant_authority_id=assistant_authority_id,
+            character_id=local_character_id,
+            character_name=name,
         )
-        session.character_id = character_id
-        session.character_name = name
         if greeting:
             try:
                 store.append_message(
@@ -12166,6 +12407,10 @@ class ChatScreen(BaseAppScreen):
         try:
             await self._sync_native_console_chat_ui()
             self._focus_console_composer_if_needed(force=True)
+        except asyncio.CancelledError:
+            # The durable commit boundary is above. Report success so the
+            # caller acknowledges this handoff instead of replaying it.
+            return True
         except Exception:
             # The character session (and its greeting) is already durably
             # created above -- a UI-sync/focus failure here must not

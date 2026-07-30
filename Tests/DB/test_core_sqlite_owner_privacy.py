@@ -550,6 +550,48 @@ BACKUP_CASES = (
 )
 
 
+def test_chachanotes_backup_reopen_preserves_conversation_authority(
+    tmp_path: Path,
+) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir(mode=0o700)
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir(mode=0o700)
+    source_path = source_dir / "chachanotes.sqlite"
+    backup_path = backup_dir / "chachanotes.sqlite"
+    authority_id = "server-user-v1:" + ("d" * 64)
+
+    source_db = ChaChaNotes_DB.CharactersRAGDB(source_path, "source-client")
+    try:
+        conversation_id = source_db.add_conversation(
+            {
+                "assistant_kind": "character",
+                "assistant_id": "opaque-server-character",
+                "assistant_authority_id": authority_id,
+                "runtime_backend": "server",
+                "title": "Backed up character chat",
+            }
+        )
+        assert source_db.backup_database(str(backup_path)) is True
+    finally:
+        source_db.close_connection()
+
+    restored_db = ChaChaNotes_DB.CharactersRAGDB(backup_path, "restored-client")
+    try:
+        columns = {
+            row["name"]
+            for row in restored_db.get_connection()
+            .execute("PRAGMA table_info(conversations)")
+            .fetchall()
+        }
+        restored = restored_db.get_conversation_by_id(conversation_id)
+
+        assert "assistant_authority_id" in columns
+        assert restored["assistant_authority_id"] == authority_id
+    finally:
+        restored_db.close_connection()
+
+
 @pytest.mark.skipif(os.name != "posix", reason="POSIX backup target contract")
 @pytest.mark.parametrize("existing", [False, True], ids=["first-create", "harden"])
 @pytest.mark.parametrize("backup_case", BACKUP_CASES, ids=lambda case: case.name)

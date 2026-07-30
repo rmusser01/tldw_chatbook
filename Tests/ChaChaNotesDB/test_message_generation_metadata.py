@@ -25,7 +25,7 @@ def test_fresh_database_reaches_current_schema(db):
         v = cur.execute(
             "SELECT version FROM db_schema_version WHERE schema_name=?",
             ("rag_char_chat_schema",)).fetchone()[0]
-    assert v == 27
+    assert v == 28
 
 def test_set_and_batch_get_roundtrip(db):
     _, mid = _mk_message(db)

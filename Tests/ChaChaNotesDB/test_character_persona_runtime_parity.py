@@ -44,7 +44,7 @@ def test_character_conversation_stores_canonical_assistant_id(
         {
             "title": "Character Session",
             "assistant_kind": "character",
-            "assistant_id": "char.local.alice",
+            "assistant_id": str(character_id),
             "character_id": character_id,
             "runtime_backend": "local",
             "discovery_owner": "ccp_character",
@@ -53,7 +53,11 @@ def test_character_conversation_stores_canonical_assistant_id(
     )
 
     conversation = db_instance.get_conversation_by_id(conversation_id)
-    assert conversation["assistant_id"] == "char.local.alice"
+    assert conversation["assistant_id"] == str(character_id)
+    assert (
+        conversation["assistant_authority_id"]
+        == db_instance.get_local_authority_id()
+    )
     assert conversation["runtime_backend"] == "local"
     assert conversation["discovery_owner"] == "ccp_character"
     assert conversation["discovery_entity_id"] == "char.local.alice"
@@ -120,7 +124,7 @@ def test_update_conversation_supports_runtime_and_discovery_metadata(
         {
             "title": "Update Runtime",
             "assistant_kind": "character",
-            "assistant_id": "char.local.updater",
+            "assistant_id": str(character_id),
             "character_id": character_id,
             "runtime_backend": "local",
             "discovery_owner": "ccp_character",
@@ -144,6 +148,8 @@ def test_update_conversation_supports_runtime_and_discovery_metadata(
     updated = db_instance.get_conversation_by_id(conversation_id)
     assert updated is not None
     assert updated["runtime_backend"] == "server"
+    assert updated["character_id"] is None
+    assert updated["assistant_authority_id"] is None
     assert updated["discovery_owner"] == "general_chat"
     assert updated["discovery_entity_id"] == "canonical.updater"
 

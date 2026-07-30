@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Mapping
 from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
 
 _VALID_AUTH_MODES = {"api_key", "bearer", "custom_token"}
 _VALID_REACHABILITY_STATES = {"unknown", "reachable", "unreachable"}
@@ -193,6 +194,10 @@ class ConfiguredServerTarget:
     last_known_auth_state: str | None = None
     last_connected_at: datetime | None = None
     updated_at: datetime | None = None
+    authority_scope_id: str | None = field(
+        default_factory=lambda: str(uuid4()),
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         normalized_base_url = self.base_url.rstrip("/")
@@ -232,6 +237,7 @@ class ConfiguredServerTarget:
     def to_dict(self) -> dict[str, Any]:
         return {
             "server_id": self.server_id,
+            "authority_scope_id": self.authority_scope_id,
             "label": self.label,
             "base_url": self.base_url,
             "auth_mode": self.auth_mode,
@@ -247,12 +253,18 @@ class ConfiguredServerTarget:
     @classmethod
     def from_dict(cls, data: Any) -> "ConfiguredServerTarget":
         if not isinstance(data, Mapping):
-            return cls(server_id="", label="", base_url="")
+            return cls(
+                server_id="",
+                label="",
+                base_url="",
+                authority_scope_id=None,
+            )
 
         status = TargetStatusMetadata.from_dict(data.get("status"))
         base_url = _text_or_none(data.get("base_url")) or ""
         return cls(
             server_id=_text_or_none(data.get("server_id")) or "",
+            authority_scope_id=data.get("authority_scope_id"),
             label=_text_or_none(data.get("label")) or "",
             base_url=base_url,
             auth_mode=_coerce_choice(

@@ -18,6 +18,7 @@ ServerContextFailureReason = Literal[
     "server_credentials_unavailable",
     "stale_authorization",
     "profile_no_longer_authorized",
+    "server_identity_unavailable",
 ]
 ActionKind = Literal[
     "browse", "detail", "create", "update", "delete", "launch", "observe"
@@ -36,6 +37,7 @@ SERVER_CONTEXT_FAILURE_REASON_CODES: frozenset[ServerContextFailureReason] = fro
         "server_credentials_unavailable",
         "stale_authorization",
         "profile_no_longer_authorized",
+        "server_identity_unavailable",
     }
 )
 

@@ -176,6 +176,114 @@ def _row_text(item) -> str:
     return str(item.query_one(Static).renderable)
 
 
+_SHARED_MODE_OWNER_CASES = (
+    pytest.param(
+        "dictionaries",
+        "dictionary",
+        "New Dictionary Owner",
+        "2 entries · on",
+        "1 dictionary",
+        id="dictionaries",
+    ),
+    pytest.param(
+        "lore",
+        "lore",
+        "New Lore Owner",
+        "3 entries · on",
+        "1 lore book",
+        id="lore",
+    ),
+)
+
+
+def _configure_shared_mode_sources(mock_app_instance, monkeypatch) -> None:
+    """Install complete Dictionary/Lore list seams for shared-pane race tests."""
+    mock_app_instance.runtime_backend = "local"
+    mock_app_instance.chat_dictionary_scope_service = SimpleNamespace(
+        list_dictionaries=AsyncMock(
+            return_value={
+                "dictionaries": [
+                    {
+                        "id": 91,
+                        "name": "New Dictionary Owner",
+                        "entry_count": 2,
+                        "enabled": True,
+                    }
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr(
+        PersonasScreen,
+        "_lore_manager",
+        lambda self: object(),
+    )
+
+
+def _shared_pane_publication(screen) -> dict[str, object]:
+    """Snapshot the shared row/count/label fields that establish pane ownership."""
+    library = screen.query_one("#personas-library-pane")
+    rendered_rows = tuple(
+        (
+            str(row.id),
+            tuple(
+                str(static.renderable)
+                for static in row.query(Static).results()
+            ),
+        )
+        for row in library.query(".personas-library-row").results()
+    )
+    return {
+        "mode": screen.state.active_mode,
+        "rows": rendered_rows,
+        "count": str(
+            screen.query_one(
+                "#personas-library-count",
+                Static,
+            ).renderable
+        ),
+        "sort": str(
+            screen.query_one(
+                "#personas-library-sort",
+                Button,
+            ).label
+        ),
+        "tag": str(
+            screen.query_one(
+                "#personas-library-tag",
+                Button,
+            ).label
+        ),
+    }
+
+
+def _observe_shared_mode_render(
+    monkeypatch,
+    screen,
+    mode: str,
+    started,
+) -> tuple[str, str]:
+    """Mark a real mode renderer as started and stamp owner-distinct labels."""
+    library = screen.query_one("#personas-library-pane")
+    method_name = (
+        "_render_dictionary_rows"
+        if mode == "dictionaries"
+        else "_render_lore_rows"
+    )
+    original_render = getattr(screen, method_name)
+    owner_sort = f"Sort: {mode} owner"
+    owner_tag = f"Tag: {mode} owner"
+
+    async def observed_render(*args, **kwargs):
+        started.set()
+        await original_render(*args, **kwargs)
+        library.set_sort_label(owner_sort)
+        library.set_tag_label(owner_tag)
+
+    monkeypatch.setattr(screen, method_name, observed_render)
+    return owner_sort, owner_tag
+
+
 def _right_edge(widget) -> int:
     """Right edge of a mounted widget region."""
     return widget.region.x + widget.region.width
@@ -3266,6 +3374,8 @@ class TestConsoleActions:
             "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
             "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8181"}},
         }
+        mock_app_instance.runtime_backend = "local"
+        mock_app_instance.active_server_id = "configured-but-not-selected"
         app = PersonasTestApp(mock_app_instance)
         app.open_chat_with_handoff = Mock()
         async with app.run_test(size=(160, 50)) as pilot:
@@ -3275,9 +3385,183 @@ class TestConsoleActions:
         app.open_chat_with_handoff.assert_called_once()
         payload = app.open_chat_with_handoff.call_args.args[0]
         assert payload.source == "personas"
+        assert payload.runtime_backend == "local"
+        assert payload.source_owner == "local"
+        assert payload.source_selector_state == "local"
+        assert payload.active_server_profile_id is None
         assert payload.metadata["intent"] == "start_chat"
         assert payload.metadata["selected_target_id"] == "local:character:1"
+        assert payload.metadata["backend"] == "local"
         assert payload.suggested_prompt == "Respond as Detective Sam."
+
+    async def test_server_start_chat_carries_exact_source_and_active_target(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+    ):
+        """Server browsing, detail, preview, and handoff share one proven card."""
+        local_card = {
+            "id": 1,
+            "name": "Local collision",
+            "description": "Local-only description",
+            "first_message": "Local-only greeting",
+        }
+        server_row = {
+            "id": 1,
+            "name": "Remote Elara",
+            "description": "Server summary",
+        }
+        server_card = {
+            "id": 1,
+            "name": "Remote Elara",
+            "description": "Remote authoritative description",
+            "first_message": "Remote hello from {{char}}.",
+            "system_prompt": "Use the server card.",
+        }
+        local_list = Mock(return_value=[dict(local_card)])
+        local_detail = Mock(return_value=dict(local_card))
+        local_page = Mock(return_value=[dict(local_card)])
+        local_count = Mock(return_value=1)
+        local_conversations = Mock(return_value=[])
+        local_dictionaries = AsyncMock(return_value={"dictionaries": []})
+        local_worldbooks = Mock(return_value=[])
+        local_avatar = AsyncMock()
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_all_characters",
+            local_list,
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_character_by_id",
+            local_detail,
+        )
+        monkeypatch.setattr(
+            personas_screen_module,
+            "get_character_page_for_ui",
+            local_page,
+        )
+        monkeypatch.setattr(
+            personas_screen_module,
+            "count_character_page",
+            local_count,
+        )
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "list_character_conversations",
+            local_conversations,
+        )
+        monkeypatch.setattr(
+            PersonasScreen,
+            "_render_inspector_avatar",
+            local_avatar,
+        )
+        monkeypatch.setattr(
+            PersonasScreen,
+            "_lore_manager",
+            lambda self: SimpleNamespace(
+                get_world_books_for_character=local_worldbooks
+            ),
+        )
+
+        row_dto = SimpleNamespace(
+            model_dump=Mock(return_value=dict(server_row))
+        )
+        detail_dto = SimpleNamespace(
+            model_dump=Mock(return_value=dict(server_card))
+        )
+        scope_service = SimpleNamespace(
+            list_characters=AsyncMock(return_value=[row_dto]),
+            search_characters=AsyncMock(
+                return_value={"items": [row_dto], "total": 1}
+            ),
+            get_character=AsyncMock(return_value=detail_dto),
+        )
+        mock_app_instance.app_config = {
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+            "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8181"}},
+        }
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "configured-target-7"
+        mock_app_instance.character_persona_scope_service = scope_service
+        mock_app_instance.chat_dictionary_scope_service = SimpleNamespace(
+            list_character_dictionaries=local_dictionaries
+        )
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            row = screen.query_one("#personas-library-row-character-1")
+            assert "Remote Elara" in _row_text(row)
+            assert "Local collision" not in _row_text(row)
+
+            screen.state.search_query = "remote"
+            await screen._reload_character_page(reset_offset=True)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert "Remote Elara" in str(
+                screen.query_one("#personas-character-card-name", Static).renderable
+            )
+            assert "Remote authoritative description" in str(
+                screen.query_one(
+                    "#personas-character-card-description", Static
+                ).renderable
+            )
+            assert "Remote Elara: Remote hello from Remote Elara." in (
+                screen.query_one(PersonasPreviewPane).transcript_text()
+            )
+            assert (
+                screen.query_one("#personas-character-attachments").display is False
+            )
+            assert (
+                screen.query_one("#personas-card-edit-character", Button).disabled
+                is True
+            )
+            screen.query_one("#personas-start-chat", Button).press()
+            await pilot.pause()
+
+        page_size = personas_screen_module.PERSONAS_LIBRARY_PAGE_SIZE
+        scope_service.list_characters.assert_awaited_once_with(
+            mode="server",
+            limit=page_size + 1,
+            offset=0,
+        )
+        scope_service.search_characters.assert_awaited_once_with(
+            "remote",
+            mode="server",
+            limit=page_size + 1,
+        )
+        scope_service.get_character.assert_awaited_once_with(1, mode="server")
+        row_dto.model_dump.assert_called_with(mode="json")
+        detail_dto.model_dump.assert_called_once_with(mode="json")
+        local_list.assert_not_called()
+        local_page.assert_not_called()
+        local_count.assert_not_called()
+        local_detail.assert_not_called()
+        local_avatar.assert_not_awaited()
+        local_conversations.assert_not_called()
+        local_dictionaries.assert_not_awaited()
+        local_worldbooks.assert_not_called()
+        app.open_chat_with_handoff.assert_called_once()
+        payload = app.open_chat_with_handoff.call_args.args[0]
+        assert payload.source == "personas"
+        assert payload.runtime_backend == "server"
+        assert payload.source_owner == "server"
+        assert payload.source_selector_state == "server"
+        assert payload.active_server_profile_id == "configured-target-7"
+        assert payload.metadata["intent"] == "start_chat"
+        assert payload.metadata["selected_target_id"] == "server:character:1"
+        assert payload.metadata["backend"] == "server"
+        assert "Remote authoritative description" in payload.body
+        assert "Local-only description" not in payload.body
 
     async def test_start_chat_action_guard_blocks_unready_provider(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -3499,6 +3783,1663 @@ class TestConsoleActions:
             assert screen._console_action_allowed() is False  # nothing selected yet
             await self._select_first_character(pilot)
             assert screen._console_action_allowed() is True
+
+
+class TestServerCharacterSourceIsolation:
+    """Server Characters never exposes or crosses into local character seams."""
+
+    @staticmethod
+    def _server_service(
+        *,
+        rows: list[dict] | None = None,
+        detail: dict | None = None,
+    ) -> SimpleNamespace:
+        records = rows if rows is not None else [{"id": 7, "name": "Remote Elara"}]
+        card = (
+            detail
+            if detail is not None
+            else {
+                "id": 7,
+                "name": "Remote Elara",
+                "description": "Server-owned card",
+                "first_message": "Hello from the server.",
+            }
+        )
+        return SimpleNamespace(
+            list_characters=AsyncMock(
+                return_value={
+                    "items": [dict(row) for row in records],
+                    "total": len(records),
+                }
+            ),
+            search_characters=AsyncMock(
+                return_value={
+                    "items": [dict(row) for row in records],
+                    "total": len(records),
+                }
+            ),
+            get_character=AsyncMock(return_value=dict(card)),
+        )
+
+    async def test_source_switch_clears_local_rows_before_server_load_and_gates_actions(
+        self, mock_app_instance, stub_characters
+    ):
+        """A blocked server fetch cannot leave the local page or local controls live."""
+        import asyncio
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        service = self._server_service()
+
+        async def blocked_list(*, mode, limit, offset):
+            assert mode == "server"
+            started.set()
+            await release.wait()
+            return {"items": [{"id": 7, "name": "Remote Elara"}], "total": 1}
+
+        service.list_characters.side_effect = blocked_list
+        mock_app_instance.runtime_backend = "local"
+        mock_app_instance.active_server_id = "server-a"
+        mock_app_instance.character_persona_scope_service = service
+        mock_app_instance.app_config = {
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+            "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8181"}},
+        }
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            assert screen.query_one("#personas-library-row-character-1")
+
+            switch = asyncio.create_task(
+                screen.handle_runtime_backend_changed("server")
+            )
+            await started.wait()
+            await pilot.pause()
+
+            assert screen._characters == []
+            assert screen._character_total == 0
+            assert not list(screen.query("#personas-library-row-character-1"))
+
+            release.set()
+            await switch
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-7")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            for control_id in (
+                "#personas-library-new",
+                "#personas-library-import",
+                "#personas-library-duplicate",
+                "#personas-library-tag",
+                "#personas-card-edit-character",
+                "#personas-export-json",
+                "#personas-export-png",
+                "#personas-delete",
+            ):
+                control = screen.query_one(control_id, Button)
+                assert control.disabled or not control.display
+            assert (
+                screen.query_one("#personas-attach-to-console", Button).disabled
+                is False
+            )
+            assert screen.query_one("#personas-start-chat", Button).disabled is False
+
+    async def test_server_footer_does_not_advertise_local_character_creation(
+        self, mock_app_instance, stub_characters
+    ):
+        """Switching to server Characters removes the unsupported Ctrl+N hint."""
+        mock_app_instance.runtime_backend = "local"
+        mock_app_instance.active_server_id = "server-a"
+        mock_app_instance.character_persona_scope_service = self._server_service()
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            footer = screen.query_one(AppFooterStatus)
+            assert "ctrl+n new" in footer.shortcut_text.lower()
+
+            await screen.handle_runtime_backend_changed("server")
+            await pilot.pause()
+            rendered = screen._shortcut_context().render().lower()
+            footer_copy = footer.shortcut_text.lower()
+
+            assert "ctrl+n new" not in rendered
+            assert "ctrl+n new" not in footer_copy
+
+    async def test_server_tag_request_does_not_schedule_local_worker(
+        self, mock_app_instance
+    ):
+        """A queued Tag event cannot start local tag discovery on the server."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
+            PersonaTagFilterRequested,
+        )
+
+        screen = PersonasScreen(mock_app_instance)
+        screen.state.runtime_source = "server"
+        screen.state.active_mode = "characters"
+        screen.run_worker = Mock()
+
+        await screen._handle_tag_filter(PersonaTagFilterRequested())
+
+        screen.run_worker.assert_not_called()
+        assert screen._io_dialog_active is False
+
+    async def test_server_action_dispatch_and_direct_local_seams_fail_closed(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """Queued events and worker continuations are harmless after a source flip."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            CharacterSaveRequested,
+            EditCharacterRequested,
+        )
+
+        service = self._server_service()
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "server-a"
+        mock_app_instance.character_persona_scope_service = service
+        app = PersonasTestApp(mock_app_instance)
+
+        local_fetch = Mock(return_value=dict(CHARACTERS[0]))
+        local_create = Mock(return_value=99)
+        local_update = Mock(return_value=True)
+        local_import = Mock(return_value=99)
+        local_delete = Mock(return_value=True)
+        monkeypatch.setattr(
+            character_handler_module, "fetch_character_by_id", local_fetch
+        )
+        monkeypatch.setattr(character_handler_module, "create_character", local_create)
+        monkeypatch.setattr(character_handler_module, "update_character", local_update)
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card", local_import
+        )
+        monkeypatch.setattr(character_handler_module, "delete_character", local_delete)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.click("#personas-library-row-character-7")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            begin_create_impl = screen._begin_create_character
+            open_import_impl = screen._open_import_dialog
+            duplicate_impl = screen._duplicate_selected_character
+            begin_create = AsyncMock()
+            open_import = AsyncMock()
+            duplicate = AsyncMock()
+            screen._begin_create_character = begin_create
+            screen._open_import_dialog = open_import
+            screen._duplicate_selected_character = duplicate
+            for action in ("create", "import", "duplicate"):
+                await screen._handle_action_requested(
+                    PersonaActionRequested(action=action)
+                )
+            begin_create.assert_not_awaited()
+            open_import.assert_not_awaited()
+            duplicate.assert_not_awaited()
+            screen._begin_create_character = begin_create_impl
+            screen._open_import_dialog = open_import_impl
+            screen._duplicate_selected_character = duplicate_impl
+
+            run_worker = Mock()
+            screen.run_worker = run_worker
+            await begin_create_impl()
+            await open_import_impl()
+            await duplicate_impl()
+            assert screen._edit_mode == "view"
+            run_worker.assert_not_called()
+
+            full_record = Mock(return_value=dict(CHARACTERS[0]))
+            save_worker = Mock()
+            screen._full_character_record = full_record
+            screen._save_character_worker = save_worker
+            screen._handle_edit_requested(EditCharacterRequested("7"))
+            screen._handle_save_requested(
+                CharacterSaveRequested({"name": "Must stay remote"})
+            )
+            full_record.assert_not_called()
+            save_worker.assert_not_called()
+
+            await PersonasScreen._save_character_worker.__wrapped__(
+                screen,
+                {"name": "Must stay remote"},
+                "7",
+                "edit",
+            )
+            await screen._import_character_from_path("/tmp/remote-card.json")
+            await screen._export_selected_character("/tmp/remote-card.json", fmt="json")
+            await screen._export_selected_character("/tmp/remote-card.png", fmt="png")
+            await screen._delete_entity("character", "7", 1)
+
+        local_fetch.assert_not_called()
+        local_create.assert_not_called()
+        local_update.assert_not_called()
+        local_import.assert_not_called()
+        local_delete.assert_not_called()
+
+    async def test_server_source_blocks_attachment_and_editor_mutation_messages(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """Hidden card/editor controls also fail closed when their messages race."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_character_dictionaries import (
+            CharacterDictionaryAttachRequested,
+            CharacterDictionaryDetachRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_character_world_books import (
+            CharacterWorldBookAttachRequested,
+            CharacterWorldBookDetachRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            CharacterAvatarGenerateRequested,
+            CharacterExpressionClearRequested,
+            CharacterExpressionGenerateAllRequested,
+            CharacterExpressionGenerateRequested,
+            CharacterExpressionSetExportRequested,
+            CharacterExpressionSetImportRequested,
+            CharacterExpressionStylePickRequested,
+            CharacterExpressionUploadRequested,
+            CharacterImageRemoveRequested,
+            CharacterImageUploadRequested,
+        )
+
+        dictionary_service = SimpleNamespace(
+            attach_to_character=AsyncMock(),
+            detach_from_character=AsyncMock(),
+        )
+        lore_manager = SimpleNamespace(
+            attach_world_book_to_character=Mock(),
+            detach_world_book_from_character=Mock(),
+        )
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "server-a"
+        mock_app_instance.character_persona_scope_service = self._server_service()
+        mock_app_instance.chat_dictionary_scope_service = dictionary_service
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.click("#personas-library-row-character-7")
+            await pilot.pause()
+            screen.run_worker = Mock()
+            monkeypatch.setattr(
+                PersonasScreen, "_lore_manager", lambda self: lore_manager
+            )
+
+            await screen._handle_character_dictionary_attach(
+                CharacterDictionaryAttachRequested()
+            )
+            await screen._handle_character_dictionary_detach(
+                CharacterDictionaryDetachRequested("facts")
+            )
+            await screen._handle_character_worldbook_attach(
+                CharacterWorldBookAttachRequested()
+            )
+            await screen._handle_character_worldbook_detach(
+                CharacterWorldBookDetachRequested("setting")
+            )
+            for message, handler in (
+                (
+                    CharacterImageUploadRequested(),
+                    screen._handle_character_image_upload_requested,
+                ),
+                (
+                    CharacterImageRemoveRequested(),
+                    screen._handle_character_image_remove,
+                ),
+                (
+                    CharacterExpressionUploadRequested("thinking"),
+                    screen._handle_character_expression_upload_requested,
+                ),
+                (
+                    CharacterExpressionGenerateRequested("thinking"),
+                    screen._handle_character_expression_generate_requested,
+                ),
+                (
+                    CharacterAvatarGenerateRequested(),
+                    screen._handle_character_avatar_generate_requested,
+                ),
+                (
+                    CharacterExpressionGenerateAllRequested(),
+                    screen._handle_character_expression_generate_all_requested,
+                ),
+                (
+                    CharacterExpressionStylePickRequested(),
+                    screen._handle_expression_style_pick_requested,
+                ),
+                (
+                    CharacterExpressionClearRequested("thinking"),
+                    screen._handle_character_expression_clear_requested,
+                ),
+                (
+                    CharacterExpressionSetImportRequested(),
+                    screen._handle_expression_set_import_requested,
+                ),
+                (
+                    CharacterExpressionSetExportRequested(),
+                    screen._handle_expression_set_export_requested,
+                ),
+            ):
+                handler(message)
+
+            screen.run_worker.assert_not_called()
+            dictionary_service.attach_to_character.assert_not_awaited()
+            dictionary_service.detach_from_character.assert_not_awaited()
+            lore_manager.attach_world_book_to_character.assert_not_called()
+            lore_manager.detach_world_book_from_character.assert_not_called()
+
+    async def test_local_page_result_is_dropped_after_source_switch(
+        self, mock_app_instance, monkeypatch
+    ):
+        """A local DB read already in flight cannot publish into server mode."""
+        import asyncio
+
+        screen = PersonasScreen(mock_app_instance)
+        screen.state.runtime_source = "local"
+        screen._character_db = lambda: object()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocked_to_thread(function, *args, **kwargs):
+            if function is personas_screen_module.count_character_page:
+                started.set()
+                await release.wait()
+                return 1
+            return [{"id": 1, "name": "Late local row"}]
+
+        monkeypatch.setattr(
+            personas_screen_module.asyncio, "to_thread", blocked_to_thread
+        )
+        display = AsyncMock()
+        screen._display_character_page = display
+
+        load = asyncio.create_task(screen._reload_character_page())
+        await started.wait()
+        screen.state.runtime_source = "server"
+        release.set()
+        await load
+
+        display.assert_not_awaited()
+
+    async def test_local_page_failure_is_silent_after_source_switch(
+        self, mock_app_instance, monkeypatch
+    ):
+        """A stale local failure cannot notify or restore rows after server switch."""
+        import asyncio
+
+        screen = PersonasScreen(mock_app_instance)
+        screen.state.runtime_source = "local"
+        screen._character_db = lambda: object()
+        screen._characters = [{"id": 1, "name": "Old local row"}]
+        screen._character_total = 1
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def failing_to_thread(function, *args, **kwargs):
+            started.set()
+            await release.wait()
+            raise RuntimeError("stale local failure")
+
+        monkeypatch.setattr(
+            personas_screen_module.asyncio, "to_thread", failing_to_thread
+        )
+        notify = Mock()
+        screen._notify = notify
+
+        load = asyncio.create_task(screen._reload_character_page())
+        await started.wait()
+        await screen.handle_runtime_backend_changed("server")
+        assert screen._characters == []
+        assert screen._character_total == 0
+
+        release.set()
+        await load
+
+        notify.assert_not_called()
+        assert screen._characters == []
+        assert screen._character_total == 0
+
+    async def test_stale_local_offset_clamp_cannot_mutate_newer_page(
+        self, mock_app_instance, monkeypatch
+    ):
+        """A stale offset-100 count cannot clamp or render over offset 50."""
+        import asyncio
+
+        screen = PersonasScreen(mock_app_instance)
+        screen.state.runtime_source = "local"
+        screen.state.page_offset = 100
+        screen._character_db = lambda: object()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        count_calls = 0
+
+        async def interleaved_to_thread(function, *args, **kwargs):
+            nonlocal count_calls
+            if function is personas_screen_module.count_character_page:
+                count_calls += 1
+                if count_calls == 1:
+                    started.set()
+                    await release.wait()
+                    return 1
+                return 60
+            if kwargs["offset"] == 50:
+                return [{"id": 50, "name": "Newer offset winner"}]
+            return [{"id": 1, "name": "Stale clamped row"}]
+
+        monkeypatch.setattr(
+            personas_screen_module.asyncio, "to_thread", interleaved_to_thread
+        )
+        notify = Mock()
+        screen._notify = notify
+        display = AsyncMock(wraps=screen._display_character_page)
+        screen._display_character_page = display
+
+        stale = asyncio.create_task(screen._reload_character_page())
+        await started.wait()
+        screen.state.page_offset = 50
+        await screen._reload_character_page()
+        assert screen._characters == [{"id": 50, "name": "Newer offset winner"}]
+
+        release.set()
+        await stale
+
+        assert screen.state.page_offset == 50
+        assert screen._characters == [{"id": 50, "name": "Newer offset winner"}]
+        assert screen._character_total == 60
+        assert display.await_count == 1
+        notify.assert_not_called()
+
+    async def test_local_query_aba_drops_older_success(
+        self, mock_app_instance, monkeypatch
+    ):
+        """Local X→Y→X keeps the newer X page when the older X returns last."""
+        import asyncio
+
+        screen = PersonasScreen(mock_app_instance)
+        screen.state.runtime_source = "local"
+        screen._character_db = lambda: object()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        count_calls = 0
+        x_fetch_calls = 0
+
+        async def interleaved_to_thread(function, *args, **kwargs):
+            nonlocal count_calls, x_fetch_calls
+            if function is personas_screen_module.count_character_page:
+                count_calls += 1
+                if count_calls == 1:
+                    started.set()
+                    await release.wait()
+                return 1
+            if kwargs["search_term"] is not None:
+                return [{"id": 2, "name": "Y page"}]
+            x_fetch_calls += 1
+            if x_fetch_calls == 1:
+                return [{"id": 3, "name": "Newer X winner"}]
+            return [{"id": 1, "name": "Older X result"}]
+
+        monkeypatch.setattr(
+            personas_screen_module.asyncio, "to_thread", interleaved_to_thread
+        )
+
+        older_x = asyncio.create_task(screen._reload_character_page())
+        await started.wait()
+        screen.state.search_query = "y"
+        await screen._reload_character_page()
+        screen.state.search_query = ""
+        await screen._reload_character_page()
+        assert screen._characters == [{"id": 3, "name": "Newer X winner"}]
+
+        release.set()
+        await older_x
+
+        assert screen._characters == [{"id": 3, "name": "Newer X winner"}]
+
+    async def test_mid_render_invalidation_clears_partial_stale_character_page(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """A newer failed reload leaves no older page published after its await."""
+        import asyncio
+
+        mock_app_instance.runtime_backend = "local"
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            library = screen.query_one("#personas-library-pane")
+            original_update_rows = library.update_rows
+            stale_render_started = asyncio.Event()
+            release_stale_render = asyncio.Event()
+            count_calls = 0
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                nonlocal count_calls
+                if function is personas_screen_module.count_character_page:
+                    count_calls += 1
+                    if count_calls == 1:
+                        return 1
+                    raise RuntimeError("newer page failed")
+                return [{"id": 7, "name": "Older X"}]
+
+            async def block_after_row_publication(rows, **kwargs):
+                await original_update_rows(rows, **kwargs)
+                if tuple(row.name for row in rows) == ("Older X",):
+                    stale_render_started.set()
+                    await release_stale_render.wait()
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+            monkeypatch.setattr(library, "update_rows", block_after_row_publication)
+            screen._character_db = lambda: object()
+            screen._count_cache_key = None
+            screen._notify = Mock()
+            screen.state.sort_key = "modified_desc"
+            screen.state.tag_filter = "older-tag"
+
+            stale = asyncio.create_task(screen._reload_character_page())
+            await stale_render_started.wait()
+
+            screen.state.sort_key = "name_asc"
+            screen.state.tag_filter = None
+            await screen._reload_character_page()
+
+            release_stale_render.set()
+            await stale
+            await pilot.pause()
+
+            assert screen._characters == []
+            assert screen._character_total == 0
+            assert not list(screen.query(".personas-library-row"))
+            assert (
+                str(
+                    screen.query_one(
+                        "#personas-library-count",
+                        Static,
+                    ).renderable
+                )
+                == "0 characters"
+            )
+            assert (
+                str(screen.query_one("#personas-library-sort", Button).label)
+                == "Sort: Name"
+            )
+            assert (
+                str(screen.query_one("#personas-library-tag", Button).label)
+                == "Tag: All"
+            )
+
+    @pytest.mark.parametrize(
+        (
+            "new_mode",
+            "new_kind",
+            "new_name",
+            "new_meta",
+            "new_count",
+        ),
+        (
+            (
+                "dictionaries",
+                "dictionary",
+                "New Dictionary Owner",
+                "2 entries · on",
+                "1 dictionary",
+            ),
+            (
+                "lore",
+                "lore",
+                "New Lore Owner",
+                "3 entries · on",
+                "1 lore book",
+            ),
+        ),
+    )
+    async def test_stale_character_render_preserves_newer_shared_mode_publication(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        new_mode,
+        new_kind,
+        new_name,
+        new_meta,
+        new_count,
+    ):
+        """A mode renderer started after Characters publishes must finish last."""
+        import asyncio
+
+        _configure_shared_mode_sources(mock_app_instance, monkeypatch)
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            library = screen.query_one("#personas-library-pane")
+            original_update_rows = library.update_rows
+            stale_render_started = asyncio.Event()
+            release_stale_render = asyncio.Event()
+            mode_render_started = asyncio.Event()
+            owner_sort, owner_tag = _observe_shared_mode_render(
+                monkeypatch,
+                screen,
+                new_mode,
+                mode_render_started,
+            )
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                if function is personas_screen_module.count_character_page:
+                    return 1
+                if function is personas_screen_module.get_character_page_for_ui:
+                    return [{"id": 7, "name": "Older Character Publication"}]
+                if (
+                    function
+                    is PersonasScreen._list_world_books_with_counts
+                ):
+                    return [
+                        {
+                            "id": 91,
+                            "name": "New Lore Owner",
+                            "entry_count": 3,
+                            "enabled": True,
+                        }
+                    ]
+                raise AssertionError(f"Unexpected to_thread function: {function!r}")
+
+            async def block_after_character_publication(rows, **kwargs):
+                await original_update_rows(rows, **kwargs)
+                if tuple(row.name for row in rows) == (
+                    "Older Character Publication",
+                ):
+                    stale_render_started.set()
+                    await release_stale_render.wait()
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+            monkeypatch.setattr(
+                library,
+                "update_rows",
+                block_after_character_publication,
+            )
+            screen._character_db = lambda: object()
+            screen._count_cache_key = None
+            screen.state.sort_key = "modified_desc"
+            screen.state.tag_filter = "older-tag"
+
+            stale = asyncio.create_task(screen._reload_character_page())
+            await stale_render_started.wait()
+
+            newer_mode = asyncio.create_task(screen._apply_mode(new_mode))
+            await mode_render_started.wait()
+            await pilot.pause()
+
+            release_stale_render.set()
+            await stale
+            await newer_mode
+            await pilot.pause()
+
+            assert _shared_pane_publication(screen) == {
+                "mode": new_mode,
+                "rows": (
+                    (
+                        f"personas-library-row-{new_kind}-91",
+                        (new_name, new_meta),
+                    ),
+                ),
+                "count": new_count,
+                "sort": owner_sort,
+                "tag": owner_tag,
+            }
+            assert screen._characters == []
+            assert screen._character_total == 0
+            assert screen._count_cache_key is None
+
+    @pytest.mark.parametrize(
+        ("new_mode", "new_kind", "new_name", "new_meta", "new_count"),
+        _SHARED_MODE_OWNER_CASES,
+    )
+    async def test_new_mode_wins_when_stale_character_waits_before_publication(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        new_mode,
+        new_kind,
+        new_name,
+        new_meta,
+        new_count,
+    ):
+        """A mode renderer started behind Characters must publish last."""
+        import asyncio
+
+        _configure_shared_mode_sources(mock_app_instance, monkeypatch)
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            library = screen.query_one("#personas-library-pane")
+            original_update_rows = library.update_rows
+            character_writer_entered = asyncio.Event()
+            release_character_writer = asyncio.Event()
+            mode_render_started = asyncio.Event()
+            owner_sort, owner_tag = _observe_shared_mode_render(
+                monkeypatch,
+                screen,
+                new_mode,
+                mode_render_started,
+            )
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                if function is personas_screen_module.count_character_page:
+                    return 1
+                if function is personas_screen_module.get_character_page_for_ui:
+                    return [{"id": 7, "name": "Older Character Publication"}]
+                if function is PersonasScreen._list_world_books_with_counts:
+                    return [
+                        {
+                            "id": 91,
+                            "name": "New Lore Owner",
+                            "entry_count": 3,
+                            "enabled": True,
+                        }
+                    ]
+                raise AssertionError(f"Unexpected to_thread function: {function!r}")
+
+            async def block_before_character_publication(rows, **kwargs):
+                if tuple(row.name for row in rows) == (
+                    "Older Character Publication",
+                ):
+                    character_writer_entered.set()
+                    await release_character_writer.wait()
+                await original_update_rows(rows, **kwargs)
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+            monkeypatch.setattr(
+                library,
+                "update_rows",
+                block_before_character_publication,
+            )
+            screen._character_db = lambda: object()
+            screen._count_cache_key = None
+
+            stale_character = asyncio.create_task(
+                screen._reload_character_page()
+            )
+            await character_writer_entered.wait()
+
+            newer_mode = asyncio.create_task(screen._apply_mode(new_mode))
+            await mode_render_started.wait()
+            await pilot.pause()
+
+            release_character_writer.set()
+            await stale_character
+            await newer_mode
+            await pilot.pause()
+
+            assert _shared_pane_publication(screen) == {
+                "mode": new_mode,
+                "rows": (
+                    (
+                        f"personas-library-row-{new_kind}-91",
+                        (new_name, new_meta),
+                    ),
+                ),
+                "count": new_count,
+                "sort": owner_sort,
+                "tag": owner_tag,
+            }
+            assert screen._characters == []
+            assert screen._character_total == 0
+
+    @pytest.mark.parametrize(
+        ("new_mode", "new_kind", "new_name", "new_meta", "new_count"),
+        _SHARED_MODE_OWNER_CASES,
+    )
+    async def test_new_mode_wins_when_stale_character_cleanup_is_suspended(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        new_mode,
+        new_kind,
+        new_name,
+        new_meta,
+        new_count,
+    ):
+        """A mode renderer started inside stale cleanup must publish last."""
+        import asyncio
+
+        _configure_shared_mode_sources(mock_app_instance, monkeypatch)
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            library = screen.query_one("#personas-library-pane")
+            original_update_rows = library.update_rows
+            initial_character_published = asyncio.Event()
+            release_initial_character = asyncio.Event()
+            cleanup_writer_entered = asyncio.Event()
+            release_cleanup_writer = asyncio.Event()
+            mode_render_started = asyncio.Event()
+            owner_sort, owner_tag = _observe_shared_mode_render(
+                monkeypatch,
+                screen,
+                new_mode,
+                mode_render_started,
+            )
+            count_calls = 0
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                nonlocal count_calls
+                if function is personas_screen_module.count_character_page:
+                    count_calls += 1
+                    if count_calls == 1:
+                        return 1
+                    raise RuntimeError("newer character page failed")
+                if function is personas_screen_module.get_character_page_for_ui:
+                    return [{"id": 7, "name": "Older Character Publication"}]
+                if function is PersonasScreen._list_world_books_with_counts:
+                    return [
+                        {
+                            "id": 91,
+                            "name": "New Lore Owner",
+                            "entry_count": 3,
+                            "enabled": True,
+                        }
+                    ]
+                raise AssertionError(f"Unexpected to_thread function: {function!r}")
+
+            async def suspend_character_writers(rows, **kwargs):
+                row_names = tuple(row.name for row in rows)
+                if row_names == ("Older Character Publication",):
+                    await original_update_rows(rows, **kwargs)
+                    initial_character_published.set()
+                    await release_initial_character.wait()
+                    return
+                if not rows and kwargs.get("noun") == "characters":
+                    cleanup_writer_entered.set()
+                    await release_cleanup_writer.wait()
+                await original_update_rows(rows, **kwargs)
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+            monkeypatch.setattr(
+                library,
+                "update_rows",
+                suspend_character_writers,
+            )
+            screen._character_db = lambda: object()
+            screen._count_cache_key = None
+            screen.state.tag_filter = "older-tag"
+
+            stale_character = asyncio.create_task(
+                screen._reload_character_page()
+            )
+            await initial_character_published.wait()
+
+            screen.state.tag_filter = None
+            await screen._reload_character_page()
+            release_initial_character.set()
+            await cleanup_writer_entered.wait()
+
+            newer_mode = asyncio.create_task(screen._apply_mode(new_mode))
+            await mode_render_started.wait()
+            await pilot.pause()
+
+            release_cleanup_writer.set()
+            await stale_character
+            await newer_mode
+            await pilot.pause()
+
+            assert _shared_pane_publication(screen) == {
+                "mode": new_mode,
+                "rows": (
+                    (
+                        f"personas-library-row-{new_kind}-91",
+                        (new_name, new_meta),
+                    ),
+                ),
+                "count": new_count,
+                "sort": owner_sort,
+                "tag": owner_tag,
+            }
+            assert screen._characters == []
+            assert screen._character_total == 0
+            assert screen._count_cache_key is None
+
+    @pytest.mark.parametrize(
+        ("source_mode", "owner_change"),
+        (
+            pytest.param("dictionaries", "query", id="dictionaries-query"),
+            pytest.param("dictionaries", "mode", id="dictionaries-mode"),
+            pytest.param("lore", "query", id="lore-query"),
+            pytest.param("lore", "mode", id="lore-mode"),
+        ),
+    )
+    async def test_slow_shared_mode_fetch_cannot_overwrite_changed_owner(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        source_mode,
+        owner_change,
+    ):
+        """Dictionary/Lore results publish only for their captured mode/query."""
+        import asyncio
+
+        fetch_started = asyncio.Event()
+        release_fetch = asyncio.Event()
+        dictionary_calls = 0
+
+        async def list_dictionaries(*, mode, include_inactive):
+            nonlocal dictionary_calls
+            assert (mode, include_inactive) == ("local", True)
+            dictionary_calls += 1
+            if source_mode == "dictionaries" and dictionary_calls == 1:
+                fetch_started.set()
+                await release_fetch.wait()
+                name = "Old Dictionary Result"
+            else:
+                name = "new Dictionary Owner"
+            return {
+                "dictionaries": [
+                    {
+                        "id": 91,
+                        "name": name,
+                        "entry_count": 2,
+                        "enabled": True,
+                    }
+                ]
+            }
+
+        mock_app_instance.runtime_backend = "local"
+        mock_app_instance.chat_dictionary_scope_service = SimpleNamespace(
+            list_dictionaries=list_dictionaries
+        )
+        monkeypatch.setattr(
+            PersonasScreen,
+            "_lore_manager",
+            lambda self: object(),
+        )
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            lore_calls = 0
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                nonlocal lore_calls
+                if function is PersonasScreen._list_world_books_with_counts:
+                    lore_calls += 1
+                    if source_mode == "lore" and lore_calls == 1:
+                        fetch_started.set()
+                        await release_fetch.wait()
+                        name = "Old Lore Result"
+                    else:
+                        name = "new Lore Owner"
+                    return [
+                        {
+                            "id": 91,
+                            "name": name,
+                            "entry_count": 3,
+                            "enabled": True,
+                        }
+                    ]
+                raise AssertionError(f"Unexpected to_thread function: {function!r}")
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+
+            stale_fetch = asyncio.create_task(screen._apply_mode(source_mode))
+            await fetch_started.wait()
+
+            library = screen.query_one("#personas-library-pane")
+            if owner_change == "query":
+                screen.state.search_query = "new"
+                if source_mode == "dictionaries":
+                    await screen._render_dictionary_rows(query="new")
+                    expected_rows = (
+                        (
+                            "personas-library-row-dictionary-91",
+                            ("new Dictionary Owner", "2 entries · on"),
+                        ),
+                    )
+                    expected_count = "1 of 1 dictionary"
+                else:
+                    await screen._render_lore_rows(query="new")
+                    expected_rows = (
+                        (
+                            "personas-library-row-lore-91",
+                            ("new Lore Owner", "3 entries · on"),
+                        ),
+                    )
+                    expected_count = "1 of 1 lore book"
+                expected_mode = source_mode
+            else:
+                await screen._apply_mode("prompts")
+                expected_mode = "prompts"
+                expected_rows = ()
+                expected_count = "0 prompts"
+
+            owner_sort = f"Sort: {expected_mode} current owner"
+            owner_tag = f"Tag: {expected_mode} current owner"
+            library.set_sort_label(owner_sort)
+            library.set_tag_label(owner_tag)
+            await pilot.pause()
+            current_publication = _shared_pane_publication(screen)
+
+            release_fetch.set()
+            await stale_fetch
+            await pilot.pause()
+
+            assert current_publication == {
+                "mode": expected_mode,
+                "rows": expected_rows,
+                "count": expected_count,
+                "sort": owner_sort,
+                "tag": owner_tag,
+            }
+            assert _shared_pane_publication(screen) == current_publication
+
+    @pytest.mark.parametrize("source_mode", ("dictionaries", "lore"))
+    @pytest.mark.parametrize("older_outcome", ("success", "failure"))
+    async def test_shared_mode_query_aba_drops_older_completion(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        source_mode,
+        older_outcome,
+    ):
+        """Dictionary/Lore X→Y→X keeps the newer X rows and cache."""
+        import asyncio
+
+        fetch_started = asyncio.Event()
+        release_fetch = asyncio.Event()
+        call_count = 0
+        kind = "dictionary" if source_mode == "dictionaries" else "lore"
+        cache_name = (
+            "_dictionaries_cache"
+            if source_mode == "dictionaries"
+            else "_lore_books_cache"
+        )
+        entry_count = 2 if source_mode == "dictionaries" else 3
+
+        def record(item_id: int, name: str) -> dict:
+            return {
+                "id": item_id,
+                "name": name,
+                "entry_count": entry_count,
+                "enabled": True,
+            }
+
+        old_x = record(71, "X older result")
+        y_result = record(72, "Y intermediate result")
+        newer_x = record(73, "X newer winner")
+
+        async def fetch_records() -> list[dict]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                fetch_started.set()
+                await release_fetch.wait()
+                if older_outcome == "failure":
+                    raise RuntimeError("older X failed")
+                return [old_x]
+            if call_count == 2:
+                return [y_result]
+            if call_count == 3:
+                return [newer_x]
+            raise AssertionError(f"Unexpected fetch call: {call_count}")
+
+        async def list_dictionaries(*, mode, include_inactive):
+            assert (mode, include_inactive) == ("local", True)
+            return {"dictionaries": await fetch_records()}
+
+        _configure_shared_mode_sources(mock_app_instance, monkeypatch)
+        mock_app_instance.chat_dictionary_scope_service.list_dictionaries = (
+            list_dictionaries
+        )
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                if function is PersonasScreen._list_world_books_with_counts:
+                    return await fetch_records()
+                raise AssertionError(f"Unexpected to_thread function: {function!r}")
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+            library = screen.query_one("#personas-library-pane")
+            screen.state.switch_mode(source_mode)
+            screen.state.search_query = "x"
+            library.set_mode(source_mode)
+            render = (
+                screen._render_dictionary_rows
+                if source_mode == "dictionaries"
+                else screen._render_lore_rows
+            )
+
+            older_x_request = asyncio.create_task(render(query="x"))
+            await fetch_started.wait()
+
+            screen.state.search_query = "y"
+            await render(query="y")
+            screen.state.search_query = "x"
+            await render(query="x")
+            await pilot.pause()
+
+            newer_publication = _shared_pane_publication(screen)
+            newer_cache = deepcopy(getattr(screen, cache_name))
+            assert newer_publication["rows"] == (
+                (
+                    f"personas-library-row-{kind}-73",
+                    ("X newer winner", f"{entry_count} entries · on"),
+                ),
+            )
+            assert newer_cache == [newer_x]
+
+            release_fetch.set()
+            await older_x_request
+            await pilot.pause()
+
+            assert _shared_pane_publication(screen) == newer_publication
+            assert getattr(screen, cache_name) == newer_cache
+
+    @pytest.mark.parametrize("source_mode", ("dictionaries", "lore"))
+    async def test_shared_mode_away_and_back_drops_older_completion(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        source_mode,
+    ):
+        """Dictionary/Lore mode-away→back keeps the newer request owner."""
+        import asyncio
+
+        fetch_started = asyncio.Event()
+        release_fetch = asyncio.Event()
+        call_count = 0
+        kind = "dictionary" if source_mode == "dictionaries" else "lore"
+        cache_name = (
+            "_dictionaries_cache"
+            if source_mode == "dictionaries"
+            else "_lore_books_cache"
+        )
+        entry_count = 2 if source_mode == "dictionaries" else 3
+
+        def record(item_id: int, name: str) -> dict:
+            return {
+                "id": item_id,
+                "name": name,
+                "entry_count": entry_count,
+                "enabled": True,
+            }
+
+        older_result = record(81, "Older before mode return")
+        newer_result = record(82, "Newer after mode return")
+
+        async def fetch_records() -> list[dict]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                fetch_started.set()
+                await release_fetch.wait()
+                return [older_result]
+            if call_count == 2:
+                return [newer_result]
+            raise AssertionError(f"Unexpected fetch call: {call_count}")
+
+        async def list_dictionaries(*, mode, include_inactive):
+            assert (mode, include_inactive) == ("local", True)
+            return {"dictionaries": await fetch_records()}
+
+        _configure_shared_mode_sources(mock_app_instance, monkeypatch)
+        mock_app_instance.chat_dictionary_scope_service.list_dictionaries = (
+            list_dictionaries
+        )
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                if function is PersonasScreen._list_world_books_with_counts:
+                    return await fetch_records()
+                raise AssertionError(f"Unexpected to_thread function: {function!r}")
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+            library = screen.query_one("#personas-library-pane")
+            screen.state.switch_mode(source_mode)
+            screen.state.search_query = ""
+            library.set_mode(source_mode)
+            render = (
+                screen._render_dictionary_rows
+                if source_mode == "dictionaries"
+                else screen._render_lore_rows
+            )
+
+            older_request = asyncio.create_task(render())
+            await fetch_started.wait()
+
+            await screen._apply_mode("prompts")
+            await screen._apply_mode(source_mode)
+            await pilot.pause()
+
+            newer_publication = _shared_pane_publication(screen)
+            newer_cache = deepcopy(getattr(screen, cache_name))
+            assert newer_publication["rows"] == (
+                (
+                    f"personas-library-row-{kind}-82",
+                    ("Newer after mode return", f"{entry_count} entries · on"),
+                ),
+            )
+            assert newer_cache == [newer_result]
+
+            release_fetch.set()
+            await older_request
+            await pilot.pause()
+
+            assert _shared_pane_publication(screen) == newer_publication
+            assert getattr(screen, cache_name) == newer_cache
+
+    @pytest.mark.parametrize("valid_mode", ("dictionaries", "lore"))
+    @pytest.mark.parametrize(
+        "stale_callback",
+        ("wrong-mode", "wrong-query"),
+    )
+    @pytest.mark.parametrize("valid_outcome", ("success", "failure"))
+    async def test_invalid_shared_mode_callback_does_not_supersede_valid_owner(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        valid_mode,
+        stale_callback,
+        valid_outcome,
+    ):
+        """Rejected callbacks cannot invalidate an accepted suspended owner."""
+        import asyncio
+
+        fetch_started = asyncio.Event()
+        release_fetch = asyncio.Event()
+        fetch_calls = 0
+        kind = "dictionary" if valid_mode == "dictionaries" else "lore"
+        cache_name = (
+            "_dictionaries_cache"
+            if valid_mode == "dictionaries"
+            else "_lore_books_cache"
+        )
+        entry_count = 2 if valid_mode == "dictionaries" else 3
+        owner_record = {
+            "id": 93,
+            "name": f"Owner {kind.title()} Result",
+            "entry_count": entry_count,
+            "enabled": True,
+        }
+        prior_cache = [
+            {
+                "id": 90,
+                "name": f"Prior {kind.title()} Cache",
+                "entry_count": 1,
+                "enabled": True,
+            }
+        ]
+
+        async def fetch_records() -> list[dict]:
+            nonlocal fetch_calls
+            fetch_calls += 1
+            if fetch_calls != 1:
+                raise AssertionError(f"Unexpected fetch call: {fetch_calls}")
+            fetch_started.set()
+            await release_fetch.wait()
+            if valid_outcome == "failure":
+                raise RuntimeError("accepted owner failed")
+            return [owner_record]
+
+        async def list_dictionaries(*, mode, include_inactive):
+            assert (mode, include_inactive) == ("local", True)
+            return {"dictionaries": await fetch_records()}
+
+        _configure_shared_mode_sources(mock_app_instance, monkeypatch)
+        mock_app_instance.chat_dictionary_scope_service.list_dictionaries = (
+            list_dictionaries
+        )
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                if function is PersonasScreen._list_world_books_with_counts:
+                    return await fetch_records()
+                raise AssertionError(f"Unexpected to_thread function: {function!r}")
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+            library = screen.query_one("#personas-library-pane")
+            screen.state.switch_mode(valid_mode)
+            screen.state.search_query = "owner"
+            library.set_mode(valid_mode)
+            setattr(screen, cache_name, deepcopy(prior_cache))
+
+            valid_render = (
+                screen._render_dictionary_rows
+                if valid_mode == "dictionaries"
+                else screen._render_lore_rows
+            )
+            generation_before = screen._dictionary_lore_request_generation
+            valid_request = asyncio.create_task(valid_render(query="owner"))
+            await fetch_started.wait()
+            accepted_generation = screen._dictionary_lore_request_generation
+
+            if stale_callback == "wrong-mode":
+                invalid_render = (
+                    screen._render_lore_rows
+                    if valid_mode == "dictionaries"
+                    else screen._render_dictionary_rows
+                )
+                await invalid_render(query="owner")
+            else:
+                await valid_render(query="stale")
+            generation_after_invalid = screen._dictionary_lore_request_generation
+
+            release_fetch.set()
+            await valid_request
+            await pilot.pause()
+
+            publication = _shared_pane_publication(screen)
+            recovery_rows = list(
+                screen.query(".personas-library-recovery-row").results()
+            )
+            recovery_copy = (
+                str(recovery_rows[0].query_one(Static).renderable)
+                if recovery_rows
+                else None
+            )
+            if valid_outcome == "success":
+                expected_rows = (
+                    (
+                        f"personas-library-row-{kind}-93",
+                        (
+                            f"Owner {kind.title()} Result",
+                            f"{entry_count} entries · on",
+                        ),
+                    ),
+                )
+                expected_count = (
+                    "1 of 1 dictionary"
+                    if valid_mode == "dictionaries"
+                    else "1 of 1 lore book"
+                )
+                expected_cache = [owner_record]
+                expected_recovery = None
+            else:
+                expected_rows = ()
+                expected_count = (
+                    "Dictionaries unavailable"
+                    if valid_mode == "dictionaries"
+                    else "Lore books unavailable"
+                )
+                expected_cache = prior_cache
+                expected_recovery = (
+                    "Dictionaries could not be loaded.\n"
+                    "Switch modes and back to retry."
+                    if valid_mode == "dictionaries"
+                    else "Lore books could not be loaded.\n"
+                    "Switch modes and back to retry."
+                )
+
+            assert (
+                accepted_generation,
+                generation_after_invalid,
+                fetch_calls,
+                publication["rows"],
+                publication["count"],
+                getattr(screen, cache_name),
+                recovery_copy,
+            ) == (
+                generation_before + 1,
+                accepted_generation,
+                1,
+                expected_rows,
+                expected_count,
+                expected_cache,
+                expected_recovery,
+            )
+
+    @pytest.mark.parametrize("older_outcome", ("success", "failure"))
+    async def test_server_target_aba_drops_older_request(
+        self, mock_app_instance, older_outcome
+    ):
+        """Server X→Y→X keeps newer X rows and ignores older X completion."""
+        import asyncio
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        call_count = 0
+
+        async def list_characters(*, mode, limit, offset):
+            nonlocal call_count
+            assert mode == "server"
+            call_count += 1
+            if call_count == 1:
+                started.set()
+                await release.wait()
+                if older_outcome == "failure":
+                    raise RuntimeError("older X failed")
+                return {"items": [{"id": 1, "name": "Older X"}], "total": 1}
+            if mock_app_instance.active_server_id == "target-y":
+                return {"items": [{"id": 2, "name": "Y page"}], "total": 1}
+            return {"items": [{"id": 3, "name": "Newer X winner"}], "total": 1}
+
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "target-x"
+        mock_app_instance.character_persona_scope_service = SimpleNamespace(
+            list_characters=AsyncMock(side_effect=list_characters)
+        )
+        screen = PersonasScreen(mock_app_instance)
+        notify = Mock()
+        screen._notify = notify
+
+        older_x = asyncio.create_task(screen._reload_server_character_page())
+        await started.wait()
+        mock_app_instance.active_server_id = "target-y"
+        await screen._reload_server_character_page()
+        mock_app_instance.active_server_id = "target-x"
+        await screen._reload_server_character_page()
+        assert screen._characters == [{"id": 3, "name": "Newer X winner"}]
+
+        release.set()
+        await older_x
+
+        assert screen._characters == [{"id": 3, "name": "Newer X winner"}]
+        assert screen._character_total == 1
+        notify.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "changed_dimension",
+        ("source", "target", "mode", "query", "sort", "tag", "offset"),
+    )
+    async def test_server_page_result_is_dropped_after_request_snapshot_changes(
+        self, mock_app_instance, changed_dimension
+    ):
+        """Every source/target/view facet fences an in-flight server result."""
+        import asyncio
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocked_list(*, mode, limit, offset):
+            assert mode == "server"
+            started.set()
+            await release.wait()
+            return {"items": [{"id": 9, "name": "Late server row"}], "total": 1}
+
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "target-a"
+        mock_app_instance.character_persona_scope_service = SimpleNamespace(
+            list_characters=AsyncMock(side_effect=blocked_list)
+        )
+        screen = PersonasScreen(mock_app_instance)
+        screen._characters = [{"id": 1, "name": "Old row"}]
+        screen._character_total = 1
+
+        load = asyncio.create_task(screen._reload_server_character_page())
+        await started.wait()
+        if changed_dimension == "source":
+            screen.state.runtime_source = "local"
+        elif changed_dimension == "target":
+            mock_app_instance.active_server_id = "target-b"
+        elif changed_dimension == "mode":
+            screen.state.active_mode = "personas"
+        elif changed_dimension == "query":
+            screen.state.search_query = "new query"
+        elif changed_dimension == "sort":
+            screen.state.sort_key = "date"
+        elif changed_dimension == "tag":
+            screen.state.tag_filter = "new-tag"
+        else:
+            screen.state.page_offset = (
+                personas_screen_module.PERSONAS_LIBRARY_PAGE_SIZE
+            )
+        release.set()
+        await load
+
+        assert screen._characters == []
+        assert screen._character_total == 0
+
+    async def test_target_b_winner_survives_stale_target_a_failure(
+        self, mock_app_instance
+    ):
+        """A failed A request cannot clear the newer B page."""
+        import asyncio
+
+        started_a = asyncio.Event()
+        release_a = asyncio.Event()
+
+        async def list_characters(*, mode, limit, offset):
+            assert mode == "server"
+            if mock_app_instance.active_server_id == "target-a":
+                started_a.set()
+                await release_a.wait()
+                raise RuntimeError("target A went away")
+            return {"items": [{"id": 2, "name": "Target B"}], "total": 1}
+
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "target-a"
+        mock_app_instance.character_persona_scope_service = SimpleNamespace(
+            list_characters=AsyncMock(side_effect=list_characters)
+        )
+        screen = PersonasScreen(mock_app_instance)
+        screen._characters = [{"id": 1, "name": "Old A"}]
+        screen._character_total = 1
+
+        load_a = asyncio.create_task(screen._reload_server_character_page())
+        await started_a.wait()
+        mock_app_instance.active_server_id = "target-b"
+        await screen._reload_server_character_page()
+        assert screen._characters == [{"id": 2, "name": "Target B"}]
+
+        release_a.set()
+        await load_a
+        assert screen._characters == [{"id": 2, "name": "Target B"}]
+        assert screen._character_total == 1
+
+    @pytest.mark.parametrize(
+        "failure",
+        ("missing-target", "missing-service", "network"),
+    )
+    async def test_server_load_failures_replace_old_rows_with_empty_page(
+        self, mock_app_instance, failure
+    ):
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = (
+            None if failure == "missing-target" else "target-a"
+        )
+        if failure == "missing-service":
+            service = SimpleNamespace()
+        elif failure == "network":
+            service = SimpleNamespace(
+                list_characters=AsyncMock(side_effect=RuntimeError("offline"))
+            )
+        else:
+            service = SimpleNamespace(
+                list_characters=AsyncMock(return_value={"items": [], "total": 0})
+            )
+        mock_app_instance.character_persona_scope_service = service
+        screen = PersonasScreen(mock_app_instance)
+        screen._characters = [{"id": 1, "name": "Stale row"}]
+        screen._character_total = 1
+        screen._count_cache_key = ("stale", None)
+
+        await screen._reload_server_character_page()
+
+        assert screen._characters == []
+        assert screen._character_total == 0
+        assert screen._count_cache_key is None
+
+    async def test_server_search_pages_at_api_limit_without_third_page(
+        self, mock_app_instance
+    ):
+        rows = [{"id": index, "name": f"Remote {index:03d}"} for index in range(1, 121)]
+
+        async def search_characters(query, *, mode, limit):
+            assert query == "remote"
+            assert mode == "server"
+            return {"items": rows[:limit], "total": len(rows)}
+
+        service = self._server_service(rows=[])
+        service.search_characters.side_effect = search_characters
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "target-a"
+        mock_app_instance.character_persona_scope_service = service
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            screen.state.search_query = "remote"
+            await screen._reload_character_page(reset_offset=True)
+            assert [row["id"] for row in screen._characters] == list(range(1, 51))
+
+            await screen._on_page_changed_delta(1)
+            assert [row["id"] for row in screen._characters] == list(range(51, 101))
+            assert screen._character_total == 100
+            assert screen.query_one("#personas-library-next", Button).disabled is True
+
+            await screen._on_page_changed_delta(1)
+            assert screen.state.page_offset == 50
+
+        assert [
+            call.kwargs["limit"] for call in service.search_characters.await_args_list
+        ] == [51, 100]
 
 
 class _FakePreviewGateway:
@@ -5341,31 +7282,56 @@ class TestPersonaHumanIdentityRemoval:
         server_profile_service.list_persona_profiles = AsyncMock(
             return_value={"items": [dict(PROFILE)], "total": 1}
         )
+        server_profile_service.get_character = AsyncMock(
+            return_value={
+                "id": 7,
+                "name": "Elara",
+                "first_message": "Hello {{user}}, I am {{char}}.",
+                "system_prompt": "Stay curious.",
+            }
+        )
+        db = SimpleNamespace(
+            get_local_authority_id=Mock(return_value="local-authority"),
+            get_character_card_by_id=Mock(
+                side_effect=AssertionError(
+                    "Start Chat must use the source-aware scope service"
+                )
+            ),
+        )
+        server_target_id = "configured-target-7"
+        server_authority_id = "server-user-v1:" + ("d" * 64)
+        authority_resolver = AsyncMock(return_value=server_authority_id)
+        authority_capture = object()
 
-        class _CardDB:
-            @staticmethod
-            def get_character_card_by_id(character_id):
-                assert character_id == 7
-                return {
-                    "id": 7,
-                    "name": "Elara",
-                    "first_message": "Hello {{user}}, I am {{char}}.",
-                    "system_prompt": "Stay curious.",
-                }
+        async def resolve_authority_for_capture(
+            *,
+            expected_server_id,
+            context_capture,
+        ):
+            assert context_capture is authority_capture
+            return await authority_resolver(
+                expected_server_id=expected_server_id
+            )
 
         class _CapturingStore:
             def __init__(self):
                 self.session = None
                 self.messages = []
 
-            def create_session(self, *, title, workspace_id, settings):
+            def create_session(
+                self,
+                *,
+                title,
+                workspace_id,
+                settings,
+                **identity,
+            ):
                 self.session = SimpleNamespace(
                     id="session-1",
                     title=title,
                     workspace_id=workspace_id,
                     settings=settings,
-                    character_id=None,
-                    character_name=None,
+                    **identity,
                 )
                 return self.session
 
@@ -5381,10 +7347,21 @@ class TestPersonaHumanIdentityRemoval:
 
         runtime_app = SimpleNamespace(
             app_config=legacy_human_config.mapping,
-            chachanotes_db=_CardDB(),
+            active_server_id=(
+                server_target_id if runtime_source == "server" else None
+            ),
+            chachanotes_db=db,
             character_persona_scope_service=server_profile_service,
             local_character_persona_service=local_profile_service,
-            get_authoritative_runtime_source=lambda: runtime_source,
+            server_context_provider=SimpleNamespace(
+                capture_character_authority_context=Mock(
+                    return_value=authority_capture
+                ),
+                is_character_authority_context_current=Mock(
+                    side_effect=lambda capture: capture is authority_capture
+                ),
+                resolve_character_authority_id=resolve_authority_for_capture,
+            ),
         )
         screen = ChatScreen(runtime_app)
         store = _CapturingStore()
@@ -5418,11 +7395,19 @@ class TestPersonaHumanIdentityRemoval:
             item_type="character-card",
             title="Elara",
             body="Character summary",
+            runtime_backend=runtime_source,
+            source_owner=runtime_source,
+            source_selector_state=runtime_source,
+            active_server_profile_id=(
+                server_target_id if runtime_source == "server" else None
+            ),
             metadata={
                 "intent": "start_chat",
                 "selected_kind": "character",
                 "selected_record_id": "7",
                 "selected_name": "Elara",
+                "selected_target_id": f"{runtime_source}:character:7",
+                "backend": runtime_source,
             },
         )
 
@@ -5434,6 +7419,20 @@ class TestPersonaHumanIdentityRemoval:
         ]
         local_profile_service.list_persona_profiles.assert_not_called()
         server_profile_service.list_persona_profiles.assert_not_awaited()
+        server_profile_service.get_character.assert_awaited_once_with(
+            7, mode=runtime_source
+        )
+        db.get_character_card_by_id.assert_not_called()
+        if runtime_source == "local":
+            db.get_local_authority_id.assert_called_once_with()
+            authority_resolver.assert_not_awaited()
+            assert store.session.assistant_authority_id == "local-authority"
+        else:
+            db.get_local_authority_id.assert_not_called()
+            authority_resolver.assert_awaited_once_with(
+                expected_server_id=server_target_id
+            )
+            assert store.session.assistant_authority_id == server_authority_id
         legacy_human_config.assert_unchanged()
 
     async def test_profile_rename_does_not_follow_legacy_pointer(
