@@ -2203,6 +2203,40 @@ Expected: the rendered inspector exposes useful bounded metadata and no
 payload-bearing legacy fields. Existing full-file Ruff debt must remain
 unchanged; do not broadly reformat this test module under this repair.
 
+### Task 4ba: Settle Media browsing-shell search workers
+
+**Files:**
+- Modify: `Tests/UI/test_media_window_v88_textual.py`
+
+- [ ] **Step 1: Preserve the worker races**
+
+Run the result-loading and item-selection nodes independently. Expected before
+repair: both fail after one `pilot.pause()` because the background search has
+not populated `list_panel.items`.
+
+- [ ] **Step 2: Await the existing worker owner**
+
+After each of the four `activate_media_type()` calls, await
+`pilot.app.workers.wait_for_complete()` before the test reads results, resets
+the search mock, or selects a row. In the search-button and pagination tests,
+also await worker completion after the user action and before inspecting the
+new service call. Keep the existing pilot pauses and all assertions. Do not add
+sleeps, a helper, or production behavior.
+
+- [ ] **Step 3: Verify the current Media shell**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_media_window_v88_textual.py \
+  -q
+../../.venv/bin/python -m ruff check Tests/UI/test_media_window_v88_textual.py
+../../.venv/bin/python -m ruff format --check Tests/UI/test_media_window_v88_textual.py
+git diff --check
+```
+
+Expected: all seven current-shell nodes pass with deterministic worker
+ownership and unchanged user-facing behavior.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
