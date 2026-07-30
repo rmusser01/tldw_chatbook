@@ -1251,6 +1251,14 @@ class ConsoleComposerBar(Horizontal):
             visible_draft.styles.height = row_count
             visible_draft.styles.min_height = row_count
             visible_draft.styles.max_height = self.MAX_DRAFT_ROWS
+            # The stylesheet pins `#console-composer-expanded` to height 1
+            # (the collapsed sibling genuinely wants that). Left at 1, the
+            # row CROPS the grown draft to a single painted line, vertically
+            # centered in the taller bar -- the live-gate "text hidden past
+            # the cutoff" report. Grow the row with the draft it contains.
+            expanded = self.query_one("#console-composer-expanded", Horizontal)
+            expanded.styles.height = row_count
+            expanded.styles.min_height = row_count
         except NoMatches:
             pass
         self.styles.height = composer_height

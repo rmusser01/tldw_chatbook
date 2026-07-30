@@ -21,13 +21,33 @@ directly in the pure-function tests below.
 from __future__ import annotations
 
 import signal
+from pathlib import Path
 
 from rich.cells import cell_len
 import pytest
 from textual.widgets import Static
 
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+
+
+class _CssTrueConsoleHarness(ConsoleHarness):
+    """ConsoleHarness that loads the real app CSS bundle.
+
+    The shared harness is a bare ``App`` -- none of the app's stylesheet
+    applies under it, so geometry/clipping assertions made there are void
+    (the live-gate crop shipped through two review rounds because of it).
+    """
+
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
 
 WIDTH = 57
 
@@ -425,6 +445,51 @@ async def test_bug1_unfocused_insert_keeps_the_sentinel_row_painted():
             for row in range(visible_draft.size.height)
         ]
         assert any(_SENTINEL in row for row in painted_rows), painted_rows
+
+
+@pytest.mark.asyncio
+async def test_the_expanded_row_grows_with_the_draft_so_the_screen_shows_all_rows():
+    """Live-gate RED reproduction: the parent row crops the grown draft.
+
+    `#console-composer-expanded` is pinned to `height: 1` in
+    `_agentic_terminal.tcss`, so when `_apply_draft_height` grows the
+    visible-draft Static to 4 rows and the composer bar to 8, the parent
+    Horizontal crops the paint to ONE screen row, vertically centered in
+    the bar with blank rows around it. Every earlier test here asserted
+    `visible_draft.render_line(...)` -- the widget's own paint -- which a
+    parent's crop never touches, so the whole suite stayed green while the
+    real screen showed one line. This test asserts the DISPLAY CHAIN: the
+    parent row must be at least as tall as the draft it contains, and the
+    draft's rows must lie inside the parent's screen region.
+    """
+    app, host = _ready_host()
+    # The shared ConsoleHarness is a bare App: it never loads the real CSS
+    # bundle, so `#console-composer-expanded { height: 1 }` -- the rule that
+    # causes this bug -- silently doesn't apply under it and this test would
+    # pass against broken code. Run under a bundle-loading harness instead.
+    host = _CssTrueConsoleHarness(app)
+    async with host.run_test(size=(120, 30)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        await pilot.pause()
+
+        composer.insert_text(_BOUNDARY_TEXT)
+        await pilot.pause()
+        await pilot.pause()
+
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        expanded = composer.query_one("#console-composer-expanded")
+        assert visible_draft.region.height >= 4, visible_draft.region
+        assert expanded.region.height >= visible_draft.region.height, (
+            expanded.region,
+            visible_draft.region,
+        )
+        draft_last_row_y = visible_draft.region.y + visible_draft.region.height - 1
+        assert draft_last_row_y < expanded.region.y + expanded.region.height, (
+            "the draft's last row lies outside the parent row's screen region",
+            expanded.region,
+            visible_draft.region,
+        )
 
 
 @pytest.mark.asyncio
