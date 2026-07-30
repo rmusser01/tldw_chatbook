@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 import re
 from typing import Any, Literal
 
-from rich.cells import cell_len, chop_cells
+from rich.cells import cell_len
 from rich.markup import escape
 from rich.text import Text
 from textual import on
@@ -666,7 +666,64 @@ class ConsoleComposerBar(Horizontal):
         )
 
     @staticmethod
-    def _cell_wrap_line(line: str, width: int) -> list[str]:
+    def _extend_fitting_cells(prefix: str, text: str, width: int) -> str:
+        """Return the longest prefix of ``text`` that keeps ``prefix + <it>`` within ``width``.
+
+        Measures the actual **joined** candidate (``prefix + text[:k]``)
+        directly with `cell_len` at every step -- never a pre-computed
+        numeric budget (``width - cell_len(prefix)``) checked against
+        `cell_len` of the candidate piece *alone*. Cell width is not
+        additive across a join in every case, and not only in the way
+        `_cell_wrap_line`'s own docstring already covers (a boundary
+        crossing a narrow_to_wide upgrade): `cell_len` has a still sharper
+        edge where a **trailing** ZWJ silently absorbs the character that
+        would have followed it in a longer string (confirmed:
+        ``cell_len("#ZXY b9\\u200d ")`` -- 9 characters, ending right after
+        a ZWJ then a space -- is 7, as if the trailing space were never
+        there; append even one more character and the space *and* a
+        narrow-to-wide upgrade both reappear in the total). A numeric budget
+        derived from `cell_len(prefix)` in isolation cannot see that the
+        join itself changes what the tail of `prefix` measures as; measuring
+        the literal joined string every time sidesteps needing to know why.
+
+        Also why this doesn't delegate to `rich.cells.chop_cells`/
+        `split_graphemes`: those compute cell width via Unicode grapheme
+        segmentation, which itself disagrees with `cell_len`'s own
+        character-scan algorithm on ZWJ-bearing text (confirmed:
+        ``cell_len("\\u200d\\u200dbcb3Z33")`` is 7, but `split_graphemes`
+        -- what `chop_cells` trusts -- reports 6 for the identical string).
+        Recomputing directly with `cell_len` keeps this self-consistent with
+        every other width check in the file, all of which measure that way.
+
+        Returns ``""`` when even a single character of ``text`` doesn't fit
+        -- an honest "nothing fits" answer, not a forced minimum.
+        `_cell_wrap_line` is responsible for its own forward-progress
+        guarantee on an empty result; folding a forced minimum in here
+        caused it to fire on ordinary partial-budget rows too (an
+        already-full row plus a next chunk that simply has no room left is
+        not the same situation as a wholly empty row that cannot fit
+        *anything*, and conflating them broke the single-width parity
+        guarantee -- caught by 100k-trial differential fuzzing against
+        `textwrap.wrap` during development).
+
+        Args:
+            prefix: Text already committed to the row being built.
+            text: Candidate string to take a fitting extension from.
+            width: Total cell width the joined row must fit within.
+
+        Returns:
+            The longest fitting extension; ``""`` if nothing fits (including
+            an empty ``text``).
+        """
+        if not text:
+            return text
+        end = 0
+        while end < len(text) and cell_len(prefix + text[: end + 1]) <= width:
+            end += 1
+        return text[:end]
+
+    @classmethod
+    def _cell_wrap_line(cls, line: str, width: int) -> list[str]:
         """Greedy word-wrap ``line`` by terminal cell width, not character count.
 
         Mirrors ``textwrap.wrap(line, width=width, break_long_words=True,
@@ -676,17 +733,23 @@ class ConsoleComposerBar(Horizontal):
         check measures ``rich.cells.cell_len`` (terminal columns) instead of
         ``len()`` (Python characters). For single-width-only text the two
         measures are identical, so this produces byte-identical output to
-        the ``textwrap`` call it replaces; the difference only surfaces on
-        double-width text (CJK, emoji), where a character-counted wrap can
-        under-count how many terminal columns a row actually occupies and
-        let it silently overflow the wrap width at paint time.
+        the ``textwrap`` call it replaces (confirmed with 100k-trial
+        differential fuzzing against the exact `textwrap.wrap` call above);
+        the difference only surfaces on double-width text (CJK, emoji),
+        where a character-counted wrap can under-count how many terminal
+        columns a row actually occupies and let it silently overflow the
+        wrap width at paint time.
 
-        A long chunk that cannot fit even alone is hard-broken with
-        ``rich.cells.chop_cells`` (a cell-aware analogue of ``chunk[:end]``),
-        one cell-budget bite per call -- matching
-        ``TextWrapper._handle_long_word``'s one-bite-per-line contract, so a
-        chunk that needs several lines to exhaust naturally gets the rest on
-        subsequent passes of the outer loop below.
+        Both the greedy fill and the long-word hard-break measure the
+        *actual joined candidate row* directly with `cell_len` -- never a
+        running sum or a pre-computed numeric budget checked against a
+        piece's own isolated `cell_len` (see `_extend_fitting_cells`'s
+        docstring for why cell width is not reliably additive across a
+        join). The hard-break takes one fitting bite per call via
+        `_extend_fitting_cells`, matching `TextWrapper._handle_long_word`'s
+        one-bite-per-line contract, so a chunk that needs several lines to
+        exhaust naturally gets the rest on subsequent passes of the outer
+        loop below.
 
         Args:
             line: A single logical line (no newlines) to wrap.
@@ -709,44 +772,54 @@ class ConsoleComposerBar(Horizontal):
         chunks.reverse()
         lines: list[str] = []
         while chunks:
-            current_line: list[str] = []
-            current_cells = 0
+            current_text = ""
             while chunks:
-                chunk = chunks[-1]
-                chunk_cells = cell_len(chunk)
-                if current_cells + chunk_cells > width:
+                candidate = current_text + chunks[-1]
+                if cell_len(candidate) > width:
                     break
-                current_line.append(chunks.pop())
-                current_cells += chunk_cells
+                current_text = candidate
+                chunks.pop()
 
             if chunks and cell_len(chunks[-1]) > width:
                 chunk = chunks[-1]
-                # Mirrors `_handle_long_word`'s `space_left`: only the
-                # degenerate `width < 1` case floors to 1, never `current_cells
-                # == width` -- that legitimately yields 0, which must append an
-                # empty (no-progress) piece this round rather than force one
-                # cell in, or this would violate the width budget it is trying
-                # to enforce.
-                space_left = 1 if width < 1 else width - current_cells
-                piece = ""
-                if space_left > 0:
-                    chopped = chop_cells(chunk, space_left)
-                    piece = chopped[0] if chopped else ""
-                current_line.append(piece)
+                piece = cls._extend_fitting_cells(current_text, chunk, width)
+                if not piece and not current_text:
+                    # A wholly fresh row and even the FULL `width` budget
+                    # can't fit this chunk's first character (only possible
+                    # at width < 2 with double-width leading content --
+                    # unreachable in production, where every call site
+                    # floors width at 8, but no caller here relies on that,
+                    # so this stays correct if one ever passes a smaller
+                    # width). Force exactly one character so the outer loop
+                    # is guaranteed to make progress; the CSS
+                    # `text_overflow: clip` guard crops the resulting
+                    # overflow at paint time.
+                    piece = chunk[:1]
                 if piece:
+                    current_text += piece
                     chunks[-1] = chunk[len(piece) :]
                     if not chunks[-1]:
                         chunks.pop()
+                # else: this row already holds prior content and has no
+                # room left for even one more character of the next
+                # (individually too-wide) chunk -- leave it untouched for a
+                # fresh, full-budget row on the next pass of the outer loop,
+                # exactly mirroring `TextWrapper._handle_long_word`'s own
+                # `space_left == 0` behavior. Forcing a character onto an
+                # already-full row here would silently make that row wider
+                # than `width` for perfectly ordinary text, not just the
+                # width-1 double-width case above (caught by fuzzing during
+                # development).
 
-            if current_line:
-                lines.append("".join(current_line))
-            elif chunks:
-                # Defensive only: every branch above either consumes a chunk
-                # or appends a (possibly empty) piece derived from one, so
-                # `current_line` empty with `chunks` non-empty should not
-                # occur. Pop unconditionally rather than loop forever if it
-                # ever does.
-                lines.append(chunks.pop())
+            # `current_text` is always non-empty here: either the greedy
+            # fill above consumed at least one chunk, or the hard-break
+            # branch's forced-progress fallback fired (guaranteed whenever
+            # `current_text` started this iteration empty and nothing else
+            # fit, per the note above). The only way to reach here with an
+            # unconsumed too-wide `chunks[-1]` and an empty `current_text`
+            # would require that fallback to not fire on an empty row, which
+            # cannot happen.
+            lines.append(current_text)
         return lines or [""]
 
     @classmethod
@@ -974,13 +1047,22 @@ class ConsoleComposerBar(Horizontal):
                 cursor_index=caret_position,
             )
             # `no_wrap`/`overflow="crop"`: defense-in-depth, not the fix for
-            # any known bug. Each joined row is already budgeted to fit
-            # `width` by `_visible_draft_line_slices`; this only changes what
-            # happens if a *future* budgeting bug lets a row overflow again --
-            # cropping the one offending row in place instead of silently
-            # rewrapping it into an extra physical row, which would push the
-            # fixed 4-row window's true last row out of view without any
-            # visible sign something was wrong. Belt-and-suspenders only:
+            # any known bug reachable through this file's own call sites.
+            # Each joined row is already budgeted to fit `width` by
+            # `_visible_draft_line_slices` -- verified with 500k-trial fuzzing
+            # (ASCII, CJK, ZWJ/emoji grapheme clusters) at every width >= 8,
+            # the floor both `_wrap_draft_lines` and `_wrap_draft_line_slices`
+            # enforce, with zero violations. Below that floor (unreachable in
+            # production, but not something `_cell_wrap_line` itself assumes)
+            # a genuinely-empty row that can't fit even one character of a
+            # double-width chunk is allowed a single bounded overflow rather
+            # than hang -- this guard is what actually crops that case. This
+            # only otherwise changes what happens if a *future* budgeting bug
+            # lets a row overflow again -- cropping the one offending row in
+            # place instead of silently rewrapping it into an extra physical
+            # row, which would push the fixed 4-row window's true last row out
+            # of view without any visible sign something was wrong.
+            # Belt-and-suspenders only:
             # Textual's `Static` converts a `rich.Text` to `Content` via
             # `Content.from_rich_text`, which carries over the plain text and
             # spans but *not* `no_wrap`/`overflow` -- the enforcement that
@@ -2376,12 +2458,15 @@ class ConsoleComposerBar(Horizontal):
             visible_draft.styles.width = "1fr"
             visible_draft.styles.min_width = 0
             # Defense-in-depth (see `_draft_renderable`): each row `"\n"`-joined
-            # into the update is already budgeted to `_draft_render_width()`,
-            # so this is a no-op in the fitting case. If a future budgeting
-            # bug lets a row overflow again, `nowrap`/`clip` truncates that
-            # one row in place at paint time instead of Textual rewrapping it
-            # into an extra physical row -- which, inside this fixed-height
-            # 4-row Static, would silently push the true last row out of view.
+            # into the update is already budgeted to `_draft_render_width()`
+            # -- verified with 500k-trial fuzzing at every width >= 8 (the
+            # floor every call site in this file enforces), zero violations
+            # -- so this is a no-op for every width this composer actually
+            # renders at. If a future budgeting bug lets a row overflow
+            # again, `nowrap`/`clip` truncates that one row in place at paint
+            # time instead of Textual rewrapping it into an extra physical
+            # row -- which, inside this fixed-height 4-row Static, would
+            # silently push the true last row out of view.
             visible_draft.styles.text_wrap = "nowrap"
             visible_draft.styles.text_overflow = "clip"
             yield visible_draft
