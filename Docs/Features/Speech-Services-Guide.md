@@ -373,10 +373,11 @@ example is "Console. Send." finalizing as a single segment and firing
 `send`. This trade-off is deliberate: keeping punctuation would let the
 comma that recognizers almost universally insert after a vocative prefix
 ("Console, send.") break every real command, i.e. the feature would never
-fire at all. The false-fire is rare and visible — every recognized command
-acknowledges itself in the composer's voice chip (an inline break as `¶`,
-anything else by name), and a capture-ending one visibly ends the capture on
-the spot — and is one of the checks in live verification before every
+fire at all. The false-fire is rare and visible — an inline break acknowledges itself in
+the composer's voice chip as `¶`, and a capture-ending command's evidence is
+the action itself: the chip flips to `◌ Transcribing…`, the capture visibly
+ends, and the command's effect (send, discard, new tab, read-back) follows
+on the spot — and it is one of the checks in live verification before every
 release.
 
 **Spoken feedback (opt-in).** `dictation.spoken_feedback` (default
