@@ -3333,6 +3333,45 @@ test, and `git diff --check`.
 Expected: identity persistence and presentation separation remain explicit,
 and all adjacent Console ownership coverage passes.
 
+### Task 4ca: Keep all synthetic historical fixtures pre-v28
+
+**Files:**
+- Modify: `Tests/Chat/test_conversation_local_marks_service.py`
+- Modify: `Tests/DB/test_chachanotes_world_book_priority_migration.py`
+- Modify: `Tests/DB/test_chachanotes_world_book_regex_migration.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This corrects synthetic historical-schema fixtures for an
+already-accepted migration without changing storage architecture or production
+migration behavior.
+
+- [x] **Step 1: Inventory and reproduce the remaining failures**
+
+Search for tests that create a current `CharactersRAGDB` and roll its schema
+version back. Confirm the v16 local-marks and v20/v21 world-book paths all fail
+at v27-to-v28 because the synthetic fixture retains
+`assistant_authority_id`.
+
+- [x] **Step 2: Remove the current-only authority column**
+
+Drop `assistant_authority_id` before recording each historical schema version.
+Keep all existing migration targets, later-provenance cleanup, trigger cleanup,
+and outcome assertions. Do not change production.
+
+- [x] **Step 3: Verify focused and adjacent migration coverage**
+
+Run all three repaired migration modules, the full ChaChaNotesDB initialization
+module, the dedicated v27-to-v28 authority suite, Ruff/format on the changed
+tests, and `git diff --check`.
+
+Expected: all historical databases replay through v28, the dedicated authority
+migration remains strict and green, and no production file changes.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

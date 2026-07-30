@@ -279,6 +279,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   `assistant_id` on `ConsoleChatSession`. ADR-037 now requires native sessions
   to retain complete durable assistant identity while keeping persona
   presentation names out of both settings and session schemas.
+- Three more ChaChaNotes regressions synthesize v16, v20, or v21 databases by
+  removing later schema from a freshly created current database. They remove
+  the strict v27 provenance objects but retain v28's
+  `assistant_authority_id`, so all three replay paths fail at v27-to-v28 with
+  the same duplicate-column error.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -861,6 +866,10 @@ Update the tests to describe current behavior:
     `ConsoleChatSession`, reject them from `ConsoleSessionSettings`, and reject
     user/persona labels plus `assistant_name` from both. Keep production
     session/settings schemas unchanged.
+83. In the remaining current-to-historical ChaChaNotes fixtures, drop
+    `assistant_authority_id` before setting the recorded version to 16, 20, or
+    21. Preserve the local-marks and world-book migration assertions, their
+    later-provenance cleanup, and the strict production v27-to-v28 migration.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1208,6 +1217,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   and break persisted conversation authority. Dropping the stale assertion
   entirely would lose the presentation boundary. Explicit identity and
   presentation sets preserve both contracts in one focused schema test.
+- Making the v27-to-v28 migration silently accept an existing authority column
+  would admit partial or corrupted schemas. Updating only the first failing
+  v16 fixture would defer the identical deterministic failures in the two
+  inventory-confirmed world-book fixtures; correcting all three truthful
+  historical fixtures is the smaller complete repair.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
