@@ -1240,6 +1240,53 @@ git add \
 git commit -m "test(console): follow prompt handoff ownership"
 ```
 
+### Task 4ab: Follow Console live-work handoff ownership
+
+**Files:**
+- Modify: `Tests/UI/test_console_internals_decomposition.py`
+- Modify: `Tests/UI/test_console_live_work_handoffs.py`
+- Modify: `Tests/UI/test_home_screen.py`
+
+- [ ] **Step 1: Reproduce the retired launch field failures**
+
+Run the three modules. Expected: live-work helper, mounted Console,
+Save/inspector/staged-context, action-routing, and Home-isolation cases assign
+or inspect deleted `app.pending_console_launch`, so the Console cannot claim
+their payloads.
+
+- [ ] **Step 2: Stage and inspect the typed launch channel**
+
+Replace every executable app-root launch-field use with
+`pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, payload)`. Helper
+tests must claim the normalized launch, assert it, and settle the claim;
+mounted Console tests use `has_pending` after consumption. Preserve direct
+screen-context assertions where that accepted context is the subject, and
+retain all rendering, action, navigation, staged-context, inspector, and
+Home-isolation assertions. The Home case must assert the launch remains
+pending. Do not change production.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_internals_decomposition.py \
+  Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_home_screen.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_console_internals_decomposition.py \
+  Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_home_screen.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_console_internals_decomposition.py \
+  Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_home_screen.py
+git add \
+  Tests/UI/test_console_internals_decomposition.py \
+  Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_home_screen.py
+git commit -m "test(console): follow live work handoff ownership"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -1321,6 +1368,9 @@ Include any conditionally required focused test/production files in that commit.
   Tests/TTS/test_tts_preferences.py \
   Tests/UI/test_command_palette_providers.py \
   Tests/UI/test_console_command_composer.py \
+  Tests/UI/test_console_internals_decomposition.py \
+  Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_home_screen.py \
   Tests/UI/test_library_prompts_canvas.py \
   Tests/integration/test_library_ingest_flow.py \
   Tests/test_config_delete_settings.py \
@@ -1358,6 +1408,9 @@ Expected: all affected tests pass.
   Tests/TTS/test_tts_preferences.py \
   Tests/UI/test_command_palette_providers.py \
   Tests/UI/test_console_command_composer.py \
+  Tests/UI/test_console_internals_decomposition.py \
+  Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_home_screen.py \
   Tests/UI/test_library_prompts_canvas.py \
   Tests/integration/test_library_ingest_flow.py \
   Tests/test_config_delete_settings.py \
@@ -1390,6 +1443,9 @@ Expected: all affected tests pass.
   Tests/TTS/test_tts_preferences.py \
   Tests/UI/test_command_palette_providers.py \
   Tests/UI/test_console_command_composer.py \
+  Tests/UI/test_console_internals_decomposition.py \
+  Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_home_screen.py \
   Tests/UI/test_library_prompts_canvas.py \
   Tests/integration/test_library_ingest_flow.py \
   Tests/test_config_delete_settings.py \

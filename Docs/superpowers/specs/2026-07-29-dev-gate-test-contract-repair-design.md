@@ -274,6 +274,20 @@ Update the tests to describe current behavior:
     claim, while dirty and empty cases prove the channel remains empty. Do not
     restore `pending_console_prompt_insert`, omit the dispatch-time session id,
     or weaken the existing lifecycle and interaction assertions.
+31. In all UI regressions that still assign or inspect
+    `app.pending_console_launch`, stage the existing launch mapping through
+    `app.pending_handoffs` on `HandoffChannel.CONSOLE_LIVE_WORK`. Helper tests
+    must claim the staged value, assert the normalized
+    `ConsoleLiveWorkLaunch`, and settle the claim. Mounted Console tests must
+    assert the channel is no longer pending after consumption while retaining
+    rendered status, source, artifact, inspector, navigation, primary-action,
+    and staged-context assertions. The Home isolation case must retain its
+    absence-of-controls coverage and explicitly prove the Console-owned
+    channel remains pending.
+    Direct assertions against ChatScreen's private
+    `_pending_console_launch_context` remain valid where the screen's accepted
+    context itself is under test. Do not restore the app-root launch field or
+    change production.
 
 The only planned production behavior change outside an ADR-029 diagnostic
 correction is the three-name synchronization of the existing Library collision
@@ -371,6 +385,10 @@ fail-closed behavior. No compatibility shims. No broad deletion of live tests.
   settlement and retry semantics. Following the live session argument and
   typed handoff store preserves both ownership contracts without production
   compatibility state.
+- Making the Save/inspector tests assign a screen-private context directly
+  would skip the cross-destination ownership boundary. Staging the typed
+  launch channel exercises the real claim path and keeps Home from becoming a
+  competing consumer.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
