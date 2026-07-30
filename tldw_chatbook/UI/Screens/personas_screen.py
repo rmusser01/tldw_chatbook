@@ -1401,6 +1401,8 @@ class PersonasScreen(BaseAppScreen):
                 self._characters = []
                 self._character_total = 0
                 self._update_status_row()
+                if self.state.active_mode != "characters":
+                    return
                 if self.state.runtime_source == "server":
                     current_sort_label = "Sort: Server order"
                     current_tag_label = "Tag: All"
