@@ -366,9 +366,17 @@ async def test_a_stuck_generating_row_is_refused_then_recovered(monkeypatch):
     path too, so a row seeded BEFORE opening would already be recovered by
     the plain load, before the first press ever runs -- collapsing this
     test's two presses into one and asserting nothing about the Generate
-    path's own sweep. Seeding it post-load isolates exactly what this test
-    is for: a row that appears while the screen is already sitting open
-    (a crash in another process, say) still gets caught by the button.
+    path's own sweep.
+
+    Seeding post-load is not enough on its own: the worker's `finally`
+    reloads Artifacts after `_briefing_in_flight` clears, and the
+    load-path recovery would silently recover the zombie between the two
+    presses even with the button's own sweep deleted -- every outcome
+    assertion here stays green under that mutation. What actually pins
+    the Generate path is the recorder below: the load path only ever
+    calls `fail_interrupted_briefings` when `_briefing_in_flight` is
+    clear (`_fail_interrupted_briefings_if_safe`'s guard), so a call
+    observed with the flag CLAIMED can only be the button's own sweep.
     """
     app = _build_test_app()
     app.notify = Mock()
@@ -381,8 +389,27 @@ async def test_a_stuck_generating_row_is_refused_then_recovered(monkeypatch):
         # inserted only now, after the section's own load has already run.
         zombie_id = app.watchlist_bundle_service.db.insert_briefing(watchlist_id)
 
+        # Record `_briefing_in_flight` at every recovery call: True can
+        # only come from the Generate worker's own sweep (see docstring).
+        in_flight_at_call: list[bool] = []
+        real_fail = screen_module.fail_interrupted_briefings
+
+        def _recording_fail(db, watchlist_id=None):
+            in_flight_at_call.append(bool(screen._briefing_in_flight))
+            return real_fail(db, watchlist_id)
+
+        monkeypatch.setattr(
+            screen_module, "fail_interrupted_briefings", _recording_fail
+        )
+
         # First press: refuses, and says why.
         await _press_generate(screen, pilot, app, watchlist_id)
+
+        assert True in in_flight_at_call, (
+            "the zombie must be recovered by the Generate path's OWN sweep"
+            " (a call with `_briefing_in_flight` claimed), not merely by"
+            " the load-path recovery that runs after the flag clears"
+        )
 
         assert chat.calls == [], "nothing may be generated while a row is in flight"
         assert app.notify.called, "a refusal must be visible, not silent"
