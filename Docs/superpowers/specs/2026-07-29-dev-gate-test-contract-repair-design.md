@@ -186,6 +186,13 @@ The failures reproduce on an exact `origin/dev` checkout:
   `PendingHandoffStore` and the Console may claim it before the next Pilot
   tick, so the old observation always times out even though the real journey
   creates a character-bound conversation and reaches Chat.
+- Repeating that UAT exposed a separate pre-handoff race: its Personas
+  navigation wait accepts the screen as soon as `app.screen` references a
+  `PersonasScreen`, even when Textual has not mounted it yet. The test then
+  invokes the import continuation directly; production's stale-owner guard
+  correctly preserves the database import but skips selection presentation
+  for an unmounted destination, so `selected_entity_kind` is intermittently
+  still `None`.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -674,6 +681,12 @@ Update the tests to describe current behavior:
     provider-readiness recovery, network seam, reply, and database-persistence
     assertions. Do not add a store peek API, delay production consumption, or
     restore app-root compatibility state.
+67. In the same UAT's navigation boundary, make `_wait_for()` return the
+    `PersonasScreen` only when it is both the active `app.screen` and mounted.
+    Bind that returned screen directly for the remaining journey. Retain the
+    direct awaited import continuation and exact selected-character assertions.
+    Do not add another delay, weaken the selection assertion, or change
+    production's stale-owner guard.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -937,6 +950,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   captures the producer contract without changing lifecycle timing. Requiring
   no pending value alone is also ambiguous before staging, so the bound
   character session and idle consumer state provide the settlement proof.
+- Removing the selected-character assertion would hide a broken first-run
+  presentation, while increasing the post-import pause would not prevent an
+  import begun before mount. Waiting on the destination's existing
+  `is_mounted` lifecycle signal at navigation is the earliest deterministic
+  boundary and leaves production's stale-screen protection intact.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

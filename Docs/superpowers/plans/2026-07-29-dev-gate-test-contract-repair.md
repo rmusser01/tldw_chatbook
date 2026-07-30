@@ -2665,6 +2665,48 @@ Expected: the full UAT passes with its import, recovery, handoff, send, reply,
 and persistence assertions intact; static checks pass and no production file
 changes.
 
+### Task 4bk: Wait for mounted Personas ownership in first-run UAT
+
+**Files:**
+- Modify: `Tests/UI/test_uat_first_time_character_chat.py`
+
+**Existing ADR:** `backlog/decisions/033-application-session-state-ownership.md`
+
+- [ ] **Step 1: Record the observed lifecycle race**
+
+Preserve the exact repeat-run evidence: after the typed-handoff repair, one UAT
+run imported the database row but failed at the unchanged
+`selected_entity_kind == "character"` assertion because the test invoked the
+import continuation after screen assignment but before the Personas
+destination was mounted. Surrounding exact runs pass, confirming a lifecycle
+race rather than a deterministic handoff regression.
+
+- [ ] **Step 2: Wait on the real destination boundary**
+
+Change the Personas navigation predicate to return `app.screen` only when its
+type is `PersonasScreen` and `is_mounted` is true, and bind the returned value
+as `personas`. Keep the awaited import continuation, selected-character
+assertions, and every later UAT step unchanged. Do not add a sleep or change
+production.
+
+- [ ] **Step 3: Verify repeat stability**
+
+Run the exact UAT three consecutive times, then run Ruff and diff checks:
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_uat_first_time_character_chat.py::test_first_time_user_character_chat_journey \
+  --count=3 -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_uat_first_time_character_chat.py
+git diff --check
+```
+
+If `pytest-repeat` is unavailable, invoke the same exact node three times
+sequentially. Expected: all three journeys pass without selection or handoff
+failure, Ruff passes, the file's already-proven parent format drift does not
+increase, and no production file changes.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
