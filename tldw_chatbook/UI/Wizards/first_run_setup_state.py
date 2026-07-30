@@ -183,6 +183,16 @@ def build_provider_commit(
 
 
 def build_model_commit(*, provider_value: str, model_id: str) -> dict[str, dict[str, Any]]:
+    """Mutation for the model step.
+
+    Args:
+        provider_value: The ``chat_defaults.provider`` value the model is
+            paired with (whatever form ProviderStep last committed).
+        model_id: The chosen default model id.
+
+    Returns:
+        The section/value mapping to persist under ``chat_defaults``.
+    """
     return {"chat_defaults": {"provider": provider_value, "model": model_id}}
 
 
@@ -217,10 +227,28 @@ def curated_models_for_provider(
 
 
 def build_rag_commit(*, default_model_id: str) -> dict[str, dict[str, Any]]:
+    """Mutation for the RAG step.
+
+    Args:
+        default_model_id: The chosen default embedding model id.
+
+    Returns:
+        The section/value mapping to persist under ``embedding_config``.
+    """
     return {"embedding_config": {"default_model_id": default_model_id}}
 
 
 def build_tools_commit(*, gate_values: Mapping[str, bool]) -> dict[str, dict[str, Any]]:
+    """Mutation for the tools step.
+
+    Args:
+        gate_values: Mapping of tool gate key to the desired enabled state.
+            Callers typically pass only the delta (see
+            ``tools_commit_delta``), not every gate.
+
+    Returns:
+        The section/value mapping to persist under ``tools``.
+    """
     return {"tools": {key: bool(value) for key, value in gate_values.items()}}
 
 
@@ -254,6 +282,14 @@ def build_notes_commit(
     directory should survive untouched. ``save_settings_to_cli_config``
     merges per-key within a section, so a dict missing "sync_directory"
     never clobbers the persisted value; passing an empty string here would.
+
+    Args:
+        sync_directory: The notes-sync directory to persist, or None to
+            omit the key entirely (see above).
+        auto_sync_enabled: Whether notes sync should be turned on.
+
+    Returns:
+        The section/value mapping to persist under ``notes``.
     """
     values: dict[str, Any] = {"auto_sync_enabled": auto_sync_enabled}
     if sync_directory is not None:
@@ -306,6 +342,18 @@ def build_appearance_commit(
 def build_wizard_state_commit(
     *, started: bool | None = None, completed: bool | None = None
 ) -> dict[str, dict[str, Any]]:
+    """Mutation for the wizard's own progress flags.
+
+    Args:
+        started: Set ``first_run.setup_started`` to this value, or omit
+            (leave as None) to leave that key out of the commit.
+        completed: Set ``first_run.setup_completed`` to this value, or omit
+            (leave as None) to leave that key out of the commit.
+
+    Returns:
+        The section/value mapping to persist under ``first_run``; empty
+        when neither flag was passed.
+    """
     values: dict[str, Any] = {}
     if started is not None:
         values[SETUP_STARTED_KEY] = started

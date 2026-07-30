@@ -121,6 +121,14 @@ def default_api_key_env_var(provider_key: str) -> Optional[str]:
     wizard's "found in your environment" detection agrees with Chat's own
     readiness resolution even before ``api_key_env_var`` is explicitly
     persisted to config.
+
+    Args:
+        provider_key: The normalized provider key (e.g. via
+            ``provider_config_key``), such as "openai" or "mistralai".
+
+    Returns:
+        The conventional environment variable name (e.g. "OPENAI_API_KEY"),
+        or None when the provider is not one of the known keyed providers.
     """
     if provider_key not in PROVIDERS_REQUIRING_API_KEY_KEYS:
         return None

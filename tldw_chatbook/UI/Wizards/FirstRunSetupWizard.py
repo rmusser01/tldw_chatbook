@@ -8,7 +8,7 @@ this module renders them and owns persistence via one exclusive worker.
 from __future__ import annotations
 
 import os
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from loguru import logger
 from textual import on, work
@@ -48,8 +48,16 @@ CLOUD_PROBE_TIMEOUT_SECONDS = 8.0
 class ProviderStep(SetupStep):
     """Choose a provider, supply credentials, verify without blocking."""
 
-    def __init__(self, wizard=None, config=None, *, discover=None, probe=None,
-                 environ=None, **kwargs):
+    def __init__(
+        self,
+        wizard: Optional["SetupWizardContainer"] = None,
+        config: Optional[WizardStepConfig] = None,
+        *,
+        discover: Optional[Callable[..., Any]] = None,
+        probe: Optional[Callable[..., Any]] = None,
+        environ: Optional[Mapping[str, str]] = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(wizard=wizard, config=config, **kwargs)
         from tldw_chatbook.Chat.local_server_discovery import discover_local_servers
         from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
@@ -249,6 +257,10 @@ class ProviderStep(SetupStep):
     ) -> None:
         import httpx
 
+        from tldw_chatbook.Chat.local_server_discovery import (
+            DISCOVERY_PROBE_TIMEOUT_SECONDS,
+        )
+
         # Local servers probe their own base URL; cloud keys probe the
         # provider's OpenAI-compatible endpoint with the key as a bearer
         # header via the http_client seam (probe_settings_endpoint has no
@@ -268,7 +280,11 @@ class ProviderStep(SetupStep):
                 )
             outcome = await self._probe(
                 target,
-                timeout=CLOUD_PROBE_TIMEOUT_SECONDS if api_key else 2.5,
+                timeout=(
+                    CLOUD_PROBE_TIMEOUT_SECONDS
+                    if api_key
+                    else DISCOVERY_PROBE_TIMEOUT_SECONDS
+                ),
                 http_client=client,
             )
             self.apply_probe_result(

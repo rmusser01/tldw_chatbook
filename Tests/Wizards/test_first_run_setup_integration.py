@@ -1,8 +1,5 @@
 """Integration tests: wizard commit plans against a real TOML config file."""
 
-import os
-from pathlib import Path
-
 import pytest
 
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
@@ -36,13 +33,13 @@ def _write(section_values):
 class TestCommitRoundTrip:
     def test_provider_and_model_commits_land_in_toml(self, temp_config):
         _write(wizard_state.build_provider_commit(
-            provider_key="openai", api_key="sk-integration", api_url=None
+            provider_key="openai", api_key="wizard-test-key-alpha", api_url=None
         ))
         _write(wizard_state.build_model_commit(
             provider_value="OpenAI", model_id="gpt-5.6-terra"
         ))
         config = _reload()
-        assert config["api_settings"]["openai"]["api_key"] == "sk-integration"
+        assert config["api_settings"]["openai"]["api_key"] == "wizard-test-key-alpha"
         assert config["chat_defaults"]["provider"] == "OpenAI"
         assert config["chat_defaults"]["model"] == "gpt-5.6-terra"
 
@@ -57,7 +54,7 @@ class TestCommitRoundTrip:
 
     def test_rerun_prefill_round_trip_without_secret_leak(self, temp_config):
         _write(wizard_state.build_provider_commit(
-            provider_key="openai", api_key="sk-secret", api_url=None
+            provider_key="openai", api_key="wizard-test-key-beta", api_url=None
         ))
         _write(wizard_state.build_model_commit(
             provider_value="OpenAI", model_id="gpt-5.6-terra"
@@ -65,15 +62,15 @@ class TestCommitRoundTrip:
         config = _reload()
         prefill = wizard_state.read_wizard_prefill(config)
         assert prefill.provider_value == "OpenAI"
-        assert "sk-secret" not in repr(prefill)
+        assert "wizard-test-key-beta" not in repr(prefill)
         presence = wizard_state.read_provider_secret_presence(
             config, {}, provider_key="openai"
         )
         assert presence.configured is True
-        assert "sk-secret" not in repr(presence)
+        assert "wizard-test-key-beta" not in repr(presence)
 
     def test_upgrader_config_never_auto_offers(self, temp_config):
-        _write({"api_settings.anthropic": {"api_key": "sk-upgrader"}})
+        _write({"api_settings.anthropic": {"api_key": "wizard-test-key-gamma"}})
         config = _reload()
         assert wizard_state.should_offer_wizard(config, {}) is False
 
@@ -93,9 +90,9 @@ class TestEncryptionAtRest:
         from tldw_chatbook.config import enable_config_encryption
 
         _write(wizard_state.build_provider_commit(
-            provider_key="openai", api_key="sk-to-encrypt", api_url=None
+            provider_key="openai", api_key="wizard-test-key-delta", api_url=None
         ))
         assert enable_config_encryption("integration-test-password") is True
-        raw = Path(os.environ["TLDW_CONFIG_PATH"]).read_text()
-        assert "sk-to-encrypt" not in raw
+        raw = temp_config.read_text()
+        assert "wizard-test-key-delta" not in raw
         assert "enc:" in raw or "password_verifier" in raw
