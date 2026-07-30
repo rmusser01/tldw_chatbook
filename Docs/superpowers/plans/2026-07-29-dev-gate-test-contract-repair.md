@@ -3022,6 +3022,45 @@ git diff --check
 
 Expected: the module and static checks pass with no production changes.
 
+### Task 4bs: Keep the Parakeet file-loader test off the empty-audio path
+
+**Files:**
+- Modify: `Tests/Local_Ingestion/test_transcription_service_lazy_mlx.py`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This restores the loader test's non-empty-audio premise without
+changing the approved zero-frame behavior.
+
+- [ ] **Step 1: Preserve the focused RED**
+
+Run `test_parakeet_file_model_construction_uses_loader` alone. Expected before
+repair: `soundfile.info()` reports zero duration, production correctly returns
+from the empty-audio fast path, and the loader sentinel is never raised.
+
+- [ ] **Step 2: Supply non-empty metadata**
+
+Change only the fake info result to realistic non-empty duration, frames, and
+sample rate. Retain the import sentinel, chained error, exact loader call, and
+debug assertion. Do not change production.
+
+- [ ] **Step 3: Verify lazy MLX coverage**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Local_Ingestion/test_transcription_service_lazy_mlx.py \
+  -q
+../../.venv/bin/python -m ruff check \
+  Tests/Local_Ingestion/test_transcription_service_lazy_mlx.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/Local_Ingestion/test_transcription_service_lazy_mlx.py
+git diff --check
+```
+
+Expected: the module and static checks pass with no production changes.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
