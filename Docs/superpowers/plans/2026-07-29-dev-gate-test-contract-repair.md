@@ -1850,6 +1850,46 @@ git add \
 git commit -m "test(console): follow workspace sync owner"
 ```
 
+### Task 4ar: Restore Watchlists source nesting after left alignment
+
+**Files:**
+- Modify: `tldw_chatbook/UI/Watchlists_Modules/watchlist_tree.py`
+- Modify: `tldw_chatbook/css/features/_watchlists.tcss`
+- Regenerate: `tldw_chatbook/css/tldw_cli_modular.tcss`
+- Modify: `Tests/UI/test_destination_visual_parity_correction.py`
+
+- [ ] **Step 1: Preserve the failing production contract**
+
+Run the existing visual-parity node at both parametrized viewport sizes and
+retain its relative compositor assertion. Expected before the fix: the narrow
+case reports the left-aligned source name at column 4 and its parent at column
+5.
+
+- [ ] **Step 2: Restore the existing textual indent**
+
+Change only the source label prefix from two to four spaces, update the nearby
+production, test, and source-stylesheet explanations, then regenerate the
+bundled stylesheet with `../../.venv/bin/python tldw_chatbook/css/build_css.py`.
+Do not add a second CSS geometry rule or weaken the relative-column assertion.
+
+- [ ] **Step 3: Verify the focused contract**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_destination_visual_parity_correction.py::test_watchlists_tree_chevron_shares_a_row_with_its_watchlist \
+  -q
+../../.venv/bin/python -m ruff check \
+  tldw_chatbook/UI/Watchlists_Modules/watchlist_tree.py \
+  Tests/UI/test_destination_visual_parity_correction.py
+../../.venv/bin/python -m ruff format --check \
+  tldw_chatbook/UI/Watchlists_Modules/watchlist_tree.py \
+  Tests/UI/test_destination_visual_parity_correction.py
+git diff --check
+```
+
+Expected: both viewport parameters pass, the generated bundle matches the
+source stylesheet, and static/diff checks are clean.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

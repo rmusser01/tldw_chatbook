@@ -4,9 +4,10 @@
 
 Restore the mandatory `dev` pytest gate by reconciling stale or nondeterministic
 tests with the production contracts that already exist, then review and refresh
-the checked diagnostic inventory under ADR-029. This is a non-production
-repair: it must not restore retired Chat infrastructure, change audio-recording
-behavior, or silently admit unsafe persistent diagnostics.
+the checked diagnostic inventory under ADR-029. It must not restore retired
+Chat infrastructure, change audio-recording behavior, or silently admit unsafe
+persistent diagnostics; a production edit is allowed only when the gate exposes
+a real current-behavior defect and the repair is documented and test-first.
 
 ## Evidence
 
@@ -67,6 +68,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   selects `config/tldw_cli/config.toml` without creating the intermediate
   trusted profile directory, so its host-secret isolation subprocess fails
   before the benchmark runs.
+- TASK-1091 left-aligned Watchlists tree labels, invalidating TASK-997's
+  documented assumption that a two-space source prefix plus Textual's centered
+  minimum button width would place a child name past its parent. The existing
+  compositor regression now renders `ArXiv` at column 4 and its parent at
+  column 5 at the narrow visual-parity size.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -413,14 +419,20 @@ Update the tests to describe current behavior:
     one selected row contains the restored conversation title. Do not add an
     ignored compatibility parameter or revive the retired legacy tab session
     path already described by the test's rationale.
+48. Restore the Watchlists source label's textual indent from two to four
+    spaces so a left-aligned child paints strictly to the right of its parent.
+    Keep the relative rendered-column assertion unchanged, update only its
+    explanatory comment and the source stylesheet explanation, and regenerate
+    the bundled stylesheet rather than adding a second geometry rule.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
 collision boundary, the canonical-state guard that prevents untouched prompt
 fields from becoming dirty during mount/recompose, and the shared display-name
-rendering for missing-key recovery copy. The RAG capture edit is
-documentation-only and records already-live fail-closed behavior. No
-compatibility shims. No broad deletion of live tests.
+rendering for missing-key recovery copy, plus the four-space Watchlists child
+label indent that restores the already-tested visible hierarchy. The RAG
+capture edit is documentation-only and records already-live fail-closed
+behavior. No compatibility shims. No broad deletion of live tests.
 
 ## Alternatives
 
@@ -582,6 +594,10 @@ compatibility shims. No broad deletion of live tests.
   `ChatSessionData` would contradict its current owned-state contract. The test
   already restores the native session that the sync reads, so dropping the
   dead argument and import completes its earlier migration.
+- Weakening the Watchlists compositor assertion or pinning one absolute column
+  would hide the visible parent-child ordering regression or overfit one
+  viewport. Restoring four spaces at the existing label seam preserves the
+  relative contract without another CSS layout mechanism.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
