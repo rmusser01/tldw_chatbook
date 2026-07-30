@@ -4011,12 +4011,15 @@ async def test_unstage_all_summary_counts_the_complete_displayed_snapshot(
         )
 
         workspace.query_one("#file-notes-git-unstage-all", Button).press()
-        await _wait_until(
-            pilot,
-            lambda: git_service.unstage_calls == [(1, 2)]
-            and len(git_service.status_calls) == 2,
-            "Unstage All did not settle and refresh",
-        )
+        for _ in range(200):
+            if (
+                git_service.unstage_calls == [(1, 2)]
+                and len(git_service.status_calls) == 2
+            ):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("Unstage All did not settle and refresh")
 
         assert workspace._git_last_action is not None
         assert workspace._git_last_action.text == (
