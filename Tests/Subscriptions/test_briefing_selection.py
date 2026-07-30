@@ -69,3 +69,99 @@ def test_queue_flag_round_trips_through_the_normalizer():
 
     db.set_item_briefing_queued(item_id, False)
     assert _fetch_normalized()["queued_for_briefing"] is False
+
+
+def test_update_briefing_rejects_unknown_field_but_accepts_a_valid_one():
+    """Matches the sibling `update_subscription`'s allowlist pattern.
+
+    `update_briefing` builds its SET clause from `**fields`; without an
+    allowlist a typo'd or renamed keyword would silently build a query
+    against a column that was never meant to be settable this way (or,
+    worse, become attacker-reachable). A valid field must still work.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    w = WatchlistBundleService(db).create(name="w")["id"]
+    b = db.insert_briefing(w)
+
+    with pytest.raises(ValueError, match="not_a_real_column"):
+        db.update_briefing(b, not_a_real_column="oops")
+
+    db.update_briefing(b, status="complete", body_markdown="hello")
+    row = db.get_briefing(b)
+    assert row["status"] == "complete"
+    assert row["body_markdown"] == "hello"
+
+
+def test_latest_completed_watermark_is_scoped_per_watchlist():
+    """A busy watchlist's completions must never leak into a quiet one's
+    watermark -- `latest_completed_watermark` is filtered by watchlist_id,
+    not read from every `briefings` row regardless of owner."""
+    db = SubscriptionsDB(":memory:", "test")
+    busy = WatchlistBundleService(db).create(name="busy")["id"]
+    quiet = WatchlistBundleService(db).create(name="quiet")["id"]
+
+    busy_briefing = db.insert_briefing(busy)
+    db.update_briefing(busy_briefing, status="complete", covers_through_item_id=500)
+
+    # The quiet watchlist has never had a briefing at all yet.
+    assert db.latest_completed_watermark(quiet) is None
+    assert db.latest_completed_watermark(busy) == 500
+
+    quiet_briefing = db.insert_briefing(quiet)
+    db.update_briefing(quiet_briefing, status="complete", covers_through_item_id=3)
+
+    # Each watchlist reads back only its own watermark.
+    assert db.latest_completed_watermark(quiet) == 3
+    assert db.latest_completed_watermark(busy) == 500
+
+
+def test_ensure_watchlists_schema_restores_briefing_columns_on_a_pre_existing_db():
+    """Re-arm idiom from `test_watchlist_noise_not_volume.py`'s migration
+    tests: an in-memory connection can't be "reopened" to re-trigger
+    `BaseDB.__init__`'s migration call, so drop the columns to simulate a
+    database that predates this change and invoke the real migration
+    method directly."""
+    db = SubscriptionsDB(":memory:", "test")
+    with db.transaction() as conn:
+        conn.execute("ALTER TABLE watchlists DROP COLUMN briefing_selection_mode")
+        conn.execute("ALTER TABLE watchlists DROP COLUMN default_briefing_preset_id")
+
+    cols_before = {r[1] for r in db.conn.execute("PRAGMA table_info(watchlists)")}
+    assert "briefing_selection_mode" not in cols_before
+    assert "default_briefing_preset_id" not in cols_before
+
+    db._ensure_watchlists_schema()
+
+    cols_after = {r[1]: r for r in db.conn.execute("PRAGMA table_info(watchlists)")}
+    assert "briefing_selection_mode" in cols_after
+    assert "default_briefing_preset_id" in cols_after
+
+    w = WatchlistBundleService(db).create(name="w")["id"]
+    row = db.conn.execute(
+        "SELECT briefing_selection_mode, default_briefing_preset_id "
+        "FROM watchlists WHERE id = ?",
+        (w,),
+    ).fetchone()
+    assert row["briefing_selection_mode"] == "auto_featured"
+    assert row["default_briefing_preset_id"] is None
+
+
+def test_list_briefings_returns_newest_first_by_identity():
+    """Insert three out of any timestamp-collision-prone order and assert
+    the exact id sequence -- identities, not just a count -- so a query
+    that merely returns "three rows" without honoring recency cannot
+    pass this by accident."""
+    db = SubscriptionsDB(":memory:", "test")
+    w = WatchlistBundleService(db).create(name="w")["id"]
+
+    first = db.insert_briefing(w)
+    second = db.insert_briefing(w)
+    third = db.insert_briefing(w)
+
+    listed = db.list_briefings(w)
+    assert [row["id"] for row in listed] == [third, second, first]
+
+
+def test_get_briefing_returns_none_for_a_missing_id():
+    db = SubscriptionsDB(":memory:", "test")
+    assert db.get_briefing(999999) is None

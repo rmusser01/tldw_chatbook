@@ -1616,23 +1616,47 @@ class SubscriptionsDB(BaseDB):
             return cursor.lastrowid
 
     def update_briefing(self, briefing_id: int, **fields: Any) -> None:
-        """Update arbitrary columns on a `briefings` row by id.
+        """Update named columns on a `briefings` row by id.
 
-        `fields` keys are always passed by trusted callers as keyword
-        arguments naming real `briefings` columns (e.g.
-        `status="complete", covers_through_item_id=40`) -- never sourced
-        from unvalidated external input -- so building the SET clause from
-        the keys is not a SQL-injection surface here.
+        Matches the sibling `update_subscription`'s pattern: keys are
+        validated against an explicit allowlist of real `briefings` columns
+        rather than trusted blindly, so a typo'd or renamed field raises
+        immediately instead of silently building a SET clause for a column
+        that was never meant to be settable this way.
+
+        Raises:
+            ValueError: If any key in `fields` is not an allowed column.
         """
+        allowed_fields = (
+            "status",
+            "error",
+            "covers_through_item_id",
+            "covers_from_ts",
+            "selection_mode",
+            "preset_id",
+            "model_used",
+            "body_markdown",
+            "item_count",
+            "featured_count",
+            "overflow_count",
+            "updated_at",
+        )
         if not fields:
             return
+        for key in fields:
+            if key not in allowed_fields:
+                raise ValueError(f"update_briefing: unknown field {key!r}")
+
         set_clause = ", ".join(f"{key} = ?" for key in fields)
         values = list(fields.values())
+        # Only append the automatic timestamp bump when the caller didn't
+        # already supply `updated_at` explicitly -- otherwise the column
+        # would appear twice in the same SET clause.
+        extra = "" if "updated_at" in fields else ", updated_at = CURRENT_TIMESTAMP"
         values.append(briefing_id)
         with self.transaction() as conn:
             conn.execute(
-                f"UPDATE briefings SET {set_clause}, updated_at = CURRENT_TIMESTAMP "
-                "WHERE id = ?",
+                f"UPDATE briefings SET {set_clause}{extra} WHERE id = ?",
                 values,
             )
 
