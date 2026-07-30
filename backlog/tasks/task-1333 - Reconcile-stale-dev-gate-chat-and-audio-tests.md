@@ -102,6 +102,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #73 The File Notes Git bulk-stage summary regression observes its retained action and postflight refresh with the same bounded event-loop boundary, while retaining exact stage ids, refresh count, and complete displayed-snapshot summary.
 - [ ] #74 The Library source-action style contract extracts the exact base selector instead of the newer blocked-state selector that shares its prefix, while retaining source and bundled CSS coverage for transparent, borderless, left-aligned controls.
 - [ ] #75 The Library footer-ownership regression expects the `u` handoff hint only for the Search/RAG row where that action is live, while retaining the screen-owned registration and untouched app-footer contracts.
+- [ ] #76 The Console pending-skill-script preservation regression seeds and reads the current screen-owned task-resume state instead of the retired `chat_state` wrapper, while retaining exact preservation and clear behavior.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -182,6 +183,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 67. Apply the same retained-work boundary to the paired bulk-stage summary after its required verification reproduces the identical Pilot timeout.
 68. Make the Library source-action CSS check select its exact base rule instead of a prefix-sharing blocked modifier.
 69. Align the Library footer-ownership regression with the current Search/RAG-only shortcut registration.
-70. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-71. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+70. Retarget the pending-skill-script preservation test to the screen-owned task-resume state.
+71. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+72. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

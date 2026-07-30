@@ -2983,6 +2983,45 @@ git diff --check
 
 Expected: the footer module and static checks pass with no production changes.
 
+### Task 4br: Retarget pending skill-script task state
+
+**Files:**
+- Modify: `Tests/UI/test_skill_script_confirm_card.py`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This aligns one direct-screen fixture with the existing native
+Console task-state owner without changing the skill confirmation bridge.
+
+- [ ] **Step 1: Preserve the focused RED**
+
+Run `test_set_console_pending_skill_script_preserves_other_resume_fields`
+alone. Expected before repair: fixture setup raises `AttributeError` because
+the retired `ChatScreen.chat_state` wrapper no longer exists.
+
+- [ ] **Step 2: Use the current task-state owner**
+
+Seed the existing state through `screen.set_task_resume_state(...)`. Read
+`screen._task_resume_state` for the add and clear assertions, retaining exact
+summary, last-step, and pending payload coverage. Do not change production or
+mount the screen.
+
+- [ ] **Step 3: Verify the skill-script module**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_skill_script_confirm_card.py \
+  -q
+../../.venv/bin/python -m ruff check Tests/UI/test_skill_script_confirm_card.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_skill_script_confirm_card.py
+git diff --check
+```
+
+Expected: the module and static checks pass with no production changes.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

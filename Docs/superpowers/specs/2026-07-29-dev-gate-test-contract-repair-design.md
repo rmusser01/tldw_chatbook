@@ -238,6 +238,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   that shortcut only when Search/RAG is selected, because every other Library
   row hard-gates the action. The mounted test starts with no selected row, so
   its default footer is correct.
+- The pending-skill-script preservation test still seeds and reads
+  `screen.chat_state.task_resume_state`. Native Console task cards, persistence,
+  approvals, and skill confirmations now share the screen-owned
+  `_task_resume_state`, updated through `set_task_resume_state()`; `chat_state`
+  no longer exists.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -776,6 +781,11 @@ Update the tests to describe current behavior:
     registration method. Assert the `u` hint reaches only the screen footer and
     the host app's footer remains default. Do not restore a screen-wide hint or
     add a UI navigation journey to this focused ownership test.
+74. Seed the direct `ChatScreen` fixture through `set_task_resume_state()` and
+    assert the screen's current `_task_resume_state` before and after
+    `_set_console_pending_skill_script()`. Retain exact summary, last-step,
+    payload, and clear assertions. Do not restore a compatibility wrapper or
+    mount a full app.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1078,6 +1088,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   would duplicate navigation coverage and introduce unrelated workers; setting
   the registration owner's row state directly keeps this test focused on
   footer ownership and dynamic shortcut projection.
+- Reintroducing `chat_state` would create a second task-resume owner solely for
+  a stale fixture. A mounted Console journey would add unrelated lifecycle cost;
+  the current setter already tolerates an unmounted direct screen and exercises
+  the same preservation bridge this test owns.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
