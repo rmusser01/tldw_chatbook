@@ -83,6 +83,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #55 Selected and empty Library Collections retain all current copy, selection, and geometry coverage while asserting the established pressable-but-blocked Console handoff state rather than a disabled button.
 - [ ] #56 When an ingest completes while Notes is selected, the transiently recomposed Library rail eventually remounts its Media row with count 1, Notes remains selected, and ingest-path plus ingest-job widgets remain absent.
 - [ ] #57 MCP import-file regressions override only the workbench's import-containment-root seam, so temporary picked files remain valid without replacing process-wide home expansion or redirecting the isolated application config path to a directory; picker loading, unreadable-file, outside-home rejection, and size-cap coverage remain intact.
+- [ ] #58 MCP audit-detail fixtures use the current metadata-only execution-record schema; the rendered inspector retains identity, decision, duration, argument-name/count, result-type/size, and drill-through control coverage while proving raw argument values, result excerpts, and exception text are absent.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -145,6 +146,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 49. Align both Library Collections handoff assertions with the established pressable-but-blocked recovery contract.
 50. Make the different-canvas ingest isolation regression tolerate the current Library rail remount while still requiring the updated Media count.
 51. Retarget MCP import-file path fixtures from process-wide `os.path.expanduser` replacement to the workbench's existing import-root seam.
-52. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-53. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+52. Align MCP audit-detail fakes and assertions with the current metadata-only execution-log schema.
+53. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+54. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

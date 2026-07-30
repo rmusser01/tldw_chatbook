@@ -2163,6 +2163,46 @@ git diff --check
 Expected: config isolation remains valid while all four import-path contracts
 exercise their intended branch.
 
+### Task 4az: Align MCP audit-detail fixtures with metadata-only records
+
+**Files:**
+- Modify: `Tests/UI/test_mcp_workbench.py`
+
+- [ ] **Step 1: Preserve the three stale payload expectations**
+
+Run the three `test_audit_entry_detail*`/selection nodes together. Expected
+before repair: all three fail because the inspector renders the current
+metadata-only schema and intentionally omits raw argument values and legacy
+result excerpts.
+
+- [ ] **Step 2: Seed and assert the public audit schema**
+
+Change the test-local `_audit_record` factory from retired `arguments`,
+`result_excerpt`, and `error` fields to the current status/category/type,
+argument-name/count, and result-type/size fields. Keep the existing rendered
+inspector journey and drill-through button checks. Parse its JSON detail and
+assert the current metadata. In the two privacy tests, inject legacy payload
+fields after factory construction solely to prove their raw values, excerpts,
+and exception text do not render. Do not change production or add a projection
+helper.
+
+- [ ] **Step 3: Verify focused audit-detail contracts**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_mcp_workbench.py::test_audit_entry_selection_shows_pretty_printed_detail_in_inspector \
+  Tests/UI/test_mcp_workbench.py::test_audit_entry_detail_omits_argument_values \
+  Tests/UI/test_mcp_workbench.py::test_audit_entry_detail_omits_legacy_result_excerpt \
+  -q
+../../.venv/bin/python -m ruff check Tests/UI/test_mcp_workbench.py
+../../.venv/bin/python -m ruff format --check Tests/UI/test_mcp_workbench.py
+git diff --check
+```
+
+Expected: the rendered inspector exposes useful bounded metadata and no
+payload-bearing legacy fields. Existing full-file Ruff debt must remain
+unchanged; do not broadly reformat this test module under this repair.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

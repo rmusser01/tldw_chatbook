@@ -111,6 +111,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   directory itself, which the private-file guard correctly rejects before the
   import panel can mount. The workbench already exposes `_mcp_import_home()` as
   the narrow containment-root seam those fixtures intend to control.
+- The MCP audit-detail fake still emits retired `arguments`, `result_excerpt`,
+  and free-form `error` fields, and three inspector tests still expect selected
+  payload values to render. The live execution log and inspector now expose
+  only ADR-029-safe metadata: registered argument names, unknown-argument
+  count, result type/size, bounded categories, and exception type.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -498,6 +503,13 @@ Update the tests to describe current behavior:
     all picker-loading, unreadable-file, outside-home rejection, and size-cap
     assertions, and update the affected test rationale to name the seam actually
     patched; do not change production config or private-path handling.
+56. Update the test-local MCP audit-record factory to the current metadata-only
+    public schema. Seed and parse the rendered inspector detail through the
+    existing async UI tests, preserving identity, decision, duration, and
+    button coverage while asserting argument-name/count and result-type/size
+    metadata. Inject legacy payload fields only in the two privacy regressions
+    and assert their values/excerpts/text never render. Do not extract a new
+    production helper or restore payload display.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -700,6 +712,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   path would hide a fixture leak and weaken production safety. Patching the
   existing workbench-local import-root seam expresses the test's intended home
   boundary without changing process-wide path resolution.
+- Restoring redacted-or-allowlisted payload values in the audit inspector would
+  violate the accepted metadata-only persistence and display boundary. A new
+  production payload-projection helper is unnecessary: the existing rendered
+  UI tests can pin the public schema directly with current fake records.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
