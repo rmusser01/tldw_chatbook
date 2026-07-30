@@ -164,6 +164,35 @@ def test_local_authority_accessor_uses_shared_transaction_seam(
         db.close_connection()
 
 
+def test_local_authority_accessor_borrows_caller_owned_sqlite_transaction(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / "authority-caller-transaction.sqlite",
+        client_id="authority-caller-transaction-test",
+    )
+    conn = db.get_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE rag_identity_context
+            SET local_authority_id = local_authority_id
+            WHERE context_name = 'default'
+            """
+        )
+        assert conn.in_transaction
+        assert db._local.transaction_depth == 0
+
+        assert db.get_local_authority_id()
+
+        assert conn.in_transaction
+        assert db._local.transaction_depth == 0
+    finally:
+        if conn.in_transaction:
+            conn.rollback()
+        db.close_connection()
+
+
 def test_local_authority_accessor_documents_public_contract() -> None:
     doc = inspect.getdoc(CharactersRAGDB.get_local_authority_id)
 

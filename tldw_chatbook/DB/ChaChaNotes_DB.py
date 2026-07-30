@@ -12852,6 +12852,7 @@ class TransactionContextManager:
         self.db = db_instance
         self.conn: Optional[sqlite3.Connection] = None
         self.is_outermost_transaction = False
+        self.borrows_native_transaction = False
 
     def __enter__(self):
         # Ensure transaction_depth is initialized for this thread
@@ -12869,10 +12870,18 @@ class TransactionContextManager:
         else:
             # This is the outermost transaction
             self.conn = self.db.get_connection()
+            if self.conn.in_transaction:
+                self.borrows_native_transaction = True
+                self.db._local.transaction_depth = 1
+                logger.debug(
+                    f"Borrowed caller-owned SQLite transaction on thread {threading.get_ident()}."
+                )
+                return self.conn.cursor()
+
+            # Set depth only after BEGIN succeeds so a failed BEGIN cannot corrupt it.
+            self.conn.execute("BEGIN")
             self.is_outermost_transaction = True
             self.db._local.transaction_depth = 1
-            # SQLite doesn't support nested transactions directly, but we use SAVEPOINTs for nested behavior
-            self.conn.execute("BEGIN")
             logger.debug(
                 f"Started outermost transaction on thread {threading.get_ident()}."
             )
@@ -12946,6 +12955,13 @@ class TransactionContextManager:
                     raise CharactersRAGDBError(
                         f"Rollback failed after exception: {rollback_err}. Original exception: {exc_val}"
                     ) from rollback_err
+        elif self.borrows_native_transaction:
+            if exc_type:
+                logger.debug(
+                    f"Exception in caller-owned transaction block on thread "
+                    f"{threading.get_ident()}: {exc_type.__name__}. Caller retains "
+                    "rollback ownership."
+                )
         elif exc_type:
             # If an exception occurred in a nested block, we don't do anything here.
             # The outermost block will handle the rollback.
