@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-import textwrap
+import re
 from typing import Any, Literal
 
-from rich.cells import cell_len
+from rich.cells import cell_len, chop_cells
 from rich.markup import escape
 from rich.text import Text
 from textual import on
@@ -37,6 +37,14 @@ from ...config import (
 _CollapseState = Literal["literal", "collapsed", "confirm", "expanded"]
 _DictationState = Literal["idle", "starting", "recording", "transcribing"]
 _DraftStyleRange = tuple[int, int, str]
+
+#: Chunk boundary regex mirroring `textwrap.TextWrapper.wordsep_simple_re`
+#: (the pattern used whenever `break_on_hyphens=False`, which every wrap call
+#: in this module passes). `_cell_wrap_line` needs the identical chunking so
+#: its greedy fill only differs from `textwrap.wrap` in how it *measures* a
+#: chunk (terminal cells instead of characters), not in where it is willing
+#: to break.
+_DRAFT_WORD_SPLIT_RE = re.compile(r"([\t\n\x0b\x0c\r ]+)")
 
 
 @dataclass
@@ -657,6 +665,90 @@ class ConsoleComposerBar(Horizontal):
             elapsed_seconds=self._voice_elapsed_seconds,
         )
 
+    @staticmethod
+    def _cell_wrap_line(line: str, width: int) -> list[str]:
+        """Greedy word-wrap ``line`` by terminal cell width, not character count.
+
+        Mirrors ``textwrap.wrap(line, width=width, break_long_words=True,
+        break_on_hyphens=False, drop_whitespace=False, replace_whitespace=False)``
+        chunk-for-chunk -- same tab expansion, same whitespace-run chunking,
+        same greedy fill and long-word hard-break -- except every length
+        check measures ``rich.cells.cell_len`` (terminal columns) instead of
+        ``len()`` (Python characters). For single-width-only text the two
+        measures are identical, so this produces byte-identical output to
+        the ``textwrap`` call it replaces; the difference only surfaces on
+        double-width text (CJK, emoji), where a character-counted wrap can
+        under-count how many terminal columns a row actually occupies and
+        let it silently overflow the wrap width at paint time.
+
+        A long chunk that cannot fit even alone is hard-broken with
+        ``rich.cells.chop_cells`` (a cell-aware analogue of ``chunk[:end]``),
+        one cell-budget bite per call -- matching
+        ``TextWrapper._handle_long_word``'s one-bite-per-line contract, so a
+        chunk that needs several lines to exhaust naturally gets the rest on
+        subsequent passes of the outer loop below.
+
+        Args:
+            line: A single logical line (no newlines) to wrap.
+            width: Wrap width in terminal cells.
+
+        Returns:
+            Wrapped rows for ``line``; always at least one entry (matching
+            ``textwrap.wrap(...) or [""]`` at every call site).
+        """
+        width = max(1, width)
+        # `textwrap.wrap` always expands tabs before splitting into chunks
+        # (`expand_tabs` defaults to True and is never overridden by any
+        # caller in this module) regardless of `replace_whitespace`, which
+        # only controls whether *other* whitespace becomes plain spaces.
+        chunks = [
+            chunk
+            for chunk in _DRAFT_WORD_SPLIT_RE.split(line.expandtabs(8))
+            if chunk
+        ]
+        chunks.reverse()
+        lines: list[str] = []
+        while chunks:
+            current_line: list[str] = []
+            current_cells = 0
+            while chunks:
+                chunk = chunks[-1]
+                chunk_cells = cell_len(chunk)
+                if current_cells + chunk_cells > width:
+                    break
+                current_line.append(chunks.pop())
+                current_cells += chunk_cells
+
+            if chunks and cell_len(chunks[-1]) > width:
+                chunk = chunks[-1]
+                # Mirrors `_handle_long_word`'s `space_left`: only the
+                # degenerate `width < 1` case floors to 1, never `current_cells
+                # == width` -- that legitimately yields 0, which must append an
+                # empty (no-progress) piece this round rather than force one
+                # cell in, or this would violate the width budget it is trying
+                # to enforce.
+                space_left = 1 if width < 1 else width - current_cells
+                piece = ""
+                if space_left > 0:
+                    chopped = chop_cells(chunk, space_left)
+                    piece = chopped[0] if chopped else ""
+                current_line.append(piece)
+                if piece:
+                    chunks[-1] = chunk[len(piece) :]
+                    if not chunks[-1]:
+                        chunks.pop()
+
+            if current_line:
+                lines.append("".join(current_line))
+            elif chunks:
+                # Defensive only: every branch above either consumes a chunk
+                # or appends a (possibly empty) piece derived from one, so
+                # `current_line` empty with `chunks` non-empty should not
+                # occur. Pop unconditionally rather than loop forever if it
+                # ever does.
+                lines.append(chunks.pop())
+        return lines or [""]
+
     @classmethod
     def _wrap_draft_lines(cls, text: str, width: int) -> list[str]:
         """Return wrapped draft lines for the visible bounded composer."""
@@ -667,17 +759,7 @@ class ConsoleComposerBar(Horizontal):
             if not line:
                 wrapped_lines.append("")
                 continue
-            wrapped_lines.extend(
-                textwrap.wrap(
-                    line,
-                    width=width,
-                    break_long_words=True,
-                    break_on_hyphens=False,
-                    drop_whitespace=False,
-                    replace_whitespace=False,
-                )
-                or [""]
-            )
+            wrapped_lines.extend(cls._cell_wrap_line(line, width))
         return wrapped_lines or [""]
 
     @classmethod
@@ -704,14 +786,7 @@ class ConsoleComposerBar(Horizontal):
                 continue
 
             line_offset = 0
-            wrapped_segments = textwrap.wrap(
-                line,
-                width=width,
-                break_long_words=True,
-                break_on_hyphens=False,
-                drop_whitespace=False,
-                replace_whitespace=False,
-            ) or [""]
+            wrapped_segments = cls._cell_wrap_line(line, width)
             for wrapped_segment in wrapped_segments:
                 start = source_offset + line_offset
                 end = start + len(wrapped_segment)
