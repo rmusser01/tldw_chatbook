@@ -2,7 +2,7 @@
 id: TASK-1466
 title: >-
   Fix deterministic 300s hang in test_pyaudio_recording_flow that kills every full-suite run when webrtcvad is installed
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-30 09:20'
 labels:
