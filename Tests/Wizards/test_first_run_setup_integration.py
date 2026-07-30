@@ -109,6 +109,38 @@ class TestFreshTemplateOfferGuard:
         assert wizard_state.should_offer_wizard(config, {}) is False
 
 
+class TestFreshTemplateSummaryRow:
+    """F2 regression, same "use the REAL generated template" rationale as
+    TestFreshTemplateOfferGuard above: the shipped config.toml pre-populates
+    chat_defaults.provider="OpenAI" and ~12 [api_settings.*] default
+    endpoints, none of them entered by the user. The Summary step's Provider
+    row must still read unconfigured against that untouched template, and
+    must flip to configured once the wizard's own one-click local-server
+    commit (endpoint only, no key) actually lands."""
+
+    def test_pristine_template_provider_row_is_unconfigured(self, temp_config):
+        config = _reload()
+        rows = {r.label: r for r in wizard_state.build_summary_rows(
+            config, {}, rag_deps_installed=False
+        )}
+        assert rows["Provider"].ok is False
+
+    def test_one_click_local_server_commit_provider_row_is_configured(self, temp_config):
+        # Mirrors the wizard's own on-mount behavior (FirstRunSetupWizard.on_mount
+        # -> _persist_started_flag) plus ProviderStep.commit()'s one-click,
+        # no-api-key path (build_provider_commit(api_key=None, api_url=...)
+        # followed by invalidate_model_for_provider_change writing
+        # chat_defaults.provider).
+        _write(wizard_state.build_wizard_state_commit(started=True))
+        _write({"api_settings.llama_cpp": {"api_url": "http://127.0.0.1:8080"}})
+        _write({"chat_defaults": {"provider": "llama_cpp", "model": ""}})
+        config = _reload()
+        rows = {r.label: r for r in wizard_state.build_summary_rows(
+            config, {}, rag_deps_installed=False
+        )}
+        assert rows["Provider"].ok is True
+
+
 class TestLoadSettingsProjectsFirstRun:
     """UAT regression pin (F-E): ``app.py`` repoints ``self.app_config`` at
     ``load_settings()`` (a differently-shaped, hand-curated projection of the

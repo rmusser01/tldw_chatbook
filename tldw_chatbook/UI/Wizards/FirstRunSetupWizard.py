@@ -638,15 +638,40 @@ class ModelStep(SetupStep):
             self._model_id_from_custom_input = True
         elif self._model_id_from_custom_input:
             self._model_id_from_custom_input = False
-            try:
-                pressed = self.query_one("#setup-model-choice", RadioSet).pressed_button
-            except Exception:
-                pressed = None
+            pressed = self._live_pressed_radio()
             self.selected_model_id = str(pressed.label) if pressed is not None else ""
 
     def set_selected_model(self, model_id: str) -> None:
         self.selected_model_id = model_id
         self._model_id_from_custom_input = False
+
+    def _live_pressed_radio(self) -> Optional[RadioButton]:
+        """F1 fix: read ``#setup-model-choice``'s ``pressed_button``, but only
+        if it is still one of the RadioSet's *current* children.
+
+        Textual's ``RadioSet._pressed_button`` (``textual/widgets/_radio_set.py``)
+        is a plain instance attribute; ``remove_children()`` prunes DOM
+        children but never touches it. ``_render_models`` calls
+        ``remove_children()``/``mount_all()`` on every provider switch to
+        swap in the new provider's models, so a RadioButton pressed under
+        the OLD provider stays referenced by ``_pressed_button`` -- now
+        pointing at a detached, no-longer-mounted widget -- until the user
+        presses something in the NEW list. Reading ``pressed_button``
+        unguarded after a provider switch (Back -> switch provider -> Next)
+        therefore resurrects the previous provider's model id even though
+        nothing in the currently-visible list was ever pressed. Guarding
+        with membership in ``radio_set.query(RadioButton)`` (the set's
+        live, currently-mounted children) closes that window without
+        reaching into ``_pressed_button`` from application code.
+        """
+        try:
+            radio_set = self.query_one("#setup-model-choice", RadioSet)
+        except Exception:
+            return None
+        pressed = radio_set.pressed_button
+        if pressed is None or pressed not in radio_set.query(RadioButton):
+            return None
+        return pressed
 
     def _effective_model_id(self) -> str:
         """F-A fix: fall back to the RadioSet's own ``pressed_button`` when
@@ -656,13 +681,15 @@ class ModelStep(SetupStep):
         placeholder rows this step ever mounts (loading / no-provider /
         no-models-found) are all ``disabled=True`` and so can never actually
         become ``pressed_button``.
+
+        F1 fix: the fallback goes through ``_live_pressed_radio()`` rather
+        than reading ``pressed_button`` directly, so a stale press left over
+        from a provider switch (see ``_live_pressed_radio``'s docstring)
+        cannot resurrect the previous provider's model at commit time.
         """
         if self.selected_model_id:
             return self.selected_model_id
-        try:
-            pressed = self.query_one("#setup-model-choice", RadioSet).pressed_button
-        except Exception:
-            return ""
+        pressed = self._live_pressed_radio()
         return str(pressed.label) if pressed is not None else ""
 
     async def commit(self) -> tuple[bool, str]:
@@ -1299,6 +1326,9 @@ class SetupWizardContainer(WizardContainer):
             self.track, key_entered=self._effective_key_entered()
         )
         self._advancing = False
+        # F3 hardening: guards _dismiss_screen/_finalize against ever
+        # dismissing the screen twice -- see those methods' docstrings.
+        self._finalized = False
 
     # -- step construction -------------------------------------------------
     def _create_steps(self) -> List[WizardStep]:
@@ -1649,10 +1679,36 @@ class SetupWizardContainer(WizardContainer):
         )
 
     async def _finalize(self, exit_route: Optional[str]) -> None:
+        """F3 hardening: a second entry is a clean no-op.
+
+        Checked here (not just inside ``_dismiss_screen``) so a duplicate
+        call -- e.g. a stray extra Finish click/ctrl+n racing the exclusive
+        "setup-wizard-finalize" worker -- also skips re-committing
+        ``first_run.setup_completed``, not merely the redundant dismiss.
+        Deliberately does NOT set ``self._finalized`` itself:
+        ``_dismiss_screen`` is the sole setter (see its docstring) -- if
+        this method set the flag before calling ``_dismiss_screen``, that
+        call would see it already True and skip the real dismiss on the
+        very FIRST, intended run.
+        """
+        if self._finalized:
+            return
         await self.commit_config(wizard_state.build_wizard_state_commit(completed=True))
         self._dismiss_screen({"completed": True, "exit_route": exit_route})
 
     def _dismiss_screen(self, result: Optional[dict]) -> None:
+        """F3 hardening: the single choke point both ``_finalize`` (Finish)
+        and ``_skip_entirely`` (the whole-wizard Skip button) funnel
+        through to actually pop the screen -- idempotent no-op on a second
+        entry, from either caller. Textual's ``Screen.dismiss()`` is not
+        designed to tolerate being called twice on the same screen; without
+        this guard, a duplicate call (Skip arriving after Finish already
+        completed, or any other double-entry into either caller) would
+        attempt a second dismiss.
+        """
+        if self._finalized:
+            return
+        self._finalized = True
         screen = self.screen
         if isinstance(screen, FirstRunSetupWizard):
             screen.dismiss(result)

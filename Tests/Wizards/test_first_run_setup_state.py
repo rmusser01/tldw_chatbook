@@ -309,6 +309,7 @@ class TestSectionAllowlist:
 
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     build_summary_rows,
+    provider_summary_configured,
     read_provider_secret_presence,
     read_wizard_prefill,
 )
@@ -473,3 +474,103 @@ class TestSummaryRows:
         by_label = {row.label: row for row in rows}
         assert by_label["Provider"].ok is False
         assert by_label["Tools"].ok is False  # no gates on => off is reported honestly
+
+    def test_provider_row_checks_for_one_click_local_server_commit(self):
+        """F2 regression: the wizard's own one-click "Use this server" path
+        (ProviderStep._on_use_detected -> build_provider_commit) commits an
+        api_url with NO api_key at all -- any_provider_configured (the
+        auto-offer gate) deliberately never counts that. Reusing it verbatim
+        for the SUMMARY row made the wizard's own one-click commit render
+        "no credentials or endpoint" immediately after the user finished
+        that exact flow."""
+        cfg = {
+            "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8080"}},
+            "chat_defaults": {"provider": "llama_cpp", "model": ""},
+            "first_run": {"setup_started": True},
+        }
+        rows = {row.label: row for row in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        assert rows["Provider"].ok is True
+
+    def test_provider_row_stays_unconfigured_for_pristine_template_shape(self):
+        """The other half of F2: a synthetic dict shaped like the SHIPPED
+        template's defaults (chat_defaults.provider="OpenAI", no first_run
+        section at all, no api_key anywhere) must still show unconfigured --
+        the fix must not resurrect the exact "poisoned by the always-present
+        default" bug any_provider_configured itself was written to avoid.
+        See TestFreshTemplateSummaryRow in test_first_run_setup_integration.py
+        for the same claim against the REAL generated template file."""
+        cfg = {
+            "api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}},
+            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        }
+        rows = {row.label: row for row in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        assert rows["Provider"].ok is False
+
+    def test_provider_row_endpoint_ignored_without_wizard_involvement(self):
+        """A bare endpoint sitting in api_settings, matching chat_defaults.provider,
+        does NOT count on its own -- only combined with the wizard's own
+        setup_started/setup_completed flag (see provider_summary_configured's
+        docstring for why that flag is the chosen "the wizard did this"
+        signal)."""
+        cfg = {
+            "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8080"}},
+            "chat_defaults": {"provider": "llama_cpp", "model": ""},
+        }
+        rows = {row.label: row for row in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        assert rows["Provider"].ok is False
+
+    def test_provider_row_endpoint_for_a_different_provider_does_not_leak(self):
+        """Cross-provider contamination guard: the shipped template ships
+        default local-server endpoints for MANY providers at once (llama_cpp,
+        ollama, vllm, ...). A user who selects a totally different provider
+        (Anthropic) and enters no key must not have some OTHER, untouched
+        provider's leftover endpoint make this row falsely read ✓."""
+        cfg = {
+            "api_settings": {
+                "anthropic": {"api_key_env_var": "ANTHROPIC_API_KEY"},
+                "llama_cpp": {"api_url": "http://127.0.0.1:8080"},
+            },
+            "chat_defaults": {"provider": "anthropic", "model": ""},
+            "first_run": {"setup_started": True},
+        }
+        rows = {row.label: row for row in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        assert rows["Provider"].ok is False
+
+
+class TestProviderSummaryConfigured:
+    """Unit coverage for the pure helper directly, isolated from the rest of
+    build_summary_rows' row-building."""
+
+    def test_inline_key_counts_same_as_the_offer_gate(self):
+        cfg = {"api_settings": {"openai": {"api_key": "sk-real"}}}
+        assert provider_summary_configured(cfg, {}) is True
+
+    def test_env_var_counts_same_as_the_offer_gate(self):
+        cfg = {"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}}
+        assert provider_summary_configured(cfg, {"OPENAI_API_KEY": "sk-x"}) is True
+
+    def test_one_click_endpoint_commit_counts(self):
+        cfg = {
+            "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8080"}},
+            "chat_defaults": {"provider": "llama_cpp"},
+            "first_run": {"setup_started": True},
+        }
+        assert provider_summary_configured(cfg, {}) is True
+
+    def test_completed_flag_also_counts(self):
+        cfg = {
+            "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8080"}},
+            "chat_defaults": {"provider": "llama_cpp"},
+            "first_run": {"setup_completed": True},
+        }
+        assert provider_summary_configured(cfg, {}) is True
+
+    def test_endpoint_without_either_wizard_flag_does_not_count(self):
+        cfg = {
+            "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8080"}},
+            "chat_defaults": {"provider": "llama_cpp"},
+        }
+        assert provider_summary_configured(cfg, {}) is False
+
+    def test_pristine_config_does_not_count(self):
+        assert provider_summary_configured({}, {}) is False

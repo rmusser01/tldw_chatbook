@@ -98,6 +98,111 @@ def _wizard_flag(app_config: Mapping[str, object], key: str) -> bool:
     return coerce_wizard_flag(section.get(key))
 
 
+def _api_settings_entry_for_provider(
+    app_config: Mapping[str, object], provider_value: str
+) -> Mapping[str, object]:
+    """The ``api_settings.<key>`` block matching ``provider_value``, or ``{}``.
+
+    ``api_settings`` is always keyed by the raw provider_key form (e.g.
+    "openai", "llama_cpp" -- see the ``[api_settings.*]`` headings in
+    config.py's ``CONFIG_TOML_CONTENT``), which is also the exact form
+    ``ProviderStep._display_value_for`` persists into
+    ``chat_defaults.provider``. Comparing case-insensitively is a small
+    extra safety margin (costs nothing, and the shipped template's OWN
+    default ``chat_defaults.provider = "OpenAI"`` happens to use the
+    capitalized display form rather than the wizard's raw-key form --
+    matching case-insensitively doesn't change the outcome there, since
+    ``[api_settings.openai]`` carries no endpoint field at all, but it keeps
+    this helper from silently depending on that particular template detail
+    staying inconsistent).
+    """
+    if not provider_value:
+        return {}
+    api_settings = app_config.get("api_settings")
+    if not isinstance(api_settings, Mapping):
+        return {}
+    target = provider_value.strip().lower()
+    for key, settings in api_settings.items():
+        if str(key).strip().lower() == target and isinstance(settings, Mapping):
+            return settings
+    return {}
+
+
+def provider_summary_configured(
+    app_config: Mapping[str, object], environ: Mapping[str, str]
+) -> bool:
+    """Whether the Summary step's Provider row should read configured (✓).
+
+    Deliberately more permissive than ``any_provider_configured`` (the
+    auto-offer gate, used as-is by ``should_offer_wizard``): a real inline
+    ``api_key`` or resolved env var counts here exactly as it does there,
+    but this row ALSO counts a bare endpoint (``api_url``/``api_base_url``,
+    no key at all) for the provider named by ``chat_defaults.provider`` --
+    something ``any_provider_configured`` intentionally ignores (see its
+    own docstring).
+
+    Why the extra case is needed. The wizard's own one-click "Use this
+    server" path (``ProviderStep._on_use_detected`` ->
+    ``build_provider_commit``) commits an ``api_url`` with NO ``api_key`` at
+    all -- exactly the shape ``any_provider_configured`` was written to
+    ignore. Reusing that helper verbatim for this row made the wizard's own
+    one-click commit render "no credentials or endpoint" immediately after
+    the user finished that exact flow on this exact screen.
+
+    Why not just "any api_settings endpoint is present": the shipped
+    config.toml template pre-populates roughly a dozen ``[api_settings.*]``
+    blocks with default local-server endpoint URLs (llama.cpp, Ollama,
+    vLLM, ...) on every fresh install, none of them touched by the user.
+    Blanket-scanning every provider's endpoint would resurrect exactly the
+    bug ``any_provider_configured``'s docstring describes, and would ALSO
+    leak cross-provider: a user who selects Anthropic and enters no key
+    would still see ✓ purely because some OTHER, untouched provider's
+    default endpoint (e.g. llama_cpp) happens to sit in the same config.
+    Scoping the endpoint check to ONLY the provider named by
+    ``chat_defaults.provider`` (which the wizard always writes, in the raw
+    provider_key form, whenever ``ProviderStep.commit()`` runs -- see
+    ``invalidate_model_for_provider_change``) avoids that leak: the
+    template's own default for that key is "OpenAI", a cloud provider whose
+    ``[api_settings.openai]`` block carries no endpoint field at all, so an
+    untouched template can never accidentally satisfy this check through
+    its own baked-in provider value.
+
+    Why also require ``first_run.setup_started``/``setup_completed``: belt
+    and suspenders, and the literal "did the wizard actually do this"
+    signal -- the wizard sets ``setup_started`` in the live app_config the
+    moment it mounts (``FirstRunSetupWizard.on_mount`` ->
+    ``_persist_started_flag``), before any step commits anything, and the
+    shipped template never ships a ``[first_run]`` section at all. In
+    practice this flag is already true for every real Summary render (the
+    step cannot be reached before the wizard has mounted), so the
+    chat_defaults-keyed scoping above is what actually prevents the
+    cross-provider leak; this flag's job is to keep a synthetic/pristine
+    ``app_config`` (e.g. a hand-built dict in a unit test, or any future
+    caller that evaluates this outside of a live wizard run) from ever
+    reading ✓ off endpoint state alone.
+
+    Known limitation, accepted deliberately (same shape
+    ``any_provider_configured`` already accepts for its own narrower case):
+    a user who reruns the wizard on a config that already has
+    ``setup_completed=True`` from a prior full run, then backs out of
+    Provider without touching it this time, will still see this row read
+    off whatever endpoint survives from that earlier run for whatever
+    provider is currently named in ``chat_defaults.provider``.
+    """
+    if any_provider_configured(app_config, environ):
+        return True
+    if not (
+        _wizard_flag(app_config, SETUP_STARTED_KEY)
+        or _wizard_flag(app_config, SETUP_COMPLETED_KEY)
+    ):
+        return False
+    provider_value = str(_section(app_config, "chat_defaults").get("provider") or "")
+    settings = _api_settings_entry_for_provider(app_config, provider_value)
+    return _is_real_secret(settings.get("api_url")) or _is_real_secret(
+        settings.get("api_base_url")
+    )
+
+
 def should_offer_wizard(
     app_config: Mapping[str, object], environ: Mapping[str, str]
 ) -> bool:
@@ -538,7 +643,11 @@ def build_summary_rows(
 ) -> tuple[SummaryRow, ...]:
     """Build the ✓/✗ matrix strictly from persisted config (never step memory)."""
     prefill = read_wizard_prefill(app_config)
-    provider_ok = any_provider_configured(app_config, environ)
+    # F2 fix: this row uses provider_summary_configured, NOT
+    # any_provider_configured (the auto-offer gate) -- see that function's
+    # docstring for why the two deliberately disagree on a bare, wizard-
+    # committed endpoint (the one-click "Use this server" path).
+    provider_ok = provider_summary_configured(app_config, environ)
     tools_on = [key for key, value in prefill.tool_gates if value]
     notes_on = prefill.auto_sync_enabled and bool(prefill.sync_directory)
     encryption_on = coerce_wizard_flag(_section(app_config, "encryption").get("enabled"))
@@ -550,7 +659,7 @@ def build_summary_rows(
     else:
         rag_row = SummaryRow("RAG", False, "no embedding model selected")
     return (
-        SummaryRow("Provider", provider_ok, "" if provider_ok else "no credentials or endpoint"),
+        SummaryRow("Provider", provider_ok, "" if provider_ok else "no credentials or saved endpoint"),
         SummaryRow(
             "Default model",
             bool(prefill.model_id),

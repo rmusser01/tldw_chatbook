@@ -831,6 +831,57 @@ async def test_model_step_commit_reads_pressed_radio_without_changed_event():
 
 
 @pytest.mark.asyncio
+async def test_model_step_provider_switch_does_not_resurrect_stale_pressed_radio():
+    """F1 regression: Textual's ``RadioSet._pressed_button`` is a plain
+    instance attribute that ``remove_children()`` never touches (confirmed
+    by reading ``textual/widgets/_radio_set.py`` -- pruning children is
+    purely a DOM operation with no watcher on ``_pressed_button``).
+    ``_render_models`` calls ``remove_children()``/``mount_all()`` on every
+    provider switch, but the OLD, now-detached RadioButton object stays
+    referenced by ``_pressed_button`` until a NEW button is pressed in the
+    fresh set. Sequence: press a real radio for provider A (via ``.value =
+    True``, a genuine toggle -- not manipulating ``_pressed_button``
+    directly), switch to provider B via wizard_data + on_show, let the
+    re-render happen, then commit with nothing pressed in B's list yet --
+    the commit must NOT resurrect provider A's model."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    async def discover(provider_key):
+        return {"openai": ["model-a"], "anthropic": ["model-b"]}[provider_key]
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard, discover_models=discover)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.1)
+        radio_set = step.query_one("#setup-model-choice", RadioSet)
+        radio_set.query_one(RadioButton).value = True  # real press, fires Changed
+        await pilot.pause()
+        assert step.selected_model_id == "model-a"  # sanity: the press registered
+
+        wizard.wizard_data["provider"] = {
+            "provider_key": "anthropic", "provider_value": "Anthropic",
+        }
+        step.on_show()
+        await pilot.pause(0.1)
+        labels = [str(b.label) for b in radio_set.query(RadioButton)]
+        assert labels == ["model-b"]  # the re-render itself landed correctly
+
+        ok, error = await step.commit()
+        assert ok, error
+        assert step._effective_model_id() != "model-a"
+        wizard.commit_config.assert_not_called()  # skip-safe: nothing pressed in B's list
+
+
+@pytest.mark.asyncio
 async def test_model_step_no_provider_shows_pick_a_provider_copy():
     """F-F regression: with no provider chosen yet, on_show must not leave
     the initial "(loading models...)" placeholder forever -- there is
@@ -1675,6 +1726,36 @@ def test_finalize_worker_uses_a_dedicated_group_not_wizard_advance():
     assert calls, "expected _handle_complete to schedule the finalize worker"
     assert calls[0]["group"] == "setup-wizard-finalize"
     assert calls[0]["group"] != "setup-wizard-advance"
+
+
+@pytest.mark.asyncio
+async def test_finalize_and_dismiss_screen_never_double_dismiss():
+    """F3 hardening: a duplicate entry into _finalize/_dismiss_screen (e.g.
+    a stray extra Finish click/ctrl+n racing the "setup-wizard-finalize"
+    worker, or Skip-entirely arriving after Finish already completed) must
+    be a clean no-op, not a second Screen.dismiss() call."""
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        summary_index = container._step_index_for_id(STEP_SUMMARY)
+        container.show_step(summary_index)
+        await pilot.pause(0.2)
+
+        dismiss_calls = []
+        wizard.dismiss = lambda result=None: dismiss_calls.append(result)
+
+        await pilot.press("ctrl+n")
+        await pilot.pause(0.3)
+        assert len(dismiss_calls) == 1
+        assert container._finalized is True
+
+        # Duplicate entries via BOTH public entry points must be no-ops.
+        await container._finalize(None)
+        container._dismiss_screen({"completed": True, "exit_route": "duplicate"})
+        assert len(dismiss_calls) == 1
 
 
 @pytest.mark.asyncio

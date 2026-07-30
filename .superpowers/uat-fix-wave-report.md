@@ -517,3 +517,177 @@ try/except, fallback string, `logger.warning` on a genuine
 `get_cli_config_path()` failure) stands as defensive coverage for a
 different failure mode than the one originally reported, which this
 round's evidence shows was never actually present.
+
+---
+
+## Round 3 — closing-review fix wave (F1-F3)
+
+Three findings from a closing code review, fixed TDD (failing test first)
+for F1/F2 per the review's own instruction; F3 is minor hardening.
+`BaseWizard.py` was never modified.
+
+### F1 (Important) — stale RadioSet press resurrects the OLD provider's model
+
+**Mechanism, confirmed by reading Textual's installed `RadioSet` source
+(`textual/widgets/_radio_set.py`, version 8.2.8), not assumed:**
+`RadioSet._pressed_button` is a plain instance attribute, set only by
+`_on_radio_button_changed` (a real toggle) or `_on_mount`'s `switched_on`
+handling. `Widget.remove_children()` (`textual/widget.py`) is purely a DOM
+prune (`self.app._prune(*children, parent=self)`) — it never touches
+`_pressed_button`. `ModelStep._render_models` calls
+`await radio_set.remove_children()` then `mount_all(...)` on every provider
+switch to swap in the new provider's models. A RadioButton pressed under
+the OLD provider therefore stays referenced by `_pressed_button` — now
+pointing at a detached, no-longer-mounted widget — until the user presses
+something in the NEW list. Both `ModelStep._effective_model_id()`'s
+fallback and the custom-input-cleared fallback in `_on_custom_model`
+(~line 645) read `pressed_button` unguarded, so a Back → switch-provider →
+return sequence resurrected the previous provider's model id at commit
+time even though nothing in the currently-visible list was ever pressed.
+
+**Fix chosen (of the two the task offered).** Not "null the stale press
+directly in `_render_models`": that would require mutating Textual's
+private `_pressed_button` attribute from application code, and the task
+asked to pick whichever approach "survives Textual's actual API." Instead,
+added `ModelStep._live_pressed_radio()` — reads `radio_set.pressed_button`
+(public API) but only returns it if it is still a member of
+`radio_set.query(RadioButton)` (the RadioSet's *current*, live-mounted
+children; also public API). Both fallback sites
+(`_effective_model_id` and `_on_custom_model`'s clear-handler) now route
+through this one helper, so the same staleness guard applies identically
+at both places the task named, without ever touching a private attribute.
+
+**Test.** `test_model_step_provider_switch_does_not_resurrect_stale_pressed_radio`
+(`Tests/Wizards/test_first_run_setup_wizard.py`): mounts `ModelStep` for
+provider "openai" with models `["model-a"]`, presses the radio via a REAL
+toggle (`radio_button.value = True`, firing `Changed` — not manipulating
+`_pressed_button` directly, per the task's repro spec), switches
+`wizard_data` to provider "anthropic" (models `["model-b"]`), re-renders via
+`on_show()`, then commits. Confirmed **red** pre-fix
+(`assert step._effective_model_id() != "model-a"` failed with
+`'model-a' != 'model-a'`, i.e. the exact reported resurrection) and
+**green** post-fix (`_effective_model_id()` returns `""`, and
+`wizard.commit_config` is never called — correctly skip-safe since nothing
+was pressed in provider B's fresh list).
+
+### F2 (Important) — Summary's Provider row poisoned by the offer gate's own narrowness
+
+**Mechanism.** `build_summary_rows` keyed the Provider row off
+`any_provider_configured`, which deliberately never counts a bare
+`api_url`/`api_base_url` (see that function's own docstring — counting
+endpoints there was the ORIGINAL UAT bug, since the shipped config.toml
+template pre-populates ~12 `[api_settings.*]` default local-server
+endpoints on every fresh install). But the wizard's own one-click "Use
+this server" path (`ProviderStep._on_use_detected` → `build_provider_commit`)
+commits exactly that shape — `api_url` with no `api_key` — so completing
+that exact flow made the Summary step immediately render
+"✗ Provider — no credentials or endpoint" for a provider the user just
+configured on that very screen.
+
+**Options considered, per the task's own menu.** Diffing the persisted
+endpoint against the shipped template's default value per-provider was
+rejected as needless complexity (would need to know all ~12 template
+defaults and keep them in sync). A blanket "any `api_settings.*` endpoint
+present AND `first_run.setup_started`/`completed`" check was also
+rejected: `first_run.setup_started` is set in the live `app_config` at
+`FirstRunSetupWizard.on_mount` — before ANY step, including Summary, ever
+renders — so it is true for essentially every real Summary render
+regardless of what the user actually did. A blanket per-provider scan
+under that gate would leak cross-provider: a user who picks Anthropic and
+enters no key would still read ✓ purely because some OTHER, untouched
+provider's leftover template endpoint (e.g. llama_cpp's
+`http://localhost:8080`) sits elsewhere in the same config.
+
+**Fix chosen.** Added `provider_summary_configured(app_config, environ)`
+(`first_run_setup_state.py`): same inline-key/env-var check as
+`any_provider_configured`, OR'd with a check scoped to ONLY the
+`api_settings` entry matching `chat_defaults.provider` (which
+`ProviderStep.commit()` always writes, in the raw provider_key form,
+whenever it commits anything — see `invalidate_model_for_provider_change`),
+gated behind `first_run.setup_started`/`setup_completed`. Scoping to the
+one provider actually named in `chat_defaults.provider` is what prevents
+the cross-provider leak: the template's own default there is `"OpenAI"`,
+a cloud provider whose `[api_settings.openai]` block carries no endpoint
+field at all, so an untouched template can never satisfy the check through
+its own baked-in value. The `setup_started`/`completed` gate is kept as
+belt-and-suspenders (and is the literal "did the wizard do this" signal
+the task asked for), even though in production it is mostly redundant with
+the chat_defaults-scoping once reasoned through — its real job is keeping
+a synthetic/pristine `app_config` built outside a live wizard run (i.e.
+every unit test) from reading ✓ off endpoint state alone. `build_summary_rows`
+now calls this new helper instead of `any_provider_configured` for the
+Provider row only (the auto-offer gate is untouched); the row's ✗ detail
+copy changed from "no credentials or endpoint" to "no credentials or saved
+endpoint" to match.
+
+**Tests, both directions required by the task, at two levels.** Unit level
+(`Tests/Wizards/test_first_run_setup_state.py`): `TestProviderSummaryConfigured`
+(5 tests: inline key, env var, one-click endpoint+started-flag, +completed-flag,
+endpoint-without-either-flag, pristine) and 4 new cases added to
+`TestSummaryRows` (one-click commit → ✓; pristine-template-shaped dict → ✗;
+endpoint without wizard involvement → ✗; endpoint for a DIFFERENT provider
+than `chat_defaults.provider` → does not leak into ✓). Integration level,
+against the REAL generated template (`Tests/Wizards/test_first_run_setup_integration.py`,
+`TestFreshTemplateSummaryRow` — same "don't trust a synthetic dict" rationale
+already established by this file's `TestFreshTemplateOfferGuard`):
+pristine template → Provider row ✗; wizard-started flag + one-click
+endpoint commit + `chat_defaults.provider` write (mirroring
+`ProviderStep.commit()`'s exact shape) → Provider row ✓. All confirmed
+**red** before `provider_summary_configured` existed (import error, since
+`build_summary_rows` still called `any_provider_configured`) and **green**
+after.
+
+### F3 (Minor hardening) — idempotent `_finalize`/`_dismiss_screen`
+
+Added `SetupWizardContainer._finalized` (init'd `False`). `_dismiss_screen`
+(the single choke point both `_finalize`'s Finish path and
+`_skip_entirely`'s Skip-button path funnel through to actually call
+`screen.dismiss()`) now checks-and-sets the flag at entry, making a second
+call — from either caller, or a stray extra one — a clean no-op instead of
+a second `Screen.dismiss()` attempt (which Textual is not designed to
+tolerate). `_finalize` separately checks (but deliberately does NOT set)
+the same flag at its own entry, so a duplicate `_handle_complete` also
+skips the redundant `first_run.setup_completed` re-commit, not just the
+dismiss; it cannot be the setter itself, since setting it before calling
+`_dismiss_screen` would make that inner call see the flag already True and
+skip the real dismiss on the very first, intended run.
+
+**Test.** `test_finalize_and_dismiss_screen_never_double_dismiss`
+(`Tests/Wizards/test_first_run_setup_wizard.py`): drives a real completion
+via `ctrl+n` on Summary (spying on `wizard.dismiss` beforehand), confirms
+exactly one dismiss call and `container._finalized is True`, then calls
+`await container._finalize(None)` and `container._dismiss_screen(...)`
+again directly and asserts the spy count stays at 1.
+
+### Verification
+
+`PYTHONPATH=$PWD .venv/bin/pytest Tests/Wizards/ Tests/UI/test_first_run_wizard_live_contract.py Tests/UI/test_product_maturity_phase1_first_run.py -q`
+→ **176 passed**, 1 pre-existing unrelated warning (same un-awaited
+coroutine in an existing Pilot test noted in Round 1/2, not introduced
+here).
+
+**Process note.** The initial verification run hit
+`OSError: could not create numbered dir ... after 10 tries` — not a code
+regression but the host's `/private/var/folders/.../T` filesystem sitting
+at 100% capacity (2.1G of it stale `pytest-of-macbook-dev` directories from
+prior runs). Cleared the stale pytest tmp directories (disposable test
+artifacts, not project or user data) to restore headroom before re-running;
+worth flagging since a full disk produces an error that looks
+code-related but isn't.
+
+### Files changed
+
+- `tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py` — F1
+  (`ModelStep._live_pressed_radio()` + both fallback call sites), F3
+  (`SetupWizardContainer._finalized` guard on `_finalize`/`_dismiss_screen`).
+  `BaseWizard.py` was never modified.
+- `tldw_chatbook/UI/Wizards/first_run_setup_state.py` — F2
+  (`_api_settings_entry_for_provider`, `provider_summary_configured`,
+  `build_summary_rows` rewired to the new helper, Provider row ✗ detail
+  copy updated).
+- `Tests/Wizards/test_first_run_setup_wizard.py` — F1 regression test, F3
+  regression test.
+- `Tests/Wizards/test_first_run_setup_state.py` — F2 unit tests
+  (`TestProviderSummaryConfigured`, `TestSummaryRows` additions).
+- `Tests/Wizards/test_first_run_setup_integration.py` — F2 real-template
+  integration tests (`TestFreshTemplateSummaryRow`).
