@@ -3969,12 +3969,15 @@ async def test_stage_all_summary_counts_the_complete_displayed_snapshot(
         )
 
         workspace.query_one("#file-notes-git-stage-all", Button).press()
-        await _wait_until(
-            pilot,
-            lambda: git_service.stage_calls == [(1, 2)]
-            and len(git_service.status_calls) == 2,
-            "Stage All did not settle and refresh",
-        )
+        for _ in range(200):
+            if (
+                git_service.stage_calls == [(1, 2)]
+                and len(git_service.status_calls) == 2
+            ):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("Stage All did not settle and refresh")
 
         assert workspace._git_last_action is not None
         assert workspace._git_last_action.text == (
