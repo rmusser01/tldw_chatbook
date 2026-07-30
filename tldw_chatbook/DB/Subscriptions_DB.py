@@ -585,27 +585,52 @@ class SubscriptionsDB(BaseDB):
         # thresholds/selectors migrated (or was created fresh, after the
         # CREATE TABLE above already declared the column and the 0.0
         # default), so the data migration below can never re-run and clobber
-        # a user's subsequent edits. The ALTER and the two UPDATEs share this
-        # method's transaction, so the write that would re-arm the gate is
-        # gated by the exact same condition that guards it -- a migration
-        # that only *returns* corrected values without writing them lasts
-        # exactly one load (learned the hard way in Phase D).
+        # a user's subsequent edits.
+        #
+        # The ALTER and the two UPDATEs are wrapped in one EXPLICIT
+        # transaction below -- they do NOT get this for free. Python's
+        # sqlite3 module (default isolation_level, no override anywhere in
+        # BaseDB/connect_private_sqlite) opens an implicit transaction only
+        # before DML (INSERT/UPDATE/DELETE/REPLACE), never before DDL, so a
+        # bare `cursor.execute("ALTER TABLE ...")` autocommits immediately --
+        # it is not protected by whatever transaction the caller thinks it
+        # is in. Verified empirically: without an explicit BEGIN here, an
+        # exception between the ALTER and the second UPDATE (e.g. from
+        # default_ignore_selectors_text() below) leaves the column present
+        # -- the one-time gate durably spent -- with change_threshold moved
+        # but ignore_selectors permanently NULL, and *unrepairable*: a clean
+        # re-run sees the column already there and skips entirely. SQLite's
+        # DDL is itself fully transactional; only the sqlite3 module's
+        # implicit-BEGIN policy is not. Wrapping the ALTER and both UPDATEs
+        # in one explicit BEGIN IMMEDIATE / COMMIT (rolled back together on
+        # any exception) restores atomicity, so the write structurally
+        # gates the marker instead of merely being re-runnable until it
+        # eventually completes.
         snapshot_cols = {row[1] for row in cursor.execute("PRAGMA table_info(url_snapshots)")}
         if "extraction_fingerprint" not in snapshot_cols:
-            cursor.execute("ALTER TABLE url_snapshots ADD COLUMN extraction_fingerprint TEXT")
-
             from ..Subscriptions.noise_defaults import default_ignore_selectors_text
 
-            cursor.execute(
-                "UPDATE subscriptions SET change_threshold = 0.0"
-                " WHERE type IN ('url','url_list','sitemap')"
-            )
-            cursor.execute(
-                "UPDATE subscriptions SET ignore_selectors = ?"
-                " WHERE type IN ('url','url_list','sitemap')"
-                "   AND (ignore_selectors IS NULL OR TRIM(ignore_selectors) = '')",
-                (default_ignore_selectors_text(),),
-            )
+            if conn.in_transaction:
+                conn.commit()
+            cursor.execute("BEGIN IMMEDIATE")
+            try:
+                cursor.execute(
+                    "ALTER TABLE url_snapshots ADD COLUMN extraction_fingerprint TEXT"
+                )
+                cursor.execute(
+                    "UPDATE subscriptions SET change_threshold = 0.0"
+                    " WHERE type IN ('url','url_list','sitemap')"
+                )
+                cursor.execute(
+                    "UPDATE subscriptions SET ignore_selectors = ?"
+                    " WHERE type IN ('url','url_list','sitemap')"
+                    "   AND (ignore_selectors IS NULL OR TRIM(ignore_selectors) = '')",
+                    (default_ignore_selectors_text(),),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
         # Watchlist bundle entity. `name` is intentionally not UNIQUE — uniqueness
         # is enforced case-insensitively in WatchlistBundleService with

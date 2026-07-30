@@ -95,12 +95,13 @@ def test_migration_moves_thresholds_and_prefills_empty_selectors():
     """Existing url-family sources move to the new defaults, once.
 
     Non-empty selectors are preserved; feed sources are untouched entirely
-    (neither threshold nor selectors). The migration's gate is the
-    ``extraction_fingerprint`` column's absence, so it is re-armed here by
-    dropping the column to simulate a pre-migration database -- an
-    in-memory SQLite connection cannot be "reopened" to re-trigger
-    ``BaseDB.__init__``'s migration call, so the real migration method is
-    invoked directly instead.
+    (neither threshold nor selectors). Whitespace-only selectors count as
+    empty (the ``TRIM(...) = ''`` branch) and get prefilled too. The
+    migration's gate is the ``extraction_fingerprint`` column's absence, so
+    it is re-armed here by dropping the column to simulate a pre-migration
+    database -- an in-memory SQLite connection cannot be "reopened" to
+    re-trigger ``BaseDB.__init__``'s migration call, so the real migration
+    method is invoked directly instead.
     """
     from tldw_chatbook.Subscriptions.noise_defaults import default_ignore_selectors_text
 
@@ -114,6 +115,11 @@ def test_migration_moves_thresholds_and_prefills_empty_selectors():
             "INSERT INTO subscriptions (name, type, source, change_threshold,"
             " ignore_selectors) VALUES"
             " ('u2','url','https://b.test',0.1,'.mine')"
+        )
+        conn.execute(
+            "INSERT INTO subscriptions (name, type, source, change_threshold,"
+            " ignore_selectors) VALUES"
+            " ('u3','url','https://d.test',0.1,'   ')"
         )
         conn.execute(
             "INSERT INTO subscriptions (name, type, source, change_threshold)"
@@ -136,6 +142,8 @@ def test_migration_moves_thresholds_and_prefills_empty_selectors():
     assert rows["u1"]["ignore_selectors"] == default_ignore_selectors_text()
     assert rows["u2"]["ignore_selectors"] == ".mine"  # preserved, not clobbered
     assert rows["u2"]["change_threshold"] == 0.0  # still moved
+    assert rows["u3"]["ignore_selectors"] == default_ignore_selectors_text()  # TRIM branch
+    assert rows["u3"]["change_threshold"] == 0.0
     assert rows["f1"]["ignore_selectors"] in (None, "")  # feed untouched
     assert rows["f1"]["change_threshold"] == 0.1  # feed untouched
 
@@ -196,3 +204,71 @@ def test_url_snapshots_has_fingerprint_column():
     db = _fresh_db()
     cols = {r[1] for r in db.conn.execute("PRAGMA table_info(url_snapshots)")}
     assert "extraction_fingerprint" in cols
+
+
+def test_migration_rolls_back_atomically_on_mid_migration_failure():
+    """A crash between the ALTER and the second UPDATE must not spend the gate.
+
+    Python's sqlite3 module opens an implicit transaction only before DML
+    (INSERT/UPDATE/DELETE/REPLACE), never before DDL, so under the default
+    isolation policy (no override anywhere in BaseDB/connect_private_sqlite)
+    a bare ``ALTER TABLE`` autocommits immediately on its own -- it is not
+    protected by whatever transaction the caller thinks it is in. Proven by
+    fix-round-1 review: without an explicit transaction wrapping the ALTER
+    and both UPDATEs, an exception raised between them (here, from
+    ``default_ignore_selectors_text()``, injected via monkeypatch) leaves
+    the fingerprint column present -- the one-time gate durably spent --
+    with ``change_threshold`` moved but ``ignore_selectors`` permanently
+    NULL, and *unrepairable*: a clean re-run sees the column already there
+    and skips entirely. This asserts the fix instead: the whole thing rolls
+    back together, so the gate stays unspent and a later, uninterrupted
+    re-run still converges fully.
+    """
+    import tldw_chatbook.Subscriptions.noise_defaults as noise_defaults
+
+    db = _fresh_db()
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO subscriptions (name, type, source, change_threshold)"
+            " VALUES ('u1','url','https://a.test',0.1)"
+        )
+        conn.execute("ALTER TABLE url_snapshots DROP COLUMN extraction_fingerprint")
+
+    original_fn = noise_defaults.default_ignore_selectors_text
+
+    def _boom():
+        raise RuntimeError("simulated crash mid-migration")
+
+    noise_defaults.default_ignore_selectors_text = _boom
+    try:
+        with pytest.raises(RuntimeError, match="simulated crash mid-migration"):
+            db._ensure_watchlists_schema()
+    finally:
+        noise_defaults.default_ignore_selectors_text = original_fn
+
+    # Rolled back: the gate (column presence) must be unspent.
+    cols = {row[1] for row in db.conn.execute("PRAGMA table_info(url_snapshots)")}
+    assert "extraction_fingerprint" not in cols
+
+    row = dict(
+        db.conn.execute(
+            "SELECT change_threshold, ignore_selectors FROM subscriptions"
+            " WHERE name = 'u1'"
+        ).fetchone()
+    )
+    assert row["change_threshold"] == 0.1  # rolled back, not left at 0.0
+    assert row["ignore_selectors"] in (None, "")
+
+    # A later, uninterrupted re-run still converges fully.
+    db._ensure_watchlists_schema()
+
+    cols = {row[1] for row in db.conn.execute("PRAGMA table_info(url_snapshots)")}
+    assert "extraction_fingerprint" in cols
+    row = dict(
+        db.conn.execute(
+            "SELECT change_threshold, ignore_selectors FROM subscriptions"
+            " WHERE name = 'u1'"
+        ).fetchone()
+    )
+    assert row["change_threshold"] == 0.0
+    assert row["ignore_selectors"] == noise_defaults.default_ignore_selectors_text()
