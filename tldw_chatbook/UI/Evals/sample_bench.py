@@ -495,7 +495,7 @@ def _resolve_targets(db: EvalsDB, config: BenchConfig) -> list[Target]:
         model = db.get_model(target_id)
         if model is None:
             raise RuntimeError(
-                f"Target {target_id!r} could not be resolved -- its "
+                f"Target {target_id!r} could not be resolved — its "
                 "eval_models row is missing or was deleted."
             )
         targets.append(

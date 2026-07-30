@@ -157,8 +157,15 @@ async def test_unresolvable_target_raises_runtime_error(view_model, db, dataset_
     )
     task_id = save_bench(db, config)
 
-    with pytest.raises(RuntimeError, match=missing_target_id):
+    with pytest.raises(RuntimeError, match=missing_target_id) as exc_info:
         await run_existing_bench(view_model, {}, task_id)
+
+    # TASK-1481 fix-round-1: this message reaches a user-facing notify()
+    # toast verbatim (evals_screen.py's bench-run error handler interpolates
+    # `exc` straight into "Could not run the bench: {exc}"), so it used
+    # ASCII "--" where the rest of the Evals rail copy uses real em-dashes.
+    assert " -- " not in str(exc_info.value)
+    assert "—" in str(exc_info.value)
 
     assert db.list_runs(task_id=task_id) == []
 

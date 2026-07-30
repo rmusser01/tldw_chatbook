@@ -668,6 +668,21 @@ def test_ever_observed_helpers_share_one_scan_and_hold_the_right_axis_fixed():
         monkeypatch.undo()
 
 
+def test_degenerate_canary_text_uses_an_em_dash_not_ascii_double_dash():
+    """TASK-1481 fix-round-1: the reviewer found this rendered sentence
+    (shared verbatim by the grid callout and inspector.py's per-target
+    callout, see the function's own docstring) still used ASCII ``--``
+    where the rest of the Evals rail copy uses real em-dashes. Covers
+    both the singular and plural grammar branches -- the dash sits after
+    ``{be}``, which differs between them ("is"/"are")."""
+    singular = degenerate_canary_text(["steered"])
+    plural = degenerate_canary_text(["steered", "distilled"])
+    assert " -- " not in singular
+    assert " -- " not in plural
+    assert "—" in singular
+    assert "—" in plural
+
+
 def test_near_tie_threshold_is_a_named_constant_not_a_magic_number():
     """The threshold and the ``near_tie()`` predicate itself live in
     ``analysis.py`` (moved there per review: a threshold comparison on raw
@@ -1431,15 +1446,23 @@ async def test_delta_lens_baseline_column_shows_literal_baseline_text_or_blank_i
 async def test_delta_lens_on_a_single_target_run_explains_itself_instead_of_faking_baseline(
     evals_app, evals_db
 ):
-    """TASK-1481 (live UAT): a single-target run has no second target for
-    the Δ lens to compare against. Before this fix, ``_delta_reading``'s
-    "is_baseline_position" branch fired for EVERY cell (there being only
-    one target, ``tid == baseline_id`` always), so the whole column read
-    as the literal word "baseline" -- alongside an always-empty Spread
-    column, since ``analysis.spread`` needs at least two per-row captures
-    across targets (see ``_compute_active_lens_rows``). The lens itself
-    must stay selectable (this test switches to it the same way any other
-    delta test does); only what it renders for this shape changes."""
+    """TASK-1481 (live UAT): a single-target run has no second TARGET for
+    COLUMN-mode Δ baseline comparison (the default baseline mode). Before
+    this fix, ``_delta_reading``'s "is_baseline_position" branch fired for
+    EVERY cell (there being only one target, ``tid == baseline_id``
+    always), so the whole column read as the literal word "baseline" --
+    alongside an always-empty Spread column, since ``analysis.spread``
+    needs at least two per-row captures across targets (see
+    ``_compute_active_lens_rows``). The lens itself must stay selectable
+    (this test switches to it the same way any other delta test does);
+    only what it renders for this shape changes.
+
+    TASK-1481 fix-round-1: this is deliberately scoped to COLUMN mode --
+    see ``test_delta_lens_row_baseline_on_a_single_target_still_computes_
+    real_divergence`` right below for why ROW mode's baseline (a snippet,
+    not a target) is unaffected by a single-target run and must keep
+    rendering real comparisons, not this same blank-and-explain
+    treatment."""
     group_id, target_id, snippets, run_id = _make_single_target_run_group(
         evals_db, "lonely-target", 2
     )
@@ -1466,6 +1489,67 @@ async def test_delta_lens_on_a_single_target_run_explains_itself_instead_of_faki
         # single-target shape only changes what it renders, never removes
         # it from the Select.
         assert select.value == "delta"
+
+
+@pytest.mark.asyncio
+async def test_delta_lens_row_baseline_on_a_single_target_still_computes_real_divergence(
+    evals_app, evals_db
+):
+    """TASK-1481 fix-round-1: the reviewer traced ``_delta_reading`` and
+    confirmed the first version of this fix's gate was too broad -- it
+    keyed off target count ALONE, regardless of ``self._baseline_mode``,
+    so it also blanked out ROW-mode baselines on a single-target run. Row
+    mode's baseline is a SNIPPET, not a target: a cell there compares two
+    DIFFERENT snippets' captures on the run's one (and only) target -- a
+    real, independently reproducible divergence, never a degenerate
+    comparison-with-itself. Row mode is fully reachable via
+    ``#evals-baseline-selector`` even with one target (see
+    ``_baseline_options``, which always lists every snippet as a "Row ·"
+    option). This pins THREE things the broad gate got wrong: a real
+    numeric divergence for a genuine comparison, the literal "baseline"
+    text for the baseline row's own position, and ``FAILED_MARK`` (not
+    blank) for a cell that itself failed."""
+    group_id, target_id, snippets, run_id = _make_single_target_run_group(
+        evals_db, "row-baseline-lonely", 3
+    )
+    baseline_cap = _cap([(" a", 0.9), (" b", 0.1)])
+    real_cap = _cap([(" a", 0.2), (" b", 0.8)])
+    save_cell(evals_db, run_id, snippets[0], baseline_cap)  # s1: the baseline row
+    save_cell(evals_db, run_id, snippets[1], real_cap)  # s2: a real comparison
+    save_cell(
+        evals_db, run_id, snippets[2], CellError(reason="timeout", detail="")
+    )  # s3: this cell itself failed
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, group_id)
+        grid.query_one("#evals-lens-selector", Select).value = "delta"
+        await pilot.pause()
+        grid.query_one("#evals-baseline-selector", Select).value = ("row", "s1")
+        await pilot.pause()
+
+        table = grid.query_one("#evals-grid-table", DataTable)
+        # The baseline row's own position: still the literal word, same as
+        # column mode -- comparing a cell to itself is not a finding.
+        assert str(table.get_cell("s1", target_id)) == "baseline"
+
+        # A real comparison: the SAME divergence analysis.divergence
+        # itself produces for these two captures, computed independently
+        # here rather than hand-picked -- mirrors this file's own
+        # test_group_mean_rows_match_analysis_group_means_over_the_
+        # rendered_divergences pattern.
+        expected_jsd, _ = analysis.divergence(real_cap, baseline_cap)
+        assert str(table.get_cell("s2", target_id)) == f"{expected_jsd:.2f}"
+
+        # A cell that itself failed: FAILED_MARK, never blank -- the
+        # broad gate silently turned this blank too (the reviewer's Minor).
+        assert str(table.get_cell("s3", target_id)) == FAILED_MARK
+
+        # The column-mode-only "needs at least two targets" explanation
+        # must NOT show here -- row mode's baseline is genuinely usable.
+        state = str(grid.query_one("#evals-grid-state").renderable)
+        assert "needs at least two targets" not in state
+        assert "row ·" in state
 
 
 @pytest.mark.asyncio

@@ -233,7 +233,7 @@ def degenerate_canary_text(target_labels: Sequence[str]) -> str:
     return (
         f"{names} preflighted with a degenerate canary: {its} plain-text "
         f"{continuation_noun} looked out-of-distribution rather than failing "
-        f"outright. {subject} {be} still runnable -- a large divergence in "
+        f"outright. {subject} {be} still runnable — a large divergence in "
         f"{its} {columns_noun} may reflect that, not the prompt."
     )
 
@@ -1044,14 +1044,19 @@ class ResultsGrid(NotifyMixin, Vertical):
         sort_label = {"none": "dataset order", "desc": "spread ▼", "asc": "spread ▲"}[
             self._sort_mode
         ]
-        # TASK-1481: a single-target run has no second target for the Δ
-        # lens's baseline comparison, so the usual "Baseline: column · <name>"
-        # segment (which would otherwise name the run's one and only target)
-        # is replaced with the reason instead -- see _delta_reading's own
-        # docstring for why the table itself renders blank cells, not the
-        # "baseline" literal, in this same case.
+        # TASK-1481: a single-target run has no second target for COLUMN-mode
+        # Δ baseline comparison (see _delta_reading's own docstring for why
+        # this is scoped to column mode, not the lens generally -- row mode
+        # still compares two different snippets on the run's one target,
+        # a real reading). The usual "Baseline: column · <name>" segment
+        # (which would otherwise name the run's one and only target) is
+        # replaced with the reason instead.
         targets = snapshot.get("targets") or []
-        if self._lens == "delta" and len(targets) < 2:
+        if (
+            self._lens == "delta"
+            and self._baseline_mode == "column"
+            and len(targets) < 2
+        ):
             baseline_state = "needs at least two targets to compare (this run has one)"
         else:
             baseline_state = self._baseline_description()
@@ -1278,18 +1283,27 @@ class ResultsGrid(NotifyMixin, Vertical):
         both call this rather than each computing (and risking disagreeing
         about) the comparison independently.
 
-        TASK-1481: a single-target run has no second target for the lens
-        to compare against -- in column mode every cell is inherently the
-        baseline column (``tid == baseline_id`` always), so the branch
-        below used to render EVERY cell as the literal "baseline" text.
-        The Spread column (``_compute_active_lens_rows``) needs at least
-        two per-row captures across targets to compute anything, so it was
-        already silently empty for the same reason. Blank reads honestly
-        as "nothing to show" here; ``_render_header``'s state line is what
-        actually explains why (see ``needs at least two targets`` there).
+        TASK-1481: a single-target run has no second target for COLUMN-mode
+        baseline comparison -- every cell is inherently the baseline column
+        (``tid == baseline_id`` always, there being only one ``tid``), so
+        the ``is_baseline_position`` branch below used to render EVERY cell
+        as the literal "baseline" text there. ROW mode is unaffected by a
+        single target: its baseline is a snippet, not a target, so a cell
+        still compares two DIFFERENT snippets' captures on the same (one)
+        target -- a real, independently reproducible divergence, not a
+        degenerate comparison-with-itself. Gating on target count alone
+        (regardless of ``self._baseline_mode``) would blank out that
+        genuine row-mode reading and silently turn a failed row-mode
+        baseline cell's ``FAILED_MARK`` into blank too -- both real
+        regressions an earlier version of this fix introduced. Only the
+        Spread column (``_compute_active_lens_rows``) needs at least two
+        per-row captures across targets regardless of mode, so it stays
+        silently empty either way; ``_render_header``'s state line is what
+        explains the column-mode case (see ``needs at least two targets``
+        there).
         """
         targets = self._grid["snapshot"].get("targets") or []
-        if len(targets) < 2:
+        if self._baseline_mode == "column" and len(targets) < 2:
             return _DeltaReading(text="")
 
         if self._baseline_mode == "column":
