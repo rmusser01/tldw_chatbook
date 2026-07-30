@@ -173,6 +173,13 @@ The failures reproduce on an exact `origin/dev` checkout:
   app-root runtime fields that the current method deliberately treats as
   composition-owner state. The remaining app-level runtime-callback fixture
   failure is independent.
+- The remaining app-level Study runtime-callback test constructs only two
+  retired writable backend fields and a screen callback. The live
+  `TldwCli.handle_runtime_backend_changed()` contract instead commits through
+  `RuntimePolicyContext`, invalidates `ServerContextProvider` for the resolved
+  server transition, and forwards the committed source to the active screen.
+  The fixture fails before the callback because it provides none of those
+  current owners.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -640,6 +647,15 @@ Update the tests to describe current behavior:
     assertions. Do not teach production or test apps to translate legacy
     fields, and do not fold the separate runtime-policy callback failure into
     this migration.
+65. In the remaining app-level Study runtime-callback regression, construct a
+    real in-memory `RuntimePolicyContext` with a recording store, an empty
+    application config, a mocked server-context invalidation seam, and the
+    existing active-screen callback. Invoke the unbound application handler,
+    then assert a successful result, the committed local policy state, the
+    exact invalidation call, and the forwarded local source. Remove the two
+    retired app-root field assertions and rename the test to describe policy
+    commit plus forwarding. Do not instantiate the full application, add a
+    compatibility projection, or change production.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -890,6 +906,12 @@ behavior. No compatibility shims. No broad deletion of live tests.
   identical store arguments; installing one empty store in each test app
   constructor matches the real composition root, while tests with staged
   inputs remain explicit through typed channels.
+- Restoring writable `current_runtime_backend` / `runtime_backend` fields for
+  the app-level callback test would recreate competing runtime authority.
+  Mounting the full application would duplicate the dedicated runtime-policy
+  integration suite and add unrelated lifecycle cost. A real policy context
+  plus the handler's two direct collaborators exercises this unit boundary
+  without a new harness abstraction.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

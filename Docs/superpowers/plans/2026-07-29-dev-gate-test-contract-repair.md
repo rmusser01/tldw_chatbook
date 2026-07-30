@@ -2573,6 +2573,55 @@ Expected after this cluster: all 81 in-scope tests pass; the separately run
 runtime-callback fixture retains its independent RED for the next cluster.
 Static and diff checks introduce no new issues.
 
+### Task 4bi: Follow app-level runtime-policy callback ownership
+
+**Files:**
+- Modify: `Tests/UI/test_study_screen.py`
+
+**Existing ADR:** `backlog/decisions/033-application-session-state-ownership.md`
+
+- [ ] **Step 1: Preserve the focused RED**
+
+Run
+`Tests/UI/test_study_screen.py::test_app_level_runtime_backend_callback_updates_backend_and_forwards`.
+Expected before repair: the unbound application handler fails because the
+fixture has no `runtime_policy`; its two writable backend fields are retired
+composition state.
+
+- [ ] **Step 2: Exercise the live unit boundary**
+
+Give the fixture a real `RuntimePolicyContext` backed by a small recording
+store, empty `app_config`, and a mocked `server_context_provider`. Keep the
+active-screen callback. Rename the test for policy commit and forwarding,
+assert the handler returns `True`, the authoritative source is `local`, the
+store saved that state once, the provider invalidated the unchanged
+`None`-to-`None` server binding, and the screen received `"local"`. Remove the
+retired writable-field setup and assertions. Do not change production or
+instantiate the full application.
+
+- [ ] **Step 3: Verify the focused and Study boundaries**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_study_screen.py::test_app_level_runtime_backend_callback_commits_policy_and_forwards \
+  -q
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_study_screen.py \
+  Tests/UI/test_study_dashboard.py \
+  Tests/UI/test_study_quizzes_screen.py \
+  Tests/UI/test_study_flashcards_screen.py \
+  Tests/UI/test_product_maturity_phase3_knowledge_entry.py \
+  Tests/UI/test_product_maturity_phase3_library_study_context.py \
+  Tests/UI/test_product_maturity_phase3_source_study_generation.py \
+  -q
+../../.venv/bin/python -m ruff check Tests/UI/test_study_screen.py
+../../.venv/bin/python -m ruff format --check Tests/UI/test_study_screen.py
+git diff --check
+```
+
+Expected: the focused test and all 82 Study-boundary tests pass, static checks
+pass, and no production file changes.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
