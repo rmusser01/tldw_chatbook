@@ -2418,6 +2418,47 @@ Expected: the core-loop proof passes through current visible Console behavior,
 the adjacent screen-adaptation contract remains green, and static plus diff
 checks remain clean.
 
+### Task 4bf: Align the service-unavailable Library handoff state
+
+**Files:**
+- Modify: `Tests/UI/test_product_maturity_phase1_empty_setup_states.py`
+
+- [ ] **Step 1: Preserve the three-row RED**
+
+Run the parameterized service-unavailable handoff regression. Expected before
+repair: the Library row fails because `#library-use-in-console` is enabled and
+marked `library-source-action-blocked`; the Watchlists and Skills rows pass
+with disabled controls. Confirm TASK-716 and the focused destination test
+establish Library's pressable recovery action.
+
+- [ ] **Step 2: Narrow the differing assertion to Library**
+
+Rename the test from “disable” to “block.” When `route == "library"`, assert
+the button is enabled and owns `library-source-action-blocked`; otherwise keep
+the disabled assertion. Retain the exact service recovery copy and unavailable
+tooltip check for all three rows. Do not change production, parameterize
+another behavior field, or duplicate the dedicated blocked-press coverage.
+
+- [ ] **Step 3: Verify the matrix and adjacent Library contract**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_product_maturity_phase1_empty_setup_states.py \
+  -q
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_destination_shells.py::test_library_destination_service_failure_uses_recovery_copy \
+  Tests/UI/test_product_maturity_phase1_empty_setup_states.py::test_service_unavailable_states_block_false_console_handoffs \
+  -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_product_maturity_phase1_empty_setup_states.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_product_maturity_phase1_empty_setup_states.py
+git diff --check
+```
+
+Expected: all service-unavailable rows pass with Library pressable and blocked,
+Watchlists and Skills disabled, and static plus diff checks clean.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

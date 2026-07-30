@@ -155,6 +155,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   and claim settlement to `PendingHandoffStore`; the same test's immediately
   following visible Console assertions already prove the payload reached the
   staged-source lane, live-work title, evidence state, and composer.
+- The product-maturity service-unavailable matrix still requires every
+  destination's Console handoff to be disabled. TASK-716 intentionally keeps
+  Library's blocked action pressable so its handler can explain the recovery;
+  only the Library parameter fails, while Watchlists and Skills still satisfy
+  the disabled contract.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -596,6 +601,12 @@ Update the tests to describe current behavior:
     visible staged-source count, RAG state, live-work title, evidence readiness,
     and suggested composer draft. Do not restore compatibility state or replace
     the visible outcome proof with a store-internal assertion.
+62. In the product-maturity service-unavailable matrix, rename the test to
+    describe blocked rather than universally disabled handoffs. For the
+    existing Library route only, assert the action remains enabled and carries
+    `library-source-action-blocked`; retain the disabled assertion for
+    Watchlists and Skills and retain every recovery-copy and tooltip assertion.
+    Do not change production or duplicate the dedicated blocked-press test.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -831,6 +842,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   transient store detail that becomes false at claim time, before destination
   application necessarily completes. The retained visible Console assertions
   are the stronger end-to-end consumption proof.
+- Re-disabling Library would make its recovery handler unreachable because a
+  disabled Textual button emits no press event. Generalizing the
+  pressable-but-blocked contract to Watchlists or Skills is outside the
+  observed failure; a route-specific assertion preserves their current
+  disabled behavior without another fixture abstraction.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
