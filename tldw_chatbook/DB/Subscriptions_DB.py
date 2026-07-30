@@ -578,7 +578,7 @@ class SubscriptionsDB(BaseDB):
 
         # Snapshot extraction fingerprint + one-time TASK-1362 "noise, not
         # volume" data migration (spec:
-        # Docs/superpowers/specs/2026-07-29-watchlists-noise-not-changes-design.md
+        # Docs/superpowers/specs/2026-07-29-watchlists-noise-not-volume-design.md
         # -- see .superpowers/sdd/2026-07-29-watchlists-noise-not-volume).
         # The column's absence IS the one-time gate: a database that already
         # has `extraction_fingerprint` has already had its url-family
