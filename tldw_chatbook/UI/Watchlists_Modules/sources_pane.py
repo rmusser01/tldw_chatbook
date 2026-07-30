@@ -108,7 +108,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     create_draft_name = reactive("")
     create_draft_url = reactive("")
     create_draft_tags = reactive("")
-    # TASK-1361 (spec §2). Seeds `#sources-create-ignore-selectors`. Its
+    # TASK-1362 (spec §2). Seeds `#sources-create-ignore-selectors`. Its
     # default is the shipped noise set, so a form that has never been touched
     # opens *prefilled and visible* -- that prefill lives here, in the form,
     # rather than being applied silently at save time, because the user has to
@@ -140,7 +140,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     )
 
     #: The noise field's visible label and its help copy, carried as the
-    #: TextArea's border title/subtitle (TASK-1361). Border rows are rows the
+    #: TextArea's border title/subtitle (TASK-1362). Border rows are rows the
     #: field already spends on its border, and the Sources pane is 16 rows
     #: tall at 160x42 with the create form open -- two extra `Static` rows for
     #: this text is two rows the form does not have. Both strings are painted
@@ -270,7 +270,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             # auto-height children stacks them tight, in visual = DOM =
             # Tab order, which is what the New-watchlist dialog does too.
             with Vertical(id="sources-create-form"):
-                # TASK-1361: Name and URL share a row, and the tags row below
+                # TASK-1362: Name and URL share a row, and the tags row below
                 # is compact. Both are here to pay for the noise field: the
                 # form was 13 rows in a pane that is exactly 16 at 160x42
                 # (toolbar 2 + form 13 + table 1, measured), so a new field of
@@ -317,7 +317,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 # full-height row would push `Create`/`Cancel` off the bottom.
                 # `compact=True` on both, matching the toolbar strips two rows
                 # above: it takes the row from three rows to one, which is the
-                # rest of what the noise field below costs (TASK-1361).
+                # rest of what the noise field below costs (TASK-1362).
                 yield Horizontal(
                     Input(
                         placeholder="Tags (comma separated)",
@@ -369,7 +369,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         yield table
 
     def _ignore_selectors_field(self) -> TextArea:
-        """The prefilled noise-selector field (TASK-1361, spec §2).
+        """The prefilled noise-selector field (TASK-1362, spec §2).
 
         A `TextArea` rather than an `Input` because the stored format is one
         rule per line: newlines separate independent rules and a comma inside
@@ -382,10 +382,14 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         field = TextArea(
             self.create_draft_ignore_selectors,
             id="sources-create-ignore-selectors",
-            # One visual line == one rule. With wrapping on, a long grouped
-            # rule spills onto a second row and reads as a second rule, which
-            # is precisely the distinction the label has to teach.
-            soft_wrap=False,
+            # Wrapped, despite one-rule-per-line being the stored format. The
+            # field's inner width at 160x42 is 89 columns and the first
+            # shipped rule is exactly 89, so `soft_wrap=False` spends one of
+            # the field's two content rows on a horizontal scrollbar and
+            # leaves a single rule visible. A wrapped continuation row reads
+            # as part of the rule above it; a scrollbar eating a quarter of
+            # the field does not read as anything.
+            soft_wrap=True,
         )
         field.border_title = self._IGNORE_SELECTORS_LABEL
         field.border_subtitle = self._IGNORE_SELECTORS_HELP
@@ -517,17 +521,21 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         event.stop()
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        """Mirror the noise field's text into the draft (TASK-1361).
+        """Mirror the noise field's text into the draft (TASK-1362).
 
         Same contract as the three `Input`s above: without this the text is
         pane-local, and the next workbench rebuild re-seeds the field from
         `create_draft_ignore_selectors`'s default -- silently restoring rules
         the user had just deleted.
+
+        Only this field's own event is consumed. A blanket `event.stop()`
+        would swallow the `Changed` of any `TextArea` a future descendant of
+        this pane adds, leaving its owner with no signal and no clue why.
         """
         if event.text_area.id == "sources-create-ignore-selectors":
             self.create_draft_ignore_selectors = event.text_area.text
             self._post_create_draft_changed()
-        event.stop()
+            event.stop()
 
     def _post_create_draft_changed(self) -> None:
         self.post_message(
@@ -713,7 +721,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         except (TypeError, ValueError):
             check_frequency = self._DEFAULT_FREQUENCY_SECONDS
         # Whatever the field holds, verbatim apart from outer whitespace and
-        # control characters (TASK-1361). Not re-split, not reformatted: a
+        # control characters (TASK-1362). Not re-split, not reformatted: a
         # comma inside a line is a CSS selector group, so splitting on commas
         # would break `:is(.a, .b)`. Empty means empty -- a user who cleared
         # the field is saying "watch everything on this page", and re-filling

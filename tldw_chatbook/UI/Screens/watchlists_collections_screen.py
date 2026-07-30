@@ -343,7 +343,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._source_create_form_open = False
         self._source_create_draft: dict[str, str] = {"name": "", "url": "", "tags": ""}
         # The create form's noise-selector text, mirrored for the same reason
-        # as the three fields above (TASK-1361). Held separately, and `None`
+        # as the three fields above (TASK-1362). Held separately, and `None`
         # rather than `""` when untouched, because its empty state is not its
         # default: `SourcesPane` prefills it with the shipped selector set, and
         # `""` is a user deliberately clearing it. Seeding `""` back over a

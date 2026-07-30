@@ -51,7 +51,7 @@ class SourcesPaneHarness(App):
 class PersistingSourcesPaneHarness(SourcesPaneHarness):
     """`SourcesPaneHarness`, but the create request reaches a real database.
 
-    TASK-1361. The noise field's contract is about what gets *stored* -- the
+    TASK-1362. The noise field's contract is about what gets *stored* -- the
     selector text a source is created with, and the empty text a user who
     cleared the field is entitled to. A captured payload cannot show that: it
     would still look correct if the field never reached
@@ -124,7 +124,7 @@ async def _create_through_the_form(pilot, app, **field_values) -> dict:
 
 @pytest.mark.asyncio
 async def test_create_form_stores_the_default_noise_selectors(tmp_path):
-    """TASK-1361, spec §2: the prefill has to land in the database.
+    """TASK-1362, spec §2: the prefill has to land in the database.
 
     The suppression defaults exist so that a first source does not report a
     change every check because its ad slot or view counter rewrote itself. If
@@ -146,7 +146,7 @@ async def test_create_form_stores_the_default_noise_selectors(tmp_path):
 
 @pytest.mark.asyncio
 async def test_clearing_the_noise_field_stores_no_selectors(tmp_path):
-    """TASK-1361, spec §2: deliberate emptiness is honoured.
+    """TASK-1362, spec §2: deliberate emptiness is honoured.
 
     Emptying the field is a real instruction -- "report every change on this
     page, including the furniture" -- and it is the only way to watch a page
@@ -179,7 +179,7 @@ async def test_clearing_the_noise_field_stores_no_selectors(tmp_path):
 
 @pytest.mark.asyncio
 async def test_noise_field_is_visible_prefilled_and_labelled():
-    """The control itself: on screen, filled in, and named (TASK-1361).
+    """The control itself: on screen, filled in, and named (TASK-1362).
 
     Spec §2 puts the prefill in the *form* rather than applying it invisibly at
     save time, so what the field shows and what it is called are part of the
@@ -205,7 +205,7 @@ async def test_noise_field_is_visible_prefilled_and_labelled():
 
 @pytest.mark.asyncio
 async def test_noise_field_is_seeded_from_the_draft_not_the_default():
-    """A rebuild must not restore rules the user deleted (TASK-1361).
+    """A rebuild must not restore rules the user deleted (TASK-1362).
 
     `SourcesPane` is reconstructed whenever the workbench recomposes -- any
     region collapse does it -- which is why the name/url/tags drafts are
