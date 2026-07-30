@@ -1,6 +1,6 @@
 # PR #1096 Review Remediation
 
-**Status:** approved in conversation on 2026-07-30; pending written-spec review
+**Status:** approved by the user and independent spec review on 2026-07-30
 **Date:** 2026-07-30
 **Related task:** [TASK-617.2](<../../../backlog/tasks/task-617.2 - Establish-character-authority-and-conversation-provenance.md>)
 **Canonical ADR:** [ADR-037](../../../backlog/decisions/037-roleplay-assistant-identity-and-persona-user-profile-separation.md)
