@@ -52,10 +52,10 @@ So this is not an ADR that was authored against code that never worked; it is a 
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] A decision is recorded on whether ADR-019's rollback guarantee is still wanted
-- [ ] If kept: toggling the flag off demonstrably runs the old scheduler, proven by a test
-- [ ] If dropped: ADR-019 is amended, and the dead scheduler/worker/controller are removed together
-- [ ] The default value of `scheduling.watchlist_checks_enabled` is a deliberate, documented choice
+- [x] A decision is recorded on whether ADR-019's rollback guarantee is still wanted
+- [x] If kept: toggling the flag off demonstrably runs the old scheduler, proven by a test
+- [x] If dropped: ADR-019 is amended, and the dead scheduler/worker/controller are removed together
+- [x] The default value of `scheduling.watchlist_checks_enabled` is a deliberate, documented choice
 <!-- AC:END -->
 
 ## Ownership
@@ -90,3 +90,14 @@ What shipped against it:
   that the promotion gate it defined was unsatisfiable because the path it compared against did not
   run.
 
+## Closed 2026-07-29 — superseded, and the decision it asked for has been taken
+
+Both halves of this finding were resolved independently while it sat with the watchlists workstream, in exactly the split it described. Nothing here was implemented by this task.
+
+**TASK-1210 (`3f297856d`, PR #1054) — scheduled checks now run.** `watchlist_checks_enabled` defaults **true** and `watchlist_checks_shadow` defaults **false**, in both the shipped TOML and `app.py`'s in-code fallbacks. `WatchlistCheckHandler` is the sole authoritative executor. This closes the more urgent half: the claim in this task's description that "on a default install no scheduled watchlist execution runs" is **no longer true** and should be read as historical.
+
+**TASK-1211 (`e74e37d07`, PR #1058) — the rollback chain is retired.** The owner decision this task existed to surface was taken, and it went the way the evidence pointed: delete rather than restore. About 7,750 LOC across 13 files were removed, including `scheduler.py`, `textual_scheduler_worker.py` and `subscription_backend_controller.py`. `monitoring_engine.py` is retained, since that is what the new handler calls. `Tests/Subscriptions/test_retired_modules_stay_retired.py` now guards the removal — 23 tests, verified passing.
+
+**ADR-019 is amended, not left disagreeing with the code.** Its status line now reads "amended; the dual-run below was never implemented. Read the amendment first," and the amendment states plainly that the rollback lever does not exist and that setting the flag false disables checking entirely rather than reverting. It also records why the ADR's own promotion gate was unsatisfiable: parity metrics required a second path to compare against, and the old scheduler was already unreachable, so waiting for the gate meant waiting forever with nothing checking watchlists.
+
+That last point is the durable lesson, and it is why this was worth filing even though someone else fixed it: a promotion gate that depends on a comparison path can silently become unsatisfiable when that path is removed, and the failure mode is indefinite inaction rather than an error.
