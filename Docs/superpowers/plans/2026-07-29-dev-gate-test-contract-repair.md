@@ -1474,6 +1474,47 @@ git add Tests/UI/test_console_session_settings.py
 git commit -m "test(console): align curated Anthropic default"
 ```
 
+### Task 4ah: Follow the explicit provider-model resolver boundary
+
+**Files:**
+- Modify: `Tests/UI/test_console_session_settings.py`
+- Modify: `Tests/UI/test_provider_model_resolution.py`
+
+- [ ] **Step 1: Reproduce the eight stale-signature failures**
+
+Run the Console runtime-discovery regression and the UI selector merge-cap
+module. Expected: all eight pass an app-shaped object to
+`resolve_provider_model_options`, whose current API requires the saved-model
+mapping and catalog scope service separately.
+
+- [ ] **Step 2: Pass the existing fake values explicitly**
+
+At each call site, pass the fake app's `providers_models` and
+`llm_provider_catalog_scope_service` as the two positional inputs. Retain all
+existing entries, expected order/labels/warnings, cap boundaries, uncapped
+picker, transient-current-model, and scope-call assertions. Do not change
+production or add a compatibility overload/helper abstraction.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_session_settings.py::test_console_model_resolution_includes_runtime_discovered_models \
+  Tests/UI/test_provider_model_resolution.py \
+  Tests/Provider/test_provider_model_resolution.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_console_session_settings.py \
+  Tests/UI/test_provider_model_resolution.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_console_session_settings.py \
+  Tests/UI/test_provider_model_resolution.py
+git diff --check
+git add \
+  Tests/UI/test_console_session_settings.py \
+  Tests/UI/test_provider_model_resolution.py
+git commit -m "test(console): follow explicit model resolver inputs"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -1545,6 +1586,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/Local_Ingestion/test_local_file_ingestion.py \
   Tests/MCP/test_control_plane_bridge.py \
   Tests/Performance/test_rag_citation_provenance_benchmark.py \
+  Tests/Provider/test_provider_model_resolution.py \
   Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/ProductionApp/test_media_state_ownership.py \
   Tests/ProductionApp/test_personas_library_root_state.py \
@@ -1563,6 +1605,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/UI/test_console_session_settings.py \
   Tests/UI/test_home_screen.py \
   Tests/UI/test_library_prompts_canvas.py \
+  Tests/UI/test_provider_model_resolution.py \
   Tests/integration/test_library_ingest_flow.py \
   Tests/test_config_delete_settings.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
@@ -1606,6 +1649,7 @@ Expected: all affected tests pass.
   Tests/UI/test_console_session_settings.py \
   Tests/UI/test_home_screen.py \
   Tests/UI/test_library_prompts_canvas.py \
+  Tests/UI/test_provider_model_resolution.py \
   Tests/integration/test_library_ingest_flow.py \
   Tests/test_config_delete_settings.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
@@ -1644,6 +1688,7 @@ Expected: all affected tests pass.
   Tests/UI/test_console_session_settings.py \
   Tests/UI/test_home_screen.py \
   Tests/UI/test_library_prompts_canvas.py \
+  Tests/UI/test_provider_model_resolution.py \
   Tests/integration/test_library_ingest_flow.py \
   Tests/test_config_delete_settings.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \

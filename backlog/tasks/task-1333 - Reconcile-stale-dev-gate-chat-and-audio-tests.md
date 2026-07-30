@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-29 08:11'
-updated_date: '2026-07-29 17:55'
+updated_date: '2026-07-29 18:00'
 labels:
   - testing
   - baseline
@@ -65,6 +65,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #37 Schedules/Workflows recent-work, Artifacts target, and Home-to-Study regressions seed and settle the current screen-state and typed handoff owners instead of retired app-root fields, while retaining positive recent-work, requested-before-latest, exact payload, consumption, launch, and one-hop routing coverage.
 - [ ] #38 The MCP approval-cancellation audit regression expects the current metadata-only `approval_cancelled` category rather than retired persisted error text, while retaining the denied decision, blocked outcome, identity, and durable-record coverage required by ADR-029.
 - [ ] #39 The curated Console remote-default regression expects Anthropic's current configured and cataloged `claude-sonnet-5` default, while retaining exact curated defaults and catalog-membership coverage for every provider in the representative set.
+- [ ] #40 Console and selector merge-cap regressions pass saved provider models and the catalog scope as the current explicit resolver inputs, while retaining runtime-discovery labels, warning, cap-boundary, uncapped-picker, transient-current-model, and scope-call coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -109,6 +110,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 31. Seed Schedules/Workflows recent-work and Artifacts/Study destination tests through the current screen-state and typed handoff stores.
 32. Align the MCP approval-cancellation regression with the metadata-only audit record.
 33. Align the curated Anthropic Console default assertion with the current configured and cataloged model.
-34. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-35. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+34. Retarget provider-model option regressions to the resolver's explicit saved-model and catalog-scope inputs.
+35. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+36. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

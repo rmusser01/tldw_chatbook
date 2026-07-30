@@ -341,6 +341,15 @@ Update the tests to describe current behavior:
     capabilities, and their dedicated default-model coverage already agree on
     `claude-sonnet-5`; do not revert them or derive the expected mapping from
     the values under test.
+38. In the Console runtime-discovery and UI selector merge-cap regressions,
+    call `resolve_provider_model_options` with its current explicit
+    `providers_models` mapping and catalog scope service positional inputs
+    instead of passing an app-shaped object. Retain the same fake data and all
+    runtime-discovery ordering/label/warning, merge-cap boundary,
+    uncapped-picker, transient current-model, and catalog scope-call
+    assertions. The provider-layer resolver suite already pins the explicit
+    boundary; do not restore application introspection to production or add a
+    compatibility overload.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -468,6 +477,10 @@ compatibility shims. No broad deletion of live tests.
   value from production would either undo the reviewed provider refresh or make
   the regression tautological. Updating the one curated literal retains an
   independent drift check against both configuration and catalog membership.
+- Restoring app-shaped input support in the provider-model resolver would
+  reintroduce application-state coupling removed by the current explicit API.
+  Passing the two existing fake values separately preserves every behavior
+  assertion without compatibility code.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
