@@ -2902,6 +2902,46 @@ git diff --check
 Expected: both actions and the full module pass, static checks introduce no new
 debt, and there are no production changes.
 
+### Task 4bp: Select the exact Library source-action CSS rule
+
+**Files:**
+- Modify: `Tests/UI/test_product_maturity_phase3_library_contract_layout.py`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This fixes a static test parser's selector-prefix collision without
+changing the accepted Library styling or production behavior.
+
+- [ ] **Step 1: Preserve the focused RED**
+
+Run `test_library_source_actions_use_console_text_control_style` alone.
+Expected before repair: `_css_block(..., ".library-source-action")` extracts
+the earlier `.library-source-action-blocked` color-only rule and fails the
+transparent-background assertion even though the exact base rule is present.
+
+- [ ] **Step 2: Select the exact base rule**
+
+For the two base-rule extractions only, pass `.library-source-action {` to the
+existing helper. Leave the helper, stylesheets, modifier rules, and all
+assertions unchanged.
+
+- [ ] **Step 3: Verify the static contract module**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_product_maturity_phase3_library_contract_layout.py \
+  -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_product_maturity_phase3_library_contract_layout.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_product_maturity_phase3_library_contract_layout.py
+git diff --check
+```
+
+Expected: the module and static checks pass with no production changes.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

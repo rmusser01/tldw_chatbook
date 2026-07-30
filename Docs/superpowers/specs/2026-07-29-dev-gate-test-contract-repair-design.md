@@ -228,6 +228,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   `stage_calls == [(1, 2)]` and second status-refresh predicate is already
   satisfied by the real retained action; only the generic helper's global
   screen-idle yield prevents the test from observing that completion.
+- The Library source-action style test searches for
+  `.library-source-action` by prefix. The newer
+  `.library-source-action-blocked` rule now appears first, so the helper
+  extracts that modifier's color-only block even though both source and
+  bundled stylesheets still contain the complete exact base rule.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -757,6 +762,9 @@ Update the tests to describe current behavior:
     Check the existing exact `stage_calls == [(1, 2)]` and `status_calls == 2`
     predicate, retain its complete `_git_last_action` assertion, and leave the
     shared helper and production unchanged.
+72. Pass the exact `.library-source-action {` selector to the existing CSS
+    block helper for the source and bundled base-rule checks. Retain all style
+    assertions and leave the live stylesheets and shared helper unchanged.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1050,6 +1058,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   deterministic 30-second failure discovered by the required 4bn verification.
   Generalizing the shared helper would widen the scheduler contract for
   unrelated tests; the same local loop is the smaller correction.
+- Reordering or renaming the blocked production class would change live CSS to
+  accommodate a prefix-based test parser. Rewriting the shared helper is
+  unnecessary when only this base selector has the newly colliding prefix;
+  selecting its already-asserted exact token is the smaller repair.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

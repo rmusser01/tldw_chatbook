@@ -100,6 +100,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #71 The service-backed destination worker-policy sentinel uses syntax-aware decorator inventory to account for Library's six reviewed blocking-thread workers—including verified Parakeet installation and source-ingest preflight—while retaining exact zero-thread-worker enforcement for Personas and Skills and recognizing the required worker-loop annotation anywhere in each complete `asyncio.run` call span.
 - [ ] #72 The File Notes Git bulk-unstage summary regression observes its retained action and postflight refresh with a bounded event-loop wait instead of requiring global Textual screen idleness, while retaining exact unstage ids, refresh count, complete displayed-snapshot summary, and the paired bulk-stage coverage.
 - [ ] #73 The File Notes Git bulk-stage summary regression observes its retained action and postflight refresh with the same bounded event-loop boundary, while retaining exact stage ids, refresh count, and complete displayed-snapshot summary.
+- [ ] #74 The Library source-action style contract extracts the exact base selector instead of the newer blocked-state selector that shares its prefix, while retaining source and bundled CSS coverage for transparent, borderless, left-aligned controls.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -178,6 +179,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 65. Synchronize the Library thread-worker policy sentinel with its two reviewed blocking operations.
 66. Make the File Notes Git bulk-unstage summary wait on its retained work rather than global screen idleness.
 67. Apply the same retained-work boundary to the paired bulk-stage summary after its required verification reproduces the identical Pilot timeout.
-68. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-69. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+68. Make the Library source-action CSS check select its exact base rule instead of a prefix-sharing blocked modifier.
+69. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+70. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
