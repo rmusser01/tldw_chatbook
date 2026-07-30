@@ -956,7 +956,7 @@ def load_settings(force_reload: bool = False) -> Dict:
     elevenlabs_api_key = get_api_key("elevenlabs_api_key", "ELEVENLABS_API_KEY")
 
     # Determine platform-specific default STT provider
-    default_stt_provider = "faster_whisper"
+    default_stt_provider = "faster-whisper"
     if sys.platform == "darwin":
         if _optional_package_available("parakeet_mlx"):
             default_stt_provider = "parakeet-mlx"
