@@ -139,6 +139,35 @@ def active_step_ids(track: str, *, key_entered: bool) -> tuple[str, ...]:
     return tuple(step for step in base if step != STEP_PROTECT)
 
 
+def stored_plaintext_key_present(app_config: Mapping[str, object]) -> bool:
+    """Whether a real, unencrypted provider secret already sits on disk.
+
+    Bug-4 fix: ``active_step_ids``'s ``key_entered`` gate previously only
+    reflected secrets typed THIS run, so a rerun over a config that already
+    has a plaintext key (e.g. hand-edited config.toml, or a completed prior
+    run) could never reach Protect Keys without retyping a credential. This
+    is the config-derived signal the spec actually wants: any configured
+    key, regardless of when it was entered, as long as it is not already
+    protected by encryption.
+
+    Args:
+        app_config: Loaded app configuration.
+
+    Returns:
+        True when at least one ``api_settings.<provider>.api_key`` holds a
+        real (non-placeholder) secret AND config encryption is not enabled.
+    """
+    if coerce_wizard_flag(_section(app_config, "encryption").get("enabled")):
+        return False
+    api_settings = app_config.get("api_settings")
+    if not isinstance(api_settings, Mapping):
+        return False
+    for settings in api_settings.values():
+        if isinstance(settings, Mapping) and _is_real_secret(settings.get("api_key")):
+            return True
+    return False
+
+
 def build_provider_commit(
     *, provider_key: str, api_key: str | None, api_url: str | None
 ) -> dict[str, dict[str, Any]]:
@@ -233,11 +262,44 @@ def build_notes_commit(
 
 
 def build_appearance_commit(
-    *, default_theme: str, splash_card: str | None
+    *,
+    default_theme: str | None,
+    splash_card: str | None = None,
+    reset_splash_to_random: bool = False,
 ) -> dict[str, dict[str, Any]]:
-    commit: dict[str, dict[str, Any]] = {"general": {"default_theme": default_theme}}
+    """Mutation for the appearance step.
+
+    Bug-2 fix: both ``default_theme`` and the splash-card write are now
+    each individually optional, so the caller (``AppearanceStep.commit()``)
+    can build a delta-aware commit -- e.g. a rerun that only changes the
+    splash card omits ``general.default_theme`` entirely instead of
+    rewriting it back to a (possibly stale) fallback value.
+
+    Args:
+        default_theme: Theme name to persist under
+            ``general.default_theme``, or falsy (``None``/``""``) to omit
+            that key entirely -- e.g. the chosen theme matches what is
+            already persisted, so nothing needs to change.
+        splash_card: A specific card name to persist under
+            ``splash_screen.card_selection``, or falsy to leave that key
+            out (e.g. nothing was chosen, or "Surprise me" was picked --
+            see ``reset_splash_to_random``).
+        reset_splash_to_random: When True and ``splash_card`` is falsy,
+            write ``splash_screen.card_selection = "random"``. This is the
+            explicit "Surprise me" choice over a previously persisted
+            specific card, which otherwise has no truthy value of its own
+            to signal that a write is even needed.
+
+    Returns:
+        The section/value mapping to persist; empty where nothing changed.
+    """
+    commit: dict[str, dict[str, Any]] = {}
+    if default_theme:
+        commit["general"] = {"default_theme": default_theme}
     if splash_card:
         commit["splash_screen"] = {"card_selection": splash_card}
+    elif reset_splash_to_random:
+        commit["splash_screen"] = {"card_selection": "random"}
     return commit
 
 
@@ -262,8 +324,35 @@ def invalidate_model_for_provider_change(
 
     Without this, Back-and-switch leaves chat_defaults pairing the new
     provider with the old provider's model.
+
+    Bug-3 fix: ``previous_provider_value`` is compared with ``!=`` against
+    an empty-string default rather than gated behind a truthiness check.
+    The old ``if previous_provider_value and ...`` guard treated a falsy
+    "no previous provider" (``None`` or ``""``) as "nothing to compare",
+    which silently skipped the chat_defaults write on a genuinely first-ever
+    provider selection (an empty/absent persisted ``chat_defaults.provider``
+    is exactly as "different" from a real new provider as any other prior
+    provider would be). Callers resolve ``previous_provider_value`` as the
+    in-session previous commit if one exists this run, else the PERSISTED
+    ``chat_defaults.provider`` (see ``read_wizard_prefill``), so this
+    function no longer needs to special-case "no information at all".
+
+    Args:
+        commit: The commit built so far (e.g. from ``build_provider_commit``).
+        previous_provider_value: The provider ``chat_defaults.provider`` was
+            associated with before this commit -- the in-session value if
+            this step has already committed once this run, else the
+            persisted value (``""`` on a fresh/absent config). ``None`` is
+            treated the same as ``""``.
+        new_provider_value: The provider value this commit is selecting.
+
+    Returns:
+        ``commit`` unchanged when the provider is the same as before;
+        otherwise a copy with ``chat_defaults`` set to the new provider and
+        an emptied model.
     """
-    if previous_provider_value and previous_provider_value != new_provider_value:
+    effective_previous = previous_provider_value or ""
+    if effective_previous != new_provider_value:
         merged = dict(commit)
         merged["chat_defaults"] = {"provider": new_provider_value, "model": ""}
         return merged
@@ -300,6 +389,13 @@ class WizardPrefill:
     auto_sync_enabled: bool = False
     default_theme: str = ""
     tool_gates: tuple[tuple[str, bool], ...] = ()
+    card_selection: str = ""
+    """Persisted ``splash_screen.card_selection`` -- "" when never set.
+
+    Bug-2 fix: AppearanceStep needs this to tell "the user just explicitly
+    re-picked Surprise-me over a persisted specific card" (a real reset)
+    apart from "nothing was ever configured" (a no-op).
+    """
 
 
 @dataclass(frozen=True)
@@ -354,6 +450,7 @@ def read_wizard_prefill(app_config: Mapping[str, object]) -> WizardPrefill:
     notes = _section(app_config, "notes")
     general = _section(app_config, "general")
     tools = _section(app_config, "tools")
+    splash_screen = _section(app_config, "splash_screen")
     return WizardPrefill(
         provider_value=str(chat_defaults.get("provider") or ""),
         model_id=str(chat_defaults.get("model") or ""),
@@ -363,6 +460,7 @@ def read_wizard_prefill(app_config: Mapping[str, object]) -> WizardPrefill:
         tool_gates=tuple(
             (str(key), coerce_wizard_flag(value)) for key, value in tools.items()
         ),
+        card_selection=str(splash_screen.get("card_selection") or ""),
     )
 
 

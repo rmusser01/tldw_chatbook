@@ -107,6 +107,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     build_wizard_state_commit,
     commit_sections_allowed,
     invalidate_model_for_provider_change,
+    stored_plaintext_key_present,
     tools_commit_delta,
 )
 
@@ -178,6 +179,30 @@ class TestCommitBuilders:
         commit = build_appearance_commit(default_theme="textual-dark", splash_card=None)
         assert commit == {"general": {"default_theme": "textual-dark"}}
 
+    def test_appearance_commit_omits_theme_when_falsy(self):
+        """Bug-2b: a falsy default_theme (delta-aware "unchanged") must omit
+        the general section entirely, not write an empty/None theme."""
+        commit = build_appearance_commit(default_theme=None, splash_card="matrix")
+        assert commit == {"splash_screen": {"card_selection": "matrix"}}
+
+    def test_appearance_commit_reset_splash_to_random(self):
+        """Bug-2c: explicit reset-to-random writes card_selection="random"
+        even though splash_card itself has no truthy value to signal it."""
+        commit = build_appearance_commit(
+            default_theme=None, splash_card=None, reset_splash_to_random=True
+        )
+        assert commit == {"splash_screen": {"card_selection": "random"}}
+
+    def test_appearance_commit_specific_card_wins_over_reset_flag(self):
+        commit = build_appearance_commit(
+            default_theme=None, splash_card="matrix", reset_splash_to_random=True
+        )
+        assert commit == {"splash_screen": {"card_selection": "matrix"}}
+
+    def test_appearance_commit_nothing_changed_is_empty(self):
+        commit = build_appearance_commit(default_theme=None, splash_card=None)
+        assert commit == {}
+
     def test_rag_commit(self):
         commit = build_rag_commit(default_model_id="e5-small-v2")
         assert commit == {"embedding_config": {"default_model_id": "e5-small-v2"}}
@@ -233,6 +258,27 @@ class TestDependencyInvalidation:
             commit, previous_provider_value="OpenAI", new_provider_value="OpenAI"
         )
         assert "chat_defaults" not in merged
+
+    def test_empty_previous_still_writes_on_first_selection(self):
+        """Bug-3: previous_provider_value="" (the persisted-fallback value on
+        an empty/fresh config) must be treated as differing from any real
+        new provider -- the old ``if previous_provider_value and ...``
+        truthiness check silently skipped this because "" is falsy, which is
+        exactly why a first-ever provider selection never synced
+        chat_defaults.provider."""
+        commit = build_provider_commit(provider_key="openai", api_key="sk-x", api_url=None)
+        merged = invalidate_model_for_provider_change(
+            commit, previous_provider_value="", new_provider_value="OpenAI"
+        )
+        assert merged["chat_defaults"] == {"provider": "OpenAI", "model": ""}
+
+    def test_none_previous_is_treated_like_empty(self):
+        """None (no information at all) must behave the same as "" above."""
+        commit = build_provider_commit(provider_key="openai", api_key="sk-x", api_url=None)
+        merged = invalidate_model_for_provider_change(
+            commit, previous_provider_value=None, new_provider_value="OpenAI"
+        )
+        assert merged["chat_defaults"] == {"provider": "OpenAI", "model": ""}
 
 
 class TestSectionAllowlist:
@@ -322,6 +368,7 @@ class TestWizardPrefill:
             "notes": {"sync_directory": "~/N", "auto_sync_enabled": True},
             "general": {"default_theme": "textual-light"},
             "tools": {"read_file_enabled": True},
+            "splash_screen": {"card_selection": "matrix"},
         }
         prefill = read_wizard_prefill(cfg)
         assert prefill.provider_value == "Anthropic"
@@ -330,11 +377,42 @@ class TestWizardPrefill:
         assert prefill.auto_sync_enabled is True
         assert prefill.default_theme == "textual-light"
         assert ("read_file_enabled", True) in prefill.tool_gates
+        assert prefill.card_selection == "matrix"
 
     def test_empty_config_yields_empty_strings(self):
         prefill = read_wizard_prefill({})
         assert prefill.provider_value == ""
         assert prefill.model_id == ""
+        assert prefill.card_selection == ""
+
+
+class TestStoredPlaintextKeyPresent:
+    """Bug-4 truth table: active_step_ids' Protect-keys gate must be
+    config-derived, not just "was a secret typed this run"."""
+
+    def test_inline_key_no_encryption_is_true(self):
+        cfg = {"api_settings": {"openai": {"api_key": "sk-real"}}}
+        assert stored_plaintext_key_present(cfg) is True
+
+    def test_encryption_enabled_is_false(self):
+        cfg = {
+            "api_settings": {"openai": {"api_key": "sk-real"}},
+            "encryption": {"enabled": True},
+        }
+        assert stored_plaintext_key_present(cfg) is False
+
+    def test_env_var_only_is_false(self):
+        """A key that lives only in the environment is not a stored
+        plaintext secret -- there is nothing on disk to protect."""
+        cfg = {"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}}
+        assert stored_plaintext_key_present(cfg) is False
+
+    def test_placeholder_key_is_false(self):
+        cfg = {"api_settings": {"openai": {"api_key": "<API_KEY_HERE>"}}}
+        assert stored_plaintext_key_present(cfg) is False
+
+    def test_empty_config_is_false(self):
+        assert stored_plaintext_key_present({}) is False
 
 
 from tldw_chatbook.UI.Wizards.first_run_setup_state import curated_models_for_provider

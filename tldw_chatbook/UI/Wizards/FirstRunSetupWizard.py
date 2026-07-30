@@ -155,6 +155,7 @@ class ProviderStep(SetupStep):
             read_provider_secret_presence,
         )
 
+        provider_changed = provider_key != self.selected_provider_key
         self.selected_provider_key = provider_key
         self.probe_generation += 1
         self._clear_requested = False
@@ -165,6 +166,12 @@ class ProviderStep(SetupStep):
         status = self.query_one("#setup-provider-key-status", Static)
         actions = self.query_one("#setup-provider-key-actions", Horizontal)
         key_input = self.query_one("#setup-provider-key-input", Input)
+        if provider_changed:
+            # Bug-1 fix: the key Input is shared across every provider this
+            # step renders. Without clearing it here, a key typed for
+            # provider A silently survived a switch to provider B and would
+            # commit under B's api_settings section on Next.
+            key_input.value = ""
         if presence.env_var_set:
             status.update(f"Found {presence.env_var} in your environment ✓ — nothing to store.")
             key_input.display = False
@@ -302,6 +309,7 @@ class ProviderStep(SetupStep):
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (
             build_provider_commit,
             invalidate_model_for_provider_change,
+            read_wizard_prefill,
         )
 
         if not self.selected_provider_key:
@@ -333,9 +341,22 @@ class ProviderStep(SetupStep):
         self.provider_value_for_chat_defaults = self._display_value_for(
             self.selected_provider_key
         )
+        # Bug-3 fix: on the very first commit this session,
+        # self._last_committed_provider_value is still None -- fall back to
+        # the PERSISTED chat_defaults.provider so a first-ever provider
+        # selection (with Model skipped) still syncs chat_defaults instead
+        # of silently leaving it at whatever the template/previous run had,
+        # even though credentials just landed under api_settings. A later
+        # commit this same session (Back-and-switch) still prefers the
+        # in-session value over a possibly-stale persisted one.
+        if self._last_committed_provider_value is not None:
+            effective_previous_provider = self._last_committed_provider_value
+        else:
+            app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+            effective_previous_provider = read_wizard_prefill(app_config).provider_value
         commit = invalidate_model_for_provider_change(
             commit,
-            previous_provider_value=self._last_committed_provider_value,
+            previous_provider_value=effective_previous_provider,
             new_provider_value=self.provider_value_for_chat_defaults,
         )
         ok = await self.wizard.commit_config(commit)
@@ -385,6 +406,11 @@ class ModelStep(SetupStep):
         self._discover_models = discover_models
         self._shown_for_provider: Optional[str] = None
         self.selected_model_id: str = ""
+        # Bug-5: tracks whether selected_model_id's current value came from
+        # the free-text custom Input (as opposed to the RadioSet) -- lets
+        # clearing that Input fall back to any active radio selection
+        # instead of leaving a stale custom value in place.
+        self._model_id_from_custom_input: bool = False
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="setup-model"):
@@ -425,6 +451,7 @@ class ModelStep(SetupStep):
                     getattr(self.wizard.app_instance, "app_config", {}) or {}
                 ).model_id
             self.selected_model_id = prefill_model_id
+            self._model_id_from_custom_input = False
             self._shown_for_provider = provider_key
             try:
                 self.query_one("#setup-model-custom", Input).value = prefill_model_id
@@ -508,11 +535,30 @@ class ModelStep(SetupStep):
 
     @on(Input.Changed, "#setup-model-custom")
     def _on_custom_model(self, event: Input.Changed) -> None:
-        if event.value.strip():
-            self.selected_model_id = event.value.strip()
+        """Bug-5 fix: clearing the custom Input must clear the selection too.
+
+        The old handler only ever ASSIGNED on a non-empty value, so
+        clearing a previously-typed custom model left ``selected_model_id``
+        stuck at the last typed value -- a "skip-safe" commit would then
+        silently persist a model the input no longer shows. On empty, fall
+        back to whatever radio button is currently pressed (or "" if none),
+        rather than just blanking unconditionally.
+        """
+        value = event.value.strip()
+        if value:
+            self.selected_model_id = value
+            self._model_id_from_custom_input = True
+        elif self._model_id_from_custom_input:
+            self._model_id_from_custom_input = False
+            try:
+                pressed = self.query_one("#setup-model-choice", RadioSet).pressed_button
+            except Exception:
+                pressed = None
+            self.selected_model_id = str(pressed.label) if pressed is not None else ""
 
     def set_selected_model(self, model_id: str) -> None:
         self.selected_model_id = model_id
+        self._model_id_from_custom_input = False
 
     async def commit(self) -> tuple[bool, str]:
         _, provider_value = self._current_provider()
@@ -727,6 +773,11 @@ class AppearanceStep(SetupStep):
 
     selected_theme: str = ""
     selected_splash_card: str = ""
+    # Bug-2 fix: True only when the user EXPLICITLY re-picked "Surprise me"
+    # this run (see _on_card) -- distinct from selected_splash_card=="",
+    # which is ALSO true on a fresh mount where nothing was ever chosen
+    # (RadioSet does not fire Changed for its own initial pre-selection).
+    _picked_surprise_me: bool = False
 
     def compose(self) -> ComposeResult:
         # Re-run prefill: pre-select the theme RadioButton matching the
@@ -736,6 +787,14 @@ class AppearanceStep(SetupStep):
         prefill = wizard_state.read_wizard_prefill(
             getattr(self.wizard.app_instance, "app_config", {}) or {}
         )
+        # Bug-2a fix: initialize selected_theme from the persisted value.
+        # RadioSet does not emit Changed for its own initial pre-selection
+        # (only _on_theme below updates selected_theme), so without this a
+        # rerun that never touches the theme radio left selected_theme=="",
+        # and commit()'s old "fall back to textual-dark" default would
+        # clobber the persisted theme just because some OTHER field (e.g.
+        # only the splash card) changed on this step.
+        self.selected_theme = prefill.default_theme
         with Vertical(classes="setup-appearance"):
             yield Static("Appearance", classes="setup-title")
             yield Label("Theme", classes="setup-field-label")
@@ -775,20 +834,48 @@ class AppearanceStep(SetupStep):
     @on(RadioSet.Changed, "#setup-splash-choice")
     def _on_card(self, event: RadioSet.Changed) -> None:
         label = str(event.pressed.label)
-        self.selected_splash_card = "" if label.startswith("Surprise me") else label
+        if label.startswith("Surprise me"):
+            self.selected_splash_card = ""
+            self._picked_surprise_me = True
+        else:
+            self.selected_splash_card = label
+            self._picked_surprise_me = False
 
     async def commit(self) -> tuple[bool, str]:
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (
             build_appearance_commit,
+            read_wizard_prefill,
         )
 
-        if not self.selected_theme and not self.selected_splash_card:
+        prefill = read_wizard_prefill(
+            getattr(self.wizard.app_instance, "app_config", {}) or {}
+        )
+        # Bug-2c fix: only reset to "random" when the user EXPLICITLY
+        # re-picked Surprise-me this run over a config that currently names
+        # a specific card -- a fresh/no-op run (nothing pressed, or already
+        # "random") must not write anything.
+        reset_to_random = (
+            self._picked_surprise_me
+            and bool(prefill.card_selection)
+            and prefill.card_selection != "random"
+        )
+        if not self.selected_theme and not self.selected_splash_card and not reset_to_random:
             return True, ""
-        theme = self.selected_theme or "textual-dark"
+        # Bug-2b fix: delta-aware theme write -- only persist default_theme
+        # when the chosen theme actually differs from what's already on
+        # disk, so a rerun that only changes the splash card (theme radio
+        # left at its prefilled, already-persisted position) leaves the
+        # persisted theme untouched instead of rewriting it (or a stale
+        # "textual-dark" fallback) back over itself.
+        chosen_theme = self.selected_theme or "textual-dark"
+        theme_to_persist = (
+            chosen_theme if chosen_theme != prefill.default_theme else None
+        )
         ok = await self.wizard.commit_config(
             build_appearance_commit(
-                default_theme=theme,
+                default_theme=theme_to_persist,
                 splash_card=self.selected_splash_card or None,
+                reset_splash_to_random=reset_to_random,
             )
         )
         if ok and self.selected_theme:
@@ -1072,7 +1159,7 @@ class SetupWizardContainer(WizardContainer):
             **kwargs,
         )
         self.active_ids: tuple[str, ...] = wizard_state.active_step_ids(
-            self.track, key_entered=self.key_entered
+            self.track, key_entered=self._effective_key_entered()
         )
         self._advancing = False
 
@@ -1114,9 +1201,21 @@ class SetupWizardContainer(WizardContainer):
             self.key_entered = True
             self._refresh_active_ids()
 
+    def _effective_key_entered(self) -> bool:
+        """Bug-4 fix: config-derived fallback for the Protect-keys gate.
+
+        ``self.key_entered`` only flips true when a secret is TYPED this
+        run, so a rerun over a config that already has a plaintext key on
+        disk (hand-edited config.toml, or a prior completed run) could
+        never reach Protect Keys without retyping a credential -- even
+        though ``check_encryption_needed``'s own intent is config-derived.
+        """
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        return self.key_entered or wizard_state.stored_plaintext_key_present(app_config)
+
     def _refresh_active_ids(self) -> None:
         self.active_ids = wizard_state.active_step_ids(
-            self.track, key_entered=self.key_entered
+            self.track, key_entered=self._effective_key_entered()
         )
         self._rebuild_progress()
 

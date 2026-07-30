@@ -22,6 +22,7 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
 )
 from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+    STEP_PROTECT,
     STEP_PROVIDER,
     STEP_RAG,
     STEP_SUMMARY,
@@ -274,8 +275,14 @@ async def test_provider_step_one_click_connect_adopts_discovered_server():
         ok, error = await step.commit()
         assert ok, error
         committed = wizard.commit_config.call_args.args[0]
+        # Bug-3 fix: this app_config has no persisted chat_defaults, so the
+        # persisted-fallback previous provider is "" -- selecting
+        # "llama_cpp" differs from that, so chat_defaults now syncs
+        # alongside the endpoint, exactly like a first-ever cloud-provider
+        # selection would (see the dedicated Bug-3 tests below).
         assert committed == {
-            "api_settings.llama_cpp": {"api_url": "http://127.0.0.1:8080"}
+            "api_settings.llama_cpp": {"api_url": "http://127.0.0.1:8080"},
+            "chat_defaults": {"provider": "llama_cpp", "model": ""},
         }
         wizard.note_key_entered.assert_not_called()
 
@@ -329,7 +336,12 @@ async def test_provider_step_keep_preserves_existing_key_without_note():
         ok, error = await step.commit()
         assert ok, error
         committed = wizard.commit_config.call_args.args[0]
-        assert committed == {}
+        # Bug-3 fix: this app_config has no persisted chat_defaults, so
+        # selecting "openai" (differing from the persisted-fallback "")
+        # now syncs chat_defaults alongside the untouched (Keep) credential
+        # -- the secret itself is still not written, and note_key_entered is
+        # still not called, which is the whole point of this test.
+        assert committed == {"chat_defaults": {"provider": "openai", "model": ""}}
         wizard.note_key_entered.assert_not_called()
 
 
@@ -359,8 +371,159 @@ async def test_provider_step_clear_persists_empty_key_without_note():
         ok, error = await step.commit()
         assert ok, error
         committed = wizard.commit_config.call_args.args[0]
-        assert committed == {"api_settings.openai": {"api_key": ""}}
+        # Bug-3 fix: as with Keep above, selecting "openai" here also
+        # differs from the persisted-fallback "" (no chat_defaults in this
+        # app_config), so the commit picks up the provider sync alongside
+        # the explicit empty-key erasure.
+        assert committed == {
+            "api_settings.openai": {"api_key": ""},
+            "chat_defaults": {"provider": "openai", "model": ""},
+        }
         wizard.note_key_entered.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_provider_step_switching_provider_clears_key_input():
+    """Bug-1: a key typed for provider A must not commit under provider B.
+    select_provider() previously left the shared key Input's value alone
+    when the provider selection changed, so a key typed under one provider
+    silently carried over and would commit under whichever provider was
+    selected next."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        step.query_one("#setup-provider-key-input", Input).value = "sk-under-openai"
+        step.select_provider("anthropic")
+        key_input = step.query_one("#setup-provider-key-input", Input)
+        assert key_input.value == ""
+
+        ok, error = await step.commit()
+        assert ok, error
+        committed = wizard.commit_config.call_args.args[0]
+        assert "api_settings.anthropic" not in committed
+        assert "api_settings.openai" not in committed
+
+
+@pytest.mark.asyncio
+async def test_provider_step_reselecting_same_provider_keeps_typed_key():
+    """Guards the boundary of the Bug-1 fix above: the key Input must only
+    be cleared on an actual provider CHANGE, not on every select_provider()
+    call (e.g. a redundant re-selection of the currently-active provider)."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        step.query_one("#setup-provider-key-input", Input).value = "sk-under-openai"
+        step.select_provider("openai")
+        key_input = step.query_one("#setup-provider-key-input", Input)
+        assert key_input.value == "sk-under-openai"
+
+
+@pytest.mark.asyncio
+async def test_provider_step_first_selection_persists_chat_defaults_provider():
+    """Bug-3: a first-ever provider selection on an empty config previously
+    left chat_defaults.provider untouched (invalidate_model_for_provider_change
+    only fired for a non-empty in-session previous value), so Model-step-
+    skipped left the template default provider active even though
+    credentials landed under api_settings. ProviderStep must fall back to
+    the PERSISTED chat_defaults.provider (empty here) and still sync it."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        step.query_one("#setup-provider-key-input", Input).value = "sk-new"
+        ok, error = await step.commit()
+        assert ok, error
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed["chat_defaults"] == {"provider": "openai", "model": ""}
+
+
+@pytest.mark.asyncio
+async def test_provider_step_rerun_same_provider_leaves_chat_defaults_untouched():
+    """Bug-3: a rerun that re-selects the SAME persisted provider must not
+    blank chat_defaults.model -- only an actual provider CHANGE should."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={
+                "chat_defaults": {"provider": "openai", "model": "gpt-4o"},
+                "api_settings": {"openai": {"api_key": "sk-existing"}},
+            }
+        ),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
+    )
+    step = _provider_step(wizard=wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        step._on_keep()
+        ok, error = await step.commit()
+        assert ok, error
+        committed = wizard.commit_config.call_args.args[0]
+        assert "chat_defaults" not in committed
+
+
+@pytest.mark.asyncio
+async def test_provider_step_rerun_different_provider_blanks_model():
+    """Bug-3: a rerun that picks a DIFFERENT provider than the persisted one
+    must sync chat_defaults.provider and blank the stale model."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={"chat_defaults": {"provider": "openai", "model": "gpt-4o"}}
+        ),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
+    )
+    step = _provider_step(wizard=wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("anthropic")
+        step.query_one("#setup-provider-key-input", Input).value = "sk-new-anthropic"
+        ok, error = await step.commit()
+        assert ok, error
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed["chat_defaults"] == {"provider": "anthropic", "model": ""}
 
 
 @pytest.mark.asyncio
@@ -467,6 +630,75 @@ async def test_model_step_empty_selection_commits_nothing():
         ok, error = await step.commit()
         assert ok, error
         wizard.commit_config.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_model_step_clearing_custom_input_clears_stale_selection():
+    """Bug-5: typing then clearing the custom-model Input previously left
+    selected_model_id stuck at the last typed value (Input.Changed only
+    assigned when the value was non-empty) -- clearing it must reset the
+    selection so a skip-safe commit doesn't silently keep committing it."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        custom_input = step.query_one("#setup-model-custom", Input)
+        custom_input.value = "my-custom-model"
+        await pilot.pause()
+        assert step.selected_model_id == "my-custom-model"
+
+        custom_input.value = ""
+        await pilot.pause()
+        assert step.selected_model_id == ""
+
+        ok, error = await step.commit()
+        assert ok, error
+        wizard.commit_config.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_model_step_clearing_custom_input_falls_back_to_radio_selection():
+    """Guards the "fall back to a radio selection if one is active" half of
+    the Bug-5 fix: clearing the custom Input after a radio pick was also
+    made must restore the radio's model, not blank it."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard, discover_models=AsyncMock(return_value=["radio-model-a"]))
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.1)
+        radio_set = step.query_one("#setup-model-choice", RadioSet)
+        radio_set.query_one(RadioButton).value = True
+        await pilot.pause()
+        assert step.selected_model_id == "radio-model-a"
+
+        custom_input = step.query_one("#setup-model-custom", Input)
+        custom_input.value = "my-custom-model"
+        await pilot.pause()
+        assert step.selected_model_id == "my-custom-model"
+
+        custom_input.value = ""
+        await pilot.pause()
+        assert step.selected_model_id == "radio-model-a"
 
 
 @pytest.mark.asyncio
@@ -1112,6 +1344,113 @@ async def test_appearance_step_no_config_theme_preselects_nothing():
 
 
 @pytest.mark.asyncio
+async def test_appearance_step_rerun_change_only_splash_card_leaves_theme_untouched():
+    """Bug-2a/b: AppearanceStep.commit() used to fall back to a hardcoded
+    "textual-dark" default whenever selected_theme was empty, clobbering a
+    persisted theme on a rerun that only touches the splash card. compose()
+    must initialize selected_theme from the persisted default (a), and the
+    delta-aware commit must omit general.default_theme when the chosen
+    theme matches what's already persisted (b)."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={"general": {"default_theme": "nord"}}),
+        commit_config=AsyncMock(return_value=True), rerun=True,
+    )
+    step = AppearanceStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="appearance", title="Appearance", step_number=7),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        # compose() must have initialized selected_theme from the persisted
+        # default -- pin that directly, since it's the crux of fix (a).
+        assert step.selected_theme == "nord"
+
+        # Only the splash card changes this run; the theme RadioSet is left
+        # untouched at its pre-selected ("nord") position.
+        step.selected_splash_card = "matrix"
+        ok, error = await step.commit()
+        assert ok, error
+        committed = wizard.commit_config.call_args.args[0]
+        assert "general" not in committed
+        assert committed["splash_screen"] == {"card_selection": "matrix"}
+
+
+@pytest.mark.asyncio
+async def test_appearance_step_surprise_me_over_persisted_card_writes_random():
+    """Bug-2c: "Surprise me (random)" maps to splash_card=None, which the
+    old commit() unconditionally treated as "nothing to write" -- so a
+    previously persisted specific card could never be reset back to random.
+    Explicitly re-picking "Surprise me" over a persisted specific card must
+    write card_selection="random"."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={"splash_screen": {"card_selection": "matrix"}}
+        ),
+        commit_config=AsyncMock(return_value=True), rerun=True,
+    )
+    step = AppearanceStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="appearance", title="Appearance", step_number=7),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        radio_set = step.query_one("#setup-splash-choice", RadioSet)
+        buttons = list(radio_set.query(RadioButton))
+        surprise_button = next(
+            b for b in buttons if str(b.label).startswith("Surprise me")
+        )
+        other_button = next(
+            b for b in buttons if not str(b.label).startswith("Surprise me")
+        )
+        # "Surprise me" is already the default mount-time pre-selection, and
+        # RadioSet does not fire Changed for its own initial state -- press
+        # a different card first, then explicitly re-press "Surprise me",
+        # to mirror a real user re-picking it.
+        other_button.value = True
+        await pilot.pause()
+        surprise_button.value = True
+        await pilot.pause()
+
+        ok, error = await step.commit()
+        assert ok, error
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed["splash_screen"] == {"card_selection": "random"}
+
+
+@pytest.mark.asyncio
+async def test_appearance_step_fresh_run_untouched_commits_nothing():
+    """Bug-2 regression guard: a truly fresh run where the user never
+    touches either RadioSet must still commit nothing at all (unchanged
+    skip-safe behavior), even now that selected_theme is initialized from
+    prefill in compose()."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = AppearanceStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="appearance", title="Appearance", step_number=7),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        ok, error = await step.commit()
+        assert ok, error
+        wizard.commit_config.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_tools_step_rerun_prefills_switches_from_config():
     """Added scope: ToolsStep previously always initialized every Switch to
     False, even on re-run with gates already enabled in config -- initialize
@@ -1189,6 +1528,34 @@ async def test_model_step_with_provider_entry_present_does_not_prefill_stale_mod
         step.on_show()
         assert step.selected_model_id == ""
         assert step.query_one("#setup-model-custom", Input).value == ""
+
+
+@pytest.mark.asyncio
+async def test_rerun_with_stored_plaintext_key_activates_protect_step_without_typing():
+    """Bug-4: active_step_ids previously dropped STEP_PROTECT unless a
+    secret was typed THIS run, so a rerun over a config that already has a
+    plaintext key on disk could never reach Protect Keys without retyping a
+    credential. The gate must also fire from config alone."""
+    app_instance = MagicMock()
+    app_instance.app_config = {"api_settings": {"openai": {"api_key": "sk-existing"}}}
+    wizard = FirstRunSetupWizard(app_instance, rerun=True)
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        assert STEP_PROTECT in container.active_ids
+
+
+@pytest.mark.asyncio
+async def test_fresh_config_without_stored_key_omits_protect_step():
+    """Regression guard for the Bug-4 fix above: a fresh config with no
+    stored key and nothing typed this run must still omit STEP_PROTECT."""
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        assert STEP_PROTECT not in container.active_ids
 
 
 class TestAppOfferGating:
