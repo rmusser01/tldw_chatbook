@@ -357,6 +357,12 @@ Update the tests to describe current behavior:
     send-blocking behavior. Unknown provider keys continue to display
     unchanged through the shared helper's existing fallback. Do not add a new
     display map or recase endpoint recovery copy outside the observed failure.
+40. In the Console empty-transcript “Choose model” action-routing regression,
+    explicitly seed the existing OpenAI provider with an empty model before
+    mounting the harness. Preserve the rendered live setup action, pointer
+    click, and settings-destination assertion. Do not change the settings modal
+    or retain a fixture whose blank provider conflicts with the test's stated
+    missing-model state.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -493,6 +499,11 @@ compatibility shims. No broad deletion of live tests.
   caused by canonical provider storage. The shared provider catalog already
   owns branded display names, so using it only at the two failing copy
   boundaries avoids a second map and leaves routing untouched.
+- Making the provider Select accept an invalid empty value would broaden
+  production behavior to accommodate a routing test that claims to exercise
+  “Choose model.” Giving that test the same explicit provider-plus-empty-model
+  state used by adjacent missing-model coverage exercises its named contract
+  and leaves modal validation intact.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

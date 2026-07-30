@@ -67,6 +67,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #39 The curated Console remote-default regression expects Anthropic's current configured and cataloged `claude-sonnet-5` default, while retaining exact curated defaults and catalog-membership coverage for every provider in the representative set.
 - [ ] #40 Console and selector merge-cap regressions pass saved provider models and the catalog scope as the current explicit resolver inputs, while retaining runtime-discovery labels, warning, cap-boundary, uncapped-picker, transient-current-model, and scope-call coverage.
 - [ ] #41 Console missing-key recovery copy uses the shared human provider display name even when the active session stores a canonical lowercase provider key, while retaining the exact setup target, field, and send-blocking behavior.
+- [ ] #42 The Console “Choose model” action-routing regression explicitly configures a valid provider with no selected model before opening settings, retaining the live button-click and destination assertion without relying on an internally contradictory blank-provider fixture.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -113,6 +114,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 33. Align the curated Anthropic Console default assertion with the current configured and cataloged model.
 34. Retarget provider-model option regressions to the resolver's explicit saved-model and catalog-scope inputs.
 35. Render the shared provider display name in missing-key recovery copy without changing canonical provider storage or routing.
-36. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-37. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+36. Give the Console choose-model routing regression an explicit valid provider and missing model.
+37. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+38. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

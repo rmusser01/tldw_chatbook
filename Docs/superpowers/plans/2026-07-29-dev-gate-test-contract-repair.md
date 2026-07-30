@@ -1555,6 +1555,43 @@ git add \
 git commit -m "fix(console): preserve provider display name in recovery"
 ```
 
+### Task 4aj: Seed the choose-model routing fixture explicitly
+
+**Files:**
+- Modify: `Tests/UI/test_console_workbench_contract.py`
+
+- [ ] **Step 1: Reproduce the contradictory fixture**
+
+Run `test_console_empty_transcript_choose_model_opens_settings`. Expected: the
+live setup action reaches the settings modal, but the modal mount raises
+`InvalidSelectValueError` because the test's app has an empty provider even
+though the regression is named and asserted as a missing-model flow.
+
+- [ ] **Step 2: Configure the missing-model state**
+
+Before mounting the harness, seed the same explicit OpenAI provider, empty
+model, and empty-key configuration used by adjacent missing-model Console
+coverage. Keep the live setup action wait, pointer click, and settings-modal or
+Settings-screen destination assertion unchanged. Do not change production,
+relax Select validation, or add timing waits.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_workbench_contract.py::test_console_empty_transcript_choose_model_opens_settings \
+  Tests/UI/test_console_workbench_contract.py::test_console_composer_keeps_disabled_reason_outside_input_row \
+  Tests/UI/test_console_session_settings.py::test_console_settings_modal_save_returns_validated_settings -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_console_workbench_contract.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_console_workbench_contract.py
+git diff --check
+git add \
+  Tests/UI/test_console_workbench_contract.py
+git commit -m "test(console): seed choose-model routing state"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
