@@ -5,6 +5,7 @@ from time import perf_counter
 
 import pytest
 
+import tldw_chatbook.Notes.file_notes_git_service as git_service
 from tldw_chatbook.Notes.file_notes_git_commit import (
     CommitContractError,
     CommitIncludedNote,
@@ -48,6 +49,18 @@ def test_commit_message_public_contract_models_are_frozen(
 ) -> None:
     assert is_dataclass(model_type)
     assert model_type.__dataclass_params__.frozen is True  # type: ignore[attr-defined]
+
+
+def test_retained_commit_child_public_settlement_is_frozen() -> None:
+    model_type = git_service.RetainedGitChildSettlement
+
+    assert is_dataclass(model_type)
+    assert model_type.__dataclass_params__.frozen is True  # type: ignore[attr-defined]
+
+
+def test_retained_commit_child_token_has_no_public_constructor() -> None:
+    with pytest.raises(TypeError):
+        git_service.RetainedGitChildToken()
 
 
 def _raw_delta_record(

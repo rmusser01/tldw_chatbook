@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import tldw_chatbook.Notes.file_notes_git_service as git_service
 from tldw_chatbook.Notes.file_notes_git_service import (
     AsyncGitProcessRunner,
     DiscoveryResult,
@@ -1744,6 +1745,723 @@ class _SignalFailureProcess(_StubbornProcess):
             raise self.kill_error
 
 
+class _RetainedCommitChildProcess:
+    returncode: int | None = None
+
+    def __init__(
+        self,
+        *,
+        terminate_returncode: int | None = None,
+        kill_returncode: int | None = None,
+    ) -> None:
+        self.terminate_returncode = terminate_returncode
+        self.kill_returncode = kill_returncode
+        self.terminate_calls = 0
+        self.kill_calls = 0
+        self.communicate_calls = 0
+        self.communicate_started = asyncio.Event()
+        self._settled = asyncio.Event()
+        self._stdout = b""
+        self._stderr = b""
+
+    def settle(
+        self,
+        returncode: int,
+        *,
+        stdout: bytes = b"",
+        stderr: bytes = b"",
+    ) -> None:
+        self.returncode = returncode
+        self._stdout = stdout
+        self._stderr = stderr
+        self._settled.set()
+
+    def finish_communication_without_returncode(self) -> None:
+        self._settled.set()
+
+    async def communicate(
+        self,
+        stdin: bytes | None,
+    ) -> tuple[bytes, bytes]:
+        del stdin
+        self.communicate_calls += 1
+        self.communicate_started.set()
+        await self._settled.wait()
+        return self._stdout, self._stderr
+
+    async def wait(self) -> int:
+        await self._settled.wait()
+        assert self.returncode is not None
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+        if self.terminate_returncode is not None:
+            self.settle(self.terminate_returncode)
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+        if self.kill_returncode is not None:
+            self.settle(self.kill_returncode)
+
+
+def _install_retained_commit_children(
+    monkeypatch: pytest.MonkeyPatch,
+    *children: _RetainedCommitChildProcess,
+) -> None:
+    pending = list(children)
+
+    async def fake_create_subprocess_exec(
+        *argv: str | bytes,
+        **kwargs: object,
+    ) -> _RetainedCommitChildProcess:
+        del argv, kwargs
+        return pending.pop(0)
+
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+
+
+async def _cancel_retained_commit_child(
+    runner: AsyncGitProcessRunner,
+    child: _RetainedCommitChildProcess,
+    *suffix: str,
+) -> git_service.RetainedGitChildToken:
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "commit", *suffix),
+            cwd="/repo",
+            environment={},
+        )
+    )
+    await child.communicate_started.wait()
+    command.cancel()
+    with pytest.raises(git_service.GitRunCancelled) as cancellation:
+        await command
+    token = cancellation.value.retained_child
+    assert token is not None
+    return token
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("returncode", [0, 7])
+async def test_retained_commit_child_normal_zero_and_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+) -> None:
+    child = _RetainedCommitChildProcess()
+    child.settle(returncode, stdout=b"out", stderr=b"err")
+    _install_retained_commit_children(monkeypatch, child)
+    runner = AsyncGitProcessRunner()
+
+    result = await runner.run(
+        ("git", "commit"),
+        cwd="/repo",
+        environment={},
+        timeout=1,
+    )
+
+    assert result.returncode == returncode
+    assert result.stdout == b"out"
+    assert result.stderr == b"err"
+    assert result.retained_child is None
+    assert not result.stop_requested
+    assert not result.force_stopped
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_child_timeout_while_still_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _RetainedCommitChildProcess()
+    _install_retained_commit_children(monkeypatch, child)
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.001,
+    )
+
+    result = await runner.run(
+        ("git", "commit"),
+        cwd="/repo",
+        environment={},
+        timeout=0.001,
+    )
+
+    assert result.timed_out
+    assert result.termination_uncertain
+    assert result.retained_child is not None
+    observation = runner.read_retained_child(result.retained_child)
+    assert observation.state == "alive"
+    assert observation.stop_requested
+    assert observation.force_stopped
+    assert child.communicate_calls == 1
+
+    child.finish_communication_without_returncode()
+    observation = await runner.settle_retained_child(
+        result.retained_child,
+        timeout=1,
+    )
+    assert observation.state == "uncertain"
+    child.returncode = 0
+    assert runner.read_retained_child(result.retained_child).state == "natural"
+    assert await runner.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("returncode", [9, 0])
+async def test_retained_commit_child_later_natural_result_is_exact(
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+) -> None:
+    child = _RetainedCommitChildProcess()
+    _install_retained_commit_children(monkeypatch, child)
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.001,
+    )
+    result = await runner.run(
+        ("git", "commit"),
+        cwd="/repo",
+        environment={},
+        timeout=0.001,
+    )
+    token = result.retained_child
+    assert token is not None
+
+    child.settle(
+        returncode,
+        stdout=b"later-output",
+        stderr=b"later-error",
+    )
+    settlement = await runner.settle_retained_child(token, timeout=1)
+
+    assert settlement.state == "natural"
+    assert settlement.returncode == returncode
+    assert settlement.stdout == b"later-output"
+    assert settlement.stderr == b"later-error"
+    assert settlement.stop_requested
+    assert settlement.force_stopped
+    assert await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_child_shutdown_records_terminate_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _RetainedCommitChildProcess(terminate_returncode=-15)
+    _install_retained_commit_children(monkeypatch, child)
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.1,
+        kill_timeout=0.1,
+    )
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "commit"),
+            cwd="/repo",
+            environment={},
+        )
+    )
+    await child.communicate_started.wait()
+
+    assert await runner.shutdown()
+    result = await command
+
+    assert result.returncode == -15
+    assert result.termination_uncertain
+    assert result.stop_requested
+    assert not result.force_stopped
+    assert result.retained_child is None
+    assert child.terminate_calls == 1
+    assert child.kill_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_child_shutdown_records_forced_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _RetainedCommitChildProcess(kill_returncode=-9)
+    _install_retained_commit_children(monkeypatch, child)
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.1,
+    )
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "commit"),
+            cwd="/repo",
+            environment={},
+        )
+    )
+    await child.communicate_started.wait()
+
+    assert await runner.shutdown()
+    result = await command
+
+    assert result.returncode == -9
+    assert result.termination_uncertain
+    assert result.stop_requested
+    assert result.force_stopped
+    assert result.retained_child is None
+    assert child.terminate_calls == 1
+    assert child.kill_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_child_caller_cancellation_keeps_runner_shield(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _RetainedCommitChildProcess()
+    _install_retained_commit_children(monkeypatch, child)
+    runner = AsyncGitProcessRunner()
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "commit"),
+            cwd="/repo",
+            environment={},
+        )
+    )
+    await child.communicate_started.wait()
+
+    command.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await command
+    assert child.terminate_calls == 0
+    assert child.kill_calls == 0
+
+    child.settle(0, stdout=b"completed-after-cancel")
+    while runner._run_tasks:
+        await asyncio.sleep(0)
+
+    assert child.communicate_calls == 1
+    assert await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_child_caller_cancellation_recovers_natural_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _RetainedCommitChildProcess()
+    _install_retained_commit_children(monkeypatch, child)
+    runner = AsyncGitProcessRunner()
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "commit"),
+            cwd="/repo",
+            environment={},
+        )
+    )
+    await child.communicate_started.wait()
+
+    command.cancel()
+    with pytest.raises(asyncio.CancelledError) as cancellation:
+        await command
+    assert command.cancelled()
+
+    try:
+        assert isinstance(cancellation.value, git_service.GitRunCancelled)
+        token = cancellation.value.retained_child
+        assert token is not None
+        assert cancellation.value.result is None
+        assert runner.read_retained_child(token).state == "alive"
+
+        child.settle(
+            0,
+            stdout=b"committed",
+            stderr=b"natural-stderr",
+        )
+        settlement = await runner.settle_retained_child(token, timeout=1)
+
+        assert settlement.state == "natural"
+        assert settlement.returncode == 0
+        assert settlement.stdout == b"committed"
+        assert settlement.stderr == b"natural-stderr"
+        assert runner.read_retained_child(token) is settlement
+    finally:
+        child.settle(0)
+        assert await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_child_cancellation_before_spawn_keeps_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _RetainedCommitChildProcess()
+    spawn_started = asyncio.Event()
+    allow_spawn = asyncio.Event()
+
+    async def delayed_create_subprocess_exec(
+        *argv: str | bytes,
+        **kwargs: object,
+    ) -> _RetainedCommitChildProcess:
+        del argv, kwargs
+        spawn_started.set()
+        await allow_spawn.wait()
+        return child
+
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        delayed_create_subprocess_exec,
+    )
+    runner = AsyncGitProcessRunner()
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "commit"),
+            cwd="/repo",
+            environment={},
+        )
+    )
+    await spawn_started.wait()
+
+    command.cancel()
+    with pytest.raises(git_service.GitRunCancelled) as cancellation:
+        await command
+    token = cancellation.value.retained_child
+    assert token is not None
+    assert cancellation.value.result is None
+    assert runner.read_retained_child(token).state == "uncertain"
+
+    allow_spawn.set()
+    await child.communicate_started.wait()
+    child.settle(0, stdout=b"spawned-after-cancel")
+    settlement = await runner.settle_retained_child(token, timeout=1)
+
+    assert settlement.state == "natural"
+    assert settlement.returncode == 0
+    assert settlement.stdout == b"spawned-after-cancel"
+    assert child.terminate_calls == 0
+    assert child.kill_calls == 0
+    assert await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_child_pre_spawn_shutdown_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _RetainedCommitChildProcess(terminate_returncode=-15)
+    spawn_started = asyncio.Event()
+    allow_spawn = asyncio.Event()
+
+    async def delayed_create_subprocess_exec(
+        *argv: str | bytes,
+        **kwargs: object,
+    ) -> _RetainedCommitChildProcess:
+        del argv, kwargs
+        spawn_started.set()
+        await allow_spawn.wait()
+        return child
+
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        delayed_create_subprocess_exec,
+    )
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.005,
+        kill_timeout=0.005,
+    )
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "commit"),
+            cwd="/repo",
+            environment={},
+        )
+    )
+    await spawn_started.wait()
+    command.cancel()
+    with pytest.raises(git_service.GitRunCancelled) as cancellation:
+        await command
+    token = cancellation.value.retained_child
+    assert token is not None
+    (owned_task,) = runner._run_tasks
+
+    confirmed = await asyncio.wait_for(runner.shutdown(), timeout=0.1)
+
+    allow_spawn.set()
+    await asyncio.wait_for(asyncio.shield(owned_task), timeout=1)
+    exact = await runner.settle_retained_child(token, timeout=1)
+
+    assert confirmed is False
+    assert exact.state == "stop_requested"
+    assert exact.returncode == -15
+    assert child.terminate_calls == 1
+    assert child.kill_calls == 0
+    assert not owned_task.cancelled()
+    assert runner.release_retained_child(token)
+    assert not runner._retained_children
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_child_terminal_cancellation_returns_result_not_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _RetainedCommitChildProcess()
+    child.settle(0, stdout=b"known-terminal", stderr=b"known-stderr")
+    _install_retained_commit_children(monkeypatch, child)
+    runner = AsyncGitProcessRunner()
+    real_shield = asyncio.shield
+
+    async def cancel_after_owned_completion(
+        awaitable: Awaitable[GitCommandResult],
+    ) -> GitCommandResult:
+        result = await real_shield(awaitable)
+        current = asyncio.current_task()
+        assert current is not None
+        current.cancel()
+        await asyncio.sleep(0)
+        return result
+
+    monkeypatch.setattr(asyncio, "shield", cancel_after_owned_completion)
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "commit"),
+            cwd="/repo",
+            environment={},
+        )
+    )
+
+    with pytest.raises(git_service.GitRunCancelled) as cancellation:
+        await command
+    monkeypatch.setattr(asyncio, "shield", real_shield)
+
+    assert cancellation.value.retained_child is None
+    assert cancellation.value.result == GitCommandResult(
+        0,
+        b"known-terminal",
+        b"known-stderr",
+    )
+    assert not runner._retained_children
+    assert await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_child_terminal_cancellation_uses_fresh_settlement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _RetainedCommitChildProcess()
+    _install_retained_commit_children(monkeypatch, child)
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.001,
+    )
+    real_shield = asyncio.shield
+    owned_returned = asyncio.Event()
+    allow_cancellation = asyncio.Event()
+
+    async def cancel_after_later_settlement(
+        awaitable: Awaitable[GitCommandResult],
+    ) -> GitCommandResult:
+        result = await real_shield(awaitable)
+        owned_returned.set()
+        await allow_cancellation.wait()
+        current = asyncio.current_task()
+        assert current is not None
+        current.cancel()
+        await asyncio.sleep(0)
+        return result
+
+    monkeypatch.setattr(asyncio, "shield", cancel_after_later_settlement)
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "commit"),
+            cwd="/repo",
+            environment={},
+            timeout=0.001,
+        )
+    )
+    await owned_returned.wait()
+    child.settle(7, stdout=b"fresh-terminal", stderr=b"fresh-stderr")
+    record = next(iter(runner._retained_children.values()))
+    assert record.communication is not None
+    await real_shield(record.communication)
+    allow_cancellation.set()
+
+    with pytest.raises(git_service.GitRunCancelled) as cancellation:
+        await command
+    monkeypatch.setattr(asyncio, "shield", real_shield)
+
+    assert cancellation.value.retained_child is None
+    assert cancellation.value.result == GitCommandResult(
+        7,
+        b"fresh-terminal",
+        b"fresh-stderr",
+        timed_out=True,
+        termination_uncertain=True,
+        stop_requested=True,
+        force_stopped=True,
+    )
+    assert await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_child_repeated_settlement_is_stable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _RetainedCommitChildProcess()
+    _install_retained_commit_children(monkeypatch, child)
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.001,
+    )
+    result = await runner.run(
+        ("git", "commit"),
+        cwd="/repo",
+        environment={},
+        timeout=0.001,
+    )
+    token = result.retained_child
+    assert token is not None
+    child.settle(4, stderr=b"failed")
+
+    first = await runner.settle_retained_child(token, timeout=1)
+    second = await runner.settle_retained_child(token, timeout=1)
+
+    assert first is second
+    assert second.returncode == 4
+    assert child.communicate_calls == 1
+    assert await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_child_terminal_release_bounds_record_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    children = tuple(_RetainedCommitChildProcess() for _ in range(3))
+    _install_retained_commit_children(monkeypatch, *children)
+    runner = AsyncGitProcessRunner()
+
+    for index, child in enumerate(children):
+        token = await _cancel_retained_commit_child(runner, child, str(index))
+        assert not runner.release_retained_child(token)
+        child.settle(index, stdout=f"result-{index}".encode())
+        assert (
+            await runner.settle_retained_child(token, timeout=1)
+        ).returncode == index
+        if child is children[-1]:
+            break
+        assert runner.release_retained_child(token)
+        with pytest.raises(ValueError, match="Unknown retained Git child token"):
+            runner.release_retained_child(token)
+        assert not runner._retained_children
+
+    assert len(runner._retained_children) == 1
+    assert await runner.shutdown()
+    assert not runner._retained_children
+    with pytest.raises(ValueError, match="Unknown retained Git child token"):
+        runner.read_retained_child(token)
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_child_settlement_enforces_event_loop_affinity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _RetainedCommitChildProcess()
+    _install_retained_commit_children(monkeypatch, child)
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.001,
+    )
+    result = await runner.run(
+        ("git", "commit"),
+        cwd="/repo",
+        environment={},
+        timeout=0.001,
+    )
+    token = result.retained_child
+    assert token is not None
+
+    with pytest.raises(GitShutdownAffinityError):
+        await asyncio.to_thread(
+            asyncio.run,
+            runner.settle_retained_child(token),
+        )
+
+    child.settle(0)
+    await runner.settle_retained_child(token, timeout=1)
+    assert await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_child_stderr_is_bounded_and_sanitized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _RetainedCommitChildProcess()
+    _install_retained_commit_children(monkeypatch, child)
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.001,
+        stderr_limit=16,
+    )
+    result = await runner.run(
+        ("git", "commit"),
+        cwd="/repo",
+        environment={},
+        timeout=0.001,
+    )
+    token = result.retained_child
+    assert token is not None
+    child.settle(8, stderr=(b"\x1bsecret\n" * 100))
+
+    settlement = await runner.settle_retained_child(token, timeout=1)
+
+    assert settlement.state == "natural"
+    assert len(settlement.stderr) <= 16
+    assert b"\x1b" not in settlement.stderr
+    assert b"\\x1b" in settlement.stderr
+    assert b"\n" not in settlement.stderr
+    assert await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_child_token_cannot_settle_another_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_child = _RetainedCommitChildProcess()
+    second_child = _RetainedCommitChildProcess()
+    _install_retained_commit_children(monkeypatch, first_child, second_child)
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.001,
+    )
+    first = await runner.run(
+        ("git", "commit", "first"),
+        cwd="/repo",
+        environment={},
+        timeout=0.001,
+    )
+    second = await runner.run(
+        ("git", "commit", "second"),
+        cwd="/repo",
+        environment={},
+        timeout=0.001,
+    )
+    assert first.retained_child is not None
+    assert second.retained_child is not None
+    assert first.retained_child is not second.retained_child
+
+    first_child.settle(3, stdout=b"first")
+    first_settlement = await runner.settle_retained_child(
+        first.retained_child,
+        timeout=1,
+    )
+
+    assert first_settlement.returncode == 3
+    assert first_settlement.stdout == b"first"
+    assert runner.read_retained_child(second.retained_child).state == "alive"
+
+    second_child.settle(0, stdout=b"second")
+    second_settlement = await runner.settle_retained_child(
+        second.retained_child,
+        timeout=1,
+    )
+    assert second_settlement.returncode == 0
+    assert second_settlement.stdout == b"second"
+    assert await runner.shutdown()
+
+
 @pytest.mark.asyncio
 async def test_runner_timeout_terminates_then_kills_with_two_bounded_waits(
     monkeypatch: pytest.MonkeyPatch,
@@ -1837,7 +2555,7 @@ async def test_runner_shutdown_returns_retained_finite_settlement(
 
 
 @pytest.mark.asyncio
-async def test_runner_caller_cancellation_performs_bounded_child_cleanup(
+async def test_runner_caller_cancellation_retains_child_until_shutdown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     child = _KillableProcess()
@@ -1872,11 +2590,12 @@ async def test_runner_caller_cancellation_performs_bounded_child_cleanup(
     with pytest.raises(asyncio.CancelledError):
         await command
 
-    async def wait_until_runner_settles() -> None:
-        while runner._run_tasks:
-            await asyncio.sleep(0)
+    assert child.terminate_calls == 0
+    assert child.kill_calls == 0
+    assert child in runner._processes
+    assert runner._run_tasks
 
-    await asyncio.wait_for(wait_until_runner_settles(), timeout=1)
+    assert await runner.shutdown()
     assert child.terminate_calls == 1
     assert child.kill_calls == 1
     assert child.wait_calls == 2
@@ -1920,7 +2639,7 @@ async def test_runner_shutdown_retries_retained_process_without_run_task(
     assert child in runner._processes
     assert not runner._run_tasks
 
-    assert not await asyncio.wait_for(runner.shutdown(), timeout=1)
+    assert await asyncio.wait_for(runner.shutdown(), timeout=1)
     assert child.terminate_calls == 2
     assert child.kill_calls == 2
     assert child.wait_calls == 4
