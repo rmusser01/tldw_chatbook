@@ -50,6 +50,7 @@ import asyncio  # noqa: E402
 import sqlite3  # noqa: E402
 import sys  # noqa: E402
 import gc  # noqa: E402
+from typing import Iterator  # noqa: E402
 import warnings  # noqa: E402
 
 # Add project root to Python path for consistent imports
@@ -190,17 +191,49 @@ def cleanup_loguru_handlers():
 # above and the fd_leak_sentinel below; periodic collection plus the
 # requires_cleanup marker covers the rest. TLDW_TEST_GC_EVERY=1 restores
 # per-test collection as an escape hatch.
-_GC_EVERY = max(1, int(os.environ.get("TLDW_TEST_GC_EVERY", "25")))
+def _env_int(name: str, default: int) -> int:
+    """Parse an integer environment knob without letting a typo abort the run.
+
+    Args:
+        name: Environment variable name.
+        default: Value used when the variable is unset or malformed.
+
+    Returns:
+        The parsed integer, or ``default`` (with a UserWarning) when the value
+        is not a valid integer — a malformed escape-hatch value must degrade to
+        the default, not kill conftest import for the whole suite.
+    """
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        warnings.warn(
+            f"{name}={raw!r} is not an integer; using default {default}",
+            UserWarning,
+            stacklevel=2,
+        )
+        return default
+
+
+_GC_EVERY = max(1, _env_int("TLDW_TEST_GC_EVERY", 25))
 _gc_test_counter = 0
 
 
 @pytest.fixture(autouse=True)
-def cleanup_file_descriptors(request):
+def cleanup_file_descriptors(request: pytest.FixtureRequest) -> Iterator[None]:
     """Garbage-collect leaked file objects periodically (or per-test on request).
 
     Tests that genuinely need a collection pass right after they run (e.g. they
     open many files and assert on fd state) mark themselves
     ``@pytest.mark.requires_cleanup``.
+
+    Args:
+        request: The pytest fixture request, used to read the test's markers.
+
+    Yields:
+        None. Collection (if due) happens in teardown, after the test body.
     """
     yield
 
@@ -217,13 +250,18 @@ def cleanup_file_descriptors(request):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def fd_leak_sentinel():
+def fd_leak_sentinel() -> Iterator[None]:
     """Warn when the session's open-fd count grows past a leak threshold.
 
     Replacement leak detection for the per-test gc.collect() this file used to
     do: cheap (two directory listings per session), and unlike the gc pass it
     produces an actionable signal instead of silently papering over leaks.
-    Warn-only for now; threshold via TLDW_TEST_FD_GROWTH_LIMIT.
+    Warn-only for now; threshold via TLDW_TEST_FD_GROWTH_LIMIT. The signal is
+    a UserWarning (never in default ignore filters, unlike ResourceWarning)
+    plus a stderr line, so it survives any warning-filter configuration.
+
+    Yields:
+        None. The fd count comparison happens at session teardown.
     """
     fd_dir = "/dev/fd" if sys.platform == "darwin" else "/proc/self/fd"
 
@@ -233,21 +271,25 @@ def fd_leak_sentinel():
         except OSError:
             return None
 
-    limit = int(os.environ.get("TLDW_TEST_FD_GROWTH_LIMIT", "200"))
+    limit = _env_int("TLDW_TEST_FD_GROWTH_LIMIT", 200)
     start = _count_fds()
     yield
     if start is None:
         return
     end = _count_fds()
     if end is not None and end - start > limit:
-        warnings.warn(
+        message = (
             f"open file descriptors grew by {end - start} over the test session "
             f"(start={start}, end={end}, limit={limit}) — possible fd leak; "
             "bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests "
-            "@pytest.mark.requires_cleanup",
-            ResourceWarning,
-            stacklevel=0,
+            "@pytest.mark.requires_cleanup"
         )
+        # UserWarning (not ResourceWarning): ResourceWarning sits in Python's
+        # default ignore filters, so the sentinel's only signal could vanish
+        # under filter configurations that don't re-enable it. The stderr echo
+        # survives even -W ignore.
+        warnings.warn(message, UserWarning, stacklevel=0)
+        print(f"[fd_leak_sentinel] {message}", file=sys.stderr)
 
 
 # ========== Async Cleanup Fixtures ==========

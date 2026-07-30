@@ -2,7 +2,7 @@
 id: TASK-1454
 title: >-
   Narrow the per-test double gc.collect() autouse fixture to periodic/marked collection and add an fd-leak sentinel
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-30 09:05'
 labels:
@@ -20,10 +20,10 @@ dependencies: []
 
 ## Acceptance Criteria
 
-- [ ] gc.collect() runs every N tests (`TLDW_TEST_GC_EVERY`, default 25) or immediately after tests marked `requires_cleanup`; `TLDW_TEST_GC_EVERY=1` restores per-test collection
-- [ ] `cleanup_loguru_handlers` is unchanged
-- [ ] A session-scoped fd sentinel warns (warn-only initially) when open-fd count grows past a configurable threshold, with actionable guidance in the message
-- [ ] Full-suite run completes without fd exhaustion; junit outcome diff vs baseline shows no regressions
+- [x] gc.collect() runs every N tests (`TLDW_TEST_GC_EVERY`, default 25) or immediately after tests marked `requires_cleanup`; `TLDW_TEST_GC_EVERY=1` restores per-test collection
+- [x] `cleanup_loguru_handlers` is unchanged
+- [x] A session-scoped fd sentinel warns (warn-only initially) when open-fd count grows past a configurable threshold, with actionable guidance in the message
+- [x] Full-suite run completes without fd exhaustion; junit outcome diff vs baseline shows no regressions
 
 ## Implementation Plan
 
