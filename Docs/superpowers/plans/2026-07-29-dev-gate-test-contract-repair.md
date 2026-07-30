@@ -2373,6 +2373,49 @@ git diff --check
 Expected: the import/export class passes, the failure path renders only the
 fixed recovery copy, and the change introduces no new static or diff issue.
 
+### Task 4be: Remove the retired core-loop handoff field wait
+
+**Files:**
+- Modify: `Tests/UI/test_product_maturity_phase1_core_loop.py`
+
+- [ ] **Step 1: Preserve the focused RED**
+
+Run
+`test_search_rag_result_stages_context_into_console_core_loop` alone. Expected
+before repair: the real handoff navigates to Console, but the test raises
+`AttributeError` while polling the deleted app-root `pending_chat_handoff`
+field. Confirm TASK-645 moved the channel to `PendingHandoffStore` and that the
+current smoke test proves the same flow through visible Console outcomes.
+
+- [ ] **Step 2: Delete only the obsolete intermediate wait**
+
+Remove the comment and `_wait_until` block that read
+`app.pending_chat_handoff`. Retain the real `open_chat_with_handoff()` call,
+route wait, staged-source count, RAG state, live-work title, evidence readiness,
+and suggested composer draft assertions. Do not change production, restore a
+compatibility field, or substitute a transient store-internal assertion.
+
+- [ ] **Step 3: Verify the focused module and resumed boundary**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_product_maturity_phase1_core_loop.py \
+  -q
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py \
+  Tests/UI/test_product_maturity_phase1_core_loop.py \
+  -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_product_maturity_phase1_core_loop.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_product_maturity_phase1_core_loop.py
+git diff --check
+```
+
+Expected: the core-loop proof passes through current visible Console behavior,
+the adjacent screen-adaptation contract remains green, and static plus diff
+checks remain clean.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

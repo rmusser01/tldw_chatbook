@@ -150,6 +150,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   leaves the unused `chat_dictionary_scope_service` as a plain `MagicMock`, so
   selecting the retained character produces an unrelated non-awaitable-service
   traceback before the import assertion.
+- The product-maturity Search/RAG-to-Console core-loop regression still waits
+  on the deleted app-root `pending_chat_handoff` field. TASK-645 moved staging
+  and claim settlement to `PendingHandoffStore`; the same test's immediately
+  following visible Console assertions already prove the payload reached the
+  staged-source lane, live-work title, evidence state, and composer.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -585,6 +590,12 @@ Update the tests to describe current behavior:
     absent. Retain the real row selection and selected-entity assertion. Do not
     restore raw exception display, alter production diagnostics, or mock away
     the import path itself.
+61. In the product-maturity Search/RAG-to-Console core-loop regression, remove
+    only the wait that reads the retired app-root `pending_chat_handoff`
+    attribute. Retain the real `open_chat_with_handoff()` producer, route wait,
+    visible staged-source count, RAG state, live-work title, evidence readiness,
+    and suggested composer draft. Do not restore compatibility state or replace
+    the visible outcome proof with a store-internal assertion.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -815,6 +826,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   Ignoring the unrelated dictionary-service traceback would leave the focused
   test exercising an invalid fixture; declaring that unused service unavailable
   follows existing Personas screen-test setup without adding a fake service.
+- Restoring `pending_chat_handoff` would recreate competing app-root handoff
+  ownership, while replacing the dead read with `has_pending()` would inspect a
+  transient store detail that becomes false at claim time, before destination
+  application necessarily completes. The retained visible Console assertions
+  are the stronger end-to-end consumption proof.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
