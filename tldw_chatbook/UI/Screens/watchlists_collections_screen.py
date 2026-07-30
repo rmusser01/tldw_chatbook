@@ -47,6 +47,7 @@ from ..Watchlists_Modules.inspector_pane import (
     IgnoreRequested,
     IngestRequested,
     InspectorPane,
+    NoiseSelectorsSaveRequested,
     PreviewRequested,
     StageInConsoleRequested,
 )
@@ -3240,6 +3241,84 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 pass
 
         self.set_timer(0.05, open_edit_form)
+
+    @on(NoiseSelectorsSaveRequested)
+    def handle_noise_selectors_save_requested(
+        self, event: NoiseSelectorsSaveRequested
+    ) -> None:
+        event.stop()
+        if event.source_id is None:
+            return
+        self.run_worker(
+            self._save_noise_selectors(event.source_id, event.text),
+            exclusive=True,
+            group="wc_noise_selectors",
+        )
+
+    async def _save_noise_selectors(self, source_id: Any, text: str) -> None:
+        """Persist one source's `ignore_selectors` and patch, never recompose.
+
+        TASK-1362 (spec §2). Deliberately does NOT call `_load_sources()`,
+        `_refresh_overview_data()` or `_refresh_local_wc_snapshot()` the way
+        `_create_source` does. `overview_data` is `reactive({}, recompose=True)`
+        on this screen, so touching it rebuilds every region through its
+        factory and replaces the mounted panes wholesale -- proven live in
+        Phase D Task 5 to detach the `ItemsPane`, reset the `DataTable` cursor
+        and drop keyboard focus. Nothing the user can see is derived from a
+        source's selectors: not the Sources table's five columns, not the
+        overview counts, not the staging line. So the only stale surface is
+        the entity dict itself, which is patched in place -- the SAME object
+        held by `selected_entity`, `selected_source` and `SourcesPane.sources`
+        -- so a later read (including the Inspector rebuilt by an unrelated
+        region toggle) already sees the new value with no rebuild forced here.
+
+        Args:
+            source_id: The source's watchlist item id, namespaced or bare.
+            text: The newline-separated selector text to store.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            await self._controller.update_source(
+                runtime_backend=self.runtime_backend,
+                item_id=source_id,
+                payload={"ignore_selectors": text},
+            )
+        except Exception:
+            logger.opt(exception=True).warning("Failed to save noise selectors.")
+            if callable(notify):
+                notify("Failed to save ignore rules.", severity="error")
+            return
+        self._patch_entity_ignore_selectors(source_id, text)
+        if callable(notify):
+            notify(
+                "Ignore rules saved. The next check re-baselines this source.",
+                severity="information",
+            )
+
+    def _patch_entity_ignore_selectors(self, source_id: Any, text: str) -> None:
+        """Mirror a saved selector text into the in-memory source dicts.
+
+        Matches `normalize_local_subscription_row`'s published shape (a list
+        under `settings`, with the key absent when there is nothing stored),
+        so a subsequent `InspectorPane._ignore_selectors_text` read reproduces
+        exactly what the backend would return.
+        """
+        selectors = [line.strip() for line in text.split("\n") if line.strip()]
+        seen: list[dict[str, Any]] = []
+        for entity in (self.selected_entity, self.selected_source):
+            if not isinstance(entity, dict) or any(entity is other for other in seen):
+                continue
+            seen.append(entity)
+            if str(entity.get("id")) != str(source_id):
+                continue
+            settings = entity.get("settings")
+            if not isinstance(settings, dict):
+                settings = {}
+                entity["settings"] = settings
+            if selectors:
+                settings["ignore_selectors"] = selectors
+            else:
+                settings.pop("ignore_selectors", None)
 
     @on(IngestRequested)
     def handle_ingest_requested(self, event: IngestRequested) -> None:
