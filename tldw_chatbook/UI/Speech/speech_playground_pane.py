@@ -56,6 +56,7 @@ from .speech_action_strip import SpeechActionStrip
 from .speech_axis_row import AXIS_EMPTY_PROMPTS, DEFAULT_SPEED, SpeechAxisRow
 from .speech_catalog_mixin import SpeechCatalogMixin
 from .speech_playback_mixin import EXAMPLE_TEXTS, SpeechPlaybackMixin
+from .speech_playground_model import AXIS_CONTROLS
 from .speech_profile_mixin import SpeechProfileMixin
 from .speech_synthesis_mixin import SpeechSynthesisMixin
 from .speech_param_group import SpeechParamGroup
@@ -239,15 +240,19 @@ class SpeechPlaygroundPane(
 
     @on(Input.Changed)
     def on_tts_speed_changed(self, event: Input.Changed) -> None:
-        """Delegate to the shared catalog mixin.
+        """Mirror an axis edit, then delegate to the shared catalog mixin.
 
-        dev wired this up while the rebuild was in flight -- it had been an
-        undispatched name, which is why an earlier version of this branch
-        deleted it as dead. It is live now, so the pane carries it.
+        dev wired the delegation up while the rebuild was in flight -- it
+        had been an undispatched name, which is why an earlier version of
+        this branch deleted it as dead. It is live now, so the pane carries
+        it. The mirroring is this ruling's addition: the speed axis is the
+        only Input among the axes, so this is also the pane's one
+        Input.Changed chokepoint.
 
         Args:
             event: Any Input change in this pane.
         """
+        self._mirror_axis_edit(event.input.id, event.value)
         self.handle_speed_changed(event)
 
     @on(TextArea.Changed)
@@ -261,16 +266,56 @@ class SpeechPlaygroundPane(
 
     @on(Select.Changed)
     def on_tts_provider_select_changed(self, event: Select.Changed) -> None:
-        """Delegate to the shared catalog mixin.
+        """Mirror an axis edit, then delegate to the shared catalog mixin.
 
         The decorator has to live on this class: Textual collects `@on`
         handlers per-class in its metaclass, so one declared in the mixin is
-        never registered.
+        never registered. Despite the name, this sees every Select in the
+        pane, not only the provider one -- which is exactly why it is also
+        the pane's one Select.Changed chokepoint for mirroring axis edits.
 
         Args:
             event: Any Select change in this pane.
         """
+        self._mirror_axis_edit(event.select.id, event.value)
         self.handle_provider_select_changed(event)
+
+    def _mirror_axis_edit(self, control_id: str | None, value: object) -> None:
+        """Mirror a user's direct edit of an axis control into the model.
+
+        Skipped while `_applying_catalog_controls` is True: those writes
+        originate from `_apply_controls` or `_prime_profile_preset_controls`,
+        which update `axis_values` themselves -- reusing that guard rather
+        than inventing a second one, since it is also what
+        `_end_profile_preset` depends on to tell a catalog-driven write from
+        a user edit.
+
+        Args:
+            control_id: The changed widget's id, or ``None``.
+            value: The widget's new value. Ignored unless it is a plain
+                ``str`` -- the sentinel values `Select` uses for "loading"
+                and "unavailable" are not session edits.
+        """
+        if self._applying_catalog_controls:
+            return
+        if control_id not in AXIS_CONTROLS or not isinstance(value, str):
+            return
+        self.axis_values[control_id] = value
+        self._refresh_axis_markers()
+
+    def _refresh_axis_markers(self) -> None:
+        """Repaint the axis row's override markers from the current model.
+
+        Tolerates the row not being mounted yet (`NoMatches`): this is
+        called from `_apply_controls` and `_prime_profile_preset_controls`,
+        which can run before `compose()` has yielded `#speech-axis-row`, or
+        in a unit-test context that never mounts it.
+        """
+        try:
+            row = self.query_one("#speech-axis-row", SpeechAxisRow)
+        except NoMatches:
+            return
+        row.update_values(self.axis_values)
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Re-evaluate whether Generate is available.
