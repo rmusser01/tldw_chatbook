@@ -794,15 +794,21 @@ async def test_console_undo_redo_re_collapses_over_threshold_restored_segment():
     one-keystroke repro (attach 200 KB, type one character, undo). The
     restored segment must instead re-collapse into the same paste-token
     display a fresh over-threshold paste gets -- a BEHAVIOR pin (what
-    paints), not a timing pin."""
+    paints), not a timing pin.
+
+    Gated on `UNDO_RECOLLAPSE_CHAR_THRESHOLD` (review W-1), NOT the
+    cosmetic `paste_collapse_threshold` -- see
+    `test_console_undo_of_ordinary_typed_text_stays_literal_not_a_paste_token`
+    for the regression an earlier version of this fix introduced by using
+    the wrong (much smaller) threshold."""
     _, host = _ready_host()
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
-        threshold = composer.paste_collapse_threshold
-        big_text = "x" * (threshold + 250)
+        threshold = composer.UNDO_RECOLLAPSE_CHAR_THRESHOLD
+        big_text = "x" * (threshold + 500)
 
         composer.insert_file_segment(big_text, label="big.txt")
         composer.focus()
@@ -838,9 +844,16 @@ def test_composer_undo_redo_does_not_double_collapse_already_collapsed_snapshot(
     INSERTION time, not by the undo/redo re-collapse -- must show that
     same token correctly: not a token wrapping a token, and not a wrong
     character count. Confirms the re-collapse operates on the segment's
-    real underlying text, never on a previously-rendered display string."""
+    real underlying text, never on a previously-rendered display string.
+
+    The payload must exceed `UNDO_RECOLLAPSE_CHAR_THRESHOLD` (review W-1),
+    not merely `paste_collapse_threshold`: a paste collapsed at insertion
+    (over the small cosmetic threshold) but under the large recollapse
+    threshold is EXPECTED to come back as ordinary literal text after an
+    undo -- that's the whole point of W-1's fix -- so testing "stays
+    collapsed" needs a payload big enough to still cross the real gate."""
     composer = ConsoleComposerBar()
-    threshold = composer.paste_collapse_threshold
+    threshold = composer.UNDO_RECOLLAPSE_CHAR_THRESHOLD
     big_text = "y" * (threshold + 100)
 
     composer.insert_pasted_text(big_text)  # collapsed at insertion, not by undo/redo
@@ -908,3 +921,116 @@ async def test_console_refused_send_preserves_undo_history(monkeypatch):
 
         console._console_composer_undo()
         assert composer.draft_text() == ""
+
+
+# ---------------------------------------------------------------------------
+# Wave-2 re-review fix round (2026-07-30): W-1 (HIGH) and W-2 (LOW) -- pinned
+# reproductions of the reviewer's own wave-2 scenarios.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_console_undo_of_ordinary_typed_text_stays_literal_not_a_paste_token():
+    """W-1 (HIGH): the NEW-2 re-collapse fix reused `paste_collapse_
+    threshold` (shipped default 50 chars) as the undo-restore gate, so
+    undo of ordinary TYPED draft text over 50 characters repainted as an
+    opaque "Pasted Text: N Characters" token -- `has_paste_segments()`
+    became True for text that was never pasted, and one Backspace then
+    deleted the WHOLE restored draft in a single step (a collapsed token
+    deletes as one unit). This lands squarely on the AC's own flagship
+    recovery path: Ctrl+U on a real message, then Ctrl+Z, must still show
+    (and let you edit character-by-character) the recovered text."""
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        message = (
+            "Please summarise the attached report and list the three "
+            "biggest risks that stand out to you."
+        )
+        # Comfortably over the cosmetic paste threshold (50), comfortably
+        # under the dedicated recollapse threshold (20,000).
+        assert 50 < len(message) < composer.UNDO_RECOLLAPSE_CHAR_THRESHOLD
+
+        composer.load_draft(message)
+        composer.focus()
+        await pilot.pause()
+
+        # The AC's own flagship recovery path: Ctrl+U, then Ctrl+Z.
+        composer.clear_draft(record_history=True)
+        assert composer.draft_text() == ""
+        assert composer.undo() is True
+
+        assert composer.draft_text() == message
+        assert composer.has_paste_segments() is False
+        painted = visible_draft.render_line(0).text.rstrip()
+        assert message[:20] in painted
+        assert "Pasted Text:" not in painted
+
+        # One Backspace removes exactly one character -- not the token
+        # that a collapsed segment would delete as an atomic unit.
+        composer.delete_left()
+        assert composer.draft_text() == message[:-1]
+
+
+def test_composer_undo_snaps_cursor_out_of_a_collapsed_restored_token():
+    """W-1: `_apply_history_snapshot` used to restore the raw
+    `snapshot.cursor_index` verbatim even when the restored segment
+    collapsed, leaving the caret INSIDE a token -- no other code path can
+    produce that state, since paste-token caret movement always treats a
+    token as atomic (reviewer repro: a 120-char draft with the caret
+    reporting 60 inside a now-collapsed segment, where typing then
+    inserted at canonical offset 0, not 60)."""
+    composer = ConsoleComposerBar()
+    threshold = composer.UNDO_RECOLLAPSE_CHAR_THRESHOLD
+    base = "A" * (threshold + 100)  # even length: midpoint splits it exactly
+
+    composer.load_draft(base)
+    composer.position_cursor_from_display_index(len(base) // 2)
+    assert composer.cursor_index == len(base) // 2
+
+    composer.insert_text("Z")
+    assert composer.undo() is True
+
+    # The restored segment is over threshold -> collapsed; the caret must
+    # land on a real token boundary (0 or the token's end), never inside.
+    # The pre-undo caret (the exact midpoint) is nearer the end here.
+    assert composer.cursor_index == len(base)
+    assert composer.draft_text() == base
+
+    # And the reported position is genuinely where the next edit lands.
+    composer.insert_text("Q")
+    assert composer.draft_text() == base + "Q"
+
+
+@pytest.mark.asyncio
+async def test_console_undo_recollapses_regardless_of_collapse_large_pastes_setting():
+    """W-2 (LOW): the re-collapse used to also gate on
+    `collapse_large_pastes_enabled` -- a cosmetic paste-display preference
+    -- so a user with `collapse_large_pastes = False` got NEW-2's
+    multi-second freeze back in full. The performance guard must hold
+    regardless of that preference; only collapse-ON-PASTE cosmetics should
+    respect it."""
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        composer.collapse_large_pastes = False
+        threshold = composer.UNDO_RECOLLAPSE_CHAR_THRESHOLD
+        big_text = "z" * (threshold + 500)
+
+        composer.insert_file_segment(big_text, label="big.txt")
+        composer.focus()
+        await pilot.pause()
+
+        composer.insert_text("!")
+        assert composer.undo() is True
+
+        painted = visible_draft.render_line(0).text.rstrip()
+        assert f"Pasted Text: {len(big_text)} Characters" in painted
+        assert big_text not in painted
+        assert composer.draft_text() == big_text
