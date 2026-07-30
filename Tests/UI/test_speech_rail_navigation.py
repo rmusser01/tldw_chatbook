@@ -74,14 +74,18 @@ async def test_each_rail_entry_switches_the_view(view_key):
 
 @pytest.mark.asyncio
 async def test_the_playground_view_mounts_a_playground():
-    """The playground view must mount *something* that is a playground.
+    """The playground view must mount the rebuilt `SpeechPlaygroundPane`.
 
-    It is dev's `TTSPlaygroundWidget` for now, not the rebuilt pane. dev
-    shipped a profile library into that widget while this rebuild was in
-    flight, and retiring it would delete the UI half of that feature; the
-    pane takes the view over once its axis row and dev's profile presets are
-    reconciled. Asserting the pane here would assert a decision that has not
-    been made yet.
+    dev shipped a profile library into the legacy `TTSPlaygroundWidget`
+    while this rebuild was in flight; the pane took the view over once its
+    axis row and dev's profile presets were reconciled -- the ownership
+    ruling at
+    `Docs/superpowers/specs/2026-07-30-speech-preset-axis-ownership.md`
+    (`SpeechPlaygroundPane.axis_values`/`axis_defaults` are the model of
+    record, every axis writer keeps the row's markers in step, and
+    defaults are seeded from persisted preferences at construction). Retiring
+    the legacy widget's own code is a separate task and not part of this
+    ruling.
     """
     app = _build_test_app()
     async with app.run_test(size=(200, 60)) as pilot:
@@ -89,8 +93,5 @@ async def test_the_playground_view_mounts_a_playground():
         await app.push_screen(screen)
         await pilot.pause()
         await pilot.pause()
-        from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
 
-        assert screen.query(TTSPlaygroundWidget) or screen.query(
-            "#speech-playground-pane"
-        ), "the playground view mounts no playground at all"
+        assert screen.query_one("#speech-playground-pane")
