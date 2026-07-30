@@ -145,11 +145,20 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     #: tall at 160x42 with the create form open -- two extra `Static` rows for
     #: this text is two rows the form does not have. Both strings are painted
     #: whenever the field is, which a tooltip would not be.
+    #:
+    #: TASK-1362 close-out (spec AC#2): the help copy also states
+    #: `change_threshold`'s role, since it is the other half of "why did/did
+    #: not a change fire" and has no live UI of its own to explain it in. Kept
+    #: to a single added clause -- the field's bottom border is 91 columns
+    #: wide at 160x42 (verified: 87 chars is the hard cutoff before Textual's
+    #: border-label renderer silently truncates with an ellipsis), so this is
+    #: not decorative belt-tightening, it is the actual budget.
     _IGNORE_SELECTORS_LABEL = (
         "Ignore elements (CSS selectors — one rule per line; commas group)"
     )
     _IGNORE_SELECTORS_HELP = (
-        "Too noisy? The item diff names what churned; add a rule here to silence it."
+        "Add a rule to silence noise; changes always report; "
+        "change_threshold limits volume."
     )
 
     #: Cap on the stored selector text. Generous next to the shipped default

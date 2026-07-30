@@ -2,7 +2,7 @@
 
 **Tasks:** TASK-1362 (threshold), with TASK-1361 (snapshot tie-break, already implemented on this branch) landing together.
 **Date:** 2026-07-29
-**Status:** proposed
+**Status:** implemented
 
 ## Problem
 
@@ -139,6 +139,21 @@ than preserving behaviour:
   `PRAGMA table_info` column-presence check with `ALTER TABLE` (the same pattern that added
   `content_kind`). The `schema_version` table exists but is pinned at 1 and never consulted; do
   not invent a versioning scheme around it.
+
+**Corrected (implementation, TASK-1362 Task 2 review):** this design originally asserted the
+column-presence `ALTER` and the two data-migration `UPDATE`s "share one transaction," on the theory
+that the write would gate the marker structurally. That was false as written. Python's `sqlite3`
+module (default isolation, no override anywhere in `BaseDB`/`connect_private_sqlite`) opens an
+implicit transaction only before DML (`INSERT`/`UPDATE`/`DELETE`/`REPLACE`), never before DDL, so a
+bare `ALTER TABLE` autocommits immediately regardless of what transaction the caller believes it is
+in. Proven with a probe: an exception raised between the `ALTER` and the second `UPDATE` left the
+fingerprint column present — the one-time gate durably spent — with `change_threshold` moved but
+`ignore_selectors` permanently `NULL`, and unrepairable, since a clean re-run sees the column and
+skips entirely. What actually shipped instead is an **explicit `BEGIN IMMEDIATE`** transaction
+wrapping the `ALTER` and both `UPDATE`s, committed together on success and rolled back together on
+any exception (`DB/Subscriptions_DB.py:609-633`), restoring the atomicity the gate depends on.
+SQLite's DDL is itself fully transactional; only the `sqlite3` module's implicit-BEGIN policy is
+not, and that distinction is what the original wording missed.
 
 Phase D's migration lessons apply mechanically: the corrected values must actually be **written**
 (not just returned), the write's success must gate any marker, and `save`-style helpers that signal
