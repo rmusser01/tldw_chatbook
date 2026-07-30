@@ -160,6 +160,10 @@ The failures reproduce on an exact `origin/dev` checkout:
   Library's blocked action pressable so its handler can explain the recovery;
   only the Library parameter fails, while Watchlists and Skills still satisfy
   the disabled contract.
+- The completed first-run character-chat UAT task was repeatedly renamed to
+  avoid numeric collisions, ending at filename 672, but its legacy Markdown
+  never received YAML frontmatter and its heading still says task 635. The
+  repository-wide task identity guard correctly rejects the malformed record.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -607,6 +611,11 @@ Update the tests to describe current behavior:
     `library-source-action-blocked`; retain the disabled assertion for
     Watchlists and Skills and retain every recovery-copy and tooltip assertion.
     Do not change production or duplicate the dedicated blocked-press test.
+63. Add standard YAML frontmatter with unique id `TASK-672`, completed status,
+    dates derived from the task's existing history, and bounded metadata to the
+    renumbered first-run character-chat UAT task. Change only its top heading
+    from task 635 to task 672; preserve all completed acceptance criteria,
+    implementation plan, implementation notes, and historical explanation.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -847,6 +856,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   pressable-but-blocked contract to Watchlists or Skills is outside the
   observed failure; a route-specific assertion preserves their current
   disabled behavior without another fixture abstraction.
+- Exempting one malformed task from the identity harness would hide the exact
+  filename/frontmatter drift the guard exists to prevent. Renumbering the file
+  again would repeat the earlier mistake; completing its existing `TASK-672`
+  identity is the minimal source-of-truth repair.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

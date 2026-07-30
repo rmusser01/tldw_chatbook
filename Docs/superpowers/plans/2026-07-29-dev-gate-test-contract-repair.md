@@ -2459,6 +2459,44 @@ git diff --check
 Expected: all service-unavailable rows pass with Library pressable and blocked,
 Watchlists and Skills disabled, and static plus diff checks clean.
 
+### Task 4bg: Restore the renumbered UAT task identity
+
+**Files:**
+- Modify: `backlog/tasks/task-672 - First-run-character-chat-UAT-orientation-markup-crash-approval-card-mount-order.md`
+
+- [ ] **Step 1: Preserve the identity-guard RED**
+
+Run `test_backlog_task_frontmatter_ids_are_unique`. Expected before repair:
+the guard rejects task 672 because the file starts with a legacy task-635
+heading instead of YAML frontmatter. Confirm repository history renamed this
+same file through several collision-free ids and no other file owns
+`TASK-672`.
+
+- [ ] **Step 2: Repair only record identity**
+
+Prepend standard frontmatter for unique id `TASK-672`, its existing title,
+`Done` status, empty assignee list, bounded labels, no dependencies, high
+priority, and dates grounded in the existing commit history. Change the
+Markdown heading to task 672. Preserve the completed acceptance criteria,
+plan, implementation notes, and historical narrative byte-for-byte otherwise.
+Do not weaken the harness or renumber the file again.
+
+- [ ] **Step 3: Verify Backlog parsing and uniqueness**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_product_maturity_phase1_harness.py::test_backlog_task_frontmatter_ids_are_unique \
+  -q
+backlog task 672 --plain
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_product_maturity_phase1_harness.py \
+  -q
+git diff --check
+```
+
+Expected: task 672 parses as a completed task with its existing content, every
+task identity remains unique, the harness module passes, and the diff is clean.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

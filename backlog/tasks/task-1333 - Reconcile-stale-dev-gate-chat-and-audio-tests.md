@@ -91,6 +91,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #62 The Personas character-import failure regression expects the current fixed recovery message, proves the raw importer exception text is not surfaced, declares its unused dictionary service unavailable during selection setup, and retains the selected-character state after failure.
 - [ ] #63 The product-maturity Search/RAG-to-Console core-loop regression no longer reads the retired app-root `pending_chat_handoff` field and still proves the real route, staged-source count, live-work title, evidence readiness, RAG state, and suggested composer draft through current visible Console behavior.
 - [ ] #64 The product-maturity service-unavailable matrix expects Library's established pressable-but-blocked Console handoff while continuing to require disabled handoffs for Watchlists and Skills, with every destination's recovery copy and tooltip retained.
+- [ ] #65 The completed first-run character-chat UAT task record has valid unique `TASK-672` YAML frontmatter and a matching task heading, while its acceptance criteria, plan, implementation notes, and history remain unchanged.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -160,6 +161,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 56. Align the Personas import-failure assertion with the current fixed recovery copy and isolate its unused dictionary-service fixture.
 57. Remove the product-maturity core-loop test's obsolete app-root handoff-consumption wait while retaining its complete visible Console outcome proof.
 58. Align only the Library row in the product-maturity service-unavailable matrix with its pressable-but-blocked recovery contract while retaining disabled Watchlists and Skills rows.
-59. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-60. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+59. Repair the renumbered first-run character-chat UAT task's missing YAML identity and stale heading without rewriting its completed record.
+60. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+61. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
