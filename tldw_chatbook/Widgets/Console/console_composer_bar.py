@@ -2,12 +2,19 @@
 
 Undo/redo (TASK-1281): history is recorded as flat (draft text, cursor
 index) snapshots, never a copy of the live `_DraftSegment` objects. This
-keeps the history model simple, but it means undo/redo restores plain
-text only -- a collapsed paste token or a labeled file/attachment segment
-that existed at a snapshotted point always comes back as ordinary literal
-text, never re-collapsed into its display token. A redo that lands back on
-a snapshot taken while a large paste was still collapsed will therefore
-show the whole payload expanded in the composer, not the short token.
+keeps the history model simple, and it means undo/redo restores plain
+text -- a snapshot never carries a segment's `label` or its `expanded`/
+`confirm` display state, so a restored segment is always either an
+ordinary literal or a generic collapsed paste token (`_apply_history_
+snapshot` re-collapses any restored text over `paste_collapse_threshold`,
+review NEW-2), never the exact original presentation (a labeled file/
+attachment segment, or one the user had manually unfurled, comes back as
+a plain "Pasted Text: N Characters" token if it's still over threshold,
+or as ordinary literal text if it isn't). What undo/redo does NOT do
+anymore is repaint a large restored segment as one giant literal: that
+used to run the composer's O(n^2) wrap/render path against the full
+text on every undo/redo (measured up to 283s frozen for a 2.4 MB
+snapshot), which is why the re-collapse exists.
 """
 
 from __future__ import annotations
@@ -85,12 +92,14 @@ class _DraftHistorySnapshot:
     """Undo/redo entry (TASK-1281): the canonical draft text plus caret offset.
 
     Deliberately flat text+cursor rather than a copy of `_segments` -- the
-    architecture this task specified trades away paste-token collapse
-    fidelity across an undo/redo (a restored segment always comes back as
-    plain literal text, never a re-collapsed paste token) for a much
-    simpler history model. `restore_stashed_draft`/`ConsoleDraftStash`
-    already own the "preserve real segment objects" contract for the send
-    flow; this is a separate, narrower one.
+    architecture this task specified trades away exact display-state
+    fidelity across an undo/redo (`_apply_history_snapshot` reconstructs a
+    single segment from `text` alone, re-collapsing it into a generic
+    paste token when it's over `paste_collapse_threshold` -- review NEW-2 --
+    but never recovering the ORIGINAL segment's `label` or `expanded`/
+    `confirm` state) for a much simpler history model. `restore_stashed_
+    draft`/`ConsoleDraftStash` already own the "preserve real segment
+    objects" contract for the send flow; this is a separate, narrower one.
     """
 
     text: str
@@ -146,15 +155,19 @@ class ConsoleComposerBar(Horizontal):
     #: TASK-1281: max entries kept per undo/redo stack; the oldest entry is
     #: dropped once a push would exceed this.
     UNDO_HISTORY_DEPTH_CAP = 100
-    #: TASK-1281 review F6: max total characters retained across BOTH
-    #: stacks combined, evicting the oldest entries first once a push would
-    #: exceed it. Entry count alone doesn't bound memory: every snapshot
-    #: holds a FULL copy of the draft text, so a single large inlined
-    #: attachment (`insert_file_segment`, up to `MAX_ATTACHMENT_BYTES`)
-    #: multiplies across every entry recorded after it. Measured during
-    #: review: one 1 MB `insert_file_segment` followed by 20 ordinary
-    #: pastes retained >20,000,000 characters across just 21 entries --
-    #: nowhere near the 100-entry depth cap.
+    #: TASK-1281 review F6 (comment corrected per review NEW-3): max total
+    #: characters retained PER STACK -- `_evict_to_char_budget` is applied
+    #: to the undo stack and the redo stack independently, so the real
+    #: combined ceiling across both is up to ~2x this constant (plus the
+    #: never-evict-the-last-entry allowance on each), not this constant
+    #: itself. Evicts the oldest entries of a stack first once a push would
+    #: put that stack over budget. Entry count alone doesn't bound memory:
+    #: every snapshot holds a FULL copy of the draft text, so a single
+    #: large inlined attachment (`insert_file_segment`, up to
+    #: `MAX_ATTACHMENT_BYTES`) multiplies across every entry recorded after
+    #: it. Measured during review: one 1 MB `insert_file_segment` followed
+    #: by 20 ordinary pastes retained >20,000,000 characters across just
+    #: 21 entries -- nowhere near the 100-entry depth cap.
     UNDO_HISTORY_CHAR_BUDGET = 2_000_000
     #: Shared with the mic button's initial `compose()` tooltip and
     #: `sync_dictation_state`'s idle tooltip, and used as the fallback in
@@ -1674,9 +1687,41 @@ class ConsoleComposerBar(Horizontal):
             total -= len(removed.text)
 
     def _apply_history_snapshot(self, snapshot: _DraftHistorySnapshot) -> None:
-        """Replace the live draft with a recorded undo/redo snapshot."""
+        """Replace the live draft with a recorded undo/redo snapshot.
+
+        TASK-1281 review NEW-2: a restored segment over the paste-collapse
+        threshold is created COLLAPSED -- the same paste-token mechanics
+        `insert_pasted_text` already uses for a real paste over threshold --
+        rather than as one giant literal segment. Restoring it as a flat
+        literal used to run `_refresh_visible_draft`'s O(n^2) wrap/render
+        path against the FULL text on every undo/redo: measured up to 283s
+        frozen on the main thread for a 2.4 MB restored draft, and a
+        realistic one-keystroke repro (attach 200 KB, type one character,
+        undo) froze for 2.89s. F6's char-budget eviction deliberately keeps
+        such large snapshots revertible, which is exactly what made this
+        reachable by an ordinary Ctrl+Z rather than only a contrived one.
+        This also means a redo landing back on a snapshot taken while a
+        large paste was still collapsed now correctly shows the collapsed
+        token again, not the fully expanded literal text -- see the module
+        docstring for the (narrower) limitation that remains: the restored
+        token is always a generic "Pasted Text: N Characters" collapse,
+        never the original segment's label (a labeled file/attachment
+        segment, or one already `expanded`/mid-`confirm`, is not carried
+        through the flat snapshot -- only the raw text and whether it
+        crosses the threshold are).
+        """
         self._draft_selection_all = False
-        self._segments = [_DraftSegment(snapshot.text)] if snapshot.text else []
+        if not snapshot.text:
+            self._segments = []
+        elif (
+            self.collapse_large_pastes_enabled
+            and len(snapshot.text) > self.paste_collapse_threshold
+        ):
+            self._segments = [
+                _DraftSegment(snapshot.text, collapse_state="collapsed")
+            ]
+        else:
+            self._segments = [_DraftSegment(snapshot.text)]
         self._segments_initialized = True
         self._cursor_index = max(0, min(snapshot.cursor_index, len(snapshot.text)))
         self._sync_hidden_input()
@@ -1933,11 +1978,17 @@ class ConsoleComposerBar(Horizontal):
             self._record_undo_snapshot(coalesce=False)
             self.clear_draft()
             return
-        if not self._segments_initialized:
-            if self.draft_text():
-                self._record_undo_snapshot(coalesce=False)
-            self.load_draft(self.draft_text()[:-1])
-            return
+        # TASK-1281 review NEW-1: previously this branch shortcut through
+        # `self.load_draft(self.draft_text()[:-1])` -- but `load_draft` now
+        # unconditionally wipes both undo/redo stacks (F4), which silently
+        # discarded the snapshot just recorded a line above it, making this
+        # deletion the one path in the whole widget that was NOT undoable.
+        # `_ensure_editable_segments()` is the same lazy-init helper every
+        # other mutator here already uses (`delete_right`/`delete_word_left`
+        # included); it initializes segments from the legacy draft without
+        # touching history, so the ordinary deletion logic below can record
+        # and splice exactly as it does once the composer is initialized.
+        self._ensure_editable_segments()
         self._clamp_cursor()
         if not self._segments or self._cursor_index == 0:
             self._sync_interaction_classes()
