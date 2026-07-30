@@ -43,6 +43,26 @@ class ChatPersistenceService:
             and repository.local_citation_writes_ready
         )
 
+    def get_message_version(self, message_id: str) -> int | None:
+        """Return the current positive version for one non-deleted message.
+
+        Args:
+            message_id: Persisted Chat message identifier.
+
+        Returns:
+            The exact positive integer row version, or ``None`` when the row
+            is missing, deleted, or carries an untrustworthy version value.
+        """
+        if type(message_id) is not str or not message_id:
+            return None
+        message = self.db.get_message_by_id(message_id)
+        if message is None or message.get("deleted"):
+            return None
+        version = message.get("version")
+        if type(version) is not int or version < 1:
+            return None
+        return version
+
     @staticmethod
     def derive_conversation_title(
         *,

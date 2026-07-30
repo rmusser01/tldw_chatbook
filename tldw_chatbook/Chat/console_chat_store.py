@@ -33,6 +33,11 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_speech import (
+    ConsoleSpeechSnapshotRejected,
+    ConsoleSpeechSnapshotRejectionCode,
+    TTSMessageSpeechSnapshot,
+)
 from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
@@ -120,6 +125,9 @@ class ConsoleChatPersistence(Protocol):
         passes this) leaves attachments untouched. Optional: fakes used in
         tests may omit this parameter entirely.
         """
+
+    def get_message_version(self, message_id: str) -> int | None:
+        """Return the current positive durable row version, if trustworthy."""
 
     def update_conversation_system_prompt(
         self,
@@ -376,6 +384,9 @@ class ConsoleChatStore:
         self._stream_materialized_counts: dict[str, int] = {}
         self._sync_v2_message_versions: dict[str, str] = {}
         self._variant_stream_bases: dict[str, _VariantStreamBase] = {}
+        # Ephemeral fence for issued speech snapshots. It deliberately lives
+        # outside ConsoleChatMessage so it is neither persisted nor restored.
+        self._message_speech_revisions: dict[str, int] = {}
 
     def ensure_session(
         self,
@@ -667,6 +678,7 @@ class ConsoleChatStore:
             self._stream_materialized_counts.pop(message_id, None)
             self._pending_persistence_message_ids.discard(message_id)
             self._variant_stream_bases.pop(message_id, None)
+            self._message_speech_revisions.pop(message_id, None)
             self._native_parent_by_message.pop(message_id, None)
 
         self._messages_by_session.pop(session_id, None)
@@ -874,6 +886,7 @@ class ConsoleChatStore:
         # Pre-existing bug fixed while here: the regenerate base snapshots were
         # never cleared on restore, leaking across a state replacement.
         self._variant_stream_bases.clear()
+        self._message_speech_revisions.clear()
         self._nodes_by_session.clear()
         self._children_by_parent.clear()
         self._native_parent_by_message.clear()
@@ -1355,6 +1368,181 @@ class ConsoleChatStore:
         self._materialize_stream_buffer(message)
         return self._snapshot(message)
 
+    def issue_tts_message_speech_snapshot(
+        self,
+        message_id: str,
+    ) -> TTSMessageSpeechSnapshot:
+        """Issue a trusted snapshot for one speakable active-path message.
+
+        Args:
+            message_id: Native Console message selected by the user.
+
+        Returns:
+            An immutable snapshot bound to the exact selected text and
+            current trusted session authorship.
+
+        Raises:
+            ConsoleSpeechSnapshotRejected: If the message is missing,
+                inactive, incomplete, non-assistant, blank, or cannot be
+                durably version-fenced.
+        """
+        session_id = self._message_session_index.get(message_id)
+        if session_id is None:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MISSING_MESSAGE
+            )
+        if session_id != self.active_session_id:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
+            )
+        session = self._sessions.get(session_id)
+        message = self._nodes_by_session.get(session_id, {}).get(message_id)
+        if session is None or message is None:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MISSING_MESSAGE
+            )
+        if (
+            message.persisted_message_id is not None
+            and session.persisted_conversation_id is None
+        ):
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+            )
+        if message_id not in self.active_path_message_ids(session_id):
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+            )
+        raw_content, selected_variant_id = self._speech_selection(message)
+        if (
+            message.role is not ConsoleMessageRole.ASSISTANT
+            or message.status != "complete"
+            or not raw_content.strip()
+        ):
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MESSAGE_NOT_SPEAKABLE
+            )
+        speech_revision = self._message_speech_revisions.get(message_id)
+        if type(speech_revision) is not int or speech_revision < 0:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+            )
+        if (
+            session.assistant_kind is not None
+            and type(session.assistant_kind) is not str
+        ):
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.AUTHORSHIP_CHANGED
+            )
+        persisted_version = self._persisted_message_version_or_reject(message)
+        return TTSMessageSpeechSnapshot(
+            session_id=session_id,
+            message_id=message.id,
+            persisted_conversation_id=session.persisted_conversation_id,
+            persisted_message_id=message.persisted_message_id,
+            raw_content=raw_content,
+            selected_variant_id=selected_variant_id,
+            speech_revision=speech_revision,
+            persisted_message_version=persisted_version,
+            role=message.role,
+            status=message.status,
+            assistant_kind=session.assistant_kind,
+            character_ref=session.character_ref(),
+        )
+
+    def validate_tts_message_speech_snapshot(
+        self,
+        snapshot: TTSMessageSpeechSnapshot,
+    ) -> str:
+        """Revalidate an issued Console speech snapshot against live state.
+
+        Args:
+            snapshot: Immutable snapshot previously issued by this store.
+
+        Returns:
+            The captured exact raw content after every identity, state,
+            authorship, and durable-version check succeeds.
+
+        Raises:
+            ConsoleSpeechSnapshotRejected: If any captured fact is stale or
+                cannot be re-established.
+        """
+        if type(snapshot) is not TTSMessageSpeechSnapshot:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+            )
+        if snapshot.session_id != self.active_session_id:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
+            )
+        session = self._sessions.get(snapshot.session_id)
+        if session is None:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
+            )
+        owner_session_id = self._message_session_index.get(snapshot.message_id)
+        if owner_session_id is None:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MISSING_MESSAGE
+            )
+        if owner_session_id != snapshot.session_id:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+            )
+        message = self._nodes_by_session.get(snapshot.session_id, {}).get(
+            snapshot.message_id
+        )
+        if message is None:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MISSING_MESSAGE
+            )
+        if (
+            message.persisted_message_id is not None
+            and session.persisted_conversation_id is None
+        ):
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+            )
+        if snapshot.message_id not in self.active_path_message_ids(snapshot.session_id):
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+            )
+        raw_content, selected_variant_id = self._speech_selection(message)
+        if (
+            message.role is not ConsoleMessageRole.ASSISTANT
+            or message.status != "complete"
+            or not raw_content.strip()
+        ):
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MESSAGE_NOT_SPEAKABLE
+            )
+        if (
+            message.id != snapshot.message_id
+            or message.role is not snapshot.role
+            or message.status != snapshot.status
+            or selected_variant_id != snapshot.selected_variant_id
+            or raw_content != snapshot.raw_content
+            or self._message_speech_revisions.get(message.id)
+            != snapshot.speech_revision
+            or session.persisted_conversation_id != snapshot.persisted_conversation_id
+            or message.persisted_message_id != snapshot.persisted_message_id
+        ):
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+            )
+        if (
+            session.assistant_kind != snapshot.assistant_kind
+            or session.character_ref() != snapshot.character_ref
+        ):
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.AUTHORSHIP_CHANGED
+            )
+        current_version = self._persisted_message_version_or_reject(message)
+        if current_version != snapshot.persisted_message_version:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.PERSISTED_VERSION_CHANGED
+            )
+        return snapshot.raw_content
+
     def replace_deferred_terminal_body(
         self,
         message_id: str,
@@ -1390,6 +1578,7 @@ class ConsoleChatStore:
         else:
             buffer[:] = [selected_body]
         self._stream_materialized_counts[message.id] = 1
+        self._bump_message_speech_revision(message.id)
         return self._snapshot(message)
 
     def set_citation_presentation(
@@ -1440,6 +1629,7 @@ class ConsoleChatStore:
                 content=content,
             )
             message.content = message.variants.current.content
+        self._bump_message_speech_revision(message.id)
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -1475,6 +1665,7 @@ class ConsoleChatStore:
             self._stream_materialized_counts.pop(node_id, None)
             self._pending_persistence_message_ids.discard(node_id)
             self._variant_stream_bases.pop(node_id, None)
+            self._message_speech_revisions.pop(node_id, None)
         # Only when the deleted branch was on the active path does the leaf move
         # (up to the deleted node's parent); an off-path delete leaves it alone.
         if on_active_path:
@@ -1639,6 +1830,7 @@ class ConsoleChatStore:
         )
         buffer.append(chunk)
         message.status = "streaming"
+        self._bump_message_speech_revision(message.id)
         return self._snapshot(message)
 
     def reset_stream_content(self, message_id: str) -> ConsoleChatMessage:
@@ -1684,6 +1876,7 @@ class ConsoleChatStore:
         self._stream_chunks_by_message.pop(message.id, None)
         self._stream_materialized_counts.pop(message.id, None)
         message.status = "streaming"
+        self._bump_message_speech_revision(message.id)
         return self._snapshot(message)
 
     def mark_message_complete(self, message_id: str) -> ConsoleChatMessage:
@@ -1699,12 +1892,14 @@ class ConsoleChatStore:
         self.clear_terminal_citation_state(message.id)
         if not terminal_persistence:
             message.status = "complete"
+            self._bump_message_speech_revision(message.id)
             self._persist_existing_message(message)
             return self._snapshot(message)
 
         try:
             if not message.content:
                 message.status = "complete"
+                self._bump_message_speech_revision(message.id)
                 self._persist_existing_message(message)
                 return self._snapshot(message)
 
@@ -1715,6 +1910,7 @@ class ConsoleChatStore:
                 except Exception:
                     logger.warning("terminal_finalizer_unavailable")
             message.status = "complete"
+            self._bump_message_speech_revision(message.id)
             session_id = self._message_session_index[message.id]
             try:
                 self._persist_new_message(
@@ -1761,6 +1957,7 @@ class ConsoleChatStore:
             message.status = base.prior_status
         else:
             message.status = "stopped"
+        self._bump_message_speech_revision(message.id)
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -1792,6 +1989,7 @@ class ConsoleChatStore:
             message.status = base.prior_status
         else:
             message.status = "failed"
+        self._bump_message_speech_revision(message.id)
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -1833,6 +2031,7 @@ class ConsoleChatStore:
                 "not one that is mid-stream."
             )
         message.status = "failed"
+        self._bump_message_speech_revision(message.id)
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -1874,6 +2073,7 @@ class ConsoleChatStore:
         message.status = "pending"
         self._stream_chunks_by_message.pop(message.id, None)
         self._stream_materialized_counts.pop(message.id, None)
+        self._bump_message_speech_revision(message.id)
         return self._snapshot(message)
 
     def add_variant(self, message_id: str, content: str) -> ConsoleChatMessage:
@@ -1892,6 +2092,7 @@ class ConsoleChatStore:
             message.variants.variants.append(ConsoleVariant(content=content))
             message.variants.selected_index = len(message.variants.variants) - 1
         message.content = message.variants.current.content
+        self._bump_message_speech_revision(message.id)
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -1922,6 +2123,7 @@ class ConsoleChatStore:
         self._stream_chunks_by_message.pop(message.id, None)
         self._stream_materialized_counts.pop(message.id, None)
         message.status = "streaming"
+        self._bump_message_speech_revision(message.id)
         return self._snapshot(message)
 
     def finalize_variant_stream(self, message_id: str) -> ConsoleChatMessage:
@@ -1954,6 +2156,7 @@ class ConsoleChatStore:
             message.variants.selected_index = len(message.variants.variants) - 1
         message.content = message.variants.current.content
         message.status = "complete"
+        self._bump_message_speech_revision(message.id)
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -1969,6 +2172,7 @@ class ConsoleChatStore:
             raise ValueError("selected_index must reference an existing variant")
         message.variants.selected_index = selected_index
         message.content = message.variants.current.content
+        self._bump_message_speech_revision(message.id)
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -2732,6 +2936,85 @@ class ConsoleChatStore:
             return node
         raise KeyError(f"Unknown Console message: {message_id}")
 
+    @staticmethod
+    def _selected_speech_variant_id(message: ConsoleChatMessage) -> str:
+        """Return the native linear id or exact selected text-variant id."""
+        if message.variants is None:
+            return message.id
+        try:
+            selected_id = message.variants.current.id
+        except (AttributeError, IndexError):
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+            ) from None
+        if type(selected_id) is not str or not selected_id:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+            )
+        return selected_id
+
+    @classmethod
+    def _speech_selection(
+        cls,
+        message: ConsoleChatMessage,
+    ) -> tuple[str, str]:
+        """Return exact visible text and its selected text-variant identity."""
+        selected_variant_id = cls._selected_speech_variant_id(message)
+        if type(message.content) is not str:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+            )
+        if message.variants is not None:
+            try:
+                selected_content = message.variants.current.content
+            except (AttributeError, IndexError):
+                raise ConsoleSpeechSnapshotRejected(
+                    ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+                ) from None
+            if type(selected_content) is not str or message.content != selected_content:
+                raise ConsoleSpeechSnapshotRejected(
+                    ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+                )
+        return message.content, selected_variant_id
+
+    def _persisted_message_version_or_reject(
+        self,
+        message: ConsoleChatMessage,
+    ) -> int | None:
+        """Read the durable version fence or reject an unverifiable row."""
+        persisted_message_id = message.persisted_message_id
+        if persisted_message_id is None:
+            return None
+        if type(persisted_message_id) is not str or not persisted_message_id:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.PERSISTED_VERSION_UNAVAILABLE
+            )
+        persistence = self.persistence
+        reader = (
+            getattr(persistence, "get_message_version", None)
+            if persistence is not None
+            else None
+        )
+        if not callable(reader):
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.PERSISTED_VERSION_UNAVAILABLE
+            )
+        try:
+            version = reader(persisted_message_id)
+        except Exception:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.PERSISTED_VERSION_UNAVAILABLE
+            ) from None
+        if type(version) is not int or version < 1:
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.PERSISTED_VERSION_UNAVAILABLE
+            )
+        return version
+
+    def _bump_message_speech_revision(self, message_id: str) -> None:
+        """Advance one registered node's process-local speech fence."""
+        self._message_speech_revisions[message_id] += 1
+
     def _register_tree_node(
         self,
         session_id: str,
@@ -2753,6 +3036,7 @@ class ConsoleChatStore:
             parent_native_id, []
         ).append(message.id)
         self._message_session_index[message.id] = session_id
+        self._message_speech_revisions[message.id] = 0
 
     def _ingest_linear_messages(
         self, session_id: str, messages: Iterable[ConsoleChatMessage]
@@ -3213,6 +3497,7 @@ class ConsoleChatStore:
         message.content = "".join(buffer)
         buffer[:] = [message.content]
         self._stream_materialized_counts[message.id] = 1
+        self._bump_message_speech_revision(message.id)
         return True
 
     def _materialize_stream_buffer(self, message: ConsoleChatMessage) -> None:
