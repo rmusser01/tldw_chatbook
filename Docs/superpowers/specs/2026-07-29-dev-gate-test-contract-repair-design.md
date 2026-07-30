@@ -386,6 +386,13 @@ Update the tests to describe current behavior:
     llama.cpp-default assertion followed by Anthropic Console-control
     precedence. Update the test name/comments to describe the current owner.
     Do not restore app-reactive coupling or add a compatibility path.
+44. In the two skill regressions that wrap
+    `ConsoleChatController.submit_draft`, capture the active Console session id
+    before sending and include it in all three exact spy assertions. Preserve
+    the raw `$code-review` draft text, controller-side skill execution,
+    transcript retention, and picker argument/no-argument cases. Do not weaken
+    to `ANY`, remove exact text checks, or drop the session-routing contract
+    threaded through normal Console sends.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -540,6 +547,9 @@ compatibility shims. No broad deletion of live tests.
   would reverse the accepted explicit resolver boundary. Staging the existing
   screen-owned control field keeps this integration check useful without
   duplicating event or compatibility machinery.
+- Reverting `submit_draft` to text-only calls would reopen the cross-tab routing
+  race fixed by the dispatch-time session contract. Capturing the already-live
+  active id keeps the skill tests exact without adding a fixture abstraction.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

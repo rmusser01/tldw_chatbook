@@ -1706,6 +1706,43 @@ git add \
 git commit -m "test(console): follow resolution control owner"
 ```
 
+### Task 4an: Assert skill sends against the dispatch session
+
+**Files:**
+- Modify: `Tests/UI/test_console_skill_commands.py`
+
+- [ ] **Step 1: Reproduce the stale text-only spy assertions**
+
+Run the skill-command module. Expected: the leading-dollar normal-send
+regression expects `submit_draft("$code-review fix it")`, while production
+correctly passes the active `session_id` keyword. Confirm the picker-driven
+regression contains the same stale expectation for both argument and
+no-argument drafts.
+
+- [ ] **Step 2: Assert exact text and exact dispatch owner**
+
+In each affected test, capture the active store session id before dispatch.
+Include `session_id=<captured id>` in all three
+`submit_spy.assert_called_once_with` assertions. Keep the exact raw drafts,
+skill execution, stored transcript, no-TOOL-row, and picker behavior
+assertions unchanged. Do not edit production or weaken the spy assertions.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_skill_commands.py \
+  Tests/UI/test_console_command_composer.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_console_skill_commands.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_console_skill_commands.py
+git diff --check
+git add \
+  Tests/UI/test_console_skill_commands.py
+git commit -m "test(console): assert skill dispatch session"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
