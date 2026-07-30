@@ -86,6 +86,42 @@ class ChatPersistenceService:
         conversation_title: Optional[str] = None,
         system_prompt: Optional[str] = None,
     ) -> str:
+        """Create a conversation and link it to a workspace when requested.
+
+        Args:
+            character_id: Local character identifier associated with the conversation.
+            character_name: Display name used to derive a title when no explicit
+                title is supplied.
+            assistant_kind: Kind of assistant that owns the conversation.
+            assistant_id: Stable assistant identifier used for title derivation.
+            assistant_authority_id: Provenance authority identifier. Omitting it
+                leaves the field absent so eligible DB-owned local inference may
+                apply; passing ``None`` explicitly preserves unproven authority.
+            persona_memory_mode: Memory behavior for a persona conversation.
+            runtime_backend: Backend selected to run the assistant.
+            discovery_owner: Owner of the assistant discovery record.
+            discovery_entity_id: Discovery record identifier for the assistant.
+            scope_type: Conversation scope. Only an explicit normalized
+                ``scope_type="workspace"`` validates and links workspace
+                membership here.
+            workspace_id: Candidate workspace identifier forwarded to the
+                database and resolved for an explicit workspace scope.
+                Non-workspace/global persistence is normalized by the database
+                and may clear it; omitting scope does not create a link.
+            conversation_title: Explicit title, which takes precedence when
+                truthy; otherwise the character or assistant-derived title is used.
+            system_prompt: Initial system prompt persisted with the conversation.
+
+        Returns:
+            Persisted conversation ID.
+
+        Raises:
+            ValueError: If workspace scope is invalid or its workspace cannot be
+                resolved.
+            Exception: If workspace membership linkage fails after creation. A
+                best-effort soft-delete is attempted; a false result can leave
+                the row, and a cleanup exception may replace the link error.
+        """
         safe_workspace_id = self._require_workspace_scope(
             scope_type=scope_type,
             workspace_id=workspace_id,

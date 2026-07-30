@@ -376,6 +376,41 @@ class ChatConversationService:
         external_ref: str | None = None,
         **extra_fields: Any,
     ) -> str:
+        """Create and persist a conversation.
+
+        Args:
+            title: Secondary title candidate used only when raw
+                ``conversation_title`` is falsey.
+            conversation_title: Raw truthy value selected by
+                ``conversation_title or title``, including whitespace. Downstream
+                cleaning can discard it and derive an assistant title without
+                falling back to ``title``.
+            character_id: Local character identifier associated with the conversation.
+            assistant_kind: Kind of assistant that owns the conversation.
+            assistant_id: Stable assistant identifier.
+            assistant_authority_id: Provenance authority identifier. Omitting it
+                leaves the field absent so eligible DB-owned local inference may
+                apply; passing ``None`` explicitly preserves unproven authority.
+            persona_memory_mode: Memory behavior for a persona conversation.
+            runtime_backend: Backend selected to run the assistant.
+            discovery_owner: Owner of the assistant discovery record.
+            discovery_entity_id: Discovery record identifier for the assistant.
+            scope_type: Scope classification for the conversation.
+            workspace_id: Workspace identifier when the scope requires one.
+            state: Initial conversation state.
+            topic_label: Optional topic label.
+            source: Origin that created the conversation.
+            external_ref: External source reference.
+            **extra_fields: Additional database-supported fields. Explicit named
+                fields are assigned after this mapping; recognized keyword names
+                bind to the signature rather than this mapping.
+
+        Returns:
+            Persisted conversation ID as a string.
+
+        Raises:
+            ValueError: If the database cannot create the conversation.
+        """
         resolved_title = derive_conversation_title(
             assistant_kind=assistant_kind,
             assistant_name=None,
