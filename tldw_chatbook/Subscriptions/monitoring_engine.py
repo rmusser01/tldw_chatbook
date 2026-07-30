@@ -1008,6 +1008,36 @@ class FeedMonitor:
         return date_str
 
 
+#: How many snapshots `_store_snapshot` keeps per **(subscription, url)**
+#: (TASK-1393). Nothing in the repo ever deleted from `url_snapshots` -- the
+#: only DELETE lives in `baseline_manager.py`, which has zero importers
+#: (TASK-1360) -- while every significant change stores a full row including
+#: `raw_html`. TASK-1362's default `change_threshold` of 0.0 means every real
+#: change persists one, and TASK-1361's per-URL baselines multiply that by a
+#: source's URL count, so steady state was monotonic growth in the user's
+#: private database.
+#:
+#: Three, and why each one is needed:
+#:
+#: 1. The live baseline -- the row the next `check_url` reads. Losing it
+#:    re-baselines the URL and burns a diff window.
+#: 2. The previous snapshot. The design spec's Content-pane mockup
+#:    (`Docs/superpowers/specs/2026-07-25-watchlists-console-rebuild-design.md`,
+#:    "`[previous snapshot]` reading from `url_snapshots`") promises the reader
+#:    an affordance that is **not built yet** -- there is no reference to it
+#:    anywhere in `UI/`, and it is filed separately. Pruning must not foreclose
+#:    it, so the second-newest row per URL survives.
+#: 3. One row of slack for the same-second tie window of TASK-1361:
+#:    `created_at` is a DATETIME with one-second resolution, so two checks
+#:    inside one second are ordered only by the `id` tie-break.
+#:
+#: Deliberately NOT a config setting: there is no user question here that a
+#: number answers, and a knob would be one more surface to migrate, validate
+#: and document for a bound nobody has asked to move. `baseline_manager`'s
+#: `retention_days` is orphaned code and stays untouched (TASK-1360).
+_SNAPSHOTS_KEPT_PER_URL = 3
+
+
 class URLMonitor:
     """Monitor URLs for changes."""
 
@@ -1103,6 +1133,17 @@ class URLMonitor:
             # and no URL was ever reported unchanged. Found while making the
             # per-run disposition counts (spec §4) come out right, which is
             # impossible while the baselines are shared.
+            #
+            # TASK-1393 ordering pact (one of two sites; grep that phrase for
+            # the other). This ORDER BY is duplicated by the pruning DELETE in
+            # `_store_snapshot`, at the end of this file, which keeps the first
+            # `_SNAPSHOTS_KEPT_PER_URL` rows under exactly this ordering.
+            # THE INVARIANT: survivor ordering == baseline ordering. That is
+            # what makes the row this SELECT returns provably the first
+            # survivor, and therefore never a row the prune deleted. Change
+            # either ORDER BY (or either `url` predicate) and you must change
+            # the other in the same commit; diverge them and this SELECT reads
+            # a pruned row -- i.e. re-baselines, or diffs against stale text.
             cursor = self.db.conn.cursor()
             cursor.execute(
                 """
@@ -1409,6 +1450,75 @@ class URLMonitor:
                     fingerprint,
                 ),
             )
+
+            # TASK-1393: prune here, and only here. This is the single live
+            # write path into `url_snapshots`, and it already holds a
+            # transaction -- so the INSERT and the DELETE share ONE commit
+            # boundary (`SubscriptionsDB.transaction`). A crash before that
+            # commit rolls back both, so the "row inserted, prune not yet run"
+            # state is not merely benign, it is unrepresentable -- worth
+            # stating because the neighbouring TASK-1362 fingerprint migration
+            # (`DB/Subscriptions_DB.py`) had to take an explicit
+            # `BEGIN IMMEDIATE` to get the same guarantee. The shadow-mode
+            # guard above returns before both, so a dry run still deletes
+            # nothing.
+            #
+            # TASK-1393 ordering pact (one of two sites; grep that phrase for
+            # the other). Survivors are chosen by `ORDER BY created_at DESC,
+            # id DESC` -- the SAME ordering as `check_url`'s baseline SELECT,
+            # earlier in this file, the `SELECT content_hash, ... FROM
+            # url_snapshots ... LIMIT 1` that runs right after the fetch
+            # (TASK-1361's tie-break). THE INVARIANT: survivor ordering ==
+            # baseline ordering. The row the next check will read is therefore,
+            # by construction, the first survivor -- it can never be pruned,
+            # whatever the cap. Change either ORDER BY (or either `url`
+            # predicate) and you must change the other in the same commit;
+            # diverging them lets this DELETE evict the very row the next check
+            # is about to ask for.
+            #
+            # The `url` predicate is the load-bearing part, and it is on BOTH
+            # halves. A `url_list` or `sitemap` source gives every one of its
+            # URLs the same `subscription_id`, so pruning per subscription
+            # would let a busy URL's snapshots evict a quiet URL's only
+            # baseline -- and that URL would re-baseline on its next check,
+            # for ever, reporting nothing each time. That is precisely the
+            # defect in the orphaned `baseline_manager._cleanup_old_baselines`
+            # (see TASK-1360).
+            cursor.execute(
+                """
+                DELETE FROM url_snapshots
+                WHERE subscription_id = ? AND url = ?
+                  AND id NOT IN (
+                      SELECT id FROM url_snapshots
+                      WHERE subscription_id = ? AND url = ?
+                      ORDER BY created_at DESC, id DESC
+                      LIMIT ?
+                  )
+                """,
+                (
+                    subscription_id,
+                    url,
+                    subscription_id,
+                    url,
+                    _SNAPSHOTS_KEPT_PER_URL,
+                ),
+            )
+            pruned = cursor.rowcount
+            if pruned > 0:
+                # Qodo/PR #1100: URLs can embed credentials
+                # (https://user:pass@host); the repo's log sanitizer redacts
+                # exactly that, so route the value through it rather than
+                # logging it raw.
+                from ..Utils.log_sanitizer import sanitize_string as _sanitize_log
+
+                logger.debug(
+                    "Pruned {} snapshot(s) for subscription {} url {}, "
+                    "keeping the newest {}",
+                    pruned,
+                    subscription_id,
+                    _sanitize_log(url),
+                    _SNAPSHOTS_KEPT_PER_URL,
+                )
 
 
 # End of monitoring_engine.py
