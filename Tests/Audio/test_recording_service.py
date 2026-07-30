@@ -439,6 +439,7 @@ class TestAudioRecordingIntegration:
 
                 # Simulate audio data
                 test_audio = b"\x00\x01" * 512
+                mock_stream.read.return_value = test_audio
 
                 # use_vad=False: with webrtcvad installed, VAD classifies this
                 # synthetic buffer as non-speech, the callback below never
