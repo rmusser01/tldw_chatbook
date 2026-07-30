@@ -81,8 +81,20 @@ again. The test now asserts the full disposition-count dict of every run.
 at run 3 (`{'baseline': 1, 'unchanged': 0}`); `N = 1` -> RED, 4 tests incl. AC#3; inverted survivor
 `ORDER BY` -> RED, 5 tests, one of them reporting a phantom `changed` against the oldest kept text.
 
+**Review fix round.** Three items, all addressed. (1) The ordering invariant was documented only on
+the DELETE side, so the pairing was ungreppable from the read side — the direction where divergence
+is silent. Both sites now carry the token `TASK-1393 ordering pact`, name the other by
+file-relative location, and state the invariant. (2) The "50 pre-existing rows collapse in one
+store" property was only ever a throwaway probe; promoted to the suite, and it earns its place —
+mutation (d), an *incremental* prune shedding one row per write, leaves the pre-existing tests
+9-passed/2-failed with the transaction test among the passers, while the new test fails
+`50 == 3`. (3) The crash-safety comment understated the guarantee: the INSERT and DELETE share one
+commit boundary, so the partial state is unrepresentable, not merely benign — unlike the TASK-1362
+migration next door, which needed an explicit `BEGIN IMMEDIATE` for the same property.
+
 **Files:** `tldw_chatbook/Subscriptions/monitoring_engine.py`;
-`Tests/Subscriptions/test_watchlist_snapshot_pruning.py` (new, 10 tests).
-Suites: `Tests/Subscriptions/ Tests/Scheduling/ Tests/Watchlists/` -> **601 passed** in 193.82s.
+`Tests/Subscriptions/test_watchlist_snapshot_pruning.py` (new, 11 tests).
+Suites: `Tests/Subscriptions/ Tests/Scheduling/ Tests/Watchlists/` -> **601 passed** in 193.82s;
+after the fix round `Tests/Subscriptions/` -> **190 passed** in 42.79s.
 Report: `task-1393-report.md`.
 <!-- SECTION:NOTES:END -->

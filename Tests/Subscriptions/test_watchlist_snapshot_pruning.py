@@ -214,6 +214,56 @@ async def test_store_snapshot_prunes_within_its_own_transaction(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_pre_existing_backlog_collapses_on_the_very_next_write(monkeypatch):
+    """Every database in the field already holds an unpruned backlog.
+
+    Nothing ever deleted from `url_snapshots`, so a user who has been checking
+    one URL for months arrives at this fix with hundreds of rows. The prune is
+    unconditional rather than incremental -- it deletes everything past the cap
+    in one statement, not one row per write -- so that backlog collapses on the
+    first store for that URL and the fix is self-healing with no migration.
+
+    The permanent suite otherwise only ever exercises one-row-over-cap (each
+    write prunes exactly one), which would pass just as well for an
+    incremental `DELETE ... LIMIT 1`. Fifty seeded rows is far enough past the
+    cap to tell the two apart, and the survivors are asserted by identity.
+    """
+    n = _cap()
+    db, _service, source_id = await _site_source(monkeypatch, [_page("seed")])
+    db.conn.execute("DELETE FROM url_snapshots")
+
+    with db.transaction() as conn:
+        for i in range(50):
+            conn.execute(
+                "INSERT INTO url_snapshots (subscription_id, url, content_hash,"
+                " extracted_content) VALUES (?, ?, ?, ?)",
+                (source_id, _URL_A, f"legacy-{i}", f"legacy {i}"),
+            )
+    seeded = _snapshots(db, source_id, _URL_A)
+    assert len(seeded) == 50, "the precondition: a real backlog exists"
+
+    await _monitor_store(db, source_id, _URL_A, "the first write after the fix")
+
+    survivors = _snapshots(db, source_id, _URL_A)
+    assert len(survivors) == n, (
+        f"one store must collapse 51 rows to {n}, not shed a single row; got "
+        f"{len(survivors)}"
+    )
+    expected = ["the first write after the fix"] + [
+        f"legacy {49 - i}" for i in range(n - 1)
+    ]
+    assert [row["extracted_content"] for row in survivors] == expected, (
+        "the survivors must be the newest by identity, newest first; got "
+        f"{[row['extracted_content'] for row in survivors]!r}"
+    )
+    surviving_ids = {row["id"] for row in survivors}
+    assert not surviving_ids & {row["id"] for row in seeded[n - 1 :]}, (
+        "every seeded row past the cap must be gone -- by id, so a survivor "
+        "list that merely reads right cannot pass"
+    )
+
+
+@pytest.mark.asyncio
 async def test_shadow_mode_writes_nothing_and_therefore_prunes_nothing(monkeypatch):
     """A dry run must not delete the user's snapshots.
 

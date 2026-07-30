@@ -1133,6 +1133,17 @@ class URLMonitor:
             # and no URL was ever reported unchanged. Found while making the
             # per-run disposition counts (spec §4) come out right, which is
             # impossible while the baselines are shared.
+            #
+            # TASK-1393 ordering pact (one of two sites; grep that phrase for
+            # the other). This ORDER BY is duplicated by the pruning DELETE in
+            # `_store_snapshot`, at the end of this file, which keeps the first
+            # `_SNAPSHOTS_KEPT_PER_URL` rows under exactly this ordering.
+            # THE INVARIANT: survivor ordering == baseline ordering. That is
+            # what makes the row this SELECT returns provably the first
+            # survivor, and therefore never a row the prune deleted. Change
+            # either ORDER BY (or either `url` predicate) and you must change
+            # the other in the same commit; diverge them and this SELECT reads
+            # a pruned row -- i.e. re-baselines, or diffs against stale text.
             cursor = self.db.conn.cursor()
             cursor.execute(
                 """
@@ -1442,18 +1453,28 @@ class URLMonitor:
 
             # TASK-1393: prune here, and only here. This is the single live
             # write path into `url_snapshots`, and it already holds a
-            # transaction -- so the INSERT and the DELETE commit together and
-            # the table is never observably over the cap. The shadow-mode
+            # transaction -- so the INSERT and the DELETE share ONE commit
+            # boundary (`SubscriptionsDB.transaction`). A crash before that
+            # commit rolls back both, so the "row inserted, prune not yet run"
+            # state is not merely benign, it is unrepresentable -- worth
+            # stating because the neighbouring TASK-1362 fingerprint migration
+            # (`DB/Subscriptions_DB.py`) had to take an explicit
+            # `BEGIN IMMEDIATE` to get the same guarantee. The shadow-mode
             # guard above returns before both, so a dry run still deletes
             # nothing.
             #
-            # INVARIANT: survivors are chosen by `ORDER BY created_at DESC,
-            # id DESC`, the SAME ordering `check_url`'s baseline SELECT uses
-            # (TASK-1361's tie-break). The row the next check will read is
-            # therefore, by construction, the first survivor -- it can never be
-            # pruned, whatever the cap. Diverging the two orderings (dropping
-            # the tie-break here, or reversing it) would let this DELETE evict
-            # the very row the next check is about to ask for.
+            # TASK-1393 ordering pact (one of two sites; grep that phrase for
+            # the other). Survivors are chosen by `ORDER BY created_at DESC,
+            # id DESC` -- the SAME ordering as `check_url`'s baseline SELECT,
+            # earlier in this file, the `SELECT content_hash, ... FROM
+            # url_snapshots ... LIMIT 1` that runs right after the fetch
+            # (TASK-1361's tie-break). THE INVARIANT: survivor ordering ==
+            # baseline ordering. The row the next check will read is therefore,
+            # by construction, the first survivor -- it can never be pruned,
+            # whatever the cap. Change either ORDER BY (or either `url`
+            # predicate) and you must change the other in the same commit;
+            # diverging them lets this DELETE evict the very row the next check
+            # is about to ask for.
             #
             # The `url` predicate is the load-bearing part, and it is on BOTH
             # halves. A `url_list` or `sitemap` source gives every one of its

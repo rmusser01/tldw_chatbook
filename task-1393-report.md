@@ -21,9 +21,9 @@ Steady state was monotonic growth of raw HTML in the user's private database.
 ## The fix
 
 One place: `URLMonitor._store_snapshot`
-(`tldw_chatbook/Subscriptions/monitoring_engine.py`, now `:1424`), a `DELETE` immediately after the
-`INSERT` **inside the same `db.transaction()`**, so the two commit together and the table is never
-observably over the cap.
+(`tldw_chatbook/Subscriptions/monitoring_engine.py`), a `DELETE` immediately after the `INSERT`
+**inside the same `db.transaction()`**, so the two share one commit boundary
+(`DB/Subscriptions_DB.py:899-907`) and the table is never observably over the cap.
 
 ```sql
 DELETE FROM url_snapshots
@@ -46,14 +46,26 @@ re-baselines on its next check — reporting no change — for ever. That is exa
 orphaned `baseline_manager` pruning.
 
 **Survivors ordered `created_at DESC, id DESC`** — the *same* ordering `check_url`'s baseline
-`SELECT` uses (`monitoring_engine.py:1141`, TASK-1361's tie-break). Because the two orderings are
-identical, the row the next check will read is by construction the first survivor and can never be
-pruned, whatever the cap. The invariant is stated in the code comment. The existing index
-`idx_url_snapshots_lookup(subscription_id, url, created_at)` covers the subquery.
+`SELECT` uses (TASK-1361's tie-break). Because the two orderings are identical, the row the next
+check will read is by construction the first survivor and can never be pruned, whatever the cap.
+The existing index `idx_url_snapshots_lookup(subscription_id, url, created_at)` covers the
+subquery.
+
+The invariant is stated **at both ends**, under the greppable token **`TASK-1393 ordering pact`**:
+each site names the other by file-relative location and says what breaks if they diverge. It was
+one-directional at first — the DELETE named the SELECT, the SELECT said nothing — which left the
+pairing invisible to anyone editing the read side, the direction from which the damage is silent.
 
 **After the shadow-mode guard.** `persist_snapshots=False` returns before the `INSERT`, so a dry
 run neither writes nor deletes. Pinned by a test that seeds the table *over* the cap first, so a
 prune placed before the guard would be visible.
+
+**Crash safety is stronger than "benign".** Because the INSERT and the DELETE share one commit
+boundary, a crash before that commit rolls back *both*: the "row inserted, prune not yet run" state
+is not merely harmless, it is unrepresentable. Worth stating by contrast — the neighbouring
+TASK-1362 fingerprint migration (`DB/Subscriptions_DB.py:626-650`) had to take an explicit
+`BEGIN IMMEDIATE`, and is documented there as an exemption, precisely because its partial state
+*was* representable and unrepairable.
 
 `N = _SNAPSHOTS_KEPT_PER_URL = 3`, a module constant carrying its rationale:
 
@@ -88,6 +100,7 @@ still across many runs.
 | `test_the_cap_is_at_least_two_so_a_previous_snapshot_can_exist` | the constant's floor |
 | `test_a_churning_url_keeps_exactly_the_newest_n_snapshots` | **AC#1** end to end: N+3 changes -> exactly N rows, asserted by row *identity* (id + body), plus that no superseded revision survived |
 | `test_store_snapshot_prunes_within_its_own_transaction` | the cap holds after *every* write, not only at the end |
+| `test_a_pre_existing_backlog_collapses_on_the_very_next_write` | 50 seeded rows -> `N` in ONE store: the fix is self-healing for field databases, and the prune is unconditional rather than incremental |
 | `test_shadow_mode_writes_nothing_and_therefore_prunes_nothing` | the guard ordering |
 | `test_a_quiet_urls_baseline_survives_a_busy_siblings_churn` | **AC#2** on the real `url_list` arm |
 | `test_pruning_one_url_never_touches_another_urls_rows` | **AC#2** at the chokepoint: the DELETE's blast radius is one URL |
@@ -112,18 +125,41 @@ symptom.
 
 All three mutations were reverted; the final tree is green.
 
+## Review round (fix round after the first review)
+
+The review verified all three ACs empirically — including dropping each single `url` predicate
+separately, both directions red — and confirmed the index already covers all three hot queries.
+Three items came back:
+
+1. **(Important) The ordering pact was one-directional.** Fixed at both ends, above.
+2. **(Minor) The 50-row collapse was only ever a throwaway probe.** Promoted to the permanent
+   suite. This was a real gap, not bookkeeping: the suite otherwise only exercised
+   one-row-over-cap, where each write prunes exactly one row. Mutation **(d)** — replace the
+   set-based DELETE with an incremental one that sheds the single oldest row past the cap
+   (`WHERE id = (SELECT id … LIMIT 1 OFFSET N)`) — leaves the old suite **9 passed / 2 failed**,
+   and `test_store_snapshot_prunes_within_its_own_transaction` is among the passers. Only the new
+   test (`assert 50 == 3`) and the tie-break test catch it. Reverted.
+3. **(Minor) The crash-safety claim was imprecise in the safe direction.** Corrected in the code
+   comment and above: the partial state is unrepresentable, not merely benign.
+
 ## Suite runs
 
 ```
+# first round
 .venv/bin/python -m pytest Tests/Subscriptions/test_watchlist_snapshot_pruning.py -p no:randomly
   -> 10 passed in 0.90s
-
 .venv/bin/python -m pytest Tests/Subscriptions/ Tests/Scheduling/ Tests/Watchlists/
   -> 601 passed in 193.82s (0:03:13)
+
+# fix round
+.venv/bin/python -m pytest Tests/Subscriptions/test_watchlist_snapshot_pruning.py -p no:randomly
+  -> 11 passed in 1.30s
+.venv/bin/python -m pytest Tests/Subscriptions/
+  -> 190 passed in 42.79s
 ```
 
 ## Files
 
-* `tldw_chatbook/Subscriptions/monitoring_engine.py` — `_SNAPSHOTS_KEPT_PER_URL` constant + the
-  prune in `_store_snapshot`.
-* `Tests/Subscriptions/test_watchlist_snapshot_pruning.py` — new, 10 tests.
+* `tldw_chatbook/Subscriptions/monitoring_engine.py` — `_SNAPSHOTS_KEPT_PER_URL` constant, the
+  prune in `_store_snapshot`, and the `TASK-1393 ordering pact` comment at both ends.
+* `Tests/Subscriptions/test_watchlist_snapshot_pruning.py` — new, 11 tests.
