@@ -170,6 +170,18 @@ neither: the item's diff (TASK-1343) shows exactly which text churned, which nam
 add in the now-visible field. That loop — spam → diff names the churn → one selector added — is the
 intended workflow, and the form's help text states it.
 
+## Residual visibility gaps (final review, recorded not assumed)
+
+The §3/§1 promise is discharged at *source* granularity: the run row names the source and start
+time, the detail line splits `baseline` from `re-baselined (settings changed)` and shows the
+largest withheld percentage, and the Save toast warns about the lost window. Still not visible,
+deliberately left as scope: which *URL* of a multi-URL source re-baselined (per-URL reasons are
+aggregated away and never persisted); the exact bounds of a lost window (the prior run's timestamp
+must be read from the table); per-URL withheld percentages (only the max survives); and nothing is
+proactive — the user must open the Runs pane. A migration-caused re-baseline also reads "settings
+changed" although the migration, not the user, changed them — literally true, potentially
+surprising.
+
 Out of scope, filed as follow-up if wanted: automatically flagging a source whose every check
 produces an item ("this source looks noisy — inspect its last diff").
 

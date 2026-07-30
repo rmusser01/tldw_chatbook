@@ -14,7 +14,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-`local_watchlists_service.py:838-862`: the `url_list`/`sitemap` arms loop URLs with no per-URL
+`local_watchlists_service.py:894-921`: the `url_list`/`sitemap` arms loop URLs with no per-URL
 `try/except`, so one failing URL (timeout, SSRF block, HTTP error) raises out of the loop, fails
 the whole run via `record_run_failure`, and discards the items already collected from the URLs
 that succeeded.

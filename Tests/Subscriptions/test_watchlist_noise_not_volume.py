@@ -913,6 +913,19 @@ async def test_withheld_carries_the_scaled_percentage(monkeypatch):
     )
     assert run_pct < 50.0
 
+    # Final re-review: the MIDDLE seam. `run["stats"][...]` above is
+    # `execute_run`'s in-process return; what the Runs pane actually reads is
+    # the FLATTENED top-level key that `list_runs()` re-derives from the
+    # persisted `stats_json` via `normalize_watchlist_run`. The re-reviewer
+    # deleted that lift and 399 tests stayed green -- this assertion is the
+    # one that goes red.
+    runs = await service.list_runs(source_id=source_id)
+    assert runs[0]["max_withheld_pct"] == pytest.approx(run_pct), (
+        "the flattened run row the Runs pane reads must carry the same "
+        "max_withheld_pct the run measured -- the normalizer lift is the "
+        "only bridge, and deleting it must not go unnoticed"
+    )
+
     # The percentage itself, off the disposition dict. A below-threshold check
     # deliberately does NOT store a snapshot, so the baseline is still the
     # first page and this repeat check withholds identically.

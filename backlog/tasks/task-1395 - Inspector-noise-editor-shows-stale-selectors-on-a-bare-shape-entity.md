@@ -14,8 +14,8 @@ priority: low
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-`inspector_pane.py:634` (`_ignore_selectors_text`) falls back to a bare `entity["ignore_selectors"]`
-key, but the screen's post-save patch (`watchlists_collections_screen.py:3457` region) updates only
+`inspector_pane.py:227` (`_ignore_selectors_text`; the fallback read is at `:246`) falls back to a bare `entity["ignore_selectors"]`
+key, but the screen's post-save patch (`watchlists_collections_screen.py:3328` region) updates only
 the `settings` shape. On an entity carrying both shapes, clearing the field to empty then reopening
 would re-display the stale bare-key value.
 
