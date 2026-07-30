@@ -156,6 +156,15 @@ def _single_group(path: str = "note.md") -> SessionChangeGroup:
     )
 
 
+def test_coalesce_session_changes_documents_public_contract() -> None:
+    docstring = inspect.getdoc(coalesce_session_changes)
+
+    assert docstring is not None
+    assert "\nArgs:\n" in docstring
+    assert "\nReturns:\n" in docstring
+    assert "\nRaises:\n" in docstring
+
+
 def test_coalesce_session_changes_records_exact_ordered_sequence_membership() -> None:
     groups = coalesce_session_changes(
         (
@@ -3205,6 +3214,33 @@ def _repository_at(root: Path) -> RepositoryIdentity:
             git_stat.st_ino,
         ),
     )
+
+
+def test_private_hooks_creation_refuses_missing_posix_ownership_apis(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    repository = _repository_at(root)
+    for attribute in ("geteuid", "getegid", "getgroups"):
+        monkeypatch.delattr(git_service.os, attribute, raising=False)
+
+    with pytest.raises(OSError, match="POSIX ownership APIs"):
+        git_service._create_private_hooks_directory(repository, set())
+
+
+def test_private_hooks_safety_helpers_fail_closed_without_posix_ownership_apis(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent = tmp_path.resolve()
+    metadata = parent.stat()
+    for attribute in ("geteuid", "getegid", "getgroups"):
+        monkeypatch.delattr(git_service.os, attribute, raising=False)
+
+    assert not git_service._hooks_parent_is_safe(parent, metadata.st_dev)
+    assert not git_service._directory_is_writable_by_current_process(metadata)
 
 
 class _DelayedStatusRunner:

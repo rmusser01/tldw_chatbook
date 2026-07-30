@@ -6272,6 +6272,8 @@ def _create_private_hooks_directory(
     pending_cleanup: set[Path],
 ) -> Path:
     """Create and verify one empty owner-only hooks directory outside the repo."""
+    if not _private_hooks_posix_ownership_apis_available():
+        raise OSError("Private hooks safety requires POSIX ownership APIs")
     worktree = Path(repository.worktree_root).resolve(strict=True)
     repository_device = worktree.stat().st_dev
     candidate_paths = (
@@ -6320,11 +6322,21 @@ def _create_private_hooks_directory(
     raise OSError("Unable to create a private hooks directory")
 
 
+def _private_hooks_posix_ownership_apis_available() -> bool:
+    """Return whether private-hooks ownership checks can run safely."""
+    return os.name == "posix" and all(
+        hasattr(os, attribute)
+        for attribute in ("geteuid", "getegid", "getgroups")
+    )
+
+
 def _hooks_parent_is_safe(
     parent: Path,
     repository_device: int,
 ) -> bool:
     """Validate one canonical hooks parent against cross-principal substitution."""
+    if not _private_hooks_posix_ownership_apis_available():
+        return False
     try:
         if parent != parent.resolve(strict=True):
             return False
@@ -6358,6 +6370,8 @@ def _hooks_parent_is_safe(
 
 def _directory_is_writable_by_current_process(metadata: os.stat_result) -> bool:
     """Project Unix directory write/search permission for the effective IDs."""
+    if not _private_hooks_posix_ownership_apis_available():
+        return False
     mode = stat.S_IMODE(metadata.st_mode)
     effective_uid = os.geteuid()
     if effective_uid == 0:

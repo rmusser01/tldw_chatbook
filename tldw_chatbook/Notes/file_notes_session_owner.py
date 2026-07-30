@@ -233,7 +233,18 @@ class _GroupBuilder:
 def coalesce_session_changes(
     changes: Sequence[SequencedSessionChange],
 ) -> tuple[SessionChangeGroup, ...]:
-    """Coalesce session events using only each lineage's active path."""
+    """Coalesce session changes using each lineage's active path.
+
+    Args:
+        changes: Sequenced changes. Input may be unordered; changes are
+            processed in ascending sequence order.
+
+    Returns:
+        Coalesced lineage groups in earliest-sequence order.
+
+    Raises:
+        ValueError: If a moved change has no destination path.
+    """
     active_paths: dict[str, _GroupBuilder] = {}
     builders: list[_GroupBuilder] = []
 
