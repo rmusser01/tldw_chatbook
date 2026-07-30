@@ -87,6 +87,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #59 Current Media browsing-shell regressions identify the isolated mounted widget as the active screen-owned Media destination and await the Textual worker manager after background search and item-detail dispatch before inspecting results, resetting the search mock, selecting or reading a result, or asserting query/pagination calls; list population, detail loading, filter propagation, and pagination coverage remain intact without sleeps or production changes.
 - [ ] #60 The non-obscuring focus contract follows Textual's live `CollapsibleTitle` DOM, pins both global and ID-scoped Library/RAG focus treatment plus the QA-scoped hover owner in source and bundle, and no longer reads or asserts CSS retired with legacy chat tabs, sidebar presets, resize controls, or an unowned `Collapsible.-active` state; all remaining static focus contracts pass without activating dead app-wide selectors.
 - [ ] #61 Personas character-generation wiring tests dispatch mounted editor controls through Textual's direct `Button.press()` event seam rather than coordinate hit testing, preserving live field/context/preview/failure/regeneration and whole-character behavior while remaining deterministic when the later Library/RAG settings module is collected in the same pytest process.
+- [ ] #62 The Personas character-import failure regression expects the current fixed recovery message, proves the raw importer exception text is not surfaced, declares its unused dictionary service unavailable during selection setup, and retains the selected-character state after failure.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -153,6 +154,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 53. Give current Media browsing-shell fixtures a live screen owner and settle their search workers before dependent actions and assertions.
 54. Retarget live Collapsible focus/hover contracts and remove CSS assertions for retired or unowned selectors.
 55. Drive mounted Personas generation buttons through Textual's direct press seam so wiring coverage does not race coordinate hit testing against debounced editor validation.
-56. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-57. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+56. Align the Personas import-failure assertion with the current fixed recovery copy and isolate its unused dictionary-service fixture.
+57. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+58. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

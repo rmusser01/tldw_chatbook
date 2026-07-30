@@ -142,6 +142,14 @@ The failures reproduce on an exact `origin/dev` checkout:
   event-loop timing—not the controller or screen handler—decide whether the
   press arrives. The same nodes retain the real Textual event path when the
   already-mounted `Button` is pressed directly.
+- The Personas import-failure regression still expects the injected
+  `"Unsupported card format"` exception text in a user notification. Current
+  production deliberately logs only bounded file type and exception category,
+  then shows the fixed recovery message `"Character import failed; verify the
+  file and retry."`; the stale assertion fails alone. Its selection setup also
+  leaves the unused `chat_dictionary_scope_service` as a plain `MagicMock`, so
+  selecting the retained character produces an unrelated non-awaitable-service
+  traceback before the import assertion.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -571,6 +579,12 @@ Update the tests to describe current behavior:
     test is collected. Do not add sleeps, change validation timing, or modify
     production behavior for a coordinate-hit-test race outside this module's
     wiring purpose.
+60. In the Personas import-failure regression, set the unused dictionary scope
+    service to `None` before mounting, then assert the exact fixed error
+    notification and explicitly prove the injected importer exception text is
+    absent. Retain the real row selection and selected-entity assertion. Do not
+    restore raw exception display, alter production diagnostics, or mock away
+    the import path itself.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -796,6 +810,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   changing the editor's production validation debounce would alter user
   behavior for a test-only pointer race. Directly pressing the mounted buttons
   keeps Textual message bubbling and the screen-owned worker path intact.
+- Restoring the raw Personas importer exception in the notification would
+  reverse the current bounded-diagnostic and stable-recovery-copy contract.
+  Ignoring the unrelated dictionary-service traceback would leave the focused
+  test exercising an invalid fixture; declaring that unused service unavailable
+  follows existing Personas screen-test setup without adding a fake service.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

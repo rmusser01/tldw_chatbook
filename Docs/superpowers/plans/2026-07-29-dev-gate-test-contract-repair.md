@@ -2333,6 +2333,46 @@ git diff --check
 Expected: all nine wiring nodes and all fourteen Library/RAG settings nodes pass
 together, and static plus diff checks remain clean.
 
+### Task 4bd: Align Personas import-failure recovery coverage
+
+**Files:**
+- Modify: `Tests/UI/test_personas_workbench.py`
+
+- [ ] **Step 1: Preserve the stale recovery assertion**
+
+Run
+`TestImportExport::test_import_failure_shows_recovery_copy` alone. Expected
+before repair: the production import path catches and safely categorizes the
+injected `ValueError`, but the assertion fails because it still expects raw
+`"Unsupported card format"` text. The selection setup also logs a
+non-awaitable `chat_dictionary_scope_service` `MagicMock` traceback.
+
+- [ ] **Step 2: Follow the fixed recovery-copy contract**
+
+Set `mock_app_instance.chat_dictionary_scope_service = None` before constructing
+the test app because dictionary attachment is outside this regression. Keep the
+real character-row selection and direct `_import_character_from_path()` call.
+Replace the raw-exception expectation with the exact
+`("Character import failed; verify the file and retry.", "error")` notification
+and assert no captured message contains the injected exception text. Retain the
+selected-character assertion. Do not change production or add a fake service.
+
+- [ ] **Step 3: Verify the import/export cluster**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_personas_workbench.py::TestImportExport \
+  -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_personas_workbench.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_personas_workbench.py
+git diff --check
+```
+
+Expected: the import/export class passes, the failure path renders only the
+fixed recovery copy, and the change introduces no new static or diff issue.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
