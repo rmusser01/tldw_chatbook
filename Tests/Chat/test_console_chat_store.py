@@ -751,6 +751,43 @@ def test_persist_session_if_needed_reports_invalid_runtime_backend():
     ), diagnostics
 
 
+def test_persist_session_if_needed_handles_invalid_backend_with_raising_repr():
+    """Diagnostic formatting cannot replace the stable invalid-backend error."""
+    from loguru import logger as loguru_logger
+
+    class ExplodingBackend:
+        def __repr__(self):
+            raise RuntimeError("repr must not run")
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(
+        title="Malformed chat", runtime_backend=ExplodingBackend()
+    )
+    diagnostics: list[str] = []
+    sink_id = loguru_logger.add(
+        diagnostics.append,
+        level="ERROR",
+        format="{extra[session_id]} {extra[runtime_backend]} {message}",
+    )
+    try:
+        with pytest.raises(
+            ValueError, match="runtime_backend must be 'local' or 'server'"
+        ):
+            store.persist_session_if_needed(session.id)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert persistence.created_conversations == []
+    assert persistence.created_messages == []
+    assert any(
+        session.id in diagnostic
+        and "ExplodingBackend" in diagnostic
+        and "persist" in diagnostic.lower()
+        for diagnostic in diagnostics
+    ), diagnostics
+
+
 @pytest.mark.parametrize(
     ("session_kwargs", "expected"),
     [
