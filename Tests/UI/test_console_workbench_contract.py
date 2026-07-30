@@ -693,6 +693,12 @@ async def test_console_ready_empty_transcript_exposes_activation_panel_copy():
 @pytest.mark.asyncio
 async def test_console_empty_transcript_choose_model_opens_settings():
     app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "OpenAI", "model": ""},
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = ""
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(120, 40)) as pilot:
