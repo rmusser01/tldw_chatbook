@@ -2806,6 +2806,55 @@ git diff --check
 Expected: the focused policy sentinel and full recovery-taxonomy module pass,
 static checks pass, and no production file changes.
 
+### Task 4bn: Settle File Notes bulk-unstage without global screen idle
+
+**Files:**
+- Modify: `Tests/UI/test_library_file_notes_git.py`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This corrects one test's scheduler observation boundary without
+changing retained-worker ownership or production behavior.
+
+- [ ] **Step 1: Preserve the focused RED**
+
+Run
+`test_unstage_all_summary_counts_the_complete_displayed_snapshot` alone.
+Expected before repair: after the Unstage All press, `_wait_until()` enters
+`pilot.pause(0.02)` and Textual raises `WaitForScreenTimeout` after 30 seconds
+while retained Git refresh messages are still settling. The failure reproduces
+both alone and after 2,517 passing full-UI tests.
+
+- [ ] **Step 2: Poll only the asserted retained-work boundary**
+
+Replace that one `_wait_until()` call with at most 200 direct predicate checks,
+yielding via `asyncio.sleep(0.01)` between checks. Keep the exact
+`unstage_calls == [(1, 2)]` and `status_calls == 2` conditions and raise
+`AssertionError("Unstage All did not settle and refresh")` on exhaustion.
+Leave the shared helper, bulk-stage test, summary text, and production
+unchanged.
+
+- [ ] **Step 3: Verify File Notes Git coverage**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_library_file_notes_git.py::test_stage_all_summary_counts_the_complete_displayed_snapshot \
+  Tests/UI/test_library_file_notes_git.py::test_unstage_all_summary_counts_the_complete_displayed_snapshot \
+  -q
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_library_file_notes_git.py \
+  -q
+../../.venv/bin/python -m ruff check Tests/UI/test_library_file_notes_git.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_library_file_notes_git.py
+git diff --check
+```
+
+Expected: both bulk summary regressions and the full File Notes Git module
+pass, static checks pass, and no production file changes.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

@@ -213,6 +213,16 @@ The failures reproduce on an exact `origin/dev` checkout:
   `asyncio.run` annotation check reads only the opening line even though one
   of the three current annotations is correctly attached to the multiline
   call's closing line.
+- The File Notes Git bulk-unstage summary test starts the real retained action
+  and postflight status refresh, then polls their exact fake-service calls via
+  `_wait_until()`. That helper yields with `pilot.pause()`, which additionally
+  requires the entire Textual screen message queue to become idle. The
+  retained row refresh legitimately continues processing messages, so the
+  Pilot waits 30 seconds and raises `WaitForScreenTimeout` before the bounded
+  predicate can be checked again. Replacing only that yield with
+  `asyncio.sleep()` makes the same exact action/refresh predicate pass in under
+  a second; production behavior and the paired bulk-stage test are already
+  correct.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -729,6 +739,14 @@ Update the tests to describe current behavior:
     Personas/Skills, the three annotated `asyncio.run` exceptions, and the ban
     on `_run_maybe_awaitable`. Do not change production decorators or weaken
     the sentinel into pattern-only acceptance.
+70. In the File Notes Git bulk-unstage summary regression only, replace the
+    generic Pilot-idle polling call after the Unstage All press with a bounded
+    event-loop loop. Check the same exact `unstage_calls == [(1, 2)]` and
+    `status_calls == 2` predicate on every iteration, yield with
+    `asyncio.sleep(0.01)`, and raise the same focused assertion if it does not
+    settle. Retain the complete `_git_last_action` text assertion and the
+    adjacent bulk-stage regression unchanged. Do not increase Textual's global
+    screen timeout, change the shared helper, or alter production scheduling.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1012,6 +1030,12 @@ behavior. No compatibility shims. No broad deletion of live tests.
   negative, while keeping line-prefix decorator counting would let harmless
   formatting changes evade the exact inventory; the existing AST parse can
   cover both syntax boundaries without a new helper or production change.
+- Increasing `Pilot`'s 30-second screen-idle timeout would make the regression
+  slower without matching its contract, and changing shared `_wait_until()`
+  would alter hundreds of unrelated lifecycle assertions. Waiting directly on
+  the event loop for this retained-worker predicate preserves its two-second
+  bound and exact service evidence while avoiding a one-off helper or
+  production test hook.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
