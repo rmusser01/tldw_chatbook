@@ -2737,20 +2737,24 @@ UPDATE db_schema_version
     def get_local_authority_id(self) -> str:
         """Return this database's stable, bounded local character authority.
 
+        Returns:
+            The database-owned local authority identifier.
+
         Raises:
             CharactersRAGDBError: If the default identity is absent, ambiguous,
                 malformed, or cannot be read.
         """
 
         try:
-            rows = self.get_connection().execute(
-                """
-                SELECT local_authority_id
-                FROM rag_identity_context
-                WHERE context_name = 'default'
-                LIMIT 2
-                """
-            ).fetchall()
+            with self.transaction() as cursor:
+                rows = cursor.execute(
+                    """
+                    SELECT local_authority_id
+                    FROM rag_identity_context
+                    WHERE context_name = 'default'
+                    LIMIT 2
+                    """
+                ).fetchall()
         except sqlite3.Error as exc:
             raise CharactersRAGDBError(
                 "Local authority identity is unavailable or invalid."
