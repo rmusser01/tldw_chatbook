@@ -2900,7 +2900,11 @@ def load_chat_history_from_file_and_save_to_db(
         # Create a new conversation for this imported chat
         conv_title = f"Imported Chat: {actual_char_name_from_db} ({time.strftime('%Y-%m-%d %H:%M')})"
         new_conv_id = db.add_conversation(
-            {"character_id": character_id_from_db, "title": conv_title}
+            {
+                "character_id": character_id_from_db,
+                "title": conv_title,
+                "assistant_authority_id": None,
+            }
         )
 
         if not new_conv_id:
