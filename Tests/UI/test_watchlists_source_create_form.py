@@ -60,6 +60,10 @@ CREATE_FIELD_ORDER = [
     "sources-create-active",
     "sources-create-tags",
     "sources-create-frequency",
+    # TASK-1361: the noise control. Focusable, so it is part of the Tab walk,
+    # and subject to every geometry assertion below -- the form had exactly
+    # zero spare rows at 160x42 before it was added.
+    "sources-create-ignore-selectors",
     "sources-create-submit",
     "sources-create-cancel",
 ]

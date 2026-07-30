@@ -342,6 +342,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # a keybinding that has nothing to do with Sources.
         self._source_create_form_open = False
         self._source_create_draft: dict[str, str] = {"name": "", "url": "", "tags": ""}
+        # The create form's noise-selector text, mirrored for the same reason
+        # as the three fields above (TASK-1361). Held separately, and `None`
+        # rather than `""` when untouched, because its empty state is not its
+        # default: `SourcesPane` prefills it with the shipped selector set, and
+        # `""` is a user deliberately clearing it. Seeding `""` back over a
+        # fresh pane would silently turn "watch everything" into the default,
+        # and seeding the default over a cleared field would be the reverse.
+        self._source_create_draft_selectors: str | None = None
         # Mirrors RulesPane's edit-form state (Finding 4, fix round 2): the
         # same rebuild-destroys-pane-local-state failure mode as the Sources
         # create form above, but for an in-progress rule EDIT rather than a
@@ -1161,6 +1169,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             sources_pane.create_draft_name = self._source_create_draft["name"]
             sources_pane.create_draft_url = self._source_create_draft["url"]
             sources_pane.create_draft_tags = self._source_create_draft["tags"]
+            if self._source_create_draft_selectors is not None:
+                sources_pane.create_draft_ignore_selectors = (
+                    self._source_create_draft_selectors
+                )
             children.append(sources_pane)
         elif self.active_section == "runs":
             runs_pane = RunsPane(id="watchlists-runs-pane")
@@ -2384,6 +2396,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             "url": event.url,
             "tags": event.tags,
         }
+        if event.ignore_selectors is not None:
+            self._source_create_draft_selectors = event.ignore_selectors
 
     @on(CreateFormVisibilityChanged)
     def handle_source_create_visibility_changed(
@@ -2412,6 +2426,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # before `run_worker` even starts the async chain that can recompose.
         self._source_create_form_open = False
         self._source_create_draft = {"name": "", "url": "", "tags": ""}
+        # Back to "untouched", so the next create form is prefilled again
+        # rather than inheriting the selectors of the source just submitted.
+        self._source_create_draft_selectors = None
         self.run_worker(self._create_source(event.payload), exclusive=True)
 
     async def _create_source(self, payload: dict[str, Any]) -> None:
