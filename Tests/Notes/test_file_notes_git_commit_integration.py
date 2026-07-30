@@ -1145,6 +1145,11 @@ async def test_complete_commit_proof_blocks_unrelated_staged_without_disclosure(
     assert result.state == "blocked"
     assert result.handle is None
     assert result.projection is None
+    assert result.message == (
+        "The complete staged state does not exactly match this session. "
+        "If Git has unrelated staged changes, commit or unstage them outside "
+        "Chatbook; then Refresh and review this session again."
+    )
     assert "unrelated-secret" not in repr(result)
     assert "unrelated-secret" not in repr(service._owner.snapshot(binding))
     assert "unrelated-secret" not in repr(service._commit_review_snapshots)

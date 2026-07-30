@@ -472,7 +472,7 @@ class _CommitIncludedNoteListItem(ListItem):
 
 
 class _CommitWorkflowScroll(VerticalScroll):
-    """Keyboard-scrollable focus target for actionless workflow states."""
+    """Keyboard-scrollable focus target for constrained workflow states."""
 
     can_focus = True
 
@@ -891,7 +891,7 @@ class LibraryFileNotesGitPanel(Vertical):
         return self._commit_phase
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="file-notes-git-list-surface"):
+        with VerticalScroll(id="file-notes-git-list-surface"):
             with Horizontal(id="file-notes-git-header"):
                 yield Button(
                     "Back to navigator",

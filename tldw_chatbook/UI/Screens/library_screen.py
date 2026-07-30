@@ -1036,6 +1036,19 @@ class LibraryScreen(BaseAppScreen):
         border: none;
         background: transparent;
     }
+
+    #library-notes-source-strip Button.-selected {
+        text-style: bold;
+    }
+
+    #library-notes-source-separator {
+        width: 1;
+        min-width: 1;
+        max-width: 1;
+        height: 1;
+        min-height: 1;
+        content-align: center middle;
+    }
     """
 
     def __init__(
@@ -3761,20 +3774,30 @@ class LibraryScreen(BaseAppScreen):
         )
         if shell.canvas_kind == "notes":
             with Horizontal(id="library-notes-source-strip"):
+                database_selected = self._library_notes_source == "database"
                 database_source = Button(
-                    "Database",
+                    (
+                        "Database (selected)"
+                        if database_selected
+                        else "Database"
+                    ),
                     id="library-notes-source-database",
                     compact=True,
                 )
-                database_source.disabled = self._library_notes_source == "database"
+                database_source.set_class(database_selected, "-selected")
                 yield database_source
-                yield Static("|", markup=False)
+                yield Static(
+                    "|",
+                    id="library-notes-source-separator",
+                    markup=False,
+                )
+                files_selected = self._library_notes_source == "files"
                 files_source = Button(
-                    "Files",
+                    "Files (selected)" if files_selected else "Files",
                     id="library-notes-source-files",
                     compact=True,
                 )
-                files_source.disabled = self._library_notes_source == "files"
+                files_source.set_class(files_selected, "-selected")
                 yield files_source
             if self._library_notes_source == "files":
                 workspace = self._library_file_notes_workspace

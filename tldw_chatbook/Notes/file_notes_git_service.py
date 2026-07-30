@@ -3582,7 +3582,9 @@ class FileNotesGitService:
         )
         if proof is None:
             return _blocked_commit_review(
-                "The complete staged state does not exactly match this session."
+                "The complete staged state does not exactly match this session. "
+                "If Git has unrelated staged changes, commit or unstage them "
+                "outside Chatbook; then Refresh and review this session again."
             )
         identities = await self._resolve_commit_identities(repository)
         if identities is None:

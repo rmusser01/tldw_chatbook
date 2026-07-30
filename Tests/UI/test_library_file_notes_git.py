@@ -4569,6 +4569,199 @@ async def test_narrow_git_navigation_retains_editor_search_tree_and_row_selectio
 
 
 @pytest.mark.asyncio
+async def test_40x20_prepare_scrolls_actions_below_a_long_linked_root(
+    tmp_path: Path,
+) -> None:
+    nested = (
+        tmp_path
+        / "management-notes-with-a-realistically-long-root"
+        / "projects-and-study"
+    )
+    root, owner, _binding, replica, git_service, workspace = _workspace_fixture(
+        nested
+    )
+    workspace.styles.height = 14
+
+    async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        root_row = workspace.query_one("#file-notes-root-row")
+        root_status = workspace.query_one("#file-notes-root-status", Static)
+        full_status = f"Linked — {root.resolve()}"
+        assert root_row.region.height == 1
+        assert root_status.region.height == 1
+        assert _text(root_status) != full_status
+        assert "..." in _text(root_status)
+        assert str(root_status.tooltip) == full_status
+        details = workspace.query_one("#file-notes-root-details", Button)
+        assert details.display
+        workspace_screen = pilot.app.screen
+        details.focus()
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: bool(
+                pilot.app.screen.query("#file-notes-root-details-text")
+            ),
+            "Keyboard root-details disclosure did not open",
+        )
+        assert (
+            pilot.app.screen.query_one(
+                "#file-notes-root-details-text",
+                TextArea,
+            ).text
+            == full_status
+        )
+        await pilot.press("escape")
+        await _wait_until(
+            pilot,
+            lambda: pilot.app.screen is workspace_screen,
+            "Root-details disclosure did not close",
+        )
+
+        entry = workspace.query_one("#file-notes-session-changes", Button)
+        entry.focus()
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: (
+                len(git_service.status_calls) == 1
+                and len(workspace._git_panel_widget.rows) == 2
+            ),
+            "Prepare session did not render current rows",
+        )
+        await _wait_for_current_git_row_projection(workspace)
+
+        panel = workspace._git_panel_widget
+        list_surface = panel.query_one(
+            "#file-notes-git-list-surface",
+            VerticalScroll,
+        )
+        assert list_surface.can_focus
+        stage_all = panel.query_one("#file-notes-git-stage-all", Button)
+        for _ in range(20):
+            if stage_all.has_focus:
+                break
+            await pilot.press("tab")
+        assert stage_all.has_focus
+        assert list_surface.content_region.contains_region(stage_all.region)
+        assert cell_len(str(stage_all.label)) <= stage_all.content_region.width
+
+        git_service.rows = (
+            _row("owned", group_id=1, unstage_eligible=True),
+            _row("owned", group_id=2, unstage_eligible=True),
+        )
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: (
+                git_service.stage_calls == [(1, 2)]
+                and len(git_service.status_calls) == 2
+            ),
+            "Keyboard activation did not stage the eligible session notes",
+        )
+
+        async def focus_action(selector: str) -> Button:
+            button = panel.query_one(selector, Button)
+            for _ in range(30):
+                if button.has_focus:
+                    break
+                await pilot.press("tab")
+            assert button.has_focus
+            assert list_surface.content_region.contains_region(button.region)
+            return button
+
+        await focus_action("#file-notes-git-unstage-selected")
+        await focus_action("#file-notes-git-unstage-all")
+        await focus_action("#file-notes-git-commit-staged")
+
+        git_service.rows = (
+            _row("unstaged", group_id=1, stage_action="stage"),
+            _row("unstaged", group_id=2, stage_action="stage"),
+        )
+        await focus_action("#file-notes-git-unstage-all")
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: (
+                git_service.unstage_calls == [(1, 2)]
+                and len(git_service.status_calls) == 3
+            ),
+            "Keyboard activation did not unstage the session notes",
+        )
+
+        git_service.rows = (
+            _row("owned", group_id=1, unstage_eligible=True),
+            _row("owned", group_id=2, unstage_eligible=True),
+        )
+        await focus_action("#file-notes-git-stage-all")
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: (
+                git_service.stage_calls == [(1, 2), (1, 2)]
+                and len(git_service.status_calls) == 4
+            ),
+            "Keyboard activation did not restage the session notes",
+        )
+
+        await focus_action("#file-notes-git-commit-staged")
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: panel.commit_phase == "form",
+            "Keyboard activation did not open the guarded commit form",
+        )
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_40x20_actionless_prepare_surface_is_keyboard_scrollable(
+    tmp_path: Path,
+) -> None:
+    _root, owner, _binding, replica, git_service, workspace = _workspace_fixture(
+        tmp_path
+    )
+    git_service.rows = ()
+    workspace.styles.height = 14
+
+    async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        entry = workspace.query_one("#file-notes-session-changes", Button)
+        entry.focus()
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: (
+                len(git_service.status_calls) == 1
+                and not workspace._git_panel_widget.rows
+            ),
+            "Actionless Prepare state did not render",
+        )
+
+        panel = workspace._git_panel_widget
+        list_surface = panel.query_one(
+            "#file-notes-git-list-surface",
+            VerticalScroll,
+        )
+        assert list_surface.can_focus
+        await pilot.press("shift+tab")
+        assert list_surface.has_focus
+
+        await pilot.press("end")
+        await pilot.pause()
+        commit_zero = panel.query_one("#file-notes-git-commit-zero", Static)
+        assert list_surface.scroll_y > 0
+        assert list_surface.content_region.contains_region(commit_zero.region)
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_remount(
     tmp_path: Path,
 ) -> None:

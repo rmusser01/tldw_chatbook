@@ -1,0 +1,15 @@
+Full-app PTY transcript excerpt, 40x20
+
+Observed Prepare session for commit:
+
+- The linked-root value wrapped across approximately four terminal rows.
+- The current-status line was visible only through:
+
+    Status: CURRENT · READY — 1 can...
+
+- Stage and commit actions were below the visible viewport.
+- Keyboard traversal followed by activation did not stage the eligible note.
+- Resizing the same running app to 120x40 exposed the expected actions.
+
+Result: FAIL. The supported compact layout did not keep the primary workflow
+reachable with a realistic path.
