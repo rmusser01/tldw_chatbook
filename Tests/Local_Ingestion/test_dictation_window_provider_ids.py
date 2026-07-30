@@ -104,6 +104,8 @@ def _assert_all_ids_are_real(provider_ids: list[str]) -> None:
 
 
 def test_dictation_window_provider_select_ids_are_real() -> None:
+    """`DictationWindow`'s `"provider-select"` options must all be real
+    `transcription_service` dispatch ids (or a documented exception)."""
     source = (REPO_ROOT / "tldw_chatbook" / "UI" / "Dictation_Window.py").read_text()
 
     _assert_all_ids_are_real(_select_option_ids(source, "provider-select"))
@@ -155,3 +157,136 @@ def test_no_dropdown_offers_the_bare_misspelled_lightning_whisper_id() -> None:
     assert "lightning-whisper-mlx" in privacy_ids
     assert "lightning-whisper-mlx" in all_ids
     assert "lightning-whisper-mlx" in plain_window_ids
+
+
+# -- task-1282 follow-up: normalize an already-persisted legacy provider id --
+
+
+def _fake_get_cli_setting_legacy_provider(section, key=None, default=None):
+    """Stand-in for `config.get_cli_setting` with an empty config file,
+    except `dictation.provider`, which answers as if a user's saved config
+    still holds the pre-task-1282 misspelling. Every other setting mirrors
+    an unset config: both windows call `get_cli_setting("section.key",
+    default)` (the dotted two-positional-arg form), so echoing `key` back
+    (it carries the caller's default in that form) reproduces "key absent,
+    default applies" for everything that isn't the provider.
+    """
+    if section == "dictation.provider":
+        return "lightning-whisper"
+    return key
+
+
+def test_load_settings_normalizes_legacy_provider_id(monkeypatch) -> None:
+    """A `dictation.provider` config value saved under the pre-task-1282
+    dropdown (`"lightning-whisper"`) must resolve to the real dispatch id
+    (`"lightning-whisper-mlx"`) when either window loads its settings.
+    Correcting the dropdown's own options (tested above) does nothing for a
+    config file a user already saved with the old, broken value -- this is
+    what actually unbreaks that user without them touching Settings again.
+    Read-side only: `_load_settings()` must not write the normalized value
+    back to config as a side effect of merely loading it.
+    """
+    import tldw_chatbook.UI.Dictation_Window as dw
+    import tldw_chatbook.UI.Dictation_Window_Improved as dwi
+
+    monkeypatch.setattr(dw, "get_cli_setting", _fake_get_cli_setting_legacy_provider)
+    monkeypatch.setattr(dwi, "get_cli_setting", _fake_get_cli_setting_legacy_provider)
+    save_calls = []
+    monkeypatch.setattr(
+        dw,
+        "save_setting_to_cli_config",
+        lambda *args, **kwargs: save_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        dwi,
+        "save_setting_to_cli_config",
+        lambda *args, **kwargs: save_calls.append((args, kwargs)),
+    )
+
+    plain_settings = dw.DictationWindow.__new__(dw.DictationWindow)._load_settings()
+    improved_settings = dwi.ImprovedDictationWindow.__new__(
+        dwi.ImprovedDictationWindow
+    )._load_settings()
+
+    assert plain_settings["provider"] == "lightning-whisper-mlx"
+    assert improved_settings["provider"] == "lightning-whisper-mlx"
+    assert not save_calls, (
+        "_load_settings() must not write the normalized value back to config"
+    )
+
+
+def test_initialize_service_constructs_with_normalized_legacy_provider_id(
+    monkeypatch,
+) -> None:
+    """Drives the exact path the bug report described:
+    `ImprovedDictationWindow._initialize_service()` forwards
+    `self.settings["provider"]` straight into `LazyLiveDictationService`
+    unmodified, so if `_load_settings()` ever stopped normalizing, the
+    service itself would be constructed with the dead legacy id. Patches
+    only the service constructor (and the two calls `_initialize_service()`
+    makes on the constructed instance) plus `_show_status`, which otherwise
+    needs a mounted widget; no audio device is touched anywhere here.
+
+    Constructs the window via its real `__init__` rather than `__new__`:
+    `is_initialized`/`initialization_error` are Textual `reactive`
+    attributes, and `_initialize_service()` assigns to them on both its
+    success and failure paths, which raises `ReactiveError` on an instance
+    that skipped `Widget.__init__` (no mounting/DOM is otherwise needed --
+    `__init__` alone is enough to satisfy the reactive machinery). This also
+    means `get_cli_setting` must be patched *before* construction, since
+    `__init__` itself calls `_load_settings()`.
+    """
+    import tldw_chatbook.UI.Dictation_Window_Improved as dwi
+
+    monkeypatch.setattr(dwi, "get_cli_setting", _fake_get_cli_setting_legacy_provider)
+
+    constructed_kwargs = {}
+
+    class _FakeDictationService:
+        def __init__(self, **kwargs):
+            constructed_kwargs.update(kwargs)
+
+        def update_privacy_settings(self, *_args, **_kwargs):
+            pass
+
+        def set_buffer_duration(self, *_args, **_kwargs):
+            pass
+
+    monkeypatch.setattr(dwi, "LazyLiveDictationService", _FakeDictationService)
+
+    window = dwi.ImprovedDictationWindow()
+    window._show_status = lambda *_args, **_kwargs: None
+
+    assert window.settings["provider"] == "lightning-whisper-mlx"
+    assert window._initialize_service() is True
+    assert constructed_kwargs["transcription_provider"] == "lightning-whisper-mlx"
+
+
+def test_provider_select_accepts_the_normalized_legacy_value() -> None:
+    """The dropdown must tolerate a normalized legacy value at init time.
+
+    `Select.value` raises `InvalidSelectValueError` when set (at mount, via
+    `_init_selected_option`) to something absent from its own options --
+    exactly what would happen if the raw legacy `"lightning-whisper"` config
+    value reached `Select(value=...)` unnormalized, since neither window's
+    option list has offered that id since task-1282. Calls
+    `_init_selected_option` directly (the real method `_on_mount` uses) so
+    this exercises actual `Select` validation without needing a running app.
+    """
+    from tldw_chatbook.UI.Dictation_Window_Improved import ImprovedDictationWindow
+    from tldw_chatbook.Utils.local_stt_providers import normalize_provider_id
+    from textual.widgets import Select
+    from textual.widgets._select import InvalidSelectValueError
+
+    window = ImprovedDictationWindow.__new__(ImprovedDictationWindow)
+    window.settings = {"privacy": {"local_only": True}}
+    options = window._get_provider_options()
+
+    normalized = normalize_provider_id("lightning-whisper")
+    select = Select(options=options, value=Select.NULL)
+    select._init_selected_option(normalized)  # must not raise
+    assert select.value == normalized
+
+    unnormalized_select = Select(options=options, value=Select.NULL)
+    with pytest.raises(InvalidSelectValueError):
+        unnormalized_select._init_selected_option("lightning-whisper")

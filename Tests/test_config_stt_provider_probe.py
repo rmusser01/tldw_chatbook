@@ -120,6 +120,12 @@ def test_non_macos_stt_default_fallback_is_hyphenated(
     `sysconfig` at import time using the real build's platform tag. Patching
     only around the call keeps every other import on the real platform and
     exercises just the one `sys.platform` read this fix touches.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; used as the isolated
+            `TLDW_CONFIG_PATH` so this test never touches a real config file.
+        monkeypatch: pytest's monkeypatch fixture; sets `TLDW_CONFIG_PATH`
+            and forces `config_module.sys.platform` to `"linux"`.
     """
     from tldw_chatbook import config as config_module
 

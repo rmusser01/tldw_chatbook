@@ -29,6 +29,7 @@ from loguru import logger
 from ..config import get_cli_setting, save_setting_to_cli_config
 from ..Audio.dictation_service_lazy import LazyLiveDictationService, DictationState
 from ..Event_Handlers.Audio_Events import VoiceCommandEvent
+from ..Utils.local_stt_providers import normalize_provider_id
 from ..Widgets.audio_troubleshooting_dialog import AudioTroubleshootingDialog
 
 
@@ -690,9 +691,18 @@ Performance Tips:
         self.app.notify(help_text.strip(), title="Dictation Help", timeout=15)
 
     def _load_settings(self) -> Dict[str, Any]:
-        """Load dictation settings with privacy defaults."""
+        """Load dictation settings with privacy defaults.
+
+        Normalizes `dictation.provider` on read so a config file saved before
+        `_get_provider_options()` was corrected to `"lightning-whisper-mlx"`
+        (it used to offer the misspelled `"lightning-whisper"`) still resolves
+        to a real dispatch id. This is read-side only -- it does not write
+        the normalized value back to config.
+        """
         settings = {
-            "provider": get_cli_setting("dictation.provider", "auto") or "auto",
+            "provider": normalize_provider_id(
+                get_cli_setting("dictation.provider", "auto") or "auto"
+            ),
             "model": get_cli_setting("dictation.model", None),
             "language": get_cli_setting("dictation.language", "en") or "en",
             "punctuation": get_cli_setting("dictation.punctuation", True),

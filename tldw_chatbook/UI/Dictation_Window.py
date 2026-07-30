@@ -27,6 +27,7 @@ import json
 
 # Local imports
 from ..config import get_cli_setting, save_setting_to_cli_config
+from ..Utils.local_stt_providers import normalize_provider_id
 from ..Widgets.voice_input_widget import VoiceInputWidget, VoiceInputMessage
 from ..Event_Handlers.Audio_Events import (
     DictationStartedEvent,
@@ -583,9 +584,18 @@ class DictationWindow(Widget):
             self.notify("Failed to export transcript", severity="error")
 
     def _load_settings(self) -> Dict[str, Any]:
-        """Load dictation settings."""
+        """Load dictation settings.
+
+        Normalizes `dictation.provider` on read so a config file saved before
+        `"provider-select"` was corrected to `"lightning-whisper-mlx"` (it
+        used to offer the misspelled `"lightning-whisper"`) still resolves to
+        a real dispatch id. This is read-side only -- it does not write the
+        normalized value back to config.
+        """
         settings = {
-            "provider": get_cli_setting("dictation.provider", "auto"),
+            "provider": normalize_provider_id(
+                get_cli_setting("dictation.provider", "auto")
+            ),
             "model": get_cli_setting("dictation.model", None),
             "language": get_cli_setting("dictation.language", "en"),
             "punctuation": get_cli_setting("dictation.punctuation", True),

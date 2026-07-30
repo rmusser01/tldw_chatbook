@@ -886,6 +886,11 @@ def test_release_stops_the_real_processing_thread(monkeypatch):
     abandoned or mid-session-failed capture forever. Drives a *real*
     `_processing_loop` thread (no fakes for the loop itself) so a fix that
     merely no-ops instead of actually stopping it would be caught.
+
+    Args:
+        monkeypatch: pytest's monkeypatch fixture; passed through to
+            `_controller()` to stub capture availability, the installed
+            local-provider list, and settings.
     """
     from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
 
