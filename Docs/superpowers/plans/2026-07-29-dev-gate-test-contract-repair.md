@@ -1743,6 +1743,41 @@ git add \
 git commit -m "test(console): assert skill dispatch session"
 ```
 
+### Task 4ao: Complete the skill unknown-command hint
+
+**Files:**
+- Modify: `Tests/UI/test_console_skill_commands.py`
+
+- [ ] **Step 1: Reproduce the stale command list**
+
+Run
+`test_bare_slash_skill_name_no_longer_auto_runs_shows_unknown_command_hint`.
+Expected: the regression's curated four-command hint is absent because the
+current registry also advertises `/generate-image` and `/rewind`.
+
+- [ ] **Step 2: Update only the independent expected copy**
+
+Add `/generate-image` and `/rewind` after `/prefill` in the expected hint.
+Retain the submit-not-called, skill-not-executed, draft-preserved, and exact
+unknown-send-armed assertions. Do not derive the expected value from
+production or change command registration.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_skill_commands.py \
+  Tests/UI/test_console_command_composer.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_console_skill_commands.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_console_skill_commands.py
+git diff --check
+git add \
+  Tests/UI/test_console_skill_commands.py
+git commit -m "test(console): complete skill command hint"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

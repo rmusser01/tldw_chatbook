@@ -393,6 +393,12 @@ Update the tests to describe current behavior:
     transcript retention, and picker argument/no-argument cases. Do not weaken
     to `ANY`, remove exact text checks, or drop the session-routing contract
     threaded through normal Console sends.
+45. In the bare-slash skill-name regression, add `/generate-image` and
+    `/rewind` to the independently curated expected unknown-command hint in
+    the same registered order used by the already-aligned command-composer
+    regressions. Preserve the non-execution, preserved draft, uncalled submit,
+    and exact second-Enter arming assertions. Do not derive the expected copy
+    from production or change command registration.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -550,6 +556,10 @@ compatibility shims. No broad deletion of live tests.
 - Reverting `submit_draft` to text-only calls would reopen the cross-tab routing
   race fixed by the dispatch-time session contract. Capturing the already-live
   active id keeps the skill tests exact without adding a fixture abstraction.
+- Leaving the skill test's copy at four commands makes it disagree with the
+  same live registry already pinned by the composer suite. Updating its one
+  independent literal preserves the regression without a shared tautological
+  helper.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
