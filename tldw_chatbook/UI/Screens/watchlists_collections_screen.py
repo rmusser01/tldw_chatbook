@@ -55,6 +55,7 @@ from ..Watchlists_Modules.inspector_pane import (
     SaveNoiseSelectorsRequested,
     PreviewRequested,
     StageInConsoleRequested,
+    ToggleBriefingQueueRequested,
 )
 from ..Watchlists_Modules.artifacts_pane import (
     ArtifactsPane,
@@ -3768,6 +3769,117 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if entity is None:
             return
         self.run_worker(self._update_item_status(entity.get("id"), "ignored"), exclusive=True)
+
+    @on(ToggleBriefingQueueRequested)
+    def handle_toggle_briefing_queue_requested(
+        self, event: ToggleBriefingQueueRequested
+    ) -> None:
+        """Flip the global queued-for-briefing flag on one item (spec #2 §UI).
+
+        Synchronous, not a worker: `SubscriptionsDB.set_item_briefing_queued`
+        is a single indexed `UPDATE subscription_items ... WHERE id = ?` --
+        the same order of cost as any other UI-thread state write on this
+        screen -- so routing it through `run_worker` would only add a
+        scheduling round trip for no benefit. Reached the SAME way
+        `_briefings_db()` reaches `SubscriptionsDB` for the Artifacts pane's
+        own writes: through `WatchlistBundleService`, not the scope service
+        -- the flag is local-only by design (ADR-018's global shape, the
+        design doc's "The queue flag is global, and never auto-cleared"),
+        so there is no server form here to resolve first.
+
+        Honest failure (the repeated whole-branch-review pattern on this
+        stream): on a DB error the flag is never patched and the indicator
+        never repainted, so a failed write leaves the item exactly as it
+        was, with an error toast reporting it. The log line names the
+        exception TYPE only -- `logger.opt(exception=True)` would dump the
+        failing frame's locals (including this item's title/excerpt) into a
+        file sink running with `diagnose=True` (Task 3's leak, one layer up).
+        """
+        event.stop()
+        if event.item_id is None:
+            logger.warning(
+                "Queue-for-briefing toggle requested for an entity carrying "
+                "no item id; nothing was written."
+            )
+            self._notify_watchlists(
+                "Nothing to queue: no item is selected.", severity="warning"
+            )
+            return
+        db = self._briefings_db()
+        if db is None:
+            self._notify_watchlists(
+                "Could not reach the local database, so nothing was queued.",
+                severity="error",
+            )
+            return
+        try:
+            db.set_item_briefing_queued(event.item_id, event.queued)
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.warning(
+                "Failed to set the briefing queue flag for item "
+                f"{event.item_id}: {type(exc).__name__}"
+            )
+            self._notify_watchlists(
+                "Could not update the briefing queue flag. Nothing changed.",
+                severity="error",
+            )
+            return
+        self._patch_item_queued_flag(event.item_id, event.queued)
+        label = "queued for" if event.queued else "removed from"
+        self._notify_watchlists(
+            f"Item {label} the next briefing.", severity="information"
+        )
+
+    def _patch_item_queued_flag(self, raw_item_id: Any, queued: bool) -> None:
+        """Mirror a saved queue flag into every in-memory dict, then repaint.
+
+        Same shape as `_patch_entity_ignore_selectors`/
+        `_repaint_item_status_cell`: patches every dict this screen holds
+        that describes the same item, in place, so a later read (including
+        the mounted Inspector, rebuilt for an unrelated reason) already sees
+        the new value with no rebuild forced here -- then repaints the ONE
+        Items-table cell that displays it and, if the Inspector is currently
+        showing this same item, its queue button's label. Neither touches a
+        `recompose=True` reactive (Phase D pattern): the dicts are mutated
+        in place, never reassigned.
+
+        `raw_item_id` is the DB row id (`entity["item_id"]`), not the
+        namespaced `entity["id"]` the table row key and
+        `update_item_queued_cell` use -- resolved below from whichever
+        matching dict is found first, exactly as `_repaint_item_status_cell`
+        already has to for the status column.
+        """
+        row_key: Any = None
+        for item in self._loaded_items:
+            if item.get("item_id") == raw_item_id:
+                item["queued_for_briefing"] = queued
+                row_key = row_key or item.get("id")
+        for entity in (self.selected_entity, self._selected_content_item):
+            if isinstance(entity, dict) and entity.get("item_id") == raw_item_id:
+                entity["queued_for_briefing"] = queued
+                row_key = row_key or entity.get("id")
+        if row_key is not None:
+            try:
+                pane = self.query_one("#watchlists-items-pane", ItemsPane)
+                pane.update_item_queued_cell(row_key, queued)
+            except NoMatches:
+                pass
+        entity = self.selected_entity
+        if isinstance(entity, dict) and entity.get("item_id") == raw_item_id:
+            try:
+                inspector = self.query_one(
+                    "#watchlists-entity-inspector", InspectorPane
+                )
+                button = inspector.query_one(
+                    "#inspector-queue-briefing-button", Button
+                )
+            except NoMatches:
+                return
+            button.label = (
+                InspectorPane._UNQUEUE_BRIEFING_LABEL
+                if queued
+                else InspectorPane._QUEUE_BRIEFING_LABEL
+            )
 
     async def _update_item_status(
         self,

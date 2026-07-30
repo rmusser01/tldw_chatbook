@@ -92,6 +92,37 @@ class EditRuleRequested(Message):
         super().__init__()
 
 
+class ToggleBriefingQueueRequested(Message):
+    """Posted when the user queues or unqueues an item for briefing.
+
+    Spec #2 phase 1's queue-for-briefing affordance -- the input side of
+    "queued AND NOT already in a briefing" selection; the read path
+    (`queued_for_briefing` on the normalized item) was already wired by
+    Task 1. Same shape as `SaveNoiseSelectorsRequested`: a verb-first
+    message class posted from `on_button_pressed`, consumed by exactly one
+    screen `@on` handler.
+
+    `queued` is always the FLIP of what the entity held when the button was
+    pressed, not a fixed "queue" action -- the same button both queues and
+    unqueues, and its label states the current value.
+
+    Args:
+        item_id: The item's raw database row id (`entity["item_id"]`, an
+            int for a real item). `SubscriptionsDB.set_item_briefing_queued`
+            takes this directly, and the flag is local-only by design (the
+            same global shape as read status, ADR-018) -- so unlike
+            `SaveNoiseSelectorsRequested.source_id`, there is no
+            namespaced/server form for the screen to resolve first.
+        queued: The value to set the flag to (not the value it currently
+            holds).
+    """
+
+    def __init__(self, item_id: Any, queued: bool) -> None:
+        self.item_id = item_id
+        self.queued = queued
+        super().__init__()
+
+
 class SaveNoiseSelectorsRequested(Message):
     """Posted when the user saves a url-family source's noise selectors.
 
@@ -291,6 +322,36 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             ),
         )
 
+    #: Spec #2 phase 1. The queue button's label states the CURRENT value, so
+    #: the same control both queues and unqueues -- there is no separate
+    #: "Unqueue" button to render or hide.
+    _QUEUE_BRIEFING_LABEL = "Queue for briefing"
+    _UNQUEUE_BRIEFING_LABEL = "Unqueue from briefing"
+
+    @classmethod
+    def _queue_briefing_button(cls, entity: dict[str, Any]) -> Button:
+        """The item's queue-for-briefing toggle, labelled by its current state.
+
+        Reads `queued_for_briefing` straight off the normalized item
+        (`normalize_watchlist_item`'s read path, Task 1) -- there is no
+        separate reactive to seed, so a freshly selected item always shows
+        the flag it actually holds, and a screen-side patch that mutates
+        this same entity dict in place is picked up the next time the
+        Inspector rebuilds for it.
+        """
+        queued = bool(entity.get("queued_for_briefing"))
+        return Button(
+            cls._UNQUEUE_BRIEFING_LABEL if queued else cls._QUEUE_BRIEFING_LABEL,
+            id="inspector-queue-briefing-button",
+            compact=True,
+            tooltip=(
+                "Remove this item from the pool the next briefing draws from."
+                if queued
+                else "Add this item to the pool the next briefing draws from, "
+                "regardless of the watchlist's coverage window."
+            ),
+        )
+
     def compose(self):
         # No "Inspector" title here. `_build_inspector_pane` already opens the
         # RIGHT_RAIL with `Static("Inspector", classes="destination-section
@@ -393,6 +454,7 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                 # actions and are unaffected.
                 yield Button("Ingest", id="inspector-ingest-button", variant="primary")
                 yield Button("Ignore", id="inspector-ignore-button", variant="error")
+                yield self._queue_briefing_button(entity)
             elif deepest.kind == "rule":
                 yield Button("Edit", id="inspector-edit-rule-button", variant="primary")
                 yield Button("Delete", id="inspector-delete-button", variant="error")
@@ -573,6 +635,8 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             self.post_message(IngestRequested(entity))
         elif button_id == "inspector-ignore-button":
             self.post_message(IgnoreRequested(entity))
+        elif button_id == "inspector-queue-briefing-button":
+            self._post_toggle_briefing_queue(entity)
         elif button_id == "inspector-edit-rule-button":
             self.post_message(EditRuleRequested(entity))
         elif button_id == "inspector-save-selectors-button":
@@ -633,6 +697,40 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                 severity="error",
                 markup=False,
             )
+
+    def _post_toggle_briefing_queue(self, entity: dict[str, Any] | None) -> None:
+        """Read the entity's current flag and post its flip.
+
+        Same "no silent no-op" rule as `_post_noise_selectors_save`: an item
+        button is only ever rendered when `selected_entity` is an item (see
+        `compose`), so `entity is None` here is a state defect rather than
+        anything the user did -- but a press that produces no write, no
+        error and no toast is indistinguishable from a broken button, so it
+        is refused loudly rather than swallowed.
+        """
+        if entity is None:
+            self._report_nothing_to_queue(
+                "Queue-for-briefing pressed with no entity selected."
+            )
+            return
+        item_id = entity.get("item_id")
+        if item_id is None:
+            self._report_nothing_to_queue(
+                "Queue-for-briefing pressed for an entity carrying no item id."
+            )
+            return
+        queued = not bool(entity.get("queued_for_briefing"))
+        self.post_message(ToggleBriefingQueueRequested(item_id, queued))
+
+    def _report_nothing_to_queue(self, reason: str) -> None:
+        """Say so, in the log and on screen, when the queue toggle cannot write."""
+        logger.warning(reason)
+        try:
+            notify = getattr(self.app, "notify", None)
+        except Exception:
+            notify = None
+        if callable(notify):
+            notify("Nothing to queue: no item is selected.", severity="warning")
 
     def _report_nothing_to_save(self, reason: str) -> None:
         """Say so, in the log and on screen, when Save cannot do anything."""
