@@ -2287,6 +2287,49 @@ git diff --check
 Expected: all 93 remaining current-owner contracts pass, and Ruff plus diff
 checks remain clean.
 
+### Task 4bc: Dispatch Personas generation wiring through mounted buttons
+
+**Files:**
+- Modify: `Tests/UI/test_personas_generation_wiring.py`
+
+- [ ] **Step 1: Preserve the collection-sensitive failure**
+
+Run the three field-generation wiring nodes while also collecting
+`Tests/UI/test_settings_library_rag_defaults.py`. Expected before repair: at
+least one mounted editor pointer click intermittently misses, leaving the
+controller call list or captured live record empty. Confirm the same three
+nodes pass when collected alone.
+
+- [ ] **Step 2: Use the direct mounted-button event seam**
+
+Keep `pilot.click("#personas-library-new")` because opening the editor is the
+user-navigation setup under test. For controls already inside the returned
+mounted editor, query the `Button` and call `press()` instead of asking the
+pilot to resolve pointer geometry while programmatic field changes are posting
+dirty/validation events. Retain the existing pauses, worker completion
+barriers, and every behavior assertion. Do not add sleeps, helpers, production
+changes, or validation-timer changes.
+
+- [ ] **Step 3: Verify isolated and collection-sensitive coverage**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_personas_generation_wiring.py \
+  -q
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_personas_generation_wiring.py \
+  Tests/UI/test_settings_library_rag_defaults.py \
+  -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_personas_generation_wiring.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_personas_generation_wiring.py
+git diff --check
+```
+
+Expected: all nine wiring nodes and all fourteen Library/RAG settings nodes pass
+together, and static plus diff checks remain clean.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

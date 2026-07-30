@@ -132,6 +132,16 @@ The failures reproduce on an exact `origin/dev` checkout:
   or assert preset/resize selectors explicitly retired by TASK-577. A separate
   passing conversation test also blesses the dead header class for an
   `-active` state no live Collapsible owns.
+- The Personas generation wiring module passes when collected alone, but its
+  coordinate-based editor-button clicks intermittently miss after later
+  Library/RAG settings imports are collected. The smallest reproducer imports
+  the otherwise-pure RAG fusion module before running the three generation
+  nodes; repeated runs show the import only amplifies the race. The editor
+  posts `TextArea.Changed`, marks the form dirty, and arms a 0.2-second
+  validation timer immediately before several pointer clicks, so geometry and
+  event-loop timing—not the controller or screen handler—decide whether the
+  press arrives. The same nodes retain the real Textual event path when the
+  already-mounted `Button` is pressed directly.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -550,6 +560,15 @@ Update the tests to describe current behavior:
     and its now unused path constant because no live Collapsible owns that
     state. Do not restore retired CSS or activate the unscoped dead conversation
     selectors.
+59. In the Personas generation wiring module, keep the real library-entry
+    pointer click that opens the editor, but dispatch controls owned by the
+    mounted editor through `Button.press()`. Preserve the existing pauses and
+    worker-manager completion barriers, plus every controller argument,
+    preview, failure, regeneration, concept, and non-clobbering assertion.
+    Verify the focused module both alone and while the Library/RAG settings
+    test is collected. Do not add sleeps, change validation timing, or modify
+    production behavior for a coordinate-hit-test race outside this module's
+    wiring purpose.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -770,6 +789,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   conversation selector to `CollapsibleTitle` would make a formerly inert,
   globally bundled rule style every Collapsible; removing its ownerless test is
   safer and more honest than introducing unreviewed app-wide UI behavior.
+- Adding sleeps after programmatic Personas field edits would make the wiring
+  suite slower without giving it a deterministic scheduler boundary, while
+  changing the editor's production validation debounce would alter user
+  behavior for a test-only pointer race. Directly pressing the mounted buttons
+  keeps Textual message bubbling and the screen-owned worker path intact.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
