@@ -1,7 +1,11 @@
 """Console-native widgets."""
 
 from .console_control_bar import ConsoleControlBar
-from .console_composer_bar import ConsoleComposerBar, ConsoleDraftStash
+from .console_composer_bar import (
+    ConsoleComposerBar,
+    ConsoleComposerUndoHistory,
+    ConsoleDraftStash,
+)
 from .console_background_effect import ConsoleBackgroundEffect, ConsoleTranscriptSurface
 from .console_citation_sources_modal import (
     ConsoleCitationSourceRow,
@@ -30,6 +34,7 @@ from .console_workspace_switcher_modal import (
 __all__ = [
     "build_console_workbench_state",
     "ConsoleComposerBar",
+    "ConsoleComposerUndoHistory",
     "ConsoleDraftStash",
     "ConsoleBackgroundEffect",
     "ConsoleCitationSourceRow",

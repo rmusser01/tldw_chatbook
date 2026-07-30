@@ -1,4 +1,14 @@
-"""Console-native composer action row."""
+"""Console-native composer action row.
+
+Undo/redo (TASK-1281): history is recorded as flat (draft text, cursor
+index) snapshots, never a copy of the live `_DraftSegment` objects. This
+keeps the history model simple, but it means undo/redo restores plain
+text only -- a collapsed paste token or a labeled file/attachment segment
+that existed at a snapshotted point always comes back as ordinary literal
+text, never re-collapsed into its display token. A redo that lands back on
+a snapshot taken while a large paste was still collapsed will therefore
+show the whole payload expanded in the composer, not the short token.
+"""
 
 from __future__ import annotations
 
@@ -87,6 +97,16 @@ class _DraftHistorySnapshot:
     cursor_index: int
 
 
+#: Public alias for the (undo stack, redo stack) pair `export_undo_history`
+#: returns and `restore_undo_history` accepts (TASK-1281 N2) -- lets a
+#: caller like `ChatScreen` type its own per-session history map without
+#: reaching for the private `_DraftHistorySnapshot` name or falling back to
+#: `Any`.
+ConsoleComposerUndoHistory = tuple[
+    list[_DraftHistorySnapshot], list[_DraftHistorySnapshot]
+]
+
+
 @dataclass(frozen=True)
 class _DraftSegmentDisplayRange:
     """Visible character range occupied by a segment display token."""
@@ -126,6 +146,16 @@ class ConsoleComposerBar(Horizontal):
     #: TASK-1281: max entries kept per undo/redo stack; the oldest entry is
     #: dropped once a push would exceed this.
     UNDO_HISTORY_DEPTH_CAP = 100
+    #: TASK-1281 review F6: max total characters retained across BOTH
+    #: stacks combined, evicting the oldest entries first once a push would
+    #: exceed it. Entry count alone doesn't bound memory: every snapshot
+    #: holds a FULL copy of the draft text, so a single large inlined
+    #: attachment (`insert_file_segment`, up to `MAX_ATTACHMENT_BYTES`)
+    #: multiplies across every entry recorded after it. Measured during
+    #: review: one 1 MB `insert_file_segment` followed by 20 ordinary
+    #: pastes retained >20,000,000 characters across just 21 entries --
+    #: nowhere near the 100-entry depth cap.
+    UNDO_HISTORY_CHAR_BUDGET = 2_000_000
     #: Shared with the mic button's initial `compose()` tooltip and
     #: `sync_dictation_state`'s idle tooltip, and used as the fallback in
     #: `set_dictation_availability` -- an `Availability(ok=False)` with no
@@ -1453,6 +1483,18 @@ class ConsoleComposerBar(Horizontal):
 
         The caret lands at the end of the restored draft.
 
+        TASK-1281 review F3/F4: this is always a SCOPE change (a session
+        switch, or a launch-context prefill), never a recorded edit, so it
+        unconditionally wipes any existing undo/redo history rather than
+        leaving the previous scope's stale entries reachable -- a caller
+        that wants to carry history across the call (the session-switch
+        path in `ChatScreen._sync_console_session_draft`) must explicitly
+        call `restore_undo_history` afterward, which it already does.
+        Resetting `_coalescing_active` matters independently of wiping the
+        stacks: left `True`, it would silently swallow the very first
+        keystroke recorded against the new scope (nothing to merge into,
+        but `_record_undo_snapshot` would still no-op).
+
         Args:
             text: Draft payload to show and send literally.
         """
@@ -1460,6 +1502,9 @@ class ConsoleComposerBar(Horizontal):
         self._segments = [_DraftSegment(text)] if text else []
         self._segments_initialized = True
         self._cursor_index = len(text)
+        self._undo_stack = []
+        self._redo_stack = []
+        self._coalescing_active = False
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -1513,6 +1558,13 @@ class ConsoleComposerBar(Horizontal):
             self._segments_initialized = True
         self._segments = list(stash.segments) + self._segments
         self._cursor_index = len(self._canonical_draft_text())
+        # TASK-1281 review F3: this replaces the draft wholesale without
+        # recording (a rejected send putting the user's own text back is
+        # not itself an edit), but it must still close any run left open
+        # from before the send -- otherwise the first keystroke typed after
+        # the restore silently coalesces into (and is swallowed by) an
+        # unrelated pre-send entry instead of getting its own.
+        self._coalescing_active = False
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -1542,10 +1594,33 @@ class ConsoleComposerBar(Horizontal):
         self._segments = []
         self._segments_initialized = True
         self._cursor_index = 0
+        # TASK-1281 review F3: even the non-recording branch replaces the
+        # draft, so it must close any coalescing run left open from before
+        # the clear -- otherwise the next typed character merges into (and
+        # is swallowed by) a stale pre-clear entry instead of recording its
+        # own. The recording branch above already resets this as a
+        # side effect of `_record_undo_snapshot`, but the non-recording
+        # (default) branch never calls it, so this cannot be conditional.
+        self._coalescing_active = False
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
         self._sync_current_action_state()
+
+    def clear_history(self) -> None:
+        """Empty both undo/redo stacks (TASK-1281 review F2: send is a history barrier).
+
+        Called once a draft has been irrevocably consumed by an accepted
+        send that will never be restored. Clearing just the draft
+        (`clear_draft()`, always non-recording for a send) is not enough on
+        its own -- the mutations that produced the sent text stay reachable
+        on the undo stack, and Ctrl+Z would resurrect already-sent content
+        back into the composer (and, via the screen's undo/redo
+        re-persist, right back into the store as the "live" draft).
+        """
+        self._undo_stack = []
+        self._redo_stack = []
+        self._coalescing_active = False
 
     # -- Undo/redo history (TASK-1281) ------------------------------------
     #
@@ -1580,8 +1655,23 @@ class ConsoleComposerBar(Horizontal):
         )
         if len(self._undo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
             del self._undo_stack[0]
+        self._evict_to_char_budget(self._undo_stack)
         self._redo_stack.clear()
         self._coalescing_active = coalesce
+
+    @classmethod
+    def _evict_to_char_budget(cls, stack: list[_DraftHistorySnapshot]) -> None:
+        """Drop the oldest entries of ``stack`` while it exceeds the char budget.
+
+        TASK-1281 review F6. Never evicts the single most recent entry, even
+        if it alone exceeds the budget -- a best-effort bound on total
+        retained memory, not a hard guarantee, since a single oversized
+        snapshot (a large inlined attachment) must still be revertible.
+        """
+        total = sum(len(entry.text) for entry in stack)
+        while total > cls.UNDO_HISTORY_CHAR_BUDGET and len(stack) > 1:
+            removed = stack.pop(0)
+            total -= len(removed.text)
 
     def _apply_history_snapshot(self, snapshot: _DraftHistorySnapshot) -> None:
         """Replace the live draft with a recorded undo/redo snapshot."""
@@ -1612,6 +1702,7 @@ class ConsoleComposerBar(Horizontal):
         self._redo_stack.append(current)
         if len(self._redo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
             del self._redo_stack[0]
+        self._evict_to_char_budget(self._redo_stack)
         snapshot = self._undo_stack.pop()
         self._apply_history_snapshot(snapshot)
         self._coalescing_active = False
@@ -1632,14 +1723,13 @@ class ConsoleComposerBar(Horizontal):
         self._undo_stack.append(current)
         if len(self._undo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
             del self._undo_stack[0]
+        self._evict_to_char_budget(self._undo_stack)
         snapshot = self._redo_stack.pop()
         self._apply_history_snapshot(snapshot)
         self._coalescing_active = False
         return True
 
-    def export_undo_history(
-        self,
-    ) -> tuple[list[_DraftHistorySnapshot], list[_DraftHistorySnapshot]]:
+    def export_undo_history(self) -> ConsoleComposerUndoHistory:
         """Return a copy of this composer's undo/redo stacks.
 
         Used by `ChatScreen` to scope history per Console session (TASK-1281
@@ -1651,9 +1741,7 @@ class ConsoleComposerBar(Horizontal):
         return (list(self._undo_stack), list(self._redo_stack))
 
     def restore_undo_history(
-        self,
-        history: tuple[list[_DraftHistorySnapshot], list[_DraftHistorySnapshot]]
-        | None,
+        self, history: ConsoleComposerUndoHistory | None
     ) -> None:
         """Replace the undo/redo stacks wholesale (TASK-1281 session scoping).
 
@@ -1665,6 +1753,13 @@ class ConsoleComposerBar(Horizontal):
         undo_entries, redo_entries = history if history is not None else ([], [])
         self._undo_stack = list(undo_entries)
         self._redo_stack = list(redo_entries)
+        # TASK-1281 review F6: a caller-supplied history (banked across a
+        # session switch, potentially from before this composer instance's
+        # own char-budget enforcement existed, or simply handed in from
+        # elsewhere) is re-enforced here too rather than trusted as already
+        # within budget.
+        self._evict_to_char_budget(self._undo_stack)
+        self._evict_to_char_budget(self._redo_stack)
         self._coalescing_active = False
 
     def select_all_draft(self) -> bool:
