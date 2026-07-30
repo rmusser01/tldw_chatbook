@@ -405,14 +405,16 @@ class TestCharacterEditorAvatarThumbnailFit:
         }
         char_id = seeded_character_with_wide_avatar["char_id"]
 
-        captured: list[Image.Image] = []
-        original_from_image = rich_pixels.Pixels.from_image
+        from tldw_chatbook.Utils import mosaic_render
 
-        def _spy_from_image(image, *args, **kwargs):
-            captured.append(image.copy())
-            return original_from_image(image, *args, **kwargs)
+        captured: list[tuple[Image.Image, int, int]] = []
+        original_mosaic = mosaic_render.mosaic_from_image
 
-        monkeypatch.setattr(rich_pixels.Pixels, "from_image", _spy_from_image)
+        def _spy_mosaic(image, box_cols, box_lines):
+            captured.append((image.copy(), box_cols, box_lines))
+            return original_mosaic(image, box_cols, box_lines)
+
+        monkeypatch.setattr(mosaic_render, "mosaic_from_image", _spy_mosaic)
 
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
@@ -424,24 +426,18 @@ class TestCharacterEditorAvatarThumbnailFit:
             assert len(editor.query("#personas-char-editor-avatar-thumb > *")) == 1
 
         assert len(captured) == 1, (
-            "Pixels.from_image should be called exactly once building the "
+            "mosaic_from_image should be called exactly once building the "
             "avatar thumbnail"
         )
-        thumb = captured[0]
-        # Fits the avatar box, in half-block "pixel" units (COLS wide,
-        # LINES*2 tall) - NOT the 80x40 chat-transcript box that
-        # get_pixels() thumbnails to.
-        assert thumb.width <= AVATAR_THUMB_COLS
-        assert thumb.height <= AVATAR_THUMB_LINES * 2
-        # It actually used (not shrunk far below) the box's width - the old
-        # bug's symptom was a sliver, not merely "some image smaller than
-        # the transcript box".
-        assert thumb.width == AVATAR_THUMB_COLS
-        # Aspect preserved (not stretched/cropped to fill the box): the
-        # 200x100 source is 2:1.
-        source_aspect = 200 / 100
-        thumb_aspect = thumb.width / thumb.height
-        assert thumb_aspect == pytest.approx(source_aspect, rel=0.15)
+        source, box_cols, box_lines = captured[0]
+        # Baked at the avatar box - NOT the 80x40 chat-transcript box that
+        # get_pixels() thumbnails to (the old bug's symptom was a clipped
+        # top-left sliver). Box-fit and aspect preservation inside the box
+        # are the mosaic module's own tested contract.
+        assert (box_cols, box_lines) == (AVATAR_THUMB_COLS, AVATAR_THUMB_LINES)
+        # The full-resolution source reaches the mosaic (no pre-shrink that
+        # would throw away detail before baking).
+        assert source.width == 200 and source.height == 100
 
     @pytest.mark.asyncio
     async def test_tiny_avatar_still_produces_pixels_thumbnail(

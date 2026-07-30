@@ -250,7 +250,6 @@ from ...Chat.console_image_view import (
     resolve_default_mode,
     resolve_react_character_expressions,
     resolve_show_character_avatar,
-    scale_image_for_cell_box,
 )
 from ...Chat.console_paste_attach import (
     extract_dropped_path,
@@ -1104,6 +1103,18 @@ def _character_session_prompt_seed(
         str(card.get("first_message") or ""), name, "User"
     )
     return name, system_prompt, greeting
+
+
+def _character_avatar_fallback_renderable(pil: Any):
+    """Bake the rail avatar's non-graphics renderable from a PIL image.
+
+    Quadrant mosaic (2x2 subpixels per cell) at the rail's fitted box --
+    double the horizontal detail of the previous half-block Pixels build
+    with the same universal Block Elements font coverage.
+    """
+    from ...Utils.mosaic_render import mosaic_from_image
+
+    return mosaic_from_image(pil, CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES)
 
 
 def _is_personas_preview_handoff(payload: ChatHandoffPayload) -> bool:
@@ -6052,12 +6063,7 @@ class ChatScreen(BaseAppScreen):
         try:
             pixels = spec.get("pixels")
             if pixels is None and spec.get("pil") is not None:
-                scaled = scale_image_for_cell_box(
-                    spec["pil"], CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES
-                )
-                from rich_pixels import Pixels
-
-                pixels = Pixels.from_image(scaled)
+                pixels = _character_avatar_fallback_renderable(spec["pil"])
             widget = Static(
                 pixels if pixels is not None else "",
                 id="console-character-avatar-image",

@@ -132,12 +132,13 @@ def test_build_character_avatar_widget_pixels_failure_falls_back_to_text(monkeyp
     the no-image case, not propagate.
     """
     from PIL import Image as PILImage
-    import rich_pixels
+
+    from tldw_chatbook.Utils import mosaic_render
 
     def _boom(*args, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(rich_pixels.Pixels, "from_image", staticmethod(_boom))
+    monkeypatch.setattr(mosaic_render, "mosaic_from_image", _boom)
 
     screen = _bare_console_screen(ConsoleChatStore())
     spec = {
