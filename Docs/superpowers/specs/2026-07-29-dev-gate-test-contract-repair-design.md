@@ -266,6 +266,10 @@ The failures reproduce on an exact `origin/dev` checkout:
   category recomposition the label can be absent, or it can exist on a partial
   Select before the required overlay `OptionList` mounts, producing
   `NoMatches`.
+- The real STT compatibility-facade regression passes the nonexistent literal
+  `audio.wav` while mocking only the recognizer. The shared missing-file guard
+  correctly rejects that input before provider dispatch, so the regression no
+  longer reaches the forwarding seam it intends to assert.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -833,6 +837,10 @@ Update the tests to describe current behavior:
     current screen's `#settings-provider-value OptionList` descendant instead,
     then query the live `Select` before assigning its value. Preserve all
     provider/model save, placeholder, session, and handoff assertions.
+80. Give the real STT compatibility-facade regression an empty file under
+    `tmp_path`, pass that existing path to the real facade, and retain the exact
+    configured model/source-language forwarding assertions against the mocked
+    recognizer. Do not bypass or weaken the production missing-file guard.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1167,6 +1175,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   the tests to another internal name. Its public `OptionList` base is the child
   that value assignment requires; waiting for it in the current screen DOM and
   then re-querying the Select handles recomposition without a new helper.
+- Mocking `os.path.exists()` in the real STT facade regression would bypass the
+  public precondition the production path now owns. Creating an empty temporary
+  file is the smallest truthful fixture: it reaches the already-mocked
+  recognizer without decoding audio or changing runtime behavior.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

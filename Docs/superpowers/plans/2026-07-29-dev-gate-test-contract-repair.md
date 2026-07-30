@@ -3227,6 +3227,40 @@ Run the two exact regressions, both changed modules, Ruff, format checks, and
 Expected: value assignment occurs only after the live Select is fully composed,
 and all existing save, placeholder, session, and handoff assertions pass.
 
+### Task 4bx: Give the real STT facade regression an existing input
+
+**Files:**
+- Modify: `Tests/STT/test_transcription_service_facade.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This corrects a test fixture so it satisfies an existing public
+input contract and does not change production architecture or behavior.
+
+- [x] **Step 1: Confirm the focused failure**
+
+Run the exact real-facade regression. Expected before repair: the production
+missing-file guard rejects the nonexistent literal `audio.wav` before the
+mocked recognizer is called.
+
+- [x] **Step 2: Supply truthful local input**
+
+Create an empty `audio.wav` under pytest's `tmp_path`, pass its string path to
+the real facade, and retain the exact configured model and source-language
+forwarding assertions. Do not mock path existence or change production.
+
+- [x] **Step 3: Verify focused and adjacent STT coverage**
+
+Run the exact node, its full module, the complete `Tests/STT/` package, Ruff on
+the changed file, and `git diff --check`.
+
+Expected: the exact node and module pass, all STT package tests pass, and the
+production missing-file contract remains exercised by its dedicated tests.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 from typing import get_type_hints
 from unittest.mock import patch
 
@@ -328,7 +329,9 @@ def test_facade_preserves_backend_exception_identity(
     assert caught.value is failure
 
 
-def test_real_facade_keeps_configured_legacy_provider_and_language() -> None:
+def test_real_facade_keeps_configured_legacy_provider_and_language(
+    tmp_path: Path,
+) -> None:
     settings = {
         "transcription.default_provider": "faster-whisper",
         "transcription.default_model": "base",
@@ -336,6 +339,8 @@ def test_real_facade_keeps_configured_legacy_provider_and_language() -> None:
         "transcription.default_source_language": "fr",
     }
     legacy_result = {"text": "bonjour", "segments": [], "language": "fr"}
+    audio_path = tmp_path / "audio.wav"
+    audio_path.touch()
 
     with (
         patch(
@@ -353,11 +358,11 @@ def test_real_facade_keeps_configured_legacy_provider_and_language() -> None:
             return_value=legacy_result,
         ) as transcribe,
     ):
-        result = TranscriptionService().transcribe("audio.wav")
+        result = TranscriptionService().transcribe(str(audio_path))
 
     assert result is legacy_result
     assert transcribe.call_args.args[:6] == (
-        "audio.wav",
+        str(audio_path),
         "base",
         "fr",
         False,
