@@ -76,7 +76,8 @@ pytest --cov=tldw_chatbook --cov-report=html
 # Run tests with timeout (default: 300s)
 pytest --timeout=60
 
-# Run tests in parallel (requires pytest-xdist)
+# Run tests in parallel (requires pytest-xdist — being added to the dev
+# extras in task-1453; not installed by default before that)
 pytest -n auto
 ```
 
@@ -95,13 +96,12 @@ pytest -m integration
 pytest -m ui
 
 # Run only tests that require optional dependencies
-pytest -m optional_deps
-
-# Run tests excluding optional dependencies
-pytest -m "not optional_deps"
+# (marker is `optional`; the `--run-optional` conftest gate is being reworked
+# in task-1457 — see backlog/docs/test-suite-audit-2026-07-30.md)
+pytest -m optional
 
 # Combine markers
-pytest -m "unit and not optional_deps"
+pytest -m "unit and not optional"
 ```
 
 ### Running Tests by Module
@@ -167,14 +167,17 @@ class TestChatWindow:
         # Test implementation
 ```
 
-### Optional Dependency Tests (`@pytest.mark.optional_deps`)
-- Require optional packages (embeddings, RAG, etc.)
-- Automatically skipped if dependencies missing
-- Include ML model loading tests
+### Optional Dependency Tests (`@pytest.mark.optional`)
+- Require optional packages (embeddings, RAG, etc.) or live API keys
+- Guard themselves with `pytest.mark.skipif` on the relevant availability flag
+  (there is NO automatic skip: the old `optional_deps` marker documented here
+  was never used by any test, and the conftest gate keyed to it selected
+  nothing — 2026-07-30 audit)
 
 Example:
 ```python
-@pytest.mark.optional_deps
+@pytest.mark.optional
+@pytest.mark.skipif(not DEPENDENCIES_AVAILABLE.get("embeddings_rag"), reason="embeddings extras not installed")
 class TestRAGFunctionality:
     def test_embedding_generation(self):
         # Test implementation
