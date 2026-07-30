@@ -1128,17 +1128,27 @@ class ChatbookExportManagementWindow(ModalScreen):
         chatbook = self.chatbook_files[self.selected_chatbook]
 
         try:
-            import subprocess
+            # Launched, never awaited (TASK-1373) -- same reasoning as the
+            # Chatbook wizard's open-folder button. This runs on Textual's
+            # serialized message pump, and `subprocess.run` waits for the child:
+            # `xdg-open` does not always return until the launched file manager
+            # exits, so a button press could freeze the app indefinitely.
             import platform
+            import subprocess
 
             folder = str(chatbook["path"].parent)
-
-            if platform.system() == "Darwin":  # macOS
-                subprocess.run(["open", folder])
-            elif platform.system() == "Linux":
-                subprocess.run(["xdg-open", folder])
-            elif platform.system() == "Windows":
-                subprocess.run(["explorer", folder])
+            launchers = {
+                "Darwin": ["open", folder],
+                "Linux": ["xdg-open", folder],
+                "Windows": ["explorer", folder],
+            }
+            command = launchers.get(platform.system())
+            if command is not None:
+                subprocess.Popen(
+                    command,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
 
         except Exception as e:
             logger.error(f"Error opening folder: {e}")

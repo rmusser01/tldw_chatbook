@@ -1036,17 +1036,44 @@ class ProgressStep(WizardStep):
         button_id = event.button.id
 
         if button_id == "open-folder" and self.export_path:
-            # Open the folder containing the export
-            import subprocess
+            # Open the folder containing the export.
+            #
+            # Launched, never awaited (TASK-1373). This runs on Textual's
+            # serialized message pump, so `subprocess.run` -- which waits for the
+            # child -- froze the app for as long as the file manager took to
+            # return. `open` on macOS returns promptly, which is why this went
+            # unnoticed, but `xdg-open` is a shell script that in several desktop
+            # environments does not return until the launched handler exits: an
+            # unbounded freeze from a button press.
             import platform
+            import subprocess
 
             folder = str(self.export_path.parent)
-            if platform.system() == "Darwin":  # macOS
-                subprocess.run(["open", folder])
-            elif platform.system() == "Linux":
-                subprocess.run(["xdg-open", folder])
-            elif platform.system() == "Windows":
-                subprocess.run(["explorer", folder])
+            launchers = {
+                "Darwin": ["open", folder],
+                "Linux": ["xdg-open", folder],
+                "Windows": ["explorer", folder],
+            }
+            command = launchers.get(platform.system())
+            if command is not None:
+                try:
+                    subprocess.Popen(
+                        command,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                except Exception as exc:
+                    # A missing launcher must not take down the wizard.
+                    logger.warning(
+                        "Could not open export folder "
+                        "(platform={}, exception_category={}).",
+                        platform.system(),
+                        type(exc).__name__,
+                    )
+                    self.app.notify(
+                        "Couldn't open the folder. The export is still saved.",
+                        severity="warning",
+                    )
 
         elif button_id == "create-another":
             # Dismiss wizard to create another
