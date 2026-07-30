@@ -188,7 +188,12 @@ def _run_group_row_label(row: dict[str, Any]) -> str:
     """
     name = str(row.get("task_name") or "Untitled run")
     glyph = _RUN_STATUS_GLYPHS.get(row.get("status"), _RUN_STATUS_GLYPHS["completed"])
-    time_text = _run_group_row_time(row.get("created_at"))
+    # escape_markup: `_run_group_row_time`'s parse-failure fallback returns
+    # the RAW `created_at` string verbatim (a free-text DB column with no
+    # format enforcement -- see that function's own docstring), so it
+    # carries the identical markup hazard `name` does. Escaping only `name`
+    # and not this left the fallback path unescaped.
+    time_text = escape_markup(_run_group_row_time(row.get("created_at")))
     return f"{glyph} {time_text} · {escape_markup(name)}"
 
 
@@ -219,6 +224,7 @@ class LibraryRail(NotifyMixin, Vertical):
         selection: Optional[EvalsSelection] = None,
         open_sections: Optional[dict[str, bool]] = None,
         app_config: Optional[dict[str, Any]] = None,
+        sample_bench_running: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -230,6 +236,20 @@ class LibraryRail(NotifyMixin, Vertical):
         #: load) degrades to ``{}`` -- "no providers configured", never a
         #: crash.
         self.app_config: dict[str, Any] = dict(app_config or {})
+        #: Whole-branch review: whether ANY word-bench run (this rail's own
+        #: sample-bench worker, or a bench-run started from the primary
+        #: action in the inspector pane) is in flight right now --
+        #: `EvalsScreen` passes its own OR of both running-flags in. TASK-
+        #: 1478 made "Create sample bench" a PERSISTENT control (no longer
+        #: empty-only), which opened a stale-enabled-button seam identical
+        #: to `_primary_action_state`'s own (see that function's in-flight
+        #: branch): a rail click during an in-flight run recomposes this
+        #: whole widget from scratch, and without this flag the fresh
+        #: instance would render the button enabled again regardless of
+        #: what is actually running. ``False`` in every context that
+        #: doesn't pass it explicitly (production callers other than
+        #: ``EvalsScreen``, if any, and every pre-existing test).
+        self.sample_bench_running = sample_bench_running
         # Shared, mutated in place (never reassigned) rather than copied:
         # EvalsScreen holds this same dict and passes it back in on every
         # recompose, so a section's collapsed/expanded state survives the
@@ -310,19 +330,34 @@ class LibraryRail(NotifyMixin, Vertical):
             tooltip="No local llama.cpp provider is configured yet.",
         )
 
-    @staticmethod
-    def _create_sample_bench_button() -> Button:
+    def _create_sample_bench_button(self) -> Button:
         """Shared by both branches of ``_benches_section_body`` (TASK-1478:
         the button is no longer empty-only, so both the "no benches yet"
         and "benches already exist" paths need the identical control, id
         included -- see the module docstring's "Creation affordances are
-        not empty-only" note)."""
+        not empty-only" note).
+
+        Whole-branch review: no longer a ``@staticmethod`` -- it now reads
+        ``self.sample_bench_running`` to stay disabled across a mid-run
+        recompose (this button is PERSISTENT since TASK-1478, so a rail
+        click while a run is in flight would otherwise rebuild a fresh,
+        enabled instance; see ``self.sample_bench_running``'s own comment
+        in ``__init__``). The LIVE running label
+        (``EvalsScreen._set_sample_bench_running_ui``, driven by
+        ``query_one`` against the mounted button) is unaffected by this --
+        it still mutates the existing widget directly while a run
+        progresses; this only matters for a FRESH instance built by a
+        recompose landing mid-run.
+        """
         return Button(
             "Create sample bench",
             id="evals-create-sample-bench",
+            disabled=self.sample_bench_running,
             tooltip=(
-                "Creates the loaded-nouns sample dataset, wires it to a "
-                "configured target, and runs it."
+                "A bench run is already in flight."
+                if self.sample_bench_running
+                else "Creates the loaded-nouns sample dataset, wires it to "
+                "a configured target, and runs it."
             ),
         )
 

@@ -29,6 +29,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from loguru import logger
+from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -327,12 +328,20 @@ class EvalsScreen(LabScreen):
         )
 
     def _reset_sample_bench_running_ui(self) -> None:
-        """Restores the button after a run ends. A no-op (via the same
-        ``QueryError`` guard) on the success path, where ``self.select(...)``
-        immediately recomposes the rail and replaces this button with the
-        bench's own row anyway -- this only matters on the failure path,
-        where the SAME ``LibraryRail`` instance survives and must not be
-        left permanently disabled."""
+        """Restores the button after a run ends -- on BOTH the success and
+        failure paths.
+
+        TASK-1478 made "Create sample bench" a persistent control (rendered
+        at the top of the Benches section regardless of whether any benches
+        exist yet -- see ``library_rail.py``'s module docstring, "Creation
+        affordances are not empty-only"), so the claim this docstring used
+        to make -- that the success path's ``self.select(...)`` recompose
+        "replaces this button with the bench's own row" -- is no longer
+        true: a fresh ``LibraryRail`` recompose still renders the SAME
+        button, at the same id, still needing to be un-disabled and
+        re-labelled. The ``QueryError`` guard remains for the case the
+        button genuinely isn't in the DOM at all (no configured provider,
+        so the rail renders "Open Settings" instead)."""
         from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
 
         try:
@@ -530,6 +539,13 @@ class EvalsScreen(LabScreen):
             selection=self._selection,
             open_sections=self._rail_open_sections,
             app_config=self._current_app_config(),
+            # Whole-branch review: gated on EITHER worker, not just the
+            # sample-bench one -- "a run is in flight" is the condition
+            # that makes starting a SECOND one (via this button) a stale-
+            # button trap, regardless of which worker owns the first run.
+            # See `_primary_action_state`'s own in-flight branch just
+            # below for the identical rationale on the primary action.
+            sample_bench_running=self._sample_bench_running or self._bench_run_running,
             id="evals-library-pane",
         )
 
@@ -782,9 +798,39 @@ class EvalsScreen(LabScreen):
         button -- every other branch (an unresolvable bench, a dataset, a
         completed run group, or no selection at all) stays disabled with
         its own stated reason, since none of those names an object this
-        action can actually run.
+        action can actually run. The in-flight branch below overrides ALL
+        of those, found-bench included, whenever a run is genuinely in
+        progress.
         """
         selection = self._selection
+
+        if self._bench_run_running or self._sample_bench_running:
+            # Whole-branch review Important finding: this function used to
+            # never consult either running-flag at all, so a rail click
+            # during an in-flight run -- `EvalsScreen.select()` always
+            # schedules `refresh(recompose=True)`, even for a same-bench
+            # reselection -- recomposed the inspector into a FRESH,
+            # ENABLED "Run <name>" button. A press there hits
+            # `_on_primary_action_pressed`'s own `_bench_run_running`
+            # guard and silently no-ops: the exact dead-end-toast/silent-
+            # no-op anti-pattern this whole function's naming rule exists
+            # to avoid, just reopened by a recompose instead of by a
+            # missing press handler. Checked first, before every other
+            # branch, so it wins regardless of what's currently selected --
+            # including the found-bench branch just below, whose own label
+            # this still borrows (escaped) so the button keeps naming its
+            # object even while blocked.
+            bench = (
+                self._view_model.bench_by_id(selection.id)
+                if selection.kind == "bench" and selection.id
+                else None
+            )
+            name = escape_markup(str(bench.get("name") or "Untitled bench")) if bench else None
+            return (
+                f"Run {name}" if name else "Run Bench",
+                True,
+                "A bench run is already in flight.",
+            )
 
         if selection.kind == "bench":
             bench = (
@@ -797,7 +843,21 @@ class EvalsScreen(LabScreen):
                     "The selected bench no longer exists; choose another "
                     "bench to run.",
                 )
-            name = str(bench.get("name") or "Untitled bench")
+            # escape_markup: `name` is free-text and reaches TWO markup-
+            # parsed surfaces from here -- this tooltip string, AND (via
+            # this same return value) `Button(label=...)`'s construction in
+            # `_compose_inspector_pane` plus the live `button.label = ...`/
+            # `button.tooltip = ...` reassignment in
+            # `_reset_bench_run_running_ui`. `Content.from_text`'s
+            # markup=True default applies on EVERY assignment to a
+            # Button's `.label`, not just construction (Textual's
+            # `validate_label` reactive validator), so a bare `[/]` in a
+            # bench name would raise `MarkupError` and crash the rail --
+            # the same hazard class task-1476 fixed for bench-run toast
+            # text, and library_rail.py's `_run_group_row_label` fixed for
+            # run rows; this closes the last unescaped instance of it in
+            # this file.
+            name = escape_markup(str(bench.get("name") or "Untitled bench"))
             return (
                 f"Run {name}",
                 False,

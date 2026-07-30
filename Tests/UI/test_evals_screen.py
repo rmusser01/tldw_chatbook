@@ -770,6 +770,68 @@ async def test_a_second_press_while_a_bench_run_is_in_flight_is_a_no_op(
 
 
 @pytest.mark.asyncio
+async def test_action_buttons_stay_disabled_across_a_mid_run_recompose(
+    evals_app, evals_db, runnable_bench
+):
+    """Whole-branch review Important finding: ``_primary_action_state()``
+    never consulted ``_bench_run_running``/``_sample_bench_running``, so
+    any rail click while a run is genuinely in flight
+    (``EvalsScreen.select()`` always schedules ``refresh(recompose=True)``,
+    even for a same-bench reselection) recomposed the inspector into a
+    FRESH, ENABLED "Run <name>" button -- a press there would hit
+    ``_on_primary_action_pressed``'s own ``_bench_run_running`` guard and
+    silently no-op, the exact dead-end anti-pattern
+    ``_primary_action_state``'s own docstring forbids. Task 4's persistent
+    "Create sample bench" rail button (no longer empty-only, see
+    ``library_rail.py``'s module docstring) opened the identical seam for
+    itself. Mirrors ``test_rail_run_row_shows_the_running_glyph_while_the_
+    run_is_in_flight``'s own mid-flight-recompose technique, just below.
+    """
+    other_dataset_id = evals_db.create_dataset(
+        name="other-dataset", format="custom", source_path="inline:other-dataset"
+    )
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        button = screen.query_one("#evals-primary-action", Button)
+        button.scroll_visible(animate=False)
+        await pilot.pause()
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+
+        # Force a mid-flight recompose: select a different row, then
+        # reselect the running bench -- exactly the seam the finding
+        # describes (a rail click during an in-flight run).
+        screen.select(kind="dataset", id=other_dataset_id)
+        await pilot.pause()
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+
+        label, disabled, tooltip = screen._primary_action_state()
+        assert disabled is True, (label, disabled, tooltip)
+        assert tooltip == "A bench run is already in flight."
+        action_button = screen.query_one("#evals-primary-action", Button)
+        assert action_button.disabled is True
+
+        sample_bench_button = screen.query_one(
+            "#evals-create-sample-bench", Button
+        )
+        assert sample_bench_button.disabled is True
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
 async def test_rail_run_row_shows_the_running_glyph_while_the_run_is_in_flight(
     evals_app, runnable_bench
 ):
