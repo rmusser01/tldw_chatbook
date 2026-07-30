@@ -138,6 +138,7 @@ DEFAULT_GIT_STDERR_LIMIT_BYTES = 4096
 DEFAULT_COMMIT_PROOF_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024
 DEFAULT_COMMIT_PROOF_STDERR_LIMIT_BYTES = DEFAULT_GIT_STDERR_LIMIT_BYTES
 _GIT_STREAM_CHUNK_BYTES = 64 * 1024
+_DISABLED_GIT_BOOLEAN_VALUES = frozenset({b"false", b"no", b"off", b"0"})
 _UNCERTAIN_COMMIT_MESSAGE = (
     "Commit may have succeeded. Git actions are disabled until the repository "
     "is checked. Run git status and git log -1, then choose Check again."
@@ -3734,20 +3735,41 @@ class FileNotesGitService:
         except OSError:
             return False
 
-        config_result = await self._run_commit_proof_command(
+        local_config = await self._run_commit_proof_command(
             repository,
             (
                 self._git_executable_or_raise(),
                 "--no-replace-objects",
                 "config",
+                "--includes",
                 "--local",
                 "--null",
                 "--list",
             ),
         )
-        if not _command_succeeded(config_result):
+        if not _command_succeeded(local_config):
             return False
-        return _commit_local_config_is_supported(config_result.stdout)
+        if not _commit_local_config_is_supported(local_config.stdout):
+            return False
+        if not _commit_worktree_config_is_enabled(local_config.stdout):
+            return True
+        worktree_config = await self._run_commit_proof_command(
+            repository,
+            (
+                self._git_executable_or_raise(),
+                "--no-replace-objects",
+                "config",
+                "--includes",
+                "--worktree",
+                "--null",
+                "--list",
+            ),
+        )
+        if not _command_succeeded(worktree_config):
+            return False
+        if not _commit_local_config_is_supported(worktree_config.stdout):
+            return False
+        return True
 
     async def _read_commit_head(
         self,
@@ -3998,21 +4020,31 @@ class FileNotesGitService:
         self,
         retained_child: RetainedGitChildToken,
     ) -> RetainedGitChildSettlement:
-        """Wait without spinning, then release one exact terminal token."""
+        """Retain through cancellation, then release one exact terminal token."""
         if not self._runner.claim_retained_child(retained_child):
             raise RuntimeError("Git proof child could not be retained")
+        cancelled = False
         while True:
-            settlement = await self._runner.settle_retained_child(
-                retained_child,
-                timeout=0.1,
-            )
+            try:
+                settlement = await self._runner.settle_retained_child(
+                    retained_child,
+                    timeout=0.1,
+                )
+            except asyncio.CancelledError:
+                cancelled = True
+                continue
             if settlement.state not in {"alive", "uncertain"}:
                 if not self._runner.release_retained_child(retained_child):
                     raise RuntimeError(
                         "Terminal Git proof child could not be released"
                     )
+                if cancelled:
+                    raise asyncio.CancelledError
                 return settlement
-            await asyncio.sleep(0.01)
+            try:
+                await asyncio.sleep(0.01)
+            except asyncio.CancelledError:
+                cancelled = True
 
     async def _run_unstage_cycle(
         self,
@@ -6381,21 +6413,33 @@ def _commit_local_config_is_supported(payload: bytes) -> bool:
         value = raw_value.strip().lower()
         if key == "extensions.partialclone":
             return False
-        if key in {"core.sparsecheckout", "index.sparse"} and value not in {
-            b"",
-            b"false",
-            b"no",
-            b"off",
-            b"0",
-        }:
+        if (
+            key in {"core.sparsecheckout", "index.sparse"}
+            and value not in _DISABLED_GIT_BOOLEAN_VALUES
+        ):
             return False
         if (
             key.startswith("remote.")
             and key.endswith(".promisor")
-            and value not in {b"", b"false", b"no", b"off", b"0"}
+            and value not in _DISABLED_GIT_BOOLEAN_VALUES
         ):
             return False
     return True
+
+
+def _commit_worktree_config_is_enabled(payload: bytes) -> bool:
+    """Return the effective repository opt-in for worktree config."""
+    if not payload:
+        return False
+    enabled = False
+    for record in payload[:-1].split(b"\0"):
+        raw_key, raw_value = record.split(b"\n", 1)
+        if raw_key.decode("ascii").lower() == "extensions.worktreeconfig":
+            enabled = (
+                raw_value.strip().lower()
+                not in _DISABLED_GIT_BOOLEAN_VALUES
+            )
+    return enabled
 
 
 def _commit_index_semantics_are_supported(payload: bytes) -> bool:

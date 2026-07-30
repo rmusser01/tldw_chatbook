@@ -170,7 +170,8 @@ class _NoNetworkRunner(_RecordingRunner):
             ("rev-parse", "--path-format=absolute", "--show-toplevel"),
             ("rev-parse", "--absolute-git-dir"),
             ("rev-parse", "--path-format=absolute", "--git-common-dir"),
-            ("config", "--local", "--null", "--list"),
+            ("config", "--includes", "--local", "--null", "--list"),
+            ("config", "--includes", "--worktree", "--null", "--list"),
         }
     )
 
@@ -577,6 +578,8 @@ async def _prepare_owned_review(
     local_marker: str | None = None,
     replacement_reference: bool = False,
     promisor_repository: bool = False,
+    worktree_promisor_repository: bool = False,
+    included_promisor_repository: bool = False,
     partial_repository: bool = False,
     local_promisor_marker: bool = False,
     sparse_repository: bool = False,
@@ -753,6 +756,22 @@ async def _prepare_owned_review(
         _git(repository, "replace", head.object_id or "", replacement)
     if promisor_repository:
         _git(repository, "config", "remote.origin.promisor", "true")
+    if worktree_promisor_repository:
+        _git(repository, "config", "extensions.worktreeConfig", "true")
+        _git(
+            repository,
+            "config",
+            "--worktree",
+            "remote.origin.promisor",
+            "true",
+        )
+    if included_promisor_repository:
+        include_path = repository / ".git" / "promisor.inc"
+        include_path.write_text(
+            '[remote "origin"]\n\tpromisor\n',
+            encoding="utf-8",
+        )
+        _git(repository, "config", "--local", "include.path", "promisor.inc")
     if partial_repository:
         _git(repository, "config", "extensions.partialClone", "origin")
     if local_promisor_marker:
@@ -922,6 +941,29 @@ async def test_commit_review_attached_repository_returns_sanitized_projection(
     assert result.projection.hooks_bypassed is True
     assert result.projection.unsigned is True
     assert "unrelated" not in repr(result)
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_review_allows_linked_worktree_without_worktree_config(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    linked = tmp_path / "linked"
+    _git(
+        repository,
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "linked-review",
+        str(linked),
+        "HEAD",
+    )
+
+    service, _binding, result = await _prepare_owned_review(linked)
+
+    assert result.state == "ready"
     await service.shutdown()
 
 
@@ -1231,17 +1273,26 @@ async def test_commit_review_blocks_replacement_reference(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "repository_flag",
+    [
+        "promisor_repository",
+        "worktree_promisor_repository",
+        "included_promisor_repository",
+    ],
+)
 async def test_commit_review_blocks_promisor_repository_without_fetch(
     tmp_path: Path,
+    repository_flag: str,
 ) -> None:
     repository = _init_repository(tmp_path)
     runner = _NoNetworkRunner()
 
     service, _binding, result = await _prepare_owned_review(
         repository,
-        promisor_repository=True,
         runner=runner,
         arm_runner_before_review=True,
+        **{repository_flag: True},
     )
 
     assert result.state == "blocked"
@@ -1617,6 +1668,42 @@ async def test_commit_review_retained_proof_child_holds_mutation_until_drained(
     admitted = service._owner.admit_mutation(binding)
     assert admitted.lease is not None
     admitted.lease.release()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_explicit_review_cancel_retains_proof_child_and_mutation_lease(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledRetainedReviewRunner("uncertain_result")
+    captured: list[tuple[FileNotesGitService, object]] = []
+    preparation = asyncio.create_task(
+        _prepare_owned_review(
+            repository,
+            runner=runner,
+            service_capture=captured,
+        )
+    )
+    await asyncio.wait_for(runner.exposed.wait(), 1.0)
+    service, binding = captured[0]
+
+    assert service.cancel_commit(binding)
+    await asyncio.sleep(0)
+    assert service.cancel_commit(binding)
+    await asyncio.sleep(0)
+
+    assert not preparation.done()
+    assert service._owner.mutation_active(binding)
+    assert runner.claimed is True
+    assert runner.released is False
+
+    runner.terminal.set()
+    _service, _binding, result = await asyncio.wait_for(preparation, 1.0)
+
+    assert result.state == "cancelled"
+    assert runner.released is True
+    assert service._owner.mutation_active(binding) is False
     await service.shutdown()
 
 
