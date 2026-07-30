@@ -1974,7 +1974,14 @@ class ConsoleChatStore:
             type(session.runtime_backend) is not str
             or session.runtime_backend not in {"local", "server"}
         ):
-            return None
+            logger.bind(
+                session_id=session_id,
+                runtime_backend=repr(session.runtime_backend)[:128],
+            ).error("Cannot persist Console session with invalid runtime backend.")
+            raise ValueError(
+                "Cannot persist Console session: runtime_backend must be "
+                "'local' or 'server'."
+            )
         scope_type, persisted_workspace_id = self._persistence_scope(session)
         local_character_id = session.local_character_id()
         identity_kwargs = {
