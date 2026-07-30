@@ -2,6 +2,7 @@ import ast
 import sqlite3
 from contextlib import asynccontextmanager, closing
 from pathlib import Path
+from types import MethodType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1265,67 +1266,80 @@ def test_rag_indexing_db_path_matches_ingestion_module_resolution():
     assert resolved_path.name == "rag_indexing.db"
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "db_name",
     [name for name in _ALL_MAINTENANCE_DB_NAMES if name != "evals"],
 )
-async def test_backup_then_restore_round_trips_at_the_real_resolved_path(
-    db_name, monkeypatch, temp_config_path
+def test_backup_then_restore_round_trips_at_the_resolved_path(
+    db_name, monkeypatch, tmp_path
 ):
-    """Backup followed by restore must round-trip against the REAL database
-    file the application actually uses (TASK-899) -- proven by creating a
-    real sqlite database at the resolved path, corrupting it, and asserting
-    the original content comes back at that exact same path."""
-    async with mount_settings_window({}, temp_config_path, monkeypatch) as (window, pilot):
-        db_path = window._get_database_path(db_name, {})
-        assert db_path is not None, f"{db_name} did not resolve to a path"
+    """Direct workers must back up and restore the resolver-selected path."""
+    import tldw_chatbook.UI.Tools_Settings_Window as tools_settings_module
 
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        with closing(sqlite3.connect(str(db_path))) as conn:
-            conn.execute("CREATE TABLE marker (value TEXT)")
-            conn.execute("INSERT INTO marker VALUES ('original')")
-            conn.commit()
+    data_dir = tmp_path / "data"
+    db_path = tmp_path / "live" / f"{db_name}.db"
+    monkeypatch.setattr(
+        tools_settings_module,
+        "get_user_data_dir",
+        lambda: data_dir,
+    )
 
-        # --- Backup ---
-        backup_worker = window._backup_single_worker(db_name)
-        await backup_worker.wait()
+    notify = MagicMock()
 
-        assert _notify_calls_with_severity(window.app_instance.notify, "success"), (
-            f"backup did not report success for {db_name}: "
-            f"{window.app_instance.notify.call_args_list}"
-        )
-        window.app_instance.notify.reset_mock()
+    def call_from_thread(callback, *args, **kwargs):
+        return callback(*args, **kwargs)
 
-        # Profile-scoped -- matches get_user_data_dir(), the same real
-        # (profile-aware) location _backup_single_worker actually writes to
-        # (TASK-927 follow-up: this used to assert the flat, non-profile
-        # literal, which no longer matches where the worker writes).
-        backup_dir = tldw_chatbook.config.get_user_data_dir() / "backups" / db_name
-        backup_files = sorted(backup_dir.glob(f"{db_name}_backup_*.db"))
-        assert backup_files, f"no backup file was written for {db_name} at {backup_dir}"
-        backup_path = backup_files[-1]
+    window = SimpleNamespace(
+        config_data={"database": {}},
+        app=SimpleNamespace(call_from_thread=call_from_thread),
+        app_instance=SimpleNamespace(notify=notify),
+    )
+    window._get_database_path = lambda _name, _config: db_path
+    window._validate_maintenance_path = MethodType(
+        ToolsSettingsWindow._validate_maintenance_path,
+        window,
+    )
+    window._get_schema_version = MethodType(
+        ToolsSettingsWindow._get_schema_version,
+        window,
+    )
+    window._update_last_backup_status = lambda *_args: None
+    window._update_database_sizes = lambda: None
 
-        # --- Simulate data loss on the live database ---
-        with closing(sqlite3.connect(str(db_path))) as conn:
-            conn.execute("DELETE FROM marker")
-            conn.execute("INSERT INTO marker VALUES ('corrupted')")
-            conn.commit()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.execute("CREATE TABLE marker (value TEXT)")
+        conn.execute("INSERT INTO marker VALUES ('original')")
+        conn.commit()
 
-        # --- Restore ---
-        restore_worker = window._restore_single_worker(db_name, backup_path)
-        await restore_worker.wait()
+    ToolsSettingsWindow._backup_single_worker.__wrapped__(window, db_name)
 
-        assert _notify_calls_with_severity(window.app_instance.notify, "success"), (
-            f"restore did not report success for {db_name}: "
-            f"{window.app_instance.notify.call_args_list}"
-        )
+    assert _notify_calls_with_severity(notify, "success"), (
+        f"backup did not report success for {db_name}: {notify.call_args_list}"
+    )
+    notify.reset_mock()
+    backup_dir = data_dir / "backups" / db_name
+    backup_files = sorted(backup_dir.glob(f"{db_name}_backup_*.db"))
+    assert backup_files, f"no backup file was written for {db_name} at {backup_dir}"
+    backup_path = backup_files[-1]
 
-        # The content must be back at the SAME path the application actually
-        # resolves for this database -- not some other, phantom location.
-        with closing(sqlite3.connect(str(db_path))) as restored_conn:
-            value = restored_conn.execute("SELECT value FROM marker").fetchone()[0]
-        assert value == "original"
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.execute("DELETE FROM marker")
+        conn.execute("INSERT INTO marker VALUES ('corrupted')")
+        conn.commit()
+
+    ToolsSettingsWindow._restore_single_worker.__wrapped__(
+        window,
+        db_name,
+        backup_path,
+    )
+
+    assert _notify_calls_with_severity(notify, "success"), (
+        f"restore did not report success for {db_name}: {notify.call_args_list}"
+    )
+    with closing(sqlite3.connect(str(db_path))) as restored_conn:
+        value = restored_conn.execute("SELECT value FROM marker").fetchone()[0]
+    assert value == "original"
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@
 # Property-based tests for the simplified embeddings service using Hypothesis
 
 import pytest
-from hypothesis import given, strategies as st, settings, HealthCheck
+from hypothesis import given, settings, strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, rule, invariant
 import threading
 import time
@@ -14,13 +14,9 @@ from tldw_chatbook.RAG_Search.simplified import (
     InMemoryVectorStore,
 )
 
+EMBEDDINGS_SETTINGS = settings(max_examples=50)
+
 # Import test utilities from conftest
-
-
-# Hypothesis settings come from the central 'tldw' profile (Tests/conftest.py,
-# task-1452): deadline=None and env-scaled max_examples supersede the old
-# module-level "embeddings" profile (deadline=5000, max_examples=50), whose
-# import-time load_profile() also leaked into every later-imported module.
 
 
 # Custom strategies for embeddings domain
@@ -80,6 +76,7 @@ def provider_config(draw):
 class TestEmbeddingProperties:
     """Property-based tests for embedding invariants"""
 
+    @EMBEDDINGS_SETTINGS
     @given(texts=text_batch())
     def test_embedding_determinism(self, texts):
         """Same text should always produce same embedding"""
@@ -114,6 +111,7 @@ class TestEmbeddingProperties:
 
             service.close()
 
+    @EMBEDDINGS_SETTINGS
     @given(texts=text_batch(min_size=1, max_size=5), dimension=embedding_dimension())
     def test_embedding_dimension_consistency(self, texts, dimension):
         """All embeddings should have consistent dimension"""
@@ -136,6 +134,7 @@ class TestEmbeddingProperties:
 
             service.close()
 
+    @EMBEDDINGS_SETTINGS
     @given(texts=text_batch())
     def test_embedding_count_matches_input(self, texts):
         """Number of embeddings should match number of input texts"""
@@ -154,6 +153,7 @@ class TestEmbeddingProperties:
 
             service.close()
 
+    @EMBEDDINGS_SETTINGS
     @given(
         texts=st.lists(valid_text(), min_size=10, max_size=50),
         batch_size=st.integers(min_value=1, max_value=10),
@@ -199,6 +199,7 @@ class TestEmbeddingProperties:
             assert embeddings_single.shape == embeddings_batch.shape
             assert np.allclose(embeddings_single, embeddings_batch)
 
+    @EMBEDDINGS_SETTINGS
     @given(texts=text_batch(), num_models=st.integers(min_value=2, max_value=5))
     def test_model_isolation(self, texts, num_models):
         """Different models should produce different embeddings"""
@@ -243,6 +244,7 @@ class TestEmbeddingProperties:
 class TestVectorStoreProperties:
     """Property-based tests for vector store operations"""
 
+    @EMBEDDINGS_SETTINGS
     @given(
         collection_names=st.lists(
             st.text(
@@ -277,6 +279,7 @@ class TestVectorStoreProperties:
         # No collections should remain
         assert len(store.list_collections()) == 0
 
+    @EMBEDDINGS_SETTINGS
     @given(
         texts=text_batch(min_size=1, max_size=20),
         n_results=st.integers(min_value=1, max_value=10),
@@ -324,6 +327,7 @@ class TestVectorStoreProperties:
 
             service.close()
 
+    @EMBEDDINGS_SETTINGS
     @given(
         doc_ids=st.lists(
             st.text(min_size=1, max_size=20), min_size=5, max_size=10, unique=True
@@ -352,6 +356,7 @@ class TestVectorStoreProperties:
 class TestThreadSafetyProperties:
     """Property-based tests for thread safety"""
 
+    @EMBEDDINGS_SETTINGS
     @given(
         num_threads=st.integers(min_value=2, max_value=10),
         texts_per_thread=st.integers(min_value=1, max_value=5),
@@ -415,6 +420,7 @@ class TestThreadSafetyProperties:
 
             service.close()
 
+    @EMBEDDINGS_SETTINGS
     @given(num_operations=st.integers(min_value=5, max_value=20))
     def test_concurrent_service_creation(self, num_operations):
         """Concurrent service creation should be thread-safe"""
@@ -566,6 +572,7 @@ class EmbeddingServiceStateMachine(RuleBasedStateMachine):
 class TestEmbeddingServiceWrapper:
     """Additional property tests for EmbeddingsServiceWrapper"""
 
+    @EMBEDDINGS_SETTINGS
     @given(texts=st.lists(valid_text(), min_size=0, max_size=10))
     def test_empty_and_edge_cases(self, texts):
         """Test handling of empty lists and edge cases"""
@@ -589,6 +596,7 @@ class TestEmbeddingServiceWrapper:
 
             service.close()
 
+    @EMBEDDINGS_SETTINGS
     @given(
         model_name=st.sampled_from(
             [
@@ -618,6 +626,7 @@ class TestEmbeddingServiceWrapper:
 
 # Run stateful tests
 TestEmbeddingServiceStateful = EmbeddingServiceStateMachine.TestCase
+TestEmbeddingServiceStateful.settings = EMBEDDINGS_SETTINGS
 
 
 if __name__ == "__main__":

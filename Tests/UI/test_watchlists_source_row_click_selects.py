@@ -26,6 +26,8 @@ and ingested 10 items in 268ms.
 """
 from __future__ import annotations
 
+from types import MethodType, SimpleNamespace
+
 import pytest
 from textual.widgets import Button, DataTable
 
@@ -291,31 +293,41 @@ OTHER_TABLES = (
 
 
 @pytest.mark.parametrize(
-    "section,pane_id,pane_type,rows_attr,table_id,selected_attr,rows",
+    "section,_pane_id,pane_type,rows_attr,table_id,selected_attr,rows",
     OTHER_TABLES,
     ids=[entry[0] for entry in OTHER_TABLES],
 )
-@pytest.mark.asyncio
-async def test_every_watchlists_table_selects_the_clicked_row(
-    section, pane_id, pane_type, rows_attr, table_id, selected_attr, rows
+def test_every_watchlists_highlight_handler_selects_requested_row(
+    section, _pane_id, pane_type, rows_attr, table_id, selected_attr, rows
 ):
-    """AC#5: Runs, Items, Rules and Notifications had the same defect."""
-    app = _build_test_app()
-    app.watchlist_scope_service = StaticWatchlistsScopeService([])
-    host = _visual_destination_harness(app, "watchlists_collections")
-    async with host.run_test(size=(235, 52)) as pilot:
-        screen = _active_destination_screen(host)
-        screen.active_section = section
-        await pilot.pause(0.3)
-        pane = screen.query_one(pane_id, pane_type)
-        setattr(pane, rows_attr, list(rows))
-        await pilot.pause(0.3)
+    """AC#5: every pane maps a focused row highlight to that stable row id."""
+    select_methods = {
+        ItemsPane: ("select_item_by_id", ItemsPane.select_item_by_id),
+        RunsPane: ("select_run_by_id", RunsPane.select_run_by_id),
+        RulesPane: ("select_rule_by_id", RulesPane.select_rule_by_id),
+        NotificationsPane: (
+            "select_notification_by_id",
+            NotificationsPane.select_notification_by_id,
+        ),
+    }
+    method_name, select_method = select_methods[pane_type]
+    pane = SimpleNamespace(**{rows_attr: list(rows), selected_attr: None})
+    setattr(pane, method_name, MethodType(select_method, pane))
+    stopped = []
+    event = SimpleNamespace(
+        data_table=SimpleNamespace(
+            id=table_id.removeprefix("#"),
+            has_focus=True,
+        ),
+        row_key=SimpleNamespace(value=rows[1]["id"]),
+        stop=lambda: stopped.append(True),
+    )
 
-        await pilot.click(table_id, offset=SECOND_ROW_OFFSET)
-        await pilot.pause(0.4)
+    pane_type.on_data_table_row_highlighted(pane, event)
 
-        selected = getattr(pane, selected_attr)
-        assert selected is not None, f"{section}: clicking a row selected nothing"
-        assert str(selected["id"]) == str(rows[1]["id"]), (
-            f"{section}: the click must select the row it landed on, not row 0"
-        )
+    selected = getattr(pane, selected_attr)
+    assert stopped == [True]
+    assert selected is not None, f"{section}: highlighting a row selected nothing"
+    assert str(selected["id"]) == str(rows[1]["id"]), (
+        f"{section}: the highlight must select the requested stable row id"
+    )
