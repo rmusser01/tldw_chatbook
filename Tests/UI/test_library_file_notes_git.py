@@ -7,13 +7,15 @@ import os
 import sys
 import types
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
 from rich.cells import cell_len
 from textual.app import App, ComposeResult
 from textual.color import Color
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
+from textual.widget import Widget
 from textual.widgets import Button, Input, Label, ListView, Static, TextArea, Tree
 
 sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
@@ -25,6 +27,13 @@ from tldw_chatbook.Notes.file_notes_git_service import (  # noqa: E402
     GitCommandResult,
     GitMutationAdmissionError,
     coalesce_session_changes,
+)
+from tldw_chatbook.Notes.file_notes_git_commit import (  # noqa: E402
+    CommitIncludedNote,
+    CommitOutcome,
+    CommitRecoveryProjection,
+    CommitReviewProjection,
+    GitIdentity,
 )
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica  # noqa: E402
 from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
@@ -46,6 +55,9 @@ from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (  # noqa
     LibraryFileNotesGitPanel,
     SessionGitTrustDialog,
     _middle_elide_cells,
+)
+from tldw_chatbook.Widgets.Library import (  # noqa: E402
+    library_file_notes_git_panel as git_panel_module,
 )
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (  # noqa: E402
     LibraryFileNotesWorkspace,
@@ -90,6 +102,48 @@ class _PanelHarness(App[None]):
     def on_library_file_notes_git_panel_unstage_requested(
         self,
         message: LibraryFileNotesGitPanel.UnstageRequested,
+    ) -> None:
+        self.messages.append(message)
+
+    def on_library_file_notes_git_panel_commit_staged_requested(
+        self,
+        message,
+    ) -> None:
+        self.messages.append(message)
+
+    def on_library_file_notes_git_panel_commit_draft_changed(
+        self,
+        message,
+    ) -> None:
+        self.messages.append(message)
+
+    def on_library_file_notes_git_panel_review_commit_requested(
+        self,
+        message,
+    ) -> None:
+        self.messages.append(message)
+
+    def on_library_file_notes_git_panel_edit_commit_message_requested(
+        self,
+        message,
+    ) -> None:
+        self.messages.append(message)
+
+    def on_library_file_notes_git_panel_cancel_commit_requested(
+        self,
+        message,
+    ) -> None:
+        self.messages.append(message)
+
+    def on_library_file_notes_git_panel_confirm_commit_requested(
+        self,
+        message,
+    ) -> None:
+        self.messages.append(message)
+
+    def on_library_file_notes_git_panel_check_commit_again_requested(
+        self,
+        message,
     ) -> None:
         self.messages.append(message)
 
@@ -402,6 +456,86 @@ def _status(
     )
 
 
+def _panel_projection_type(name: str) -> type:
+    projection_type = getattr(git_panel_module, name, None)
+    assert isinstance(projection_type, type), f"{name} is not implemented"
+    return projection_type
+
+
+def _commit_draft_projection(
+    *,
+    binding_key: object | None = None,
+    branch: str = "refs/heads/feature/session-git",
+    staged_note_count: int = 2,
+    subject: str = "",
+    body: str = "",
+    subject_error: str | None = None,
+    body_error: str | None = None,
+) -> object:
+    projection_type = _panel_projection_type("CommitDraftProjection")
+    return projection_type(
+        binding_key=binding_key if binding_key is not None else object(),
+        branch=branch,
+        staged_note_count=staged_note_count,
+        subject=subject,
+        body=body,
+        subject_error=subject_error,
+        body_error=body_error,
+    )
+
+
+def _commit_review_projection(
+    *,
+    message: str = "Summarize [review]\n\nKeep exact body.\n",
+    paths: tuple[tuple[str, str], ...] = (
+        ("Modified", "folder/[literal]-one.md"),
+        ("Moved", "old/place.md → new/place.md"),
+    ),
+) -> object:
+    notes = tuple(
+        CommitIncludedNote(group_id=index, display_text=path)
+        for index, (_change_type, path) in enumerate(paths, 1)
+    )
+    review = CommitReviewProjection(
+        branch="refs/heads/feature/[literal]",
+        old_commit="a" * 40,
+        message=message,
+        included_notes=notes,
+        author=GitIdentity("[Author]", "author@example.test"),
+        committer=GitIdentity("[Committer]", "committer@example.test"),
+    )
+    note_type = _panel_projection_type("CommitReviewNoteProjection")
+    projection_type = _panel_projection_type("CommitPanelReviewProjection")
+    return projection_type(
+        review=review,
+        included_notes=tuple(
+            note_type(
+                note=note,
+                change_type=change_type,
+            )
+            for note, (change_type, _path) in zip(
+                notes,
+                paths,
+                strict=True,
+            )
+        ),
+    )
+
+
+def _commit_result_projection(
+    outcome: CommitOutcome,
+    *,
+    can_check_again: bool | None = None,
+) -> object:
+    projection_type = _panel_projection_type("CommitResultProjection")
+    recovery = (
+        None
+        if can_check_again is None
+        else CommitRecoveryProjection(outcome.message, can_check_again)
+    )
+    return projection_type(outcome=outcome, recovery=recovery)
+
+
 def _workspace_fixture(
     tmp_path: Path,
     *,
@@ -574,6 +708,819 @@ async def _assert_visible_panel_buttons_fit(panel, pilot) -> None:
         assert button.styles.background == Color.parse("#51677e")
         assert button.styles.text_style.bold
         assert button.styles.text_style.underline
+
+
+@pytest.mark.asyncio
+async def test_commit_panel_count_uses_only_the_authorized_projection() -> None:
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    async with _PanelHarness(panel).run_test() as pilot:
+        panel.render_status(
+            _status(
+                _row("owned", group_id=1, unstage_eligible=True),
+                _row("owned", group_id=2, unstage_eligible=True),
+                _row("owned", group_id=3, unstage_eligible=True),
+            )
+        )
+        projected = _commit_draft_projection(staged_note_count=2)
+        panel.render_commit_availability(projected)
+        await pilot.pause()
+
+        commit_button = panel.query_one(
+            "#file-notes-git-commit-staged",
+            Button,
+        )
+        zero_copy = panel.query_one("#file-notes-git-commit-zero", Static)
+        assert str(commit_button.label) == "Commit staged (2)"
+        assert not commit_button.disabled
+        assert not zero_copy.display
+        with pytest.raises(FrozenInstanceError):
+            setattr(projected, "staged_note_count", 3)
+
+        panel.render_commit_availability(
+            _commit_draft_projection(staged_note_count=0)
+        )
+        await pilot.pause()
+        assert str(commit_button.label) == "Commit staged (0)"
+        assert commit_button.disabled
+        assert zero_copy.display
+        assert _text(zero_copy) == "Stage at least one session note to commit"
+
+
+@pytest.mark.asyncio
+async def test_commit_form_is_binding_keyed_validates_inline_and_emits_typed_intents(
+) -> None:
+    binding_key = object()
+    draft = _commit_draft_projection(
+        binding_key=binding_key,
+        branch="refs/heads/feature/[literal]",
+        staged_note_count=2,
+        body="Preserved body",
+    )
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+    async with app.run_test() as pilot:
+        panel.render_commit_availability(draft)
+        panel.query_one("#file-notes-git-commit-staged", Button).press()
+        await pilot.pause()
+
+        assert panel.commit_phase == "form"
+        assert not panel.query_one("#file-notes-git-list-surface").display
+        workflow = panel.query_one("#file-notes-git-commit-workflow")
+        assert workflow.display
+        assert not workflow.query("#file-notes-git-back")
+        assert _text(
+            panel.query_one("#file-notes-git-commit-form-meta", Static)
+        ) == "Branch: refs/heads/feature/[literal] · 2 session notes staged"
+        subject = panel.query_one("#file-notes-git-commit-subject", Input)
+        body = panel.query_one("#file-notes-git-commit-body-input", TextArea)
+        assert subject.has_focus
+        assert body.text == "Preserved body"
+        assert app.messages[0].__class__.__name__ == "CommitStagedRequested"
+        assert app.messages[0].binding_key is binding_key
+
+        subject.value = "   "
+        panel.query_one("#file-notes-git-commit-review", Button).press()
+        await pilot.pause()
+        assert panel.commit_phase == "form"
+        assert subject.has_focus
+        subject_error = panel.query_one(
+            "#file-notes-git-commit-subject-error",
+            Static,
+        )
+        assert subject_error.display
+        assert _text(subject_error) == "Commit subject is required."
+        assert not any(
+            message.__class__.__name__ == "ReviewCommitRequested"
+            for message in app.messages
+        )
+
+        subject.value = "Exact subject"
+        body.load_text("Exact [body]\nsecond line")
+        await pilot.pause()
+        draft_messages = tuple(
+            message
+            for message in app.messages
+            if message.__class__.__name__ == "CommitDraftChanged"
+        )
+        assert draft_messages
+        assert draft_messages[-1].binding_key is binding_key
+        assert draft_messages[-1].subject == "Exact subject"
+        assert draft_messages[-1].body == "Exact [body]\nsecond line"
+
+        panel.query_one("#file-notes-git-commit-review", Button).press()
+        await pilot.pause()
+        review_request = next(
+            message
+            for message in reversed(app.messages)
+            if message.__class__.__name__ == "ReviewCommitRequested"
+        )
+        assert review_request.binding_key is binding_key
+        assert review_request.subject == "Exact subject"
+        assert review_request.body == "Exact [body]\nsecond line"
+        assert panel.commit_phase == "checking"
+        assert _text(
+            panel.query_one("#file-notes-git-commit-checking-copy", Static)
+        ) == "Checking commit..."
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert panel.commit_phase == "list"
+        assert panel.query_one("#file-notes-git-list-surface").display
+        assert app.messages[-1].__class__.__name__ == "CancelCommitRequested"
+        assert app.messages[-1].from_phase == "checking"
+
+        panel.render_commit_form(
+            _commit_draft_projection(
+                binding_key=binding_key,
+                subject="Exact subject",
+                body="Exact body",
+                body_error="Commit body cannot be previewed safely.",
+            )
+        )
+        await pilot.pause()
+        assert body.has_focus
+        assert _text(
+            panel.query_one("#file-notes-git-commit-body-error", Static)
+        ) == "Commit body cannot be previewed safely."
+
+
+@pytest.mark.asyncio
+async def test_commit_availability_refresh_cannot_replace_the_active_binding_draft(
+) -> None:
+    binding_a = object()
+    binding_b = object()
+    draft_a = _commit_draft_projection(
+        binding_key=binding_a,
+        subject="Initial A",
+        body="Initial A body",
+    )
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+    async with app.run_test() as pilot:
+        panel.render_commit_availability(draft_a)
+        panel.query_one("#file-notes-git-commit-staged", Button).press()
+        await pilot.pause()
+
+        subject = panel.query_one("#file-notes-git-commit-subject", Input)
+        body = panel.query_one("#file-notes-git-commit-body-input", TextArea)
+        subject.value = "Edited A"
+        body.load_text("Edited A body")
+        await pilot.pause()
+        draft_intent_count = sum(
+            message.__class__.__name__ == "CommitDraftChanged"
+            for message in app.messages
+        )
+
+        # An ordinary stale/list refresh is presentation-only for the active form,
+        # even when the latest list projection belongs to another binding.
+        panel.clear_commit_availability()
+        panel.render_commit_availability(
+            _commit_draft_projection(
+                binding_key=binding_a,
+                staged_note_count=1,
+                subject="Stale A",
+                body="Stale A body",
+            )
+        )
+        panel.render_commit_availability(
+            _commit_draft_projection(
+                binding_key=binding_b,
+                staged_note_count=3,
+                subject="Initial B",
+                body="Initial B body",
+            )
+        )
+        await pilot.pause()
+
+        assert subject.value == "Edited A"
+        assert body.text == "Edited A body"
+        assert sum(
+            message.__class__.__name__ == "CommitDraftChanged"
+            for message in app.messages
+        ) == draft_intent_count
+
+        panel.query_one("#file-notes-git-commit-review", Button).press()
+        await pilot.pause()
+        request = next(
+            message
+            for message in reversed(app.messages)
+            if message.__class__.__name__ == "ReviewCommitRequested"
+        )
+        assert request.binding_key is binding_a
+        assert request.subject == "Edited A"
+        assert request.body == "Edited A body"
+
+
+@pytest.mark.asyncio
+async def test_commit_binding_invalidation_clears_list_and_workflow_drafts(
+) -> None:
+    binding_a = object()
+    binding_b = object()
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+    async with app.run_test() as pilot:
+        panel.render_commit_availability(
+            _commit_draft_projection(
+                binding_key=binding_a,
+                subject="Draft A",
+            )
+        )
+        panel.query_one("#file-notes-git-commit-staged", Button).press()
+        await pilot.pause()
+        panel.render_commit_availability(
+            _commit_draft_projection(
+                binding_key=binding_b,
+                subject="Draft B",
+            )
+        )
+
+        panel.invalidate_commit_binding()
+        await pilot.pause()
+        assert panel.commit_phase == "list"
+        assert not panel.query_one(
+            "#file-notes-git-commit-staged",
+            Button,
+        ).display
+        assert panel.query_one("#file-notes-git-back", Button).has_focus
+
+        panel.render_commit_availability(
+            _commit_draft_projection(
+                binding_key=binding_b,
+                subject="Fresh B",
+            )
+        )
+        panel.query_one("#file-notes-git-commit-staged", Button).press()
+        await pilot.pause()
+        assert (
+            panel.query_one(
+                "#file-notes-git-commit-subject",
+                Input,
+            ).value
+            == "Fresh B"
+        )
+        activation = next(
+            message
+            for message in reversed(app.messages)
+            if message.__class__.__name__ == "CommitStagedRequested"
+        )
+        assert activation.binding_key is binding_b
+
+
+@pytest.mark.asyncio
+async def test_commit_binding_invalidation_cancels_deferred_form_focus(
+) -> None:
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+    async with app.run_test() as pilot:
+        panel.render_commit_form(
+            _commit_draft_projection(
+                binding_key=object(),
+                subject="Stale draft",
+            )
+        )
+        panel.invalidate_commit_binding()
+
+        await pilot.pause()
+        subject = panel.query_one(
+            "#file-notes-git-commit-subject",
+            Input,
+        )
+        assert panel.commit_phase == "list"
+        assert not subject.has_focus
+        assert panel.query_one("#file-notes-git-back", Button).has_focus
+
+
+@pytest.mark.asyncio
+async def test_programmatic_commit_form_projection_emits_no_draft_intent(
+) -> None:
+    binding_key = object()
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+    async with app.run_test() as pilot:
+        panel.render_commit_form(
+            _commit_draft_projection(
+                binding_key=binding_key,
+                subject="Projected subject",
+                body="Projected body",
+            )
+        )
+        await pilot.pause()
+        assert not any(
+            message.__class__.__name__ == "CommitDraftChanged"
+            for message in app.messages
+        )
+
+        panel.render_commit_form(
+            _commit_draft_projection(
+                binding_key=binding_key,
+                subject="Corrected subject",
+                body="Corrected body",
+                body_error="Literal error",
+            )
+        )
+        await pilot.pause()
+        assert not any(
+            message.__class__.__name__ == "CommitDraftChanged"
+            for message in app.messages
+        )
+
+
+@pytest.mark.asyncio
+async def test_commit_review_is_literal_complete_and_discloses_included_notes(
+) -> None:
+    long_path = (
+        "folder/[literal]/"
+        + "very-long-segment/" * 5
+        + "note.md\\nvisible-control"
+    )
+    projection = _commit_review_projection(
+        paths=(
+            ("New", "new-note.md"),
+            ("Modified", long_path),
+            ("Deleted", "deleted-note.md"),
+            ("Moved", "old/place.md → new/place.md"),
+        )
+    )
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    async with _PanelHarness(panel).run_test(size=(80, 30)) as pilot:
+        panel.render_commit_review(projection)
+        await pilot.pause()
+
+        assert panel.commit_phase == "review"
+        assert _text(
+            panel.query_one("#file-notes-git-commit-review-branch", Static)
+        ) == "Branch: refs/heads/feature/[literal] · Parent: aaaaaaaaaaaa"
+        message = panel.query_one(
+            "#file-notes-git-commit-review-message",
+            Static,
+        )
+        assert _text(message) == "Summarize [review]\n\nKeep exact body.\n"
+        assert not message._render_markup
+        author = panel.query_one(
+            "#file-notes-git-commit-review-identity-primary",
+            Static,
+        )
+        committer = panel.query_one(
+            "#file-notes-git-commit-review-identity-secondary",
+            Static,
+        )
+        assert _text(author) == "Author: [Author] <author@example.test>"
+        assert _text(committer) == (
+            "Committer: [Committer] <committer@example.test>"
+        )
+        assert not author._render_markup
+        assert not committer._render_markup
+        assert _text(
+            panel.query_one("#file-notes-git-commit-review-promise", Static)
+        ) == "4 session notes will be committed; unrelated changes untouched"
+        assert _text(
+            panel.query_one("#file-notes-git-commit-review-scope", Static)
+        ) == (
+            "No unrelated staged content will be committed; "
+            "Chatbook will select no unrelated worktree paths"
+        )
+        assert _text(
+            panel.query_one("#file-notes-git-commit-review-change-counts", Static)
+        ) == "Changes: New 1 · Modified 1 · Deleted 1 · Moved 1"
+        assert _text(
+            panel.query_one("#file-notes-git-commit-review-policy", Static)
+        ) == (
+            "Commit policy: Git hooks will not run · Commit will be unsigned"
+        )
+        assert _text(
+            panel.query_one(
+                "#file-notes-git-commit-review-complete-state",
+                Static,
+            )
+        ) == (
+            "Included notes use their complete staged file state, "
+            "not only edits made in Chatbook"
+        )
+
+        disclosure = panel.query_one(
+            "#file-notes-git-commit-included-toggle",
+            Button,
+        )
+        assert str(disclosure.label) == "Show included notes (4)"
+        disclosure.press()
+        await pilot.pause()
+        assert str(disclosure.label) == "Hide included notes"
+        notes = panel.query_one(
+            "#file-notes-git-commit-included-notes",
+            ListView,
+        )
+        assert notes.display
+        notes.index = 1
+        notes.focus()
+        await pilot.pause()
+        selected = panel.query_one(
+            "#file-notes-git-commit-included-selected",
+            Static,
+        )
+        assert _text(selected) == f"Modified: {long_path}"
+        assert not selected._render_markup
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    ("subset", "reordered", "substituted"),
+)
+def test_commit_review_note_projection_rejects_authority_mismatch(
+    mismatch: str,
+) -> None:
+    valid = _commit_review_projection()
+    review = valid.review
+    included_notes = valid.included_notes
+    if mismatch == "subset":
+        mismatched_notes = included_notes[:1]
+    elif mismatch == "reordered":
+        mismatched_notes = tuple(reversed(included_notes))
+    else:
+        note_type = _panel_projection_type("CommitReviewNoteProjection")
+        replacement = CommitIncludedNote(
+            group_id=review.included_notes[0].group_id,
+            display_text="substituted/path.md",
+        )
+        mismatched_notes = (
+            note_type(
+                note=replacement,
+                change_type=included_notes[0].change_type,
+            ),
+            *included_notes[1:],
+        )
+
+    projection_type = _panel_projection_type("CommitPanelReviewProjection")
+    with pytest.raises(ValueError, match="exactly match"):
+        projection_type(
+            review=review,
+            included_notes=mismatched_notes,
+        )
+
+
+@pytest.mark.parametrize("size", [(80, 30), (40, 20)])
+@pytest.mark.asyncio
+async def test_commit_footer_keeps_disclosure_edit_cancel_confirm_order_and_geometry(
+    size: tuple[int, int],
+) -> None:
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+    async with app.run_test(size=size) as pilot:
+        panel.render_commit_review(_commit_review_projection())
+        await pilot.pause()
+
+        disclosure = panel.query_one(
+            "#file-notes-git-commit-included-toggle",
+            Button,
+        )
+        edit = panel.query_one("#file-notes-git-commit-edit", Button)
+        cancel = panel.query_one("#file-notes-git-commit-cancel", Button)
+        confirm = panel.query_one("#file-notes-git-commit-confirm", Button)
+        footer = panel.query_one("#file-notes-git-commit-footer")
+        assert edit.has_focus
+        assert not confirm.has_focus
+
+        await pilot.press("shift+tab")
+        assert disclosure.has_focus
+        await pilot.press("tab")
+        assert edit.has_focus
+        await pilot.press("tab")
+        assert cancel.has_focus
+        await pilot.press("tab")
+        assert confirm.has_focus
+
+        if size[0] == 40:
+            assert edit.region.y == cancel.region.y
+            assert confirm.region.y > edit.region.y
+            assert confirm.region.x == footer.content_region.x
+            assert confirm.region.right == footer.content_region.right
+        else:
+            assert edit.region.y == cancel.region.y == confirm.region.y
+
+
+@pytest.mark.asyncio
+async def test_commit_review_enter_escape_cancel_and_execution_are_state_aware(
+) -> None:
+    binding_key = object()
+    draft = _commit_draft_projection(
+        binding_key=binding_key,
+        subject="Reviewed subject",
+    )
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+    async with app.run_test() as pilot:
+        panel.render_commit_availability(draft)
+        panel.query_one("#file-notes-git-commit-staged", Button).press()
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert panel.commit_phase == "list"
+        assert app.messages[-1].__class__.__name__ == "CancelCommitRequested"
+        assert app.messages[-1].from_phase == "form"
+        panel.query_one("#file-notes-git-commit-staged", Button).press()
+        await pilot.pause()
+        panel.query_one("#file-notes-git-commit-review", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert panel.commit_phase == "checking"
+        assert not any(
+            message.__class__.__name__ == "ConfirmCommitRequested"
+            for message in app.messages
+        )
+
+        panel.render_commit_review(_commit_review_projection())
+        await pilot.pause()
+        assert panel.query_one("#file-notes-git-commit-edit", Button).has_focus
+        await pilot.press("enter")
+        await pilot.pause()
+        assert panel.commit_phase == "form"
+        assert app.messages[-1].__class__.__name__ == (
+            "EditCommitMessageRequested"
+        )
+        assert not any(
+            message.__class__.__name__ == "ConfirmCommitRequested"
+            for message in app.messages
+        )
+
+        panel.render_commit_review(_commit_review_projection())
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert panel.commit_phase == "form"
+        assert app.messages[-1].__class__.__name__ == (
+            "EditCommitMessageRequested"
+        )
+
+        panel.render_commit_review(_commit_review_projection())
+        panel.query_one("#file-notes-git-commit-cancel", Button).press()
+        await pilot.pause()
+        assert panel.commit_phase == "list"
+        assert app.messages[-1].__class__.__name__ == "CancelCommitRequested"
+        assert app.messages[-1].from_phase == "review"
+
+        panel.render_commit_review(_commit_review_projection())
+        await pilot.pause()
+        panel.query_one("#file-notes-git-commit-confirm", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert panel.commit_phase == "confirming"
+        assert app.messages[-1].__class__.__name__ == (
+            "ConfirmCommitRequested"
+        )
+        await pilot.press("escape")
+        await pilot.pause()
+        assert panel.commit_phase == "list"
+        assert app.messages[-1].__class__.__name__ == "CancelCommitRequested"
+        assert app.messages[-1].from_phase == "confirming"
+
+        execution_type = _panel_projection_type("CommitExecutionProjection")
+        panel.render_commit_executing(execution_type(staged_note_count=2))
+        message_count = len(app.messages)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert panel.commit_phase == "executing"
+        assert len(app.messages) == message_count
+
+
+@pytest.mark.asyncio
+async def test_commit_result_copy_is_scrollable_unelided_and_uncertainty_is_safe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uncertain_copy = (
+        "Commit may have succeeded. Git actions are disabled until the "
+        "repository is checked. Run git status and git log -1, then choose "
+        "Check again."
+    )
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+    async with app.run_test(size=(40, 20)) as pilot:
+        execution_type = _panel_projection_type("CommitExecutionProjection")
+        panel.render_commit_checking()
+        assert _text(
+            panel.query_one("#file-notes-git-commit-checking-copy", Static)
+        ) == "Checking commit..."
+        panel.render_commit_executing(execution_type(staged_note_count=2))
+        assert _text(
+            panel.query_one("#file-notes-git-commit-execution-title", Static)
+        ) == "Committing 2 session notes..."
+        assert _text(
+            panel.query_one("#file-notes-git-commit-execution-detail", Static)
+        ) == "Git is updating the branch; cancellation is unavailable."
+
+        fit_calls: list[str] = []
+
+        def record_fit(text: str, width: int) -> str:
+            fit_calls.append(f"{width}:{text}")
+            return text
+
+        def record_fixed_regions() -> None:
+            fit_calls.append("fixed-regions")
+
+        monkeypatch.setattr(git_panel_module, "_fit_two_line_copy", record_fit)
+        monkeypatch.setattr(panel, "_fit_fixed_regions", record_fixed_regions)
+
+        outcomes = (
+            CommitOutcome(
+                "succeeded",
+                "Committed 2 session notes as abcdef123456; "
+                "unrelated changes untouched.",
+                qualification=(
+                    "No unrelated staged content was committed; "
+                    "Chatbook selected no unrelated worktree paths."
+                ),
+                committed_note_count=2,
+            ),
+            CommitOutcome(
+                "failed_unchanged",
+                "Git did not create a commit; branch and staged state are "
+                "unchanged.",
+            ),
+            CommitOutcome(
+                "blocked",
+                "Configure Git user.name and user.email, then review again.",
+            ),
+            CommitOutcome("uncertain", uncertain_copy),
+        )
+        for outcome in outcomes:
+            panel.render_commit_result(
+                _commit_result_projection(
+                    outcome,
+                    can_check_again=(
+                        True if outcome.state == "uncertain" else None
+                    ),
+                )
+            )
+            assert _text(
+                panel.query_one("#file-notes-git-commit-result-message", Static)
+            ) == outcome.message
+            assert not fit_calls
+
+        assert panel.commit_phase == "result"
+        assert _text(
+            panel.query_one("#file-notes-git-commit-result-state", Static)
+        ) == "Uncertain"
+        footer_buttons = tuple(
+            button
+            for button in panel.query_one(
+                "#file-notes-git-commit-footer"
+            ).query(Button)
+            if button.display
+        )
+        assert tuple(str(button.label) for button in footer_buttons) == (
+            "Check again",
+        )
+        assert not footer_buttons[0].disabled
+        footer_buttons[0].press()
+        await pilot.pause()
+        assert app.messages[-1].__class__.__name__ == (
+            "CheckCommitAgainRequested"
+        )
+        result_body = panel.query_one("#file-notes-git-commit-body")
+        assert isinstance(result_body, VerticalScroll)
+        assert result_body.styles.overflow_y == "auto"
+        assert result_body.region.height >= 1
+
+
+@pytest.mark.parametrize("size", [(80, 30), (40, 20)])
+@pytest.mark.parametrize("can_check_again", [False, True])
+@pytest.mark.asyncio
+async def test_commit_uncertain_recovery_has_literal_reason_and_visible_focus(
+    size: tuple[int, int],
+    can_check_again: bool,
+) -> None:
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+    async with app.run_test(size=size) as pilot:
+        panel.query_one("#file-notes-git-back", Button).focus()
+        panel.render_commit_result(
+            _commit_result_projection(
+                CommitOutcome(
+                    "uncertain",
+                    "Commit outcome is uncertain. Inspect Git before retrying.",
+                ),
+                can_check_again=can_check_again,
+            )
+        )
+        await pilot.pause()
+
+        check_again = panel.query_one(
+            "#file-notes-git-commit-check-again",
+            Button,
+        )
+        reason = panel.query_one(
+            "#file-notes-git-commit-check-again-reason",
+            Static,
+        )
+        result_body = panel.query_one(
+            "#file-notes-git-commit-body",
+            VerticalScroll,
+        )
+        assert check_again.display
+        assert check_again.disabled is not can_check_again
+        assert not panel.query_one("#file-notes-git-back", Button).has_focus
+
+        if can_check_again:
+            assert not reason.display
+            assert check_again.has_focus
+        else:
+            assert reason.display
+            assert _text(reason) == (
+                "Check again is temporarily unavailable while the exact Git "
+                "child may still be settling or Git has a relevant lock or "
+                "operation. Inspect git status and git log -1, then wait and "
+                "try again."
+            )
+            assert reason.content_region.height >= 1
+            assert result_body.has_focus
+            assert result_body.can_focus
+            assert result_body.styles.overflow_y == "auto"
+            assert result_body.styles.outline
+            assert all(
+                not isinstance(node, Widget) or node.display
+                for node in result_body.ancestors_with_self
+            )
+            message_count = len(app.messages)
+            check_again.press()
+            await pilot.pause()
+            assert len(app.messages) == message_count
+
+
+@pytest.mark.asyncio
+async def test_return_to_commit_list_keeps_result_until_called_then_focuses_row(
+) -> None:
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    async with _PanelHarness(panel).run_test() as pilot:
+        panel.render_status(
+            _status(
+                _row("owned", group_id=1, unstage_eligible=True),
+                _row("owned", group_id=2, unstage_eligible=True),
+            )
+        )
+        panel.render_commit_review(_commit_review_projection())
+        panel.render_commit_result(
+            _commit_result_projection(
+                CommitOutcome(
+                    "succeeded",
+                    "Committed 2 session notes; unrelated changes untouched.",
+                    committed_note_count=2,
+                )
+            )
+        )
+        await pilot.pause()
+        assert panel.commit_phase == "result"
+        assert panel.query_one(
+            "#file-notes-git-commit-result",
+        ).display
+
+        panel.return_to_commit_list(preferred_group_id=2)
+        row_list = panel.query_one("#file-notes-git-rows", ListView)
+        await _wait_until(
+            pilot,
+            lambda: (
+                len(panel.query(".file-notes-git-row")) == 2
+                and row_list.display
+                and row_list.has_focus
+            ),
+            "commit list rows and requested focus did not settle",
+        )
+        assert panel.commit_phase == "list"
+        assert row_list.has_focus
+        assert row_list.index == 1
+        assert panel.selected_group_id == 2
+        assert panel._commit_review is None
+        assert panel._commit_result is None
+        assert panel._commit_notes == ()
+
+
+@pytest.mark.asyncio
+async def test_return_to_empty_commit_list_after_cancelled_result_focuses_back(
+) -> None:
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    async with _PanelHarness(panel).run_test() as pilot:
+        panel.render_commit_result(
+            _commit_result_projection(
+                CommitOutcome("cancelled", "Commit cancelled safely.")
+            )
+        )
+        await pilot.pause()
+        assert panel.commit_phase == "result"
+
+        panel.return_to_commit_list()
+        await pilot.pause()
+        assert panel.commit_phase == "list"
+        assert panel.query_one("#file-notes-git-back", Button).has_focus
 
 
 @pytest.mark.asyncio
