@@ -166,12 +166,11 @@ def test_random_splash_selection_skips_missing_active_card_definitions(
     """Default active cards can outpace implemented card definitions."""
     from tldw_chatbook.Widgets import splash_screen
 
-    def fake_get_cli_setting(setting: str, default=None, *args, **kwargs):
-        if setting == "splash_screen":
-            return {
-                "card_selection": "random",
-                "active_cards": ["neon_sign", "default"],
-            }
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section == "splash_screen" and key == "card_selection":
+            return "random"
+        if section == "splash_screen" and key == "active_cards":
+            return ["neon_sign", "default"]
         return default
 
     choices: list[list[str]] = []
