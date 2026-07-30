@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 import stat
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -26,6 +27,7 @@ from tldw_chatbook.Notes.file_notes_git_service import (
     RetainedGitChildSettlement,
     RetainedGitChildToken,
 )
+from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
 from tldw_chatbook.Notes.file_notes_session_owner import (
     CommitPublicationResult,
     FileNotesSessionOwner,
@@ -145,6 +147,60 @@ class _RecordingRunner(AsyncGitProcessRunner):
         stderr_limit: int | None = None,
     ) -> GitCommandResult:
         self.calls.append((tuple(argv), dict(environment)))
+        return await super().run(
+            argv,
+            cwd=cwd,
+            environment=environment,
+            stdin=stdin,
+            timeout=timeout,
+            stdout_limit=stdout_limit,
+            stderr_limit=stderr_limit,
+        )
+
+
+class _NoNetworkRunner(_RecordingRunner):
+    """Fail the test if the guarded flow launches a network-capable Git child."""
+
+    _ALLOWED_GUARDED_REVIEW_COMMANDS = frozenset(
+        {
+            ("rev-parse", "--path-format=absolute", "--show-toplevel"),
+            ("rev-parse", "--absolute-git-dir"),
+            ("rev-parse", "--path-format=absolute", "--git-common-dir"),
+            ("config", "--local", "--null", "--list"),
+        }
+    )
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._guarded_review_armed = False
+
+    def arm(self) -> None:
+        """Start fail-closed inspection immediately before guarded review."""
+        self.calls.clear()
+        self._guarded_review_armed = True
+
+    async def run(
+        self,
+        argv: Sequence[GitArg],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+        stdout_limit: int | None = None,
+        stderr_limit: int | None = None,
+    ) -> GitCommandResult:
+        decoded = tuple(os.fsdecode(value) for value in argv)
+        if self._guarded_review_armed:
+            assert environment.get("GIT_NO_LAZY_FETCH") == "1", (
+                "guarded review command lacks no-lazy-fetch isolation"
+            )
+            assert len(decoded) >= 3 and decoded[1] == "--no-replace-objects", (
+                "guarded review command lacks replacement-ref isolation"
+            )
+            assert decoded[2:] in self._ALLOWED_GUARDED_REVIEW_COMMANDS, (
+                f"guarded review command is not local-only: {decoded[2:]!r}"
+            )
         return await super().run(
             argv,
             cwd=cwd,
@@ -386,7 +442,11 @@ class _ControlledCommitRunner(_RecordingRunner):
                 retained_child=self.token,
                 stop_requested=True,
             )
-        if self.mode in {"commit_then_branch_drift", "commit_then_index_drift"}:
+        if self.mode in {
+            "commit_then_branch_drift",
+            "commit_then_index_drift",
+            "commit_then_worktree_edit",
+        }:
             result = await AsyncGitProcessRunner.run(
                 self,
                 argv,
@@ -399,12 +459,17 @@ class _ControlledCommitRunner(_RecordingRunner):
             )
             if self.mode == "commit_then_branch_drift":
                 _git(Path(cwd), "checkout", "-q", "-b", "unexpected")
-            else:
+            elif self.mode == "commit_then_index_drift":
                 (Path(cwd) / "unexpected.md").write_text(
                     "unexpected staged content\n",
                     encoding="utf-8",
                 )
                 _git(Path(cwd), "add", "unexpected.md")
+            else:
+                (Path(cwd) / "note.md").write_text(
+                    "newer worktree edit\n",
+                    encoding="utf-8",
+                )
             return result
         raise AssertionError(f"Unsupported controlled commit mode: {self.mode}")
 
@@ -490,6 +555,8 @@ async def _prepare_owned_review(
     runner: AsyncGitProcessRunner | None = None,
     environment: Mapping[str, str] | None = None,
     service_capture: list[tuple[FileNotesGitService, object]] | None = None,
+    pre_review_state: dict[str, bytes] | None = None,
+    arm_runner_before_review: bool = False,
 ) -> tuple[FileNotesGitService, object, CommitReviewResult]:
     if include_no_op_group:
         (repository / "no-op.md").write_text("unchanged\n", encoding="utf-8")
@@ -687,8 +754,22 @@ async def _prepare_owned_review(
         )
     elif unsupported_index_state == "semantic":
         _git(repository, "update-index", "--skip-worktree", "note.md")
+    elif unsupported_index_state == "assume":
+        _git(repository, "update-index", "--assume-unchanged", "note.md")
     if service_capture is not None:
         service_capture.append((service, binding))
+    if pre_review_state is not None:
+        pre_review_state["head"] = _git(repository, "rev-parse", "HEAD")
+        pre_review_state["index"] = _git(
+            repository,
+            "ls-files",
+            "-z",
+            "--stage",
+            "-v",
+        )
+    if arm_runner_before_review:
+        assert isinstance(runner, _NoNetworkRunner)
+        runner.arm()
     result = await service.start_commit_review(binding, "Review subject", "Body")
     return service, binding, result
 
@@ -714,6 +795,43 @@ async def _prepare_uncertain_commit_recovery(
     assert outcome.state == "uncertain"
     assert runner.commit_calls == 1
     return service, binding, review, runner
+
+
+async def _stage_changes_then_review(
+    repository: Path,
+    changes: Sequence[SessionChange],
+    *,
+    runner: AsyncGitProcessRunner | None = None,
+    environment: Mapping[str, str] | None = None,
+    reset_runner_before_review: bool = False,
+) -> tuple[FileNotesGitService, object, CommitReviewResult]:
+    """Stage real session changes and create one guarded commit review."""
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository)
+    for change in changes:
+        assert owner.record_change(binding, change)
+    service = FileNotesGitService(owner, runner=runner, environment=environment)
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert discovery.head is not None
+    assert discovery.head.kind == "attached"
+    assert owner.publish_trust(binding, discovery.repository)
+    status = await service.start_status(binding, owner.snapshot(binding).changes)
+    assert status.state == "ready"
+    group_ids = tuple(row.group_id for row in status.rows)
+    assert group_ids
+    staged = await service.start_stage(binding, group_ids)
+    assert staged.state == "success"
+    assert set(staged.staged_group_ids) == set(group_ids)
+    if reset_runner_before_review:
+        assert isinstance(runner, _RecordingRunner)
+        runner.calls.clear()
+    review = await service.start_commit_review(
+        binding,
+        "Repository matrix",
+        "Exact staged session state",
+    )
+    return service, binding, review
 
 
 def _commit_reviewed_index(
@@ -770,6 +888,22 @@ async def test_commit_review_attached_repository_returns_sanitized_projection(
     assert result.projection.unsigned is True
     assert "unrelated" not in repr(result)
     await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_armed_no_network_runner_rejects_unprotected_object_resolution(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _NoNetworkRunner()
+    runner.arm()
+
+    with pytest.raises(AssertionError, match="guarded review command"):
+        await runner.run(
+            ("git", "cat-file", "commit", "HEAD"),
+            cwd=str(repository),
+            environment={"GIT_NO_LAZY_FETCH": "1"},
+        )
 
 
 @pytest.mark.asyncio
@@ -921,10 +1055,14 @@ async def test_complete_commit_proof_blocks_unrelated_staged_without_disclosure(
     tmp_path: Path,
 ) -> None:
     repository = _init_repository(tmp_path)
+    runner = _RecordingRunner()
+    pre_review_state: dict[str, bytes] = {}
 
     service, binding, result = await _prepare_owned_review(
         repository,
         stage_unrelated=True,
+        runner=runner,
+        pre_review_state=pre_review_state,
     )
 
     assert result.state == "blocked"
@@ -932,6 +1070,18 @@ async def test_complete_commit_proof_blocks_unrelated_staged_without_disclosure(
     assert result.projection is None
     assert "unrelated-secret" not in repr(result)
     assert "unrelated-secret" not in repr(service._owner.snapshot(binding))
+    assert "unrelated-secret" not in repr(service._commit_review_snapshots)
+    assert _git(repository, "rev-parse", "HEAD") == pre_review_state["head"]
+    assert _git(repository, "ls-files", "-z", "--stage", "-v") == (
+        pre_review_state["index"]
+    )
+    assert not any(
+        any(
+            isinstance(value, str) and value.startswith("core.hooksPath=")
+            for value in argv
+        )
+        for argv, _environment in runner.calls
+    )
     await service.shutdown()
 
 
@@ -952,7 +1102,60 @@ async def test_complete_commit_proof_blocks_newer_included_worktree_edit(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("marker", ["MERGE_HEAD", "index.lock", "info/grafts"])
+async def test_commit_review_uses_trusted_clean_filter_for_worktree_freshness(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    filter_executable = repository / ".git" / "chatbook-matrix-clean"
+    filter_executable.write_text(
+        "#!/bin/sh\nsed 's/^stamp:.*/stamp: normalized/'\n",
+        encoding="utf-8",
+    )
+    filter_executable.chmod(0o755)
+    _git(
+        repository,
+        "config",
+        "filter.chatbook-matrix.clean",
+        shlex.quote(str(filter_executable)),
+    )
+    _git(repository, "config", "filter.chatbook-matrix.required", "true")
+    (repository / ".gitattributes").write_text(
+        "note.md filter=chatbook-matrix\n",
+        encoding="utf-8",
+    )
+    _git(repository, "add", ".gitattributes")
+    _git(repository, "commit", "-q", "-m", "configure clean filter")
+    worktree_bytes = b"session content\nstamp: worktree-only\n"
+    (repository / "note.md").write_bytes(worktree_bytes)
+
+    service, binding, review = await _stage_changes_then_review(
+        repository,
+        (SessionChange("modified", "note.md"),),
+    )
+
+    assert review.state == "ready"
+    assert review.handle is not None
+    staged_bytes = _git(repository, "cat-file", "blob", ":note.md")
+    assert staged_bytes == b"session content\nstamp: normalized\n"
+    assert staged_bytes != worktree_bytes
+    outcome = await service.start_commit(binding, review.handle)
+    assert outcome.state == "succeeded"
+    assert (repository / "note.md").read_bytes() == worktree_bytes
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "MERGE_HEAD",
+        "sequencer",
+        "BISECT_START",
+        "index.lock",
+        "refs/heads/session.lock",
+        "info/grafts",
+    ],
+)
 async def test_commit_review_local_blockers_run_before_object_proof(
     tmp_path: Path,
     marker: str,
@@ -997,23 +1200,16 @@ async def test_commit_review_blocks_promisor_repository_without_fetch(
     tmp_path: Path,
 ) -> None:
     repository = _init_repository(tmp_path)
-    sentinel = tmp_path / "network-was-used"
-    _git(
-        repository,
-        "config",
-        "remote.origin.uploadpack",
-        f"touch {sentinel}",
-    )
-    runner = _RecordingRunner()
+    runner = _NoNetworkRunner()
 
     service, _binding, result = await _prepare_owned_review(
         repository,
         promisor_repository=True,
         runner=runner,
+        arm_runner_before_review=True,
     )
 
     assert result.state == "blocked"
-    assert not sentinel.exists()
     review_commands = [
         argv for argv, _environment in runner.calls if "--no-replace-objects" in argv
     ]
@@ -1035,13 +1231,17 @@ async def test_commit_review_blocks_unsupported_local_repository_formats(
     repository_flag: str,
 ) -> None:
     repository = _init_repository(tmp_path)
+    runner = _NoNetworkRunner()
 
     service, _binding, result = await _prepare_owned_review(
         repository,
+        runner=runner,
+        arm_runner_before_review=True,
         **{repository_flag: True},
     )
 
     assert result.state == "blocked"
+    assert runner.calls
     await service.shutdown()
 
 
@@ -1105,20 +1305,36 @@ async def test_commit_review_blocks_missing_identity(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "unsupported_index_state",
-    ["intent", "conflict", "gitlink", "semantic"],
+    ["intent", "conflict", "gitlink", "semantic", "assume"],
 )
 async def test_complete_commit_proof_blocks_unsupported_index_states(
     tmp_path: Path,
     unsupported_index_state: str,
 ) -> None:
     repository = _init_repository(tmp_path)
+    runner = _RecordingRunner()
+    pre_review_state: dict[str, bytes] = {}
 
     service, _binding, result = await _prepare_owned_review(
         repository,
         unsupported_index_state=unsupported_index_state,
+        runner=runner,
+        pre_review_state=pre_review_state,
     )
 
     assert result.state == "blocked"
+    assert result.handle is None
+    assert _git(repository, "rev-parse", "HEAD") == pre_review_state["head"]
+    assert _git(repository, "ls-files", "-z", "--stage", "-v") == (
+        pre_review_state["index"]
+    )
+    assert not any(
+        any(
+            isinstance(value, str) and value.startswith("core.hooksPath=")
+            for value in argv
+        )
+        for argv, _environment in runner.calls
+    )
     await service.shutdown()
 
 
@@ -2301,6 +2517,37 @@ async def test_commit_outcome_unexpected_branch_or_index_movement_is_uncertain(
 
 
 @pytest.mark.asyncio
+async def test_guarded_commit_retains_newer_post_commit_worktree_edit(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("commit_then_worktree_edit")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "succeeded"
+    assert outcome.commit_object_id is not None
+    assert _git(repository, "show", f"{outcome.commit_object_id}:note.md") == (
+        b"staged\n"
+    )
+    assert (repository / "note.md").read_bytes() == b"newer worktree edit\n"
+    assert _git(repository, "diff-index", "--cached", "HEAD", "--") == b""
+    snapshot = service._owner.snapshot(binding)
+    assert [change.sequence for change in snapshot.changes] == [1]
+    assert dict(snapshot.staging_ownership) == {}
+    assert snapshot.git_status is not None
+    assert tuple(
+        (row.group_id, row.state) for row in snapshot.git_status.rows
+    ) == ((1, "unstaged"),)
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "contradiction",
     [
@@ -2990,6 +3237,308 @@ async def test_success_uses_one_status_snapshot_for_retirement_and_projection(
         for change in service._owner.snapshot(binding).changes
     ] == [2, 3]
     await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("change_kind", "relative_path"),
+    [
+        ("created", "created.md"),
+        ("modified", "note.md"),
+        ("deleted", "note.md"),
+        ("mode", "note.md"),
+    ],
+)
+async def test_guarded_commit_applies_basic_file_shapes_to_exact_complete_tree(
+    tmp_path: Path,
+    change_kind: str,
+    relative_path: str,
+) -> None:
+    repository = _init_repository(tmp_path)
+    (repository / "untouched.md").write_text("untouched\n", encoding="utf-8")
+    _git(repository, "add", "untouched.md")
+    _git(repository, "commit", "-q", "-m", "add complete-tree fixture")
+    target = repository / relative_path
+    if change_kind == "created":
+        target.write_text("created\n", encoding="utf-8")
+        change = SessionChange("created", relative_path)
+    elif change_kind == "deleted":
+        target.unlink()
+        change = SessionChange("deleted", relative_path)
+    elif change_kind == "mode":
+        if os.name != "posix":
+            pytest.skip("POSIX executable-bit contract")
+        target.chmod(0o755)
+        change = SessionChange("modified", relative_path)
+    else:
+        target.write_text("modified\n", encoding="utf-8")
+        change = SessionChange("modified", relative_path)
+
+    service, binding, review = await _stage_changes_then_review(
+        repository,
+        (change,),
+    )
+    assert review.state == "ready"
+    assert review.handle is not None
+    old_head = _git(repository, "rev-parse", "HEAD").decode().strip()
+    old_branch = _git(repository, "symbolic-ref", "HEAD")
+    expected_tree = _git(repository, "write-tree").decode().strip()
+    expected_listing = _git(repository, "ls-tree", "-r", "-z", expected_tree)
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "succeeded"
+    assert outcome.commit_object_id is not None
+    new_head = _git(repository, "rev-parse", "HEAD").decode().strip()
+    raw_commit = parse_raw_commit_object(
+        _git(repository, "cat-file", "commit", new_head)
+    )
+    assert new_head == outcome.commit_object_id
+    assert raw_commit.parent_object_id == old_head
+    assert raw_commit.tree_object_id == expected_tree
+    assert _git(repository, "ls-tree", "-r", "-z", new_head) == expected_listing
+    assert _git(repository, "symbolic-ref", "HEAD") == old_branch
+    assert _git(repository, "diff-index", "--cached", new_head, "--") == b""
+    assert (repository / "untouched.md").read_bytes() == b"untouched\n"
+    if change_kind == "mode":
+        tree_entry = _git(repository, "ls-tree", new_head, relative_path)
+        assert tree_entry.startswith(b"100755 ")
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("move_case", ["grouped", "chained"])
+async def test_guarded_commit_applies_grouped_and_chained_moves(
+    tmp_path: Path,
+    move_case: str,
+) -> None:
+    repository = _init_repository(tmp_path)
+    source = repository / "note.md"
+    if move_case == "grouped":
+        destination = repository / "moved.md"
+        source.rename(destination)
+        destination.write_text("moved and edited\n", encoding="utf-8")
+        changes = (
+            SessionChange("moved", "note.md", "moved.md"),
+            SessionChange("modified", "moved.md"),
+        )
+        absent_paths = ("note.md",)
+    else:
+        intermediate = repository / "intermediate.md"
+        destination = repository / "final.md"
+        source.rename(intermediate)
+        intermediate.rename(destination)
+        changes = (
+            SessionChange("moved", "note.md", "intermediate.md"),
+            SessionChange("moved", "intermediate.md", "final.md"),
+        )
+        absent_paths = ("note.md", "intermediate.md")
+
+    service, binding, review = await _stage_changes_then_review(
+        repository,
+        changes,
+    )
+    assert review.state == "ready"
+    assert review.handle is not None
+    assert review.projection is not None
+    assert review.projection.included_note_count == 1
+    expected_tree = _git(repository, "write-tree").decode().strip()
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "succeeded"
+    assert outcome.committed_note_count == 1
+    assert destination.read_bytes() == (
+        b"moved and edited\n" if move_case == "grouped" else b"baseline\n"
+    )
+    assert all(not (repository / path).exists() for path in absent_paths)
+    assert _git(repository, "rev-parse", "HEAD^{tree}").decode().strip() == (
+        expected_tree
+    )
+    assert _git(repository, "diff-index", "--cached", "HEAD", "--") == b""
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_guarded_commit_ignores_ambient_author_and_committer_dates(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _RecordingRunner()
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+        environment={
+            **os.environ,
+            "GIT_AUTHOR_DATE": "1000000000 +0000",
+            "GIT_COMMITTER_DATE": "1000000001 +0000",
+        },
+    )
+    assert review.state == "ready"
+    assert review.handle is not None
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "succeeded"
+    assert outcome.commit_object_id is not None
+    raw_commit = _git(
+        repository,
+        "cat-file",
+        "commit",
+        outcome.commit_object_id,
+    )
+    assert b" 1000000000 +0000\n" not in raw_commit
+    assert b" 1000000001 +0000\n" not in raw_commit
+    assert all(
+        "GIT_AUTHOR_DATE" not in environment
+        and "GIT_COMMITTER_DATE" not in environment
+        for _argv, environment in runner.calls
+        if "--no-replace-objects" in _argv
+    )
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_guarded_commit_leaves_note_bytes_and_sqlite_recovery_rows_unchanged(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, review = await _prepare_owned_review(repository)
+    assert review.handle is not None
+    note_bytes = (repository / "note.md").read_bytes()
+    root = str(repository.resolve())
+    replica = FileNotesReplica(tmp_path / "file-notes.sqlite3")
+    replica.upsert_file(
+        root,
+        "note.md",
+        note_bytes,
+        content_hash="a" * 64,
+        decoded_text=note_bytes.decode("utf-8"),
+        size=len(note_bytes),
+        mtime_ns=1,
+    )
+    replica.protect(root, "note.md")
+    assert replica.checkpoint(
+        root,
+        "note.md",
+        b"baseline\n",
+        content_hash="b" * 64,
+        session_key="matrix-session",
+        created_at="2026-07-29T00:00:00Z",
+    )
+    tombstone_bytes = b"deleted recovery bytes\n"
+    replica.upsert_file(
+        root,
+        "deleted.md",
+        tombstone_bytes,
+        content_hash="c" * 64,
+        decoded_text=tombstone_bytes.decode("utf-8"),
+        size=len(tombstone_bytes),
+        mtime_ns=2,
+    )
+    replica.prepare_deletion(
+        root,
+        "deleted.md",
+        tombstone_bytes,
+        content_hash="c" * 64,
+        decoded_text=tombstone_bytes.decode("utf-8"),
+        deleted_at="2026-07-29T00:01:00Z",
+        created_at="2026-07-29T00:01:00Z",
+    )
+
+    def recovery_rows() -> tuple[tuple[str, tuple[tuple[object, ...], ...]], ...]:
+        with replica._lock:
+            return tuple(
+                (
+                    table,
+                    tuple(
+                        tuple(row)
+                        for row in replica._connection.execute(
+                            f"SELECT * FROM {table} ORDER BY rowid"
+                        )
+                    ),
+                )
+                for table in ("files", "revisions", "protected_paths")
+            )
+
+    rows_before = recovery_rows()
+    try:
+        outcome = await service.start_commit(binding, review.handle)
+
+        assert outcome.state == "succeeded"
+        assert (repository / "note.md").read_bytes() == note_bytes
+        assert recovery_rows() == rows_before
+        assert replica.get_bytes(root, "note.md") == note_bytes
+        assert replica.get_restore_bytes(root, "deleted.md") == tombstone_bytes
+        assert replica.list_deleted(root) == ["deleted.md"]
+        assert replica.is_protected(root, "note.md")
+    finally:
+        replica.close()
+        await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_guarded_commit_git_process_count_is_constant_for_1000_notes(
+    tmp_path: Path,
+) -> None:
+    async def run_representative_session(
+        repository_name: str,
+        note_count: int,
+    ) -> int:
+        repository = tmp_path / repository_name
+        repository.mkdir()
+        _git(repository, "init", "-q")
+        _git(repository, "config", "user.name", "Test User")
+        _git(repository, "config", "user.email", "user@example.test")
+        for index in range(note_count):
+            (repository / f"note-{index:04d}.md").write_text(
+                f"baseline {index}\n",
+                encoding="utf-8",
+            )
+        _git(repository, "add", "--all")
+        _git(repository, "commit", "-q", "-m", "bulk baseline")
+
+        (repository / "note-0000.md").write_text(
+            "representative modification\n",
+            encoding="utf-8",
+        )
+        (repository / "note-0001.md").unlink()
+        (repository / "note-0002.md").rename(repository / "moved.md")
+        (repository / "created.md").write_text(
+            "representative creation\n",
+            encoding="utf-8",
+        )
+        runner = _RecordingRunner()
+        service, binding, review = await _stage_changes_then_review(
+            repository,
+            (
+                SessionChange("modified", "note-0000.md"),
+                SessionChange("deleted", "note-0001.md"),
+                SessionChange("moved", "note-0002.md", "moved.md"),
+                SessionChange("created", "created.md"),
+            ),
+            runner=runner,
+            reset_runner_before_review=True,
+        )
+        assert review.state == "ready"
+        assert review.handle is not None
+        assert review.projection is not None
+        assert review.projection.included_note_count == 4
+        outcome = await service.start_commit(binding, review.handle)
+        assert outcome.state == "succeeded"
+        assert outcome.committed_note_count == 4
+        protected_call_count = sum(
+            "--no-replace-objects" in argv for argv, _environment in runner.calls
+        )
+        assert protected_call_count < len(runner.calls)
+        await service.shutdown()
+        return len(runner.calls)
+
+    small_count = await run_representative_session("small", 4)
+    large_count = await run_representative_session("large", 1_000)
+
+    assert small_count == large_count
+    assert small_count <= 64
 
 
 @pytest.mark.asyncio
