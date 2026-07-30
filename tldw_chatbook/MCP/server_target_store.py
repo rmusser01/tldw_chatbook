@@ -9,7 +9,6 @@ from typing import Any, Mapping, Sequence
 from uuid import UUID, uuid4
 
 from tldw_chatbook.Utils.path_validation import validate_path_simple
-
 from .unified_control_models import ConfiguredServerTarget, TargetStatusMetadata
 
 _SERVER_TARGETS_FILENAME = "mcp_server_targets.json"
