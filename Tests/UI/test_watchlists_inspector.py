@@ -1,5 +1,6 @@
 """Tests for the Watchlists inspector pane wiring."""
 
+import threading
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
@@ -1360,9 +1361,15 @@ async def test_pressing_queue_for_briefing_writes_the_flag_and_repaints_the_row(
             "it is about to take"
         )
         button.press()
+        # Fix round 1: the write now happens in a worker (`asyncio.to_thread`
+        # then the in-place patch + repaint), so settle on the LAST
+        # observable effect of that sequence -- the repainted cell -- rather
+        # than the DB flag alone. The repaint only ever runs after the write
+        # has already been awaited, so waiting on it also guarantees the DB
+        # assertion below is no longer racing the worker.
         for _ in range(40):
             await pilot.pause()
-            if _queued_flag(db, item_id) is True:
+            if table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH:
                 break
 
         assert _queued_flag(db, item_id) is True, (
@@ -1381,6 +1388,56 @@ async def test_pressing_queue_for_briefing_writes_the_flag_and_repaints_the_row(
         assert screen.query_one("#watchlists-items-pane", ItemsPane) is pane
         assert pane.query_one("#items-table", DataTable) is table
         assert screen.query_one("#watchlists-entity-inspector", InspectorPane) is inspector
+
+
+@pytest.mark.asyncio
+async def test_the_queue_write_runs_off_the_event_loop_thread():
+    """Fix round 1: pin the load-bearing part of moving the write off the
+    UI thread. `run_worker` alone only *schedules* a coroutine back onto the
+    SAME event loop -- it is `asyncio.to_thread` inside `_toggle_briefing_queue`
+    that actually gets `set_item_briefing_queued` off it. A mutation that
+    drops `to_thread` and calls the DB method directly (still correctly,
+    still successfully) passes every other Task 5 test unchanged, since the
+    end state -- flag set, cell repainted -- is identical either way; only
+    watching WHICH thread executes the call can tell the two apart.
+    """
+    app = _build_test_app()
+    db, _source_id, item_id = _seed_new_item(app, content_hash="queue-thread-ident")
+
+    loop_thread_id = threading.get_ident()
+    write_thread_ids: list[int] = []
+    real_write = db.set_item_briefing_queued
+
+    def _spy(item_id_arg, queued_arg):
+        write_thread_ids.append(threading.get_ident())
+        return real_write(item_id_arg, queued_arg)
+
+    db.set_item_briefing_queued = _spy
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        pane, table = await _open_items_with_seeded_item(pilot, screen, app, db)
+        row_key = str(pane.items[0]["id"])
+
+        pane.select_item_by_id(row_key)
+        for _ in range(20):
+            await pilot.pause()
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        button = inspector.query_one("#inspector-queue-briefing-button", Button)
+        button.press()
+        for _ in range(40):
+            await pilot.pause()
+            if write_thread_ids:
+                break
+
+        assert write_thread_ids, "the write must have run at all"
+        assert write_thread_ids[0] != loop_thread_id, (
+            "set_item_briefing_queued must run off the event-loop thread "
+            "(asyncio.to_thread), not synchronously inside the worker on "
+            "the same thread that runs the event loop"
+        )
 
 
 @pytest.mark.asyncio
@@ -1403,10 +1460,13 @@ async def test_pressing_queue_for_briefing_again_unqueues_and_relabels():
         inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
         button = inspector.query_one("#inspector-queue-briefing-button", Button)
 
+        # Fix round 1: settle on the repainted cell, the LAST effect of the
+        # worker's write-then-patch sequence -- see the comment in
+        # `test_pressing_queue_for_briefing_writes_the_flag_and_repaints_the_row`.
         button.press()
         for _ in range(40):
             await pilot.pause()
-            if _queued_flag(db, item_id) is True:
+            if table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH:
                 break
         assert _queued_flag(db, item_id) is True, "precondition: first press queued it"
         assert table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH
@@ -1414,7 +1474,7 @@ async def test_pressing_queue_for_briefing_again_unqueues_and_relabels():
         button.press()
         for _ in range(40):
             await pilot.pause()
-            if _queued_flag(db, item_id) is False:
+            if table.get_row(row_key)[4] == "":
                 break
 
         assert _queued_flag(db, item_id) is False, (
@@ -1467,10 +1527,10 @@ async def test_a_failed_queue_write_leaves_the_flag_and_indicator_unchanged():
     """Honest failure: a DB error must not move the flag, must not repaint
     the indicator, and must say so -- and nothing may escape the handler.
 
-    Mutation (b), the DB-succeeds half held constant: the DB write is left
-    to actually run (so a dropped repaint could not hide behind a write that
-    also failed); only the LOG side is replaced, and `_queued_flag` here
-    proves the failure path never reaches the write at all.
+    The mock replaces `set_item_briefing_queued` itself with a `Mock` that
+    raises, so the write never reaches the real database at all; `_queued_flag`
+    here confirms the stored flag stayed exactly as seeded, and the failure
+    toast plus `screen.is_attached` confirm nothing escaped the worker.
     """
     app = _build_test_app()
     db, _source_id, item_id = _seed_new_item(app, content_hash="queue-fail")
@@ -1495,8 +1555,13 @@ async def test_a_failed_queue_write_leaves_the_flag_and_indicator_unchanged():
         inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
         button = inspector.query_one("#inspector-queue-briefing-button", Button)
         button.press()
-        for _ in range(30):
+        # Fix round 1: the write now happens in a worker (`asyncio.to_thread`),
+        # so settle on the observable outcome -- the error toast the failure
+        # path fires -- rather than a fixed count of no-op pauses.
+        for _ in range(60):
             await pilot.pause()
+            if toasts:
+                break
 
         assert _queued_flag(db, item_id) is False, (
             "a failed write must leave the stored flag exactly as it was"
@@ -1517,12 +1582,14 @@ async def test_a_failed_queue_write_leaves_the_flag_and_indicator_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_the_queued_indicator_renders_from_the_normalized_flag_on_reload():
+async def test_the_queued_indicator_renders_from_the_normalized_flag_on_load():
     """Requirement 5: an item already queued (via a prior session, say)
-    shows the glyph after a plain reload -- pinning Task 1's read path
+    shows the glyph on a plain (first) load -- pinning Task 1's read path
     (`queued_for_briefing` surviving `get_new_items` ->
     `normalize_watchlist_item`) end to end, through the real controller,
-    with no button press anywhere in this test."""
+    with no button press anywhere in this test. (This test never navigates
+    away and back, so "load" rather than "reload" is the accurate word for
+    what it exercises.)"""
     app = _build_test_app()
     db, _source_id, item_id = _seed_new_item(app, content_hash="queue-preloaded")
     db.set_item_briefing_queued(item_id, True)

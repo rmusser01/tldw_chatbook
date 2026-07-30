@@ -3774,26 +3774,30 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_toggle_briefing_queue_requested(
         self, event: ToggleBriefingQueueRequested
     ) -> None:
-        """Flip the global queued-for-briefing flag on one item (spec #2 §UI).
+        """Answer from memory, then dispatch the write to a worker.
 
-        Synchronous, not a worker: `SubscriptionsDB.set_item_briefing_queued`
-        is a single indexed `UPDATE subscription_items ... WHERE id = ?` --
-        the same order of cost as any other UI-thread state write on this
-        screen -- so routing it through `run_worker` would only add a
-        scheduling round trip for no benefit. Reached the SAME way
-        `_briefings_db()` reaches `SubscriptionsDB` for the Artifacts pane's
-        own writes: through `WatchlistBundleService`, not the scope service
-        -- the flag is local-only by design (ADR-018's global shape, the
-        design doc's "The queue flag is global, and never auto-cleared"),
-        so there is no server form here to resolve first.
+        Fix round 1 (Important): `SubscriptionsDB.set_item_briefing_queued`
+        is a transactional `UPDATE ... WHERE id = ?` with no busy timeout
+        beyond SQLite's default, and this branch's own docstrings (Task 4's
+        `_sweep_and_guard`) admit a second app instance against the same
+        database file. Running that write on the UI thread meant a
+        contended write could block the event loop for up to five seconds
+        before raising. This handler now does only what the UI thread is
+        entitled to do -- answer the no-selection/no-database cases from
+        memory and dispatch -- and the write itself moves into
+        `_toggle_briefing_queue`, off the UI thread, following Task 4's
+        `handle_generate_briefing_requested` -> `_generate_briefing` shape.
 
-        Honest failure (the repeated whole-branch-review pattern on this
-        stream): on a DB error the flag is never patched and the indicator
-        never repainted, so a failed write leaves the item exactly as it
-        was, with an error toast reporting it. The log line names the
-        exception TYPE only -- `logger.opt(exception=True)` would dump the
-        failing frame's locals (including this item's title/excerpt) into a
-        file sink running with `diagnose=True` (Task 3's leak, one layer up).
+        No `exclusive=True` and no per-item dedup: `set_item_briefing_queued`
+        is a single-row idempotent `UPDATE`, so two overlapping writes to the
+        SAME item are safe to interleave (last write wins, which is exactly
+        what two rapid presses mean), and two presses on DIFFERENT items
+        must not cancel each other -- Task 4's own lesson about
+        `exclusive=True` manufacturing zombie state applies here too, one
+        write at a time being the wrong shape for a control every row in the
+        table can trigger independently. The shared `group="wl-queue-toggle"`
+        exists only so these workers are nameable together (e.g. at
+        shutdown), not to serialize them.
         """
         event.stop()
         if event.item_id is None:
@@ -3812,20 +3816,53 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 severity="error",
             )
             return
+        self.run_worker(
+            self._toggle_briefing_queue(db, event.item_id, event.queued),
+            group="wl-queue-toggle",
+        )
+
+    async def _toggle_briefing_queue(
+        self, db: Any, item_id: Any, queued: bool
+    ) -> None:
+        """Worker body: write the flag off the UI thread, then patch+repaint.
+
+        `asyncio.to_thread` is the load-bearing part -- `run_worker`
+        alone only *schedules* a coroutine onto this same event loop; the
+        controller's own `_maybe_await` (`watchlists_backend_controller.py`)
+        has no `to_thread` either, so dispatch through a worker without it
+        would still block the loop for the length of the `UPDATE`.
+        `SubscriptionsDB` holds thread-local connections (see its
+        `__init__`), so the worker thread gets its own, matching the idiom
+        the rest of the UI already uses for off-thread DB writes.
+
+        Honest failure, write-first-patch-after: on a DB error the flag is
+        never patched and the indicator never repainted, so a failed write
+        leaves the item exactly as it was, with an error toast reporting
+        it. `self.is_attached` is checked before every UI mutation after the
+        `await`, matching `_generate_briefing`'s own guard, since the screen
+        may have been popped while the write was in flight. The log line
+        names the exception TYPE only -- `logger.opt(exception=True)` would
+        dump the failing frame's locals (including this item's
+        title/excerpt) into a file sink running with `diagnose=True` (Task
+        3's leak, one layer up).
+        """
         try:
-            db.set_item_briefing_queued(event.item_id, event.queued)
+            await asyncio.to_thread(db.set_item_briefing_queued, item_id, queued)
         except Exception as exc:  # noqa: BLE001 - reported, not raised
             logger.warning(
                 "Failed to set the briefing queue flag for item "
-                f"{event.item_id}: {type(exc).__name__}"
+                f"{item_id}: {type(exc).__name__}"
             )
-            self._notify_watchlists(
-                "Could not update the briefing queue flag. Nothing changed.",
-                severity="error",
-            )
+            if self.is_attached:
+                self._notify_watchlists(
+                    "Could not update the briefing queue flag. Nothing changed.",
+                    severity="error",
+                )
             return
-        self._patch_item_queued_flag(event.item_id, event.queued)
-        label = "queued for" if event.queued else "removed from"
+        if not self.is_attached:
+            return
+        self._patch_item_queued_flag(item_id, queued)
+        label = "queued for" if queued else "removed from"
         self._notify_watchlists(
             f"Item {label} the next briefing.", severity="information"
         )
@@ -3853,11 +3890,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         for item in self._loaded_items:
             if item.get("item_id") == raw_item_id:
                 item["queued_for_briefing"] = queued
-                row_key = row_key or item.get("id")
+                if row_key is None:
+                    row_key = item.get("id")
         for entity in (self.selected_entity, self._selected_content_item):
             if isinstance(entity, dict) and entity.get("item_id") == raw_item_id:
                 entity["queued_for_briefing"] = queued
-                row_key = row_key or entity.get("id")
+                if row_key is None:
+                    row_key = entity.get("id")
         if row_key is not None:
             try:
                 pane = self.query_one("#watchlists-items-pane", ItemsPane)

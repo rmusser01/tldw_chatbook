@@ -143,3 +143,153 @@ call that is already fast and already off any network/LLM path.
 - `tldw_chatbook/UI/Screens/watchlists_collections_screen.py`
 - `Tests/UI/test_watchlists_inspector.py`
 - `Tests/Watchlists/test_watchlists_items_pane.py`
+
+---
+
+# Fix round 1
+
+One Important, three Minors, all addressed.
+
+## Important — the write no longer runs on the UI thread
+
+`SubscriptionsDB.set_item_briefing_queued` is a transactional
+`UPDATE subscription_items ... WHERE id = ?` (`Subscriptions_DB.py:1603`,
+`with self.transaction()`), no busy timeout configured beyond SQLite's
+default. It ran synchronously inside `handle_toggle_briefing_queue_requested`
+-- the same shape Task 4 ruled off the UI thread hours earlier
+(`f859f9434`, `_sweep_and_guard`) for the identical reason: this branch's own
+docstrings admit a second app instance against the same database file, and a
+contended write would block the event loop for up to five seconds before
+raising.
+
+The handler now does only what the UI thread is entitled to do -- answer the
+no-selection / no-database cases from memory (`event.item_id is None`,
+`db is None`, both read-only) -- and dispatches:
+
+```python
+self.run_worker(
+    self._toggle_briefing_queue(db, event.item_id, event.queued),
+    group="wl-queue-toggle",
+)
+```
+
+`_toggle_briefing_queue` (new) is the worker body, following Task 4's
+`handle_generate_briefing_requested` -> `_generate_briefing` shape exactly:
+`await asyncio.to_thread(db.set_item_briefing_queued, item_id, queued)`,
+then -- write-first, patch-after -- `_patch_item_queued_flag` plus the
+targeted cell repaint on success; on an exception, nothing is patched,
+nothing is repainted, and an error toast fires, matching the pre-existing
+"indicator unchanged on DB raise" contract exactly. `self.is_attached` is
+checked before every UI mutation after the `await` (both on the exception
+path and the success path), mirroring `_generate_briefing`'s own guard,
+since the screen can be popped while the write is in flight. The log line
+still names the exception TYPE only (`type(exc).__name__}`), never
+`logger.opt(exception=True)`.
+
+**`asyncio.to_thread` is the load-bearing part, not `run_worker` by
+itself** -- `run_worker` only schedules a coroutine back onto the same event
+loop; `WatchlistsBackendController._maybe_await`
+(`tldw_chatbook/UI/Watchlists_Modules/watchlists_backend_controller.py:29`)
+has no `to_thread` either, and this handler does not go through the
+controller at all (it reaches `SubscriptionsDB` directly via
+`_briefings_db()`, same as before). Mutation (a) below pins this seam with a
+dedicated test, since every *outcome* test still passes with `to_thread`
+mutated away.
+
+### Worker/dedup choice
+
+**No `exclusive=True`, no dedup at all** -- a shared, non-serializing
+`group="wl-queue-toggle"` only so these workers are nameable together (e.g.
+for a future shutdown-drain), not to collapse them. Reasoning: the write is
+a single-row idempotent `UPDATE`, so two overlapping writes to the SAME item
+are safe to interleave (last write wins, which is exactly what two rapid
+presses on one row mean); two presses on DIFFERENT items must never cancel
+each other, and `exclusive=True` cancels whatever else is running under the
+same group regardless of which row it touches -- Task 4's own lesson
+(`exclusive=True` cancelling an in-flight run manufactures zombie state)
+applies here too. A per-item dedup key was considered and rejected as
+unnecessary complexity for a write this cheap and this safe to repeat.
+
+## Minor 1 -- the mislabelled docstring
+
+`Tests/UI/test_watchlists_inspector.py`'s
+`test_a_failed_queue_write_leaves_the_flag_and_indicator_unchanged` docstring
+claimed "the DB write is left to actually run... only the LOG side is
+replaced," which was never true -- the test replaces
+`db.set_item_briefing_queued` itself with a raising `Mock`. Rewritten to say
+exactly that: the write never reaches the real database, and `_queued_flag`
+confirms the stored flag stayed exactly as seeded.
+
+## Minor 2 -- the misnamed test
+
+`test_the_queued_indicator_renders_from_the_normalized_flag_on_reload` ->
+`test_the_queued_indicator_renders_from_the_normalized_flag_on_load`. The
+body never navigates away and back; it seeds a pre-queued item directly
+through the DB and opens the screen once. Docstring updated to match ("on a
+plain (first) load").
+
+## Minor 3 -- the falsy-id guard
+
+`_patch_item_queued_flag`'s `row_key = row_key or item.get("id")` (two call
+sites) would re-assign on a falsy id (`0`/`""`), not just a missing one.
+Changed to an explicit `if row_key is None: row_key = ...` guard at both
+sites.
+
+## Tests
+
+Moving the write into a worker meant the existing settle loops needed to
+wait on the worker's completion, not just the handler returning:
+
+- **Tests 1 and 2** (`writes_the_flag_and_repaints_the_row`,
+  `again_unqueues_and_relabels`) already looped on a bounded
+  `pilot.pause()` condition, but the condition was the DB flag alone. Since
+  the repaint is the LAST thing the worker does (strictly after the awaited
+  write), the loop condition was changed to wait on the repainted cell
+  instead -- a strictly stronger, still-bounded condition that also removes
+  any window where the DB assertion could pass a tick before the cell
+  catches up.
+- **Test 4** (`a_failed_queue_write_leaves_the_flag_and_indicator_unchanged`)
+  used a *fixed* 30-iteration no-op pause loop as its only carrier before
+  checking the toast list -- exactly the anti-pattern this task's rules
+  warn against. Changed to break early once `toasts` is non-empty, bounded
+  at 60 iterations.
+- **New test**: `test_the_queue_write_runs_off_the_event_loop_thread` pins
+  the `asyncio.to_thread` seam directly (mutation (a) showed no existing
+  test reds without it). It captures `threading.get_ident()` inside a spy
+  wrapping `db.set_item_briefing_queued` and asserts it differs from the
+  test's own (event-loop) thread id.
+
+## Mutation checks (fix round 1)
+
+| # | Mutation | Result |
+|---|----------|--------|
+| a | `asyncio.to_thread(...)` replaced with a direct synchronous call | RED, **only** the new `test_the_queue_write_runs_off_the_event_loop_thread` (`AssertionError: set_item_briefing_queued must run off the event-loop thread...`). All 5 other queue tests stay GREEN -- the end state (flag set, cell repainted) is identical either way, which is exactly why a dedicated thread-identity test was needed; nothing else can distinguish "off-thread" from "on-thread but still correct." |
+| b | `self._patch_item_queued_flag(...)` call removed from the success path (repaint dropped) | RED ×2, layered exactly as before the worker move: `test_pressing_queue_for_briefing_writes_the_flag_and_repaints_the_row` fails at "the row indicator must repaint in place once the write succeeds" (the preceding `_queued_flag(db, item_id) is True` assertion -- the DB half -- passes); `test_pressing_queue_for_briefing_again_unqueues_and_relabels` fails at `assert '' == '●'` on the first press's indicator check, same shape. |
+| c | `yield self._queue_briefing_button(entity)` moved unconditionally to the top of `inspector-actions` | RED: `test_the_queue_button_only_renders_for_item_selections` fails at "a source selection must not offer the briefing queue toggle." The other four queue tests (which press the button on an item selection) fail too, but on a `textual.widget.MountError: Tried to insert 2 widgets with the same ID` -- a duplicate-widget artifact of the button now rendering twice for items, not the assertion under test, matching the round-0 report's own note about this exact mutation. |
+
+All three mutations applied with `Edit` and restored with `Edit` (never
+`git checkout --`); `git diff --stat` after restoration showed only the two
+intentionally-changed files.
+
+## Test runs (fix round 1)
+
+- `Tests/UI/test_watchlists_inspector.py` -- **34 passed** (33 -> 34, +1 new:
+  the thread-identity pin).
+- `Tests/Watchlists/` (full directory) -- **215 passed** (unchanged from
+  round 0; the new test lives in `Tests/UI`, not `Tests/Watchlists`).
+- `Tests/UI/test_watchlists_item_actions.py` (the file that actually shares
+  fixtures with this task -- `OTHER_ENTITIES`/`REAL_ITEM`; no
+  `Tests/Watchlists/test_watchlists_item_actions.py` exists in this repo)
+  -- **6 passed**.
+- Failure-path test (`a_failed_queue_write_leaves_the_flag_and_indicator_unchanged`)
+  re-confirmed post-fix: indicator unchanged, button unrelabeled, error
+  toast fired, `screen.is_attached` true (nothing escaped the worker). No
+  explicit `exit_on_error` is passed to `run_worker` (matching
+  `_generate_briefing`'s own call) -- safe here because the worker body
+  wraps its only failure-prone call (`asyncio.to_thread(...)`) in a
+  `try/except Exception`, so nothing can escape regardless of the default.
+
+## Files (fix round 1)
+
+- `tldw_chatbook/UI/Screens/watchlists_collections_screen.py`
+- `Tests/UI/test_watchlists_inspector.py`
