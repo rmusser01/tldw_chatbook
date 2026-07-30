@@ -228,11 +228,28 @@ save may report **Saved — applying after current speech**; the admitted speech
 continues, only the latest pending generation may become active, and the old
 audio.cpp adapter closes before a replacement can be created.
 
+Console **Speak** does not post caller-supplied message text. The Console store
+issues an ephemeral immutable `TTSMessageSpeechSnapshot` and binds it to the
+store validator. Before the cooldown clock, normalization, or provider work,
+the TTS handler revalidates the active session and branch, native and persisted
+message identity, selected text variant and exact content, process-local speech
+revision, durable row version when present, completed assistant role/status,
+and trusted assistant authorship. A stale, edited, deleted, incomplete,
+non-assistant, or authorship-mismatched snapshot fails closed with bounded retry
+copy asking the user to select **Speak** again.
+
+The snapshot is process-local, is not persisted, and is not a voice-profile
+selection. Once admitted, Console still uses the saved global TTS defaults.
+Direct `TTSRequestEvent` callers outside Console retain their explicit trusted
+global path.
+
 Console **Speak** calls `TTSService.synthesize_default()`. An `audio_cpp`
 selection uses the native adapter with locked WAV, speed `1.0`, and empty
 options. The six retained providers continue through `LegacyTTSAdapter`. The
 native complete WAV is still consumed through `TTSAudioResponse`'s asynchronous
-iterator and closed through the existing artifact/playback lifecycle.
+iterator and closed through the existing artifact/playback lifecycle. Snapshot
+admission neither persists the snapshot nor performs message writes, and it
+does not change ownership of the external audio.cpp process.
 
 ### Native audio.cpp adapter (external mode)
 

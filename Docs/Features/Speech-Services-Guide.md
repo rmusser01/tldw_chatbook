@@ -151,7 +151,16 @@ you start and manage yourself:
 9. Enter text and click **Generate Speech**. After the complete WAV is
    validated, use **Play** or **Export**.
 10. In Console, use **Speak** on a response to synthesize and play it with the
-   same saved defaults.
+    same saved defaults.
+
+Console offers **Speak** only on completed assistant responses. When selected,
+Chatbook captures the exact visible response and selected variant in a
+temporary immutable snapshot, then checks that the same response, conversation
+branch, durable message version when present, and assistant identity are still
+current before starting TTS. If the response changed, Chatbook asks you to
+select **Speak** again instead of speaking stale text. The snapshot is never
+saved and does not select a character voice profile; Console continues to use
+the global defaults configured above.
 
 audio.cpp currently returns one complete WAV per request and supports speed
 `1.0`; the Playground locks both controls while it is selected. This still uses
