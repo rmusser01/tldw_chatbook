@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Condition, Lock, RLock
 from types import MappingProxyType
 from typing import Literal, Protocol
+
+from tldw_chatbook.Notes.file_notes_git_commit import CommitRecoveryProjection
 
 SessionChangeAction = Literal[
     "created",
@@ -51,9 +53,23 @@ GitStatusAdmissionReason = Literal[
 ]
 GitMutationAdmissionReason = Literal[
     "mutation_active",
+    "recovery_required",
     "transition_active",
     "stale_binding",
     "shutdown",
+]
+CommitPublicationState = Literal[
+    "succeeded",
+    "failed_unchanged",
+    "uncertain",
+]
+CommitRecoveryAdmissionReason = Literal[
+    "invalid_capability",
+    "mutation_active",
+    "ownership_active",
+    "stale_binding",
+    "shutdown",
+    "transition_active",
 ]
 _TRANSITION_KINDS = frozenset({"root", "path", "source", "screen"})
 
@@ -159,6 +175,7 @@ class SessionChangeGroup:
     latest_action: SessionChangeAction
     latest_sequence: int
     move_edges: tuple[tuple[str, str], ...] = ()
+    sequence_ids: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "endpoints", tuple(self.endpoints))
@@ -167,6 +184,7 @@ class SessionChangeGroup:
             "move_edges",
             tuple(tuple(edge) for edge in self.move_edges),
         )
+        object.__setattr__(self, "sequence_ids", tuple(self.sequence_ids))
 
     @property
     def topology_signature(self) -> SessionChangeTopology:
@@ -180,6 +198,96 @@ class SessionChangeGroup:
         if self.destination_path is None:
             return source
         return f"{source} → {_sanitize_display_path(self.destination_path)}"
+
+
+@dataclass(slots=True)
+class _GroupBuilder:
+    group_id: int
+    endpoints: list[str]
+    source_path: str
+    destination_path: str | None
+    current_path: str
+    latest_action: SessionChangeAction
+    latest_sequence: int
+    move_edges: list[tuple[str, str]]
+    sequence_ids: list[int]
+
+    def add_endpoint(self, path: str) -> None:
+        if path not in self.endpoints:
+            self.endpoints.append(path)
+
+    def freeze(self) -> SessionChangeGroup:
+        return SessionChangeGroup(
+            group_id=self.group_id,
+            endpoints=tuple(self.endpoints),
+            source_path=self.source_path,
+            destination_path=self.destination_path,
+            current_path=self.current_path,
+            latest_action=self.latest_action,
+            latest_sequence=self.latest_sequence,
+            move_edges=tuple(self.move_edges),
+            sequence_ids=tuple(self.sequence_ids),
+        )
+
+
+def coalesce_session_changes(
+    changes: Sequence[SequencedSessionChange],
+) -> tuple[SessionChangeGroup, ...]:
+    """Coalesce session changes using each lineage's active path.
+
+    Args:
+        changes: Sequenced changes. Input may be unordered; changes are
+            processed in ascending sequence order.
+
+    Returns:
+        Coalesced lineage groups in earliest-sequence order.
+
+    Raises:
+        ValueError: If a moved change has no destination path.
+    """
+    active_paths: dict[str, _GroupBuilder] = {}
+    builders: list[_GroupBuilder] = []
+
+    for sequenced in sorted(changes, key=lambda item: item.sequence):
+        change = sequenced.change
+        path = change.relative_path
+        builder = active_paths.get(path)
+        if builder is None:
+            builder = _GroupBuilder(
+                group_id=sequenced.sequence,
+                endpoints=[path],
+                source_path=path,
+                destination_path=None,
+                current_path=path,
+                latest_action=change.action,
+                latest_sequence=sequenced.sequence,
+                move_edges=[],
+                sequence_ids=[],
+            )
+            builders.append(builder)
+
+        if change.action == "moved":
+            destination = change.destination_path
+            if destination is None:
+                raise ValueError("A moved session change requires a destination")
+            if active_paths.get(path) is builder:
+                del active_paths[path]
+            builder.add_endpoint(path)
+            builder.add_endpoint(destination)
+            builder.move_edges.append((path, destination))
+            builder.destination_path = destination
+            builder.current_path = destination
+            active_paths[destination] = builder
+        else:
+            builder.add_endpoint(path)
+            builder.current_path = path
+            active_paths[path] = builder
+
+        builder.latest_action = change.action
+        builder.latest_sequence = sequenced.sequence
+        builder.sequence_ids.append(sequenced.sequence)
+
+    return tuple(builder.freeze() for builder in builders)
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,6 +404,28 @@ class SessionGitStatus:
         object.__setattr__(self, "rows", tuple(self.rows))
 
 
+def _status_authority_facts(
+    status: SessionGitStatus | None,
+) -> object:
+    """Return security-relevant status facts without presentation versions."""
+    if status is None:
+        return None
+    return (
+        status.state,
+        status.repository,
+        status.head,
+        tuple(
+            (
+                row.group,
+                row.state,
+                row.stage_action,
+                row.unstage_eligible,
+            )
+            for row in status.rows
+        ),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class FileNotesSessionSnapshot:
     """Immutable state for one requested root generation."""
@@ -307,6 +437,8 @@ class FileNotesSessionSnapshot:
     staging_ownership: Mapping[int, StagingOwnership] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    git_authority_generation: int = 0
+    commit_recovery: CommitRecoveryProjection | None = None
 
 
 class FileNotesGitServiceLifecycle(Protocol):
@@ -335,10 +467,93 @@ class GitMutationLease:
 
     _owner: FileNotesSessionOwner = field(repr=False, compare=False)
     _token: object = field(repr=False, compare=False)
+    _binding: SessionBinding = field(repr=False, compare=False)
 
     def release(self) -> None:
         """Release this mutation admission once."""
         self._owner._release_mutation(self._token)
+
+
+@dataclass(frozen=True, slots=True)
+class CommitAuthorityCapture:
+    """Exact session-owned facts authorized by one active mutation lease."""
+
+    binding: SessionBinding
+    authority_generation: int
+    repository: RepositoryIdentity
+    head: HeadIdentity
+    ownership: Mapping[int, StagingOwnership]
+    group_sequence_ids: Mapping[int, tuple[int, ...]]
+    _mutation_token: object = field(repr=False, compare=False)
+    _quarantine_token: object | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        if (
+            self.head.kind != "attached"
+            or self.head.object_id is None
+            or self.head.branch is None
+            or not self.head.branch.startswith("refs/heads/")
+        ):
+            raise ValueError("Commit authority requires an attached branch")
+        object.__setattr__(
+            self,
+            "ownership",
+            MappingProxyType(dict(self.ownership)),
+        )
+        object.__setattr__(
+            self,
+            "group_sequence_ids",
+            MappingProxyType(
+                {
+                    group_id: tuple(sequence_ids)
+                    for group_id, sequence_ids in self.group_sequence_ids.items()
+                }
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CommitPublication:
+    """One exact owner-side terminal or recoverable commit transition."""
+
+    state: CommitPublicationState
+    new_head: HeadIdentity | None = None
+    retired_sequence_ids: tuple[int, ...] = ()
+    divergent_sequence_ids: tuple[int, ...] = ()
+    refreshed_status: SessionGitStatus | None = None
+    recovery_projection: CommitRecoveryProjection | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "retired_sequence_ids",
+            tuple(self.retired_sequence_ids),
+        )
+        object.__setattr__(
+            self,
+            "divergent_sequence_ids",
+            tuple(self.divergent_sequence_ids),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CommitRecoveryCapability:
+    """Opaque process-memory authority for one quarantined commit attempt."""
+
+    _owner: FileNotesSessionOwner = field(repr=False, compare=False)
+    _token: object = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class CommitPublicationResult:
+    """Whether one atomic owner publication was accepted."""
+
+    published: bool
+    recovery_capability: CommitRecoveryCapability | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,6 +609,32 @@ class GitMutationAdmission:
 
 
 @dataclass(frozen=True, slots=True)
+class CommitRecoveryAdmission:
+    """Exclusive mutation admission for one exact quarantine capability."""
+
+    lease: GitMutationLease | None = None
+    capture: CommitAuthorityCapture | None = None
+    reason: CommitRecoveryAdmissionReason | None = None
+
+    def __post_init__(self) -> None:
+        admitted = self.lease is not None and self.capture is not None
+        refused = (
+            self.lease is None and self.capture is None and self.reason is not None
+        )
+        if admitted == refused or (admitted and self.reason is not None):
+            raise ValueError("Recovery admission requires exactly one outcome")
+
+
+@dataclass(frozen=True, slots=True)
+class _CommitQuarantine:
+    """Private exact captured ownership retained after uncertainty."""
+
+    token: object
+    capture: CommitAuthorityCapture
+    projection: CommitRecoveryProjection
+
+
+@dataclass(frozen=True, slots=True)
 class RootCommitReservation:
     """Fail-fast ownership of one validated root commit."""
 
@@ -439,9 +680,13 @@ class FileNotesSessionOwner:
     __slots__ = (
         "_binding",
         "_changes",
+        "_commit_publication_closed",
+        "_commit_quarantine",
         "_generation",
+        "_git_authority_generation",
         "_git_service",
         "_git_shutdown_settlement",
+        "_git_shutdown_settlement_future",
         "_git_status",
         "_lock",
         "_mutation_token",
@@ -467,11 +712,14 @@ class FileNotesSessionOwner:
         self._root_commit_state: Literal["idle", "reserved", "committed"] = "idle"
         self._binding: SessionBinding | None = None
         self._generation = 0
+        self._git_authority_generation = 0
         self._changes: list[SequencedSessionChange] = []
         self._next_sequence = 1
         self._trusted_repository: RepositoryIdentity | None = None
         self._git_status: SessionGitStatus | None = None
         self._staging_ownership: dict[int, StagingOwnership] = {}
+        self._commit_publication_closed = False
+        self._commit_quarantine: _CommitQuarantine | None = None
         self._status_generation = 0
         self._transition_tokens: set[object] = set()
         self._mutation_token: object | None = None
@@ -482,6 +730,7 @@ class FileNotesSessionOwner:
         self._shutdown_state: Literal["open", "closing", "closed", "failed"] = "open"
         self._git_service: FileNotesGitServiceLifecycle | None = None
         self._git_shutdown_settlement: Awaitable[object] | None = None
+        self._git_shutdown_settlement_future: asyncio.Future[object] | None = None
 
     def select_root(self, root: str | Path) -> SessionBinding:
         """Select one canonical root, resetting state only when it changes.
@@ -494,7 +743,7 @@ class FileNotesSessionOwner:
 
         Raises:
             RuntimeError: If the owner has shut down or another root commit is
-                in progress.
+                in progress, or a Git mutation protects a different root.
         """
         root_key = str(Path(root).expanduser().resolve(strict=False))
         if not self._root_commit_lock.acquire(blocking=False):
@@ -503,6 +752,8 @@ class FileNotesSessionOwner:
             with self._lock:
                 if self._shutdown:
                     raise RuntimeError("File Notes session owner is shut down")
+                if self._root_change_is_blocked_locked(root_key):
+                    raise RuntimeError("File Notes Git mutation is in progress")
                 return self._select_root_locked(root_key)
         finally:
             self._root_commit_lock.release()
@@ -530,6 +781,8 @@ class FileNotesSessionOwner:
         try:
             with self._lock:
                 if self._shutdown:
+                    return None
+                if self._root_change_is_blocked_locked(root_key):
                     return None
                 if not self._root_selection_matches_locked(
                     root_key,
@@ -588,9 +841,13 @@ class FileNotesSessionOwner:
         token = object()
         try:
             with self._lock:
-                if self._shutdown or not self._root_selection_matches_locked(
-                    root_key,
-                    expected_binding,
+                if (
+                    self._shutdown
+                    or self._mutation_token is not None
+                    or not self._root_selection_matches_locked(
+                        root_key,
+                        expected_binding,
+                    )
                 ):
                     return None
                 self._root_commit_token = token
@@ -616,7 +873,8 @@ class FileNotesSessionOwner:
                 )
             )
             self._next_sequence += 1
-            self._clear_git_status_locked()
+            self._clear_git_status_locked(invalidate_authority=False)
+            self._invalidate_git_authority_locked()
             return True
 
     def snapshot(self, binding: SessionBinding) -> FileNotesSessionSnapshot:
@@ -632,6 +890,12 @@ class FileNotesSessionOwner:
                 staging_ownership=MappingProxyType(
                     dict(self._staging_ownership)
                 ),
+                git_authority_generation=self._git_authority_generation,
+                commit_recovery=(
+                    None
+                    if self._commit_quarantine is None
+                    else self._commit_quarantine.projection
+                ),
             )
 
     def publish_trust(
@@ -643,13 +907,21 @@ class FileNotesSessionOwner:
         with self._lock:
             if self._shutdown or binding != self._binding:
                 return False
+            if self._trusted_repository == repository:
+                return True
             if (
                 self._trusted_repository is not None
                 and self._trusted_repository != repository
             ):
-                self._clear_git_status_locked()
+                self._clear_git_status_locked(invalidate_authority=False)
                 self._staging_ownership.clear()
+            if (
+                self._commit_quarantine is not None
+                and self._commit_quarantine.capture.repository != repository
+            ):
+                self._commit_quarantine = None
             self._trusted_repository = repository
+            self._invalidate_git_authority_locked()
             return True
 
     def clear_trust(self, binding: SessionBinding) -> bool:
@@ -670,9 +942,16 @@ class FileNotesSessionOwner:
                 and self._trusted_repository != expected_repository
             ):
                 return False
+            changed = (
+                self._trusted_repository is not None
+                or self._git_status is not None
+                or bool(self._staging_ownership)
+            )
             self._trusted_repository = None
-            self._clear_git_status_locked()
+            self._clear_git_status_locked(invalidate_authority=False)
             self._staging_ownership.clear()
+            if changed:
+                self._invalidate_git_authority_locked()
             return True
 
     def next_status_generation(
@@ -696,6 +975,7 @@ class FileNotesSessionOwner:
         with self._lock:
             if (
                 self._shutdown
+                or self._mutation_token is not None
                 or binding != self._binding
                 or status.binding_generation != binding.generation
                 or self._trusted_repository is None
@@ -707,8 +987,11 @@ class FileNotesSessionOwner:
                 )
             ):
                 return False
+            previous_facts = _status_authority_facts(self._git_status)
             self._status_generation = status.status_generation
             self._git_status = status
+            if _status_authority_facts(status) != previous_facts:
+                self._invalidate_git_authority_locked()
             return True
 
     def clear_status(self, binding: SessionBinding) -> bool:
@@ -723,12 +1006,26 @@ class FileNotesSessionOwner:
         self,
         binding: SessionBinding,
         ownership: Mapping[int, StagingOwnership],
+        *,
+        group_sequence_ids: Mapping[int, Collection[int]] | None = None,
     ) -> bool:
         """Replace staging ownership for the current binding atomically."""
         with self._lock:
-            if self._shutdown or binding != self._binding:
+            if (
+                self._shutdown
+                or binding != self._binding
+                or self._commit_quarantine is not None
+            ):
                 return False
-            self._staging_ownership = dict(ownership)
+            replacement = dict(ownership)
+            if not self._supplied_ownership_sequences_match_locked(
+                replacement,
+                group_sequence_ids,
+            ):
+                return False
+            if replacement != self._staging_ownership:
+                self._staging_ownership = replacement
+                self._invalidate_git_authority_locked()
             return True
 
     def publish_stage_result(
@@ -736,6 +1033,8 @@ class FileNotesSessionOwner:
         binding: SessionBinding,
         repository: RepositoryIdentity,
         ownership: Mapping[int, StagingOwnership],
+        *,
+        group_sequence_ids: Mapping[int, Collection[int]] | None = None,
     ) -> bool:
         """Atomically publish checked ownership and make prior status stale."""
         with self._lock:
@@ -743,10 +1042,23 @@ class FileNotesSessionOwner:
                 self._shutdown
                 or binding != self._binding
                 or repository != self._trusted_repository
+                or self._commit_quarantine is not None
             ):
                 return False
-            self._staging_ownership = dict(ownership)
-            self._clear_git_status_locked()
+            replacement = dict(ownership)
+            if not self._supplied_ownership_sequences_match_locked(
+                replacement,
+                group_sequence_ids,
+            ):
+                return False
+            changed = (
+                replacement != self._staging_ownership
+                or self._git_status is not None
+            )
+            self._staging_ownership = replacement
+            self._clear_git_status_locked(invalidate_authority=False)
+            if changed:
+                self._invalidate_git_authority_locked()
             return True
 
     def publish_unstage_result(
@@ -763,6 +1075,7 @@ class FileNotesSessionOwner:
                 self._shutdown
                 or binding != self._binding
                 or repository != self._trusted_repository
+                or self._commit_quarantine is not None
                 or any(
                     self._staging_ownership.get(group_id)
                     != expected.get(group_id)
@@ -770,9 +1083,15 @@ class FileNotesSessionOwner:
                 )
             ):
                 return False
+            changed = (
+                any(group_id in self._staging_ownership for group_id in selected)
+                or self._git_status is not None
+            )
             for group_id in selected:
                 self._staging_ownership.pop(group_id, None)
-            self._clear_git_status_locked()
+            self._clear_git_status_locked(invalidate_authority=False)
+            if changed:
+                self._invalidate_git_authority_locked()
             return True
 
     def clear_ownership(self, binding: SessionBinding) -> bool:
@@ -780,8 +1099,176 @@ class FileNotesSessionOwner:
         with self._lock:
             if binding != self._binding:
                 return False
-            self._staging_ownership.clear()
+            if self._staging_ownership:
+                self._staging_ownership.clear()
+                self._invalidate_git_authority_locked()
             return True
+
+    def capture_commit_authority(
+        self,
+        lease: GitMutationLease,
+        *,
+        binding: SessionBinding,
+        authority_generation: int,
+        repository: RepositoryIdentity,
+        head: HeadIdentity,
+        group_sequence_ids: Mapping[int, Collection[int]],
+    ) -> CommitAuthorityCapture | None:
+        """Capture exact commit authority under one active mutation lease."""
+        sequence_ids = {
+            group_id: tuple(group_sequences)
+            for group_id, group_sequences in group_sequence_ids.items()
+        }
+        with self._lock:
+            if (
+                self._shutdown
+                or self._commit_quarantine is not None
+                or self._status_token is not None
+                or not self._lease_is_active_locked(lease)
+                or binding != self._binding
+                or authority_generation != self._git_authority_generation
+                or repository != self._trusted_repository
+                or not self._commit_capture_facts_match_locked(
+                    repository,
+                    head,
+                    self._staging_ownership,
+                    sequence_ids,
+                )
+            ):
+                return None
+            return CommitAuthorityCapture(
+                binding=binding,
+                authority_generation=authority_generation,
+                repository=repository,
+                head=head,
+                ownership=self._staging_ownership,
+                group_sequence_ids=sequence_ids,
+                _mutation_token=lease._token,
+            )
+
+    def publish_commit_outcome(
+        self,
+        lease: GitMutationLease,
+        capture: CommitAuthorityCapture,
+        publication: CommitPublication,
+    ) -> CommitPublicationResult:
+        """Atomically publish one exact terminal or quarantined commit result."""
+        with self._lock:
+            exact_match = self._commit_publication_matches_locked(
+                lease,
+                capture,
+            )
+            uncertainty_fallback = (
+                publication.state == "uncertain"
+                and self._commit_uncertainty_fallback_matches_locked(
+                    lease,
+                    capture,
+                )
+            )
+            if not exact_match and not uncertainty_fallback:
+                return CommitPublicationResult(published=False)
+            if not self._commit_publication_value_is_valid_locked(
+                capture,
+                publication,
+            ):
+                return CommitPublicationResult(published=False)
+
+            recovery_capability: CommitRecoveryCapability | None = None
+            recovering = capture._quarantine_token is not None
+            if publication.state == "succeeded":
+                retired = frozenset(publication.retired_sequence_ids)
+                self._changes = [
+                    change for change in self._changes if change.sequence not in retired
+                ]
+                self._staging_ownership.clear()
+                self._commit_quarantine = None
+                self._publish_commit_status_locked(publication.refreshed_status)
+            elif publication.state == "failed_unchanged":
+                if recovering:
+                    if self._staging_ownership:
+                        return CommitPublicationResult(published=False)
+                    self._staging_ownership = dict(capture.ownership)
+                    self._commit_quarantine = None
+                if publication.refreshed_status is not None:
+                    self._publish_commit_status_locked(publication.refreshed_status)
+            else:
+                assert publication.recovery_projection is not None
+                if recovering:
+                    assert self._commit_quarantine is not None
+                    quarantine_token = self._commit_quarantine.token
+                    quarantine_capture = self._commit_quarantine.capture
+                else:
+                    quarantine_token = object()
+                    quarantine_capture = capture
+                self._staging_ownership.clear()
+                self._clear_git_status_locked(invalidate_authority=False)
+                self._commit_quarantine = _CommitQuarantine(
+                    token=quarantine_token,
+                    capture=quarantine_capture,
+                    projection=publication.recovery_projection,
+                )
+                recovery_capability = CommitRecoveryCapability(
+                    self,
+                    quarantine_token,
+                )
+
+            self._invalidate_git_authority_locked()
+            return CommitPublicationResult(
+                published=True,
+                recovery_capability=recovery_capability,
+            )
+
+    def admit_commit_recovery(
+        self,
+        binding: SessionBinding,
+        capability: CommitRecoveryCapability,
+    ) -> CommitRecoveryAdmission:
+        """Admit fresh proof for one exact quarantined commit attempt."""
+        with self._lock:
+            if self._shutdown:
+                return CommitRecoveryAdmission(reason="shutdown")
+            if binding != self._binding:
+                return CommitRecoveryAdmission(reason="stale_binding")
+            quarantine = self._commit_quarantine
+            if (
+                quarantine is None
+                or capability._owner is not self
+                or capability._token is not quarantine.token
+                or quarantine.capture.binding != binding
+                or self._trusted_repository != quarantine.capture.repository
+                or not self._captured_sequences_are_present_locked(
+                    quarantine.capture.group_sequence_ids
+                )
+            ):
+                return CommitRecoveryAdmission(
+                    reason="invalid_capability",
+                )
+            if self._staging_ownership:
+                return CommitRecoveryAdmission(reason="ownership_active")
+            if self._transition_tokens:
+                return CommitRecoveryAdmission(reason="transition_active")
+            if self._root_commit_token is not None:
+                return CommitRecoveryAdmission(reason="transition_active")
+            if self._mutation_token is not None:
+                return CommitRecoveryAdmission(reason="mutation_active")
+
+            token = object()
+            self._mutation_token = token
+            lease = GitMutationLease(self, token, binding)
+            capture = CommitAuthorityCapture(
+                binding=binding,
+                authority_generation=self._git_authority_generation,
+                repository=quarantine.capture.repository,
+                head=quarantine.capture.head,
+                ownership=quarantine.capture.ownership,
+                group_sequence_ids=quarantine.capture.group_sequence_ids,
+                _mutation_token=token,
+                _quarantine_token=quarantine.token,
+            )
+            return CommitRecoveryAdmission(
+                lease=lease,
+                capture=capture,
+            )
 
     def try_acquire_transition(
         self,
@@ -800,6 +1287,7 @@ class FileNotesSessionOwner:
                 return None
             token = object()
             self._transition_tokens.add(token)
+            self._invalidate_git_authority_locked()
             return SessionTransitionLease(self, token, kind)
 
     def try_acquire_mutation(
@@ -824,14 +1312,18 @@ class FileNotesSessionOwner:
                 return GitMutationAdmission(reason="shutdown")
             if binding != self._binding:
                 return GitMutationAdmission(reason="stale_binding")
+            if self._commit_quarantine is not None:
+                return GitMutationAdmission(reason="recovery_required")
             if self._transition_tokens:
+                return GitMutationAdmission(reason="transition_active")
+            if self._root_commit_token is not None:
                 return GitMutationAdmission(reason="transition_active")
             if self._mutation_token is not None:
                 return GitMutationAdmission(reason="mutation_active")
             token = object()
             self._mutation_token = token
             return GitMutationAdmission(
-                lease=GitMutationLease(self, token),
+                lease=GitMutationLease(self, token, binding),
             )
 
     def try_acquire_status(
@@ -896,6 +1388,8 @@ class FileNotesSessionOwner:
                 assert self._shutdown_error is not None
                 raise self._shutdown_error
             self._shutdown = True
+            self._commit_publication_closed = False
+            self._git_shutdown_settlement_future = None
             self._shutdown_state = "closing"
         with self._root_commit_lock:
             with self._lock:
@@ -909,16 +1403,22 @@ class FileNotesSessionOwner:
             with self._shutdown_condition:
                 if getattr(error, "retryable_shutdown", False):
                     self._shutdown = False
+                    self._commit_publication_closed = False
                     self._shutdown_error = None
                     self._git_shutdown_settlement = None
+                    self._git_shutdown_settlement_future = None
                     self._shutdown_state = "open"
                 else:
+                    self._commit_publication_closed = True
                     self._shutdown_error = error
                     self._shutdown_state = "failed"
                 self._shutdown_condition.notify_all()
             raise
         with self._shutdown_condition:
             self._git_service = None
+            if self._git_shutdown_settlement is None:
+                self._commit_publication_closed = True
+                self._discard_commit_quarantine_locked()
             self._shutdown_state = "closed"
             self._shutdown_condition.notify_all()
 
@@ -931,12 +1431,269 @@ class FileNotesSessionOwner:
         """Await the retained attached-service settlement, if any."""
         with self._lock:
             settlement = self._git_shutdown_settlement
-        if settlement is None:
+            if settlement is None:
+                if self._shutdown:
+                    self._commit_publication_closed = True
+                    self._discard_commit_quarantine_locked()
+                return
+            settlement_future = self._git_shutdown_settlement_future
+            if settlement_future is None:
+                settlement_future = asyncio.ensure_future(
+                    self._settle_git_shutdown_once(settlement)
+                )
+                self._git_shutdown_settlement_future = settlement_future
+                settlement_future.add_done_callback(
+                    self._retrieve_git_shutdown_settlement,
+                )
+        await asyncio.shield(settlement_future)
+
+    async def _settle_git_shutdown_once(
+        self,
+        settlement: Awaitable[object],
+    ) -> object:
+        try:
+            return await settlement
+        finally:
+            with self._lock:
+                self._commit_publication_closed = True
+                self._discard_commit_quarantine_locked()
+
+    @staticmethod
+    def _retrieve_git_shutdown_settlement(
+        settlement: asyncio.Future[object],
+    ) -> None:
+        if not settlement.cancelled():
+            settlement.exception()
+
+    def _lease_is_active_locked(self, lease: GitMutationLease) -> bool:
+        return (
+            lease._owner is self
+            and lease._token is self._mutation_token
+            and lease._binding == self._binding
+        )
+
+    def _current_ownership_sequences_locked(
+        self,
+        ownership: Mapping[int, StagingOwnership],
+    ) -> dict[int, tuple[int, ...]] | None:
+        groups = {
+            group.group_id: group
+            for group in coalesce_session_changes(self._changes)
+        }
+        if any(group_id not in groups for group_id in ownership):
+            return None
+        return {
+            group_id: groups[group_id].sequence_ids
+            for group_id in ownership
+        }
+
+    def _supplied_ownership_sequences_match_locked(
+        self,
+        ownership: Mapping[int, StagingOwnership],
+        group_sequence_ids: Mapping[int, Collection[int]] | None,
+    ) -> bool:
+        if group_sequence_ids is None:
+            return True
+        supplied = {
+            group_id: tuple(sequence_ids)
+            for group_id, sequence_ids in group_sequence_ids.items()
+        }
+        return supplied == self._current_ownership_sequences_locked(ownership)
+
+    def _commit_capture_facts_match_locked(
+        self,
+        repository: RepositoryIdentity,
+        head: HeadIdentity,
+        ownership: Mapping[int, StagingOwnership],
+        group_sequence_ids: Mapping[int, tuple[int, ...]],
+    ) -> bool:
+        current_sequence_ids = self._current_ownership_sequences_locked(
+            ownership
+        )
+        return not (
+            head.kind != "attached"
+            or head.object_id is None
+            or head.branch is None
+            or not head.branch.startswith("refs/heads/")
+            or not ownership
+            or current_sequence_ids is None
+            or dict(group_sequence_ids) != current_sequence_ids
+            or any(
+                item.repository != repository or item.head != head
+                for item in ownership.values()
+            )
+        )
+
+    def _captured_sequences_are_present_locked(
+        self,
+        group_sequence_ids: Mapping[int, tuple[int, ...]],
+    ) -> bool:
+        current = {change.sequence for change in self._changes}
+        return all(
+            sequence in current
+            for sequence_ids in group_sequence_ids.values()
+            for sequence in sequence_ids
+        )
+
+    def _commit_publication_matches_locked(
+        self,
+        lease: GitMutationLease,
+        capture: CommitAuthorityCapture,
+    ) -> bool:
+        if (
+            self._commit_publication_closed
+            or not self._lease_is_active_locked(lease)
+            or capture._mutation_token is not lease._token
+            or capture.binding != self._binding
+            or capture.authority_generation != self._git_authority_generation
+            or capture.repository != self._trusted_repository
+        ):
+            return False
+
+        quarantine_token = capture._quarantine_token
+        if quarantine_token is None:
+            return (
+                self._commit_quarantine is None
+                and dict(capture.ownership) == self._staging_ownership
+                and self._commit_capture_facts_match_locked(
+                    capture.repository,
+                    capture.head,
+                    capture.ownership,
+                    capture.group_sequence_ids,
+                )
+            )
+
+        quarantine = self._commit_quarantine
+        original = None if quarantine is None else quarantine.capture
+        return (
+            quarantine is not None
+            and quarantine.token is quarantine_token
+            and not self._staging_ownership
+            and original is not None
+            and original.binding == capture.binding
+            and original.repository == capture.repository
+            and original.head == capture.head
+            and dict(original.ownership) == dict(capture.ownership)
+            and dict(original.group_sequence_ids) == dict(capture.group_sequence_ids)
+            and self._captured_sequences_are_present_locked(capture.group_sequence_ids)
+        )
+
+    def _commit_uncertainty_fallback_matches_locked(
+        self,
+        lease: GitMutationLease,
+        capture: CommitAuthorityCapture,
+    ) -> bool:
+        """Permit only fail-closed quarantine for one exact active attempt."""
+        return (
+            not self._commit_publication_closed
+            and self._lease_is_active_locked(lease)
+            and capture._mutation_token is lease._token
+            and capture.binding == self._binding
+            and capture._quarantine_token is None
+            and self._commit_quarantine is None
+        )
+
+    def _commit_publication_value_is_valid_locked(
+        self,
+        capture: CommitAuthorityCapture,
+        publication: CommitPublication,
+    ) -> bool:
+        if publication.state == "succeeded":
+            new_head = publication.new_head
+            if (
+                new_head is None
+                or new_head.kind != "attached"
+                or new_head.branch != capture.head.branch
+                or new_head.object_id is None
+                or new_head.object_id == capture.head.object_id
+                or publication.recovery_projection is not None
+            ):
+                return False
+            retired = publication.retired_sequence_ids
+            divergent = publication.divergent_sequence_ids
+            retired_set = frozenset(retired)
+            divergent_set = frozenset(divergent)
+            captured_set = frozenset(
+                sequence
+                for sequences in capture.group_sequence_ids.values()
+                for sequence in sequences
+            )
+            if (
+                len(retired) != len(retired_set)
+                or len(divergent) != len(divergent_set)
+                or retired_set.intersection(divergent_set)
+                or retired_set.union(divergent_set) != captured_set
+            ):
+                return False
+            for sequences in capture.group_sequence_ids.values():
+                group_sequences = frozenset(sequences)
+                if group_sequences != group_sequences.intersection(
+                    retired_set
+                ) and group_sequences != group_sequences.intersection(divergent_set):
+                    return False
+            return self._commit_status_matches_locked(
+                publication.refreshed_status,
+                capture.binding,
+                capture.repository,
+                new_head,
+            )
+
+        if publication.state == "failed_unchanged":
+            return (
+                publication.new_head is None
+                and not publication.retired_sequence_ids
+                and not publication.divergent_sequence_ids
+                and publication.recovery_projection is None
+                and self._commit_status_matches_locked(
+                    publication.refreshed_status,
+                    capture.binding,
+                    capture.repository,
+                    capture.head,
+                )
+            )
+
+        if publication.state == "uncertain":
+            return (
+                publication.new_head is None
+                and not publication.retired_sequence_ids
+                and not publication.divergent_sequence_ids
+                and publication.refreshed_status is None
+                and publication.recovery_projection is not None
+            )
+        return False
+
+    def _commit_status_matches_locked(
+        self,
+        status: SessionGitStatus | None,
+        binding: SessionBinding,
+        repository: RepositoryIdentity,
+        head: HeadIdentity,
+    ) -> bool:
+        return status is None or (
+            status.binding_generation == binding.generation
+            and status.status_generation > self._status_generation
+            and status.repository == repository
+            and status.head == head
+        )
+
+    def _publish_commit_status_locked(
+        self,
+        status: SessionGitStatus | None,
+    ) -> None:
+        if status is None:
+            self._clear_git_status_locked(invalidate_authority=False)
             return
-        if isinstance(settlement, asyncio.Future):
-            await asyncio.shield(settlement)
+        self._status_generation = status.status_generation
+        self._git_status = status
+
+    def _invalidate_git_authority_locked(self) -> None:
+        self._git_authority_generation += 1
+
+    def _discard_commit_quarantine_locked(self) -> None:
+        if self._commit_quarantine is None:
             return
-        await settlement
+        self._commit_quarantine = None
+        self._invalidate_git_authority_locked()
 
     def _release_transition(self, token: object) -> None:
         with self._lock:
@@ -964,6 +1721,10 @@ class FileNotesSessionOwner:
                 or self._root_commit_state != "reserved"
             ):
                 raise RuntimeError("File Notes root reservation is not active")
+            if self._mutation_token is not None:
+                raise RuntimeError(
+                    "File Notes root commit is blocked by a Git mutation"
+                )
             binding = self._select_root_locked(root_key)
             self._root_commit_state = "committed"
         publish(binding)
@@ -987,13 +1748,29 @@ class FileNotesSessionOwner:
         self._changes.clear()
         self._next_sequence = 1
         self._trusted_repository = None
-        self._clear_git_status_locked()
+        self._clear_git_status_locked(invalidate_authority=False)
         self._staging_ownership.clear()
+        self._commit_quarantine = None
+        self._invalidate_git_authority_locked()
         return self._binding
 
-    def _clear_git_status_locked(self) -> None:
+    def _root_change_is_blocked_locked(self, root_key: str) -> bool:
+        return (
+            self._mutation_token is not None
+            and self._binding is not None
+            and self._binding.root_key != root_key
+        )
+
+    def _clear_git_status_locked(
+        self,
+        *,
+        invalidate_authority: bool = True,
+    ) -> None:
+        changed = self._git_status is not None
         self._status_generation += 1
         self._git_status = None
+        if changed and invalidate_authority:
+            self._invalidate_git_authority_locked()
 
     def _root_selection_matches_locked(
         self,

@@ -26,6 +26,12 @@ from Tests.Notes.test_file_notes_git_service import (
     _repository_at,
     _single_group,
 )
+from Tests.Notes.test_file_notes_git_commit_integration import (
+    _ControlledCommitRunner,
+    _init_repository,
+    _prepare_owned_review,
+    _prepare_uncertain_commit_recovery,
+)
 from Tests.UI.test_screen_navigation import _build_test_app
 
 
@@ -318,3 +324,94 @@ async def test_app_shutdown_settles_retained_child_after_forced_workspace_unmoun
     assert child.wait_calls == 2
     assert not owner.snapshot(binding).staging_ownership
     assert unlinked_index_locks == []
+
+
+@pytest.mark.asyncio
+async def test_app_owner_first_retained_commit_shutdown_precedes_replica_teardown(
+    tmp_path: Path,
+) -> None:
+    """A mounted panel cannot outlive exact commit publication and settlement."""
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("shutdown_stop")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    owner = service._owner
+    owner.attach_git_service(service)
+    events: list[str] = []
+    workspace = _ReplicaWorkspaceProbe(events)
+    app = _build_test_app(configured_default="library")
+    app.app_config["_first_run"] = False
+    app.file_notes_session_owner = owner
+    waiter = None
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        screen = await _wait_for_library(app, pilot)
+        screen._library_file_notes_workspace = workspace
+        waiter = service.start_commit(binding, review.handle)
+        await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+
+    assert waiter is not None
+    outcome = await asyncio.wait_for(waiter, 1.0)
+    assert outcome.state == "uncertain"
+    assert runner.commit_calls == 1
+    assert runner.shutdown_called is True
+    assert runner.released is True
+    assert not owner.mutation_active(binding)
+    assert workspace.shutdown_calls == 1
+    assert events == ["replica-closed"]
+    assert runner.hooks_directory is not None
+    assert not runner.hooks_directory.exists()
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_shutdown_joins_cancelled_recovery_before_owner_close(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Owner-first shutdown joins recovery after its mounted waiter disappears."""
+    repository = _init_repository(tmp_path)
+    service, binding, _review, runner = (
+        await _prepare_uncertain_commit_recovery(
+            repository,
+            mode="zero_without_commit",
+        )
+    )
+    owner = service._owner
+    owner.attach_git_service(service)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original_postflight = service._read_commit_postflight
+
+    async def delayed_postflight(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return await original_postflight(*args, **kwargs)
+
+    monkeypatch.setattr(
+        service,
+        "_read_commit_postflight",
+        delayed_postflight,
+    )
+    waiter = service.check_commit_again(binding)
+    await asyncio.wait_for(started.wait(), 1.0)
+    cycle = service._commit_recovery_cycle
+    assert cycle is not None
+
+    waiter.cancel("panel unmounted")
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    shutdown = asyncio.create_task(owner.shutdown_async())
+    await asyncio.sleep(0)
+    assert not shutdown.done()
+
+    release.set()
+    await asyncio.wait_for(shutdown, 1.0)
+    outcome = await asyncio.wait_for(asyncio.shield(cycle), 1.0)
+
+    assert outcome.state == "uncertain"
+    assert runner.commit_calls == 1
+    assert not owner.mutation_active(binding)
+    assert owner.snapshot(binding).commit_recovery is None
