@@ -43,4 +43,5 @@ as the producers of `change_percentage`. Half of that is false and is corrected 
 - [ ] #2 If adopted, it has test coverage before it enters the fetch path, and monitoring_engine's duplicate detection is retired rather than left as a second implementation
 - [ ] #3 If deleted, the change_type vocabulary and structural comparison worth keeping are named in the task notes so the capability is not silently lost
 - [ ] #4 A liveness check is run from both ends (what imports it, and what it imports) rather than a single outward grep
+- [ ] #5 If its pruning is adopted, it is re-keyed per (subscription, url) first: as written it prunes per subscription, which under the per-URL baselines shipped by TASK-1361/1362 would evict other URLs' baselines on multi-URL sources and cause endless re-baselining (see TASK-1393)
 <!-- AC:END -->
