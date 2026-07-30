@@ -50,6 +50,7 @@ from .item_persist import (
     CONTENT_KIND_ARTICLE,
     CONTENT_KIND_CHANGE,
 )
+from .noise_defaults import extraction_fingerprint, selector_parse_errors
 from .watchlist_rule_matching import RULE_MATCH_TEXT_KEY
 from ..Utils.egress import (
     EgressBlockedError,
@@ -67,6 +68,12 @@ from .security import SecurityValidator
 # Core Classes
 #
 ########################################################################################################################
+
+# Resolved once at import: this module hard-imports bs4, so soupsieve is
+# certainly present here. Kept in `noise_defaults` rather than inline so the
+# extraction guard and the two UI save-path validators share one definition of
+# "the selector is malformed" -- see `selector_parse_errors`.
+_SELECTOR_PARSE_ERRORS = selector_parse_errors()
 
 
 class FetchBlockedError(SubscriptionError):
@@ -201,10 +208,26 @@ class ContentExtractor:
         for script in soup(["script", "style"]):
             script.decompose()
 
-        # Remove elements matching ignore selectors
+        # Remove elements matching ignore selectors.
+        #
+        # The noise filter must never break the thing it filters. Selectors are
+        # user-typed (the create form and the Inspector both edit them), and
+        # `soup.select` RAISES on anything CSS cannot parse -- so before this
+        # guard one mistyped line aborted the whole URL check for that source,
+        # every check, until the user guessed which line was bad. A bad line
+        # may cost its own stripping and nothing more.
         if ignore_selectors:
             for selector in ignore_selectors:
-                for element in soup.select(selector):
+                try:
+                    matches = soup.select(selector)
+                except _SELECTOR_PARSE_ERRORS as exc:
+                    # One line per bad selector per extraction: named, so the
+                    # log says which rule to fix, not merely that one is broken.
+                    logger.warning(
+                        f"Skipping unparseable ignore selector {selector!r}: {exc}"
+                    )
+                    continue
+                for element in matches:
                     element.decompose()
 
         # Get text
@@ -472,6 +495,77 @@ def classify_change_type(previous_text: str, current_text: str) -> str:
     if had_text and not has_text:
         return "removed"
     return "content"
+
+
+########################################################################################################################
+#
+# Check dispositions (TASK-1362, spec §4)
+#
+########################################################################################################################
+
+#: A fresh snapshot was written and no comparison was made -- either the first
+#: check of this URL or a re-baseline after an extraction-settings change. The
+#: ``reason`` says which.
+DISPOSITION_BASELINE_STORED = "baseline_stored"
+#: The extracted text hashed identically to the previous snapshot.
+DISPOSITION_UNCHANGED = "unchanged"
+#: A real change, deliberately not reported because it fell under the source's
+#: ``change_threshold``. Carries the percentage it measured.
+DISPOSITION_WITHHELD = "withheld_below_threshold"
+#: A change was detected and an item produced.
+DISPOSITION_CHANGED = "changed"
+
+#: ``reason`` values for ``DISPOSITION_BASELINE_STORED``. These two are NOT
+#: interchangeable and must never be aggregated together (whole-branch review,
+#: Critical 1): spec §3 accepts that a re-baseline throws away one diff window
+#: -- a real change landing in it is never reported -- and it accepts that cost
+#: *only because* "the Runs pane says why". A single ``baseline`` counter
+#: cannot say why, and the difference is exactly the part the user needs:
+#:
+#: * ``first_check`` -- there was no previous snapshot, so nothing was
+#:   discarded and no change could have been lost.
+#: * ``extraction_settings_changed`` -- there WAS a snapshot with real prior
+#:   content and it was discarded uncompared, so a change the page made in
+#:   that window is gone.
+#:
+#: `local_watchlists_service._disposition_count_keys` binds each to its own
+#: run counter (``baseline`` / ``rebaselined``) for that reason.
+REASON_FIRST_CHECK = "first_check"
+REASON_EXTRACTION_SETTINGS_CHANGED = "extraction_settings_changed"
+#: ``reason`` for ``DISPOSITION_WITHHELD``.
+REASON_BELOW_CHANGE_THRESHOLD = "below_change_threshold"
+
+
+def _disposition(
+    kind: str,
+    *,
+    reason: Optional[str] = None,
+    withheld_percentage: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Build the record that says what a check DID, not merely what it returned.
+
+    ``check_url`` used to return ``change_info | None``, and ``None`` meant four
+    different things: first check, unchanged page, change withheld under the
+    threshold, or (after TASK-1362) a re-baseline. The user could not tell
+    "nothing happened" from "something happened and the app decided not to
+    mention it" -- the same failure class as the watchlists that never ran at
+    all (TASK-1210).
+
+    Args:
+        kind: One of the four ``DISPOSITION_*`` values.
+        reason: Why, for the kinds that have more than one cause.
+        withheld_percentage: The measured change, scaled ×100 for display to
+            match ``change_percentage`` (TASK-1343's convention). ``None``
+            except for ``DISPOSITION_WITHHELD``.
+
+    Returns:
+        A three-key dict; the shape is fixed so consumers can index it.
+    """
+    return {
+        "kind": kind,
+        "reason": reason,
+        "withheld_percentage": withheld_percentage,
+    }
 
 
 class FeedMonitor:
@@ -938,7 +1032,9 @@ class URLMonitor:
         self.circuit_breakers = {}
         self.persist_snapshots = persist_snapshots
 
-    async def check_url(self, subscription: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def check_url(
+        self, subscription: Dict[str, Any]
+    ) -> tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
         """
         Check a URL for changes.
 
@@ -946,10 +1042,26 @@ class URLMonitor:
             subscription: Subscription dictionary
 
         Returns:
-            Change information if changed, None otherwise
+            ``(change_info, disposition)``. ``change_info`` is the item to
+            produce, or ``None`` when there is nothing to report. The
+            disposition (see :func:`_disposition`) always says which of the four
+            outcomes happened, because ``None`` alone is ambiguous between all
+            four -- spec §4.
         """
         subscription_id = subscription["id"]
         url = subscription["source"]
+
+        # The settings that shape extracted text, hashed. Computed before the
+        # fetch so the value written to the new snapshot and the value compared
+        # against the old one are provably the same one (spec §3).
+        # The `"auto"` default is the SAME one `_fetch_url_content` applies
+        # (whole-branch review, Minor 7): an absent key extracts HTML, an
+        # explicit NULL does not, and the fingerprint has to agree with the
+        # fetch on both or it hashes two different extractions alike.
+        current_fingerprint = extraction_fingerprint(
+            subscription.get("ignore_selectors"),
+            subscription.get("extraction_method", "auto"),
+        )
 
         # Check circuit breaker
         if subscription_id not in self.circuit_breakers:
@@ -965,26 +1077,99 @@ class URLMonitor:
             # Fetch current content
             current_content = await self._fetch_url_content(subscription)
 
-            # Get previous snapshot
+            # Get previous snapshot.
+            #
+            # TASK-1361. The `id DESC` tie-break is load-bearing, not tidiness:
+            # `created_at` is a DATETIME defaulting to CURRENT_TIMESTAMP, which
+            # has one-second resolution. Two checks of the same source inside
+            # one second therefore share a `created_at`, and with only that
+            # column in the ORDER BY, SQLite may return either row -- so a
+            # check can measure the change against a *stale* baseline and
+            # report the wrong percentage, the wrong diff, or a change that is
+            # not there. `id` is INTEGER PRIMARY KEY AUTOINCREMENT, so it is
+            # monotonic and breaks the tie by true insertion order. Same shape
+            # as `Workspaces/registry_service.py:171`, which already pairs
+            # `created_at` with a second key.
+            #
+            # Note for whoever resolves TASK-1360: `baseline_manager.py` has
+            # four more instances of this same unqualified ordering, one of
+            # them a pruning DELETE, so adopting that module means fixing
+            # them too.
+            # The `url` predicate is load-bearing for `url_list` and `sitemap`
+            # sources: every URL of such a source shares one `subscription_id`,
+            # so without it the "previous snapshot" is whichever URL was
+            # checked last. Two URLs on one source then measured each other --
+            # every URL after the first looked changed on the very first check,
+            # and no URL was ever reported unchanged. Found while making the
+            # per-run disposition counts (spec §4) come out right, which is
+            # impossible while the baselines are shared.
             cursor = self.db.conn.cursor()
             cursor.execute(
                 """
-                SELECT content_hash, extracted_content
+                SELECT content_hash, extracted_content, extraction_fingerprint
                 FROM url_snapshots
-                WHERE subscription_id = ?
-                ORDER BY created_at DESC
+                WHERE subscription_id = ? AND url = ?
+                ORDER BY created_at DESC, id DESC
                 LIMIT 1
             """,
-                (subscription_id,),
+                (subscription_id, url),
             )
 
             previous = cursor.fetchone()
 
             if not previous:
                 # First check - store baseline
-                await self._store_snapshot(subscription_id, url, current_content)
+                await self._store_snapshot(
+                    subscription_id,
+                    url,
+                    current_content,
+                    fingerprint=current_fingerprint,
+                )
                 breaker.record_success()
-                return None
+                return None, _disposition(
+                    DISPOSITION_BASELINE_STORED, reason=REASON_FIRST_CHECK
+                )
+
+            # Spec §3, and BEFORE the hash comparison: a snapshot holds text
+            # extracted under the settings in force when it was captured, so
+            # once those settings change the stored hash describes a different
+            # extraction and comparing it proves nothing. Equal hashes across a
+            # settings change are luck, not evidence, and a differing hash is
+            # the noise appearing or disappearing rather than anything the site
+            # did -- which is the phantom item this prevents. Re-baseline
+            # instead: one diff window is the honest, bounded cost.
+            #
+            # A stored NULL (every pre-migration snapshot) counts as a
+            # mismatch, which makes the migration self-healing: each existing
+            # source re-baselines exactly once and the Runs pane says why.
+            #
+            # That NULL case lands in the ``rebaselined`` counter with reason
+            # ``extraction_settings_changed``, deliberately and not by
+            # accident (whole-branch review, Important 2). Both halves are
+            # honest: a pre-migration snapshot holds real prior content that
+            # IS discarded uncompared -- a lost window the user must be
+            # warned about, unlike a true `first_check` where nothing existed
+            # -- and the settings really did change, because
+            # `_ensure_watchlists_schema`'s one-time migration rewrote every
+            # url-family source's `ignore_selectors` (to the shipped default
+            # set) and `change_threshold` in the same breath as adding this
+            # column. Guarding on truthiness instead (`if previous_fp and
+            # previous_fp != current`) would compare text extracted WITHOUT
+            # those selectors against text extracted WITH them and fire a
+            # phantom item, on the first check of every migrated source.
+            previous_fingerprint = previous["extraction_fingerprint"] or ""
+            if previous_fingerprint != current_fingerprint:
+                await self._store_snapshot(
+                    subscription_id,
+                    url,
+                    current_content,
+                    fingerprint=current_fingerprint,
+                )
+                breaker.record_success()
+                return None, _disposition(
+                    DISPOSITION_BASELINE_STORED,
+                    reason=REASON_EXTRACTION_SETTINGS_CHANGED,
+                )
 
             # Calculate change
             current_hash = ContentExtractor.calculate_content_hash(
@@ -994,7 +1179,7 @@ class URLMonitor:
             if current_hash == previous["content_hash"]:
                 # No change
                 breaker.record_success()
-                return None
+                return None, _disposition(DISPOSITION_UNCHANGED)
 
             # Calculate change details
             previous_text = previous["extracted_content"] or ""
@@ -1003,14 +1188,33 @@ class URLMonitor:
             )
 
             # Check if change exceeds threshold. Both sides of this comparison
-            # are 0.0-1.0 ratios (`change_threshold` defaults to 0.1, i.e. 10%)
-            # -- the scaling to a percentage happens only where the value is
-            # handed to the reader, below.
-            threshold = subscription.get("change_threshold", 0.1)
+            # are 0.0-1.0 ratios -- the scaling to a percentage happens only
+            # where the value is handed to the reader (below, and in the
+            # disposition).
+            #
+            # The default is 0.0 (spec §1): the threshold was a *volume* filter
+            # being used as a *noise* filter, and at 0.1 a one-sentence edit to
+            # a long page moved whole-page similarity far too little to be
+            # reported at all. Noise is suppressed by `ignore_selectors`, which
+            # strips named elements before anything is hashed. The identical-
+            # hash check above already short-circuits unchanged pages, so 0.0
+            # means "any real difference in extracted text".
+            #
+            # `.get("change_threshold", 0.0)` would NOT be enough: the key
+            # exists whenever the row was read from the DB, so an explicit NULL
+            # comes back as `None` and `change_percentage < None` is a
+            # TypeError inside a scheduled fetch.
+            raw_threshold = subscription.get("change_threshold")
+            threshold = 0.0 if raw_threshold is None else float(raw_threshold)
             if change_percentage < threshold:
-                # Change too small
+                # Change too small -- recorded rather than silent, so a user who
+                # raised the threshold can see what it is holding back.
                 breaker.record_success()
-                return None
+                return None, _disposition(
+                    DISPOSITION_WITHHELD,
+                    reason=REASON_BELOW_CHANGE_THRESHOLD,
+                    withheld_percentage=change_percentage * 100.0,
+                )
 
             # Significant change detected. TASK-1343: `content` is the DIFF, not
             # the new page. The full page continues to live in `url_snapshots`
@@ -1060,11 +1264,15 @@ class URLMonitor:
 
             # Store new snapshot
             await self._store_snapshot(
-                subscription_id, url, current_content, current_hash
+                subscription_id,
+                url,
+                current_content,
+                current_hash,
+                fingerprint=current_fingerprint,
             )
 
             breaker.record_success()
-            return change_info
+            return change_info, _disposition(DISPOSITION_CHANGED)
 
         except Exception:
             breaker.record_failure()
@@ -1160,8 +1368,23 @@ class URLMonitor:
         url: str,
         content: Dict[str, Any],
         content_hash: str = None,
+        fingerprint: Optional[str] = None,
     ) -> None:
-        """Store a URL snapshot."""
+        """Store a URL snapshot.
+
+        Args:
+            subscription_id: Owning subscription.
+            url: The exact URL fetched. For ``url_list``/``sitemap`` sources
+                many URLs share one ``subscription_id``, and this column is
+                what keeps their baselines apart.
+            content: The ``_fetch_url_content`` result.
+            content_hash: Precomputed hash of ``content["text"]``, or ``None``
+                to compute it here.
+            fingerprint: The ``extraction_fingerprint`` in force at capture
+                time. Stored so a later check can tell whether this snapshot's
+                text is still comparable (spec §3). ``None`` is written as
+                NULL, which every reader treats as a mismatch.
+        """
         if not self.persist_snapshots:
             return
         if not content_hash:
@@ -1172,8 +1395,9 @@ class URLMonitor:
             cursor.execute(
                 """
                 INSERT INTO url_snapshots
-                (subscription_id, url, content_hash, extracted_content, raw_html, headers)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (subscription_id, url, content_hash, extracted_content, raw_html,
+                 headers, extraction_fingerprint)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     subscription_id,
@@ -1182,6 +1406,7 @@ class URLMonitor:
                     content["text"],
                     content["html"],
                     json.dumps(content["headers"]),
+                    fingerprint,
                 ),
             )
 

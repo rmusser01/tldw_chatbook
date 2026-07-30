@@ -207,7 +207,7 @@ class SubscriptionsDB(BaseDB):
                 notification_config TEXT,
                 
                 -- Change detection for URLs
-                change_threshold FLOAT DEFAULT 0.1,
+                change_threshold FLOAT DEFAULT 0.0,
                 ignore_selectors TEXT,
                 
                 -- Performance optimization
@@ -267,8 +267,14 @@ class SubscriptionsDB(BaseDB):
                 extracted_content TEXT,
                 raw_html TEXT,
                 headers TEXT,
+                -- Stable hash of the ignore_selectors/extraction_method in
+                -- force when this snapshot's extracted_content was captured
+                -- (TASK-1362). Nullable: pre-migration rows have none, and
+                -- comparing across a settings change must re-baseline
+                -- rather than diff (see Subscriptions/noise_defaults.py).
+                extraction_fingerprint TEXT,
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                
+
                 FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
             );
             
@@ -569,6 +575,78 @@ class SubscriptionsDB(BaseDB):
         # 'flagged' value, and an item can be flagged *and* reviewed at once.
         if "is_flagged" not in items_cols:
             cursor.execute("ALTER TABLE subscription_items ADD COLUMN is_flagged BOOLEAN DEFAULT 0")
+
+        # Snapshot extraction fingerprint + one-time TASK-1362 "noise, not
+        # volume" data migration (spec:
+        # Docs/superpowers/specs/2026-07-29-watchlists-noise-not-volume-design.md
+        # -- see .superpowers/sdd/2026-07-29-watchlists-noise-not-volume).
+        # The column's absence IS the one-time gate: a database that already
+        # has `extraction_fingerprint` has already had its url-family
+        # thresholds/selectors migrated (or was created fresh, after the
+        # CREATE TABLE above already declared the column and the 0.0
+        # default), so the data migration below can never re-run and clobber
+        # a user's subsequent edits.
+        #
+        # The ALTER and the two UPDATEs are wrapped in one EXPLICIT
+        # transaction below -- they do NOT get this for free. Python's
+        # sqlite3 module (default isolation_level, no override anywhere in
+        # BaseDB/connect_private_sqlite) opens an implicit transaction only
+        # before DML (INSERT/UPDATE/DELETE/REPLACE), never before DDL, so a
+        # bare `cursor.execute("ALTER TABLE ...")` autocommits immediately --
+        # it is not protected by whatever transaction the caller thinks it
+        # is in. Verified empirically: without an explicit BEGIN here, an
+        # exception between the ALTER and the second UPDATE (e.g. from
+        # default_ignore_selectors_text() below) leaves the column present
+        # -- the one-time gate durably spent -- with change_threshold moved
+        # but ignore_selectors permanently NULL, and *unrepairable*: a clean
+        # re-run sees the column already there and skips entirely. SQLite's
+        # DDL is itself fully transactional; only the sqlite3 module's
+        # implicit-BEGIN policy is not. Wrapping the ALTER and both UPDATEs
+        # in one explicit BEGIN IMMEDIATE / COMMIT (rolled back together on
+        # any exception) restores atomicity, so the write structurally
+        # gates the marker instead of merely being re-runnable until it
+        # eventually completes.
+        #
+        # Which is why this block deliberately does NOT use the shared
+        # `transaction()` helper, in knowing exemption from the repo-wide
+        # compliance rule that every write goes through
+        # `with db.transaction() as cursor:` (CLAUDE.md/AGENTS.md, "Key
+        # Patterns -> Database Operations", restated as gotcha 5 "Thread
+        # safety"): the helper can only ask the sqlite3 driver for a
+        # transaction, and the driver autocommits DDL under its implicit-BEGIN
+        # policy regardless, so `transaction()` cannot make ALTER + UPDATE
+        # atomic here -- proven by probe during the whole-branch review, and
+        # adopting it would reintroduce exactly the unrepairable half-migration
+        # described above (a crash between the ALTER and the UPDATEs spends the
+        # one-time gate with the data unmigrated and no way back). The explicit
+        # BEGIN IMMEDIATE exists precisely for that. The exemption is
+        # deliberate, not ignorance of the rule; pinned by
+        # `test_migration_rolls_back_atomically_on_mid_migration_failure`.
+        snapshot_cols = {row[1] for row in cursor.execute("PRAGMA table_info(url_snapshots)")}
+        if "extraction_fingerprint" not in snapshot_cols:
+            from ..Subscriptions.noise_defaults import default_ignore_selectors_text
+
+            if conn.in_transaction:
+                conn.commit()
+            cursor.execute("BEGIN IMMEDIATE")
+            try:
+                cursor.execute(
+                    "ALTER TABLE url_snapshots ADD COLUMN extraction_fingerprint TEXT"
+                )
+                cursor.execute(
+                    "UPDATE subscriptions SET change_threshold = 0.0"
+                    " WHERE type IN ('url','url_list','sitemap')"
+                )
+                cursor.execute(
+                    "UPDATE subscriptions SET ignore_selectors = ?"
+                    " WHERE type IN ('url','url_list','sitemap')"
+                    "   AND (ignore_selectors IS NULL OR TRIM(ignore_selectors) = '')",
+                    (default_ignore_selectors_text(),),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
         # Watchlist bundle entity. `name` is intentionally not UNIQUE — uniqueness
         # is enforced case-insensitively in WatchlistBundleService with

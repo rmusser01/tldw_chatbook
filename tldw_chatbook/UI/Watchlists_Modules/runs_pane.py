@@ -124,7 +124,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
     def _stats_text(run: dict[str, Any] | None) -> str:
         if not run:
             return "No run selected."
-        return (
+        base = (
             f"Status: {run.get('status', '-')}\n"
             f"Started: {run.get('started_at', '-')}\n"
             f"Duration: {run.get('duration', '-')}\n"
@@ -133,6 +133,40 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             f"Filtered: {run.get('filtered_count', 0)} | "
             f"Errors: {run.get('error_count', 0)}"
         )
+        # TASK-1362 Task 7 (spec §4): a url-family run's check dispositions,
+        # so a silent run finally says WHY it was silent (unchanged? withheld
+        # under threshold? re-baselined?) instead of just "Found: 0". Absent
+        # entirely for feed/API runs, which have no dispositions at all (see
+        # `normalize_watchlist_run`) -- `dispositions` is only ever `{}` or
+        # missing for those, so no empty "Checks:" line is added.
+        dispositions = run.get("dispositions") or {}
+        if dispositions:
+            # Whole-branch review, Critical 1. `baseline` and `rebaselined` are
+            # rendered separately because they mean opposite things: a first
+            # check discarded nothing, while a settings-change re-baseline
+            # threw away a real diff window in which a change could have been
+            # lost. Spec §3 accepts that lost window only on the strength of
+            # this line saying so -- one `baseline` count could not, which left
+            # the disposition's `reason` with no consumer anywhere in the
+            # product.
+            withheld = dispositions.get("withheld", 0)
+            withheld_text = f"{withheld} withheld"
+            max_withheld = run.get("max_withheld_pct")
+            if withheld and isinstance(max_withheld, (int, float)):
+                # Spec §1: say what is being withheld, not merely that
+                # something was. Without the number the user cannot tell a
+                # threshold that is slightly too high from one that is
+                # swallowing everything.
+                withheld_text += f" (largest {float(max_withheld):.1f}%)"
+            base += (
+                f"\nChecks: {dispositions.get('changed', 0)} changed | "
+                f"{dispositions.get('unchanged', 0)} unchanged | "
+                f"{withheld_text} | "
+                f"{dispositions.get('baseline', 0)} baseline | "
+                f"{dispositions.get('rebaselined', 0)} re-baselined "
+                "(settings changed)"
+            )
+        return base
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()

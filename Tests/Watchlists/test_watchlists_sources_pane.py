@@ -3,8 +3,11 @@
 import pytest
 from rich.style import Style
 from textual.app import App, ComposeResult
-from textual.widgets import Button, DataTable, Input, Select, Switch
+from textual.widgets import Button, DataTable, Input, Select, Switch, TextArea
 
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions import LocalWatchlistsService
+from tldw_chatbook.Subscriptions.noise_defaults import default_ignore_selectors_text
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     CheckNowRequested,
     PreviewRequested,
@@ -43,6 +46,284 @@ class SourcesPaneHarness(App):
 
     def on_export_opml_requested(self, message: ExportOpmlRequested) -> None:
         self.captured_messages.append(("export_opml_requested", None))
+
+
+class PersistingSourcesPaneHarness(SourcesPaneHarness):
+    """`SourcesPaneHarness`, but the create request reaches a real database.
+
+    TASK-1362. The noise field's contract is about what gets *stored* -- the
+    selector text a source is created with, and the empty text a user who
+    cleared the field is entitled to. A captured payload cannot show that: it
+    would still look correct if the field never reached
+    `_subscription_config_fields`, or if the column were dropped. So this
+    harness forwards `CreateSourceRequested` to the real
+    `LocalWatchlistsService` over a real `SubscriptionsDB`, exactly as
+    `WatchlistsCollectionsScreen.handle_create_source_requested` does, and the
+    assertions read the row back.
+    """
+
+    def __init__(self, service: LocalWatchlistsService) -> None:
+        super().__init__()
+        self._service = service
+        self.created_sources: list[dict] = []
+        self.create_error: BaseException | None = None
+
+    def on_create_source_requested(self, message: CreateSourceRequested) -> None:
+        super().on_create_source_requested(message)
+        self.run_worker(self._create(message.payload), exclusive=True)
+
+    async def _create(self, payload: dict) -> None:
+        try:
+            self.created_sources.append(await self._service.create_source(payload))
+        except BaseException as exc:  # surfaced by the tests, never swallowed
+            self.create_error = exc
+
+
+async def _create_through_the_form(pilot, app, **field_values) -> dict:
+    """Fill the create form and press `Create`, then return the stored row.
+
+    Uses the same direct-assignment style as the rest of this module (an
+    `Input.value` write posts `Input.Changed` exactly as a keystroke does) and
+    the pane's own submit button, so the payload is built by
+    `_submit_create_form` rather than by the test.
+
+    Args:
+        pilot: The running app's pilot.
+        app: A `PersistingSourcesPaneHarness`.
+        field_values: `id suffix -> value` for any extra field to set.
+
+    Returns:
+        The `subscriptions` row as stored.
+    """
+    pane = app.query_one(SourcesPane)
+    pane.query_one("#sources-new-button", Button).press()
+    await pilot.pause()
+
+    pane.query_one("#sources-create-name", Input).value = field_values.pop(
+        "name", "Noisy Page"
+    )
+    pane.query_one("#sources-create-url", Input).value = field_values.pop(
+        "url", "https://example.com/page"
+    )
+    assert not field_values, f"unhandled field values: {field_values}"
+
+    pane.query_one("#sources-create-submit", Button).press()
+    for _ in range(50):
+        await pilot.pause()
+        if app.created_sources or app.create_error is not None:
+            break
+    if app.create_error is not None:
+        raise app.create_error
+    assert app.created_sources, "the create request never reached the service"
+    stored = app._service._db().get_subscription(
+        int(app.created_sources[0]["source_id"])
+    )
+    assert stored is not None, "the source was not persisted"
+    return stored
+
+
+@pytest.mark.asyncio
+async def test_create_form_stores_the_default_noise_selectors(tmp_path):
+    """TASK-1362, spec §2: the prefill has to land in the database.
+
+    The suppression defaults exist so that a first source does not report a
+    change every check because its ad slot or view counter rewrote itself. If
+    the field is decorative -- prefilled in the form but dropped on the way to
+    `create_source` -- the user sees the rules, believes them applied, and gets
+    the noise anyway.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    app = PersistingSourcesPaneHarness(LocalWatchlistsService(db_factory=lambda: db))
+    async with app.run_test(size=(120, 40)) as pilot:
+        stored = await _create_through_the_form(pilot, app)
+
+        assert stored["ignore_selectors"] == default_ignore_selectors_text(), (
+            "a source created without touching the noise field must be stored "
+            "with the shipped default selectors; the row holds "
+            f"{stored['ignore_selectors']!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_clearing_the_noise_field_stores_no_selectors(tmp_path):
+    """TASK-1362, spec §2: deliberate emptiness is honoured.
+
+    Emptying the field is a real instruction -- "report every change on this
+    page, including the furniture" -- and it is the only way to watch a page
+    whose payload happens to live in an element the defaults strip. Re-applying
+    the default at save time would overrule the user silently, and they would
+    have no way to tell: the form they submitted said empty.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    app = PersistingSourcesPaneHarness(LocalWatchlistsService(db_factory=lambda: db))
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+        # The real clearing edit, not a `.text` assignment: this is what
+        # select-all-and-delete performs, and it posts `TextArea.Changed`.
+        pane.query_one("#sources-create-ignore-selectors", TextArea).clear()
+        await pilot.pause()
+
+        stored = await _create_through_the_form(pilot, app)
+
+        assert not (stored["ignore_selectors"] or ""), (
+            "a source created with the noise field cleared must be stored with "
+            f"no selectors; the row holds {stored['ignore_selectors']!r}"
+        )
+        assert stored["ignore_selectors"] != default_ignore_selectors_text(), (
+            "the cleared field was re-filled with the shipped default behind "
+            "the user's back"
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_is_refused_when_a_noise_line_is_not_valid_css(tmp_path):
+    """Whole-branch fix F1, UI side: name the bad line, at the keyboard.
+
+    `soup.select` raises on anything CSS cannot parse. The extraction side now
+    survives that, but a silently-skipped rule is still a rule the user
+    believes is suppressing noise and that does nothing, and nothing else in
+    the product would ever tell them -- the only place the mistake is cheap to
+    fix is the form they are still looking at. Mutation: delete the
+    `first_invalid_selector` check in `_submit_create_form` and this reddens
+    (a row appears and no toast is delivered).
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    app = PersistingSourcesPaneHarness(LocalWatchlistsService(db_factory=lambda: db))
+    toasts: list[tuple[str, dict]] = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+        pane = app.query_one(SourcesPane)
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        field = pane.query_one("#sources-create-ignore-selectors", TextArea)
+        # One good line, one unparseable one: the refusal must not need the
+        # whole field to be broken.
+        field.text = ".ad\ndiv[\n.promo"
+        await pilot.pause()
+        pane.query_one("#sources-create-name", Input).value = "Noisy Page"
+        pane.query_one("#sources-create-url", Input).value = "https://example.com/page"
+        await pilot.pause()
+
+        pane.query_one("#sources-create-submit", Button).press()
+        for _ in range(20):
+            await pilot.pause()
+
+        assert app.create_error is None, app.create_error
+        assert not app.created_sources, (
+            "a source with an unparseable ignore rule must not be created"
+        )
+        assert not db.get_all_subscriptions(), (
+            "nothing may reach the subscriptions table"
+        )
+
+        assert toasts, "the refusal must be visible, not only a return"
+        message, kwargs = toasts[-1]
+        assert kwargs.get("severity") == "error"
+        assert "div[" in message, (
+            "the toast must name the offending LINE -- 'a selector is invalid' "
+            f"is unactionable when the field holds three; got {message!r}"
+        )
+        # Selectors are full of `[`, which Textual's toast markup parses.
+        assert kwargs.get("markup") is False, (
+            "the message must be delivered with markup off or the bracket in "
+            "the selector is eaten before the user sees it"
+        )
+
+        # And the form stays open with the text intact, so the fix is one edit
+        # away rather than a retyped form.
+        assert pane.show_create_form, "the form must stay open to be corrected"
+        assert (
+            pane.query_one("#sources-create-ignore-selectors", TextArea).text
+            == ".ad\ndiv[\n.promo"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_valid_multi_line_noise_field_still_creates(tmp_path):
+    """The refusal's other direction: real selectors must not be rejected.
+
+    Commas inside a line are CSS selector GROUPS, and `:is(...)` /
+    attribute-substring forms are exactly what the shipped defaults use -- a
+    validator that split lines on commas, or that rejected anything exotic,
+    would refuse every source created with the prefill untouched.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    app = PersistingSourcesPaneHarness(LocalWatchlistsService(db_factory=lambda: db))
+    toasts: list[tuple[str, dict]] = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+        pane = app.query_one(SourcesPane)
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        exotic = (
+            default_ignore_selectors_text()
+            + '\n:is(.a, .b)\n[data-x="a,b"]\ndiv:has(> p)\n\n'
+        )
+        pane.query_one("#sources-create-ignore-selectors", TextArea).text = exotic
+        await pilot.pause()
+
+        stored = await _create_through_the_form(pilot, app)
+
+        assert stored["ignore_selectors"] == exotic.strip(), (
+            "every one of these lines is valid CSS and must be stored verbatim"
+        )
+        assert not [t for t in toasts if t[1].get("severity") == "error"], (
+            f"a valid field produced an error toast: {toasts!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_noise_field_is_visible_prefilled_and_labelled():
+    """The control itself: on screen, filled in, and named (TASK-1362).
+
+    Spec §2 puts the prefill in the *form* rather than applying it invisibly at
+    save time, so what the field shows and what it is called are part of the
+    contract, not decoration.
+    """
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        field = pane.query_one("#sources-create-ignore-selectors", TextArea)
+        assert field.display and field.region.height > 0, (
+            "the noise field is not on screen"
+        )
+        assert field.text == default_ignore_selectors_text()
+        assert field.border_title == (
+            "Ignore elements (CSS selectors — one rule per line; commas group)"
+        )
+        # The spam -> add-a-selector loop has to be stated where the field is.
+        assert "silence" in str(field.border_subtitle)
+
+
+@pytest.mark.asyncio
+async def test_noise_field_is_seeded_from_the_draft_not_the_default():
+    """A rebuild must not restore rules the user deleted (TASK-1362).
+
+    `SourcesPane` is reconstructed whenever the workbench recomposes -- any
+    region collapse does it -- which is why the name/url/tags drafts are
+    mirrored to the screen and seeded back. The noise field needs the same
+    treatment for a stronger reason: its untouched state is not empty, so a
+    pane rebuilt without the draft would re-prefill a field the user had
+    emptied on purpose.
+    """
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.create_draft_ignore_selectors = ""
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        field = pane.query_one("#sources-create-ignore-selectors", TextArea)
+        assert field.text == "", (
+            f"the rebuilt form re-prefilled a cleared field with {field.text!r}"
+        )
 
 
 @pytest.fixture

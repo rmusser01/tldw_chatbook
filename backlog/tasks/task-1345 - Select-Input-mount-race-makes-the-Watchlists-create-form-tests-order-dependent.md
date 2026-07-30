@@ -8,7 +8,7 @@ labels:
   - watchlists
   - testing
 dependencies: []
-priority: medium
+priority: high
 ---
 
 ## Description
@@ -32,6 +32,16 @@ reproduced). Only the two tree-chevron failures are constant.
 Consequence for anyone reading a test run: **do not quote a fixed test name as the expected
 baseline** for this race. Doing so generates false regression reports when it moves, and false
 all-clear when it lands somewhere unlisted. Characterise it by file and by ordering instead.
+
+**Root cause established 2026-07-29 (TASK-1362 Task 5):** `Widget.focus()` only *schedules* focus via
+`app.call_later`; any `reactive(recompose=True)` assignment landing in that gap (e.g. `_load_sources`
+assigning `sources`) remounts the form, so the callback fires on a detached widget and focus is
+**silently dropped** — no error, no retry. The noise-selectors branch raised the frequency under the
+`test_watchlists_content_pane.py -> test_watchlists_source_create_form.py` ordering from rare to
+~8-in-17. Three narrow mitigations reduced but did not eliminate it; none were shipped, deliberately —
+a shrunk race is a hidden race. The durable fix is a policy for the recompose/focus interaction
+(TASK-1035 lineage): either focus-restoration after recompose (the `_build_detail_pane` seeding
+pattern generalised) or a focus API that survives remount.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

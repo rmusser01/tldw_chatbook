@@ -7,9 +7,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Select
+from textual.widgets import Button, Input, Select, TextArea
 
 from textual.widgets import DataTable
+
+from tldw_chatbook.Subscriptions.noise_defaults import default_ignore_selectors_text
 
 from Tests.UI.test_destination_shells import DestinationHarness
 from Tests.UI.test_screen_navigation import _build_test_app
@@ -819,6 +821,65 @@ async def test_bracket_toggle_preserves_in_progress_create_form_draft():
         url_after = screen.query_one("#sources-create-url", Input).value
         assert name_after == "Draft Name", "typed Name text must survive the rebuild"
         assert url_after == "https://draft.example", "typed URL text must survive the rebuild"
+
+
+@pytest.mark.asyncio
+async def test_bracket_toggle_preserves_a_cleared_noise_selector_field():
+    """TASK-1362, spec §2: emptiness must survive a workbench rebuild.
+
+    The noise field is the one create-form field whose *untouched* state is
+    not empty -- `SourcesPane` prefills it with the shipped selector set. So
+    the rebuild the test above covers for Name/URL is strictly more dangerous
+    here: a pane rebuilt without the draft does not merely lose what the user
+    did, it silently restores the very rules they deleted, and the next
+    `Create` stores them. That is the "re-filled behind their back" the spec
+    forbids, arriving through a bracket press on an unrelated rail.
+
+    Drives the real path end to end: the pane's `TextArea.Changed` ->
+    `CreateFormDraftChanged` -> the screen's `_source_create_draft_selectors`
+    -> `_build_detail_pane` seeding the brand new pane.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen.query_one("#wl-tab-sources", Button).press()
+        await pilot.pause()
+        screen.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        field = screen.query_one("#sources-create-ignore-selectors", TextArea)
+        assert field.text == default_ignore_selectors_text(), (
+            "the field should open prefilled; this test is about clearing it"
+        )
+        # The real clearing edit -- what select-all-and-delete performs, and
+        # what posts `TextArea.Changed`.
+        field.clear()
+        await pilot.pause()
+        assert screen._source_create_draft_selectors == "", (
+            "clearing the field must reach the screen's mirror; without that "
+            "the rebuild below has nothing to seed from and falls back to the "
+            f"default (mirror held {screen._source_create_draft_selectors!r})"
+        )
+
+        # Same reason as the test above: move focus off the text field so `[`
+        # reaches the screen's region-collapse binding instead of being typed.
+        screen.query_one("#wl-tab-sources", Button).focus()
+        await pilot.pause()
+
+        await pilot.press("[")
+        await pilot.pause()
+
+        assert screen.query("#sources-create-ignore-selectors"), (
+            "the create form must still be open after an unrelated toggle"
+        )
+        rebuilt = screen.query_one("#sources-create-ignore-selectors", TextArea)
+        assert rebuilt.text == "", (
+            "the rebuilt form re-filled a field the user deliberately emptied "
+            f"with {rebuilt.text!r}"
+        )
 
 
 @pytest.mark.asyncio

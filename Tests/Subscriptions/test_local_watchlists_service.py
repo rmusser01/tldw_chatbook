@@ -252,13 +252,17 @@ async def test_local_watchlists_service_executes_url_list_sources_with_default_u
             self.db = db
 
         async def check_url(self, subscription):
+            # TASK-1362: the real `check_url` returns `(item, disposition)`.
             seen_urls.append(subscription["source"])
-            return {
-                "url": subscription["source"],
-                "title": f"Changed {len(seen_urls)}",
-                "content_hash": f"hash-{len(seen_urls)}",
-                "published_date": "2026-04-25T00:00:00+00:00",
-            }
+            return (
+                {
+                    "url": subscription["source"],
+                    "title": f"Changed {len(seen_urls)}",
+                    "content_hash": f"hash-{len(seen_urls)}",
+                    "published_date": "2026-04-25T00:00:00+00:00",
+                },
+                {"kind": "changed", "reason": None, "withheld_percentage": None},
+            )
 
     monkeypatch.setattr(
         "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
@@ -284,6 +288,16 @@ async def test_local_watchlists_service_executes_url_list_sources_with_default_u
     assert completed["status"] == "completed"
     assert completed["stats"]["items_found"] == 2
     assert completed["stats"]["items_ingested"] == 2
+    assert completed["stats"]["dispositions"] == {
+        "changed": 2,
+        "unchanged": 0,
+        "withheld": 0,
+        "baseline": 0,
+        # Split from `baseline` by the whole-branch review's Critical 1: a
+        # first check discarded nothing, a settings-change re-baseline threw
+        # away a real diff window.
+        "rebaselined": 0,
+    }, "the url_list arm must aggregate one disposition per URL checked"
     assert seen_urls == ["https://example.com/a", "https://example.com/b"]
     assert [dict(row) for row in stored_items] == [
         {
@@ -335,13 +349,17 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
             self.db = db
 
         async def check_url(self, subscription):
+            # TASK-1362: the real `check_url` returns `(item, disposition)`.
             seen_urls.append(subscription["source"])
-            return {
-                "url": subscription["source"],
-                "title": f"Sitemap page {len(seen_urls)}",
-                "content_hash": f"sitemap-hash-{len(seen_urls)}",
-                "published_date": "2026-04-25T00:00:00+00:00",
-            }
+            return (
+                {
+                    "url": subscription["source"],
+                    "title": f"Sitemap page {len(seen_urls)}",
+                    "content_hash": f"sitemap-hash-{len(seen_urls)}",
+                    "published_date": "2026-04-25T00:00:00+00:00",
+                },
+                {"kind": "changed", "reason": None, "withheld_percentage": None},
+            )
 
     monkeypatch.setattr(
         "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
@@ -367,6 +385,13 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
     assert seen_urls == ["https://example.com/page-a", "https://example.com/page-b"]
     assert completed["status"] == "completed"
     assert completed["stats"]["items_found"] == 2
+    assert completed["stats"]["dispositions"] == {
+        "changed": 2,
+        "unchanged": 0,
+        "withheld": 0,
+        "baseline": 0,
+        "rebaselined": 0,
+    }, "the sitemap arm must aggregate one disposition per URL checked"
     assert [dict(row) for row in stored_items] == [
         {
             "url": "https://example.com/page-a",

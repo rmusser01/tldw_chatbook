@@ -691,6 +691,31 @@ WatchlistSourcePickerDialog {
     color: $ds-text-muted;
 }
 
+/* TASK-1362 (spec §2): the Inspector's noise-selector editor -- the only
+ * edit affordance a source has. Sized exactly like the create form's copy of
+ * the field (`#sources-create-ignore-selectors` below): `max-height: 4` is
+ * two content rows between the top and bottom border rows, and `height: auto`
+ * under that cap stops TextArea's own default from claiming a full `fr` share
+ * of the rail and pushing the source's four action buttons off the bottom.
+ *
+ * Only the TOP border carries a label here (`Ignore (CSS)`); unlike the
+ * create form's copy this field has no `border_subtitle`, because the rail is
+ * ~26 columns and Textual truncates an over-wide border label silently -- see
+ * `InspectorPane._IGNORE_SELECTORS_LABEL`. The row count is unaffected: a
+ * bordered widget spends the same two rows either way.
+ */
+#inspector-noise-selectors {
+    width: 100%;
+    height: auto;
+    max-height: 4;
+    margin: 0;
+}
+
+#inspector-save-selectors-button {
+    width: 100%;
+    margin: 0;
+}
+
 /* TASK-997. The expand chevron drew on its own indented line ABOVE the
  * watchlist name:
  *
@@ -854,6 +879,25 @@ WatchlistSourcePickerDialog {
     width: 100%;
 }
 
+/* TASK-1362. Name and URL share one row so the noise field below has rows to
+ * occupy. Measured with the form open at 160x42: the Sources pane is 16 rows
+ * (toolbar 2 + form 13 + table 1), i.e. the form had no spare row at all, and
+ * a field of any height pushed `Create`/`Cancel` -- and then the table -- past
+ * the pane's bottom edge, which is the unreachable-control defect TASK-1035
+ * existed to fix. Pairing costs neither Input its border or its size, and it
+ * is what this form already does for Type/Active and Tags/cadence.
+ */
+#sources-create-form .sources-create-identity-row {
+    width: 100%;
+    height: 3;
+}
+
+#sources-create-form #sources-create-name,
+#sources-create-form #sources-create-url {
+    width: 1fr;
+    margin: 0;
+}
+
 /* Type + Active share one row. Two things are pinned here.
  *
  * The `Active` label was `width: 1fr` at Textual's default and claimed the
@@ -893,15 +937,32 @@ WatchlistSourcePickerDialog {
  */
 #sources-create-form .sources-create-tags-row {
     width: 100%;
-    height: 3;
+    height: 1;
 }
 
 #sources-create-form #sources-create-tags {
     width: 1fr;
+    margin: 0;
 }
 
 #sources-create-form #sources-create-frequency {
     width: 16;
+    margin: 0;
+}
+
+/* TASK-1362 (spec §2): the noise control. `max-height: 4` is the whole field
+ * -- two rows of selectors between its border rows, with the label on the top
+ * border and the help copy on the bottom (see `_IGNORE_SELECTORS_LABEL` in
+ * sources_pane.py). Two `Static` rows for that text is two rows this form does
+ * not have, and a taller field puts `Create`/`Cancel` off the bottom of a
+ * 16-row pane at 160x42. `height: auto` under the cap keeps it from claiming
+ * `1fr` of the form the way TextArea's own default would, which is the same
+ * defect and the same fix as `#sources-toolbar` and the form container above.
+ */
+#sources-create-form #sources-create-ignore-selectors {
+    width: 100%;
+    height: auto;
+    max-height: 4;
     margin: 0;
 }
 
