@@ -4268,6 +4268,13 @@ async def test_identity_change_after_trust_runs_no_status(
             lambda: isinstance(workspace.app.screen, SessionGitTrustDialog),
             "trust dialog did not open",
         )
+        await _wait_until(
+            pilot,
+            lambda: bool(
+                list(workspace.app.screen.query("#confirm-button"))
+            ),
+            "trust dialog controls did not mount",
+        )
         workspace.app.screen.query_one("#confirm-button", Button).press()
         await pilot.pause(0.1)
         assert git_service.status_calls == []
