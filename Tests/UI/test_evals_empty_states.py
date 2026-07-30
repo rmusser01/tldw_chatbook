@@ -34,6 +34,7 @@ from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 
 from .test_evals_screen import EvalsHarness, _FakeAppInstance
+from .test_evals_screen import seeded_bench as seeded_bench  # noqa: F401 -- fixture re-export
 from .test_evals_results_grid import _select_run_group
 from .test_evals_results_grid import evals_db as evals_db  # noqa: F401 -- fixture re-export
 from .test_evals_results_grid import mixed_run_group as mixed_run_group  # noqa: F401
@@ -924,6 +925,110 @@ async def test_import_dataset_file_selected_creates_a_dataset_from_the_file(
         assert len(datasets) == 1
         assert screen._selection.kind == "dataset"
         assert screen._selection.id == datasets[0]["id"]
+
+
+# ---------------------------------------------------------------------------
+# TASK-1478: creation affordances survive the section's first row -- live
+# UAT found "Create sample bench" and "+ New dataset"/"Import…" vanished
+# the moment one bench/dataset existed, a one-way trapdoor into a
+# read-only rail. The design spec requires both to stay reachable
+# regardless of section contents; only the explanatory empty-state COPY
+# ("No benches yet."/"No datasets yet.", the first-run hint, the
+# no-providers message) stays scoped to a genuinely empty section.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sample_bench_offer_stays_reachable_once_a_bench_already_exists(
+    configured_app, seeded_bench
+):
+    """A configured provider plus one existing word bench used to hide
+    "Create sample bench" entirely -- `_benches_section_body`'s non-empty
+    branch never even looked at the provider gate. It must stay clickable
+    (and contained within the rail) alongside the real bench row."""
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        rail = screen.query_one("#evals-library-pane")
+
+        button = screen.query_one("#evals-create-sample-bench")
+        assert rail.region.contains_region(button.region)
+        # The existing bench itself is still there too -- this is not the
+        # empty-state offer in disguise.
+        bench_row = screen.query_one("#evals-rail-row-benches-0")
+        assert "loaded-nouns" in str(bench_row.label)
+
+        # The empty-state copy is genuinely gone -- a real bench exists,
+        # so "No benches yet."/the first-run hint would be a false claim.
+        assert not screen.query("#evals-rail-first-run-hint")
+        assert not screen.query("#evals-rail-section-body-benches .evals-rail-empty-copy")
+
+
+@pytest.mark.asyncio
+async def test_dataset_actions_stay_reachable_once_a_dataset_already_exists(
+    configured_app, evals_db: EvalsDB
+):
+    """The Datasets-section mirror of the test above: "+ New dataset" and
+    "Import…" used to render only in `_section_body`'s empty branch, so a
+    single dataset made further authoring/import unreachable from the
+    rail. Both must stay present and clickable once a dataset exists."""
+    evals_db.create_dataset(
+        name="already-here", format="custom", source_path="inline:already-here"
+    )
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        rail = screen.query_one("#evals-library-pane")
+
+        new_button = screen.query_one("#evals-rail-new-dataset")
+        import_button = screen.query_one("#evals-rail-import-dataset")
+        assert rail.region.contains_region(new_button.region)
+        assert rail.region.contains_region(import_button.region)
+
+        dataset_row = screen.query_one("#evals-rail-row-datasets-0")
+        assert "already-here" in str(dataset_row.label)
+        assert not screen.query("#evals-rail-section-body-datasets .evals-rail-empty-copy")
+
+        # And the button still works exactly as it does in the empty case.
+        await pilot.click("#evals-rail-new-dataset")
+        await pilot.pause()
+        assert len(evals_db.list_datasets()) == 2
+
+
+@pytest.mark.asyncio
+async def test_collapsing_a_non_empty_section_hides_its_creation_affordance_too(
+    configured_app, seeded_bench, evals_db: EvalsDB
+):
+    """The new affordance rows live in the section BODY (never the header),
+    so collapsing a section must hide them exactly like it hides every
+    row -- proven here against the non-empty case specifically, since
+    that is the state this task newly makes render at all."""
+    evals_db.create_dataset(
+        name="already-here", format="custom", source_path="inline:already-here"
+    )
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+
+        sample_bench_button = screen.query_one("#evals-create-sample-bench")
+        new_dataset_button = screen.query_one("#evals-rail-new-dataset")
+        assert sample_bench_button.region.width > 0
+        assert new_dataset_button.region.width > 0
+
+        await pilot.click("#evals-rail-toggle-benches")
+        await pilot.click("#evals-rail-toggle-datasets")
+        await pilot.pause()
+
+        benches_body = screen.query_one("#evals-rail-section-body-benches")
+        datasets_body = screen.query_one("#evals-rail-section-body-datasets")
+        assert benches_body.styles.display == "none"
+        assert datasets_body.styles.display == "none"
+        # Still present in the DOM (the widget itself did not vanish) but
+        # not actually rendered -- same convention as
+        # test_every_pane_descendant_stays_within_its_pane's "collapsed
+        # rail section" skip.
+        assert sample_bench_button.region.width == 0
+        assert new_dataset_button.region.width == 0
 
 
 # ---------------------------------------------------------------------------

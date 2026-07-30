@@ -38,6 +38,23 @@ and possibly zero configured providers:
   import are plain DB/file operations, not provider calls, mirroring
   ``snippet_editor.py``'s own self-contained import flow) rather than
   routed through ``EvalsScreen``.
+
+**Creation affordances are not empty-only** (TASK-1478). A live UAT pass
+found the rail became read-only the moment it had one row: "Create sample
+bench" and "+ New dataset"/"Import…" used to render only in each
+section's *empty* branch, so a single bench or dataset was a one-way
+trapdoor out of ever creating another one without going through some
+other screen. Both now render unconditionally at the top of their
+section's body (``_benches_section_body``'s ``_create_sample_bench_button``
+call, ``_dataset_actions``) -- only the *explanatory copy* ("No benches
+yet."/"No datasets yet.", the first-run hint, the no-providers message)
+stays scoped to the genuinely-empty case; a real list below it needs no
+prose. The provider gate itself is unchanged: no benches and no provider
+still routes to "Open Settings" rather than a button pointing at nothing,
+and that escape hatch is never duplicated once real benches exist -- see
+``_benches_section_body``'s own comment on why a failed gate with existing
+benches (in practice unreachable, since a word bench's target already
+satisfies ``provider_is_configured``) adds no row at all.
 """
 
 from __future__ import annotations
@@ -183,7 +200,7 @@ class LibraryRail(NotifyMixin, Vertical):
             kind="dataset",
             empty_copy="No datasets yet.",
             row_label=_dataset_row_label,
-            empty_extra=self._dataset_empty_actions,
+            actions=self._dataset_actions,
         )
         yield from self._section(
             section_id="runs",
@@ -236,6 +253,22 @@ class LibraryRail(NotifyMixin, Vertical):
             tooltip="No local llama.cpp provider is configured yet.",
         )
 
+    @staticmethod
+    def _create_sample_bench_button() -> Button:
+        """Shared by both branches of ``_benches_section_body`` (TASK-1478:
+        the button is no longer empty-only, so both the "no benches yet"
+        and "benches already exist" paths need the identical control, id
+        included -- see the module docstring's "Creation affordances are
+        not empty-only" note)."""
+        return Button(
+            "Create sample bench",
+            id="evals-create-sample-bench",
+            tooltip=(
+                "Creates the loaded-nouns sample dataset, wires it to a "
+                "configured target, and runs it."
+            ),
+        )
+
     def _section(
         self,
         *,
@@ -245,7 +278,7 @@ class LibraryRail(NotifyMixin, Vertical):
         kind: str,
         empty_copy: str,
         row_label: Callable[[dict[str, Any]], str],
-        empty_extra: Optional[Callable[[], ComposeResult]] = None,
+        actions: Optional[Callable[[], ComposeResult]] = None,
     ) -> ComposeResult:
         open_state = self.open_sections.get(section_id, True)
         yield Horizontal(
@@ -270,7 +303,7 @@ class LibraryRail(NotifyMixin, Vertical):
             empty_copy=empty_copy,
             row_label=row_label,
             open_state=open_state,
-            empty_extra=empty_extra,
+            actions=actions,
         )
 
     def _row_button(
@@ -297,9 +330,15 @@ class LibraryRail(NotifyMixin, Vertical):
         empty_copy: str,
         row_label: Callable[[dict[str, Any]], str],
         open_state: bool,
-        empty_extra: Optional[Callable[[], ComposeResult]] = None,
+        actions: Optional[Callable[[], ComposeResult]] = None,
     ) -> Vertical:
         children: list[Any] = []
+        # TASK-1478: rendered unconditionally, at the top -- a creation
+        # affordance must survive the section's first row existing, not
+        # just precede it. Lives in the section body (not the header) so it
+        # still collapses with the rest of the section, same as every row.
+        if actions is not None:
+            children.extend(actions())
         if rows:
             for index, row in enumerate(rows):
                 button_id = f"{EVALS_RAIL_ROW_PREFIX}{section_id}-{index}"
@@ -315,8 +354,6 @@ class LibraryRail(NotifyMixin, Vertical):
             children.append(
                 Static(empty_copy, classes="evals-rail-empty-copy", markup=False)
             )
-            if empty_extra is not None:
-                children.extend(empty_extra())
         body = Vertical(
             *children,
             id=f"evals-rail-section-body-{section_id}",
@@ -375,7 +412,25 @@ class LibraryRail(NotifyMixin, Vertical):
         is_first_run: bool = False,
     ) -> Vertical:
         children: list[Any] = []
+        # Read once, shared by both the non-empty and empty branches below
+        # (TASK-1478 needs it in both -- the sample-bench button is no
+        # longer offered only when the section is empty).
+        provider_ready = sample_bench.provider_is_configured(
+            self.view_model, self.app_config
+        )
         if benches:
+            # TASK-1478: a word bench already exists (which itself means a
+            # llama_cpp target -- an eval_models row -- already satisfies
+            # `provider_is_configured`; see sample_bench.py's gate), but
+            # the sample-bench button used to disappear the moment this
+            # branch was reached at all, making bench creation a one-way
+            # trapdoor. Keep it reachable at the top of the list. When the
+            # gate fails here regardless (in practice unreachable, per the
+            # note above), no row is added -- the "Open Settings" escape
+            # hatch below is scoped to the fully-empty branch and must not
+            # be duplicated for a rail that already has real benches.
+            if provider_ready:
+                children.append(self._create_sample_bench_button())
             for index, row in enumerate(benches):
                 button_id = f"{EVALS_RAIL_ROW_PREFIX}benches-{index}"
                 children.append(
@@ -397,9 +452,6 @@ class LibraryRail(NotifyMixin, Vertical):
             # pre-existing classic task and no word benches -- exactly
             # this rebuild's upgrading population -- with NEITHER offer,
             # no matter what providers they had configured.
-            provider_ready = sample_bench.provider_is_configured(
-                self.view_model, self.app_config
-            )
             if not classic_tasks:
                 # Fully empty section -- the full explanatory copy. With a
                 # classic task also present, this text would just be a
@@ -444,16 +496,7 @@ class LibraryRail(NotifyMixin, Vertical):
                 # A real target IS resolvable here -- the button never
                 # appears pointing at nothing (see sample_bench.py's "Do
                 # not fabricate" note).
-                children.append(
-                    Button(
-                        "Create sample bench",
-                        id="evals-create-sample-bench",
-                        tooltip=(
-                            "Creates the loaded-nouns sample dataset, wires "
-                            "it to a configured target, and runs it."
-                        ),
-                    )
-                )
+                children.append(self._create_sample_bench_button())
             else:
                 children.append(self._open_settings_button())
 
@@ -488,11 +531,18 @@ class LibraryRail(NotifyMixin, Vertical):
             body.styles.display = "none"
         return body
 
-    def _dataset_empty_actions(self) -> ComposeResult:
-        """"No datasets" offers authoring and import side by side (design
-        spec's "Empty states and first run" table) -- both handled locally
-        (plain DB/file work, never a provider call), mirroring
-        ``snippet_editor.py``'s own self-contained import flow."""
+    def _dataset_actions(self) -> ComposeResult:
+        """Authoring and import, side by side (design spec's "Empty states
+        and first run" table) -- both handled locally (plain DB/file work,
+        never a provider call), mirroring ``snippet_editor.py``'s own
+        self-contained import flow.
+
+        TASK-1478: no longer empty-only -- rendered unconditionally at the
+        top of the Datasets section body (see ``_section_body``), so
+        dataset creation stays reachable once a dataset already exists
+        rather than only before the first one. Renamed from
+        ``_dataset_empty_actions`` accordingly.
+        """
         yield Horizontal(
             Button("+ New dataset", id="evals-rail-new-dataset", compact=True),
             Button("Import…", id="evals-rail-import-dataset", compact=True),

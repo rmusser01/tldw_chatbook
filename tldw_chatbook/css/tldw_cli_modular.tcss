@@ -11966,8 +11966,11 @@ Button:disabled {
     width: auto;
 }
 
-/* "No datasets" offers authoring and import side by side -- two compact
-   buttons in one row, under the section's existing empty-copy line. */
+/* Dataset authoring and import, side by side -- two compact buttons in one
+   row at the top of the Datasets section body (TASK-1478: rendered
+   unconditionally, not only above the section's empty-copy line -- see
+   library_rail.py's `_dataset_actions`). Class name kept from the earlier
+   empty-only version; only the Python call site changed. */
 .evals-rail-empty-actions {
     height: auto;
     padding: 0 1;
