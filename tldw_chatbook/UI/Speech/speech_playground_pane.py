@@ -283,12 +283,22 @@ class SpeechPlaygroundPane(
     def _mirror_axis_edit(self, control_id: str | None, value: object) -> None:
         """Mirror a user's direct edit of an axis control into the model.
 
-        Skipped while `_applying_catalog_controls` is True: those writes
-        originate from `_apply_controls` or `_prime_profile_preset_controls`,
-        which update `axis_values` themselves -- reusing that guard rather
-        than inventing a second one, since it is also what
-        `_end_profile_preset` depends on to tell a catalog-driven write from
-        a user edit.
+        No `_applying_catalog_controls` guard: an earlier version of this
+        method skipped mirroring while that flag was True, on the theory
+        that it would otherwise double-mirror a catalog-driven write. It
+        cannot, and never did -- `_apply_controls` and
+        `_prime_profile_preset_controls` never hold the flag True across an
+        `await`, so it is always back to False by the time Textual delivers
+        the `Select.Changed`/`Input.Changed` that write produced (a
+        five-scenario instrumented check found zero guard-True entries).
+        Reusing that dead branch would have masked the real reason mirroring
+        one of those deferred, catalog-driven messages is harmless: a
+        widget's own `Changed` queue is FIFO, so this always sees the LAST
+        value written to that control, and `_apply_controls`/
+        `_prime_profile_preset_controls` already wrote that identical value
+        into `axis_values` synchronously, before the message was even
+        queued -- mirroring it again is a redundant no-op, not a
+        correctness risk.
 
         Args:
             control_id: The changed widget's id, or ``None``.
@@ -296,8 +306,6 @@ class SpeechPlaygroundPane(
                 ``str`` -- the sentinel values `Select` uses for "loading"
                 and "unavailable" are not session edits.
         """
-        if self._applying_catalog_controls:
-            return
         if control_id not in AXIS_CONTROLS or not isinstance(value, str):
             return
         self.axis_values[control_id] = value
