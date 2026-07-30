@@ -182,18 +182,72 @@ def cleanup_loguru_handlers():
                 pass
 
 
+# Full gc passes after EVERY test cost real wall-clock at suite scale: the old
+# version of this fixture ran TWO gc.collect() per test, ~23,000 full-heap
+# collections per run with torch/transformers-sized heaps (2026-07-30 audit,
+# driver #3). The FD-leak incidents that motivated it (loguru handlers, fds
+# under Textual's redirected streams) are guarded by cleanup_loguru_handlers
+# above and the fd_leak_sentinel below; periodic collection plus the
+# requires_cleanup marker covers the rest. TLDW_TEST_GC_EVERY=1 restores
+# per-test collection as an escape hatch.
+_GC_EVERY = max(1, int(os.environ.get("TLDW_TEST_GC_EVERY", "25")))
+_gc_test_counter = 0
+
+
 @pytest.fixture(autouse=True)
-def cleanup_file_descriptors():
-    """Force garbage collection and close any leaked file descriptors after each test."""
+def cleanup_file_descriptors(request):
+    """Garbage-collect leaked file objects periodically (or per-test on request).
+
+    Tests that genuinely need a collection pass right after they run (e.g. they
+    open many files and assert on fd state) mark themselves
+    ``@pytest.mark.requires_cleanup``.
+    """
     yield
 
-    # Force garbage collection to cleanup any unclosed files
-    gc.collect()
+    global _gc_test_counter
+    _gc_test_counter += 1
+    if (
+        request.node.get_closest_marker("requires_cleanup")
+        or _gc_test_counter % _GC_EVERY == 0
+    ):
+        # Suppress ResourceWarnings emitted for unclosed files reclaimed here.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ResourceWarning)
+            gc.collect()
 
-    # Suppress ResourceWarnings during test cleanup
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", ResourceWarning)
-        gc.collect()
+
+@pytest.fixture(scope="session", autouse=True)
+def fd_leak_sentinel():
+    """Warn when the session's open-fd count grows past a leak threshold.
+
+    Replacement leak detection for the per-test gc.collect() this file used to
+    do: cheap (two directory listings per session), and unlike the gc pass it
+    produces an actionable signal instead of silently papering over leaks.
+    Warn-only for now; threshold via TLDW_TEST_FD_GROWTH_LIMIT.
+    """
+    fd_dir = "/dev/fd" if sys.platform == "darwin" else "/proc/self/fd"
+
+    def _count_fds():
+        try:
+            return len(os.listdir(fd_dir))
+        except OSError:
+            return None
+
+    limit = int(os.environ.get("TLDW_TEST_FD_GROWTH_LIMIT", "200"))
+    start = _count_fds()
+    yield
+    if start is None:
+        return
+    end = _count_fds()
+    if end is not None and end - start > limit:
+        warnings.warn(
+            f"open file descriptors grew by {end - start} over the test session "
+            f"(start={start}, end={end}, limit={limit}) — possible fd leak; "
+            "bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests "
+            "@pytest.mark.requires_cleanup",
+            ResourceWarning,
+            stacklevel=0,
+        )
 
 
 # ========== Async Cleanup Fixtures ==========
