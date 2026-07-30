@@ -22,12 +22,12 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     RepositoryIdentity,
     SequencedSessionChange,
     SessionBinding,
-    SessionChangeAction,
     SessionChangeGroup,
     SessionChangeTopology,
     SessionGitStatus,
     SessionGitRow,
     StagingOwnership,
+    coalesce_session_changes,
 )
 
 PorcelainKind = Literal[
@@ -173,6 +173,7 @@ GitStatusAdmissionReason = Literal[
 GitMutationAdmissionReason = Literal[
     "untrusted",
     "mutation_active",
+    "recovery_required",
     "transition_active",
     "stale_binding",
     "shutdown",
@@ -3537,81 +3538,6 @@ def parse_index_entries_z(payload: bytes) -> tuple[IndexEntry, ...]:
             )
         )
     return tuple(entries)
-
-
-@dataclass(slots=True)
-class _GroupBuilder:
-    group_id: int
-    endpoints: list[str]
-    source_path: str
-    destination_path: str | None
-    current_path: str
-    latest_action: SessionChangeAction
-    latest_sequence: int
-    move_edges: list[tuple[str, str]]
-
-    def add_endpoint(self, path: str) -> None:
-        if path not in self.endpoints:
-            self.endpoints.append(path)
-
-    def freeze(self) -> SessionChangeGroup:
-        return SessionChangeGroup(
-            group_id=self.group_id,
-            endpoints=tuple(self.endpoints),
-            source_path=self.source_path,
-            destination_path=self.destination_path,
-            current_path=self.current_path,
-            latest_action=self.latest_action,
-            latest_sequence=self.latest_sequence,
-            move_edges=tuple(self.move_edges),
-        )
-
-
-def coalesce_session_changes(
-    changes: Sequence[SequencedSessionChange],
-) -> tuple[SessionChangeGroup, ...]:
-    """Coalesce session events using only each lineage's active path."""
-    active_paths: dict[str, _GroupBuilder] = {}
-    builders: list[_GroupBuilder] = []
-
-    for sequenced in sorted(changes, key=lambda item: item.sequence):
-        change = sequenced.change
-        path = change.relative_path
-        builder = active_paths.get(path)
-        if builder is None:
-            builder = _GroupBuilder(
-                group_id=sequenced.sequence,
-                endpoints=[path],
-                source_path=path,
-                destination_path=None,
-                current_path=path,
-                latest_action=change.action,
-                latest_sequence=sequenced.sequence,
-                move_edges=[],
-            )
-            builders.append(builder)
-
-        if change.action == "moved":
-            destination = change.destination_path
-            if destination is None:
-                raise ValueError("A moved session change requires a destination")
-            if active_paths.get(path) is builder:
-                del active_paths[path]
-            builder.add_endpoint(path)
-            builder.add_endpoint(destination)
-            builder.move_edges.append((path, destination))
-            builder.destination_path = destination
-            builder.current_path = destination
-            active_paths[destination] = builder
-        else:
-            builder.add_endpoint(path)
-            builder.current_path = path
-            active_paths[path] = builder
-
-        builder.latest_action = change.action
-        builder.latest_sequence = sequenced.sequence
-
-    return tuple(builder.freeze() for builder in builders)
 
 
 def parse_porcelain_v2_z(

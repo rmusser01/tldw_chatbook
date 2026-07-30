@@ -146,7 +146,7 @@ def _single_group(path: str = "note.md") -> SessionChangeGroup:
     )
 
 
-def test_repeated_edits_retain_the_earliest_sequence_as_group_id() -> None:
+def test_coalesce_session_changes_records_exact_ordered_sequence_membership() -> None:
     groups = coalesce_session_changes(
         (
             _change(7, "modified", "note.md"),
@@ -158,6 +158,7 @@ def test_repeated_edits_retain_the_earliest_sequence_as_group_id() -> None:
     assert len(groups) == 1
     assert groups[0].group_id == 7
     assert groups[0].latest_sequence == 15
+    assert groups[0].sequence_ids == (7, 11, 15)
     assert groups[0].endpoints == ("note.md",)
 
 
@@ -207,6 +208,7 @@ def test_move_lineage_is_inseparable_and_retains_original_and_final_paths() -> N
     assert groups[0].source_path == "one.md"
     assert groups[0].destination_path == "three.md"
     assert groups[0].current_path == "three.md"
+    assert groups[0].sequence_ids == (2, 4, 6)
     assert groups[0].display_text == "one.md → three.md"
 
 
@@ -223,6 +225,7 @@ def test_reusing_an_old_move_source_starts_a_new_group() -> None:
         (1, ("one.md", "two.md", "three.md")),
         (2, ("one.md",)),
     ]
+    assert [group.sequence_ids for group in groups] == [(1, 3), (2,)]
 
 
 def test_only_the_active_path_mapping_extends_a_move_group() -> None:
@@ -272,6 +275,7 @@ def test_display_sanitizes_surrogateescaped_bytes_but_raw_path_round_trips() -> 
 
 def test_session_group_copies_endpoint_sequences_to_an_immutable_tuple() -> None:
     endpoints = ["one.md"]
+    sequence_ids = [1]
     group = SessionChangeGroup(
         group_id=1,
         endpoints=endpoints,  # type: ignore[arg-type]
@@ -280,10 +284,13 @@ def test_session_group_copies_endpoint_sequences_to_an_immutable_tuple() -> None
         current_path="one.md",
         latest_action="modified",
         latest_sequence=1,
+        sequence_ids=sequence_ids,  # type: ignore[arg-type]
     )
     endpoints.append("late.md")
+    sequence_ids.append(2)
 
     assert group.endpoints == ("one.md",)
+    assert group.sequence_ids == (1,)
 
 
 def test_parse_porcelain_v2_z_preserves_all_supported_record_paths_as_bytes() -> None:
@@ -3141,12 +3148,19 @@ async def test_pending_status_rerun_is_suppressed_by_admitted_mutation(
     )
     mutation = owner.try_acquire_mutation(binding)  # type: ignore[arg-type]
     assert mutation is not None
+    before_late_status = owner.snapshot(binding)  # type: ignore[arg-type]
 
     runner.release_first_index.set()
     result = await asyncio.wait_for(first, timeout=1)
 
     assert runner.query_count == 1
     assert result.state == "stale"
+    after_late_status = owner.snapshot(binding)  # type: ignore[arg-type]
+    assert after_late_status.git_status == before_late_status.git_status
+    assert (
+        after_late_status.git_authority_generation
+        == before_late_status.git_authority_generation
+    )
     assert owner.try_acquire_status(binding) is None  # type: ignore[arg-type]
     mutation.release()
     status_lease = owner.try_acquire_status(binding)  # type: ignore[arg-type]
