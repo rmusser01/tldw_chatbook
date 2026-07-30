@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import os
+import sys
 from dataclasses import FrozenInstanceError, is_dataclass
 from time import perf_counter
 
@@ -23,6 +26,7 @@ from tldw_chatbook.Notes.file_notes_git_commit import (
     parse_raw_commit_object,
     parse_raw_staged_delta,
 )
+from tldw_chatbook.Notes.file_notes_session_owner import IndexEntry
 
 
 _ZERO_OID = "0" * 40
@@ -30,6 +34,188 @@ _OLD_OID = "1" * 40
 _NEW_OID = "2" * 40
 _TREE_OID = "a" * 40
 _PARENT_OID = "b" * 40
+
+
+def test_commit_argv_is_the_exact_noninteractive_unsigned_contract() -> None:
+    assert git_service.build_commit_argv("git", "/private/hooks") == (
+        "git",
+        "--no-replace-objects",
+        "-c",
+        "core.hooksPath=/private/hooks",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "maintenance.auto=false",
+        "-c",
+        "gc.auto=0",
+        "-c",
+        "commit.gpgSign=false",
+        "-c",
+        "i18n.commitEncoding=UTF-8",
+        "commit",
+        "--no-gpg-sign",
+        "--cleanup=verbatim",
+        "-F",
+        "-",
+    )
+
+
+def test_commit_argv_uses_exact_normalized_message_as_stdin() -> None:
+    assert git_service.build_commit_stdin(" Subject ", " Body \r\n") == (
+        b"Subject\n\n Body \n"
+    )
+
+
+def test_commit_environment_isolated_and_binds_reviewed_identities() -> None:
+    ambient = {
+        "PATH": "/bin",
+        "KEEP": "yes",
+        "GIT_DIR": "/hostile/repository",
+        "GIT_WORK_TREE": "/hostile/worktree",
+        "GIT_INDEX_FILE": "/hostile/index",
+        "GIT_COMMON_DIR": "/hostile/common",
+        "GIT_CONFIG": "/hostile/config",
+        "GIT_CONFIG_GLOBAL": "/hostile/global",
+        "GIT_CONFIG_SYSTEM": "/hostile/system",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "core.hooksPath",
+        "GIT_CONFIG_VALUE_0": "/hostile/hooks",
+        "GIT_AUTHOR_DATE": "yesterday",
+        "GIT_COMMITTER_DATE": "tomorrow",
+        "GIT_AUTHOR_NAME": "Ambient author",
+        "GIT_AUTHOR_EMAIL": "ambient-author@example.test",
+        "GIT_COMMITTER_NAME": "Ambient committer",
+        "GIT_COMMITTER_EMAIL": "ambient-committer@example.test",
+        "GIT_EDITOR": "hostile-editor",
+        "GIT_SEQUENCE_EDITOR": "hostile-sequence-editor",
+        "GIT_ASKPASS": "hostile-askpass",
+        "SSH_ASKPASS": "hostile-ssh-askpass",
+        "EDITOR": "hostile-editor",
+        "VISUAL": "hostile-visual",
+    }
+    author = GitIdentity("Reviewed Author", "author@example.test")
+    committer = GitIdentity("Reviewed Committer", "committer@example.test")
+
+    environment = git_service.build_commit_environment(
+        ambient,
+        author=author,
+        committer=committer,
+    )
+
+    assert environment["KEEP"] == "yes"
+    assert environment["GIT_NO_LAZY_FETCH"] == "1"
+    assert environment["GIT_TERMINAL_PROMPT"] == "0"
+    assert environment["GIT_EDITOR"] == "true"
+    assert environment["GIT_SEQUENCE_EDITOR"] == "true"
+    assert environment["EDITOR"] == "true"
+    assert environment["VISUAL"] == "true"
+    assert environment["GIT_ASKPASS"] == "true"
+    assert environment["SSH_ASKPASS"] == "true"
+    assert environment["GIT_AUTHOR_NAME"] == author.name
+    assert environment["GIT_AUTHOR_EMAIL"] == author.email
+    assert environment["GIT_COMMITTER_NAME"] == committer.name
+    assert environment["GIT_COMMITTER_EMAIL"] == committer.email
+    for removed in (
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_CONFIG",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
+        "GIT_AUTHOR_DATE",
+        "GIT_COMMITTER_DATE",
+    ):
+        assert removed not in environment
+
+
+def test_commit_environment_is_separate_from_ordinary_stage_environment() -> None:
+    ordinary = git_service.build_git_environment(
+        {
+            "GIT_AUTHOR_DATE": "kept-for-ordinary-stage",
+            "GIT_EDITOR": "ordinary-editor",
+        }
+    )
+
+    assert ordinary["GIT_AUTHOR_DATE"] == "kept-for-ordinary-stage"
+    assert ordinary["GIT_EDITOR"] == "ordinary-editor"
+    assert "GIT_NO_LAZY_FETCH" not in ordinary
+
+
+def test_complete_commit_proof_argv_disables_optional_git_semantics() -> None:
+    assert git_service.build_commit_index_argv("git") == (
+        "git",
+        "--no-replace-objects",
+        "--literal-pathspecs",
+        "-c",
+        "core.fsmonitor=false",
+        "ls-files",
+        "-z",
+        "--stage",
+        "-v",
+        "--",
+    )
+    assert git_service.build_commit_delta_argv("git", _PARENT_OID) == (
+        "git",
+        "--no-replace-objects",
+        "--literal-pathspecs",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "diff.renames=false",
+        "diff-index",
+        "--cached",
+        "--raw",
+        "-z",
+        "--no-renames",
+        "--no-ext-diff",
+        "--no-textconv",
+        _PARENT_OID,
+        "--",
+    )
+    assert git_service.build_commit_worktree_argv(
+        "git",
+        (b"note.md", b"old-note.md"),
+    ) == (
+        "git",
+        "--no-replace-objects",
+        "--literal-pathspecs",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "status.renames=false",
+        "-c",
+        "diff.renames=false",
+        "status",
+        "--porcelain=v2",
+        "-z",
+        "--untracked-files=all",
+        "--ignored=matching",
+        "--no-renames",
+        "--",
+        b"note.md",
+        b"old-note.md",
+    )
+
+
+def test_complete_commit_proof_rejects_empty_owned_delta() -> None:
+    entry = IndexEntry("note.md", "100644", _NEW_OID)
+
+    assert (
+        git_service.complete_commit_delta_matches_ownership(
+            (),
+            {
+                1: (
+                    {"note.md": entry},
+                    {"note.md": entry},
+                )
+            },
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize(
@@ -63,6 +249,50 @@ def test_retained_commit_child_token_has_no_public_constructor() -> None:
         git_service.RetainedGitChildToken()
 
 
+@pytest.mark.asyncio
+async def test_commit_review_bounded_runner_streams_and_caps_proof_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = git_service.AsyncGitProcessRunner()
+
+    async def communicate_is_forbidden(
+        _process: asyncio.subprocess.Process,
+        _input: bytes | None = None,
+    ) -> tuple[bytes, bytes]:
+        raise AssertionError("bounded output must not use communicate()")
+
+    monkeypatch.setattr(
+        asyncio.subprocess.Process,
+        "communicate",
+        communicate_is_forbidden,
+    )
+    result = await runner.run(
+        (
+            sys.executable,
+            "-c",
+            (
+                "import sys;"
+                "payload=sys.stdin.buffer.read();"
+                "sys.stdout.buffer.write(payload + b'x' * 1000000);"
+                "sys.stderr.buffer.write(b'y' * 1000000)"
+            ),
+        ),
+        cwd="/tmp",
+        environment=os.environ,
+        stdin=b"input",
+        stdout_limit=97,
+        stderr_limit=53,
+    )
+
+    assert result.returncode == 0
+    assert result.output_overflow is True
+    assert result.stdout == b"input" + (b"x" * 92)
+    assert result.stderr == b"y" * 53
+    assert not runner._processes
+    assert not runner._retained_children
+    assert await runner.shutdown()
+
+
 def _raw_delta_record(
     *,
     old_mode: str = "100644",
@@ -90,6 +320,87 @@ def _raw_commit(
     headers.extend((b"author " + author, b"committer " + committer))
     headers.extend(extra_headers)
     return b"\n".join(headers) + b"\n\n" + message
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "delta"),
+    [
+        (
+            {"note.md": None},
+            {"note.md": IndexEntry("note.md", "100644", _NEW_OID)},
+            RawStagedDeltaEntry(
+                "000000",
+                "100644",
+                _ZERO_OID,
+                _NEW_OID,
+                "A",
+                b"note.md",
+            ),
+        ),
+        (
+            {"note.md": IndexEntry("note.md", "100644", _OLD_OID)},
+            {"note.md": None},
+            RawStagedDeltaEntry(
+                "100644",
+                "000000",
+                _OLD_OID,
+                _ZERO_OID,
+                "D",
+                b"note.md",
+            ),
+        ),
+        (
+            {"note.md": IndexEntry("note.md", "100644", _OLD_OID)},
+            {"note.md": IndexEntry("note.md", "100755", _OLD_OID)},
+            RawStagedDeltaEntry(
+                "100644",
+                "100755",
+                _OLD_OID,
+                _OLD_OID,
+                "M",
+                b"note.md",
+            ),
+        ),
+    ],
+)
+def test_complete_commit_proof_matches_add_delete_and_mode_delta(
+    before: dict[str, IndexEntry | None],
+    after: dict[str, IndexEntry | None],
+    delta: RawStagedDeltaEntry,
+) -> None:
+    assert git_service.complete_commit_delta_matches_ownership(
+        (delta,),
+        {1: (before, after)},
+    )
+
+
+def test_complete_commit_proof_rejects_unrelated_staged_delta() -> None:
+    owned = RawStagedDeltaEntry(
+        "100644",
+        "100644",
+        _OLD_OID,
+        _NEW_OID,
+        "M",
+        b"note.md",
+    )
+    unrelated = RawStagedDeltaEntry(
+        "000000",
+        "100644",
+        _ZERO_OID,
+        _NEW_OID,
+        "A",
+        b"hostile-unrelated-secret.md",
+    )
+
+    assert not git_service.complete_commit_delta_matches_ownership(
+        (owned, unrelated),
+        {
+            1: (
+                {"note.md": IndexEntry("note.md", "100644", _OLD_OID)},
+                {"note.md": IndexEntry("note.md", "100644", _NEW_OID)},
+            )
+        },
+    )
 
 
 def test_commit_message_trims_subject_and_emits_exact_subject_bytes() -> None:

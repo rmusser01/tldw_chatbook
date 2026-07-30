@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import shutil
 import stat
@@ -11,7 +12,20 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Generic, Literal, Protocol, TypeVar
 
+from tldw_chatbook.Notes.file_notes_git_commit import (
+    CommitContractError,
+    CommitIncludedNote,
+    CommitReviewHandle,
+    CommitReviewProjection,
+    CommitReviewResult,
+    GitIdentity,
+    RawStagedDeltaEntry,
+    normalize_commit_message,
+    parse_git_identity,
+    parse_raw_staged_delta,
+)
 from tldw_chatbook.Notes.file_notes_session_owner import (
+    CommitAuthorityCapture,
     FileNotesSessionOwner,
     FileSystemIdentity,
     GitMutationLease,
@@ -91,7 +105,23 @@ _DYNAMIC_CONFIG_ENVIRONMENT_PREFIXES = (
     "GIT_CONFIG_KEY_",
     "GIT_CONFIG_VALUE_",
 )
+_COMMIT_ONLY_REMOVED_ENVIRONMENT = frozenset(
+    {
+        "GIT_AUTHOR_DATE",
+        "GIT_COMMITTER_DATE",
+        "GIT_EDITOR",
+        "GIT_SEQUENCE_EDITOR",
+        "GIT_ASKPASS",
+        "SSH_ASKPASS",
+        "EDITOR",
+        "VISUAL",
+        "GIT_OPTIONAL_LOCKS",
+    }
+)
 DEFAULT_GIT_STDERR_LIMIT_BYTES = 4096
+DEFAULT_COMMIT_PROOF_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024
+DEFAULT_COMMIT_PROOF_STDERR_LIMIT_BYTES = DEFAULT_GIT_STDERR_LIMIT_BYTES
+_GIT_STREAM_CHUNK_BYTES = 64 * 1024
 
 
 _RETAINED_CHILD_TOKEN_SECRET = object()
@@ -121,6 +151,7 @@ class RetainedGitChildSettlement:
     stderr: bytes = b""
     stop_requested: bool = False
     force_stopped: bool = False
+    output_overflow: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +166,7 @@ class GitCommandResult:
     retained_child: RetainedGitChildToken | None = None
     stop_requested: bool = False
     force_stopped: bool = False
+    output_overflow: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +224,27 @@ class _RawGitInspectionFailure:
     message: str
     head: HeadIdentity | None = None
     revoke_ownership: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _CompleteCommitProof:
+    """Path-free result of one complete logical-index review proof."""
+
+    expected_tree: str
+    index_signature: str
+    delta_signature: str
+    included_group_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _CommitReviewSnapshot:
+    """Private immutable single-use evidence retained for confirmation."""
+
+    capture: CommitAuthorityCapture
+    proof: _CompleteCommitProof
+    message: bytes
+    author: GitIdentity
+    committer: GitIdentity
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,6 +337,8 @@ class GitProcessRunner(Protocol):
         environment: Mapping[str, str],
         stdin: bytes | None = None,
         timeout: float | None = None,
+        stdout_limit: int | None = None,
+        stderr_limit: int | None = None,
     ) -> GitCommandResult:
         """Run one command without accepting a shell option."""
 
@@ -295,6 +350,12 @@ class GitProcessRunner(Protocol):
         token: RetainedGitChildToken,
     ) -> RetainedGitChildSettlement:
         """Read one exact retained child without changing its lifecycle."""
+
+    def claim_retained_child(
+        self,
+        token: RetainedGitChildToken,
+    ) -> bool:
+        """Protect exact terminal evidence from global shutdown cleanup."""
 
     async def settle_retained_child(
         self,
@@ -345,7 +406,9 @@ class _RetainedChildRecord:
     force_stopped: bool = False
     timed_out: bool = False
     exposed: bool = False
+    claimed: bool = False
     released: bool = False
+    output_overflow: bool = False
     owned_task: asyncio.Task[GitCommandResult] | None = None
     settlement: RetainedGitChildSettlement | None = None
 
@@ -385,6 +448,176 @@ def build_git_environment(
     if for_status:
         environment["GIT_OPTIONAL_LOCKS"] = "0"
     return environment
+
+
+def build_commit_environment(
+    ambient: Mapping[str, str] | None = None,
+    *,
+    author: GitIdentity | None = None,
+    committer: GitIdentity | None = None,
+    read_only: bool = False,
+) -> dict[str, str]:
+    """Build the isolated environment used only by guarded commit work."""
+    source = os.environ if ambient is None else ambient
+    environment = build_git_environment(
+        {
+            key: value
+            for key, value in source.items()
+            if key not in _COMMIT_ONLY_REMOVED_ENVIRONMENT
+        },
+        stable_locale=True,
+    )
+    environment.update(
+        {
+            "GIT_NO_LAZY_FETCH": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_EDITOR": "true",
+            "GIT_SEQUENCE_EDITOR": "true",
+            "GIT_ASKPASS": "true",
+            "SSH_ASKPASS": "true",
+            "EDITOR": "true",
+            "VISUAL": "true",
+        }
+    )
+    if read_only:
+        environment["GIT_OPTIONAL_LOCKS"] = "0"
+    if (author is None) != (committer is None):
+        raise ValueError("Commit identities must be bound together")
+    if author is not None and committer is not None:
+        environment.update(
+            {
+                "GIT_AUTHOR_NAME": author.name,
+                "GIT_AUTHOR_EMAIL": author.email,
+                "GIT_COMMITTER_NAME": committer.name,
+                "GIT_COMMITTER_EMAIL": committer.email,
+            }
+        )
+    return environment
+
+
+def build_commit_argv(
+    git_executable: str,
+    hooks_directory: str,
+) -> tuple[GitArg, ...]:
+    """Build the exact reviewed branch child without starting it."""
+    return (
+        git_executable,
+        "--no-replace-objects",
+        "-c",
+        f"core.hooksPath={hooks_directory}",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "maintenance.auto=false",
+        "-c",
+        "gc.auto=0",
+        "-c",
+        "commit.gpgSign=false",
+        "-c",
+        "i18n.commitEncoding=UTF-8",
+        "commit",
+        "--no-gpg-sign",
+        "--cleanup=verbatim",
+        "-F",
+        "-",
+    )
+
+
+def build_commit_stdin(subject: str, body: str = "") -> bytes:
+    """Return the exact validated bytes later supplied to the commit child."""
+    return normalize_commit_message(subject, body)
+
+
+def build_commit_index_argv(git_executable: str) -> tuple[GitArg, ...]:
+    """Build the complete semantic-index command used only by commit proof."""
+    return (
+        git_executable,
+        "--no-replace-objects",
+        "--literal-pathspecs",
+        "-c",
+        "core.fsmonitor=false",
+        "ls-files",
+        "-z",
+        "--stage",
+        "-v",
+        "--",
+    )
+
+
+def build_commit_delta_argv(
+    git_executable: str,
+    old_head: str,
+) -> tuple[GitArg, ...]:
+    """Build the complete staged-delta command against one captured HEAD."""
+    return (
+        git_executable,
+        "--no-replace-objects",
+        "--literal-pathspecs",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "diff.renames=false",
+        "diff-index",
+        "--cached",
+        "--raw",
+        "-z",
+        "--no-renames",
+        "--no-ext-diff",
+        "--no-textconv",
+        old_head,
+        "--",
+    )
+
+
+def build_commit_worktree_argv(
+    git_executable: str,
+    repository_paths: Sequence[bytes],
+) -> tuple[GitArg, ...]:
+    """Build one complete owned-path worktree freshness inspection."""
+    return (
+        git_executable,
+        "--no-replace-objects",
+        "--literal-pathspecs",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "status.renames=false",
+        "-c",
+        "diff.renames=false",
+        "status",
+        "--porcelain=v2",
+        "-z",
+        "--untracked-files=all",
+        "--ignored=matching",
+        "--no-renames",
+        "--",
+        *repository_paths,
+    )
+
+
+def complete_commit_delta_matches_ownership(
+    delta: Sequence[RawStagedDeltaEntry],
+    ownership_entries: Mapping[
+        int,
+        tuple[Mapping[str, IndexEntry | None], Mapping[str, IndexEntry | None]],
+    ],
+) -> bool:
+    """Compare one complete raw staged delta to the exact owned union."""
+    expected = _expected_owned_delta(ownership_entries)
+    if not expected or len(delta) != len(expected):
+        return False
+    actual: dict[bytes, tuple[str, str, str, str, str]] = {}
+    for entry in delta:
+        if entry.path in actual:
+            return False
+        actual[entry.path] = (
+            entry.old_mode,
+            entry.new_mode,
+            entry.old_object_id,
+            entry.new_object_id,
+            entry.status,
+        )
+    return actual == expected
 
 
 def build_status_argv(
@@ -656,8 +889,15 @@ class AsyncGitProcessRunner:
         environment: Mapping[str, str],
         stdin: bytes | None = None,
         timeout: float | None = None,
+        stdout_limit: int | None = None,
+        stderr_limit: int | None = None,
     ) -> GitCommandResult:
         """Execute one direct child and preserve all standard streams as bytes."""
+        if any(
+            limit is not None and limit < 0
+            for limit in (stdout_limit, stderr_limit)
+        ):
+            raise ValueError("Git output limits cannot be negative")
         if self._sealed:
             return GitCommandResult(127, b"", b"Git runner is shut down")
         loop = asyncio.get_running_loop()
@@ -678,6 +918,8 @@ class AsyncGitProcessRunner:
                 environment=environment,
                 stdin=stdin,
                 timeout=timeout,
+                stdout_limit=stdout_limit,
+                stderr_limit=stderr_limit,
             )
         )
         record.owned_task = run_task
@@ -719,6 +961,8 @@ class AsyncGitProcessRunner:
         environment: Mapping[str, str],
         stdin: bytes | None,
         timeout: float | None,
+        stdout_limit: int | None,
+        stderr_limit: int | None,
     ) -> GitCommandResult:
         """Run one child in a runner-owned task immune to caller cancellation."""
         assert self._shutdown_event is not None
@@ -737,7 +981,20 @@ class AsyncGitProcessRunner:
                 stderr=asyncio.subprocess.PIPE,
             )
             self._processes.add(process)
-            communication = asyncio.create_task(process.communicate(stdin))
+            if stdout_limit is None and stderr_limit is None:
+                communication = asyncio.create_task(
+                    process.communicate(stdin)
+                )
+            else:
+                communication = asyncio.create_task(
+                    self._communicate_bounded(
+                        record,
+                        process,
+                        stdin,
+                        stdout_limit=stdout_limit,
+                        stderr_limit=stderr_limit,
+                    )
+                )
             record.process = process
             record.communication = communication
             record.ready.set()
@@ -797,6 +1054,78 @@ class AsyncGitProcessRunner:
                     shutdown_waiter,
                     return_exceptions=True,
                 )
+
+    async def _communicate_bounded(
+        self,
+        record: _RetainedChildRecord,
+        process: asyncio.subprocess.Process,
+        stdin: bytes | None,
+        *,
+        stdout_limit: int | None,
+        stderr_limit: int | None,
+    ) -> tuple[bytes, bytes]:
+        """Continuously drain both streams while retaining bounded evidence."""
+        stdout_stream = process.stdout
+        stderr_stream = process.stderr
+        assert stdout_stream is not None
+        assert stderr_stream is not None
+        stdout_reader = asyncio.create_task(
+            self._read_bounded_stream(stdout_stream, stdout_limit)
+        )
+        stderr_reader = asyncio.create_task(
+            self._read_bounded_stream(stderr_stream, stderr_limit)
+        )
+        if stdin is not None:
+            stdin_writer = asyncio.create_task(
+                self._write_process_stdin(process, stdin)
+            )
+            (stdout, stdout_overflow), (
+                stderr,
+                stderr_overflow,
+            ), _ = await asyncio.gather(
+                stdout_reader,
+                stderr_reader,
+                stdin_writer,
+            )
+        else:
+            (stdout, stdout_overflow), (
+                stderr,
+                stderr_overflow,
+            ) = await asyncio.gather(stdout_reader, stderr_reader)
+        await process.wait()
+        record.output_overflow = stdout_overflow or stderr_overflow
+        return stdout, stderr
+
+    @staticmethod
+    async def _read_bounded_stream(
+        stream: asyncio.StreamReader,
+        limit: int | None,
+    ) -> tuple[bytes, bool]:
+        retained = bytearray()
+        overflow = False
+        while chunk := await stream.read(_GIT_STREAM_CHUNK_BYTES):
+            if limit is None:
+                retained.extend(chunk)
+                continue
+            remaining = max(0, limit - len(retained))
+            retained.extend(chunk[:remaining])
+            overflow = overflow or len(chunk) > remaining
+        return bytes(retained), overflow
+
+    @staticmethod
+    async def _write_process_stdin(
+        process: asyncio.subprocess.Process,
+        payload: bytes,
+    ) -> None:
+        stream = process.stdin
+        assert stream is not None
+        try:
+            stream.write(payload)
+            await stream.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            stream.close()
 
     def _run_task_completed(
         self,
@@ -978,6 +1307,18 @@ class AsyncGitProcessRunner:
             return RetainedGitChildSettlement("uncertain")
         return self._read_record(record)
 
+    def claim_retained_child(
+        self,
+        token: RetainedGitChildToken,
+    ) -> bool:
+        """Reserve one exact token for explicit settlement and release."""
+        record = self._record_for_token(token)
+        self._require_retained_child_loop(record)
+        if record.released:
+            return False
+        record.claimed = True
+        return True
+
     async def settle_retained_child(
         self,
         token: RetainedGitChildToken,
@@ -1073,6 +1414,7 @@ class AsyncGitProcessRunner:
                 "alive",
                 stop_requested=record.stop_requested,
                 force_stopped=record.force_stopped,
+                output_overflow=record.output_overflow,
             )
         try:
             stdout, stderr = communication.result()
@@ -1081,6 +1423,7 @@ class AsyncGitProcessRunner:
                 "uncertain",
                 stop_requested=record.stop_requested,
                 force_stopped=record.force_stopped,
+                output_overflow=record.output_overflow,
             )
         returncode = process.returncode
         if returncode is None:
@@ -1088,6 +1431,7 @@ class AsyncGitProcessRunner:
                 "uncertain" if record.stop_requested else "alive",
                 stop_requested=record.stop_requested,
                 force_stopped=record.force_stopped,
+                output_overflow=record.output_overflow,
             )
         if returncode >= 0 or not record.stop_requested:
             state: RetainedGitChildState = "natural"
@@ -1102,6 +1446,7 @@ class AsyncGitProcessRunner:
             self._bounded_stderr(stderr),
             record.stop_requested,
             record.force_stopped,
+            record.output_overflow,
         )
         record.settlement = settlement
         self._processes.discard(process)
@@ -1131,6 +1476,7 @@ class AsyncGitProcessRunner:
             retained_child=record.token,
             stop_requested=record.stop_requested,
             force_stopped=record.force_stopped,
+            output_overflow=record.output_overflow,
         )
 
     def _result_from_settlement(
@@ -1155,6 +1501,7 @@ class AsyncGitProcessRunner:
             force_stopped=(
                 force_stopped or settlement.state == "forced_stop"
             ),
+            output_overflow=settlement.output_overflow,
         )
 
     def _release_unexposed_record(
@@ -1168,7 +1515,7 @@ class AsyncGitProcessRunner:
     def _release_terminal_records(self) -> None:
         """Discard only exact terminal records, retaining uncertainty."""
         for record in tuple(self._retained_children.values()):
-            if record.communication is None:
+            if record.communication is None or record.claimed:
                 continue
             settlement = self._read_record(record)
             if settlement.state not in {"alive", "uncertain"}:
@@ -1242,6 +1589,9 @@ class FileNotesGitService:
         self._status_request_generation = 0
         self._action_cycle: asyncio.Task[GitActionResult] | None = None
         self._action_waiter: asyncio.Task[GitActionResult] | None = None
+        self._commit_review_cycle: asyncio.Task[CommitReviewResult] | None = None
+        self._commit_review_waiter: asyncio.Task[CommitReviewResult] | None = None
+        self._commit_review_snapshots: dict[object, _CommitReviewSnapshot] = {}
         self._shutdown_settlement: Awaitable[None] | None = None
 
     async def discover(
@@ -1626,6 +1976,618 @@ class FileNotesGitService:
         cycle.add_done_callback(self._action_cycle_completed)
         return waiter
 
+    def start_commit_review(
+        self,
+        binding: SessionBinding,
+        subject: str,
+        body: str = "",
+    ) -> asyncio.Task[CommitReviewResult]:
+        """Admit and retain one read-only guarded commit review preflight."""
+        if self._sealed:
+            raise GitMutationAdmissionError(
+                "shutdown",
+                "File Notes Git service is shut down",
+            )
+        snapshot = self._owner.snapshot(binding)
+        if binding != self._owner.current_binding():
+            raise GitMutationAdmissionError(
+                "stale_binding",
+                "File Notes root binding is stale",
+            )
+        repository = snapshot.trusted_repository
+        if repository is None:
+            raise GitMutationAdmissionError(
+                "untrusted",
+                "Repository trust is required before commit review",
+            )
+        admission = self._owner.admit_mutation(binding)
+        lease = admission.lease
+        if lease is None:
+            reason = admission.reason or "mutation_active"
+            raise GitMutationAdmissionError(
+                reason,
+                "File Notes Git mutation admission was refused",
+            )
+        self._commit_review_snapshots.clear()
+        cycle: asyncio.Task[CommitReviewResult] | None = None
+        try:
+            cycle = self._create_task(
+                self._run_commit_review_cycle(
+                    binding,
+                    repository,
+                    snapshot.git_authority_generation,
+                    subject,
+                    body,
+                    lease,
+                )
+            )
+            waiter = self._create_task(self._shield_commit_review_cycle(cycle))
+        except BaseException:
+            if cycle is not None:
+                cycle.cancel()
+            lease.release()
+            raise
+        self._commit_review_cycle = cycle
+        self._commit_review_waiter = waiter
+        cycle.add_done_callback(self._commit_review_cycle_completed)
+        return waiter
+
+    async def _shield_commit_review_cycle(
+        self,
+        cycle: asyncio.Task[CommitReviewResult],
+    ) -> CommitReviewResult:
+        return await asyncio.shield(cycle)
+
+    def _commit_review_cycle_completed(
+        self,
+        cycle: asyncio.Task[CommitReviewResult],
+    ) -> None:
+        if self._commit_review_cycle is cycle:
+            self._commit_review_cycle = None
+        if not cycle.cancelled():
+            cycle.exception()
+
+    async def _run_commit_review_cycle(
+        self,
+        binding: SessionBinding,
+        repository: RepositoryIdentity,
+        authority_generation: int,
+        subject: str,
+        body: str,
+        lease: GitMutationLease,
+    ) -> CommitReviewResult:
+        try:
+            return await self._prepare_commit_review(
+                binding,
+                repository,
+                authority_generation,
+                subject,
+                body,
+                lease,
+            )
+        except asyncio.CancelledError:
+            return CommitReviewResult(
+                "cancelled",
+                message="Commit review was cancelled.",
+            )
+        finally:
+            lease.release()
+
+    async def _prepare_commit_review(
+        self,
+        binding: SessionBinding,
+        repository: RepositoryIdentity,
+        authority_generation: int,
+        subject: str,
+        body: str,
+        lease: GitMutationLease,
+    ) -> CommitReviewResult:
+        """Run the ordered preflight and retain only a private proof snapshot."""
+        try:
+            message = normalize_commit_message(subject, body)
+        except CommitContractError as error:
+            return CommitReviewResult("blocked", message=str(error))
+        root = self._safe_root(binding)
+        if (
+            root is None
+            or self._git_executable is None
+            or not await self._commit_repository_matches(
+                binding,
+                repository,
+            )
+        ):
+            return _blocked_commit_review("Repository identity changed.")
+        if not await self._commit_local_state_is_supported(repository):
+            return _blocked_commit_review(
+                "Repository state does not support guarded commit review."
+            )
+
+        head = await self._read_commit_head(repository)
+        if head is None:
+            return _blocked_commit_review(
+                "Commit review requires an attached branch with an existing commit."
+            )
+        current = self._owner.snapshot(binding)
+        if (
+            current.git_authority_generation != authority_generation
+            or current.trusted_repository != repository
+            or not current.staging_ownership
+        ):
+            return _blocked_commit_review("Session staging authority changed.")
+        ownership = dict(current.staging_ownership)
+        groups_by_id = {
+            group.group_id: group
+            for group in coalesce_session_changes(current.changes)
+        }
+        group_sequence_ids = {
+            group_id: groups_by_id[group_id].sequence_ids
+            for group_id in ownership
+            if group_id in groups_by_id
+        }
+        if len(group_sequence_ids) != len(ownership):
+            return _blocked_commit_review("Session staging authority changed.")
+        if any(
+            item.repository != repository
+            or item.head != head
+            or groups_by_id[group_id].topology_signature
+            != item.topology_signature
+            for group_id, item in ownership.items()
+        ):
+            return _blocked_commit_review("Session staging authority changed.")
+        repository_ownership: dict[int, StagingOwnership] = {}
+        for group_id, item in ownership.items():
+            session_group = groups_by_id[group_id]
+            repository_group, invalid = self._map_group(
+                root,
+                repository,
+                session_group,
+            )
+            if invalid is not None or repository_group is None:
+                return _blocked_commit_review(
+                    "Session staging authority changed."
+                )
+            mapped = _map_ownership_topology(
+                item,
+                session_group,
+                repository_group,
+            )
+            if mapped is None:
+                return _blocked_commit_review(
+                    "Session staging authority changed."
+                )
+            repository_ownership[group_id] = mapped
+
+        proof = await self._complete_commit_proof(
+            repository,
+            head,
+            repository_ownership,
+        )
+        if proof is None:
+            return _blocked_commit_review(
+                "The complete staged state does not exactly match this session."
+            )
+        identities = await self._resolve_commit_identities(repository)
+        if identities is None:
+            return _blocked_commit_review(
+                "Configure Git user.name and user.email, then review again."
+            )
+        author, committer = identities
+        capture = self._owner.capture_commit_authority(
+            lease,
+            binding=binding,
+            authority_generation=authority_generation,
+            repository=repository,
+            head=head,
+            group_sequence_ids=group_sequence_ids,
+        )
+        if capture is None:
+            return _blocked_commit_review("Session staging authority changed.")
+
+        token = object()
+        included_notes = tuple(
+            CommitIncludedNote(
+                group_id=group_id,
+                display_text=groups_by_id[group_id].display_text,
+            )
+            for group_id in proof.included_group_ids
+        )
+        projection = CommitReviewProjection(
+            branch=head.branch or "",
+            old_commit=head.object_id or "",
+            message=message.decode("utf-8"),
+            included_notes=included_notes,
+            author=author,
+            committer=committer,
+        )
+        self._commit_review_snapshots[token] = _CommitReviewSnapshot(
+            capture=capture,
+            proof=proof,
+            message=message,
+            author=author,
+            committer=committer,
+        )
+        return CommitReviewResult(
+            "ready",
+            handle=CommitReviewHandle(token),
+            projection=projection,
+        )
+
+    async def _commit_repository_matches(
+        self,
+        binding: SessionBinding,
+        repository: RepositoryIdentity,
+    ) -> bool:
+        """Re-read the complete repository mapping under proof isolation."""
+        commands = (
+            ("rev-parse", "--path-format=absolute", "--show-toplevel"),
+            ("rev-parse", "--absolute-git-dir"),
+            ("rev-parse", "--path-format=absolute", "--git-common-dir"),
+        )
+        resolved: list[Path] = []
+        for arguments in commands:
+            result = await self._run_commit_proof_command(
+                repository,
+                (
+                    self._git_executable_or_raise(),
+                    "--no-replace-objects",
+                    *arguments,
+                ),
+            )
+            if not _command_succeeded(result):
+                return False
+            path = _canonical_directory_from_git(result.stdout)
+            if path is None:
+                return False
+            resolved.append(path)
+        return (
+            resolved == [
+                Path(repository.worktree_root),
+                Path(repository.git_dir),
+                Path(repository.git_common_dir),
+            ]
+            and self._repository_identity_matches(binding, repository)
+        )
+
+    async def _commit_local_state_is_supported(
+        self,
+        repository: RepositoryIdentity,
+    ) -> bool:
+        """Inspect local-only blockers before any object-resolving command."""
+        git_dir = Path(repository.git_dir)
+        common_dir = Path(repository.git_common_dir)
+        marker_names = (
+            "MERGE_HEAD",
+            "CHERRY_PICK_HEAD",
+            "REVERT_HEAD",
+            "REBASE_HEAD",
+            "BISECT_START",
+            "BISECT_LOG",
+            "rebase-apply",
+            "rebase-merge",
+            "sequencer",
+        )
+        if any(
+            _path_present(directory / marker)
+            for directory in {git_dir, common_dir}
+            for marker in marker_names
+        ):
+            return False
+        fixed_blockers = (
+            git_dir / "index.lock",
+            git_dir / "HEAD.lock",
+            common_dir / "packed-refs.lock",
+            common_dir / "config.lock",
+            common_dir / "info" / "grafts",
+            git_dir / "info" / "sparse-checkout",
+            common_dir / "info" / "sparse-checkout",
+        )
+        if any(_path_present(path) for path in fixed_blockers):
+            return False
+        try:
+            if (common_dir / "refs" / "replace").is_dir() and any(
+                (common_dir / "refs" / "replace").iterdir()
+            ):
+                return False
+            heads = common_dir / "refs" / "heads"
+            if heads.is_dir() and any(heads.rglob("*.lock")):
+                return False
+            pack_directory = common_dir / "objects" / "pack"
+            if pack_directory.is_dir() and any(
+                pack_directory.glob("*.promisor")
+            ):
+                return False
+            packed_refs = common_dir / "packed-refs"
+            if packed_refs.is_file():
+                with packed_refs.open("rb") as stream:
+                    packed_payload = stream.read(8 * 1024 * 1024 + 1)
+                    if (
+                        len(packed_payload) > 8 * 1024 * 1024
+                        or b" refs/replace/" in packed_payload
+                    ):
+                        return False
+        except OSError:
+            return False
+
+        config_result = await self._run_commit_proof_command(
+            repository,
+            (
+                self._git_executable_or_raise(),
+                "--no-replace-objects",
+                "config",
+                "--local",
+                "--null",
+                "--list",
+            ),
+        )
+        if not _command_succeeded(config_result):
+            return False
+        return _commit_local_config_is_supported(config_result.stdout)
+
+    async def _read_commit_head(
+        self,
+        repository: RepositoryIdentity,
+    ) -> HeadIdentity | None:
+        symbolic = await self._run_commit_proof_command(
+            repository,
+            (
+                self._git_executable_or_raise(),
+                "--no-replace-objects",
+                "symbolic-ref",
+                "--quiet",
+                "HEAD",
+            ),
+        )
+        if not _command_succeeded(symbolic):
+            return None
+        branch = _single_git_value(symbolic.stdout)
+        if branch is None or not branch.startswith("refs/heads/"):
+            return None
+        revision = await self._run_commit_proof_command(
+            repository,
+            (
+                self._git_executable_or_raise(),
+                "--no-replace-objects",
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                f"{branch}^{{commit}}",
+            ),
+        )
+        if not _command_succeeded(revision):
+            return None
+        object_id = _ascii_object_id(revision.stdout)
+        if object_id is None:
+            return None
+        return HeadIdentity.attached(branch, object_id)
+
+    async def _complete_commit_proof(
+        self,
+        repository: RepositoryIdentity,
+        head: HeadIdentity,
+        ownership: Mapping[int, StagingOwnership],
+    ) -> _CompleteCommitProof | None:
+        """Prove the complete logical index while returning no raw paths."""
+        if head.object_id is None:
+            return None
+        index_result = await self._run_commit_proof_command(
+            repository,
+            build_commit_index_argv(self._git_executable_or_raise()),
+        )
+        if not _command_succeeded(index_result):
+            return None
+        if not _commit_index_semantics_are_supported(index_result.stdout):
+            return None
+        try:
+            index_entries = parse_index_entries_z(index_result.stdout)
+        except GitIndexParseError:
+            return None
+        if any(
+            entry.stage != 0
+            or bool(entry.semantic_flags)
+            or entry.mode in {"040000", "160000"}
+            or not any(character != "0" for character in entry.object_id)
+            for entry in index_entries
+        ):
+            return None
+        index_by_path = {entry.path: entry for entry in index_entries}
+        for item in ownership.values():
+            if any(
+                index_by_path.get(path) != expected
+                for path, expected in item.post_stage_entries.items()
+            ):
+                return None
+
+        delta_result = await self._run_commit_proof_command(
+            repository,
+            build_commit_delta_argv(
+                self._git_executable_or_raise(),
+                head.object_id,
+            ),
+        )
+        if not _command_succeeded(delta_result):
+            return None
+        try:
+            delta = parse_raw_staged_delta(delta_result.stdout)
+        except CommitContractError:
+            return None
+        ownership_entries = {
+            group_id: (
+                {
+                    path: baseline.entry
+                    for path, baseline in item.original_baselines.items()
+                },
+                item.post_stage_entries,
+            )
+            for group_id, item in ownership.items()
+        }
+        if not complete_commit_delta_matches_ownership(delta, ownership_entries):
+            return None
+        included_group_ids = tuple(
+            group_id
+            for group_id, pair in ownership_entries.items()
+            if _expected_owned_delta({group_id: pair})
+        )
+        if not included_group_ids:
+            return None
+
+        tree_result = await self._run_commit_proof_command(
+            repository,
+            (
+                self._git_executable_or_raise(),
+                "--no-replace-objects",
+                "-c",
+                "core.fsmonitor=false",
+                "write-tree",
+            ),
+        )
+        if not _command_succeeded(tree_result):
+            return None
+        expected_tree = _ascii_object_id(tree_result.stdout)
+        if expected_tree is None:
+            return None
+
+        freshness_paths = tuple(
+            dict.fromkeys(
+                os.fsencode(path)
+                for group_id in included_group_ids
+                for path in (
+                    *ownership[group_id].approved_endpoint_topology,
+                    *(
+                        path
+                        for edge in ownership[group_id].approved_move_edges
+                        for path in edge
+                    ),
+                    *ownership[group_id].original_baselines.keys(),
+                    *ownership[group_id].post_stage_entries.keys(),
+                )
+            )
+        )
+        freshness = await self._run_commit_proof_command(
+            repository,
+            build_commit_worktree_argv(
+                self._git_executable_or_raise(),
+                freshness_paths,
+            ),
+        )
+        if not _command_succeeded(freshness):
+            return None
+        try:
+            freshness_records = parse_porcelain_v2_z(
+                freshness.stdout,
+                allowed_paths=frozenset(
+                    os.fsdecode(path) for path in freshness_paths
+                ),
+            )
+        except PorcelainV2ParseError:
+            return None
+        if any(
+            record.kind != "ordinary"
+            or record.worktree_status != "."
+            for record in freshness_records
+        ):
+            return None
+        return _CompleteCommitProof(
+            expected_tree=expected_tree,
+            index_signature=hashlib.sha256(index_result.stdout).hexdigest(),
+            delta_signature=hashlib.sha256(delta_result.stdout).hexdigest(),
+            included_group_ids=included_group_ids,
+        )
+
+    async def _resolve_commit_identities(
+        self,
+        repository: RepositoryIdentity,
+    ) -> tuple[GitIdentity, GitIdentity] | None:
+        identities: list[GitIdentity] = []
+        for variable in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
+            result = await self._run_commit_proof_command(
+                repository,
+                (
+                    self._git_executable_or_raise(),
+                    "--no-replace-objects",
+                    "var",
+                    variable,
+                ),
+            )
+            if not _command_succeeded(result):
+                return None
+            try:
+                identities.append(parse_git_identity(result.stdout))
+            except CommitContractError:
+                return None
+        return identities[0], identities[1]
+
+    async def _run_commit_proof_command(
+        self,
+        repository: RepositoryIdentity,
+        argv: Sequence[GitArg],
+    ) -> GitCommandResult:
+        try:
+            result = await self._runner.run(
+                argv,
+                cwd=repository.worktree_root,
+                environment=build_commit_environment(
+                    self._environment,
+                    read_only=True,
+                ),
+                timeout=self._status_timeout,
+                stdout_limit=DEFAULT_COMMIT_PROOF_STDOUT_LIMIT_BYTES,
+                stderr_limit=DEFAULT_COMMIT_PROOF_STDERR_LIMIT_BYTES,
+            )
+        except GitRunCancelled as cancellation:
+            if cancellation.result is not None:
+                return await self._settle_commit_proof_result(
+                    cancellation.result
+                )
+            retained_child = cancellation.retained_child
+            assert retained_child is not None
+            await self._drain_commit_proof_child(retained_child)
+            raise
+        except OSError:
+            return GitCommandResult(127, b"", b"")
+        return await self._settle_commit_proof_result(result)
+
+    async def _settle_commit_proof_result(
+        self,
+        result: GitCommandResult,
+    ) -> GitCommandResult:
+        retained_child = result.retained_child
+        if retained_child is None:
+            return result
+        settlement = await self._drain_commit_proof_child(retained_child)
+        return GitCommandResult(
+            settlement.returncode,
+            settlement.stdout,
+            settlement.stderr,
+            termination_uncertain=(
+                settlement.state != "natural"
+                or settlement.stop_requested
+                or settlement.force_stopped
+            ),
+            stop_requested=settlement.stop_requested,
+            force_stopped=settlement.force_stopped,
+            output_overflow=settlement.output_overflow,
+        )
+
+    async def _drain_commit_proof_child(
+        self,
+        retained_child: RetainedGitChildToken,
+    ) -> RetainedGitChildSettlement:
+        """Wait without spinning, then release one exact terminal token."""
+        if not self._runner.claim_retained_child(retained_child):
+            raise RuntimeError("Git proof child could not be retained")
+        while True:
+            settlement = await self._runner.settle_retained_child(
+                retained_child,
+                timeout=0.1,
+            )
+            if settlement.state not in {"alive", "uncertain"}:
+                if not self._runner.release_retained_child(retained_child):
+                    raise RuntimeError(
+                        "Terminal Git proof child could not be released"
+                    )
+                return settlement
+            await asyncio.sleep(0.01)
+
     async def _run_unstage_cycle(
         self,
         binding: SessionBinding,
@@ -1734,10 +2696,19 @@ class FileNotesGitService:
         waiter = self._status_waiter
         action_cycle = self._action_cycle
         action_waiter = self._action_waiter
+        review_cycle = self._commit_review_cycle
+        review_waiter = self._commit_review_waiter
         active_task = next(
             (
                 task
-                for task in (cycle, waiter, action_cycle, action_waiter)
+                for task in (
+                    cycle,
+                    waiter,
+                    action_cycle,
+                    action_waiter,
+                    review_cycle,
+                    review_waiter,
+                )
                 if task is not None and not task.done()
             ),
             None,
@@ -1767,6 +2738,8 @@ class FileNotesGitService:
             and (waiter is None or waiter.done())
             and (action_cycle is None or action_cycle.done())
             and (action_waiter is None or action_waiter.done())
+            and (review_cycle is None or review_cycle.done())
+            and (review_waiter is None or review_waiter.done())
             and (
                 runner_settlement is None
                 or isinstance(runner_settlement, _ImmediateSettlement)
@@ -1777,6 +2750,9 @@ class FileNotesGitService:
             self._status_waiter = None
             self._action_cycle = None
             self._action_waiter = None
+            self._commit_review_cycle = None
+            self._commit_review_waiter = None
+            self._commit_review_snapshots.clear()
             self._shutdown_settlement = _ImmediateSettlement(None)
             return self._shutdown_settlement
         settlement = _RetainedSettlement(
@@ -1787,6 +2763,8 @@ class FileNotesGitService:
                     waiter,
                     action_cycle,
                     action_waiter,
+                    review_cycle,
+                    review_waiter,
                     runner_settlement,
                 )
             )
@@ -1801,12 +2779,21 @@ class FileNotesGitService:
         waiter: asyncio.Task[SessionGitStatus] | None,
         action_cycle: asyncio.Task[GitActionResult] | None,
         action_waiter: asyncio.Task[GitActionResult] | None,
+        review_cycle: asyncio.Task[CommitReviewResult] | None,
+        review_waiter: asyncio.Task[CommitReviewResult] | None,
         runner_settlement: Awaitable[bool] | None,
     ) -> None:
         """Join every retained task and preserve fail-closed shutdown state."""
         owned_tasks = tuple(
             task
-            for task in (cycle, waiter, action_cycle, action_waiter)
+            for task in (
+                cycle,
+                waiter,
+                action_cycle,
+                action_waiter,
+                review_cycle,
+                review_waiter,
+            )
             if task is not None and not task.done()
         )
         results: list[object] = []
@@ -1833,6 +2820,9 @@ class FileNotesGitService:
         self._status_waiter = None
         self._action_cycle = None
         self._action_waiter = None
+        self._commit_review_cycle = None
+        self._commit_review_waiter = None
+        self._commit_review_snapshots.clear()
         self._pending_status = None
         self._rerun_available = False
         self._status_dirty = False
@@ -3648,6 +4638,140 @@ def build_file_notes_session_owner() -> FileNotesSessionOwner:
     return owner
 
 
+def _blocked_commit_review(message: str) -> CommitReviewResult:
+    """Build one path-free blocked review settlement."""
+    return CommitReviewResult("blocked", message=message)
+
+
+def _path_present(path: Path) -> bool:
+    """Treat every filesystem entry, including a symlink, as present."""
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _commit_local_config_is_supported(payload: bytes) -> bool:
+    """Reject sparse/partial/promisor config without retaining its values."""
+    if not payload:
+        return True
+    if not payload.endswith(b"\0"):
+        return False
+    for record in payload[:-1].split(b"\0"):
+        try:
+            raw_key, raw_value = record.split(b"\n", 1)
+            key = raw_key.decode("ascii").lower()
+        except (ValueError, UnicodeDecodeError):
+            return False
+        value = raw_value.strip().lower()
+        if key == "extensions.partialclone":
+            return False
+        if key in {"core.sparsecheckout", "index.sparse"} and value not in {
+            b"",
+            b"false",
+            b"no",
+            b"off",
+            b"0",
+        }:
+            return False
+        if (
+            key.startswith("remote.")
+            and key.endswith(".promisor")
+            and value not in {b"", b"false", b"no", b"off", b"0"}
+        ):
+            return False
+    return True
+
+
+def _commit_index_semantics_are_supported(payload: bytes) -> bool:
+    """Accept only ordinary cached records before the shared byte parser."""
+    if not payload:
+        return True
+    if not payload.endswith(b"\0"):
+        return False
+    return all(
+        len(record) >= 2 and record[:2] == b"H "
+        for record in payload[:-1].split(b"\0")
+    )
+
+
+def _expected_owned_delta(
+    ownership_entries: Mapping[
+        int,
+        tuple[Mapping[str, IndexEntry | None], Mapping[str, IndexEntry | None]],
+    ],
+) -> dict[bytes, tuple[str, str, str, str, str]]:
+    """Build the exact raw no-renames delta authorized by ownership."""
+    expected: dict[bytes, tuple[str, str, str, str, str]] = {}
+    object_id_widths = {
+        len(entry.object_id)
+        for before, after in ownership_entries.values()
+        for entry in (*before.values(), *after.values())
+        if entry is not None
+    }
+    if len(object_id_widths) != 1 or not object_id_widths.issubset({40, 64}):
+        return {}
+    zero_oid = "0" * object_id_widths.pop()
+    owned_paths: set[str] = set()
+    for before, after in ownership_entries.values():
+        group_paths = set(before).union(after)
+        if owned_paths.intersection(group_paths):
+            return {}
+        owned_paths.update(group_paths)
+        for path in group_paths:
+            old_entry = before.get(path)
+            new_entry = after.get(path)
+            if old_entry == new_entry:
+                continue
+            if (
+                (old_entry is not None and not _proof_index_entry_is_supported(
+                    path,
+                    old_entry,
+                ))
+                or (
+                    new_entry is not None
+                    and not _proof_index_entry_is_supported(path, new_entry)
+                )
+            ):
+                return {}
+            raw_path = os.fsencode(path)
+            if raw_path in expected:
+                return {}
+            old_mode = "000000" if old_entry is None else old_entry.mode
+            new_mode = "000000" if new_entry is None else new_entry.mode
+            old_oid = zero_oid if old_entry is None else old_entry.object_id.lower()
+            new_oid = zero_oid if new_entry is None else new_entry.object_id.lower()
+            status = "A" if old_entry is None else "D" if new_entry is None else "M"
+            expected[raw_path] = (
+                old_mode,
+                new_mode,
+                old_oid,
+                new_oid,
+                status,
+            )
+    return expected
+
+
+def _proof_index_entry_is_supported(path: str, entry: IndexEntry) -> bool:
+    return (
+        entry.path == path
+        and entry.stage == 0
+        and not entry.semantic_flags
+        and entry.mode != "160000"
+        and len(entry.mode) == 6
+        and all(character in "01234567" for character in entry.mode)
+        and len(entry.object_id) in {40, 64}
+        and all(
+            character in "0123456789abcdefABCDEF"
+            for character in entry.object_id
+        )
+        and any(character != "0" for character in entry.object_id)
+    )
+
+
 def _canonical_directory_from_git(payload: bytes) -> Path | None:
     value = _single_git_value(payload)
     if value is None or "\0" in value:
@@ -3764,6 +4888,7 @@ def _command_succeeded(result: GitCommandResult) -> bool:
         result.returncode == 0
         and not result.timed_out
         and not result.termination_uncertain
+        and not result.output_overflow
     )
 
 
