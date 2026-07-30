@@ -307,6 +307,14 @@ Update the tests to describe current behavior:
     Production continues to own import work on the real application so durable
     saves can finish after the initiating screen unmounts. Do not move the
     production worker back to the screen or merely increase the timeout.
+34. In the bundled-CSS multi-row Console approval geometry regression, let
+    `ChatApprovalCard.on_mount` finish its deferred initial batch-body hide
+    before calling `set_batch`. This matches the already-green single-row
+    geometry fixture and the live application, where approval batches arrive
+    after the mounted Console has settled. Preserve the two-row batch and every
+    nonzero-size, fixed-width, non-overlap, compact-height, container-height,
+    and action-position assertion. Do not change production layout or weaken
+    the CSS contract to accommodate a test-only mount-order inversion.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -418,6 +426,10 @@ compatibility shims. No broad deletion of live tests.
   accepted durable app-owned worker contract. The failing status assertions
   come from an inactive nested test app's screen stack, so sharing the active
   harness worker manager fixes the fixture without changing runtime ownership.
+- Changing approval-card production CSS or removing geometry assertions would
+  hide a fixture-ordering mistake: the test installs a batch before the card's
+  deferred mount-time hide runs. Settling that callback first mirrors the live
+  lifecycle and the existing single-row geometry fixture.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

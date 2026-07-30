@@ -1338,6 +1338,36 @@ git add \
 git commit -m "fix(library): ignore prompt mount echoes"
 ```
 
+### Task 4ad: Settle the Console approval geometry fixture
+
+**Files:**
+- Modify: `Tests/UI/test_console_mcp_approval.py`
+
+- [ ] **Step 1: Reproduce the zero-size two-row geometry**
+
+Run the bundled-CSS multi-row geometry regression. Expected: both mounted rows
+exist, but the first row's header is 0x0 because the fixture calls `set_batch`
+before `ChatApprovalCard.on_mount`'s deferred `_hide_batch_body` callback runs.
+Confirm the sibling single-row geometry regression passes because it already
+settles the mount first.
+
+- [ ] **Step 2: Follow the established fixture ordering**
+
+Pause the pilot once immediately after entering `run_test`, before querying the
+card and calling `set_batch`, matching the sibling single-row regression.
+Retain every geometry assertion and make no production or CSS change.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest Tests/UI/test_console_mcp_approval.py -q
+../../.venv/bin/python -m ruff check Tests/UI/test_console_mcp_approval.py
+../../.venv/bin/python -m ruff format --check Tests/UI/test_console_mcp_approval.py
+git diff --check
+git add Tests/UI/test_console_mcp_approval.py
+git commit -m "test(console): settle approval card mount"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -1422,6 +1452,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/UI/test_console_command_composer.py \
   Tests/UI/test_console_internals_decomposition.py \
   Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_console_mcp_approval.py \
   Tests/UI/test_home_screen.py \
   Tests/UI/test_library_prompts_canvas.py \
   Tests/integration/test_library_ingest_flow.py \
@@ -1463,6 +1494,7 @@ Expected: all affected tests pass.
   Tests/UI/test_console_command_composer.py \
   Tests/UI/test_console_internals_decomposition.py \
   Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_console_mcp_approval.py \
   Tests/UI/test_home_screen.py \
   Tests/UI/test_library_prompts_canvas.py \
   Tests/integration/test_library_ingest_flow.py \
@@ -1499,6 +1531,7 @@ Expected: all affected tests pass.
   Tests/UI/test_console_command_composer.py \
   Tests/UI/test_console_internals_decomposition.py \
   Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_console_mcp_approval.py \
   Tests/UI/test_home_screen.py \
   Tests/UI/test_library_prompts_canvas.py \
   Tests/integration/test_library_ingest_flow.py \
