@@ -1515,6 +1515,46 @@ git add \
 git commit -m "test(console): follow explicit model resolver inputs"
 ```
 
+### Task 4ai: Preserve branded missing-key recovery copy
+
+**Files:**
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
+
+- [ ] **Step 1: Reproduce the user-facing casing regression**
+
+Run
+`test_console_missing_key_recovery_action_is_provider_specific`. Expected: the
+active session correctly stores canonical `openai`, but the blocker renders
+`openai` instead of `OpenAI`; the Settings tooltip follows the same raw-key
+path. The existing test already pins the intended branded copy and recovery
+behavior.
+
+- [ ] **Step 2: Use the existing display-name owner at the copy boundary**
+
+Import the shared `provider_display_name` helper. In the missing-API-key
+branches only, render that display value in the blocker and Settings tooltip.
+Keep the canonical provider key for settings, readiness, and routing, and
+retain the existing recovery target, field, and blocked-send copy. Do not add
+a compatibility field, another provider map, or broaden this repair to
+endpoint copy that is not failing.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_session_settings.py::test_console_missing_key_recovery_action_is_provider_specific \
+  Tests/UI/test_console_internals_decomposition.py::test_console_provider_blocker_exposes_open_settings_action \
+  Tests/UI/test_console_workbench_contract.py -q
+../../.venv/bin/python -m ruff check \
+  tldw_chatbook/UI/Screens/chat_screen.py
+../../.venv/bin/python -m ruff format --check \
+  tldw_chatbook/UI/Screens/chat_screen.py
+git diff --check
+git add \
+  tldw_chatbook/UI/Screens/chat_screen.py
+git commit -m "fix(console): preserve provider display name in recovery"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

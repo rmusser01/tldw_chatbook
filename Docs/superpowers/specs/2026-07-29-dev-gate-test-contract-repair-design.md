@@ -350,12 +350,20 @@ Update the tests to describe current behavior:
     assertions. The provider-layer resolver suite already pins the explicit
     boundary; do not restore application introspection to production or add a
     compatibility overload.
+39. In Console missing-key recovery surfaces, convert the canonical provider
+    key to the shared `provider_display_name` only when composing the
+    user-facing blocker and Settings tooltip. Preserve canonical lowercase
+    provider storage, readiness lookup, routing, recovery target/field, and
+    send-blocking behavior. Unknown provider keys continue to display
+    unchanged through the shared helper's existing fallback. Do not add a new
+    display map or recase endpoint recovery copy outside the observed failure.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
-collision boundary and the canonical-state guard that prevents untouched
-prompt fields from becoming dirty during mount/recompose. The RAG capture edit
-is documentation-only and records already-live fail-closed behavior. No
+collision boundary, the canonical-state guard that prevents untouched prompt
+fields from becoming dirty during mount/recompose, and the shared display-name
+rendering for missing-key recovery copy. The RAG capture edit is
+documentation-only and records already-live fail-closed behavior. No
 compatibility shims. No broad deletion of live tests.
 
 ## Alternatives
@@ -481,6 +489,10 @@ compatibility shims. No broad deletion of live tests.
   reintroduce application-state coupling removed by the current explicit API.
   Passing the two existing fake values separately preserves every behavior
   assertion without compatibility code.
+- Lowercasing the missing-key assertion would ratify a user-facing regression
+  caused by canonical provider storage. The shared provider catalog already
+  owns branded display names, so using it only at the two failing copy
+  boundaries avoids a second map and leaves routing untouched.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
