@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from loguru import logger
 from rich.text import Text
 from textual.containers import Vertical
 from textual.message import Message
@@ -87,7 +88,7 @@ class EditRuleRequested(Message):
         super().__init__()
 
 
-class NoiseSelectorsSaveRequested(Message):
+class SaveNoiseSelectorsRequested(Message):
     """Posted when the user saves a url-family source's noise selectors.
 
     TASK-1362 (spec §2). This is the ONLY edit path a source has: before it,
@@ -561,12 +562,32 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
         rebuilt Inspector re-reads the stored value from the entity itself.
         """
         if entity is None:
+            # Fix round 1 (Minor 4): neither of these two paths may return
+            # silently. A button that produces no write, no error and no
+            # toast is indistinguishable from a broken one.
+            self._report_nothing_to_save(
+                "Ignore-rule save pressed with no entity selected."
+            )
             return
         try:
             field = self.query_one("#inspector-noise-selectors", TextArea)
         except Exception:
+            self._report_nothing_to_save(
+                "Ignore-rule save pressed but #inspector-noise-selectors is "
+                "not mounted."
+            )
             return
         text = sanitize_string(
             field.text, max_length=self._IGNORE_SELECTORS_MAX_LENGTH
         ).strip()
-        self.post_message(NoiseSelectorsSaveRequested(entity.get("id"), text))
+        self.post_message(SaveNoiseSelectorsRequested(entity.get("id"), text))
+
+    def _report_nothing_to_save(self, reason: str) -> None:
+        """Say so, in the log and on screen, when Save cannot do anything."""
+        logger.warning(reason)
+        try:
+            notify = getattr(self.app, "notify", None)
+        except Exception:
+            notify = None
+        if callable(notify):
+            notify("Nothing to save: no ignore rules field is open.", severity="warning")

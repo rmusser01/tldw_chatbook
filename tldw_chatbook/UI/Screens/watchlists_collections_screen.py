@@ -47,7 +47,7 @@ from ..Watchlists_Modules.inspector_pane import (
     IgnoreRequested,
     IngestRequested,
     InspectorPane,
-    NoiseSelectorsSaveRequested,
+    SaveNoiseSelectorsRequested,
     PreviewRequested,
     StageInConsoleRequested,
 )
@@ -3242,12 +3242,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         self.set_timer(0.05, open_edit_form)
 
-    @on(NoiseSelectorsSaveRequested)
-    def handle_noise_selectors_save_requested(
-        self, event: NoiseSelectorsSaveRequested
+    @on(SaveNoiseSelectorsRequested)
+    def handle_save_noise_selectors_requested(
+        self, event: SaveNoiseSelectorsRequested
     ) -> None:
         event.stop()
         if event.source_id is None:
+            # Fix round 1 (Minor 4). A bare `return` here made Save a dead
+            # button: the press produced no write, no error and no toast, the
+            # exact pattern this stream keeps paying for (see the watchlist
+            # -level actions in Task 5 fix round 2, disabled rather than left
+            # silently inert). Reachable only from an entity with no `id`,
+            # which is a state defect rather than anything the user did --
+            # so it is logged as well as toasted.
+            logger.warning(
+                "Ignore-rule save requested for an entity carrying no id; "
+                "nothing was written."
+            )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    "Nothing to save: no source is selected.", severity="warning"
+                )
             return
         self.run_worker(
             self._save_noise_selectors(event.source_id, event.text),
