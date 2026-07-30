@@ -83,3 +83,116 @@ def test_fingerprint_changes_when_extraction_actually_changes():
     # round-trip that turns a NULL into an empty string must not silently
     # re-baseline every source's fingerprint.
     assert extraction_fingerprint(None, "auto") == extraction_fingerprint("", "auto")
+
+
+def _fresh_db():
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+
+    return SubscriptionsDB(":memory:", "test")
+
+
+def test_migration_moves_thresholds_and_prefills_empty_selectors():
+    """Existing url-family sources move to the new defaults, once.
+
+    Non-empty selectors are preserved; feed sources are untouched entirely
+    (neither threshold nor selectors). The migration's gate is the
+    ``extraction_fingerprint`` column's absence, so it is re-armed here by
+    dropping the column to simulate a pre-migration database -- an
+    in-memory SQLite connection cannot be "reopened" to re-trigger
+    ``BaseDB.__init__``'s migration call, so the real migration method is
+    invoked directly instead.
+    """
+    from tldw_chatbook.Subscriptions.noise_defaults import default_ignore_selectors_text
+
+    db = _fresh_db()
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO subscriptions (name, type, source, change_threshold)"
+            " VALUES ('u1','url','https://a.test',0.1)"
+        )
+        conn.execute(
+            "INSERT INTO subscriptions (name, type, source, change_threshold,"
+            " ignore_selectors) VALUES"
+            " ('u2','url','https://b.test',0.1,'.mine')"
+        )
+        conn.execute(
+            "INSERT INTO subscriptions (name, type, source, change_threshold)"
+            " VALUES ('f1','rss','https://c.test/feed',0.1)"
+        )
+        # Simulate a pre-migration DB: the fingerprint column is the gate,
+        # so drop it to make the migration branch fire again.
+        conn.execute("ALTER TABLE url_snapshots DROP COLUMN extraction_fingerprint")
+
+    # Re-run the real migration path directly on the live instance.
+    db._ensure_watchlists_schema()
+
+    rows = {
+        r["name"]: dict(r)
+        for r in db.conn.execute(
+            "SELECT name, change_threshold, ignore_selectors FROM subscriptions"
+        ).fetchall()
+    }
+    assert rows["u1"]["change_threshold"] == 0.0
+    assert rows["u1"]["ignore_selectors"] == default_ignore_selectors_text()
+    assert rows["u2"]["ignore_selectors"] == ".mine"  # preserved, not clobbered
+    assert rows["u2"]["change_threshold"] == 0.0  # still moved
+    assert rows["f1"]["ignore_selectors"] in (None, "")  # feed untouched
+    assert rows["f1"]["change_threshold"] == 0.1  # feed untouched
+
+    cols = {row[1] for row in db.conn.execute("PRAGMA table_info(url_snapshots)")}
+    assert "extraction_fingerprint" in cols
+
+
+def test_migration_is_idempotent_once_column_present():
+    """Re-running the migration path once the column exists changes nothing.
+
+    Proves the gate is structural (the column itself), not merely "run
+    once per process": a subsequent edit to a migrated source's selectors
+    must survive a second migration pass untouched.
+    """
+    db = _fresh_db()
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO subscriptions (name, type, source, change_threshold)"
+            " VALUES ('u1','url','https://a.test',0.1)"
+        )
+        conn.execute("ALTER TABLE url_snapshots DROP COLUMN extraction_fingerprint")
+
+    db._ensure_watchlists_schema()  # first run: column added, data migrated
+
+    # User edits the selectors after migration.
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscriptions SET ignore_selectors = '.custom',"
+            " change_threshold = 0.42 WHERE name = 'u1'"
+        )
+
+    db._ensure_watchlists_schema()  # second run: column already present
+
+    row = dict(
+        db.conn.execute(
+            "SELECT change_threshold, ignore_selectors FROM subscriptions"
+            " WHERE name = 'u1'"
+        ).fetchone()
+    )
+    assert row["ignore_selectors"] == ".custom"
+    assert row["change_threshold"] == 0.42
+
+
+def test_new_db_column_default_is_zero():
+    db = _fresh_db()
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO subscriptions (name, type, source) VALUES"
+            " ('n','url','https://n.test')"
+        )
+    row = db.conn.execute(
+        "SELECT change_threshold FROM subscriptions WHERE name='n'"
+    ).fetchone()
+    assert row["change_threshold"] == 0.0
+
+
+def test_url_snapshots_has_fingerprint_column():
+    db = _fresh_db()
+    cols = {r[1] for r in db.conn.execute("PRAGMA table_info(url_snapshots)")}
+    assert "extraction_fingerprint" in cols

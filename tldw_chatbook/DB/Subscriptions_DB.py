@@ -207,7 +207,7 @@ class SubscriptionsDB(BaseDB):
                 notification_config TEXT,
                 
                 -- Change detection for URLs
-                change_threshold FLOAT DEFAULT 0.1,
+                change_threshold FLOAT DEFAULT 0.0,
                 ignore_selectors TEXT,
                 
                 -- Performance optimization
@@ -267,8 +267,14 @@ class SubscriptionsDB(BaseDB):
                 extracted_content TEXT,
                 raw_html TEXT,
                 headers TEXT,
+                -- Stable hash of the ignore_selectors/extraction_method in
+                -- force when this snapshot's extracted_content was captured
+                -- (TASK-1362). Nullable: pre-migration rows have none, and
+                -- comparing across a settings change must re-baseline
+                -- rather than diff (see Subscriptions/noise_defaults.py).
+                extraction_fingerprint TEXT,
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                
+
                 FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
             );
             
@@ -569,6 +575,37 @@ class SubscriptionsDB(BaseDB):
         # 'flagged' value, and an item can be flagged *and* reviewed at once.
         if "is_flagged" not in items_cols:
             cursor.execute("ALTER TABLE subscription_items ADD COLUMN is_flagged BOOLEAN DEFAULT 0")
+
+        # Snapshot extraction fingerprint + one-time TASK-1362 "noise, not
+        # volume" data migration (spec:
+        # Docs/superpowers/specs/2026-07-29-watchlists-noise-not-changes-design.md
+        # -- see .superpowers/sdd/2026-07-29-watchlists-noise-not-volume).
+        # The column's absence IS the one-time gate: a database that already
+        # has `extraction_fingerprint` has already had its url-family
+        # thresholds/selectors migrated (or was created fresh, after the
+        # CREATE TABLE above already declared the column and the 0.0
+        # default), so the data migration below can never re-run and clobber
+        # a user's subsequent edits. The ALTER and the two UPDATEs share this
+        # method's transaction, so the write that would re-arm the gate is
+        # gated by the exact same condition that guards it -- a migration
+        # that only *returns* corrected values without writing them lasts
+        # exactly one load (learned the hard way in Phase D).
+        snapshot_cols = {row[1] for row in cursor.execute("PRAGMA table_info(url_snapshots)")}
+        if "extraction_fingerprint" not in snapshot_cols:
+            cursor.execute("ALTER TABLE url_snapshots ADD COLUMN extraction_fingerprint TEXT")
+
+            from ..Subscriptions.noise_defaults import default_ignore_selectors_text
+
+            cursor.execute(
+                "UPDATE subscriptions SET change_threshold = 0.0"
+                " WHERE type IN ('url','url_list','sitemap')"
+            )
+            cursor.execute(
+                "UPDATE subscriptions SET ignore_selectors = ?"
+                " WHERE type IN ('url','url_list','sitemap')"
+                "   AND (ignore_selectors IS NULL OR TRIM(ignore_selectors) = '')",
+                (default_ignore_selectors_text(),),
+            )
 
         # Watchlist bundle entity. `name` is intentionally not UNIQUE — uniqueness
         # is enforced case-insensitively in WatchlistBundleService with
