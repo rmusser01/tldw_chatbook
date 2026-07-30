@@ -2336,7 +2336,11 @@ reminder_catchup_hours = 24
 # That scheduler is gone, so shadow mode has nothing to compare against and leaving
 # these at their staging values meant nothing ever checked a watchlist (TASK-1210).
 watchlist_checks_enabled = true   # Run watchlist checks on their configured cadence
-watchlist_checks_shadow = false   # Diagnostics only: fetch but DISCARD results, ignoring cadence
+# Diagnostics only: fetch but DISCARD results, ignoring cadence. Shadow mode probes
+# feed and url/url_list sources directly; it CANNOT probe sitemap or api sources,
+# which need the execution path it exists to avoid, and reports those as
+# "shadow_unsupported" rather than pretending they were checked (TASK-1383).
+watchlist_checks_shadow = false
 
 [media_cleanup]
 # Media cleanup settings for automatic hard deletion of soft-deleted items

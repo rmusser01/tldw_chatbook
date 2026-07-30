@@ -30,6 +30,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from loguru import logger as loguru_logger
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler import (
@@ -170,10 +171,29 @@ def _loop(subs_db: SubscriptionsDB, handler: WatchlistCheckHandler) -> Scheduler
 
 
 def _run_rows(subs_db: SubscriptionsDB) -> list[dict]:
-    rows = subs_db.conn.execute(
-        "SELECT * FROM local_watchlist_runs ORDER BY id ASC"
-    ).fetchall()
+    with subs_db.transaction() as conn:
+        rows = conn.execute(
+            "SELECT * FROM local_watchlist_runs ORDER BY id ASC"
+        ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _count_items(subs_db: SubscriptionsDB, subscription_id: int) -> int:
+    with subs_db.transaction() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM subscription_items WHERE subscription_id = ?",
+            (subscription_id,),
+        ).fetchone()
+    return row["n"]
+
+
+def _count_snapshots(subs_db: SubscriptionsDB, subscription_id: int) -> int:
+    with subs_db.transaction() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM url_snapshots WHERE subscription_id = ?",
+            (subscription_id,),
+        ).fetchone()
+    return row["n"]
 
 
 # --- AC#1 + AC#2 -----------------------------------------------------------
@@ -241,16 +261,15 @@ async def test_scheduled_check_produces_the_item_and_snapshot(tmp_path, monkeypa
     _serve(monkeypatch, {url: _page("a materially different body")})
     await handler.handle(_task(subscription_id))
 
-    snapshots = subs_db.conn.execute(
-        "SELECT COUNT(*) AS n FROM url_snapshots WHERE subscription_id = ?",
-        (subscription_id,),
-    ).fetchone()["n"]
-    assert snapshots == 2, "the real URLMonitor persists a snapshot per check"
+    assert _count_snapshots(subs_db, subscription_id) == 2, (
+        "the real URLMonitor persists a snapshot per check"
+    )
 
-    items = subs_db.conn.execute(
-        "SELECT * FROM subscription_items WHERE subscription_id = ?",
-        (subscription_id,),
-    ).fetchall()
+    with subs_db.transaction() as conn:
+        items = conn.execute(
+            "SELECT * FROM subscription_items WHERE subscription_id = ?",
+            (subscription_id,),
+        ).fetchall()
     assert len(items) == 1, "the detected change is stored as an item"
     assert items[0]["run_id"] == _run_rows(subs_db)[1]["id"], (
         "the item is attributed to the run that found it"
@@ -343,12 +362,12 @@ async def test_shadow_mode_creates_no_run_row_item_or_snapshot(tmp_path, monkeyp
 
     assert fetched == [url], "shadow mode still performs the fetch"
     assert _run_rows(subs_db) == [], "shadow mode must not create a run row"
-    for table in ("subscription_items", "url_snapshots"):
-        count = subs_db.conn.execute(
-            f"SELECT COUNT(*) AS n FROM {table} WHERE subscription_id = ?",
-            (subscription_id,),
-        ).fetchone()["n"]
-        assert count == 0, f"shadow mode wrote to {table}"
+    assert _count_items(subs_db, subscription_id) == 0, (
+        "shadow mode wrote to subscription_items"
+    )
+    assert _count_snapshots(subs_db, subscription_id) == 0, (
+        "shadow mode wrote to url_snapshots"
+    )
     after = subs_db.get_subscription(subscription_id)["last_checked"]
     assert after == before, "shadow mode must not record a check result"
 
@@ -471,27 +490,130 @@ async def test_failure_recorder_itself_raising_still_records_the_check_error(
     assert row["consecutive_failures"] == 1
 
 
+@pytest.mark.asyncio
+async def test_failed_scheduled_check_is_logged_as_a_warning_with_the_error(
+    tmp_path, monkeypatch
+):
+    """A failed run must say so in the log, with its error text.
+
+    It used to be reported at INFO as "check complete" with no error at all --
+    so an unattended check of a dead source left a metric counter as its only
+    trace, which is the same invisibility the run row was added to fix.
+
+    Captured with a loguru sink rather than `caplog`: this repo logs through
+    loguru, which does not propagate to the stdlib `logging` handlers `caplog`
+    installs, so a `caplog`-based assertion here would pass vacuously.
+    """
+    subs_db = SubscriptionsDB(tmp_path / "subs.db")
+    subscription_id = _add_due_source(
+        subs_db, name="Dead page", type="url", source="https://example.com/gone"
+    )
+    _serve_failure(monkeypatch, RuntimeError("connection refused"))
+
+    records: list[tuple[str, str]] = []
+    sink_id = loguru_logger.add(
+        lambda message: records.append(
+            (message.record["level"].name, message.record["message"])
+        ),
+        level="INFO",
+    )
+    try:
+        await _handler(subs_db).handle(_task(subscription_id))
+    finally:
+        loguru_logger.remove(sink_id)
+
+    warnings = [text for level, text in records if level in ("WARNING", "ERROR")]
+    assert any("connection refused" in text for text in warnings), (
+        f"the failure's error text must reach the log at WARNING+; got {records}"
+    )
+    assert not any("check complete" in text.lower() for _, text in records), (
+        "a failed run must not also be announced as a completed one"
+    )
+
+
+@pytest.mark.asyncio
+async def test_shadow_reports_unsupported_types_distinctly_from_unknown_ones(
+    tmp_path, monkeypatch
+):
+    """Shadow mode must not call a real, checkable source unrecognised.
+
+    Unification made the real path execute `sitemap` and `api`, but the shadow
+    probe cannot reach either. Reporting them as `unknown_type` would have
+    shadow mode -- a diagnostic -- assert that a perfectly valid source is not
+    recognised by the scheduler, which is a false clean bill of health.
+    """
+    subs_db = SubscriptionsDB(tmp_path / "subs.db")
+    sitemap_id = _add_due_source(
+        subs_db,
+        name="Sitemap source",
+        type="sitemap",
+        source="https://example.com/sitemap.xml",
+    )
+    fetched = _serve(monkeypatch, {}, sitemap=True)
+
+    statuses: list[str] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler.log_counter",
+        lambda name, labels=None: statuses.append((labels or {}).get("status")),
+    )
+
+    handler = _handler(subs_db, shadow_mode=True)
+    await handler.handle(_task(sitemap_id))
+
+    assert statuses == ["shadow_unsupported"], (
+        "an executable type the probe cannot reach is not an unknown type"
+    )
+    assert fetched == [], "shadow mode must not pretend to have checked it"
+    assert _run_rows(subs_db) == [], "shadow mode still writes no run row"
+
+    # A type nothing can execute is still reported as genuinely unknown.
+    statuses.clear()
+    unknown = _subscription_of_unsupported_type(subs_db)
+    await handler.handle(_task(unknown))
+    assert statuses == ["unknown_type"]
+
+
+def _subscription_of_unsupported_type(subs_db: SubscriptionsDB) -> int:
+    """Insert a row whose type no executor handles.
+
+    Written past `add_subscription` deliberately: the `subscriptions.type` CHECK
+    constraint accepts exactly `EXECUTABLE_SOURCE_TYPES`, so a genuinely unknown
+    type cannot be stored through the normal API -- which is itself the
+    invariant `test_executable_types_match_every_type_the_db_accepts` pins.
+    """
+    subscription_id = _add_due_source(
+        subs_db, name="Odd source", type="url", source="https://example.com/odd"
+    )
+    with subs_db.transaction() as conn:
+        conn.execute("PRAGMA ignore_check_constraints = ON")
+        conn.execute(
+            "UPDATE subscriptions SET type = 'gopher' WHERE id = ?",
+            (subscription_id,),
+        )
+        conn.execute("PRAGMA ignore_check_constraints = OFF")
+    return subscription_id
+
+
 # --- guards the handler keeps ----------------------------------------------
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("field", "value"), [("is_paused", 1), ("is_active", 0)]
-)
+@pytest.mark.parametrize("gate", [{"is_paused": 1}, {"is_active": 0}])
 async def test_paused_or_inactive_source_creates_no_run_row(
-    tmp_path, monkeypatch, field, value
+    tmp_path, monkeypatch, gate
 ):
-    """The handler's own gate still short-circuits before anything is launched."""
+    """The handler's own gate still short-circuits before anything is launched.
+
+    The gate goes on through `update_subscription`, whose own allowlist decides
+    which columns may be written, rather than by interpolating a column name
+    into SQL here.
+    """
     subs_db = SubscriptionsDB(tmp_path / "subs.db")
     url = "https://example.com/watched"
     subscription_id = _add_due_source(
         subs_db, name="Watched page", type="url", source=url
     )
-    with subs_db.transaction() as conn:
-        conn.execute(
-            f"UPDATE subscriptions SET {field} = ? WHERE id = ?",
-            (value, subscription_id),
-        )
+    assert subs_db.update_subscription(subscription_id, **gate) is True
     fetched = _serve(monkeypatch, {url: _page("original text")})
 
     await _handler(subs_db).handle(_task(subscription_id))
@@ -510,9 +632,11 @@ def test_executable_types_match_every_type_the_db_accepts(tmp_path):
     to check. Anything storable must be executable.
     """
     subs_db = SubscriptionsDB(tmp_path / "subs.db")
-    schema = subs_db.conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'subscriptions'"
-    ).fetchone()["sql"]
+    with subs_db.transaction() as conn:
+        schema = conn.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'subscriptions'"
+        ).fetchone()["sql"]
     constraint = re.search(r"type\s+IN\s*\(([^)]*)\)", schema)
     assert constraint, "the subscriptions.type CHECK constraint moved or vanished"
     accepted = {value.strip().strip("'\"") for value in constraint.group(1).split(",")}

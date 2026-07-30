@@ -22,11 +22,22 @@ _WATCHLIST_TASK_PREFIX = "watchlist"
 _SHADOW_FEED_TYPES = ("rss", "atom", "json_feed", "podcast")
 _SHADOW_URL_TYPES = ("url", "url_list")
 
+#: What the shadow probe can actually reach. Deliberately narrower than
+#: `EXECUTABLE_SOURCE_TYPES`: `sitemap` and `api` need the service's own URL and
+#: payload enumeration, which lives on the path shadow mode exists to avoid.
+_SHADOW_COVERED_TYPES = frozenset(_SHADOW_FEED_TYPES) | frozenset(_SHADOW_URL_TYPES)
+
 _STATUS_SUCCESS = "success"
 _STATUS_ERROR = "error"
 _STATUS_SKIPPED = "skipped"
 _STATUS_MISSING = "missing"
 _STATUS_UNKNOWN_TYPE = "unknown_type"
+#: A source the app can really check, but that the shadow probe cannot. Distinct
+#: from `_STATUS_UNKNOWN_TYPE` because conflating them makes shadow mode lie
+#: about scheduler health: it would report a perfectly valid `sitemap` source as
+#: an unknown type, which is exactly the "nothing is wrong" reading that hid
+#: TASK-1210 and TASK-1212.
+_STATUS_SHADOW_UNSUPPORTED = "shadow_unsupported"
 
 
 class WatchlistCheckHandler:
@@ -161,10 +172,7 @@ class WatchlistCheckHandler:
             )
 
             if self.shadow_mode:
-                if not await self._check_in_shadow(subscription, subscription_type):
-                    status = _STATUS_UNKNOWN_TYPE
-                    return
-                status = _STATUS_SUCCESS
+                status = await self._check_in_shadow(subscription, subscription_type)
                 return
 
             if subscription_type not in EXECUTABLE_SOURCE_TYPES:
@@ -187,13 +195,33 @@ class WatchlistCheckHandler:
             # exception for the ordinary failure case.
             executed = await self.watchlists_service.execute_run(run_id)
             run_status = str(executed.get("status") or "")
-            status = _STATUS_ERROR if run_status == "failed" else _STATUS_SUCCESS
             stats = executed.get("stats") or {}
-            logger.info(
-                f"Subscription check complete: '{subscription.get('name')}' - "
-                f"run {run_id} {run_status or 'completed'}, "
-                f"{stats.get('new_items_found', 0)} new items"
-            )
+            if run_status == "failed":
+                status = _STATUS_ERROR
+                # A failed run used to be logged at INFO as "check complete",
+                # with no error text at all -- so the most common failure, an
+                # unattended scheduled check of a dead source, left the metric
+                # counter as its only trace. `error_msg` is read from the run's
+                # own top-level field, which `record_run_result` writes to the
+                # `local_watchlist_runs.error_msg` column; the `stats` copy is
+                # a mirror it makes only when the column is set, so the column
+                # is the one to trust and the mirror is the fallback.
+                error_text = (
+                    executed.get("error_msg")
+                    or stats.get("error_msg")
+                    or "no error message recorded"
+                )
+                logger.warning(
+                    f"Scheduled check FAILED: '{subscription.get('name')}' "
+                    f"(ID: {subscription_id}), run {run_id}: {error_text}"
+                )
+            else:
+                status = _STATUS_SUCCESS
+                logger.info(
+                    f"Subscription check complete: '{subscription.get('name')}' - "
+                    f"run {run_id} {run_status or 'completed'}, "
+                    f"{stats.get('new_items_found', 0)} new items"
+                )
 
         except Exception as exc:
             status = _STATUS_ERROR
@@ -247,7 +275,7 @@ class WatchlistCheckHandler:
 
     async def _check_in_shadow(
         self, subscription: dict[str, Any], subscription_type: str
-    ) -> bool:
+    ) -> str:
         """Probe a subscription without writing anything. The deliberate fork.
 
         Shadow mode (``[scheduling] watchlist_checks_shadow``) exists to prove
@@ -257,31 +285,49 @@ class WatchlistCheckHandler:
         exist precisely to write a run row, items and snapshots.
 
         So this stays a direct-monitor call, and stays deliberately coarser than
-        the real path: it probes one URL for a ``url_list`` and does not
-        enumerate a ``sitemap``. That is a diagnostic's fidelity, not a check's,
-        and it is safe here only because nothing it returns is persisted.
+        the real path: it probes one URL for a ``url_list``, and it cannot reach
+        ``sitemap`` or ``api`` at all, because enumerating those means the
+        service methods that live on the path shadow mode avoids.
+
+        That gap is reported rather than disguised. Before TASK-1383 the real
+        path was equally narrow, so the tuples above happened to match it; now
+        that the real path executes every type in ``EXECUTABLE_SOURCE_TYPES``,
+        folding the uncovered ones into ``unknown_type`` would have shadow mode
+        report a perfectly valid `sitemap` source as unrecognised -- a false
+        clean bill of health, which is the failure mode this stream exists to
+        remove. They get their own status instead.
 
         Args:
             subscription: The subscription row to probe.
             subscription_type: Its ``type``.
 
         Returns:
-            ``True`` when the type was probed, ``False`` when it has no shadow
-            arm (reported as ``unknown_type``).
+            The handler status for this check: ``success`` when probed,
+            ``shadow_unsupported`` when the type is genuinely executable but
+            out of the probe's reach, ``unknown_type`` when nothing can execute
+            it at all.
         """
         if subscription_type in _SHADOW_FEED_TYPES:
             items = await self.feed_monitor.check_feed(subscription)
         elif subscription_type in _SHADOW_URL_TYPES:
             result, _disposition = await self.url_monitor.check_url(subscription)
             items = [result] if result is not None else []
+        elif subscription_type in EXECUTABLE_SOURCE_TYPES:
+            logger.warning(
+                f"Shadow mode cannot probe '{subscription_type}' sources "
+                f"(subscription {subscription.get('id')}); it is checked normally "
+                f"when shadow mode is off. Shadow coverage: "
+                f"{', '.join(sorted(_SHADOW_COVERED_TYPES))}."
+            )
+            return _STATUS_SHADOW_UNSUPPORTED
         else:
             logger.warning(f"Unknown subscription type: {subscription_type}")
-            return False
+            return _STATUS_UNKNOWN_TYPE
         logger.info(
             f"Shadow check complete: '{subscription.get('name')}' - "
             f"{len(items)} item(s) observed, nothing written"
         )
-        return True
+        return _STATUS_SUCCESS
 
     def _parse_subscription_id(self, task_id: Any) -> int | None:
         """Extract the numeric subscription id from a ``watchlist:<id>`` task id."""
