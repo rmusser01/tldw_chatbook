@@ -80,6 +80,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #52 A never-run bench renders `Not yet checked` for its target and no target-readiness recovery callout inside `#evals-inspector-bench`, while unrelated screen-level recovery callouts remain permitted.
 - [ ] #53 A legacy Evals bench with a duplicate target id composes exactly two target rows in the editor and exactly two readiness rows in `#evals-inspector-bench`; all four rows render with nonzero regions and retain distinct index-derived ids despite the shared underlying target id and sibling primary-action status.
 - [ ] #54 The real Lab route mounts Models without a lifecycle `NoMatches`; local-model delete confirmation is hidden on first paint and its mounted reactive state can show and hide it without mount-order errors; Lab strip navigation still completes.
+- [ ] #55 Selected and empty Library Collections retain all current copy, selection, and geometry coverage while asserting the established pressable-but-blocked Console handoff state rather than a disabled button.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -139,6 +140,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 46. Scope the never-run Evals recovery absence assertion to the target-readiness inspector owner.
 47. Scope duplicate-target Evals readiness-row counting to the target-readiness inspector owner.
 48. Make local-model delete-confirm visibility independent of parent/child mount ordering and retain a real-shell show/hide regression.
-49. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-50. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+49. Align both Library Collections handoff assertions with the established pressable-but-blocked recovery contract.
+50. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+51. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

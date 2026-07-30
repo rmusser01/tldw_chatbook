@@ -2049,6 +2049,44 @@ git diff --check
 Expected: Models mounts without lifecycle errors, delete confirmation is
 hidden/showable/hideable, and Lab navigation remains green.
 
+### Task 4aw: Align Library Collections blocked handoff state
+
+**Files:**
+- Modify: `Tests/UI/test_library_content_hub.py`
+
+- [ ] **Step 1: Preserve both stale assertion failures**
+
+Run
+`test_library_collections_selection_explains_membership_workspace_and_actions`
+and
+`test_library_collections_empty_state_keeps_global_browse_rule_and_blocks_wip_actions`.
+Expected: all copy/selection/geometry checks pass, and only the final
+`disabled is True` assertion fails because TASK-716 keeps the blocked button
+pressable.
+
+- [ ] **Step 2: Assert the established recovery interaction**
+
+In each test, capture `#library-use-in-console` and assert it is not disabled
+and has `library-source-action-blocked`. Preserve every other assertion. Do not
+change production or duplicate the dedicated blocked-press handler coverage.
+
+- [ ] **Step 3: Verify focused and neighboring Library contracts**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_library_content_hub.py::test_library_collections_selection_explains_membership_workspace_and_actions \
+  Tests/UI/test_library_content_hub.py::test_library_collections_empty_state_keeps_global_browse_rule_and_blocks_wip_actions \
+  Tests/UI/test_library_content_hub.py \
+  Tests/UI/test_post_release_workspaces_library_depth.py::test_blocked_use_in_console_press_explains_inline \
+  -q
+../../.venv/bin/python -m ruff check Tests/UI/test_library_content_hub.py
+../../.venv/bin/python -m ruff format --check Tests/UI/test_library_content_hub.py
+git diff --check
+```
+
+Expected: Collections remain visibly blocked, their buttons remain pressable,
+and dedicated recovery behavior remains green.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

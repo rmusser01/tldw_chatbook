@@ -94,6 +94,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   queryable and raises `NoMatches`. The dialog and delete flow remain live;
   their initial hidden state and later reactive visibility are coupled to an
   invalid parent/child lifecycle assumption.
+- The selected and empty Library Collections regressions still expect
+  `#library-use-in-console` to be disabled. TASK-716 deliberately made blocked
+  handoff buttons pressable so their handler can emit the recovery warning,
+  while `library-source-action-blocked` carries the blocked visual/state
+  contract; dedicated tests already cover that press and tooltip behavior.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -465,6 +470,11 @@ Update the tests to describe current behavior:
     application until after refresh through a helper that tolerates a not-yet
     composed child. Exercise hidden-first, show, and hide state in the existing
     real-shell Lab route regression without adding a harness.
+53. In both Library Collections branches, replace only the stale disabled
+    assertion with an enabled/pressable assertion plus the existing blocked
+    class assertion. Preserve selection, copy, item counts, empty guidance,
+    geometry, and the dedicated blocked-press coverage without changing
+    production or duplicating the handler test.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -656,6 +666,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   discard a live delete flow or hide the real route defect. CSS owning initial
   visibility and the watcher owning later visibility preserves behavior with
   one lifecycle-safe seam and no compatibility surface.
+- Re-disabling the Library handoff button would make its recovery handler
+  unreachable, while deleting the assertion would lose blocked-state coverage.
+  Asserting pressable plus the established blocked class preserves both parts
+  of the accepted interaction.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
