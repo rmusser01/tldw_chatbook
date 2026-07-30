@@ -20,6 +20,8 @@ directly in the pure-function tests below.
 
 from __future__ import annotations
 
+import signal
+
 from rich.cells import cell_len
 import pytest
 from textual.widgets import Static
@@ -51,6 +53,35 @@ _BOUNDARY_TEXT = _LEAD + _BODY + _TAIL
 # under-counts it as a single row when it actually needs two.
 _CJK_TAIL = "ZEBRA4"
 _CJK_TEXT = "個" * 40 + f" {_CJK_TAIL}"
+
+# --- Fix-round-2 fixtures: review findings (MEDIUM caret-at-start regression,
+# LOW ZWJ/grapheme cell-arithmetic leaks) -------------------------------------
+# Built from explicit codepoints, never typed/pasted literals: a ZWJ
+# (U+200D) or variation selector is invisible in an editor and silently
+# corrupts on copy-paste, which would quietly turn a targeted regression
+# test into a vacuous one.
+_ZWJ_WORD = "".join(
+    chr(c) for c in (0x4B, 0x200D, 0x54, 0x43, 0x43, 0x4F, 0x74, 0x52)
+)  # "K<ZWJ>TCCOtR" -- reviewer's Finding 2 counterexample (cluster-cells=6,
+#    per-character cell_len sum=7); exercises the prefix-trim's cell math.
+_ZWJ_EMOJI_STRING = "".join(
+    chr(c) for c in (0x74, 0x52, 0x45, 0x6D, 0x1F600, 0x20, 0x200D, 0x200D, 0x65, 0x79)
+)  # "tREm<emoji> <ZWJ><ZWJ>ey" -- reviewer's Finding 3 counterexample.
+# A genuine width>=8 (the production floor) counterexample for the
+# join-boundary cell-arithmetic bug in `_cell_wrap_line`'s hard-break path,
+# found by differential fuzzing during the fix (the reviewer's own Finding 3
+# string does not reproduce against this file's exact chunking -- see the
+# fix-round-2 report section): a run of short chunks ending in a ZWJ
+# followed by a chunk starting with a variation selector + emoji.
+_ZWJ_JOIN_BOUNDARY_TEXT = "".join(
+    chr(c)
+    for c in (
+        0x23, 0x5A, 0x58, 0x59, 0x20, 0x62, 0x39, 0x200D, 0x20,
+        0xFE0F, 0x1F600, 0x62, 0x63, 0x63, 0x33, 0x59, 0x59,
+        0x1F600, 0x33, 0x58, 0x5A, 0x58, 0x59, 0x23, 0x39, 0x30,
+        0x30, 0x59, 0x63,
+    )
+)
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +149,59 @@ def test_prefixed_row_offsets_still_map_into_the_source_text():
     assert 0 <= prefixed.start <= prefixed.end <= len(_BOUNDARY_TEXT)
     displayed_tail = prefixed.text[prefixed.synthetic_prefix_columns :]
     assert _BOUNDARY_TEXT[prefixed.start : prefixed.end] == displayed_tail
+
+
+# ---------------------------------------------------------------------------
+# Fix round 2 -- review findings
+# ---------------------------------------------------------------------------
+
+
+def test_home_row_is_never_prefixed_or_trimmed_when_nothing_is_scrolled_above():
+    """MEDIUM RED reproduction: caret at draft offset 0 (Home) on a >4-row
+    draft must not delete real leading content or the caret glyph.
+
+    `first_visible == 0` means row 0 IS the draft's true first row -- nothing
+    is scrolled off above it, so the "... " prefix-and-trim must not run at
+    all. Splices the caret glyph at offset 0 exactly as `_draft_renderable`
+    does for a focused composer, then windows with `cursor_index=0` (the
+    caret-following branch, caret on the draft's very first row).
+    """
+    render_text = ConsoleComposerBar.CURSOR_GLYPH + _BOUNDARY_TEXT
+    visible = ConsoleComposerBar._visible_draft_line_slices(
+        render_text, WIDTH, cursor_index=0
+    )
+    assert len(visible) == ConsoleComposerBar.MAX_DRAFT_ROWS
+
+    first_row = visible[0]
+    assert not first_row.text.startswith("...")
+    assert first_row.text.startswith(ConsoleComposerBar.CURSOR_GLYPH)
+    # Row 0 is exactly the untouched first wrapped row -- not merely
+    # "contains the caret somewhere", but byte-identical to what an
+    # unwindowed wrap would have produced for this row.
+    unwindowed = ConsoleComposerBar._wrap_draft_line_slices(render_text, WIDTH)
+    assert first_row.text == unwindowed[0].text
+    assert first_row.start == unwindowed[0].start
+    assert first_row.end == unwindowed[0].end
+
+
+def test_prefix_trim_uses_the_zwj_fuzz_counterexample_and_stays_within_width():
+    """LOW 1 RED reproduction: a ZWJ grapheme cluster whose per-character
+    `cell_len` sum (7) exceeds its own whole-cluster `cell_len` (6) must not
+    make the old per-character-decrement trim exit early and leave the
+    prefixed row still over budget.
+    """
+    lead = "aa bb cc dd ee ff gg hh "
+    text = lead + _ZWJ_WORD + " ii jj kk ll mm SENTINEL"
+    width = 8
+
+    visible = ConsoleComposerBar._visible_draft_line_slices(text, width)
+    assert len(visible) == ConsoleComposerBar.MAX_DRAFT_ROWS
+    for row_index, line_slice in enumerate(visible):
+        assert cell_len(line_slice.text) <= width, (
+            f"row {row_index} ({line_slice.text!r}) is "
+            f"{cell_len(line_slice.text)} cells, wider than {width}"
+        )
+    assert "SENTINEL" in "".join(line_slice.text for line_slice in visible)
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +282,87 @@ def test_cell_wrap_line_matches_pinned_output_for_the_boundary_fixture():
 
 
 # ---------------------------------------------------------------------------
+# Fix round 2 -- LOW 2/LOW 3: `_cell_wrap_line`'s own grapheme-cluster and
+# join-boundary cell arithmetic (independent of the prefix-trim above)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "width"),
+    [
+        (_ZWJ_WORD, 8),
+        (_ZWJ_EMOJI_STRING, 8),
+    ],
+)
+def test_cell_wrap_line_stays_within_width_for_the_reviewers_fuzz_strings(text, width):
+    """Reviewer's Finding 2/3 counterexamples, pinned as an explicit
+    invariant check. Neither actually exceeds `width` against this file's
+    exact whitespace-chunking, against the reviewed commit or after this
+    fix (verified directly -- see the report's fix-round-2 section for the
+    per-chunk cell_len breakdown), so this pins "stays correct", not a RED
+    reproduction. `test_prefix_trim_uses_the_zwj_fuzz_counterexample_...`
+    above and `test_cell_wrap_line_does_not_hang_at_width_one_...` below are
+    the ones that actually fail against the reviewed commit.
+    """
+    rows = ConsoleComposerBar._cell_wrap_line(text, width)
+    for row in rows:
+        assert cell_len(row) <= width, (row, cell_len(row))
+
+
+def test_cell_wrap_line_stays_within_width_at_the_join_boundary():
+    """Join-boundary regression pin for `_cell_wrap_line`'s hard-break path.
+
+    `cell_len` itself is not additive across every join -- a trailing ZWJ
+    silently absorbs the character that would follow it in a longer string,
+    so a numeric budget derived from `cell_len(current_text)` in isolation
+    (checked against a hard-break piece's own isolated `cell_len`) can
+    disagree with the true joined width. This does NOT fail against the
+    reviewed commit (its `chop_cells`-based hard-break happens to split this
+    particular string at a different, still-valid point); it pins a defect
+    introduced by, and fixed within, this same fix round's first attempt at
+    LOW 2/3 (a numeric-budget version of `_extend_fitting_cells`), caught by
+    differential fuzzing during development before it was ever committed.
+    Kept as a regression guard because reverting `_extend_fitting_cells` to
+    that numeric-budget shape is exactly the mistake it would silently
+    repeat. Reproduces at width 9, inside the production floor (>= 8).
+    """
+    width = 9
+    rows = ConsoleComposerBar._cell_wrap_line(_ZWJ_JOIN_BOUNDARY_TEXT, width)
+    for row in rows:
+        assert cell_len(row) <= width, (row, cell_len(row))
+    # The row-joining round-trips to the source content -- no characters
+    # silently dropped by the hard-break's forced-progress path.
+    assert "".join(rows) == _ZWJ_JOIN_BOUNDARY_TEXT.expandtabs(8)
+
+
+def test_cell_wrap_line_does_not_hang_at_width_one_with_double_width_text():
+    """LOW 3 RED reproduction: a chunk whose leading grapheme alone exceeds
+    the wrap width (only possible at width < 2 with double-width content --
+    unreachable via either production call site, both of which floor at 8,
+    but `_cell_wrap_line` doesn't itself assume that floor) must still make
+    forward progress every call, not spin forever re-appending an empty row.
+    A hard 3s alarm turns a hang into a test failure instead of a stuck
+    suite.
+    """
+
+    def _on_alarm(signum, frame):
+        raise AssertionError(
+            "_cell_wrap_line('個個個', 1) did not return within 3s -- "
+            "infinite loop regression"
+        )
+
+    previous_handler = signal.signal(signal.SIGALRM, _on_alarm)
+    signal.alarm(3)
+    try:
+        rows = ConsoleComposerBar._cell_wrap_line("個個個", 1)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+    assert rows == ["個", "個", "個"]
+
+
+# ---------------------------------------------------------------------------
 # Painted-state reproductions (mounted app, real Static widget)
 # ---------------------------------------------------------------------------
 
@@ -228,6 +393,35 @@ async def test_bug1_unfocused_insert_keeps_the_sentinel_row_painted():
             for row in range(visible_draft.size.height)
         ]
         assert any(_SENTINEL in row for row in painted_rows), painted_rows
+
+
+@pytest.mark.asyncio
+async def test_home_on_a_long_draft_keeps_the_caret_and_leading_text_painted():
+    """MEDIUM RED reproduction, mounted: caret at the draft's true start
+    (Home) on a >4-row draft must paint both the real leading characters
+    and the caret glyph on row 0 -- the reviewer's own repro at paint level
+    (pre-fix: row 0 showed no caret at all, in any of the 4 rows, and had
+    lost "alp" from "alpha").
+    """
+    _, host = _ready_host()
+    async with host.run_test(size=(120, 30)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        await pilot.pause()
+
+        composer.load_draft(_BOUNDARY_TEXT)
+        composer.focus()
+        await pilot.pause()
+        composer.move_cursor_home()
+        await pilot.pause()
+        assert composer.cursor_index == 0
+
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        row0 = visible_draft.render_line(0).text
+        assert ConsoleComposerBar.CURSOR_GLYPH in row0, row0
+        assert row0.lstrip().startswith(
+            ConsoleComposerBar.CURSOR_GLYPH + _BOUNDARY_TEXT[:10]
+        ), row0
 
 
 @pytest.mark.asyncio
