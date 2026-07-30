@@ -371,6 +371,14 @@ Update the tests to describe current behavior:
     config boot, Settings adapter writes, screen navigation, restored session,
     readiness, and no-restart unblocking assertions. Do not make the production
     projection writable or replace the journey with a lighter fake.
+42. In the same live-config journey, resolve its owner-only temporary user-data
+    directory and give `get_subscriptions_db_path` a file below that directory
+    rather than including it in the `:memory:` getter loop. Preserve
+    `:memory:` for the unrelated single-thread test databases and preserve the
+    real scheduler worker. This lets `SubscriptionsDB` schema initialized on
+    the construction thread remain visible when `PriorityQueue.load` queries
+    it through `asyncio.to_thread`. Do not disable scheduling, change
+    production connection ownership, or point the fixture at host data.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -516,6 +524,11 @@ compatibility shims. No broad deletion of live tests.
   retired competing state. Publishing its already-constructed state through
   the same projection method used by the current app harnesses preserves the
   full journey while changing only fixture setup.
+- A `:memory:` SQLite database belongs to one connection, while
+  `SubscriptionsDB` uses thread-local connections and the production scheduler
+  loads subscriptions off-thread. A private file-backed fixture is the
+  smallest faithful seam: it shares the initialized schema across those two
+  connections without mocking away scheduler behavior.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

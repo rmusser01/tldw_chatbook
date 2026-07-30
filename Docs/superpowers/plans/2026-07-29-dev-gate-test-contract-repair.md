@@ -1629,6 +1629,45 @@ git add \
 git commit -m "test(console): publish fixture runtime state"
 ```
 
+### Task 4al: Give the live scheduler a file-backed subscriptions fixture
+
+**Files:**
+- Modify: `Tests/UI/test_console_session_settings.py`
+
+- [ ] **Step 1: Reproduce the cross-thread in-memory failure**
+
+Run `test_real_journey_settings_save_unblocks_console_without_restart` after
+Task 4ak. Expected: the journey boots and reaches navigation, then the real
+scheduler worker fails in `PriorityQueue.load` with
+`OperationalError: no such table: subscriptions`. The fixture initializes
+`SubscriptionsDB(":memory:")` on the construction thread, while the scheduler
+queries a distinct thread-local in-memory connection.
+
+- [ ] **Step 2: Use a private file-backed fixture path**
+
+Resolve the temporary user-data directory after `mkdtemp`. Remove
+`get_subscriptions_db_path` from the loop that returns `:memory:` and patch it
+separately to `user_data_dir / "subscriptions.sqlite"`. Keep every other fake,
+the real scheduler worker, real configuration persistence, navigation, and
+journey assertion unchanged. Do not disable scheduling or edit production.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_session_settings.py::test_real_journey_settings_save_unblocks_console_without_restart \
+  Tests/Scheduling/test_watchlist_projection.py \
+  Tests/DB/test_subscriptions_db.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_console_session_settings.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_console_session_settings.py
+git diff --check
+git add \
+  Tests/UI/test_console_session_settings.py
+git commit -m "test(console): share scheduler subscriptions fixture"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
