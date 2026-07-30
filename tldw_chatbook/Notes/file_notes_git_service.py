@@ -7,6 +7,7 @@ import hashlib
 import os
 import shutil
 import stat
+import tempfile
 from collections.abc import Awaitable, Collection, Generator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -15,17 +16,23 @@ from typing import Any, Generic, Literal, Protocol, TypeVar
 from tldw_chatbook.Notes.file_notes_git_commit import (
     CommitContractError,
     CommitIncludedNote,
+    CommitOutcome,
+    CommitRecoveryProjection,
     CommitReviewHandle,
     CommitReviewProjection,
     CommitReviewResult,
     GitIdentity,
+    RawCommitObject,
     RawStagedDeltaEntry,
     normalize_commit_message,
     parse_git_identity,
+    parse_raw_commit_object,
     parse_raw_staged_delta,
 )
 from tldw_chatbook.Notes.file_notes_session_owner import (
     CommitAuthorityCapture,
+    CommitPublication,
+    CommitRecoveryCapability,
     FileNotesSessionOwner,
     FileSystemIdentity,
     GitMutationLease,
@@ -122,6 +129,10 @@ DEFAULT_GIT_STDERR_LIMIT_BYTES = 4096
 DEFAULT_COMMIT_PROOF_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024
 DEFAULT_COMMIT_PROOF_STDERR_LIMIT_BYTES = DEFAULT_GIT_STDERR_LIMIT_BYTES
 _GIT_STREAM_CHUNK_BYTES = 64 * 1024
+_UNCERTAIN_COMMIT_MESSAGE = (
+    "Commit may have succeeded. Git actions are disabled until the repository "
+    "is checked. Run git status and git log -1, then choose Check again."
+)
 
 
 _RETAINED_CHILD_TOKEN_SECRET = object()
@@ -248,6 +259,38 @@ class _CommitReviewSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class _CommitConfirmation:
+    """Fresh lease-bound authority after one exact revalidation."""
+
+    capture: CommitAuthorityCapture
+
+
+@dataclass(frozen=True, slots=True)
+class _CommitPostflight:
+    """Path-free immediate branch/index proof after one commit child."""
+
+    repository_matches: bool
+    local_state_supported: bool
+    head: HeadIdentity | None
+    index_signature: str | None
+    delta_signature: str | None
+    tree_object_id: str | None
+    raw_commit: RawCommitObject | None
+
+
+@dataclass(frozen=True, slots=True)
+class _UncertainCommitEvidence:
+    """Task-5 retained evidence; Task 6 may inspect but never rerun it."""
+
+    snapshot: _CommitReviewSnapshot
+    capture: CommitAuthorityCapture
+    recovery_capability: CommitRecoveryCapability | None
+    retained_child: RetainedGitChildToken | None
+    hooks_directory: Path | None
+    mutation_lease: GitMutationLease | None
+
+
+@dataclass(frozen=True, slots=True)
 class _HeadReadFailure:
     """Typed failure that cannot be confused with a semantic HEAD state."""
 
@@ -263,6 +306,7 @@ GitStatusAdmissionReason = Literal[
     "status_active",
 ]
 GitMutationAdmissionReason = Literal[
+    "invalid_capability",
     "untrusted",
     "mutation_active",
     "recovery_required",
@@ -1592,6 +1636,12 @@ class FileNotesGitService:
         self._commit_review_cycle: asyncio.Task[CommitReviewResult] | None = None
         self._commit_review_waiter: asyncio.Task[CommitReviewResult] | None = None
         self._commit_review_snapshots: dict[object, _CommitReviewSnapshot] = {}
+        self._commit_cycle: asyncio.Task[CommitOutcome] | None = None
+        self._commit_waiter: asyncio.Task[CommitOutcome] | None = None
+        self._commit_child_started = False
+        self._uncertain_commit: _UncertainCommitEvidence | None = None
+        self._pending_hooks_cleanup: set[Path] = set()
+        self._shutdown_runner_confirmed: bool | None = None
         self._shutdown_settlement: Awaitable[None] | None = None
 
     async def discover(
@@ -2046,6 +2096,608 @@ class FileNotesGitService:
             self._commit_review_cycle = None
         if not cycle.cancelled():
             cycle.exception()
+
+    def start_commit(
+        self,
+        binding: SessionBinding,
+        handle: CommitReviewHandle,
+        *,
+        subject: str | None = None,
+        body: str = "",
+    ) -> asyncio.Task[CommitOutcome]:
+        """Consume one review capability and retain one guarded commit cycle."""
+        if self._sealed:
+            raise GitMutationAdmissionError(
+                "shutdown",
+                "File Notes Git service is shut down",
+            )
+        if binding != self._owner.current_binding():
+            raise GitMutationAdmissionError(
+                "stale_binding",
+                "File Notes root binding is stale",
+            )
+        if self._commit_cycle is not None and not self._commit_cycle.done():
+            raise GitMutationAdmissionError(
+                "mutation_active",
+                "A guarded commit is already active",
+            )
+        if not isinstance(handle, CommitReviewHandle):
+            raise GitMutationAdmissionError(
+                "invalid_capability",
+                "Commit review capability is invalid or already consumed",
+            )
+        admission = self._owner.admit_mutation(binding)
+        lease = admission.lease
+        if lease is None:
+            reason = admission.reason or "mutation_active"
+            raise GitMutationAdmissionError(
+                reason,
+                "File Notes Git mutation admission was refused",
+            )
+        snapshot = self._commit_review_snapshots.pop(handle._token, None)
+        if snapshot is None:
+            lease.release()
+            raise GitMutationAdmissionError(
+                "invalid_capability",
+                "Commit review capability is invalid or already consumed",
+            )
+        self._commit_review_snapshots.clear()
+        cycle: asyncio.Task[CommitOutcome] | None = None
+        try:
+            cycle = asyncio.get_running_loop().create_task(
+                self._run_commit_cycle(
+                    binding,
+                    snapshot,
+                    lease,
+                    subject=subject,
+                    body=body,
+                )
+            )
+            waiter = asyncio.get_running_loop().create_task(
+                self._shield_commit_cycle(cycle)
+            )
+        except BaseException:
+            if cycle is not None:
+                cycle.cancel()
+            lease.release()
+            raise
+        self._commit_child_started = False
+        self._commit_cycle = cycle
+        self._commit_waiter = waiter
+        cycle.add_done_callback(self._commit_cycle_completed)
+        return waiter
+
+    def cancel_commit(self) -> bool:
+        """Cancel only confirmation work before the branch child starts."""
+        cycle = self._commit_cycle
+        if cycle is None or cycle.done() or self._commit_child_started:
+            return False
+        cycle.cancel()
+        return True
+
+    async def _shield_commit_cycle(
+        self,
+        cycle: asyncio.Task[CommitOutcome],
+    ) -> CommitOutcome:
+        return await asyncio.shield(cycle)
+
+    def _commit_cycle_completed(
+        self,
+        cycle: asyncio.Task[CommitOutcome],
+    ) -> None:
+        if self._commit_cycle is cycle:
+            self._commit_cycle = None
+            self._commit_waiter = None
+            self._commit_child_started = False
+        if not cycle.cancelled():
+            cycle.exception()
+
+    async def _run_commit_cycle(
+        self,
+        binding: SessionBinding,
+        snapshot: _CommitReviewSnapshot,
+        lease: GitMutationLease,
+        *,
+        subject: str | None,
+        body: str,
+    ) -> CommitOutcome:
+        hooks_directory: Path | None = None
+        try:
+            if subject is not None:
+                try:
+                    confirmed_message = normalize_commit_message(subject, body)
+                except CommitContractError as error:
+                    return CommitOutcome("blocked", str(error))
+                if confirmed_message != snapshot.message:
+                    return CommitOutcome(
+                        "blocked",
+                        "Commit message changed; review again.",
+                    )
+            confirmation = await self._revalidate_commit_confirmation(
+                binding,
+                snapshot,
+                lease,
+            )
+            if confirmation is None:
+                return CommitOutcome(
+                    "blocked",
+                    "Commit review is stale; review again.",
+                )
+            try:
+                hooks_directory = _create_private_hooks_directory(
+                    confirmation.capture.repository,
+                    self._pending_hooks_cleanup,
+                )
+            except OSError:
+                return CommitOutcome(
+                    "blocked",
+                    "A private commit hooks directory could not be prepared.",
+                )
+            self._commit_child_started = True
+            try:
+                child_result = await self._runner.run(
+                    build_commit_argv(
+                        self._git_executable_or_raise(),
+                        str(hooks_directory),
+                    ),
+                    cwd=confirmation.capture.repository.worktree_root,
+                    environment=build_commit_environment(
+                        self._environment,
+                        author=snapshot.author,
+                        committer=snapshot.committer,
+                    ),
+                    stdin=snapshot.message,
+                    timeout=self._status_timeout,
+                    stdout_limit=DEFAULT_COMMIT_PROOF_STDERR_LIMIT_BYTES,
+                    stderr_limit=DEFAULT_COMMIT_PROOF_STDERR_LIMIT_BYTES,
+                )
+            except OSError:
+                outcome = self._retain_uncertain_commit(
+                    snapshot,
+                    confirmation.capture,
+                    lease,
+                    hooks_directory=hooks_directory,
+                )
+                hooks_directory = None
+                return outcome
+
+            retained_child = child_result.retained_child
+            retained_claimed = False
+            if retained_child is not None:
+                try:
+                    retained_claimed = self._runner.claim_retained_child(retained_child)
+                    settlement = self._runner.read_retained_child(retained_child)
+                except (RuntimeError, ValueError):
+                    settlement = RetainedGitChildSettlement("uncertain")
+                if (
+                    retained_claimed
+                    and settlement.state == "natural"
+                    and settlement.returncode is not None
+                    and not settlement.stop_requested
+                    and not settlement.force_stopped
+                    and self._runner.release_retained_child(retained_child)
+                ):
+                    child_result = GitCommandResult(
+                        settlement.returncode,
+                        settlement.stdout,
+                        settlement.stderr,
+                        output_overflow=settlement.output_overflow,
+                    )
+                    retained_child = None
+            child_is_natural = (
+                retained_child is None
+                and child_result.returncode is not None
+                and not child_result.termination_uncertain
+                and not child_result.stop_requested
+                and not child_result.force_stopped
+            )
+            if not child_is_natural:
+                if retained_child is not None and not retained_claimed:
+                    try:
+                        self._runner.claim_retained_child(retained_child)
+                    except (RuntimeError, ValueError):
+                        retained_child = None
+                outcome = self._retain_uncertain_commit(
+                    snapshot,
+                    confirmation.capture,
+                    lease,
+                    retained_child=retained_child,
+                    hooks_directory=hooks_directory,
+                )
+                hooks_directory = None
+                return outcome
+
+            self._remove_hooks_directory(hooks_directory)
+            hooks_directory = None
+            postflight = await self._read_commit_postflight(
+                binding,
+                confirmation.capture.repository,
+            )
+            if child_result.returncode == 0 and self._postflight_is_success(
+                snapshot,
+                confirmation,
+                postflight,
+            ):
+                return await self._publish_successful_commit(
+                    binding,
+                    snapshot,
+                    confirmation.capture,
+                    lease,
+                    postflight,
+                )
+            if child_result.returncode != 0 and self._postflight_is_unchanged(
+                snapshot,
+                postflight,
+            ):
+                return await self._publish_failed_commit(
+                    binding,
+                    snapshot,
+                    confirmation.capture,
+                    lease,
+                )
+            return self._retain_uncertain_commit(
+                snapshot,
+                confirmation.capture,
+                lease,
+            )
+        except asyncio.CancelledError:
+            return CommitOutcome(
+                "cancelled",
+                "Commit confirmation was cancelled.",
+            )
+        finally:
+            if hooks_directory is not None and not self._commit_child_started:
+                self._remove_hooks_directory(hooks_directory)
+            evidence = self._uncertain_commit
+            if evidence is None or evidence.mutation_lease is not lease:
+                lease.release()
+
+    async def _revalidate_commit_confirmation(
+        self,
+        binding: SessionBinding,
+        snapshot: _CommitReviewSnapshot,
+        lease: GitMutationLease,
+    ) -> _CommitConfirmation | None:
+        reviewed = snapshot.capture
+        repository = reviewed.repository
+        root = self._safe_root(binding)
+        if (
+            root is None
+            or self._git_executable is None
+            or not await self._commit_repository_matches(binding, repository)
+            or not await self._commit_local_state_is_supported(repository)
+        ):
+            return None
+        head = await self._read_commit_head(repository)
+        if head != reviewed.head:
+            return None
+        current = self._owner.snapshot(binding)
+        if (
+            current.git_authority_generation != reviewed.authority_generation
+            or current.trusted_repository != repository
+            or dict(current.staging_ownership) != dict(reviewed.ownership)
+        ):
+            return None
+        groups_by_id = {
+            group.group_id: group for group in coalesce_session_changes(current.changes)
+        }
+        if any(
+            groups_by_id.get(group_id) is None
+            or groups_by_id[group_id].sequence_ids != sequence_ids
+            for group_id, sequence_ids in reviewed.group_sequence_ids.items()
+        ):
+            return None
+        repository_ownership: dict[int, StagingOwnership] = {}
+        for group_id, ownership in current.staging_ownership.items():
+            group = groups_by_id.get(group_id)
+            if group is None:
+                return None
+            repository_group, invalid = self._map_group(
+                root,
+                repository,
+                group,
+            )
+            if invalid is not None or repository_group is None:
+                return None
+            mapped = _map_ownership_topology(
+                ownership,
+                group,
+                repository_group,
+            )
+            if mapped is None:
+                return None
+            repository_ownership[group_id] = mapped
+        proof = await self._complete_commit_proof(
+            repository,
+            reviewed.head,
+            repository_ownership,
+        )
+        if proof != snapshot.proof:
+            return None
+        identities = await self._resolve_commit_identities(repository)
+        if identities != (snapshot.author, snapshot.committer):
+            return None
+        capture = self._owner.capture_commit_authority(
+            lease,
+            binding=binding,
+            authority_generation=reviewed.authority_generation,
+            repository=repository,
+            head=reviewed.head,
+            group_sequence_ids=reviewed.group_sequence_ids,
+        )
+        if capture is None:
+            return None
+        return _CommitConfirmation(capture)
+
+    async def _read_commit_postflight(
+        self,
+        binding: SessionBinding,
+        repository: RepositoryIdentity,
+    ) -> _CommitPostflight:
+        repository_matches = await self._commit_repository_matches(
+            binding,
+            repository,
+        )
+        local_state_supported = (
+            repository_matches
+            and await self._commit_local_state_is_supported(repository)
+        )
+        if not local_state_supported:
+            return _CommitPostflight(
+                repository_matches,
+                False,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+        head = await self._read_commit_head(repository)
+        if head is None or head.object_id is None:
+            return _CommitPostflight(True, True, head, None, None, None, None)
+        index = await self._run_commit_proof_command(
+            repository,
+            build_commit_index_argv(self._git_executable_or_raise()),
+        )
+        delta = await self._run_commit_proof_command(
+            repository,
+            build_commit_delta_argv(
+                self._git_executable_or_raise(),
+                head.object_id,
+            ),
+        )
+        tree = await self._run_commit_proof_command(
+            repository,
+            (
+                self._git_executable_or_raise(),
+                "--no-replace-objects",
+                "-c",
+                "core.fsmonitor=false",
+                "write-tree",
+            ),
+        )
+        if not all(_command_succeeded(result) for result in (index, delta, tree)):
+            return _CommitPostflight(True, True, head, None, None, None, None)
+        if not _commit_index_semantics_are_supported(index.stdout):
+            return _CommitPostflight(True, True, head, None, None, None, None)
+        try:
+            index_entries = parse_index_entries_z(index.stdout)
+        except GitIndexParseError:
+            return _CommitPostflight(True, True, head, None, None, None, None)
+        if any(
+            entry.stage != 0
+            or entry.semantic_flags
+            or entry.mode in {"040000", "160000"}
+            for entry in index_entries
+        ):
+            return _CommitPostflight(True, True, head, None, None, None, None)
+        tree_object_id = _ascii_object_id(tree.stdout)
+        raw_commit: RawCommitObject | None = None
+        raw = await self._run_commit_proof_command(
+            repository,
+            (
+                self._git_executable_or_raise(),
+                "--no-replace-objects",
+                "cat-file",
+                "commit",
+                head.object_id,
+            ),
+        )
+        if _command_succeeded(raw):
+            try:
+                raw_commit = parse_raw_commit_object(raw.stdout)
+            except CommitContractError:
+                pass
+        return _CommitPostflight(
+            True,
+            True,
+            head,
+            hashlib.sha256(index.stdout).hexdigest(),
+            hashlib.sha256(delta.stdout).hexdigest(),
+            tree_object_id,
+            raw_commit,
+        )
+
+    @staticmethod
+    def _postflight_is_success(
+        snapshot: _CommitReviewSnapshot,
+        confirmation: _CommitConfirmation,
+        postflight: _CommitPostflight,
+    ) -> bool:
+        head = postflight.head
+        raw = postflight.raw_commit
+        return (
+            postflight.repository_matches
+            and postflight.local_state_supported
+            and head is not None
+            and head.kind == "attached"
+            and head.branch == confirmation.capture.head.branch
+            and head.object_id is not None
+            and head.object_id != confirmation.capture.head.object_id
+            and raw is not None
+            and raw.parent_object_id == confirmation.capture.head.object_id
+            and raw.tree_object_id == snapshot.proof.expected_tree
+            and postflight.tree_object_id == raw.tree_object_id
+            and raw.message == snapshot.message
+            and raw.author == snapshot.author
+            and raw.committer == snapshot.committer
+            and not raw.has_signature
+            and postflight.delta_signature == hashlib.sha256(b"").hexdigest()
+        )
+
+    @staticmethod
+    def _postflight_is_unchanged(
+        snapshot: _CommitReviewSnapshot,
+        postflight: _CommitPostflight,
+    ) -> bool:
+        return (
+            postflight.repository_matches
+            and postflight.local_state_supported
+            and postflight.head == snapshot.capture.head
+            and postflight.index_signature == snapshot.proof.index_signature
+            and postflight.delta_signature == snapshot.proof.delta_signature
+            and postflight.tree_object_id == snapshot.proof.expected_tree
+        )
+
+    async def _publish_successful_commit(
+        self,
+        binding: SessionBinding,
+        snapshot: _CommitReviewSnapshot,
+        capture: CommitAuthorityCapture,
+        lease: GitMutationLease,
+        postflight: _CommitPostflight,
+    ) -> CommitOutcome:
+        head = postflight.head
+        assert head is not None and head.object_id is not None
+        current_changes = self._owner.snapshot(binding).changes
+        status = await self._query_status(
+            binding,
+            current_changes,
+            capture.repository,
+            publish_ownership_changes=False,
+        )
+        clean_groups = {row.group_id for row in status.rows if row.state == "clean"}
+        retired: list[int] = []
+        divergent: list[int] = []
+        retired_groups: set[int] = set()
+        for group_id, sequences in capture.group_sequence_ids.items():
+            if group_id in clean_groups:
+                retired_groups.add(group_id)
+                target = retired
+            else:
+                target = divergent
+            target.extend(sequences)
+        refreshed_status = replace(
+            status,
+            rows=tuple(
+                row
+                for row in status.rows
+                if row.group_id not in retired_groups
+            ),
+        )
+        publication = self._owner.publish_commit_outcome(
+            lease,
+            capture,
+            CommitPublication(
+                state="succeeded",
+                new_head=head,
+                retired_sequence_ids=tuple(retired),
+                divergent_sequence_ids=tuple(divergent),
+                refreshed_status=refreshed_status,
+            ),
+        )
+        if not publication.published:
+            return self._retain_uncertain_commit(
+                snapshot,
+                capture,
+                lease,
+            )
+        count = len(snapshot.proof.included_group_ids)
+        short_oid = head.object_id[:12]
+        return CommitOutcome(
+            "succeeded",
+            f"Committed {count} session notes as {short_oid}; "
+            "unrelated changes untouched.",
+            qualification=(
+                "No unrelated staged content was committed; "
+                "Chatbook selected no unrelated worktree paths."
+            ),
+            commit_object_id=head.object_id,
+            committed_note_count=count,
+        )
+
+    async def _publish_failed_commit(
+        self,
+        binding: SessionBinding,
+        snapshot: _CommitReviewSnapshot,
+        capture: CommitAuthorityCapture,
+        lease: GitMutationLease,
+    ) -> CommitOutcome:
+        status = await self._query_status(
+            binding,
+            self._owner.snapshot(binding).changes,
+            capture.repository,
+            publish_ownership_changes=False,
+        )
+        publication = self._owner.publish_commit_outcome(
+            lease,
+            capture,
+            CommitPublication(
+                state="failed_unchanged",
+                refreshed_status=status,
+            ),
+        )
+        if not publication.published:
+            return self._retain_uncertain_commit(
+                snapshot,
+                capture,
+                lease,
+            )
+        return CommitOutcome(
+            "failed_unchanged",
+            "Git did not create a commit; branch and staged state are unchanged.",
+        )
+
+    def _retain_uncertain_commit(
+        self,
+        snapshot: _CommitReviewSnapshot,
+        capture: CommitAuthorityCapture,
+        lease: GitMutationLease,
+        *,
+        retained_child: RetainedGitChildToken | None = None,
+        hooks_directory: Path | None = None,
+    ) -> CommitOutcome:
+        recovery_capability = self._publish_uncertain_commit(
+            lease,
+            capture,
+        )
+        self._uncertain_commit = _UncertainCommitEvidence(
+            snapshot,
+            capture,
+            recovery_capability,
+            retained_child,
+            hooks_directory,
+            lease if recovery_capability is None else None,
+        )
+        return _uncertain_commit_outcome()
+
+    def _publish_uncertain_commit(
+        self,
+        lease: GitMutationLease,
+        capture: CommitAuthorityCapture,
+    ) -> CommitRecoveryCapability | None:
+        publication = self._owner.publish_commit_outcome(
+            lease,
+            capture,
+            CommitPublication(
+                state="uncertain",
+                recovery_projection=CommitRecoveryProjection(
+                    _UNCERTAIN_COMMIT_MESSAGE,
+                    False,
+                ),
+            ),
+        )
+        return publication.recovery_capability
 
     async def _run_commit_review_cycle(
         self,
@@ -2691,6 +3343,17 @@ class FileNotesGitService:
     def shutdown(self) -> Awaitable[None]:
         """Seal admission and return retained finite service settlement."""
         if self._shutdown_settlement is not None:
+            settlement = self._shutdown_settlement
+            if (
+                isinstance(settlement, _ImmediateSettlement)
+                or (
+                    isinstance(settlement, _RetainedSettlement)
+                    and settlement.task.done()
+                )
+            ):
+                if self._shutdown_runner_confirmed is True:
+                    self._settle_uncertain_commit_shutdown(True)
+                self._retry_pending_hooks_cleanup()
             return self._shutdown_settlement
         cycle = self._status_cycle
         waiter = self._status_waiter
@@ -2698,6 +3361,8 @@ class FileNotesGitService:
         action_waiter = self._action_waiter
         review_cycle = self._commit_review_cycle
         review_waiter = self._commit_review_waiter
+        commit_cycle = self._commit_cycle
+        commit_waiter = self._commit_waiter
         active_task = next(
             (
                 task
@@ -2708,6 +3373,8 @@ class FileNotesGitService:
                     action_waiter,
                     review_cycle,
                     review_waiter,
+                    commit_cycle,
+                    commit_waiter,
                 )
                 if task is not None and not task.done()
             ),
@@ -2730,9 +3397,6 @@ class FileNotesGitService:
         self._pending_status = None
         self._rerun_available = False
         self._status_dirty = False
-        if binding is not None:
-            self._owner.clear_ownership(binding)
-            self._owner.clear_status(binding)
         if (
             (cycle is None or cycle.done())
             and (waiter is None or waiter.done())
@@ -2740,11 +3404,19 @@ class FileNotesGitService:
             and (action_waiter is None or action_waiter.done())
             and (review_cycle is None or review_cycle.done())
             and (review_waiter is None or review_waiter.done())
+            and (commit_cycle is None or commit_cycle.done())
+            and (commit_waiter is None or commit_waiter.done())
             and (
                 runner_settlement is None
                 or isinstance(runner_settlement, _ImmediateSettlement)
             )
         ):
+            runner_confirmed = (
+                runner_settlement is None
+                or bool(runner_settlement.value)
+            )
+            self._shutdown_runner_confirmed = runner_confirmed
+            self._settle_uncertain_commit_shutdown(runner_confirmed)
             self._status_cycle = None
             self._status_cycle_binding = None
             self._status_waiter = None
@@ -2752,7 +3424,14 @@ class FileNotesGitService:
             self._action_waiter = None
             self._commit_review_cycle = None
             self._commit_review_waiter = None
+            self._commit_cycle = None
+            self._commit_waiter = None
+            self._commit_child_started = False
             self._commit_review_snapshots.clear()
+            if binding is not None:
+                self._owner.clear_ownership(binding)
+                self._owner.clear_status(binding)
+            self._retry_pending_hooks_cleanup()
             self._shutdown_settlement = _ImmediateSettlement(None)
             return self._shutdown_settlement
         settlement = _RetainedSettlement(
@@ -2765,6 +3444,8 @@ class FileNotesGitService:
                     action_waiter,
                     review_cycle,
                     review_waiter,
+                    commit_cycle,
+                    commit_waiter,
                     runner_settlement,
                 )
             )
@@ -2781,6 +3462,8 @@ class FileNotesGitService:
         action_waiter: asyncio.Task[GitActionResult] | None,
         review_cycle: asyncio.Task[CommitReviewResult] | None,
         review_waiter: asyncio.Task[CommitReviewResult] | None,
+        commit_cycle: asyncio.Task[CommitOutcome] | None,
+        commit_waiter: asyncio.Task[CommitOutcome] | None,
         runner_settlement: Awaitable[bool] | None,
     ) -> None:
         """Join every retained task and preserve fail-closed shutdown state."""
@@ -2793,16 +3476,15 @@ class FileNotesGitService:
                 action_waiter,
                 review_cycle,
                 review_waiter,
+                commit_cycle,
+                commit_waiter,
             )
             if task is not None and not task.done()
         )
-        results: list[object] = []
         if owned_tasks:
-            results.extend(
-                await asyncio.gather(
-                    *(asyncio.shield(task) for task in owned_tasks),
-                    return_exceptions=True,
-                )
+            await asyncio.gather(
+                *(asyncio.shield(task) for task in owned_tasks),
+                return_exceptions=True,
             )
         runner_confirmed = True
         if runner_settlement is not None:
@@ -2812,9 +3494,11 @@ class FileNotesGitService:
                     if isinstance(runner_settlement, asyncio.Future)
                     else await runner_settlement
                 )
-            except BaseException as error:
-                results.append(error)
+            except BaseException:
                 runner_confirmed = False
+        self._shutdown_runner_confirmed = runner_confirmed
+        self._settle_uncertain_commit_shutdown(runner_confirmed)
+        self._retry_pending_hooks_cleanup()
         self._status_cycle = None
         self._status_cycle_binding = None
         self._status_waiter = None
@@ -2822,16 +3506,65 @@ class FileNotesGitService:
         self._action_waiter = None
         self._commit_review_cycle = None
         self._commit_review_waiter = None
+        self._commit_cycle = None
+        self._commit_waiter = None
+        self._commit_child_started = False
         self._commit_review_snapshots.clear()
         self._pending_status = None
         self._rerun_available = False
         self._status_dirty = False
-        if binding is not None and (
-            not runner_confirmed
-            or any(isinstance(result, BaseException) for result in results)
-        ):
+        if binding is not None:
             self._owner.clear_ownership(binding)
             self._owner.clear_status(binding)
+
+    def _settle_uncertain_commit_shutdown(
+        self,
+        runner_confirmed: bool,
+    ) -> None:
+        """Release only exact terminal evidence after bounded shutdown proof."""
+        evidence = self._uncertain_commit
+        if evidence is None or not runner_confirmed:
+            return
+        retained_child = evidence.retained_child
+        if retained_child is not None:
+            try:
+                released = self._runner.release_retained_child(retained_child)
+            except (RuntimeError, ValueError):
+                return
+            if not released:
+                return
+            evidence = replace(evidence, retained_child=None)
+            self._uncertain_commit = evidence
+        hooks_directory = evidence.hooks_directory
+        if (
+            hooks_directory is not None
+            and self._remove_hooks_directory(hooks_directory)
+        ):
+            evidence = replace(evidence, hooks_directory=None)
+            self._uncertain_commit = evidence
+        mutation_lease = evidence.mutation_lease
+        if mutation_lease is None:
+            return
+        mutation_lease.release()
+        self._uncertain_commit = replace(
+            evidence,
+            mutation_lease=None,
+        )
+
+    def _remove_hooks_directory(self, directory: Path) -> bool:
+        if _remove_private_hooks_directory(directory):
+            self._pending_hooks_cleanup.discard(directory)
+            return True
+        self._pending_hooks_cleanup.add(directory)
+        return False
+
+    def _retry_pending_hooks_cleanup(self) -> None:
+        evidence = self._uncertain_commit
+        retained_hooks = None if evidence is None else evidence.hooks_directory
+        for directory in tuple(self._pending_hooks_cleanup):
+            if directory == retained_hooks:
+                continue
+            self._remove_hooks_directory(directory)
 
     async def _shield_status_cycle(
         self,
@@ -2975,6 +3708,8 @@ class FileNotesGitService:
         binding: SessionBinding,
         changes: tuple[SequencedSessionChange, ...],
         repository: RepositoryIdentity,
+        *,
+        publish_ownership_changes: bool = True,
     ) -> SessionGitStatus:
         if (
             self._owner.snapshot(binding).trusted_repository != repository
@@ -3032,9 +3767,10 @@ class FileNotesGitService:
             root,
             repository,
             repository_groups,
+            publish_ownership_changes=publish_ownership_changes,
         )
         if isinstance(raw, _RawGitInspectionFailure):
-            if raw.revoke_ownership:
+            if raw.revoke_ownership and publish_ownership_changes:
                 self._owner.clear_ownership(binding)
             return self._failed_status(
                 binding,
@@ -3081,7 +3817,9 @@ class FileNotesGitService:
                 retained_ownership.pop(repository_group.group_id, None)
                 continue
             ownership_by_id[repository_group.group_id] = mapped_ownership
-        if len(retained_ownership) != len(current_ownership):
+        if publish_ownership_changes and len(retained_ownership) != len(
+            current_ownership
+        ):
             self._owner.publish_ownership(binding, retained_ownership)
 
         classified = classify_session_rows(
@@ -3116,6 +3854,8 @@ class FileNotesGitService:
         root: Path,
         repository: RepositoryIdentity,
         groups: Sequence[SessionChangeGroup],
+        *,
+        publish_ownership_changes: bool = True,
     ) -> _RawGitInspection | _RawGitInspectionFailure:
         """Read the shared fresh HEAD, complete index, and scoped status."""
         head_result = await self._read_head(root)
@@ -3138,7 +3878,9 @@ class FileNotesGitService:
                 and ownership.head == head_result
             )
         }
-        if len(retained_ownership) != len(current_ownership):
+        if publish_ownership_changes and len(retained_ownership) != len(
+            current_ownership
+        ):
             self._owner.publish_ownership(binding, retained_ownership)
 
         index_result = await self._run_status_command(
@@ -3180,7 +3922,9 @@ class FileNotesGitService:
                 for path, expected in ownership.post_stage_entries.items()
             )
         }
-        if len(retained_ownership) != len(current_ownership):
+        if publish_ownership_changes and len(retained_ownership) != len(
+            current_ownership
+        ):
             self._owner.publish_ownership(binding, retained_ownership)
 
         status_records: tuple[PorcelainRecord, ...] = ()
@@ -4641,6 +5385,131 @@ def build_file_notes_session_owner() -> FileNotesSessionOwner:
 def _blocked_commit_review(message: str) -> CommitReviewResult:
     """Build one path-free blocked review settlement."""
     return CommitReviewResult("blocked", message=message)
+
+
+def _uncertain_commit_outcome() -> CommitOutcome:
+    """Return the exact bounded uncertainty copy."""
+    return CommitOutcome("uncertain", _UNCERTAIN_COMMIT_MESSAGE)
+
+
+def _create_private_hooks_directory(
+    repository: RepositoryIdentity,
+    pending_cleanup: set[Path],
+) -> Path:
+    """Create and verify one empty owner-only hooks directory outside the repo."""
+    worktree = Path(repository.worktree_root).resolve(strict=True)
+    repository_device = worktree.stat().st_dev
+    candidate_paths = (
+        Path(tempfile.gettempdir()),
+        worktree.parent,
+    )
+    checked_parents: set[Path] = set()
+    for candidate in candidate_paths:
+        directory: Path | None = None
+        try:
+            parent = candidate.resolve(strict=True)
+            if parent in checked_parents:
+                continue
+            checked_parents.add(parent)
+            if not _hooks_parent_is_safe(parent, repository_device):
+                continue
+            directory = Path(
+                tempfile.mkdtemp(
+                    prefix=".chatbook-hooks-",
+                    dir=str(parent),
+                )
+            )
+            pending_cleanup.add(directory)
+            directory.chmod(0o700)
+            metadata = directory.stat()
+            verified = (
+                directory.parent == parent
+                and not directory.is_relative_to(worktree)
+                and directory.is_dir()
+                and not directory.is_symlink()
+                and metadata.st_dev == repository_device
+                and metadata.st_uid == os.geteuid()
+                and stat.S_IMODE(metadata.st_mode) == 0o700
+                and not any(directory.iterdir())
+                and _hooks_parent_is_safe(parent, repository_device)
+            )
+            if verified:
+                return directory
+        except (OSError, RuntimeError):
+            pass
+        if (
+            directory is not None
+            and _remove_private_hooks_directory(directory)
+        ):
+            pending_cleanup.discard(directory)
+    raise OSError("Unable to create a private hooks directory")
+
+
+def _hooks_parent_is_safe(
+    parent: Path,
+    repository_device: int,
+) -> bool:
+    """Validate one canonical hooks parent against cross-principal substitution."""
+    try:
+        if parent != parent.resolve(strict=True):
+            return False
+        chain = tuple(reversed((parent, *parent.parents)))
+        metadata = tuple(component.lstat() for component in chain)
+    except (OSError, RuntimeError):
+        return False
+    effective_uid = os.geteuid()
+    trusted_uids = {0, effective_uid}
+    if any(
+        not stat.S_ISDIR(item.st_mode) or item.st_uid not in trusted_uids
+        for item in metadata
+    ):
+        return False
+    for index, item in enumerate(metadata):
+        mode = stat.S_IMODE(item.st_mode)
+        shared_writable = bool(mode & (stat.S_IWGRP | stat.S_IWOTH))
+        if shared_writable and not mode & stat.S_ISVTX:
+            return False
+        if index + 1 >= len(metadata) or not shared_writable:
+            continue
+        child = metadata[index + 1]
+        if child.st_uid not in {effective_uid, item.st_uid}:
+            return False
+    immediate = metadata[-1]
+    return (
+        immediate.st_dev == repository_device
+        and _directory_is_writable_by_current_process(immediate)
+    )
+
+
+def _directory_is_writable_by_current_process(metadata: os.stat_result) -> bool:
+    """Project Unix directory write/search permission for the effective IDs."""
+    mode = stat.S_IMODE(metadata.st_mode)
+    effective_uid = os.geteuid()
+    if effective_uid == 0:
+        return True
+    if effective_uid == metadata.st_uid:
+        required = stat.S_IWUSR | stat.S_IXUSR
+    else:
+        try:
+            effective_groups = {os.getegid(), *os.getgroups()}
+        except OSError:
+            effective_groups = {os.getegid()}
+        if metadata.st_gid in effective_groups:
+            required = stat.S_IWGRP | stat.S_IXGRP
+        else:
+            required = stat.S_IWOTH | stat.S_IXOTH
+    return (mode & required) == required
+
+
+def _remove_private_hooks_directory(directory: Path) -> bool:
+    """Remove one verified-empty directory without recursive deletion."""
+    try:
+        if directory.is_dir() and not directory.is_symlink():
+            directory.rmdir()
+            return True
+    except OSError:
+        return False
+    return False
 
 
 def _path_present(path: Path) -> bool:

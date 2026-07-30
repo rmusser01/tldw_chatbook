@@ -650,9 +650,9 @@ def test_commit_authority_rejects_old_root_lease_with_current_root_facts(
     first_binding = owner.select_root(tmp_path / "first")
     stale_lease = owner.try_acquire_mutation(first_binding)
     assert stale_lease is not None
+    stale_lease.release()
 
     current_binding = owner.select_root(tmp_path / "current")
-    stale_lease.release()
     repository, _ownership, sequence_ids, _status = _prepare_commit_authority(
         owner,
         current_binding,
@@ -907,6 +907,113 @@ def test_commit_publication_failed_unchanged_preserves_owner_facts(
     assert after.git_status == status
     assert dict(after.staging_ownership) == ownership
     assert after.git_authority_generation > before.git_authority_generation
+    lease.release()
+
+
+@pytest.mark.parametrize("drift", ["record_change", "ownership", "trust"])
+def test_commit_publication_uncertainty_fallback_quarantines_after_drift(
+    tmp_path: Path,
+    drift: str,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    repository, ownership, sequence_ids, _status = _prepare_commit_authority(
+        owner,
+        binding,
+    )
+    lease, capture = _capture_commit_authority(
+        owner,
+        binding,
+        repository,
+        sequence_ids,
+    )
+    if drift == "record_change":
+        assert owner.record_change(
+            binding,
+            SessionChange("modified", "later.md"),
+        )
+    elif drift == "ownership":
+        assert owner.publish_ownership(
+            binding,
+            {1: ownership[1]},
+            group_sequence_ids={1: (1,)},
+        )
+    else:
+        changed_repository = RepositoryIdentity(
+            worktree_root=repository.worktree_root,
+            git_dir=repository.git_dir,
+            git_common_dir=repository.git_common_dir,
+            worktree_identity=FileSystemIdentity(device=1, inode=99),
+            git_dir_identity=repository.git_dir_identity,
+            git_common_dir_identity=repository.git_common_dir_identity,
+        )
+        assert owner.publish_trust(binding, changed_repository)
+    before = owner.snapshot(binding)
+    projection = CommitRecoveryProjection(
+        message="Commit outcome requires an exact repository check.",
+        can_check_again=False,
+    )
+
+    publication = owner.publish_commit_outcome(
+        lease,
+        capture,
+        CommitPublication(
+            state="uncertain",
+            recovery_projection=projection,
+        ),
+    )
+
+    assert publication.published
+    assert publication.recovery_capability is not None
+    after = owner.snapshot(binding)
+    assert after.changes == before.changes
+    assert after.git_status is None
+    assert dict(after.staging_ownership) == {}
+    assert after.commit_recovery == projection
+    lease.release()
+    assert owner.admit_mutation(binding).reason == "recovery_required"
+
+
+def test_commit_publication_uncertainty_fallback_does_not_relax_terminal_states(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    repository, ownership, sequence_ids, _status = _prepare_commit_authority(
+        owner,
+        binding,
+    )
+    lease, capture = _capture_commit_authority(
+        owner,
+        binding,
+        repository,
+        sequence_ids,
+    )
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "later.md"),
+    )
+
+    success = owner.publish_commit_outcome(
+        lease,
+        capture,
+        CommitPublication(
+            state="succeeded",
+            new_head=HeadIdentity.attached("refs/heads/main", "d" * 40),
+            retired_sequence_ids=(1, 2),
+        ),
+    )
+    failed = owner.publish_commit_outcome(
+        lease,
+        capture,
+        CommitPublication(state="failed_unchanged"),
+    )
+
+    assert not success.published
+    assert not failed.published
+    after = owner.snapshot(binding)
+    assert after.commit_recovery is None
+    assert dict(after.staging_ownership) == ownership
     lease.release()
 
 
@@ -1654,6 +1761,73 @@ def test_owner_admits_transitions_mutations_and_status_atomically(
     waiting_mutation.release()
 
 
+def test_active_mutation_blocks_root_changes_but_allows_same_root_noops(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    mutation = owner.try_acquire_mutation(binding)
+    assert mutation is not None
+
+    assert owner.select_root(tmp_path / "notes") == binding
+    assert (
+        owner.try_select_root(
+            tmp_path / "notes",
+            expected_binding=binding,
+        )
+        == binding
+    )
+    with pytest.raises(RuntimeError, match="Git mutation is in progress"):
+        owner.select_root(tmp_path / "other")
+    assert (
+        owner.try_select_root(
+            tmp_path / "other",
+            expected_binding=binding,
+        )
+        is None
+    )
+    assert (
+        owner.try_reserve_root(
+            tmp_path / "other",
+            expected_binding=binding,
+        )
+        is None
+    )
+    assert (
+        owner.try_reserve_root(
+            tmp_path / "notes",
+            expected_binding=binding,
+        )
+        is None
+    )
+    assert owner.current_binding() == binding
+    assert owner.mutation_active(binding)
+    mutation.release()
+
+
+def test_active_root_reservation_blocks_mutation_admission(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    reservation = owner.try_reserve_root(
+        tmp_path / "other",
+        expected_binding=binding,
+    )
+    assert reservation is not None
+    try:
+        admission = owner.admit_mutation(binding)
+        assert admission.lease is None
+        assert admission.reason == "transition_active"
+        assert owner.try_acquire_mutation(binding) is None
+    finally:
+        reservation.release()
+
+    mutation = owner.try_acquire_mutation(binding)
+    assert mutation is not None
+    mutation.release()
+
+
 def test_mutation_active_is_exact_binding_read_only_query(
     tmp_path: Path,
 ) -> None:
@@ -1695,7 +1869,7 @@ def test_stale_binding_cannot_publish_or_acquire_any_lease(
     current_status.release()
 
 
-def test_leases_release_idempotently_across_root_generation_change(
+def test_leases_release_idempotently_around_root_generation_changes(
     tmp_path: Path,
 ) -> None:
     owner = FileNotesSessionOwner()
@@ -1710,11 +1884,13 @@ def test_leases_release_idempotently_across_root_generation_change(
 
     mutation = owner.try_acquire_mutation(second)
     assert mutation is not None
-    third = owner.select_root(tmp_path / "third")
-    assert owner.try_acquire_transition(third, "screen") is None
+    with pytest.raises(RuntimeError, match="Git mutation is in progress"):
+        owner.select_root(tmp_path / "third")
+    assert owner.try_acquire_transition(second, "screen") is None
     mutation.release()
     mutation.release()
 
+    third = owner.select_root(tmp_path / "third")
     replacement_mutation = owner.try_acquire_mutation(third)
     assert replacement_mutation is not None
     replacement_mutation.release()

@@ -179,12 +179,14 @@ class CommitOutcome:
     Attributes:
         state: Guarded commit outcome category.
         message: Literal-rendering result or recovery guidance.
+        qualification: Adjacent bounded policy qualification when applicable.
         commit_object_id: Proven new commit object ID on success.
         committed_note_count: Proven included-note count on success.
     """
 
     state: CommitOutcomeState
     message: str
+    qualification: str | None = None
     commit_object_id: str | None = None
     committed_note_count: int = 0
 

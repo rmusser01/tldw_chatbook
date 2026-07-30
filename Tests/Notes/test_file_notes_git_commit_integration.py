@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import os
+import stat
 import subprocess
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 import tldw_chatbook.Notes.file_notes_git_service as git_service
-from tldw_chatbook.Notes.file_notes_git_commit import CommitReviewResult
+from tldw_chatbook.Notes.file_notes_git_commit import (
+    CommitReviewResult,
+    GitIdentity,
+    parse_raw_commit_object,
+)
 from tldw_chatbook.Notes.file_notes_git_service import (
     AsyncGitProcessRunner,
     FileNotesGitService,
@@ -20,6 +26,7 @@ from tldw_chatbook.Notes.file_notes_git_service import (
     RetainedGitChildToken,
 )
 from tldw_chatbook.Notes.file_notes_session_owner import (
+    CommitPublicationResult,
     FileNotesSessionOwner,
     HeadIdentity,
     IndexBaseline,
@@ -263,6 +270,186 @@ class _ControlledRetainedReviewRunner(_RecordingRunner):
     def shutdown(self):
         self.shutdown_called = True
         self.terminal.set()
+        return super().shutdown()
+
+
+class _ControlledCommitRunner(_RecordingRunner):
+    def __init__(self, mode: str) -> None:
+        super().__init__()
+        self.mode = mode
+        self.token = RetainedGitChildToken(git_service._RETAINED_CHILD_TOKEN_SECRET)
+        self.commit_started = asyncio.Event()
+        self.release_commit = asyncio.Event()
+        self.commit_calls = 0
+        self.hooks_directory: Path | None = None
+        self.claimed = False
+        self.terminal = mode == "retained_natural_failure"
+        self.released = False
+        self.shutdown_called = False
+
+    async def run(
+        self,
+        argv: Sequence[GitArg],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+        stdout_limit: int | None = None,
+        stderr_limit: int | None = None,
+    ) -> GitCommandResult:
+        if not any(
+            isinstance(value, str) and value.startswith("core.hooksPath=")
+            for value in argv
+        ):
+            return await super().run(
+                argv,
+                cwd=cwd,
+                environment=environment,
+                stdin=stdin,
+                timeout=timeout,
+                stdout_limit=stdout_limit,
+                stderr_limit=stderr_limit,
+            )
+        self.calls.append((tuple(argv), dict(environment)))
+        self.commit_calls += 1
+        hooks_argument = next(
+            value
+            for value in argv
+            if isinstance(value, str) and value.startswith("core.hooksPath=")
+        )
+        self.hooks_directory = Path(hooks_argument.split("=", 1)[1])
+        assert self.hooks_directory.is_dir()
+        assert not any(self.hooks_directory.iterdir())
+        assert stat.S_IMODE(self.hooks_directory.stat().st_mode) == 0o700
+        assert self.hooks_directory.stat().st_dev == Path(cwd).stat().st_dev
+        assert not self.hooks_directory.is_relative_to(Path(cwd))
+        self.commit_started.set()
+        if self.mode == "failure":
+            return GitCommandResult(1, b"", b"commit refused")
+        if self.mode == "zero_without_commit":
+            return GitCommandResult(0, b"", b"")
+        if self.mode == "oserror":
+            raise OSError("commit launch outcome is unknown")
+        if self.mode in {
+            "uncertain",
+            "retained_natural_failure",
+            "uncertain_confirmed_shutdown",
+            "uncertain_unconfirmed_shutdown",
+        }:
+            return GitCommandResult(
+                None,
+                b"",
+                b"",
+                timed_out=True,
+                termination_uncertain=True,
+                retained_child=self.token,
+            )
+        if self.mode == "pause":
+            await self.release_commit.wait()
+            return GitCommandResult(1, b"", b"commit refused")
+        if self.mode == "pause_zero_without_commit":
+            await self.release_commit.wait()
+            return GitCommandResult(0, b"", b"")
+        if self.mode == "pause_then_commit":
+            await self.release_commit.wait()
+            return await AsyncGitProcessRunner.run(
+                self,
+                argv,
+                cwd=cwd,
+                environment=environment,
+                stdin=stdin,
+                timeout=timeout,
+                stdout_limit=stdout_limit,
+                stderr_limit=stderr_limit,
+            )
+        if self.mode == "shutdown_stop":
+            await self.release_commit.wait()
+            return GitCommandResult(
+                -15,
+                b"",
+                b"stopped during shutdown",
+                termination_uncertain=True,
+                retained_child=self.token,
+                stop_requested=True,
+            )
+        if self.mode in {"commit_then_branch_drift", "commit_then_index_drift"}:
+            result = await AsyncGitProcessRunner.run(
+                self,
+                argv,
+                cwd=cwd,
+                environment=environment,
+                stdin=stdin,
+                timeout=timeout,
+                stdout_limit=stdout_limit,
+                stderr_limit=stderr_limit,
+            )
+            if self.mode == "commit_then_branch_drift":
+                _git(Path(cwd), "checkout", "-q", "-b", "unexpected")
+            else:
+                (Path(cwd) / "unexpected.md").write_text(
+                    "unexpected staged content\n",
+                    encoding="utf-8",
+                )
+                _git(Path(cwd), "add", "unexpected.md")
+            return result
+        raise AssertionError(f"Unsupported controlled commit mode: {self.mode}")
+
+    def read_retained_child(
+        self,
+        token: RetainedGitChildToken,
+    ) -> RetainedGitChildSettlement:
+        assert token is self.token
+        if self.mode == "shutdown_stop" and self.terminal:
+            return RetainedGitChildSettlement(
+                "stop_requested",
+                returncode=-15,
+                stop_requested=True,
+            )
+        if self.terminal:
+            return RetainedGitChildSettlement("natural", returncode=1)
+        return RetainedGitChildSettlement("alive")
+
+    def claim_retained_child(self, token: RetainedGitChildToken) -> bool:
+        assert token is self.token
+        self.claimed = True
+        return True
+
+    async def settle_retained_child(
+        self,
+        token: RetainedGitChildToken,
+        *,
+        timeout: float = 0.0,
+    ) -> RetainedGitChildSettlement:
+        del timeout
+        return self.read_retained_child(token)
+
+    def release_retained_child(self, token: RetainedGitChildToken) -> bool:
+        assert token is self.token
+        if not self.terminal:
+            return False
+        self.released = True
+        return True
+
+    def shutdown(self):
+        self.shutdown_called = True
+        if self.mode in {
+            "uncertain_confirmed_shutdown",
+            "uncertain_unconfirmed_shutdown",
+        }:
+            confirmed = self.mode == "uncertain_confirmed_shutdown"
+            self.terminal = confirmed
+
+            async def settle_shutdown() -> bool:
+                await asyncio.sleep(0)
+                return confirmed
+
+            return git_service._RetainedSettlement(
+                asyncio.create_task(settle_shutdown())
+            )
+        if self.mode == "shutdown_stop":
+            self.terminal = True
+            self.release_commit.set()
         return super().shutdown()
 
 
@@ -1185,3 +1372,1101 @@ async def test_commit_review_shutdown_stops_and_drains_proof_child(
     assert runner.released is True
     assert runner.shutdown_called is True
     assert service._owner.mutation_active(binding) is False
+
+
+@pytest.mark.asyncio
+async def test_service_shutdown_joins_active_commit_before_return(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("shutdown_stop")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    waiter = service.start_commit(binding, review.handle)
+    await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+    hooks_directory = runner.hooks_directory
+    assert hooks_directory is not None and hooks_directory.is_dir()
+
+    await asyncio.wait_for(service.shutdown(), 1.0)
+    joined_at_return = waiter.done()
+    outcome = await asyncio.wait_for(waiter, 1.0)
+
+    assert runner.shutdown_called
+    assert runner.released
+    assert joined_at_return
+    assert outcome.state == "uncertain"
+    assert not service._owner.mutation_active(binding)
+    assert service._owner.snapshot(binding).commit_recovery is not None
+    assert not hooks_directory.exists()
+
+
+@pytest.mark.asyncio
+async def test_owner_shutdown_joins_commit_before_closing_publication(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("shutdown_stop")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    service._owner.attach_git_service(service)
+    waiter = service.start_commit(binding, review.handle)
+    await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+    hooks_directory = runner.hooks_directory
+    assert hooks_directory is not None and hooks_directory.is_dir()
+
+    await asyncio.wait_for(service._owner.shutdown_async(), 1.0)
+    joined_at_return = waiter.done()
+    outcome = await asyncio.wait_for(waiter, 1.0)
+
+    assert joined_at_return
+    assert runner.released
+    assert outcome.state == "uncertain"
+    assert service._uncertain_commit is not None
+    assert service._uncertain_commit.recovery_capability is not None
+    assert service._uncertain_commit.mutation_lease is None
+    assert not service._owner.mutation_active(binding)
+    assert not hooks_directory.exists()
+
+
+@pytest.mark.asyncio
+async def test_service_shutdown_releases_completed_unpublished_commit_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("zero_without_commit")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    original_publish = FileNotesSessionOwner.publish_commit_outcome
+
+    def refuse_uncertainty(self, lease, capture, publication):
+        if publication.state == "uncertain":
+            return CommitPublicationResult(published=False)
+        return original_publish(self, lease, capture, publication)
+
+    monkeypatch.setattr(
+        FileNotesSessionOwner,
+        "publish_commit_outcome",
+        refuse_uncertainty,
+    )
+    outcome = await service.start_commit(binding, review.handle)
+    assert outcome.state == "uncertain"
+    assert service._uncertain_commit is not None
+    assert service._uncertain_commit.mutation_lease is not None
+    assert service._owner.mutation_active(binding)
+
+    await service.shutdown()
+
+    assert service._uncertain_commit.mutation_lease is None
+    assert not service._owner.mutation_active(binding)
+
+
+@pytest.mark.asyncio
+async def test_owner_shutdown_releases_completed_unpublished_commit_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("zero_without_commit")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    service._owner.attach_git_service(service)
+    original_publish = FileNotesSessionOwner.publish_commit_outcome
+
+    def refuse_uncertainty(self, lease, capture, publication):
+        if publication.state == "uncertain":
+            return CommitPublicationResult(published=False)
+        return original_publish(self, lease, capture, publication)
+
+    monkeypatch.setattr(
+        FileNotesSessionOwner,
+        "publish_commit_outcome",
+        refuse_uncertainty,
+    )
+    outcome = await service.start_commit(binding, review.handle)
+    assert outcome.state == "uncertain"
+    assert service._uncertain_commit is not None
+    assert service._uncertain_commit.mutation_lease is not None
+    assert service._owner.mutation_active(binding)
+
+    await service._owner.shutdown_async()
+
+    assert service._uncertain_commit.mutation_lease is None
+    assert not service._owner.mutation_active(binding)
+
+
+@pytest.mark.asyncio
+async def test_repeated_shutdown_preserves_unconfirmed_commit_hooks(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("uncertain_unconfirmed_shutdown")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    outcome = await service.start_commit(binding, review.handle)
+    assert outcome.state == "uncertain"
+    hooks_directory = runner.hooks_directory
+    assert hooks_directory is not None and hooks_directory.is_dir()
+    evidence = service._uncertain_commit
+    assert evidence is not None
+    assert evidence.retained_child is runner.token
+
+    try:
+        await service.shutdown()
+        await service.shutdown()
+        await service.shutdown()
+
+        evidence = service._uncertain_commit
+        assert evidence is not None
+        assert evidence.retained_child is runner.token
+        assert evidence.hooks_directory == hooks_directory
+        assert runner.read_retained_child(runner.token).state == "alive"
+        assert not runner.released
+        assert hooks_directory.is_dir()
+    finally:
+        git_service._remove_private_hooks_directory(hooks_directory)
+
+
+@pytest.mark.asyncio
+async def test_repeated_shutdown_retries_confirmed_commit_hooks_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("uncertain_confirmed_shutdown")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    outcome = await service.start_commit(binding, review.handle)
+    assert outcome.state == "uncertain"
+    hooks_directory = runner.hooks_directory
+    assert hooks_directory is not None and hooks_directory.is_dir()
+    real_rmdir = Path.rmdir
+    attempts = 0
+
+    def fail_first_hooks_rmdir(path: Path) -> None:
+        nonlocal attempts
+        if path == hooks_directory:
+            attempts += 1
+            if attempts == 1:
+                raise OSError("injected first cleanup failure")
+        real_rmdir(path)
+
+    monkeypatch.setattr(Path, "rmdir", fail_first_hooks_rmdir)
+
+    await service.shutdown()
+
+    assert runner.released
+    assert attempts == 1
+    assert hooks_directory.is_dir()
+    evidence = service._uncertain_commit
+    assert evidence is not None
+    assert evidence.retained_child is None
+    assert evidence.hooks_directory == hooks_directory
+
+    await service.shutdown()
+
+    assert attempts == 2
+    assert not hooks_directory.exists()
+    assert service._uncertain_commit.hooks_directory is None
+
+
+@pytest.mark.asyncio
+async def test_commit_confirmation_consumes_handle_once_and_revalidates_message(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("failure")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+
+    outcome = await service.start_commit(
+        binding,
+        review.handle,
+        subject="Different subject",
+    )
+
+    assert outcome.state == "blocked"
+    assert runner.commit_calls == 0
+    with pytest.raises(
+        git_service.GitMutationAdmissionError,
+        match="capability",
+    ):
+        service.start_commit(binding, review.handle)
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_malformed_commit_handle_is_rejected_before_mutation_admission(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("failure")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    retained_snapshots = dict(service._commit_review_snapshots)
+
+    with pytest.raises(git_service.GitMutationAdmissionError) as refusal:
+        service.start_commit(binding, object())  # type: ignore[arg-type]
+
+    assert refusal.value.reason == "invalid_capability"
+    assert not service._owner.mutation_active(binding)
+    assert service._commit_review_snapshots == retained_snapshots
+    outcome = await service.start_commit(binding, review.handle)
+    assert outcome.state == "failed_unchanged"
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "drift",
+    ["generation", "repository", "branch", "index", "worktree", "identity"],
+)
+async def test_commit_confirmation_rejects_every_review_drift(
+    tmp_path: Path,
+    drift: str,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("failure")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    if drift == "generation":
+        assert service._owner.record_change(
+            binding,
+            SessionChange("modified", "later.md"),
+        )
+    elif drift == "repository":
+        trusted = service._owner.snapshot(binding).trusted_repository
+        assert trusted is not None
+        assert service._owner.publish_trust(
+            binding,
+            replace(
+                trusted,
+                worktree_identity=replace(
+                    trusted.worktree_identity,
+                    inode=(trusted.worktree_identity.inode or 0) + 1,
+                ),
+            ),
+        )
+    elif drift == "branch":
+        _git(repository, "checkout", "-q", "-b", "other")
+    elif drift == "index":
+        (repository / "note.md").write_text("different staged\n", encoding="utf-8")
+        _git(repository, "add", "note.md")
+    elif drift == "worktree":
+        (repository / "note.md").write_text("newer saved\n", encoding="utf-8")
+    else:
+        _git(repository, "config", "user.name", "Changed Identity")
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "blocked"
+    assert runner.commit_calls == 0
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_confirmation_cancels_before_child_start(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledRetainedReviewRunner("passthrough")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    runner.arm("cancelled_token")
+
+    waiter = service.start_commit(binding, review.handle)
+    await asyncio.wait_for(runner.exposed.wait(), 1.0)
+    assert service.cancel_commit() is True
+    runner.terminal.set()
+    outcome = await asyncio.wait_for(waiter, 1.0)
+
+    assert outcome.state == "cancelled"
+    assert not any("commit" in argv for argv, _environment in runner.calls)
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_confirmation_cancel_refuses_after_child_begins(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("pause")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+
+    waiter = service.start_commit(binding, review.handle)
+    await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+    hooks_directory = runner.hooks_directory
+    assert hooks_directory is not None and hooks_directory.is_dir()
+    assert service.cancel_commit() is False
+    runner.release_commit.set()
+    outcome = await asyncio.wait_for(waiter, 1.0)
+
+    assert outcome.state == "failed_unchanged"
+    assert runner.commit_calls == 1
+    assert not hooks_directory.exists()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_hooks_directory_lives_through_child_and_is_removed_with_rmdir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("pause")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    removed: list[Path] = []
+    real_rmdir = Path.rmdir
+
+    def recording_rmdir(path: Path) -> None:
+        removed.append(path)
+        real_rmdir(path)
+
+    monkeypatch.setattr(Path, "rmdir", recording_rmdir)
+    waiter = service.start_commit(binding, review.handle)
+    await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+    hooks_directory = runner.hooks_directory
+    assert hooks_directory is not None and hooks_directory.is_dir()
+    assert removed == []
+    runner.release_commit.set()
+    await asyncio.wait_for(waiter, 1.0)
+
+    assert removed == [hooks_directory]
+    assert not hooks_directory.exists()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["chmod", "stat", "iterdir"])
+async def test_failed_hooks_creation_removes_or_tracks_every_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, review = await _prepare_owned_review(repository)
+    assert review.handle is not None
+    created: list[Path] = []
+    failed: set[Path] = set()
+    real_mkdtemp = git_service.tempfile.mkdtemp
+    real_chmod = Path.chmod
+    real_stat = Path.stat
+    real_iterdir = Path.iterdir
+    real_rmdir = Path.rmdir
+
+    def recording_mkdtemp(*args, **kwargs):
+        directory = Path(real_mkdtemp(*args, **kwargs))
+        created.append(directory)
+        return str(directory)
+
+    def fail_chmod_once(path: Path, *args, **kwargs):
+        if path.name.startswith(".chatbook-hooks-") and path not in failed:
+            failed.add(path)
+            raise OSError("injected chmod failure")
+        return real_chmod(path, *args, **kwargs)
+
+    def fail_hook_stat(path: Path, *args, **kwargs):
+        if path.name.startswith(".chatbook-hooks-"):
+            failed.add(path)
+            raise OSError("injected stat failure")
+        return real_stat(path, *args, **kwargs)
+
+    def fail_iterdir_once(path: Path):
+        if path.name.startswith(".chatbook-hooks-") and path not in failed:
+            failed.add(path)
+            raise OSError("injected iterdir failure")
+        return real_iterdir(path)
+
+    def path_is_present(path: Path) -> bool:
+        try:
+            real_stat(path)
+        except FileNotFoundError:
+            return False
+        return True
+
+    monkeypatch.setattr(git_service.tempfile, "mkdtemp", recording_mkdtemp)
+    if operation == "chmod":
+        monkeypatch.setattr(Path, "chmod", fail_chmod_once)
+    elif operation == "stat":
+        monkeypatch.setattr(Path, "stat", fail_hook_stat)
+    else:
+        monkeypatch.setattr(Path, "iterdir", fail_iterdir_once)
+
+    try:
+        outcome = await service.start_commit(binding, review.handle)
+
+        assert outcome.state == "blocked"
+        assert created
+        assert set(created) == failed
+        pending = service._pending_hooks_cleanup
+        assert all(
+            not path_is_present(directory) or directory in pending
+            for directory in created
+        )
+        monkeypatch.undo()
+        await service.shutdown()
+        assert service._pending_hooks_cleanup == set()
+        assert all(not directory.exists() for directory in created)
+    finally:
+        for directory in created:
+            try:
+                real_rmdir(directory)
+            except FileNotFoundError:
+                pass
+
+
+@pytest.mark.asyncio
+async def test_failed_hooks_rmdir_retries_on_repeated_shutdown_without_recursion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, review = await _prepare_owned_review(repository)
+    assert review.handle is not None
+    created: list[Path] = []
+    attempts: dict[Path, int] = {}
+    real_mkdtemp = git_service.tempfile.mkdtemp
+    real_iterdir = Path.iterdir
+    real_rmdir = Path.rmdir
+
+    def recording_mkdtemp(*args, **kwargs):
+        directory = Path(real_mkdtemp(*args, **kwargs)).resolve()
+        created.append(directory)
+        return str(directory)
+
+    def report_synthetic_entry(path: Path):
+        if path.name.startswith(".chatbook-hooks-"):
+            return iter((path / "synthetic",))
+        return real_iterdir(path)
+
+    def fail_twice_then_rmdir(path: Path) -> None:
+        if not path.name.startswith(".chatbook-hooks-"):
+            real_rmdir(path)
+            return
+        attempts[path] = attempts.get(path, 0) + 1
+        if attempts[path] <= 2:
+            raise OSError("injected rmdir failure")
+        real_rmdir(path)
+
+    def forbid_recursive_delete(*args, **kwargs):
+        raise AssertionError(f"recursive deletion is forbidden: {args!r} {kwargs!r}")
+
+    monkeypatch.setattr(git_service.tempfile, "mkdtemp", recording_mkdtemp)
+    monkeypatch.setattr(Path, "iterdir", report_synthetic_entry)
+    monkeypatch.setattr(Path, "rmdir", fail_twice_then_rmdir)
+    monkeypatch.setattr(git_service.shutil, "rmtree", forbid_recursive_delete)
+
+    try:
+        outcome = await service.start_commit(binding, review.handle)
+
+        assert outcome.state == "blocked"
+        assert created
+        assert service._pending_hooks_cleanup == set(created)
+        assert all(directory.exists() for directory in created)
+
+        await service.shutdown()
+        assert service._pending_hooks_cleanup == set(created)
+        assert all(directory.exists() for directory in created)
+
+        await service.shutdown()
+        assert service._pending_hooks_cleanup == set()
+        assert all(not directory.exists() for directory in created)
+    finally:
+        monkeypatch.undo()
+        for directory in created:
+            try:
+                real_rmdir(directory)
+            except FileNotFoundError:
+                pass
+
+
+@pytest.mark.asyncio
+async def test_hooks_creation_rejects_nonsticky_shared_parent_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, _review = await _prepare_owned_review(repository)
+    repository_identity = service._owner.snapshot(binding).trusted_repository
+    assert repository_identity is not None
+    unsafe_temp = tmp_path / "apparently-private"
+    unsafe_temp.mkdir()
+    unsafe_temp.chmod(0o700)
+    original_mode = stat.S_IMODE(tmp_path.stat().st_mode)
+    tmp_path.chmod(0o777)
+    mkdtemp_calls: list[str] = []
+
+    def unsafe_mkdtemp_was_used(*args, **kwargs):
+        mkdtemp_calls.append(str(kwargs.get("dir")))
+        raise AssertionError("unsafe hooks parent reached mkdtemp")
+
+    monkeypatch.setattr(
+        git_service.tempfile,
+        "gettempdir",
+        lambda: str(unsafe_temp),
+    )
+    monkeypatch.setattr(
+        git_service.tempfile,
+        "mkdtemp",
+        unsafe_mkdtemp_was_used,
+    )
+    try:
+        with pytest.raises(OSError, match="private hooks"):
+            git_service._create_private_hooks_directory(
+                repository_identity,
+                set(),
+            )
+        assert mkdtemp_calls == []
+    finally:
+        tmp_path.chmod(original_mode)
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent_mode", [0o700, 0o1777])
+async def test_hooks_creation_accepts_safe_owner_or_sticky_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    parent_mode: int,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, _review = await _prepare_owned_review(repository)
+    repository_identity = service._owner.snapshot(binding).trusted_repository
+    assert repository_identity is not None
+    safe_temp = tmp_path / f"safe-{parent_mode:o}"
+    safe_temp.mkdir()
+    safe_temp.chmod(parent_mode)
+    monkeypatch.setattr(
+        git_service.tempfile,
+        "gettempdir",
+        lambda: str(safe_temp),
+    )
+    pending: set[Path] = set()
+
+    directory = git_service._create_private_hooks_directory(
+        repository_identity,
+        pending,
+    )
+
+    assert directory.parent == safe_temp.resolve()
+    assert directory in pending
+    assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+    assert git_service._remove_private_hooks_directory(directory)
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_outcome_uses_immediately_known_natural_retained_result(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("retained_natural_failure")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "failed_unchanged"
+    assert runner.claimed is True
+    assert runner.hooks_directory is not None
+    assert not runner.hooks_directory.exists()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_outcome_uncertain_child_retains_hooks_directory(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("uncertain")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "uncertain"
+    assert runner.claimed is True
+    assert runner.hooks_directory is not None
+    assert runner.hooks_directory.is_dir()
+    assert service._owner.snapshot(binding).commit_recovery is not None
+    assert service._uncertain_commit is not None
+    assert service._uncertain_commit.recovery_capability is not None
+
+
+@pytest.mark.asyncio
+async def test_commit_outcome_zero_without_branch_change_is_uncertain(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("zero_without_commit")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "uncertain"
+    assert runner.commit_calls == 1
+    assert service._owner.snapshot(binding).commit_recovery is not None
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mode",
+    ["pause_then_commit", "pause", "pause_zero_without_commit"],
+)
+async def test_commit_outcome_authority_drift_always_falls_back_to_quarantine(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner(mode)
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    old_head = _git(repository, "rev-parse", "HEAD").decode().strip()
+
+    waiter = service.start_commit(binding, review.handle)
+    await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+    assert service._owner.record_change(
+        binding,
+        SessionChange("modified", "later.md"),
+    )
+    runner.release_commit.set()
+    outcome = await asyncio.wait_for(waiter, 2.0)
+
+    assert outcome.state == "uncertain"
+    if mode == "pause_then_commit":
+        assert _git(repository, "rev-parse", "HEAD").decode().strip() != old_head
+    else:
+        assert _git(repository, "rev-parse", "HEAD").decode().strip() == old_head
+    snapshot = service._owner.snapshot(binding)
+    assert [change.sequence for change in snapshot.changes] == [1, 2]
+    assert snapshot.commit_recovery is not None
+    assert dict(snapshot.staging_ownership) == {}
+    assert service._uncertain_commit is not None
+    assert service._uncertain_commit.recovery_capability is not None
+    assert service._owner.admit_mutation(binding).reason == "recovery_required"
+    assert runner.commit_calls == 1
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_active_commit_refuses_root_rebind_and_publishes_original_session(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("pause_then_commit")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+
+    waiter = service.start_commit(binding, review.handle)
+    await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+    with pytest.raises(RuntimeError, match="Git mutation is in progress"):
+        service._owner.select_root(tmp_path / "other")
+    assert service._owner.current_binding() == binding
+    runner.release_commit.set()
+    outcome = await asyncio.wait_for(waiter, 2.0)
+
+    assert outcome.state == "succeeded"
+    assert service._owner.current_binding() == binding
+    snapshot = service._owner.snapshot(binding)
+    assert snapshot.changes == ()
+    assert snapshot.commit_recovery is None
+    assert snapshot.git_status is not None
+    assert snapshot.git_status.rows == ()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_outcome_runner_oserror_is_uncertain_not_natural_failure(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("oserror")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "uncertain"
+    assert service._owner.snapshot(binding).commit_recovery is not None
+    assert service._uncertain_commit is not None
+    assert service._uncertain_commit.recovery_capability is not None
+    assert runner.hooks_directory is not None
+    assert runner.hooks_directory.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_live_unpublished_uncertainty_retains_exact_mutation_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("zero_without_commit")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    original_publish = FileNotesSessionOwner.publish_commit_outcome
+
+    def refuse_uncertainty(self, lease, capture, publication):
+        if publication.state == "uncertain":
+            return CommitPublicationResult(published=False)
+        return original_publish(self, lease, capture, publication)
+
+    monkeypatch.setattr(
+        FileNotesSessionOwner,
+        "publish_commit_outcome",
+        refuse_uncertainty,
+    )
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "uncertain"
+    assert service._uncertain_commit is not None
+    assert service._uncertain_commit.recovery_capability is None
+    retained_lease = service._uncertain_commit.mutation_lease
+    assert retained_lease is not None
+    assert retained_lease._binding == binding
+    assert service._owner.mutation_active(binding)
+    assert service._owner.admit_mutation(binding).reason == "mutation_active"
+    assert service._owner.select_root(repository) == binding
+    with pytest.raises(RuntimeError, match="Git mutation is in progress"):
+        service._owner.select_root(tmp_path / "other")
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mode",
+    ["commit_then_branch_drift", "commit_then_index_drift"],
+)
+async def test_commit_outcome_unexpected_branch_or_index_movement_is_uncertain(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner(mode)
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "uncertain"
+    assert service._owner.snapshot(binding).commit_recovery is not None
+    assert runner.commit_calls == 1
+    if mode == "commit_then_branch_drift":
+        assert _git(repository, "symbolic-ref", "HEAD").decode().strip() == (
+            "refs/heads/unexpected"
+        )
+    else:
+        assert _git(repository, "diff", "--cached", "--name-only").decode() == (
+            "unexpected.md\n"
+        )
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "contradiction",
+    [
+        "missing_commit",
+        "tree",
+        "message",
+        "author",
+        "committer",
+        "signature",
+    ],
+)
+async def test_commit_outcome_raw_commit_contradictions_are_uncertain(
+    tmp_path: Path,
+    contradiction: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, review = await _prepare_owned_review(repository)
+    assert review.handle is not None
+    original_postflight = service._read_commit_postflight
+
+    async def contradictory_postflight(*args, **kwargs):
+        postflight = await original_postflight(*args, **kwargs)
+        raw = postflight.raw_commit
+        assert raw is not None
+        if contradiction == "missing_commit":
+            return replace(postflight, raw_commit=None)
+        if contradiction == "tree":
+            raw = replace(raw, tree_object_id="f" * 40)
+        elif contradiction == "message":
+            raw = replace(raw, message=b"Different message\n")
+        elif contradiction == "author":
+            raw = replace(
+                raw,
+                author=GitIdentity("Different Author", "author@example.test"),
+            )
+        elif contradiction == "committer":
+            raw = replace(
+                raw,
+                committer=GitIdentity(
+                    "Different Committer",
+                    "committer@example.test",
+                ),
+            )
+        else:
+            raw = replace(raw, signature_headers=("gpgsig",))
+        return replace(postflight, raw_commit=raw)
+
+    monkeypatch.setattr(
+        service,
+        "_read_commit_postflight",
+        contradictory_postflight,
+    )
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "uncertain"
+    assert service._owner.snapshot(binding).commit_recovery is not None
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_success_uses_one_status_snapshot_for_retirement_and_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        include_no_op_group=True,
+    )
+    assert review.handle is not None
+    original_query = service._query_status
+    queried_changes = []
+    loop = asyncio.get_running_loop()
+
+    async def inject_edit_after_query(
+        query_binding,
+        changes,
+        query_repository,
+        *,
+        publish_ownership_changes=True,
+    ):
+        queried_changes.append(changes)
+        status = await original_query(
+            query_binding,
+            changes,
+            query_repository,
+            publish_ownership_changes=publish_ownership_changes,
+        )
+        rows = tuple(
+            replace(row, state="unstaged")
+            if row.group_id == 2
+            else row
+            for row in status.rows
+        )
+        if len(queried_changes) == 1:
+            loop.call_soon(
+                service._owner.record_change,
+                binding,
+                SessionChange("modified", "later.md"),
+            )
+        return replace(status, rows=rows)
+
+    monkeypatch.setattr(service, "_query_status", inject_edit_after_query)
+    original_publish = FileNotesSessionOwner.publish_commit_outcome
+    publications = []
+
+    def record_publication(self, lease, capture, publication):
+        publications.append(publication)
+        return original_publish(self, lease, capture, publication)
+
+    monkeypatch.setattr(
+        FileNotesSessionOwner,
+        "publish_commit_outcome",
+        record_publication,
+    )
+
+    outcome = await service.start_commit(binding, review.handle)
+    await asyncio.sleep(0)
+
+    assert outcome.state == "succeeded"
+    assert len(queried_changes) == 1
+    assert [change.sequence for change in queried_changes[0]] == [1, 2]
+    assert len(publications) == 1
+    publication = publications[0]
+    assert publication.state == "succeeded"
+    assert publication.retired_sequence_ids == (1,)
+    assert publication.divergent_sequence_ids == (2,)
+    assert publication.refreshed_status is not None
+    assert tuple(
+        (row.group_id, row.state)
+        for row in publication.refreshed_status.rows
+    ) == ((2, "unstaged"),)
+    assert [
+        change.sequence
+        for change in service._owner.snapshot(binding).changes
+    ] == [2, 3]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_guarded_commit_success_proves_exact_unsigned_commit(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    sentinel = tmp_path / "unowned-helper-ran"
+    hook = repository / ".git" / "hooks" / "pre-commit"
+    hook.write_text(f"#!/bin/sh\ntouch '{sentinel}'\nexit 1\n", encoding="utf-8")
+    hook.chmod(0o755)
+    signer = tmp_path / "signer"
+    signer.write_text(f"#!/bin/sh\ntouch '{sentinel}'\nexit 1\n", encoding="utf-8")
+    signer.chmod(0o755)
+    fsmonitor = tmp_path / "fsmonitor"
+    fsmonitor.write_text(
+        f"#!/bin/sh\ntouch '{sentinel}'\nexit 1\n",
+        encoding="utf-8",
+    )
+    fsmonitor.chmod(0o755)
+    unrelated = repository / "unrelated.txt"
+    unrelated.write_bytes(b"unrelated bytes\x00stay")
+    old_head = _git(repository, "rev-parse", "HEAD").decode().strip()
+    runner = _RecordingRunner()
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        unrelated_unstaged=True,
+        runner=runner,
+    )
+    assert review.handle is not None
+    assert review.projection is not None
+    _git(repository, "config", "commit.gpgSign", "true")
+    _git(repository, "config", "gpg.program", str(signer))
+    _git(repository, "config", "core.fsmonitor", str(fsmonitor))
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "succeeded"
+    assert outcome.commit_object_id is not None
+    assert outcome.message == (
+        f"Committed 1 session notes as {outcome.commit_object_id[:12]}; "
+        "unrelated changes untouched."
+    )
+    assert outcome.qualification == (
+        "No unrelated staged content was committed; "
+        "Chatbook selected no unrelated worktree paths."
+    )
+    assert not sentinel.exists()
+    commit_calls = [
+        argv
+        for argv, _environment in runner.calls
+        if any(
+            isinstance(value, str) and value.startswith("core.hooksPath=")
+            for value in argv
+        )
+    ]
+    assert len(commit_calls) == 1
+    assert "maintenance.auto=false" in commit_calls[0]
+    assert "gc.auto=0" in commit_calls[0]
+    assert "core.fsmonitor=false" in commit_calls[0]
+    assert "commit.gpgSign=false" in commit_calls[0]
+    new_head = _git(repository, "rev-parse", "HEAD").decode().strip()
+    assert new_head == outcome.commit_object_id
+    raw = parse_raw_commit_object(_git(repository, "cat-file", "commit", new_head))
+    assert raw.parent_object_id == old_head
+    assert raw.tree_object_id == _git(repository, "write-tree").decode().strip()
+    assert raw.message == b"Review subject\n\nBody\n"
+    assert raw.author == review.projection.author
+    assert raw.committer == review.projection.committer
+    assert raw.has_signature is False
+    assert _git(repository, "diff-index", "--cached", new_head, "--") == b""
+    assert unrelated.read_bytes() == b"unrelated bytes\x00stay"
+    snapshot = service._owner.snapshot(binding)
+    assert snapshot.changes == ()
+    assert dict(snapshot.staging_ownership) == {}
+    assert snapshot.git_status is not None
+    assert snapshot.git_status.head is not None
+    assert snapshot.git_status.head.object_id == new_head
+    assert snapshot.git_status.rows == ()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_guarded_commit_failure_proves_branch_and_index_unchanged(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("failure")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    old_head = _git(repository, "rev-parse", "HEAD").decode().strip()
+    old_index = _git(repository, "ls-files", "-z", "--stage", "-v")
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "failed_unchanged"
+    assert runner.commit_calls == 1
+    assert _git(repository, "rev-parse", "HEAD").decode().strip() == old_head
+    assert _git(repository, "ls-files", "-z", "--stage", "-v") == old_index
+    assert service._owner.snapshot(binding).staging_ownership
+    await service.shutdown()

@@ -732,7 +732,7 @@ class FileNotesSessionOwner:
 
         Raises:
             RuntimeError: If the owner has shut down or another root commit is
-                in progress.
+                in progress, or a Git mutation protects a different root.
         """
         root_key = str(Path(root).expanduser().resolve(strict=False))
         if not self._root_commit_lock.acquire(blocking=False):
@@ -741,6 +741,8 @@ class FileNotesSessionOwner:
             with self._lock:
                 if self._shutdown:
                     raise RuntimeError("File Notes session owner is shut down")
+                if self._root_change_is_blocked_locked(root_key):
+                    raise RuntimeError("File Notes Git mutation is in progress")
                 return self._select_root_locked(root_key)
         finally:
             self._root_commit_lock.release()
@@ -768,6 +770,8 @@ class FileNotesSessionOwner:
         try:
             with self._lock:
                 if self._shutdown:
+                    return None
+                if self._root_change_is_blocked_locked(root_key):
                     return None
                 if not self._root_selection_matches_locked(
                     root_key,
@@ -826,9 +830,13 @@ class FileNotesSessionOwner:
         token = object()
         try:
             with self._lock:
-                if self._shutdown or not self._root_selection_matches_locked(
-                    root_key,
-                    expected_binding,
+                if (
+                    self._shutdown
+                    or self._mutation_token is not None
+                    or not self._root_selection_matches_locked(
+                        root_key,
+                        expected_binding,
+                    )
                 ):
                     return None
                 self._root_commit_token = token
@@ -1135,7 +1143,18 @@ class FileNotesSessionOwner:
     ) -> CommitPublicationResult:
         """Atomically publish one exact terminal or quarantined commit result."""
         with self._lock:
-            if not self._commit_publication_matches_locked(lease, capture):
+            exact_match = self._commit_publication_matches_locked(
+                lease,
+                capture,
+            )
+            uncertainty_fallback = (
+                publication.state == "uncertain"
+                and self._commit_uncertainty_fallback_matches_locked(
+                    lease,
+                    capture,
+                )
+            )
+            if not exact_match and not uncertainty_fallback:
                 return CommitPublicationResult(published=False)
             if not self._commit_publication_value_is_valid_locked(
                 capture,
@@ -1217,6 +1236,8 @@ class FileNotesSessionOwner:
                 return CommitRecoveryAdmission(reason="ownership_active")
             if self._transition_tokens:
                 return CommitRecoveryAdmission(reason="transition_active")
+            if self._root_commit_token is not None:
+                return CommitRecoveryAdmission(reason="transition_active")
             if self._mutation_token is not None:
                 return CommitRecoveryAdmission(reason="mutation_active")
 
@@ -1283,6 +1304,8 @@ class FileNotesSessionOwner:
             if self._commit_quarantine is not None:
                 return GitMutationAdmission(reason="recovery_required")
             if self._transition_tokens:
+                return GitMutationAdmission(reason="transition_active")
+            if self._root_commit_token is not None:
                 return GitMutationAdmission(reason="transition_active")
             if self._mutation_token is not None:
                 return GitMutationAdmission(reason="mutation_active")
@@ -1544,6 +1567,21 @@ class FileNotesSessionOwner:
             and self._captured_sequences_are_present_locked(capture.group_sequence_ids)
         )
 
+    def _commit_uncertainty_fallback_matches_locked(
+        self,
+        lease: GitMutationLease,
+        capture: CommitAuthorityCapture,
+    ) -> bool:
+        """Permit only fail-closed quarantine for one exact active attempt."""
+        return (
+            not self._commit_publication_closed
+            and self._lease_is_active_locked(lease)
+            and capture._mutation_token is lease._token
+            and capture.binding == self._binding
+            and capture._quarantine_token is None
+            and self._commit_quarantine is None
+        )
+
     def _commit_publication_value_is_valid_locked(
         self,
         capture: CommitAuthorityCapture,
@@ -1672,6 +1710,10 @@ class FileNotesSessionOwner:
                 or self._root_commit_state != "reserved"
             ):
                 raise RuntimeError("File Notes root reservation is not active")
+            if self._mutation_token is not None:
+                raise RuntimeError(
+                    "File Notes root commit is blocked by a Git mutation"
+                )
             binding = self._select_root_locked(root_key)
             self._root_commit_state = "committed"
         publish(binding)
@@ -1700,6 +1742,13 @@ class FileNotesSessionOwner:
         self._commit_quarantine = None
         self._invalidate_git_authority_locked()
         return self._binding
+
+    def _root_change_is_blocked_locked(self, root_key: str) -> bool:
+        return (
+            self._mutation_token is not None
+            and self._binding is not None
+            and self._binding.root_key != root_key
+        )
 
     def _clear_git_status_locked(
         self,
