@@ -13,6 +13,7 @@ labels:
 dependencies: []
 references:
   - backlog/decisions/029-local-private-data-boundary.md
+  - backlog/decisions/033-application-session-state-ownership.md
 documentation:
   - Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md
 priority: high

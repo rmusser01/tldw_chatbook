@@ -2378,6 +2378,8 @@ fixed recovery copy, and the change introduces no new static or diff issue.
 **Files:**
 - Modify: `Tests/UI/test_product_maturity_phase1_core_loop.py`
 
+**Existing ADR:** `backlog/decisions/033-application-session-state-ownership.md`
+
 - [ ] **Step 1: Preserve the focused RED**
 
 Run
