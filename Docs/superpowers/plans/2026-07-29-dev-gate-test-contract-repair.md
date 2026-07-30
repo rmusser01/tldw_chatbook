@@ -1592,6 +1592,43 @@ git add \
 git commit -m "test(console): seed choose-model routing state"
 ```
 
+### Task 4ak: Publish the live-config fixture runtime state
+
+**Files:**
+- Modify: `Tests/UI/test_console_session_settings.py`
+
+- [ ] **Step 1: Reproduce the retired projection write**
+
+Run `test_real_journey_settings_save_unblocks_console_without_restart`.
+Expected: `_build_live_config_test_app` reaches its fake runtime-policy loader
+and raises `AttributeError` while assigning the read-only
+`current_runtime_backend` property before the real journey can boot.
+
+- [ ] **Step 2: Use the live projection owner**
+
+After assigning the fake runtime policy context, call
+`app._publish_runtime_policy_projection(context.state)` and remove both direct
+compatibility-field assignments. Keep the real sandboxed config boot, Settings
+adapter saves, navigation, restored-session, readiness, and modal-unblocking
+assertions unchanged. Do not edit production or replace the journey with a
+stubbed configuration.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_session_settings.py::test_real_journey_settings_save_unblocks_console_without_restart \
+  Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_console_session_settings.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_console_session_settings.py
+git diff --check
+git add \
+  Tests/UI/test_console_session_settings.py
+git commit -m "test(console): publish fixture runtime state"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

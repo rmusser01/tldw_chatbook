@@ -363,6 +363,14 @@ Update the tests to describe current behavior:
     click, and settings-destination assertion. Do not change the settings modal
     or retain a fixture whose blank provider conflicts with the test's stated
     missing-model state.
+41. In the live-config Console journey's fake runtime-policy loader, publish
+    the existing local `RuntimeSourceState` through
+    `TldwCli._publish_runtime_policy_projection` after assigning the fake
+    policy context. Remove the unused `current_runtime_source` assignment and
+    the now-read-only `current_runtime_backend` assignment. Preserve the real
+    config boot, Settings adapter writes, screen navigation, restored session,
+    readiness, and no-restart unblocking assertions. Do not make the production
+    projection writable or replace the journey with a lighter fake.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -504,6 +512,10 @@ compatibility shims. No broad deletion of live tests.
   “Choose model.” Giving that test the same explicit provider-plus-empty-model
   state used by adjacent missing-model coverage exercises its named contract
   and leaves modal validation intact.
+- Restoring writable runtime fields for one live-config fixture would recreate
+  retired competing state. Publishing its already-constructed state through
+  the same projection method used by the current app harnesses preserves the
+  full journey while changing only fixture setup.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
