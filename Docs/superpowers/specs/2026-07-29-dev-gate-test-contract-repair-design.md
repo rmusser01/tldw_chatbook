@@ -193,6 +193,14 @@ The failures reproduce on an exact `origin/dev` checkout:
   correctly preserves the database import but skips selection presentation
   for an unmounted destination, so `selected_entity_kind` is intermittently
   still `None`.
+- The app-free Console responsiveness regression invokes
+  `_sync_native_console_chat_ui()` on a deliberately uninitialized
+  `ChatScreen`, but its stub list predates effective-scope warming,
+  world-book/avatar refresh, the native transcript method rename, and the
+  changed rail-visibility seam. It now enters a real helper that reads the
+  missing `_console_chat_store` before reaching the worker-count assertion.
+  The production sync sequence is covered elsewhere; this focused regression
+  owns only responsiveness instrumentation around that sequence.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -687,6 +695,16 @@ Update the tests to describe current behavior:
     direct awaited import continuation and exact selected-character assertions.
     Do not add another delay, weaken the selection assertion, or change
     production's stale-owner guard.
+68. In the app-free Console responsiveness regression, keep the lightweight
+    uninitialized screen but stub every current collaborator called by
+    `_sync_native_console_chat_ui()`: effective-scope warming, dictionary,
+    world-book, and avatar refresh, the current native transcript sync, and
+    the current conditional rail-visibility method, in addition to the
+    existing synchronous sync seams. Record that the core-state stub actually
+    ran while the responsiveness monitor reported one active worker, then
+    retain the final zero-worker assertion. Remove retired stub names and
+    unused fake fields. Do not mount a full application, alter production, or
+    replace the method under test with direct monitor calls.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -955,6 +973,12 @@ behavior. No compatibility shims. No broad deletion of live tests.
   import begun before mount. Waiting on the destination's existing
   `is_mounted` lifecycle signal at navigation is the earliest deterministic
   boundary and leaves production's stale-screen protection intact.
+- Giving the fake only `_console_chat_store = None` would move the failure to
+  the next unstubbed collaborator and keep the fixture coupled accidentally
+  to whichever sync helper executes first. A full-app test would add startup
+  and timer behavior while duplicating native Console integration coverage.
+  Stubbing the current collaborator list keeps this test focused on the real
+  outer worker-instrumentation wrapper and explicitly proves its core seam ran.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

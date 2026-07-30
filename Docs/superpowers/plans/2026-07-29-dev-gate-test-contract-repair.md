@@ -2707,6 +2707,49 @@ sequentially. Expected: all three journeys pass without selection or handoff
 failure, Ruff passes, the file's already-proven parent format drift does not
 increase, and no production file changes.
 
+### Task 4bl: Retarget the app-free Console responsiveness fixture
+
+**Files:**
+- Modify: `Tests/UI/test_ui_responsiveness.py`
+
+**Existing ADR:** `backlog/decisions/033-application-session-state-ownership.md`
+
+- [ ] **Step 1: Preserve the focused RED**
+
+Run
+`Tests/UI/test_ui_responsiveness.py::test_console_sync_records_worker_lifecycle`.
+Expected before repair: the app-free fake enters the current effective-scope
+warmer and fails on missing `_console_chat_store` before completing the
+worker-lifecycle assertion.
+
+- [ ] **Step 2: Stub the current sync collaborators**
+
+Keep the lightweight `ChatScreen.__new__` fixture. Add an
+`observed_active_worker` flag to the core-state stub and assert the monitor
+reports one active worker there. Stub the current effective-scope,
+dictionary/world-book/avatar, native transcript, and conditional rail
+visibility collaborators with no-ops; remove retired collaborator stubs and
+unused fake state. Invoke the real `_sync_native_console_chat_ui()` wrapper and
+assert both that the core seam ran and the final active-worker count is zero.
+Do not create a full application or change production.
+
+- [ ] **Step 3: Verify responsiveness boundaries**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_ui_responsiveness.py::test_console_sync_records_worker_lifecycle \
+  -q
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_ui_responsiveness.py \
+  -q
+../../.venv/bin/python -m ruff check Tests/UI/test_ui_responsiveness.py
+../../.venv/bin/python -m ruff format --check Tests/UI/test_ui_responsiveness.py
+git diff --check
+```
+
+Expected: the focused and full responsiveness module pass, static checks pass,
+and no production file changes.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

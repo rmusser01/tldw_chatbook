@@ -96,6 +96,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #67 The app-level Study runtime callback regression commits the requested source through a real `RuntimePolicyContext`, invalidates the server-context cache, and forwards the committed source to the active screen without constructing or asserting retired writable app-root backend fields.
 - [ ] #68 The first-time character-chat UAT observes the typed Chat payload at the real handoff store's staging boundary, forwards it unchanged for live Console consumption, and proves settlement by the absence of pending/in-flight work plus a character-bound Console session, without polling the retired app-root handoff field or weakening the import, recovery, send, reply, and persistence journey.
 - [ ] #69 The first-time character-chat UAT waits for the Personas destination to be both active and mounted before invoking its import continuation, so production's stale-owner guard cannot discard the selection presentation while the imported database row, full handoff journey, and exact selected-character assertions remain covered.
+- [ ] #70 The app-free Console responsiveness regression stubs the current native-sync collaborators, proves the instrumented core sync executes while one worker is active, and proves the worker count returns to zero afterward without constructing a full application or bypassing the production lifecycle instrumentation.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -170,6 +171,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 61. Retarget the remaining app-level Study runtime callback fixture to the current runtime-policy owner and server-context invalidation seam.
 62. Observe the first-time character-chat UAT payload and settlement through the typed Chat handoff owner.
 63. Wait for mounted Personas ownership before the UAT invokes its import continuation.
-64. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-65. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+64. Retarget the app-free Console responsiveness fixture to the current native-sync collaborator set.
+65. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+66. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
