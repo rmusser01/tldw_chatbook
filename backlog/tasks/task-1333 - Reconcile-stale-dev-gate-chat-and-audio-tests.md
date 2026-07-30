@@ -76,6 +76,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #48 The Console Workbench parity matrix references current native Console image-attachment coverage instead of a deleted legacy Chat UI test, and every matrix file/test reference resolves.
 - [ ] #49 The active-conversation workspace marker regression invokes the current argument-free Console workspace sync after restoring the native persisted session, without constructing or importing retired `ChatSessionData`, while retaining the single selected-row assertion.
 - [ ] #50 Expanded Watchlists source rows paint strictly to the right of their parent watchlist names at both visual-parity viewport sizes after tree labels are left-aligned; the existing relative-column regression remains intact, and source plus generated CSS documentation matches the four-space textual indent.
+- [ ] #51 The generic disabled-action recovery suite mounts current `STTSScreen` ownership under missing local speech dependencies, verifies the exact phase-five recovery taxonomy in the inspector, and verifies install guidance on the rail summary tooltip.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -131,6 +132,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 42. Retarget the parity matrix's deleted image-attachment reference to current native Console coverage.
 43. Remove the retired workspace-sync argument and its dead `ChatSessionData` import.
 44. Restore visible Watchlists source nesting at the existing textual-indentation seam, update only the explanatory comments, and regenerate the bundled stylesheet.
-45. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-46. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+45. Retarget the generic Speech recovery regression to the current screen-owned inspector detail and rail summary tooltip.
+46. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+47. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

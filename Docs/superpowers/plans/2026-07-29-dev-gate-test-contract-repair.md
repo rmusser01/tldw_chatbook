@@ -1890,6 +1890,47 @@ git diff --check
 Expected: both viewport parameters pass, the generated bundle matches the
 source stylesheet, and static/diff checks are clean.
 
+### Task 4as: Follow current Speech recovery ownership
+
+**Files:**
+- Modify: `Tests/UI/test_disabled_action_recovery_tooltips.py`
+
+- [ ] **Step 1: Preserve the stale-owner failure**
+
+Run `test_stts_missing_speech_dependencies_expose_phase_five_recovery`.
+Expected before the repair: the bare `STTSWindow` has no
+`#speech-capability-status` after Speech adopted the Lab frame, so the query
+raises `NoMatches`.
+
+- [ ] **Step 2: Mount and assert the split current owner**
+
+Replace the sole `STTSWindow` import with `STTSScreen`, add `_build_test_app`,
+and mount `STTSScreen(_build_test_app())` through the existing `_ScreenHost`.
+Patch dependency probes at `lab_speech_status`. Retain every exact recovery
+taxonomy assertion against inspector `#speech-capability-status`, then retain
+the exact install-tooltip assertion against rail
+`#speech-capability-summary`. Do not add a harness or production compatibility
+surface.
+
+- [ ] **Step 3: Verify the focused and neighboring contracts**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_disabled_action_recovery_tooltips.py::test_stts_missing_speech_dependencies_expose_phase_five_recovery \
+  Tests/UI/test_stts_capability_state.py \
+  Tests/UI/test_disabled_action_recovery_tooltips.py \
+  -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_disabled_action_recovery_tooltips.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_disabled_action_recovery_tooltips.py
+git diff --check
+```
+
+Expected: the exact inspector taxonomy, summary tooltip, ready refresh, and
+other disabled-action recovery contracts pass with static and diff checks
+clean.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

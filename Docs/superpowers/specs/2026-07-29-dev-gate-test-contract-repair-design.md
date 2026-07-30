@@ -73,6 +73,12 @@ The failures reproduce on an exact `origin/dev` checkout:
   minimum button width would place a child name past its parent. The existing
   compositor regression now renders `ArXiv` at column 4 and its parent at
   column 5 at the narrow visual-parity size.
+- The Speech Lab-frame migration moved local dependency recovery out of the
+  bare `STTSWindow`: exact visible taxonomy now belongs to
+  `STTSScreen`'s inspector `#speech-capability-status`, while install guidance
+  belongs to the rail `#speech-capability-summary` tooltip. The generic
+  disabled-action suite still mounts the retired owner and therefore raises
+  `NoMatches` before checking either distinct contract.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -424,6 +430,12 @@ Update the tests to describe current behavior:
     Keep the relative rendered-column assertion unchanged, update only its
     explanatory comment and the source stylesheet explanation, and regenerate
     the bundled stylesheet rather than adding a second geometry rule.
+49. Retarget the generic Speech dependency-recovery regression to
+    `STTSScreen(_build_test_app())` through its existing screen host. Patch the
+    probes at `lab_speech_status`, keep the shared dependency flags false,
+    assert the complete independent taxonomy against the inspector detail,
+    and assert the exact install tooltip against the rail summary. Do not add
+    a compatibility widget to `STTSWindow` or duplicate another harness.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -598,6 +610,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   would hide the visible parent-child ordering regression or overfit one
   viewport. Restoring four spaces at the existing label seam preserves the
   relative contract without another CSS layout mechanism.
+- Restoring the retired Speech status widget inside `STTSWindow` would create a
+  second recovery owner after the Lab-frame migration. Deleting the generic
+  regression would lose its exact Why/Next/Owner and tooltip assertions, so
+  following the existing inspector/rail split preserves distinct coverage with
+  one test-only migration.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
