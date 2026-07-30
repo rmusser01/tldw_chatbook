@@ -546,3 +546,28 @@ was decorative.
 
 - `lessons-live-verification.md` — why the suite could not see seven of these defects
 - `lessons-backlog-hygiene.md` — task IDs, CLI quirks, git plumbing traps
+
+---
+
+## The shared UI harness never loads the app stylesheet — geometry conclusions under it are void (2026-07-30)
+
+**Incident.** The V2 live gate failed its composer-overflow item AFTER the defect had
+been "fixed" twice, each fix RED-first, mutation-checked, 500k-trial fuzzed, and
+approved through two full review rounds. The real cause was one CSS rule —
+`#console-composer-expanded { height: 1 }` — cropping the grown 4-row draft to a single
+painted line. No test could see it: `Tests/UI` harnesses build `ConsoleHarness`, a bare
+`App[None]` that pushes `ChatScreen(app_instance)` directly. The `TldwCli` instance is
+only a service container there; the App that runs owns the stylesheet, and it has none.
+Every rule in `tldw_cli_modular.tcss` silently does not apply under these harnesses.
+Both instruments used to verify the fixes — `widget.render_line(...)` (the widget's own
+paint, blind to a parent's crop) and `widget.region` (layout placement, not clipped
+paint) — were also individually unable to see cropping. A 30-second tmux run of the
+real app reproduced the user's report on the first try.
+
+**What to do.** Any assertion about on-screen geometry — heights, clipping, whether a
+row is visible — must run under a harness whose `CSS_PATH` is the real bundle (see
+`_CssTrueConsoleHarness` in `Tests/UI/test_console_composer_overflow.py`), or against
+the real app in tmux. `render_line`/`region` alone prove what a widget WOULD paint,
+never what the screen shows; the composited screen is the only authority (third
+recorded instance of this lesson class). When a live report contradicts a green suite,
+suspect the harness before the reporter.
