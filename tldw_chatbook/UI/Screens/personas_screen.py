@@ -1675,6 +1675,10 @@ class PersonasScreen(BaseAppScreen):
         expected_query: str | None = None,
         expected_mode: str | None = None,
     ) -> None:
+        if expected_query is None:
+            expected_query = self.state.search_query
+        if expected_mode is None:
+            expected_mode = "personas"
         if not self._library_render_snapshot_is_current(
             expected_query=expected_query,
             expected_mode=expected_mode,
@@ -1978,31 +1982,37 @@ class PersonasScreen(BaseAppScreen):
 
     async def _render_dictionary_rows(self, query: str = "") -> None:
         """Fetch and render dictionary rows; degrade to recovery copy on failure."""
-        library = self.query_one(PersonasLibraryPane)
+        expected_mode = "dictionaries"
+        expected_query = query
+        if not self._library_render_snapshot_is_current(
+            expected_query=expected_query,
+            expected_mode=expected_mode,
+        ):
+            return
+
         service = self._dictionary_scope_service()
+        recovery_copy: str | None = None
         if service is None:
-            await library.update_rows(
-                (),
-                total=0,
-                noun="dictionaries",
-                recovery_copy="Dictionaries are unavailable: the service is not configured.",
+            records: list[dict] = []
+            recovery_copy = (
+                "Dictionaries are unavailable: the service is not configured."
             )
-            return
-        try:
-            response = await service.list_dictionaries(
-                mode="local", include_inactive=True
-            )
-            records = list(response.get("dictionaries") or [])
-        except Exception:
-            logger.opt(exception=True).warning("Could not list chat dictionaries.")
-            await library.update_rows(
-                (),
-                total=0,
-                noun="dictionaries",
-                recovery_copy="Dictionaries could not be loaded.\nSwitch modes and back to retry.",
-            )
-            return
-        self._dictionaries_cache = records
+        else:
+            try:
+                response = await service.list_dictionaries(
+                    mode="local", include_inactive=True
+                )
+                records = list(response.get("dictionaries") or [])
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not list chat dictionaries."
+                )
+                records = []
+                recovery_copy = (
+                    "Dictionaries could not be loaded.\n"
+                    "Switch modes and back to retry."
+                )
+
         needle = query.strip().lower()
         visible = (
             [r for r in records if needle in str(r.get("name", "")).lower()]
@@ -2010,12 +2020,22 @@ class PersonasScreen(BaseAppScreen):
             else records
         )
         rows = tuple(self._dictionary_row(r) for r in visible)
-        await library.update_rows(
-            rows,
-            total=len(records),
-            noun="dictionaries",
-            filtered=bool(needle),
-        )
+        async with self._render_lock:
+            if not self._library_render_snapshot_is_current(
+                expected_query=expected_query,
+                expected_mode=expected_mode,
+            ):
+                return
+            if recovery_copy is None:
+                self._dictionaries_cache = records
+            library = self.query_one(PersonasLibraryPane)
+            await library.update_rows(
+                rows,
+                total=len(records),
+                noun="dictionaries",
+                filtered=bool(needle),
+                recovery_copy=recovery_copy,
+            )
 
     def _lore_manager(self) -> Any:
         """A ``WorldBookManager`` bound to the app's local DB, or None when absent."""
@@ -2045,30 +2065,34 @@ class PersonasScreen(BaseAppScreen):
 
     async def _render_lore_rows(self, query: str = "") -> None:
         """Fetch and render lore/world-book rows; degrade to recovery copy on failure."""
-        library = self.query_one(PersonasLibraryPane)
+        expected_mode = "lore"
+        expected_query = query
+        if not self._library_render_snapshot_is_current(
+            expected_query=expected_query,
+            expected_mode=expected_mode,
+        ):
+            return
+
         manager = self._lore_manager()
+        recovery_copy: str | None = None
         if manager is None:
-            await library.update_rows(
-                (),
-                total=0,
-                noun="lore books",
-                recovery_copy="Lore is unavailable: the database is not configured.",
+            records: list[dict] = []
+            recovery_copy = (
+                "Lore is unavailable: the database is not configured."
             )
-            return
-        try:
-            records = await asyncio.to_thread(
-                self._list_world_books_with_counts, manager
-            )
-        except Exception:
-            logger.opt(exception=True).warning("Could not list lore books.")
-            await library.update_rows(
-                (),
-                total=0,
-                noun="lore books",
-                recovery_copy="Lore books could not be loaded.\nSwitch modes and back to retry.",
-            )
-            return
-        self._lore_books_cache = records
+        else:
+            try:
+                records = await asyncio.to_thread(
+                    self._list_world_books_with_counts, manager
+                )
+            except Exception:
+                logger.opt(exception=True).warning("Could not list lore books.")
+                records = []
+                recovery_copy = (
+                    "Lore books could not be loaded.\n"
+                    "Switch modes and back to retry."
+                )
+
         needle = query.strip().lower()
         visible = (
             [r for r in records if needle in str(r.get("name", "")).lower()]
@@ -2076,12 +2100,22 @@ class PersonasScreen(BaseAppScreen):
             else records
         )
         rows = tuple(self._lore_row(r) for r in visible)
-        await library.update_rows(
-            rows,
-            total=len(records),
-            noun="lore books",
-            filtered=bool(needle),
-        )
+        async with self._render_lock:
+            if not self._library_render_snapshot_is_current(
+                expected_query=expected_query,
+                expected_mode=expected_mode,
+            ):
+                return
+            if recovery_copy is None:
+                self._lore_books_cache = records
+            library = self.query_one(PersonasLibraryPane)
+            await library.update_rows(
+                rows,
+                total=len(records),
+                noun="lore books",
+                filtered=bool(needle),
+                recovery_copy=recovery_copy,
+            )
 
     # ===== Mode switching =====
 
@@ -2178,7 +2212,12 @@ class PersonasScreen(BaseAppScreen):
             self._show_center(None)
         elif mode == "personas":
             self._profile_lookup_recovery_state = None
-            await library.update_rows((), total=0, noun="personas")
+            async with self._render_lock:
+                if self._library_render_snapshot_is_current(
+                    expected_query="",
+                    expected_mode=mode,
+                ):
+                    await library.update_rows((), total=0, noun="personas")
             self._show_center(None)
             self._refresh_profile_rows_worker()
         elif mode == "dictionaries":
@@ -2188,9 +2227,16 @@ class PersonasScreen(BaseAppScreen):
             await self._render_lore_rows()
             self._show_center(None)
         else:
-            await library.update_rows(
-                (), total=0, noun=MODE_LABELS.get(mode, mode).lower()
-            )
+            async with self._render_lock:
+                if self._library_render_snapshot_is_current(
+                    expected_query="",
+                    expected_mode=mode,
+                ):
+                    await library.update_rows(
+                        (),
+                        total=0,
+                        noun=MODE_LABELS.get(mode, mode).lower(),
+                    )
             self.query_one("#personas-mode-placeholder", Static).update(
                 self._mode_placeholder_text(mode)
             )
@@ -4417,7 +4463,7 @@ class PersonasScreen(BaseAppScreen):
             logger.opt(exception=True).warning("Could not create a dictionary.")
             self._notify(f"Create failed: {exc}", "error")
             return
-        await self._render_dictionary_rows(query="")
+        await self._render_dictionary_rows(query=self.state.search_query)
         await self._select_dictionary(
             str(record.get("id")), str(record.get("name") or name)
         )
@@ -4582,7 +4628,7 @@ class PersonasScreen(BaseAppScreen):
                     f"Duplicated, but the strategy could not be copied ({exc}). Set it in Settings.",
                     "warning",
                 )
-        await self._render_dictionary_rows(query="")
+        await self._render_dictionary_rows(query=self.state.search_query)
         await self._select_dictionary(
             str(record.get("id")), str(record.get("name") or name)
         )
@@ -4614,7 +4660,7 @@ class PersonasScreen(BaseAppScreen):
             logger.opt(exception=True).warning("Could not create a lore book.")
             self._notify(f"Create failed: {exc}", "error")
             return
-        await self._render_lore_rows(query="")
+        await self._render_lore_rows(query=self.state.search_query)
         await self._select_lore_entry(str(book_id), name)
         # Land the user in Settings to rename immediately.
         try:
@@ -4661,7 +4707,7 @@ class PersonasScreen(BaseAppScreen):
             logger.opt(exception=True).warning("Could not duplicate the lore book.")
             self._notify(f"Duplicate failed: {exc}", "error")
             return
-        await self._render_lore_rows(query="")
+        await self._render_lore_rows(query=self.state.search_query)
         await self._select_lore_entry(str(new_id), name)
 
     async def _toggle_dictionary_enabled(self, entity_id: str) -> None:
@@ -6942,7 +6988,7 @@ class PersonasScreen(BaseAppScreen):
         if self.state.active_mode != "lore":
             self._notify(f"Imported '{name}' — open Lore to see it.", "information")
             return
-        await self._render_lore_rows(query="")
+        await self._render_lore_rows(query=self.state.search_query)
         await self._select_lore_entry(str(new_id), name)
         suffix = " Renamed to avoid a name clash." if name != base else ""
         self._notify(f"Imported '{name}'.{suffix}", "information")
@@ -7103,7 +7149,7 @@ class PersonasScreen(BaseAppScreen):
                 "information",
             )
             return
-        await self._render_dictionary_rows(query="")
+        await self._render_dictionary_rows(query=self.state.search_query)
         await self._select_dictionary(
             str(record.get("id")), str(record.get("name") or "")
         )

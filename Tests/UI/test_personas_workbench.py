@@ -176,6 +176,114 @@ def _row_text(item) -> str:
     return str(item.query_one(Static).renderable)
 
 
+_SHARED_MODE_OWNER_CASES = (
+    pytest.param(
+        "dictionaries",
+        "dictionary",
+        "New Dictionary Owner",
+        "2 entries · on",
+        "1 dictionary",
+        id="dictionaries",
+    ),
+    pytest.param(
+        "lore",
+        "lore",
+        "New Lore Owner",
+        "3 entries · on",
+        "1 lore book",
+        id="lore",
+    ),
+)
+
+
+def _configure_shared_mode_sources(mock_app_instance, monkeypatch) -> None:
+    """Install complete Dictionary/Lore list seams for shared-pane race tests."""
+    mock_app_instance.runtime_backend = "local"
+    mock_app_instance.chat_dictionary_scope_service = SimpleNamespace(
+        list_dictionaries=AsyncMock(
+            return_value={
+                "dictionaries": [
+                    {
+                        "id": 91,
+                        "name": "New Dictionary Owner",
+                        "entry_count": 2,
+                        "enabled": True,
+                    }
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr(
+        PersonasScreen,
+        "_lore_manager",
+        lambda self: object(),
+    )
+
+
+def _shared_pane_publication(screen) -> dict[str, object]:
+    """Snapshot the shared row/count/label fields that establish pane ownership."""
+    library = screen.query_one("#personas-library-pane")
+    rendered_rows = tuple(
+        (
+            str(row.id),
+            tuple(
+                str(static.renderable)
+                for static in row.query(Static).results()
+            ),
+        )
+        for row in library.query(".personas-library-row").results()
+    )
+    return {
+        "mode": screen.state.active_mode,
+        "rows": rendered_rows,
+        "count": str(
+            screen.query_one(
+                "#personas-library-count",
+                Static,
+            ).renderable
+        ),
+        "sort": str(
+            screen.query_one(
+                "#personas-library-sort",
+                Button,
+            ).label
+        ),
+        "tag": str(
+            screen.query_one(
+                "#personas-library-tag",
+                Button,
+            ).label
+        ),
+    }
+
+
+def _observe_shared_mode_render(
+    monkeypatch,
+    screen,
+    mode: str,
+    started,
+) -> tuple[str, str]:
+    """Mark a real mode renderer as started and stamp owner-distinct labels."""
+    library = screen.query_one("#personas-library-pane")
+    method_name = (
+        "_render_dictionary_rows"
+        if mode == "dictionaries"
+        else "_render_lore_rows"
+    )
+    original_render = getattr(screen, method_name)
+    owner_sort = f"Sort: {mode} owner"
+    owner_tag = f"Tag: {mode} owner"
+
+    async def observed_render(*args, **kwargs):
+        started.set()
+        await original_render(*args, **kwargs)
+        library.set_sort_label(owner_sort)
+        library.set_tag_label(owner_tag)
+
+    monkeypatch.setattr(screen, method_name, observed_render)
+    return owner_sort, owner_tag
+
+
 def _right_edge(widget) -> int:
     """Right edge of a mounted widget region."""
     return widget.region.x + widget.region.width
@@ -4301,29 +4409,10 @@ class TestServerCharacterSourceIsolation:
         new_meta,
         new_count,
     ):
-        """A suspended Characters cleanup cannot erase the newer pane owner."""
+        """A mode renderer started after Characters publishes must finish last."""
         import asyncio
 
-        mock_app_instance.runtime_backend = "local"
-        mock_app_instance.chat_dictionary_scope_service = SimpleNamespace(
-            list_dictionaries=AsyncMock(
-                return_value={
-                    "dictionaries": [
-                        {
-                            "id": 91,
-                            "name": "New Dictionary Owner",
-                            "entry_count": 2,
-                            "enabled": True,
-                        }
-                    ]
-                }
-            )
-        )
-        monkeypatch.setattr(
-            PersonasScreen,
-            "_lore_manager",
-            lambda self: object(),
-        )
+        _configure_shared_mode_sources(mock_app_instance, monkeypatch)
         app = PersonasTestApp(mock_app_instance)
 
         async with app.run_test(size=(160, 50)) as pilot:
@@ -4332,6 +4421,13 @@ class TestServerCharacterSourceIsolation:
             original_update_rows = library.update_rows
             stale_render_started = asyncio.Event()
             release_stale_render = asyncio.Event()
+            mode_render_started = asyncio.Event()
+            owner_sort, owner_tag = _observe_shared_mode_render(
+                monkeypatch,
+                screen,
+                new_mode,
+                mode_render_started,
+            )
 
             async def interleaved_to_thread(function, *args, **kwargs):
                 if function is personas_screen_module.count_character_page:
@@ -4360,40 +4456,6 @@ class TestServerCharacterSourceIsolation:
                     stale_render_started.set()
                     await release_stale_render.wait()
 
-            def shared_publication() -> dict[str, object]:
-                rendered_rows = tuple(
-                    (
-                        str(row.id),
-                        tuple(
-                            str(static.renderable)
-                            for static in row.query(Static).results()
-                        ),
-                    )
-                    for row in library.query(".personas-library-row").results()
-                )
-                return {
-                    "mode": screen.state.active_mode,
-                    "rows": rendered_rows,
-                    "count": str(
-                        screen.query_one(
-                            "#personas-library-count",
-                            Static,
-                        ).renderable
-                    ),
-                    "sort": str(
-                        screen.query_one(
-                            "#personas-library-sort",
-                            Button,
-                        ).label
-                    ),
-                    "tag": str(
-                        screen.query_one(
-                            "#personas-library-tag",
-                            Button,
-                        ).label
-                    ),
-                }
-
             monkeypatch.setattr(
                 personas_screen_module.asyncio,
                 "to_thread",
@@ -4412,19 +4474,16 @@ class TestServerCharacterSourceIsolation:
             stale = asyncio.create_task(screen._reload_character_page())
             await stale_render_started.wait()
 
-            await screen._apply_mode(new_mode)
-            owner_sort = f"Sort: {new_mode} owner"
-            owner_tag = f"Tag: {new_mode} owner"
-            library.set_sort_label(owner_sort)
-            library.set_tag_label(owner_tag)
+            newer_mode = asyncio.create_task(screen._apply_mode(new_mode))
+            await mode_render_started.wait()
             await pilot.pause()
-            newer_publication = shared_publication()
 
             release_stale_render.set()
             await stale
+            await newer_mode
             await pilot.pause()
 
-            assert newer_publication == {
+            assert _shared_pane_publication(screen) == {
                 "mode": new_mode,
                 "rows": (
                     (
@@ -4436,10 +4495,366 @@ class TestServerCharacterSourceIsolation:
                 "sort": owner_sort,
                 "tag": owner_tag,
             }
-            assert shared_publication() == newer_publication
             assert screen._characters == []
             assert screen._character_total == 0
             assert screen._count_cache_key is None
+
+    @pytest.mark.parametrize(
+        ("new_mode", "new_kind", "new_name", "new_meta", "new_count"),
+        _SHARED_MODE_OWNER_CASES,
+    )
+    async def test_new_mode_wins_when_stale_character_waits_before_publication(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        new_mode,
+        new_kind,
+        new_name,
+        new_meta,
+        new_count,
+    ):
+        """A mode renderer started behind Characters must publish last."""
+        import asyncio
+
+        _configure_shared_mode_sources(mock_app_instance, monkeypatch)
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            library = screen.query_one("#personas-library-pane")
+            original_update_rows = library.update_rows
+            character_writer_entered = asyncio.Event()
+            release_character_writer = asyncio.Event()
+            mode_render_started = asyncio.Event()
+            owner_sort, owner_tag = _observe_shared_mode_render(
+                monkeypatch,
+                screen,
+                new_mode,
+                mode_render_started,
+            )
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                if function is personas_screen_module.count_character_page:
+                    return 1
+                if function is personas_screen_module.get_character_page_for_ui:
+                    return [{"id": 7, "name": "Older Character Publication"}]
+                if function is PersonasScreen._list_world_books_with_counts:
+                    return [
+                        {
+                            "id": 91,
+                            "name": "New Lore Owner",
+                            "entry_count": 3,
+                            "enabled": True,
+                        }
+                    ]
+                raise AssertionError(f"Unexpected to_thread function: {function!r}")
+
+            async def block_before_character_publication(rows, **kwargs):
+                if tuple(row.name for row in rows) == (
+                    "Older Character Publication",
+                ):
+                    character_writer_entered.set()
+                    await release_character_writer.wait()
+                await original_update_rows(rows, **kwargs)
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+            monkeypatch.setattr(
+                library,
+                "update_rows",
+                block_before_character_publication,
+            )
+            screen._character_db = lambda: object()
+            screen._count_cache_key = None
+
+            stale_character = asyncio.create_task(
+                screen._reload_character_page()
+            )
+            await character_writer_entered.wait()
+
+            newer_mode = asyncio.create_task(screen._apply_mode(new_mode))
+            await mode_render_started.wait()
+            await pilot.pause()
+
+            release_character_writer.set()
+            await stale_character
+            await newer_mode
+            await pilot.pause()
+
+            assert _shared_pane_publication(screen) == {
+                "mode": new_mode,
+                "rows": (
+                    (
+                        f"personas-library-row-{new_kind}-91",
+                        (new_name, new_meta),
+                    ),
+                ),
+                "count": new_count,
+                "sort": owner_sort,
+                "tag": owner_tag,
+            }
+            assert screen._characters == []
+            assert screen._character_total == 0
+
+    @pytest.mark.parametrize(
+        ("new_mode", "new_kind", "new_name", "new_meta", "new_count"),
+        _SHARED_MODE_OWNER_CASES,
+    )
+    async def test_new_mode_wins_when_stale_character_cleanup_is_suspended(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        new_mode,
+        new_kind,
+        new_name,
+        new_meta,
+        new_count,
+    ):
+        """A mode renderer started inside stale cleanup must publish last."""
+        import asyncio
+
+        _configure_shared_mode_sources(mock_app_instance, monkeypatch)
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            library = screen.query_one("#personas-library-pane")
+            original_update_rows = library.update_rows
+            initial_character_published = asyncio.Event()
+            release_initial_character = asyncio.Event()
+            cleanup_writer_entered = asyncio.Event()
+            release_cleanup_writer = asyncio.Event()
+            mode_render_started = asyncio.Event()
+            owner_sort, owner_tag = _observe_shared_mode_render(
+                monkeypatch,
+                screen,
+                new_mode,
+                mode_render_started,
+            )
+            count_calls = 0
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                nonlocal count_calls
+                if function is personas_screen_module.count_character_page:
+                    count_calls += 1
+                    if count_calls == 1:
+                        return 1
+                    raise RuntimeError("newer character page failed")
+                if function is personas_screen_module.get_character_page_for_ui:
+                    return [{"id": 7, "name": "Older Character Publication"}]
+                if function is PersonasScreen._list_world_books_with_counts:
+                    return [
+                        {
+                            "id": 91,
+                            "name": "New Lore Owner",
+                            "entry_count": 3,
+                            "enabled": True,
+                        }
+                    ]
+                raise AssertionError(f"Unexpected to_thread function: {function!r}")
+
+            async def suspend_character_writers(rows, **kwargs):
+                row_names = tuple(row.name for row in rows)
+                if row_names == ("Older Character Publication",):
+                    await original_update_rows(rows, **kwargs)
+                    initial_character_published.set()
+                    await release_initial_character.wait()
+                    return
+                if not rows and kwargs.get("noun") == "characters":
+                    cleanup_writer_entered.set()
+                    await release_cleanup_writer.wait()
+                await original_update_rows(rows, **kwargs)
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+            monkeypatch.setattr(
+                library,
+                "update_rows",
+                suspend_character_writers,
+            )
+            screen._character_db = lambda: object()
+            screen._count_cache_key = None
+            screen.state.tag_filter = "older-tag"
+
+            stale_character = asyncio.create_task(
+                screen._reload_character_page()
+            )
+            await initial_character_published.wait()
+
+            screen.state.tag_filter = None
+            await screen._reload_character_page()
+            release_initial_character.set()
+            await cleanup_writer_entered.wait()
+
+            newer_mode = asyncio.create_task(screen._apply_mode(new_mode))
+            await mode_render_started.wait()
+            await pilot.pause()
+
+            release_cleanup_writer.set()
+            await stale_character
+            await newer_mode
+            await pilot.pause()
+
+            assert _shared_pane_publication(screen) == {
+                "mode": new_mode,
+                "rows": (
+                    (
+                        f"personas-library-row-{new_kind}-91",
+                        (new_name, new_meta),
+                    ),
+                ),
+                "count": new_count,
+                "sort": owner_sort,
+                "tag": owner_tag,
+            }
+            assert screen._characters == []
+            assert screen._character_total == 0
+            assert screen._count_cache_key is None
+
+    @pytest.mark.parametrize(
+        ("source_mode", "owner_change"),
+        (
+            pytest.param("dictionaries", "query", id="dictionaries-query"),
+            pytest.param("dictionaries", "mode", id="dictionaries-mode"),
+            pytest.param("lore", "query", id="lore-query"),
+            pytest.param("lore", "mode", id="lore-mode"),
+        ),
+    )
+    async def test_slow_shared_mode_fetch_cannot_overwrite_changed_owner(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        source_mode,
+        owner_change,
+    ):
+        """Dictionary/Lore results publish only for their captured mode/query."""
+        import asyncio
+
+        fetch_started = asyncio.Event()
+        release_fetch = asyncio.Event()
+        dictionary_calls = 0
+
+        async def list_dictionaries(*, mode, include_inactive):
+            nonlocal dictionary_calls
+            assert (mode, include_inactive) == ("local", True)
+            dictionary_calls += 1
+            if source_mode == "dictionaries" and dictionary_calls == 1:
+                fetch_started.set()
+                await release_fetch.wait()
+                name = "Old Dictionary Result"
+            else:
+                name = "new Dictionary Owner"
+            return {
+                "dictionaries": [
+                    {
+                        "id": 91,
+                        "name": name,
+                        "entry_count": 2,
+                        "enabled": True,
+                    }
+                ]
+            }
+
+        mock_app_instance.runtime_backend = "local"
+        mock_app_instance.chat_dictionary_scope_service = SimpleNamespace(
+            list_dictionaries=list_dictionaries
+        )
+        monkeypatch.setattr(
+            PersonasScreen,
+            "_lore_manager",
+            lambda self: object(),
+        )
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            lore_calls = 0
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                nonlocal lore_calls
+                if function is PersonasScreen._list_world_books_with_counts:
+                    lore_calls += 1
+                    if source_mode == "lore" and lore_calls == 1:
+                        fetch_started.set()
+                        await release_fetch.wait()
+                        name = "Old Lore Result"
+                    else:
+                        name = "new Lore Owner"
+                    return [
+                        {
+                            "id": 91,
+                            "name": name,
+                            "entry_count": 3,
+                            "enabled": True,
+                        }
+                    ]
+                raise AssertionError(f"Unexpected to_thread function: {function!r}")
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+
+            stale_fetch = asyncio.create_task(screen._apply_mode(source_mode))
+            await fetch_started.wait()
+
+            library = screen.query_one("#personas-library-pane")
+            if owner_change == "query":
+                screen.state.search_query = "new"
+                if source_mode == "dictionaries":
+                    await screen._render_dictionary_rows(query="new")
+                    expected_rows = (
+                        (
+                            "personas-library-row-dictionary-91",
+                            ("new Dictionary Owner", "2 entries · on"),
+                        ),
+                    )
+                    expected_count = "1 of 1 dictionary"
+                else:
+                    await screen._render_lore_rows(query="new")
+                    expected_rows = (
+                        (
+                            "personas-library-row-lore-91",
+                            ("new Lore Owner", "3 entries · on"),
+                        ),
+                    )
+                    expected_count = "1 of 1 lore book"
+                expected_mode = source_mode
+            else:
+                await screen._apply_mode("prompts")
+                expected_mode = "prompts"
+                expected_rows = ()
+                expected_count = "0 prompts"
+
+            owner_sort = f"Sort: {expected_mode} current owner"
+            owner_tag = f"Tag: {expected_mode} current owner"
+            library.set_sort_label(owner_sort)
+            library.set_tag_label(owner_tag)
+            await pilot.pause()
+            current_publication = _shared_pane_publication(screen)
+
+            release_fetch.set()
+            await stale_fetch
+            await pilot.pause()
+
+            assert current_publication == {
+                "mode": expected_mode,
+                "rows": expected_rows,
+                "count": expected_count,
+                "sort": owner_sort,
+                "tag": owner_tag,
+            }
+            assert _shared_pane_publication(screen) == current_publication
 
     @pytest.mark.parametrize("older_outcome", ("success", "failure"))
     async def test_server_target_aba_drops_older_request(
