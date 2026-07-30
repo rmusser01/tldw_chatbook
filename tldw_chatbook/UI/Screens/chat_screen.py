@@ -14707,6 +14707,21 @@ class ChatScreen(BaseAppScreen):
         composer_reflects_session = (
             composer is not None and controller.store.active_session_id == session_id
         )
+        # TASK-1281 review NEW-5: `clear_draft`/`clear_history` below must
+        # only ever touch the composer when it PROVABLY shows this exact
+        # session's draft right now, not merely when the store's active
+        # session id happens to match -- `composer_reflects_session` above
+        # is Task 3b's pre-existing (looser) check, kept as-is for
+        # `restore_stashed_draft` below, but during the TASK-339
+        # session-switch settle window `active_session_id` can already
+        # equal `session_id` while the composer still visibly shows a
+        # DIFFERENT session (see F1) -- clearing on that weaker guard would
+        # wipe the wrong session's on-screen draft. Unified with
+        # `_on_console_submission_accepted`'s own guard shape.
+        composer_visible_for_session = (
+            composer is not None
+            and self._console_visible_draft_session_id == session_id
+        )
         stash = self._console_inflight_send_stashes.pop(session_id, None)
         if not result.accepted and stash is not None and composer_reflects_session:
             # Controller-level refusal of a keyboard send: the composer was
@@ -14715,7 +14730,7 @@ class ChatScreen(BaseAppScreen):
             composer.restore_stashed_draft(stash)
         if (
             result.should_clear_draft
-            and composer_reflects_session
+            and composer_visible_for_session
             and inflight_stash is None
         ):
             # Stashed sends were cleared at the keypress — clearing again
@@ -14727,7 +14742,13 @@ class ChatScreen(BaseAppScreen):
             # sends that reach here without an inflight keypress stash
             # (e.g. the mouse-click Send path).
             composer.clear_history()
-        self._console_undo_histories.pop(session_id, None)
+        if result.accepted:
+            # TASK-1281 review NEW-5: only an ACCEPTED send makes this
+            # session's pre-send history genuinely stale -- a refusal
+            # (blocked/failed/canceled) sent nothing, so a background
+            # session's banked undo/redo history must survive it exactly
+            # as it would have survived never attempting the send at all.
+            self._console_undo_histories.pop(session_id, None)
         if (
             result.accepted
             and controller.run_state.status is ConsoleRunStatus.COMPLETED
@@ -15346,6 +15367,17 @@ class ChatScreen(BaseAppScreen):
             # `insert_text("\n")` followed by the paste) so they also
             # record as a single undo entry -- previously one Ctrl+Z only
             # removed the pasted body and left a stray blank line behind.
+            #
+            # Review NEW-4 (known, deliberately unfixed): when `text` is
+            # long enough to collapse, the leading "\n" lands INSIDE that
+            # one collapsed segment, so the collapsed token itself carries
+            # no visible boundary marker between "existing draft" and the
+            # pasted body (canonical text is still correct either way).
+            # Splitting this back into two calls to restore a literal,
+            # always-visible separator would reintroduce the exact N1 bug
+            # this comment describes (two undo entries, a stray blank line
+            # surviving one Ctrl+Z) -- not a trivial fix, so left as a
+            # documented display-only limitation rather than reverted.
             composer.move_cursor_end()
             composer.insert_text_as_paste(f"\n{text}")
         else:
