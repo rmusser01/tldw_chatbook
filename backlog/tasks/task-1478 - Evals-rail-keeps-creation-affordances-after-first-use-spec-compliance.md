@@ -2,7 +2,7 @@
 id: TASK-1478
 title: >-
   Evals rail keeps creation affordances after first use (spec compliance)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-30 10:00'
 labels:

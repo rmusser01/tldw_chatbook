@@ -2,7 +2,7 @@
 id: TASK-1476
 title: >-
   Wire the Evals primary action to run the selected bench
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-30 10:00'
 labels:

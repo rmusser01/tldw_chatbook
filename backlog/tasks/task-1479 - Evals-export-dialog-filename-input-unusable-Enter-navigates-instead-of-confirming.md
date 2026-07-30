@@ -2,7 +2,7 @@
 id: TASK-1479
 title: >-
   Evals export dialog: filename input unusable, Enter navigates instead of confirming
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-30 10:00'
 labels:

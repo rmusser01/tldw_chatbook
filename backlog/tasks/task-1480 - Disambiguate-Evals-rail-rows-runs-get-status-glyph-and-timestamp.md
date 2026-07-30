@@ -2,7 +2,7 @@
 id: TASK-1480
 title: >-
   Disambiguate Evals rail rows: runs get status glyph and timestamp
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-30 10:00'
 labels:

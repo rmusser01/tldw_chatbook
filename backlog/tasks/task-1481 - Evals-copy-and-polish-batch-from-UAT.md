@@ -2,7 +2,7 @@
 id: TASK-1481
 title: >-
   Evals copy and polish batch from UAT
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-30 10:00'
 labels:

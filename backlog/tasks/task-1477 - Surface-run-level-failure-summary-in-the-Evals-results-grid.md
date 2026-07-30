@@ -2,7 +2,7 @@
 id: TASK-1477
 title: >-
   Surface run-level failure summary in the Evals results grid
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-30 10:00'
 labels:
