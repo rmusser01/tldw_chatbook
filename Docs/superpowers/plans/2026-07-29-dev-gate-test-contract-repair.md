@@ -3440,6 +3440,41 @@ Run the exact node, the full ChaChaNotes property module, Ruff/format, and
 Expected: five distinct retained connection objects are observed under normal
 thread scheduling and all adjacent property tests remain green.
 
+### Task 4ce: Scope TTS unlink cleanup fakes to candidate validation
+
+**Files:**
+- Modify: `Tests/TTS/test_profile_schema.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This confines test doubles for shared standard-library modules
+without changing TTS storage, cleanup precedence, or runtime behavior.
+
+- [x] **Step 1: Confirm teardown-only failure**
+
+Record the full-suite teardown error and run both unlink-cleanup tests in
+isolation. Expected: the bodies pass alone, while full-suite teardown calls the
+still-patched process-global `os.unlink` with `dir_fd`.
+
+- [x] **Step 2: Scope shared-module replacements**
+
+Apply the existing `tempfile.mkstemp` and `os.unlink` replacements only around
+`validate_profile_candidate()` through `monkeypatch.context()`. Keep private
+body-failure injection in the same owned scope. Do not change production or
+broaden the fakes to observe pytest cleanup.
+
+- [x] **Step 3: Verify focused and adjacent TTS profile coverage**
+
+Run both parametrized nodes, the complete profile-schema module, Ruff/format,
+and `git diff --check`.
+
+Expected: exact cleanup signal/error precedence remains green and pytest
+temporary-directory teardown sees the real standard library.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

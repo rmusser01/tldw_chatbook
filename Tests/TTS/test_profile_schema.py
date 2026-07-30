@@ -1757,11 +1757,11 @@ def test_candidate_unlink_cleanup_control_flow_signal_is_preserved(
         if target_path in snapshot_paths:
             raise signal
 
-    monkeypatch.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
-    monkeypatch.setattr(profile_schema.os, "unlink", interrupting_unlink)
-
-    with pytest.raises(exception_type) as caught:
-        validate_profile_candidate(path)
+    with monkeypatch.context() as context:
+        context.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
+        context.setattr(profile_schema.os, "unlink", interrupting_unlink)
+        with pytest.raises(exception_type) as caught:
+            validate_profile_candidate(path)
 
     assert caught.value is signal
     assert unlink_attempts == snapshot_paths
@@ -1869,17 +1869,18 @@ def test_candidate_ordinary_cleanup_failure_maps_without_detail_leaks(
         real_unlink(target)
         raise RuntimeError("private cleanup detail")
 
-    monkeypatch.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
-    monkeypatch.setattr(profile_schema.os, "unlink", fail_after_unlink)
-    if body_mode == "ordinary_error":
+    with monkeypatch.context() as context:
+        context.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
+        context.setattr(profile_schema.os, "unlink", fail_after_unlink)
+        if body_mode == "ordinary_error":
 
-        def fail_schema(_connection: sqlite3.Connection) -> None:
-            raise ValueError("private body detail")
+            def fail_schema(_connection: sqlite3.Connection) -> None:
+                raise ValueError("private body detail")
 
-        monkeypatch.setattr(profile_schema, "_validate_schema", fail_schema)
+            context.setattr(profile_schema, "_validate_schema", fail_schema)
 
-    with _safe_error(expected_code) as caught:
-        validate_profile_candidate(path)
+        with _safe_error(expected_code) as caught:
+            validate_profile_candidate(path)
 
     assert "private cleanup detail" not in str(caught.value)
     assert "private body detail" not in str(caught.value)

@@ -293,6 +293,12 @@ The failures reproduce on an exact `origin/dev` checkout:
   before the last one starts, allowing both its OS thread id and freed Python
   object address to be reused; the logs show five connection creations but the
   stale assertion observes only four distinct integer addresses.
+- Two TTS profile cleanup regressions replace `profile_schema.os.unlink`, which
+  is the process-wide standard-library function on the shared `os` module.
+  Their bodies pass, but under full-suite teardown pytest removes a temporary
+  directory before the monkeypatch fixture restores `unlink`; the one-argument
+  fake rejects shutil's `dir_fd` keyword and turns successful coverage into a
+  teardown error.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -887,6 +893,10 @@ Update the tests to describe current behavior:
     until all five threads join, then compare their object identities. Keep the
     existing real threads and thread-local production path; do not add sleeps,
     retries, or production connection tracking.
+86. Use `monkeypatch.context()` around `validate_profile_candidate()` in both
+    unlink-cleanup regressions, including their paired `tempfile.mkstemp`
+    replacement. Restore the real standard-library functions before assertions
+    and pytest cleanup while retaining exact signal/error precedence.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1249,6 +1259,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   transient integer ids permits allocator reuse; retaining the objects until
   the existing join boundary preserves the intended identity assertion with
   no new coordination mechanism.
+- Teaching the TTS unlink fakes to accept and forward arbitrary pytest cleanup
+  calls would make unrelated filesystem teardown part of these tests'
+  observation surface. Scoping the existing replacements to the one production
+  call they own preserves their exact cleanup assertions and restores the
+  standard library before teardown.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

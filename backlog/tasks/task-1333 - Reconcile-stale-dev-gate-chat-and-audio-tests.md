@@ -115,6 +115,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #85 Every remaining ChaChaNotes regression that synthesizes a pre-v28 database from the current schema removes the v28 conversation authority column before replay, preserving the v16 local-marks and v20/v21 world-book migration assertions without weakening production migration validation.
 - [ ] #86 Incremental Chatbook import performance compares robust early and late medians so sustained slowdown still fails while a single millisecond-scale host scheduling outlier cannot fail an otherwise successful import sequence.
 - [ ] #87 The ChaChaNotes thread-local connection regression retains each returned connection object through its identity assertion, so short-lived thread and object-id reuse cannot collapse five distinct connections into four.
+- [ ] #88 TTS profile cleanup regressions scope process-wide `tempfile.mkstemp` and `os.unlink` replacements to the candidate-validation call, preserving cleanup signal/error precedence without intercepting pytest temporary-directory removal.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -207,6 +208,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 79. Remove the v28 conversation authority column from the remaining v16, v20, and v21 synthetic rollback fixtures before replaying migrations to the current schema.
 80. Replace the incremental Chatbook import test's single-sample maximum-deviation assertion with an early-versus-late median degradation check.
 81. Retain live connection objects in the thread-local ChaChaNotes identity regression until all worker results have been asserted.
-82. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-83. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+82. Scope the two TTS profile unlink-cleanup tests' process-global standard-library patches to their candidate-validation calls.
+83. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+84. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
