@@ -5,7 +5,7 @@ import pytest
 import tempfile
 import shutil
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, Iterator, List, Any, Optional
 from unittest.mock import MagicMock, Mock
 import threading
 import time
@@ -663,7 +663,7 @@ requires_numpy = pytest.mark.skipif(
 
 
 @pytest.fixture(scope="session")
-def real_transformers_session():
+def real_transformers_session() -> Iterator[None]:
     """Warm torch/transformers for suites that load real models (meta-tensor guard)."""
     print(f"[Session Start] Dependencies available: {DEPENDENCIES_AVAILABLE}")
 

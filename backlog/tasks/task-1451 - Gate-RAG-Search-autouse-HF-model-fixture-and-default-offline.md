@@ -2,7 +2,7 @@
 id: TASK-1451
 title: >-
   Gate the RAG_Search autouse HF-model warm-up fixture and default HuggingFace to offline in tests
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-30 09:05'
 labels:
@@ -20,9 +20,9 @@ dependencies: []
 
 ## Acceptance Criteria
 
-- [ ] The transformers warm-up fixture no longer runs for sessions that only use mocked embeddings; suites that load real models request it explicitly
-- [ ] HuggingFace env defaults to offline in tests; enabling `TLDW_RUN_REAL_EMBEDDINGS` (or `TLDW_TEST_ALLOW_HF_DOWNLOADS`) restores downloads; an externally-set value always wins
-- [ ] `pytest Tests/RAG_Search` outcome set is unchanged vs the serial baseline (junit diff)
+- [x] The transformers warm-up fixture no longer runs for sessions that only use mocked embeddings; suites that load real models request it explicitly
+- [x] HuggingFace env defaults to offline in tests; enabling `TLDW_RUN_REAL_EMBEDDINGS` (or `TLDW_TEST_ALLOW_HF_DOWNLOADS`) restores downloads; an externally-set value always wins
+- [x] `pytest Tests/RAG_Search` outcome set is unchanged vs the serial baseline (junit diff)
 
 ## Implementation Plan
 
@@ -38,4 +38,6 @@ Offline-by-default via `setdefault` (external env always wins); the warm-up fixt
 `real_transformers_session`, requested lazily from the real-integration module only
 when `TLDW_RUN_REAL_EMBEDDINGS` is on, so chromadb-only tests in that file don't pay
 it either. Grep confirms no other module referenced the old fixture name. Modified:
-`Tests/RAG_Search/conftest.py`, `Tests/RAG_Search/test_embeddings_real_integration.py`.
+`Tests/RAG_Search/conftest.py`, `Tests/RAG_Search/test_embeddings_real_integration.py`,
+`Tests/RAG_Search/test_embeddings_performance.py` (review: the real-model benchmark now
+pulls the warm-up too).
