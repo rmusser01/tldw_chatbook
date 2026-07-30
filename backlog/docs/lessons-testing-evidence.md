@@ -454,6 +454,30 @@ nesting is invisible in the source-file mental model.
 
 ---
 
+## Removing a per-test gc.collect() can unmask cross-test coupling — with a rotating victim
+
+**TASK-1468, 2026-07-30.** task-1454 replaced the double `gc.collect()` after every
+test with a periodic collect (every 25). A 10-test batch then started failing ONE
+UI test — a *different* one on consecutive identical runs (first the Skills trust
+panel test, then a Library git-notes test). Alone, each test passed. With
+`TLDW_TEST_GC_EVERY=1` the batch passed 10/10; on pre-change dev it passed 10/10.
+
+The mechanism: a Textual `App` is a reference cycle that refcounting never frees —
+only the cycle collector does. Per-test collection had been silently guaranteeing
+each app-mounting test a garbage-free predecessor; without it, the previous app's
+remains (timers, context vars, screen state) linger into the next app's lifetime,
+and which test breaks depends on heap state at the time. A rotating victim is the
+tell that you are looking at ambient-state interference, not a broken test.
+
+**What to do.** When narrowing global per-test cleanup, ask what CLASS of object it
+was silently reclaiming, and scope the cleanup to the tests that produce that class
+(here: per-test collection in app-mounting dirs, periodic elsewhere) rather than
+tuning frequency — no interval above 1 protects adjacent producers. And triage any
+"deterministic" batch failure by rerunning the identical batch twice before
+believing determinism: the rotating victim only shows on the second run.
+
+---
+
 ## Related
 
 - `lessons-live-verification.md` — why the suite could not see seven of these defects
