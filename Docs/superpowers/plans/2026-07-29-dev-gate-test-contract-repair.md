@@ -3148,6 +3148,49 @@ Keep their existing assertions and production code unchanged.
 Expected: all checks pass and pytest teardown uses the restored standard-library
 function.
 
+### Task 4bv: Isolate full-app runtime-policy notifications from catalog refresh
+
+**Files:**
+- Modify: `Tests/RuntimePolicy/test_runtime_policy_full_app.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This is a test-isolation correction at an existing fixture seam and
+does not change production architecture or behavior.
+
+- [x] **Step 1: Confirm the full-suite-only race**
+
+The full gate fails when startup model-catalog refresh appends an informational
+notification after the focused test clears earlier startup messages. The exact
+node, full test module, and RuntimePolicy package pass alone, confirming
+order/timing dependence rather than a coordinator defect.
+
+- [x] **Step 2: Suppress only the unrelated startup coroutine**
+
+In `_configure_full_app_media_startup()`, replace the app instance's
+`_refresh_model_catalogs()` coroutine with an async no-op before `run_test()`.
+Do not filter notifications, wait on network-backed refresh work, or change
+production.
+
+- [x] **Step 3: Verify focused and adjacent coverage**
+
+```bash
+../../.venv/bin/python -m pytest -q \
+  Tests/RuntimePolicy/test_runtime_policy_full_app.py
+../../.venv/bin/python -m pytest -q Tests/RuntimePolicy
+../../.venv/bin/python -m ruff check \
+  Tests/RuntimePolicy/test_runtime_policy_full_app.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/RuntimePolicy/test_runtime_policy_full_app.py
+```
+
+Expected: notification assertions remain exact, all runtime-policy coverage
+passes, and no startup catalog worker can append unrelated messages.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

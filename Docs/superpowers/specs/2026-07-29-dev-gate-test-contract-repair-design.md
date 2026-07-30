@@ -257,6 +257,10 @@ The failures reproduce on an exact `origin/dev` checkout:
   replaces the process-wide standard-library function through the shared
   module object. The test bodies pass, but pytest teardown calls the spy with
   an integer directory descriptor and raises `TypeError`.
+- A full-app runtime-policy regression clears startup notifications before
+  invoking the coordinator, but the unrelated asynchronous model-catalog
+  refresh can finish afterward and append an informational notification. The
+  exact coordinator-warning assertion then fails only under full-suite timing.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -816,6 +820,10 @@ Update the tests to describe current behavior:
     `list_installed()` or `disk_usage()` call. Retain the exact no-traversal and
     directory-identity assertions while restoring the real function before
     pytest cleanup.
+78. In the full-app runtime-policy startup helper, replace only the unrelated
+    `_refresh_model_catalogs()` coroutine with an async no-op before
+    `run_test()`. Keep exact action-owned notification assertions and all
+    runtime-policy behavior unchanged.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1140,6 +1148,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   test's observation surface. Scoping the existing monkeypatches to the service
   invocation restores the real standard-library function before teardown while
   preserving the exact no-traversal and identity-change assertions.
+- Filtering the runtime-policy notification list by severity would let other
+  unrelated notifications race through the focused assertion. Waiting for the
+  real catalog refresh would add network/cache timing to a runtime-policy test.
+  Disabling that single startup coroutine in the existing test helper preserves
+  the exact assertion and keeps catalog behavior covered by its own suites.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
