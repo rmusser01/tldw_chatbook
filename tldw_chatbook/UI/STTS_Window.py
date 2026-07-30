@@ -4257,69 +4257,80 @@ class TTSPlaygroundWidget(Widget):
 
 
 def _seed_axis_defaults() -> dict[str, str]:
-    """Seed `SpeechPlaygroundPane.axis_defaults` from persisted preferences.
+    """Seed `SpeechPlaygroundPane.axis_defaults` from GENUINELY persisted preferences.
 
     `SpeechPlaygroundPane.axis_values`/`axis_defaults` are the model of
     record for the axis row's override markers
-    (`Docs/superpowers/specs/2026-07-30-speech-preset-axis-ownership.md`).
-    Reads the same `get_cli_setting` values `SpeechSettingsMixin._set_initial_values`
-    already reads, so a first-run pane and Settings agree on what "default"
-    means, and builds one `TTSPreferencesSnapshot` -- its `model_mode`/
-    `voice_mode` are what "only when its mode is exact" needs to check.
+    (`Docs/superpowers/specs/2026-07-30-speech-preset-axis-ownership.md`,
+    contract 5). Contract 5 is explicit: a missing preference must leave the
+    axis absent from `defaults`, not substituted -- `SpeechAxisRow.is_override`
+    already treats an absent key as "not an override", which is the correct
+    first-run behaviour.
 
-    A missing preference is OMITTED rather than stored as a sentinel: the
-    axis row's `is_override` treats a missing default as "not an override",
-    which is the correct first-run behaviour.
+    Deliberately NOT `SpeechSettingsMixin._set_initial_values`'s block, and
+    NOT `TTSPreferencesSnapshot.from_settings`, though both were tried:
+
+    - `_set_initial_values` substitutes hardcoded fallbacks (`"openai"`,
+      `"tts-1"`, `"alloy"`, `"mp3"`) for anything unset, because it exists to
+      populate a form that must always show something. Reusing it here
+      fabricated four "saved defaults" on a fresh install that were never
+      saved, and marked four axes overridden the first time the pane was
+      ever opened.
+    - `TTSPreferencesSnapshot.from_settings` has the same problem one level
+      down: for a non-`audio_cpp` provider, its own resolution treats an
+      unset model/voice as *mode "exact" with the legacy default id*
+      (`tts-1-hd`/`shimmer`), not as "unconfigured" -- so routing through it
+      would silently reintroduce the same fabrication under a different
+      name.
+
+    So each preference is read directly, each with its OWN absence
+    sentinel, and included only when it was actually set.
 
     Returns:
-        A ``{control_id: value}`` mapping, or ``{}`` if preferences cannot
-        be read for any reason -- this seeds `compose()`, which must never
-        raise (an escaping exception there exits the whole app).
+        A ``{control_id: value}`` mapping containing only genuinely
+        configured axes, or ``{}`` if preferences cannot be read for any
+        reason -- this seeds `compose()`, which must never raise (an
+        escaping exception there exits the whole app).
     """
+    missing = object()
     try:
-        default_provider = get_cli_setting("app_tts", "default_provider", "openai")
-        is_audio_cpp = default_provider == AUDIO_CPP_PROVIDER_ID
-        preference_values: dict[str, object] = {
-            "default_provider": default_provider,
-            "default_model": get_cli_setting(
-                "app_tts",
-                "default_model",
-                "" if is_audio_cpp else "tts-1",
-            ),
-            "default_voice": get_cli_setting(
-                "app_tts",
-                "default_voice",
-                "" if is_audio_cpp else "alloy",
-            ),
-            "default_format": get_cli_setting(
-                "app_tts",
-                "default_format",
-                "wav" if is_audio_cpp else "mp3",
-            ),
-            "default_speed": get_cli_setting("app_tts", "default_speed", 1.0),
-        }
-        missing_mode = object()
-        for mode_key in ("default_model_mode", "default_voice_mode"):
-            mode = get_cli_setting("app_tts", mode_key, missing_mode)
-            if mode is not missing_mode:
-                preference_values[mode_key] = mode
-        preferences = TTSPreferencesSnapshot.from_settings(
-            {"app_tts": preference_values}
-        )
+        defaults: dict[str, str] = {}
+
+        provider_id = get_cli_setting("app_tts", "default_provider", missing)
+        if isinstance(provider_id, str) and provider_id:
+            defaults["tts-provider-select"] = provider_id
+
+        response_format = get_cli_setting("app_tts", "default_format", missing)
+        if isinstance(response_format, str) and response_format:
+            defaults["tts-format-select"] = response_format
+
+        speed = get_cli_setting("app_tts", "default_speed", missing)
+        if speed is not missing:
+            try:
+                defaults["tts-speed-input"] = str(float(speed))
+            except (TypeError, ValueError):
+                pass
+
+        # Model/voice defaults are keyed to "exact" mode only (file map:
+        # "only when its mode is exact"). A missing mode is NOT treated as
+        # exact-with-a-legacy-default here, unlike the runtime dispatch path
+        # (`TTS/preferences.py`'s `_resolved_selection`) -- that fallback
+        # exists so synthesis always has *something* to request, which is
+        # not evidence the user configured a default at all.
+        model_mode = get_cli_setting("app_tts", "default_model_mode", missing)
+        model_id = get_cli_setting("app_tts", "default_model", missing)
+        if model_mode == "exact" and isinstance(model_id, str) and model_id:
+            defaults["tts-model-select"] = model_id
+
+        voice_mode = get_cli_setting("app_tts", "default_voice_mode", missing)
+        voice_id = get_cli_setting("app_tts", "default_voice", missing)
+        if voice_mode == "exact" and isinstance(voice_id, str) and voice_id:
+            defaults["tts-voice-select"] = voice_id
+
+        return defaults
     except Exception:  # noqa: BLE001 - compose() must never raise
         logger.debug("Could not seed Playground axis defaults from preferences")
         return {}
-
-    defaults: dict[str, str] = {
-        "tts-provider-select": preferences.provider_id,
-        "tts-format-select": preferences.response_format,
-        "tts-speed-input": str(preferences.speed),
-    }
-    if preferences.model_mode == "exact" and preferences.model_id:
-        defaults["tts-model-select"] = preferences.model_id
-    if preferences.voice_mode == "exact" and preferences.voice_id:
-        defaults["tts-voice-select"] = preferences.voice_id
-    return defaults
 
 
 class STTSWindow(Container):
