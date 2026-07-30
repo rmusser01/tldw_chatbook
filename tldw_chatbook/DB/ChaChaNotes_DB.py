@@ -3073,8 +3073,15 @@ UPDATE db_schema_version
         Usage:
             with db.transaction() as conn:
                 # Database operations using conn.execute(...)
-                # Commit is handled automatically on successful exit,
-                # rollback on exception.
+                # A manager-owned outer transaction commits on successful exit
+                # and rolls back on exception.
+
+        At managed depth zero, if the native SQLite connection already has an
+        active transaction, this context borrows that caller-owned transaction.
+        On either successful or exceptional exit, it does not commit or roll
+        back borrowed work; the caller retains transaction ownership. Nested
+        managed contexts only track depth and defer completion to their outer
+        transaction.
 
         Returns:
             TransactionContextManager: An object to be used in a `with` statement.
@@ -12891,9 +12898,14 @@ class TransactionContextManager:
         """
         Handles the exit of the transaction context.
 
-        - If this is the outermost transaction and no exception occurred, commits the transaction.
-        - If this is the outermost transaction and an exception occurred, rolls back the transaction.
-        - If this is a nested transaction, decrements the depth counter and does nothing else.
+        - A manager-owned outermost transaction commits on successful exit and
+          rolls back on exceptional exit.
+        - At managed depth zero, a native SQLite transaction already active on
+          entry is borrowed. On successful or exceptional exit, this context
+          does not commit or roll back that caller-owned work; the caller
+          retains ownership.
+        - A nested managed transaction decrements the depth counter and defers
+          completion to its outer transaction.
 
         Args:
             exc_type: The type of the exception raised in the with block, if any.
