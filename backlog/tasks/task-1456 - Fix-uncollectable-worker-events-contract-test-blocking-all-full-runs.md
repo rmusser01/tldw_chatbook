@@ -2,7 +2,7 @@
 id: TASK-1456
 title: >-
   Fix uncollectable test_worker_events_contract.py (StreamDone import) that aborts every default full-suite run
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-30 09:05'
 labels:
@@ -20,10 +20,10 @@ dependencies: []
 
 ## Acceptance Criteria
 
-- [ ] `pytest Tests --collect-only` completes with no collection error from this module
-- [ ] task-634's regression (non-streaming failures propagate; no sentinel, no message posts) remains covered
-- [ ] The current task-650 contract is covered: streaming requests are rejected with `ValueError` and never reach the core chat function
-- [ ] The file's own tests pass
+- [x] `pytest Tests --collect-only` completes with no collection error from this module
+- [x] task-634's regression (non-streaming failures propagate; no sentinel, no message posts) remains covered
+- [x] The current task-650 contract is covered: streaming requests are rejected with `ValueError` and never reach the core chat function
+- [x] The file's own tests pass
 
 ## Implementation Plan
 
