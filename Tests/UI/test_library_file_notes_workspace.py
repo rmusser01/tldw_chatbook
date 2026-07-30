@@ -1793,6 +1793,134 @@ async def test_poll_and_narrow_navigation_retain_the_text_area(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(120, 40), (160, 45)])
+async def test_library_notes_source_choices_render_and_switch_by_keyboard(
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "library.md").write_text("library file", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=10,
+        autosave_delay=10,
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Database note", "id": "db-note-1"}],
+    )
+    screen = LibraryScreen(
+        app,
+        file_notes_workspace_factory=lambda: workspace,
+    )
+
+    async with LibraryHarness(app, screen=screen).run_test(size=size) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-strip")),
+            "Notes source strip did not compose",
+        )
+
+        strip = screen.query_one("#library-notes-source-strip")
+        separator = screen.query_one("#library-notes-source-separator")
+        database = screen.query_one("#library-notes-source-database", Button)
+        files = screen.query_one("#library-notes-source-files", Button)
+        await _wait_until(
+            pilot,
+            lambda: (
+                separator.region.width == 1
+                and database.region.width > 0
+                and files.region.width > 0
+            ),
+            "Notes source choices did not receive visible geometry",
+        )
+        assert strip.content_region.contains_region(database.region)
+        assert strip.content_region.contains_region(separator.region)
+        assert strip.content_region.contains_region(files.region)
+        assert separator.region.width == 1
+        assert str(database.label) == "Database (selected)"
+        assert database.has_class("-selected")
+        assert not database.disabled
+        assert database.can_focus
+        assert str(files.label) == "Files"
+        assert not files.disabled
+        assert files.can_focus
+
+        for _ in range(60):
+            if database.has_focus:
+                break
+            await pilot.press("tab")
+        assert database.has_focus
+        assert strip.content_region.contains_region(database.region)
+        await pilot.press("tab")
+        await _wait_until(
+            pilot,
+            lambda: files.has_focus,
+            "Tab did not move from Database to the visible Files source",
+        )
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen._library_notes_source == "files"
+                and workspace.initialized
+                and bool(screen.query("#library-file-notes-workspace"))
+            ),
+            "Files source did not open from the keyboard",
+        )
+
+        strip = screen.query_one("#library-notes-source-strip")
+        database = screen.query_one("#library-notes-source-database", Button)
+        files = screen.query_one("#library-notes-source-files", Button)
+        assert strip.content_region.contains_region(database.region)
+        assert strip.content_region.contains_region(files.region)
+        assert str(database.label) == "Database"
+        assert not database.disabled
+        assert str(files.label) == "Files (selected)"
+        assert files.has_class("-selected")
+        assert not files.disabled
+
+        for _ in range(60):
+            if files.has_focus:
+                break
+            await pilot.press("tab")
+        assert files.has_focus
+        assert strip.content_region.contains_region(files.region)
+        await pilot.press("shift+tab")
+        await _wait_until(
+            pilot,
+            lambda: database.has_focus,
+            "Shift+Tab did not move from Files to the visible Database source",
+        )
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen._library_notes_source == "database"
+                and bool(screen.query("#library-notes-canvas"))
+            ),
+            "Database source did not reopen from the keyboard",
+        )
+        assert (
+            str(
+                screen.query_one(
+                    "#library-notes-source-database",
+                    Button,
+                ).label
+            )
+            == "Database (selected)"
+        )
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_library_database_files_switch_retains_workspace_and_database_canvas(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

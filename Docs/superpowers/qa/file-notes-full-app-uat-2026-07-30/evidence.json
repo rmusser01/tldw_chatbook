@@ -1,6 +1,6 @@
 {
   "date": "2026-07-30",
-  "verdict": "ux_acceptance_blocked_core_guarded_commit_passed",
+  "verdict": "accepted_after_task_1411_remediation",
   "feature_source_head": "c07fef609f9b6eec0732b8ab28ec13d086515f1d",
   "dev_merge_commit": "665ef1c01a48130b8da3bd80eea17054de54e976",
   "method": {
@@ -8,7 +8,8 @@
     "terminal": "tmux PTY",
     "headless_textual_harness": false,
     "disposable_environment": "/private/tmp/chatbook-fullapp-uat.z0StBm",
-    "runtime_entry_probe_modified_repository": false
+    "runtime_entry_probe_modified_repository": false,
+    "remediation_retest_used_runtime_probe": false
   },
   "fixture": {
     "repository": "/private/tmp/chatbook-fullapp-uat.z0StBm/repo",
@@ -18,8 +19,8 @@
     "successful_commit": "540f5e02da489216a3b9bc1bd87c538b03d67c21"
   },
   "checks": {
-    "visible_files_source_120x40": "fail",
-    "visible_files_source_160x45": "fail",
+    "visible_files_source_120x40": "pass_after_remediation_full_app",
+    "visible_files_source_160x45": "pass_after_remediation_mounted",
     "native_folder_picker": "pass_after_entry_only_runtime_probe",
     "process_only_trust": "pass_after_entry_only_runtime_probe",
     "body_edit_and_autosave": "pass",
@@ -29,12 +30,25 @@
     "guarded_commit_two_notes_only": "pass",
     "success_count_and_promise": "pass",
     "narrow_navigator_editor_switch": "pass",
-    "narrow_prepare_actions_reachable_40x20": "fail",
+    "narrow_prepare_actions_reachable_40x20": "pass_after_remediation_full_app",
+    "explicit_selected_source_state": "pass",
+    "compact_linked_root_one_line": "pass",
+    "keyboard_exact_root_details": "pass",
+    "actionless_prepare_keyboard_scroll": "pass",
+    "actionable_unrelated_stage_recovery": "pass",
     "unrelated_staged_content_blocks_commit": "pass"
+  },
+  "remediation_verification": {
+    "affected_ui_tests": "169 passed in 69.38s",
+    "guarded_commit_integration": "1 passed in 0.69s",
+    "targeted_ruff": "pass",
+    "changed_module_compile": "pass",
+    "layout_detector_findings": 0,
+    "full_suite_or_broad_ci_run": false
   },
   "hashes": {
     "notes/one.md": "c740cfaca39684b68a49d9085a7b903cd097e66f8416c457531e7c312ed6fdad",
     "notes/study/two.md": "1f7c3a6f8b2b7dbcbd1a5f6ebd4d0ea19a2abc028a38388d49c03737d9a2526f"
   },
-  "next_task": "TASK-1411"
+  "remediation_task": "TASK-1411"
 }

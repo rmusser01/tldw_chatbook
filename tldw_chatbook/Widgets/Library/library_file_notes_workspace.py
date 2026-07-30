@@ -16,7 +16,9 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.events import Resize
+from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.worker import Worker
 from textual.widgets import Button, Input, ListView, Static, TextArea, Tree
@@ -68,6 +70,7 @@ from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
     CommitReviewNoteProjection,
     LibraryFileNotesGitPanel,
     SessionGitTrustDialog,
+    _middle_elide_cells,
 )
 
 SaveState = Literal["idle", "dirty", "saving", "saved", "conflict", "error"]
@@ -200,6 +203,76 @@ class _SessionGitService(Protocol):
     ) -> asyncio.Task[CommitOutcome]: ...
 
 
+class FileNotesRootDetailsDialog(ModalScreen[None]):
+    """Show the exact linked-root state through a keyboard-readable surface."""
+
+    BINDINGS = [("escape", "dismiss", "Close")]
+
+    DEFAULT_CSS = """
+    FileNotesRootDetailsDialog {
+        align: center middle;
+    }
+
+    #file-notes-root-details-dialog {
+        width: 76;
+        max-width: 95%;
+        height: 12;
+        max-height: 85%;
+        border: round $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #file-notes-root-details-title {
+        height: 1;
+        text-style: bold;
+    }
+
+    #file-notes-root-details-text {
+        height: 1fr;
+        min-height: 3;
+    }
+
+    #file-notes-root-details-close {
+        width: auto;
+        height: 1;
+        min-height: 1;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(id="file-notes-root-details-dialog-screen")
+        self._detail = detail
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="file-notes-root-details-dialog"):
+            yield Static(
+                "File Notes folder details",
+                id="file-notes-root-details-title",
+                markup=False,
+            )
+            yield TextArea(
+                self._detail,
+                id="file-notes-root-details-text",
+                read_only=True,
+                soft_wrap=True,
+            )
+            yield Button(
+                "Close",
+                id="file-notes-root-details-close",
+                compact=True,
+            )
+
+    def on_mount(self) -> None:
+        self.query_one("#file-notes-root-details-text", TextArea).focus()
+
+    @on(Button.Pressed, "#file-notes-root-details-close")
+    def _close(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(None)
+
+
 class LibraryFileNotesWorkspace(Vertical):
     """Browse and edit one disk-authoritative Markdown/text root."""
 
@@ -211,16 +284,22 @@ class LibraryFileNotesWorkspace(Vertical):
     }
 
     #file-notes-root-row {
-        height: auto;
+        height: 1;
         min-height: 1;
+        max-height: 1;
     }
 
     #file-notes-root-status {
         width: 1fr;
-        height: auto;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
         color: $text-muted;
+        text-wrap: nowrap;
+        overflow: hidden hidden;
     }
 
+    #file-notes-root-details,
     #file-notes-choose-root {
         width: auto;
         min-width: 0;
@@ -229,6 +308,10 @@ class LibraryFileNotesWorkspace(Vertical):
         padding: 0 1;
         border: none;
         background: transparent;
+    }
+
+    #file-notes-root-details {
+        display: none;
     }
 
     #file-notes-body {
@@ -381,6 +464,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._session_binding: SessionBinding | None = None
         self._service: FileNotesService | None = None
         self._runtime_warning = ""
+        self._root_status_detail = "Choose a notes folder."
 
         self._poll_interval = max(0.02, poll_interval)
         self._autosave_delay = max(0.01, autosave_delay)
@@ -556,6 +640,11 @@ class LibraryFileNotesWorkspace(Vertical):
                 markup=False,
             )
             yield Button(
+                "Details",
+                id="file-notes-root-details",
+                compact=True,
+            )
+            yield Button(
                 "Choose folder…",
                 id="file-notes-choose-root",
                 compact=True,
@@ -715,6 +804,7 @@ class LibraryFileNotesWorkspace(Vertical):
     def on_resize(self, event: Resize) -> None:
         """Choose wide or narrow panes from the mounted workspace width."""
         self._apply_responsive_layout(event.size.width)
+        self.call_after_refresh(self._fit_root_status)
 
     async def _initialize(self) -> None:
         generation = self._root_generation
@@ -1021,9 +1111,13 @@ class LibraryFileNotesWorkspace(Vertical):
     def _update_root_surface(self, *, offline: bool | None = None) -> None:
         if not self._active or not self.is_mounted or not self.children:
             return
-        status = self.query_one("#file-notes-root-status", Static)
-        body = self.query_one("#file-notes-body")
-        choose = self.query_one("#file-notes-choose-root", Button)
+        try:
+            status = self.query_one("#file-notes-root-status", Static)
+            body = self.query_one("#file-notes-body")
+            details = self.query_one("#file-notes-root-details", Button)
+            choose = self.query_one("#file-notes-choose-root", Button)
+        except NoMatches:
+            return
         binding = self._session_binding
         mutation_active = (
             binding is not None
@@ -1035,8 +1129,12 @@ class LibraryFileNotesWorkspace(Vertical):
             or mutation_active
         )
         if self._root is None:
-            status.update("Choose a notes folder.")
+            self._root_status_detail = "Choose a notes folder."
+            status.tooltip = None
+            status.update(self._root_status_detail)
             body.display = False
+            details.display = False
+            choose.label = "Choose folder…"
             choose.display = True
             return
         is_offline = self._root_offline if offline is None else offline
@@ -1048,10 +1146,27 @@ class LibraryFileNotesWorkspace(Vertical):
         detail = f"{state} — {self._root}"
         if self._runtime_warning:
             detail = f"{detail} · {self._runtime_warning}"
+        self._root_status_detail = detail
+        status.tooltip = Text(detail)
         status.update(detail)
         body.display = True
+        details.display = True
+        choose.label = "Change…"
         choose.display = True
         self._apply_responsive_layout(self.size.width)
+        self.call_after_refresh(self._fit_root_status)
+
+    def _fit_root_status(self) -> None:
+        """Keep the linked-root summary to one row and retain exact detail."""
+        if not self._active or not self.is_mounted or not self.children:
+            return
+        try:
+            status = self.query_one("#file-notes-root-status", Static)
+        except NoMatches:
+            return
+        width = status.content_region.width
+        if width > 0:
+            status.update(_middle_elide_cells(self._root_status_detail, width))
 
     def _apply_responsive_layout(self, width: int) -> None:
         if not self._active or not self.is_mounted:
@@ -2715,6 +2830,12 @@ class LibraryFileNotesWorkspace(Vertical):
             SelectDirectory(location, title="Choose File Notes Folder"),
             callback=self._root_selected,
         )
+
+    @on(Button.Pressed, "#file-notes-root-details")
+    def _show_root_details(self, event: Button.Pressed) -> None:
+        """Open the exact root state without depending on pointer hover."""
+        event.stop()
+        self.app.push_screen(FileNotesRootDetailsDialog(self._root_status_detail))
 
     def _root_selected(self, path: Path | None) -> None:
         if path is None or not self._active:
