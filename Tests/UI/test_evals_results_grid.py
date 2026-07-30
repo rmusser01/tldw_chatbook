@@ -358,6 +358,74 @@ def warned_markup_hazard_run_group(evals_db: EvalsDB) -> dict:
     return {"group_id": group_id, "steered_id": steered_id}
 
 
+# ---------------------------------------------------------------------------
+# Fixtures for TASK-1477: the run-level failure callout.
+# ---------------------------------------------------------------------------
+
+
+def _make_two_by_two_run_group(
+    evals_db: EvalsDB, name: str
+) -> tuple[str, str, str, list, dict]:
+    """Shared 2-target x 2-snippet scaffolding for the failure-callout
+    fixtures below -- both need the identical 4-cell shape, differing only
+    in which cells are ``CellError`` vs ``CellCapture``, so the run/target/
+    snippet setup is factored out rather than duplicated twice."""
+    base_id = evals_db.create_model(name="base", provider="llama_cpp", model_id="m")
+    steered_id = evals_db.create_model(name="steered", provider="llama_cpp", model_id="m")
+    dataset_id = evals_db.create_dataset(
+        name=f"{name}-set", format="custom", source_path=f"inline:{name}-set"
+    )
+    config = BenchConfig(
+        name=f"{name} bench", prompt_mode="raw", top_k=20,
+        dataset_id=dataset_id, target_ids=(base_id, steered_id),
+    )
+    task_id = save_bench(evals_db, config)
+    targets = [
+        Target(id=base_id, name="base", provider="llama_cpp", model_id="m"),
+        Target(id=steered_id, name="steered", provider="llama_cpp", model_id="m"),
+    ]
+    snippets = [
+        Snippet(id="s1", text="The protestors were", group=None),
+        Snippet(id="s2", text="The regime said", group=None),
+    ]
+    group_id, run_ids = create_run_group(evals_db, task_id, config, targets, snippets)
+    return group_id, base_id, steered_id, snippets, run_ids
+
+
+@pytest.fixture
+def all_cells_failed_run_group(evals_db: EvalsDB) -> dict:
+    """2 targets x 2 snippets, EVERY cell failed with the same reason --
+    the "run is otherwise unusable, name a concrete next step" case."""
+    group_id, base_id, steered_id, snippets, run_ids = _make_two_by_two_run_group(
+        evals_db, "all-failed"
+    )
+    for snippet in snippets:
+        for target_id in (base_id, steered_id):
+            save_cell(
+                evals_db, run_ids[target_id], snippet,
+                CellError(reason="unreachable", detail="connection refused"),
+            )
+    return {"group_id": group_id, "base_id": base_id, "steered_id": steered_id}
+
+
+@pytest.fixture
+def one_of_four_cells_failed_run_group(evals_db: EvalsDB) -> dict:
+    """Same 2x2 shape as ``all_cells_failed_run_group``, but only ONE of
+    the four cells failed -- the "run is still usable, state the fact with
+    no next-step sentence" case."""
+    group_id, base_id, steered_id, snippets, run_ids = _make_two_by_two_run_group(
+        evals_db, "one-failed"
+    )
+    save_cell(
+        evals_db, run_ids[base_id], snippets[0],
+        CellError(reason="unreachable", detail="connection refused"),
+    )
+    save_cell(evals_db, run_ids[steered_id], snippets[0], _cap([(" a", 0.9), (" the", 0.05)]))
+    save_cell(evals_db, run_ids[base_id], snippets[1], _cap([(" it", 0.6), (" the", 0.2)]))
+    save_cell(evals_db, run_ids[steered_id], snippets[1], _cap([(" the", 0.5), (" a", 0.3)]))
+    return {"group_id": group_id, "base_id": base_id, "steered_id": steered_id}
+
+
 @pytest.fixture
 def k_depth_matched_run_group(evals_db: EvalsDB) -> dict:
     """A single-snippet K=20-vs-K=5 grid where EVERY cell's ``top_k``
@@ -1033,6 +1101,69 @@ async def test_degenerate_canary_callout_survives_a_target_name_containing_marku
         callout = grid.query_one("#evals-grid-canary-callout", Static)
         text = callout.visual.plain  # see the .visual.plain rationale above
         assert "steered [redacted]" in text
+
+
+# ---------------------------------------------------------------------------
+# TASK-1477: the run-level failure callout.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_failure_callout_names_the_next_step_when_every_cell_failed(
+    evals_app, all_cells_failed_run_group
+):
+    """A fully-failed run used to read as an unexplained wall of
+    ``FAILED_MARK`` em-dashes with only a buried "4 failed" in the meta
+    line's jargon. Every cell failing means the run itself is otherwise
+    unusable, so the callout must name a concrete next step (the bench
+    Run action, wired earlier in this batch, makes "run the bench again"
+    real)."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, all_cells_failed_run_group["group_id"])
+
+        callout = grid.query_one("#evals-grid-failure-callout", Static)
+        assert "ds-recovery-callout" in callout.classes
+        # .visual.plain, not .renderable/.content -- see the canary
+        # callout tests above for why (only .visual catches a lost
+        # markup=False).
+        text = callout.visual.plain
+        assert text == (
+            "All 4 cells failed — unreachable. Check that the target's "
+            "server is running and reachable, then run the bench again."
+        )
+        assert callout.region.width > 0
+        assert callout.region.height > 0
+
+
+@pytest.mark.asyncio
+async def test_failure_callout_states_the_fact_without_a_next_step_when_partial(
+    evals_app, one_of_four_cells_failed_run_group
+):
+    """A partial failure still leaves a usable run -- the callout must
+    state the count/reason but must NOT prescribe "run the bench again",
+    which would misrepresent a run that already has real data in it."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(
+            pilot, one_of_four_cells_failed_run_group["group_id"]
+        )
+
+        callout = grid.query_one("#evals-grid-failure-callout", Static)
+        text = callout.visual.plain
+        assert text == "1 of 4 cells failed — unreachable."
+        assert "run the bench again" not in text
+
+
+@pytest.mark.asyncio
+async def test_failure_callout_absent_when_nothing_failed(evals_app, clean_run_group):
+    """No reserved blank row, no empty container -- the callout must not
+    exist in the DOM at all when every cell captured cleanly."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, clean_run_group["group_id"])
+
+        assert not grid.query("#evals-grid-failure-callout")
 
 
 @pytest.mark.asyncio

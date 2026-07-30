@@ -286,6 +286,13 @@
     margin: 0 0 1 0;
 }
 
+/* TASK-1477: the run-level failure callout -- same treatment as the
+   canary callout directly above (shared .ds-recovery-callout base, same
+   trailing margin so the two stack consistently when both are present). */
+#evals-grid-failure-callout {
+    margin: 0 0 1 0;
+}
+
 #evals-grid-controls {
     height: auto;
     margin: 0 0 1 0;
