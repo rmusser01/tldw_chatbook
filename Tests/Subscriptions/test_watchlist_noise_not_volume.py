@@ -125,6 +125,174 @@ def test_fingerprint_normalizes_a_null_method_to_the_branch_actually_taken():
     assert extraction_fingerprint(".ad", "auto") != extraction_fingerprint(".ad", "raw")
 
 
+def test_fingerprint_canonicalizes_auto_and_full_to_one_effective_mode():
+    """Whole-branch fix F2: `auto` and `full` are the SAME extraction.
+
+    `URLMonitor._fetch_url_content` has exactly one branch --
+    `if extraction_method == "full" or extraction_method == "auto"` -> HTML
+    text with `ignore_selectors` applied, `else` -> the raw response body -- so
+    `full` and `auto` produce byte-identical extraction. Hashing the literal
+    method string split them anyway, which meant switching a source between the
+    two invalidated its snapshot and burned a whole diff window: the next check
+    compares against nothing and reports nothing, for a change that alters not
+    one extracted character.
+
+    All four directions are pinned, because a fix that merely collapsed
+    everything would pass the equality half while destroying the Minor 7
+    property it must preserve.
+    """
+    from tldw_chatbook.Subscriptions.noise_defaults import extraction_fingerprint
+
+    selectors = ".ad\n.promo"
+
+    # (1) The fix: same effective mode -> same fingerprint -> no re-baseline.
+    assert extraction_fingerprint(selectors, "auto") == extraction_fingerprint(
+        selectors, "full"
+    ), (
+        "'auto' and 'full' take the identical fetch branch, so flipping "
+        "between them must not cost a diff window"
+    )
+
+    # (2) and (3) Minor 7 survives: neither collides with the raw branch.
+    assert extraction_fingerprint(selectors, "auto") != extraction_fingerprint(
+        selectors, None
+    )
+    assert extraction_fingerprint(selectors, "full") != extraction_fingerprint(
+        selectors, None
+    )
+
+    # (4) A NULL method and the literal "raw" are the same extraction, and any
+    # other unrecognized literal joins them -- the `else` branch is the whole
+    # of "not html".
+    assert extraction_fingerprint(selectors, None) == extraction_fingerprint(
+        selectors, "raw"
+    )
+    assert extraction_fingerprint(selectors, "") == extraction_fingerprint(
+        selectors, "raw"
+    )
+    assert extraction_fingerprint(selectors, "text") == extraction_fingerprint(
+        selectors, "raw"
+    ), "anything the fetch does not recognize falls to the raw body path"
+
+    # And the selectors still matter within a mode, both sides -- a
+    # canonicalization that swallowed the payload would pass everything above.
+    assert extraction_fingerprint(".ad", "auto") != extraction_fingerprint(
+        ".promo", "full"
+    )
+    assert extraction_fingerprint(".ad", None) != extraction_fingerprint(
+        ".promo", "raw"
+    )
+
+
+def test_one_unparseable_selector_costs_only_its_own_line():
+    """Whole-branch fix F1, extraction side: the filter cannot break the feed.
+
+    `soup.select` RAISES on anything CSS cannot parse, and this branch made
+    `ignore_selectors` user-editable in two places. Unguarded, one mistyped
+    line aborted the ENTIRE url check for that source -- every check, forever,
+    with nothing on screen naming the line -- so the noise filter broke the
+    thing it exists to filter. Mutation: delete the `try/except` in
+    `ContentExtractor.extract_text_from_html` and this goes RED with the raw
+    `SelectorSyntaxError`.
+
+    The two non-syntax members of the guarded family are covered too: a
+    pseudo-ELEMENT raises `NotImplementedError`, not a syntax error, and is
+    exactly what a user pastes out of a stylesheet.
+    """
+    from tldw_chatbook.Subscriptions.monitoring_engine import ContentExtractor
+
+    html = (
+        '<div class="ad">BUY NOW</div>'
+        '<div class="promo">Limited offer</div>'
+        "<p>All systems operational.</p>"
+    )
+    selectors = [".ad", "div[", "::before", ".promo"]
+
+    out = ContentExtractor.extract_text_from_html(html, selectors)
+
+    assert "All systems operational." in out, "the payload must survive"
+    assert "BUY NOW" not in out, (
+        "the valid selector BEFORE the bad line must still strip"
+    )
+    assert "Limited offer" not in out, (
+        "and so must the valid selector AFTER it -- a bad line may not stop "
+        "the loop, only skip itself"
+    )
+
+
+def test_a_skipped_selector_is_logged_by_name():
+    """The log has to say WHICH line, or the user cannot fix it.
+
+    "A selector failed" is unactionable when the field holds six of them. This
+    is loguru, so the sink is installed directly rather than through `caplog`,
+    which loguru does not feed.
+    """
+    from loguru import logger as loguru_logger
+
+    from tldw_chatbook.Subscriptions.monitoring_engine import ContentExtractor
+
+    records: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: records.append(str(message)), level="WARNING"
+    )
+    try:
+        ContentExtractor.extract_text_from_html("<p>x</p>", ["div["])
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert records, "skipping a selector silently leaves the user no thread to pull"
+    assert any("div[" in line for line in records), (
+        f"the warning must name the offending selector; got {records!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_bad_selector_line_does_not_abort_the_whole_check(monkeypatch):
+    """F1 end-to-end: the run still completes and still reports the change.
+
+    The unit test above proves the loop survives; this proves the thing that
+    actually mattered to the user -- a source carrying one bad rule (which the
+    UI now refuses, but a row written before this fix, or by any other path,
+    can still hold) keeps checking and keeps reporting real changes. Without
+    the guard the `SelectorSyntaxError` propagates out of `check_url` and the
+    run itself fails.
+    """
+    changed_page = _PROMO_PAGE.replace("Version 4.1", "Version 4.5")
+    assert changed_page != _PROMO_PAGE, "precondition: the second page differs"
+
+    db, service, source_id = await _url_source(
+        monkeypatch,
+        [_PROMO_PAGE, changed_page],
+        # `_url_source` supplies no url, and `_upsert_subscription_items` skips
+        # any item whose `url` is empty -- without this the stored-item
+        # assertion below could never see anything.
+        url="https://example.com/page",
+        ignore_selectors=".ad\ndiv[\n.promo",
+    )
+
+    first = await _check(service, source_id)
+    assert first["status"] == "completed", first
+    assert _dispositions(first) == _counts(baseline=1), (
+        "an unparseable ignore rule must not fail the very first check: "
+        f"{first}"
+    )
+
+    second = await _check(service, source_id)
+    assert second["status"] == "completed", second
+    assert _dispositions(second) == _counts(changed=1), (
+        "the run must complete and report the real edit despite the bad rule "
+        f"-- this is the bug: {second}"
+    )
+    items = _stored_items(db, source_id)
+    assert items, "the real change must still be reported"
+    body = " ".join((row["content"] or "") for row in items)
+    assert "4.5" in body, "the payload change came through"
+    assert "50% off everything today" not in body, (
+        "and the VALID `.promo` line, which sits after the bad one, still "
+        "stripped -- a bad line may not stop the loop"
+    )
+
+
 def _fresh_db():
     from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 

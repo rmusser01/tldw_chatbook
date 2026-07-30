@@ -26,6 +26,10 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Static, TextArea
 
+from ...Subscriptions.noise_defaults import (
+    first_invalid_selector,
+    invalid_selector_message,
+)
 from ...Utils.input_validation import sanitize_string
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .overview_pane import OverviewPane
@@ -602,7 +606,33 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
         text = sanitize_string(
             field.text, max_length=self._IGNORE_SELECTORS_MAX_LENGTH
         ).strip()
+        # Same refusal as the create form, same copy (see
+        # `invalid_selector_message`). Blocking the save is the point: writing
+        # an unparseable rule would leave the source permanently carrying a
+        # line that suppresses nothing, and the extraction guard's log warning
+        # is not a place a TUI user looks.
+        bad_selector = first_invalid_selector(text)
+        if bad_selector is not None:
+            self._report_invalid_selector(bad_selector)
+            return
         self.post_message(SaveNoiseSelectorsRequested(entity.get("id"), text))
+
+    def _report_invalid_selector(self, selector: str) -> None:
+        """Refuse the save and name the line, in the log and on screen."""
+        logger.warning(
+            f"Ignore-rule save refused: unparseable CSS selector {selector!r}."
+        )
+        try:
+            notify = getattr(self.app, "notify", None)
+        except Exception:
+            notify = None
+        if callable(notify):
+            # markup=False -- see the note on the create form's copy of this.
+            notify(
+                invalid_selector_message(selector),
+                severity="error",
+                markup=False,
+            )
 
     def _report_nothing_to_save(self, reason: str) -> None:
         """Say so, in the log and on screen, when Save cannot do anything."""

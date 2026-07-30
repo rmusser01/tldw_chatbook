@@ -1132,3 +1132,104 @@ async def test_a_successful_save_warns_that_the_next_check_loses_a_window():
             "and it must say WHEN: a change landing before the next check is "
             "the window that is lost"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_save_with_an_unparseable_selector_is_refused_and_says_why():
+    """Whole-branch fix F1, UI side (Inspector half).
+
+    Same refusal as the create form, and the same reason: `soup.select` raises
+    on anything CSS cannot parse, so an unparseable line silently suppresses
+    nothing forever. Writing it would leave the source carrying a dead rule the
+    user believes is working -- the extraction guard's log warning is not a
+    place a TUI user looks. Mutation: delete the `first_invalid_selector` check
+    in `_post_noise_selectors_save` and this reddens (the row is overwritten
+    and no error toast arrives).
+
+    Driven through the real button, so the message path and the screen handler
+    are the ones that would run for a user.
+    """
+    app = _build_test_app()
+    db, _service, source_id = await _seed_url_source(app)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    toasts: list[tuple[str, dict]] = []
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        await _select_real_source(pilot, screen, source_id)
+        # `host`, not `app`: the refusal is raised by the PANE, and a widget's
+        # `self.app` is the running App -- which under `DestinationHarness` is
+        # `host`, while `app` is only the mock instance handed to the screen.
+        # The screen-level toasts elsewhere in this module go through `app`
+        # because the screen holds that instance explicitly; patching the wrong
+        # one here captures nothing and looks like a missing toast.
+        host.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+
+        await _save_selectors(pilot, screen, ".ad\n:::nonsense\n.promo")
+        for _ in range(30):
+            await pilot.pause()
+
+        assert db.get_subscription(source_id)["ignore_selectors"] == ".ad", (
+            "the stored row must be untouched -- a refused save that still "
+            "wrote would be worse than no validation at all"
+        )
+
+        assert toasts, "the refusal must be visible, not a silent no-op button"
+        message, kwargs = toasts[-1]
+        assert kwargs.get("severity") == "error"
+        assert ":::nonsense" in message, (
+            f"the toast must name the offending line; got {message!r}"
+        )
+        assert kwargs.get("markup") is False, (
+            "selectors carry `[`, which Textual's toast markup would consume"
+        )
+        # The field keeps the user's text so the fix is one edit away.
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        assert (
+            inspector.query_one("#inspector-noise-selectors", TextArea).text
+            == ".ad\n:::nonsense\n.promo"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_inspector_still_saves_every_shipped_default_selector():
+    """The refusal's other direction, on the real prefill plus the hard cases.
+
+    `DEFAULT_IGNORE_SELECTORS` is what a user saves first, so it must pass. It
+    is NOT sufficient on its own: every default's comma groups happen to be
+    valid selectors individually, so a validator that re-split lines on commas
+    would still accept all of them (measured -- that mutation left this test
+    green until `:is(.a, .b)` and `[data-x="a,b"]` were added, where splitting
+    produces `:is(.a` and `[data-x="a`, neither of which parses).
+    """
+    app = _build_test_app()
+    db, _service, source_id = await _seed_url_source(app)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    toasts: list[tuple[str, dict]] = []
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        await _select_real_source(pilot, screen, source_id)
+        # Both sinks: the pane's refusal would land on `host`, the screen's
+        # success toast on `app`. Watching only one would let a refusal here
+        # pass as "no error toast".
+        host.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+        app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+
+        wanted = "\n".join(
+            (*DEFAULT_IGNORE_SELECTORS, ':is(.a, .b)', '[data-x="a,b"]')
+        )
+        await _save_selectors(pilot, screen, wanted)
+        for _ in range(40):
+            await pilot.pause()
+            if db.get_subscription(source_id)["ignore_selectors"] != ".ad":
+                break
+
+        assert db.get_subscription(source_id)["ignore_selectors"] == wanted, (
+            "every shipped default line is valid CSS and must save"
+        )
+        assert not [t for t in toasts if t[1].get("severity") == "error"], (
+            f"the shipped defaults produced an error toast: {toasts!r}"
+        )

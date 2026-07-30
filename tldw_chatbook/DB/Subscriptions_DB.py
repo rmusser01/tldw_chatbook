@@ -606,6 +606,22 @@ class SubscriptionsDB(BaseDB):
         # any exception) restores atomicity, so the write structurally
         # gates the marker instead of merely being re-runnable until it
         # eventually completes.
+        #
+        # Which is why this block deliberately does NOT use the shared
+        # `transaction()` helper, in knowing exemption from the repo-wide
+        # compliance rule that every write goes through
+        # `with db.transaction() as cursor:` (CLAUDE.md/AGENTS.md, "Key
+        # Patterns -> Database Operations", restated as gotcha 5 "Thread
+        # safety"): the helper can only ask the sqlite3 driver for a
+        # transaction, and the driver autocommits DDL under its implicit-BEGIN
+        # policy regardless, so `transaction()` cannot make ALTER + UPDATE
+        # atomic here -- proven by probe during the whole-branch review, and
+        # adopting it would reintroduce exactly the unrepairable half-migration
+        # described above (a crash between the ALTER and the UPDATEs spends the
+        # one-time gate with the data unmigrated and no way back). The explicit
+        # BEGIN IMMEDIATE exists precisely for that. The exemption is
+        # deliberate, not ignorance of the rule; pinned by
+        # `test_migration_rolls_back_atomically_on_mid_migration_failure`.
         snapshot_cols = {row[1] for row in cursor.execute("PRAGMA table_info(url_snapshots)")}
         if "extraction_fingerprint" not in snapshot_cols:
             from ..Subscriptions.noise_defaults import default_ignore_selectors_text

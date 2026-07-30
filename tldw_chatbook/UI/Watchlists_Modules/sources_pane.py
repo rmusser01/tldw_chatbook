@@ -12,7 +12,11 @@ from textual.reactive import reactive
 from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch, TextArea
 
-from ...Subscriptions.noise_defaults import default_ignore_selectors_text
+from ...Subscriptions.noise_defaults import (
+    default_ignore_selectors_text,
+    first_invalid_selector,
+    invalid_selector_message,
+)
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .inspector_pane import CheckNowRequested, PreviewRequested
@@ -739,6 +743,24 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             self.query_one("#sources-create-ignore-selectors", TextArea).text,
             max_length=self._IGNORE_SELECTORS_MAX_LENGTH,
         ).strip()
+        # Refuse a selector CSS cannot parse, here, while the text is still on
+        # screen and the user can see which line. `ContentExtractor` now skips
+        # a bad line rather than aborting the check, but a silently-skipped
+        # rule is still a rule the user believes is suppressing noise and that
+        # is doing nothing -- and nothing else in the product would ever tell
+        # them. Only NON-EMPTY lines are checked, so the cleared field above
+        # stays a valid instruction.
+        bad_selector = first_invalid_selector(ignore_selectors)
+        if bad_selector is not None:
+            # markup=False: selectors are full of `[`, which Textual's toast
+            # markup would otherwise eat or choke on -- `[class*="ad"]` must
+            # reach the user verbatim, since naming the line IS the message.
+            self.app.notify(
+                invalid_selector_message(bad_selector),
+                severity="error",
+                markup=False,
+            )
+            return
         self.post_message(
             CreateSourceRequested(
                 {

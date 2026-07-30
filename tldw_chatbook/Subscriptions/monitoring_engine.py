@@ -50,7 +50,7 @@ from .item_persist import (
     CONTENT_KIND_ARTICLE,
     CONTENT_KIND_CHANGE,
 )
-from .noise_defaults import extraction_fingerprint
+from .noise_defaults import extraction_fingerprint, selector_parse_errors
 from .watchlist_rule_matching import RULE_MATCH_TEXT_KEY
 from ..Utils.egress import (
     EgressBlockedError,
@@ -68,6 +68,12 @@ from .security import SecurityValidator
 # Core Classes
 #
 ########################################################################################################################
+
+# Resolved once at import: this module hard-imports bs4, so soupsieve is
+# certainly present here. Kept in `noise_defaults` rather than inline so the
+# extraction guard and the two UI save-path validators share one definition of
+# "the selector is malformed" -- see `selector_parse_errors`.
+_SELECTOR_PARSE_ERRORS = selector_parse_errors()
 
 
 class FetchBlockedError(SubscriptionError):
@@ -202,10 +208,26 @@ class ContentExtractor:
         for script in soup(["script", "style"]):
             script.decompose()
 
-        # Remove elements matching ignore selectors
+        # Remove elements matching ignore selectors.
+        #
+        # The noise filter must never break the thing it filters. Selectors are
+        # user-typed (the create form and the Inspector both edit them), and
+        # `soup.select` RAISES on anything CSS cannot parse -- so before this
+        # guard one mistyped line aborted the whole URL check for that source,
+        # every check, until the user guessed which line was bad. A bad line
+        # may cost its own stripping and nothing more.
         if ignore_selectors:
             for selector in ignore_selectors:
-                for element in soup.select(selector):
+                try:
+                    matches = soup.select(selector)
+                except _SELECTOR_PARSE_ERRORS as exc:
+                    # One line per bad selector per extraction: named, so the
+                    # log says which rule to fix, not merely that one is broken.
+                    logger.warning(
+                        f"Skipping unparseable ignore selector {selector!r}: {exc}"
+                    )
+                    continue
+                for element in matches:
                     element.decompose()
 
         # Get text

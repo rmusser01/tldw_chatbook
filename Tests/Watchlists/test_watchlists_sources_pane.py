@@ -178,6 +178,105 @@ async def test_clearing_the_noise_field_stores_no_selectors(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_create_is_refused_when_a_noise_line_is_not_valid_css(tmp_path):
+    """Whole-branch fix F1, UI side: name the bad line, at the keyboard.
+
+    `soup.select` raises on anything CSS cannot parse. The extraction side now
+    survives that, but a silently-skipped rule is still a rule the user
+    believes is suppressing noise and that does nothing, and nothing else in
+    the product would ever tell them -- the only place the mistake is cheap to
+    fix is the form they are still looking at. Mutation: delete the
+    `first_invalid_selector` check in `_submit_create_form` and this reddens
+    (a row appears and no toast is delivered).
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    app = PersistingSourcesPaneHarness(LocalWatchlistsService(db_factory=lambda: db))
+    toasts: list[tuple[str, dict]] = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+        pane = app.query_one(SourcesPane)
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        field = pane.query_one("#sources-create-ignore-selectors", TextArea)
+        # One good line, one unparseable one: the refusal must not need the
+        # whole field to be broken.
+        field.text = ".ad\ndiv[\n.promo"
+        await pilot.pause()
+        pane.query_one("#sources-create-name", Input).value = "Noisy Page"
+        pane.query_one("#sources-create-url", Input).value = "https://example.com/page"
+        await pilot.pause()
+
+        pane.query_one("#sources-create-submit", Button).press()
+        for _ in range(20):
+            await pilot.pause()
+
+        assert app.create_error is None, app.create_error
+        assert not app.created_sources, (
+            "a source with an unparseable ignore rule must not be created"
+        )
+        assert not db.get_all_subscriptions(), (
+            "nothing may reach the subscriptions table"
+        )
+
+        assert toasts, "the refusal must be visible, not only a return"
+        message, kwargs = toasts[-1]
+        assert kwargs.get("severity") == "error"
+        assert "div[" in message, (
+            "the toast must name the offending LINE -- 'a selector is invalid' "
+            f"is unactionable when the field holds three; got {message!r}"
+        )
+        # Selectors are full of `[`, which Textual's toast markup parses.
+        assert kwargs.get("markup") is False, (
+            "the message must be delivered with markup off or the bracket in "
+            "the selector is eaten before the user sees it"
+        )
+
+        # And the form stays open with the text intact, so the fix is one edit
+        # away rather than a retyped form.
+        assert pane.show_create_form, "the form must stay open to be corrected"
+        assert (
+            pane.query_one("#sources-create-ignore-selectors", TextArea).text
+            == ".ad\ndiv[\n.promo"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_valid_multi_line_noise_field_still_creates(tmp_path):
+    """The refusal's other direction: real selectors must not be rejected.
+
+    Commas inside a line are CSS selector GROUPS, and `:is(...)` /
+    attribute-substring forms are exactly what the shipped defaults use -- a
+    validator that split lines on commas, or that rejected anything exotic,
+    would refuse every source created with the prefill untouched.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    app = PersistingSourcesPaneHarness(LocalWatchlistsService(db_factory=lambda: db))
+    toasts: list[tuple[str, dict]] = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+        pane = app.query_one(SourcesPane)
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        exotic = (
+            default_ignore_selectors_text()
+            + '\n:is(.a, .b)\n[data-x="a,b"]\ndiv:has(> p)\n\n'
+        )
+        pane.query_one("#sources-create-ignore-selectors", TextArea).text = exotic
+        await pilot.pause()
+
+        stored = await _create_through_the_form(pilot, app)
+
+        assert stored["ignore_selectors"] == exotic.strip(), (
+            "every one of these lines is valid CSS and must be stored verbatim"
+        )
+        assert not [t for t in toasts if t[1].get("severity") == "error"], (
+            f"a valid field produced an error toast: {toasts!r}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_noise_field_is_visible_prefilled_and_labelled():
     """The control itself: on screen, filled in, and named (TASK-1362).
 
