@@ -361,3 +361,508 @@
 #lab-rail .evals-rail-empty-actions Button {
     width: 100%;
 }
+
+/* --- Speech panes, Console grammar ---------------------------------------
+ *
+ * One row per thing. The legacy playground spent 4 rows on every
+ * label/input pair and 5 on each explanatory notice, which made the form 93
+ * rows tall in a 34-row viewport and put `Generate Speech` at y=60. These
+ * rules exist to keep that from coming back: chips are height 1, the action
+ * strip is height 1, and only the text input is allowed to grow.
+ */
+.speech-pane {
+    height: 1fr;
+    padding: 0 1;
+}
+
+.speech-pane-title {
+    height: 1;
+    min-height: 1;
+    text-style: bold;
+    color: $ds-status-info;
+}
+
+#speech-playground-actions {
+    height: 1;
+    min-height: 1;
+    margin: 1 0 0 0;
+}
+
+/* The only element allowed to take the remaining space -- everything else on
+   this screen is one row. */
+.speech-input {
+    height: 1fr;
+    min-height: 5;
+    margin: 1 0;
+    border: solid $ds-grid-line;
+}
+
+.speech-input:focus {
+    border: solid $ds-input-focus-border;
+}
+
+.speech-chip-row {
+    height: 1;
+    min-height: 1;
+}
+
+/* `width: auto` with a cap, for the reason the Lab status chip carries one:
+   an unbounded auto chip starves its neighbours on the same row. */
+.speech-chip {
+    width: auto;
+    max-width: 30;
+    height: 1;
+    padding: 0 1;
+    margin-right: 1;
+    color: $ds-text-muted;
+    background: $ds-surface-panel;
+    text-overflow: ellipsis;
+}
+
+.speech-status-line {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+    color: $ds-status-warning;
+}
+
+/* Textual's Button carries a default min-width, so the shared
+ * `.workbench-action { width: auto }` alone still spread six actions across
+ * the full pane -- "Export" rendered as "Ex" and "Clear" fell off the right
+ * edge entirely. Console packs its action strip left; so does this. */
+#speech-playground-actions Button.workbench-action {
+    width: auto;
+    min-width: 0;
+    padding: 0 1;
+    margin: 0 2 0 0;
+    border: none;
+}
+
+
+/* Reverse-video section head, matching Console's inspector section bars
+ * (Sources / Run / Tools) rather than inventing a third heading style. */
+.speech-section-head {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+
+/* Text | Result, side by side. The pane has width to spend and does not have
+ * 34 rows of content to spend vertically -- filling the height with one tall
+ * empty box is what made the first two passes read as sparse. */
+.speech-split {
+    height: 1fr;
+    min-height: 0;
+    margin-top: 1;
+}
+
+.speech-split-pane {
+    width: 1fr;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+}
+
+#speech-result-pane {
+    margin-left: 2;
+}
+
+/* Below SPEECH_SPLIT_MIN_WIDTH two columns would be ~20 cells each, so the
+ * split stacks. Toggled from `on_resize` because Textual has no media
+ * queries -- same approach as the Personas compact workbench. */
+.speech-split-stacked .speech-split {
+    layout: vertical;
+}
+
+.speech-split-stacked #speech-result-pane {
+    margin-left: 0;
+    margin-top: 1;
+}
+
+.speech-input {
+    height: 1fr;
+    min-height: 4;
+    margin: 0;
+}
+
+.speech-result-state {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+#speech-result-actions {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+}
+
+#speech-result-actions Button.workbench-action {
+    width: auto;
+    min-width: 0;
+    padding: 0 1;
+    margin: 0 2 0 0;
+    border: none;
+}
+
+/* Result chips stack one per row here, unlike the settings line: they are
+   read as a list of facts about one artifact, not scanned across. */
+#speech-result-pane .speech-chip {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+}
+
+/* Narrow: stack the one-row rows rather than let them overflow.
+ *
+ * At 80 columns the Lab body is ~41 cells. Six actions and four chips do not
+ * fit on one row each -- Stop/Export/Clear and two chips were being cut off
+ * at the right edge, present in the DOM and unreachable on screen. Dropping
+ * actions below a threshold would hide capability; stacking keeps every
+ * option and spends rows, which is the correct trade on a narrow terminal
+ * where rows are the cheaper resource.
+ */
+.speech-split-stacked #speech-playground-actions,
+.speech-split-stacked #speech-result-actions,
+.speech-split-stacked #speech-settings-line {
+    layout: vertical;
+    height: auto;
+    min-height: 1;
+}
+
+.speech-split-stacked #speech-playground-actions Button.workbench-action,
+.speech-split-stacked #speech-result-actions Button.workbench-action {
+    width: 100%;
+    margin: 0;
+    text-align: left;
+    content-align: left middle;
+}
+
+.speech-split-stacked .speech-chip {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+}
+
+/* With the rows stacked, the pane scrolls rather than clipping. */
+.speech-split-stacked {
+    overflow-y: auto;
+}
+
+/* Stacked, the panes must overflow rather than compress. `height: 1fr` on
+ * the text area let it shrink to a single row so the Result pane fell off
+ * the bottom with nothing to scroll -- virtual height equalled the
+ * container, so the content was clipped, not scrollable. Fixed heights make
+ * the pane genuinely taller than its viewport, which is what turns
+ * `overflow-y: auto` into a usable scroll. */
+.speech-split-stacked .speech-split-pane {
+    height: auto;
+}
+
+.speech-split-stacked .speech-input {
+    height: 6;
+    min-height: 6;
+}
+
+/* The split itself must stop being `1fr` when stacked: at 1fr it resolved to
+ * 3 rows while its two panes needed 17, so it squeezed them and the overflow
+ * happened inside a container that does not scroll. `auto` lets it take its
+ * content height and pushes the scrolling up to `.speech-pane`, which has
+ * `overflow-y: auto`. */
+.speech-split-stacked .speech-split {
+    height: auto;
+}
+
+/* An override is stated, not implied. The Playground owns session-scoped
+ * values that never write back, so the user must be able to see at a glance
+ * what they have deliberately changed. The asterisk in the label carries it
+ * for anyone who cannot use the colour. */
+.speech-chip-override {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+/* Parameter rows: label left, control right, one row each. The legacy form
+ * spent four rows on exactly this pairing, which is most of why it was 93
+ * rows tall. */
+.speech-param-row {
+    height: 1;
+    min-height: 1;
+}
+
+.speech-param-label {
+    width: 24;
+    height: 1;
+    color: $ds-text-muted;
+}
+
+.speech-param-control {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    border: none;
+}
+
+/* Take rows: summary left, per-row actions right, one row each. Per-row
+ * controls are what make comparison possible -- a single player bound to the
+ * latest take would force a re-generate to hear an earlier option again. */
+.speech-take-row {
+    height: 1;
+    min-height: 1;
+}
+
+.speech-take-summary {
+    width: 1fr;
+    height: 1;
+}
+
+.speech-take-action {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    border: none;
+    padding: 0 1;
+    margin-left: 1;
+}
+
+/* The axes reflow onto a second line rather than truncating. Six chips need
+ * more than the ~81 cells the Lab body gives at 120 columns -- "Format" was
+ * being cut to "Format: un" and "Speed" fell off the edge. These are the
+ * variables the user is comparing; they are the last thing that may be
+ * clipped. One column when stacked. */
+.speech-axis-grid {
+    grid-size: 3;
+    grid-rows: 1;
+    grid-gutter: 0 1;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.speech-split-stacked .speech-axis-grid {
+    grid-size: 1;
+}
+
+/* Four player actions do not fit the ~38-cell result pane on one row --
+ * "Export" rendered at x=101..111 against a pane ending at 107, clipped by
+ * the parent rather than by itself. A 2x2 grid fits, and reflows to one
+ * column when stacked. */
+#speech-result-actions {
+    layout: grid;
+    grid-size: 2;
+    grid-rows: 1;
+    grid-gutter: 0 1;
+    height: auto;
+    margin-top: 1;
+}
+
+.speech-split-stacked #speech-result-actions {
+    grid-size: 1;
+}
+
+/* Axis cells: label then the real control, one row. The label carries the
+ * override marker; the control carries the legacy id so the existing
+ * synthesis handler reads it unchanged. */
+.speech-axis-cell {
+    height: 1;
+    min-height: 1;
+}
+
+.speech-axis-cell .speech-chip {
+    width: 10;
+    max-width: 10;
+    margin: 0;
+    background: transparent;
+}
+
+.speech-axis-control {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    border: none;
+    background: $ds-surface-panel;
+}
+
+/* `border: none` on a Select does NOT reach its inner SelectCurrent, which
+ * keeps its own three-row bordered box. Clipped to `height: 1`, every axis
+ * rendered its top border and nothing else -- a visible control showing
+ * neither its value nor its arrow. The child needs the rule too. */
+.speech-axis-control SelectCurrent {
+    border: none;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+}
+
+.speech-axis-control SelectCurrent Static {
+    height: 1;
+}
+
+/* The speed Input has the same inner-border problem in reverse: it is the
+ * bordered widget itself. */
+Input.speech-axis-control {
+    padding: 0 1;
+}
+
+/* --- Speech: player, generation status, clip source ------------------- */
+
+/* The player sits under the take list and must not steal its rows: the
+   history is what the user compares, the transport is how they audition
+   one. */
+.speech-player {
+    height: auto;
+    padding: 0 1;
+    border-top: solid #2c313a;
+}
+
+.speech-player-status {
+    height: 1;
+    color: $text-muted;
+}
+
+.speech-player-transport {
+    height: 1;
+}
+
+#audio-progress-bar {
+    width: 1fr;
+    height: 1;
+}
+
+.speech-player-time {
+    width: auto;
+    min-width: 12;
+    content-align: right middle;
+    color: $text-muted;
+}
+
+/* One row: what is happening, and how far along. */
+.speech-generation-status {
+    height: 1;
+    padding: 0 1;
+}
+
+.speech-generation-text {
+    width: 1fr;
+    color: $text-muted;
+}
+
+#generation-progress {
+    width: auto;
+    min-width: 20;
+    height: 1;
+}
+
+/* Diagnostic, so it stays behind a collapsed disclosure rather than
+   occupying rows nobody reads. */
+#speech-log-group {
+    height: auto;
+    border: none;
+    background: transparent;
+}
+
+.speech-log {
+    height: 8;
+    background: transparent;
+}
+
+/* The reference-clip / voice-sample picker, mounted only for the providers
+   that use one. */
+.speech-source-row {
+    height: 1;
+    margin-top: 1;
+}
+
+.speech-source-status {
+    width: 1fr;
+    color: $text-muted;
+}
+
+/* --- Speech: TTS Settings --------------------------------------------- */
+
+/* One row per setting. The legacy form spent FOUR on each -- a blank row,
+ * the input's top border, the label+value row, the bottom border -- which
+ * is what put `save-settings-btn` at y=102 in a 26-row viewport. */
+.speech-setting-row {
+    height: 1;
+    padding: 0 1;
+}
+
+.speech-setting-label {
+    width: 28;
+    color: $text-muted;
+}
+
+.speech-setting-control {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    border: none;
+    background: $ds-surface-panel;
+}
+
+/* `border: none` on a Select does not reach its inner SelectCurrent, which
+ * keeps its own three-row box and, clipped to `height: 1`, paints only its
+ * top border. */
+.speech-setting-control SelectCurrent {
+    border: none;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+}
+
+Input.speech-setting-control {
+    padding: 0 1;
+}
+
+.speech-settings-group {
+    height: auto;
+    border: none;
+    background: transparent;
+    margin-bottom: 1;
+}
+
+/* The action strip sits OUTSIDE the scroll region: `save-settings-btn`
+ * measured at y=102 after every provider block, four screens below the
+ * fold. Keeping it above the groups is what makes it reachable regardless
+ * of how many are expanded. */
+.speech-settings-pane {
+    height: 1fr;
+}
+
+#speech-settings-actions {
+    height: 1;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+#speech-settings-groups {
+    height: 1fr;
+    overflow-y: auto;
+}
+
+
+/* AudioBook actions live above the scroll region, so they stay on screen
+ * whatever is expanded below. Inside it they measured at y=40 in a 26-row
+ * viewport, after eight collapsible groups. */
+#audiobook-actions {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+#audiobook-actions Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0 1;
+    margin: 0 2 0 0;
+    border: none;
+}

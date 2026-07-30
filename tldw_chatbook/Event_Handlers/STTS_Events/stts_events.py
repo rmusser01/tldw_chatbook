@@ -949,16 +949,25 @@ class STTSEventHandler:
     def _mounted_playground(self, operation_id: str) -> Any | None:
         if operation_id != self._active_playground_operation_id:
             return None
-        try:
-            from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
+        # Both playgrounds can be mounted: dev's widget still owns the
+        # `playground` view while its profile presets and the rebuilt pane's
+        # axis row are reconciled, and the pane is mounted by its own tests.
+        # Naming only one meant a generation could succeed and hand its
+        # audio to a widget that was not on screen -- no error, no log, the
+        # take simply never appeared.
+        from tldw_chatbook.UI.Speech.speech_playground_pane import (
+            SpeechPlaygroundPane,
+        )
+        from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
 
-            return self.app.query_one(TTSPlaygroundWidget)
-        except Exception as error:
-            logger.debug(
-                "TTS Playground is not mounted ({})",
-                type(error).__name__,
-            )
-            return None
+        for host in (SpeechPlaygroundPane, TTSPlaygroundWidget):
+            try:
+                return self.app.query_one(host)
+            except Exception as error:
+                logger.debug(
+                    "{} is not mounted ({})", host.__name__, type(error).__name__
+                )
+        return None
 
     @staticmethod
     def _invoke_playground(
@@ -1601,7 +1610,11 @@ class STTSEventHandler:
         event: STTSProviderConfigurationChanged,
     ) -> None:
         """Invalidate any mounted Playground for the changed provider."""
-        for widget in self.app.query("TTSPlaygroundWidget"):
+        from tldw_chatbook.UI.Speech.speech_playground_pane import (
+            SpeechPlaygroundPane,
+        )
+
+        for widget in self.app.query("SpeechPlaygroundPane, TTSPlaygroundWidget"):
             callback = getattr(widget, "mark_provider_configuration_changed", None)
             if callable(callback):
                 callback(event.provider_id, event.configuration_revision)

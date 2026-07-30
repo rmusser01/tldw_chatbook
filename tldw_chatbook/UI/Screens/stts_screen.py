@@ -55,7 +55,14 @@ SPEECH_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
 )
 
 #: Rail rows that do not correspond to an ``STTSWindow.current_view``.
-SPEECH_NON_VIEW_KEYS = frozenset({"voice-cloning", "effects"})
+#: `voice-cloning` pushes its own screen rather than switching the view.
+#: `effects` used to be here too, as a disabled row that opened nothing;
+#: it has a placeholder view now, which explains itself.
+#: Rail rows with no `STTSWindow.current_view` behind them. Empty now:
+#: `effects` gained a placeholder view and `voice-cloning` became a
+#: view instead of a pushed screen. Kept so the next such row has a
+#: home, and so the branch that handles them stays exercised.
+SPEECH_NON_VIEW_KEYS: frozenset[str] = frozenset()
 
 
 class STTSScreen(LabScreen):
@@ -98,7 +105,6 @@ class STTSScreen(LabScreen):
                     # whose only handler toasts "coming soon" is the
                     # dead-end-toast pattern; disabling says it once, in the
                     # control itself, exactly as the old sidebar did.
-                    disabled=view_key == "effects",
                 )
                 # Carried as an attribute rather than parsed back out of the
                 # id, mirroring LLMScreen's lab_view_key.
@@ -135,10 +141,21 @@ class STTSScreen(LabScreen):
         )
 
     def build_lab_body(self) -> Widget:
-        """Build the legacy STTS window.
+        """Build the body: the window, which owns view switching.
+
+        Returning the playground pane directly -- as this did while the
+        rebuild was the only redesigned view -- left `self.stts_window` None
+        forever, and every rail press hit its `is None` guard and did
+        nothing. TTS Settings, AudioBook and Speech Recognition were all
+        unreachable; only Voice Cloning worked, because it pushes a screen
+        before that check.
+
+        The window mounts `SpeechPlaygroundPane` for the playground view
+        itself, so the rebuild is still what the user lands on.
 
         Returns:
-            The ``STTSWindow``, mounted after first paint like every Lab body.
+            The ``STTSWindow``, mounted after first paint like every Lab
+            body.
         """
         self.stts_window = STTSWindow(self.app_instance, classes="window")
         self.stts_window.styles.height = "1fr"
@@ -154,6 +171,7 @@ class STTSScreen(LabScreen):
         ``current_view`` itself rather than waiting for a press.
         """
         if self.stts_window is None:
+            # Redesigned panes own their own state; nothing to bind yet.
             return
         self.watch(
             self.stts_window, "current_view", self._sync_rail_active, init=True
@@ -185,11 +203,6 @@ class STTSScreen(LabScreen):
         if view_key is None:
             return
 
-        if view_key == "voice-cloning":
-            from ..Voice_Cloning_Window import VoiceCloningWindow
-
-            self.app.push_screen(VoiceCloningWindow())
-            return
         if view_key in SPEECH_NON_VIEW_KEYS:
             # `effects` composes disabled, so this is unreachable through the
             # UI; it remains the explicit "no view behind this key" branch.

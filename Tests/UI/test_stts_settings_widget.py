@@ -25,11 +25,44 @@ from tldw_chatbook.TTS.adapter_types import (
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.UI import STTS_Window
-from tldw_chatbook.UI.STTS_Window import TTSSettingsWidget
+from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
 from tldw_chatbook.UI.stts_playground_catalog import (
     FIRST_AVAILABLE_MODEL_ID,
     SERVER_DEFAULT_VOICE_ID,
 )
+
+async def _click_setting_action(pilot, selector):
+    """Scroll a provider action into view, then click it.
+
+    The rebuilt Settings view expands every configured provider, so with
+    several configured the lower groups' actions sit below the viewport in a
+    scrollable region. `pilot.click` does not scroll -- it fails with
+    OutOfBounds or silently misses -- while a user simply scrolls. This does
+    what the user does.
+    """
+    pilot.app.query_one(selector).scroll_visible(animate=False)
+    await pilot.pause()
+    await pilot.click(selector)
+
+
+def _patch_setting_reader(monkeypatch, reader):
+    """Point the pane's `_cli_setting` hook at `reader`.
+
+    The pane reads settings through a hook rather than the module-level
+    name, so patching `STTS_Window.get_cli_setting` no longer reaches it.
+    """
+    monkeypatch.setattr(
+        SpeechSettingsPane,
+        "_cli_setting",
+        lambda self, *args, **kwargs: reader(*args, **kwargs),
+    )
+
+
+def _patch_service(monkeypatch, factory):
+    """Point the pane's `_tts_service_factory` hook at `factory`."""
+    monkeypatch.setattr(
+        SpeechSettingsPane, "_tts_service_factory", lambda self: factory()
+    )
 
 _PREFERENCE_PAYLOAD_KEYS = {
     "default_provider",
@@ -47,7 +80,7 @@ class _SettingsHost(App[None]):
         self.notices: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
-        yield TTSSettingsWidget()
+        yield SpeechSettingsPane(id="speech-settings-pane")
 
     def post_message(self, message: Any) -> bool:
         if isinstance(message, STTSSettingsSaveEvent):
@@ -69,7 +102,7 @@ class _SettingsHost(App[None]):
 
 def test_settings_binding_table_classifies_every_widget_payload_key() -> None:
     tree = ast.parse(
-        textwrap.dedent(inspect.getsource(TTSSettingsWidget._save_settings))
+        textwrap.dedent(inspect.getsource(SpeechSettingsPane._save_settings))
     )
     payload_keys = {
         target.slice.value
@@ -96,9 +129,9 @@ def settings_config(monkeypatch: pytest.MonkeyPatch) -> None:
     def get_setting(section: str, key: str, default: Any = None) -> Any:
         return overrides.get((section, key), default)
 
-    monkeypatch.setattr(STTS_Window, "get_cli_setting", get_setting)
+    _patch_setting_reader(monkeypatch, get_setting)
     monkeypatch.setattr(
-        TTSSettingsWidget, "_load_kokoro_voice_blends", lambda self: None
+        SpeechSettingsPane, "_load_kokoro_voice_blends", lambda self: None
     )
 
 
@@ -171,13 +204,9 @@ async def test_audio_cpp_mount_uses_one_read_only_preference_snapshot(
         ("app_tts", "audio_cpp"): AudioCppConfig().to_mapping(),
         **{("app_tts", key): value for key, value in stored_preferences.items()},
     }
+    _patch_setting_reader(monkeypatch, lambda section, key, default=None: stored.get((section, key), default))
     monkeypatch.setattr(
-        STTS_Window,
-        "get_cli_setting",
-        lambda section, key, default=None: stored.get((section, key), default),
-    )
-    monkeypatch.setattr(
-        TTSSettingsWidget,
+        SpeechSettingsPane,
         "_load_kokoro_voice_blends",
         lambda self: None,
     )
@@ -200,7 +229,7 @@ async def test_audio_cpp_mount_uses_one_read_only_preference_snapshot(
     get_service = AsyncMock(
         side_effect=AssertionError("mount must not materialize the TTS service")
     )
-    monkeypatch.setattr(STTS_Window, "get_tts_service", get_service)
+    _patch_service(monkeypatch, get_service)
     app = _SettingsHost()
 
     async with app.run_test(size=(160, 60)) as pilot:
@@ -230,13 +259,9 @@ async def test_audio_cpp_stored_defaults_mount_and_save_without_nulls(
         ("app_tts", "default_format"): "wav",
         ("app_tts", "audio_cpp"): AudioCppConfig().to_mapping(),
     }
+    _patch_setting_reader(monkeypatch, lambda section, key, default=None: stored.get((section, key), default))
     monkeypatch.setattr(
-        STTS_Window,
-        "get_cli_setting",
-        lambda section, key, default=None: stored.get((section, key), default),
-    )
-    monkeypatch.setattr(
-        TTSSettingsWidget,
+        SpeechSettingsPane,
         "_load_kokoro_voice_blends",
         lambda self: None,
     )
@@ -244,7 +269,7 @@ async def test_audio_cpp_stored_defaults_mount_and_save_without_nulls(
 
     async with app.run_test(size=(160, 60)) as pilot:
         await pilot.pause()
-        widget = app.query_one(TTSSettingsWidget)
+        widget = app.query_one(SpeechSettingsPane)
 
         assert app.query_one("#default-provider-select", Select).value == "audio_cpp"
         assert app.query_one("#default-model-select", Select).value == "<opaque:model>"
@@ -280,13 +305,9 @@ async def test_audio_cpp_settings_preserve_sentinel_shaped_remote_defaults(
         ("app_tts", "default_format"): "wav",
         ("app_tts", "audio_cpp"): AudioCppConfig().to_mapping(),
     }
+    _patch_setting_reader(monkeypatch, lambda section, key, default=None: stored.get((section, key), default))
     monkeypatch.setattr(
-        STTS_Window,
-        "get_cli_setting",
-        lambda section, key, default=None: stored.get((section, key), default),
-    )
-    monkeypatch.setattr(
-        TTSSettingsWidget,
+        SpeechSettingsPane,
         "_load_kokoro_voice_blends",
         lambda self: None,
     )
@@ -304,7 +325,7 @@ async def test_audio_cpp_settings_preserve_sentinel_shaped_remote_defaults(
         assert remote_voice_id in voice_values
         assert SERVER_DEFAULT_VOICE_ID != remote_voice_id
 
-        app.query_one(TTSSettingsWidget)._save_settings()
+        app.query_one(SpeechSettingsPane)._save_settings()
         await pilot.pause()
 
     event = app.saved_events[-1]
@@ -340,7 +361,7 @@ async def test_selecting_audio_cpp_defaults_uses_non_materializing_sentinels(
         assert app.query_one("#default-speed-input", Input).value == "1.0"
         assert app.query_one("#default-speed-input", Input).disabled is True
 
-        app.query_one(TTSSettingsWidget)._save_settings()
+        app.query_one(SpeechSettingsPane)._save_settings()
         await pilot.pause()
 
         event = app.saved_events[-1]
@@ -363,7 +384,7 @@ async def test_settings_save_posts_canonical_values_and_explicit_openai_resets(
 
     async with app.run_test(size=(160, 60)) as pilot:
         await pilot.pause()
-        widget = app.query_one(TTSSettingsWidget)
+        widget = app.query_one(SpeechSettingsPane)
         assert app.query_one("#openai-org-id-input", Input).value == "org-existing"
         app.query_one(
             "#openai-base-url-input", Input
@@ -401,7 +422,7 @@ async def test_settings_widget_waits_for_handler_outcome_before_notifying(
 
     async with app.run_test(size=(160, 60)) as pilot:
         await pilot.pause()
-        app.query_one(TTSSettingsWidget)._save_settings()
+        app.query_one(SpeechSettingsPane)._save_settings()
         await pilot.pause()
 
         assert len(app.saved_events) == 1
@@ -429,7 +450,7 @@ async def test_settings_widget_rejects_unsafe_openai_base_urls_without_echoing_t
         await pilot.pause()
         app.query_one("#openai-base-url-input", Input).value = base_url
 
-        app.query_one(TTSSettingsWidget)._save_settings()
+        app.query_one(SpeechSettingsPane)._save_settings()
 
         assert app.saved_events == []
         assert app.notices
@@ -447,11 +468,11 @@ async def test_settings_widget_does_not_echo_collection_error_details(
     messages: list[str] = []
     app = _SettingsHost()
 
-    def fail_normalization(_self: TTSSettingsWidget, _value: str) -> str:
+    def fail_normalization(_self: SpeechSettingsPane, _value: str) -> str:
         raise RuntimeError(f"invalid setting {secret}")
 
     monkeypatch.setattr(
-        TTSSettingsWidget,
+        SpeechSettingsPane,
         "_normalize_openai_base_url",
         fail_normalization,
     )
@@ -459,7 +480,7 @@ async def test_settings_widget_does_not_echo_collection_error_details(
     try:
         async with app.run_test(size=(160, 60)) as pilot:
             await pilot.pause()
-            app.query_one(TTSSettingsWidget)._save_settings()
+            app.query_one(SpeechSettingsPane)._save_settings()
     finally:
         logger.remove(sink_id)
 
@@ -544,7 +565,7 @@ async def test_audio_cpp_settings_save_posts_validated_defensive_plain_mapping(
         for selector, value in values.items():
             app.query_one(selector, Input).value = value
 
-        app.query_one(TTSSettingsWidget)._save_settings()
+        app.query_one(SpeechSettingsPane)._save_settings()
         await pilot.pause()
 
         assert len(app.saved_events) == 1
@@ -598,7 +619,7 @@ async def test_audio_cpp_settings_reject_invalid_values_without_echo(
         async with app.run_test(size=(180, 80)) as pilot:
             await pilot.pause()
             app.query_one(selector, Input).value = invalid_value
-            app.query_one(TTSSettingsWidget)._save_settings()
+            app.query_one(SpeechSettingsPane)._save_settings()
             await pilot.pause()
     finally:
         logger.remove(sink_id)
@@ -639,18 +660,14 @@ async def test_audio_cpp_test_and_refresh_are_explicit_saved_config_actions(
         configuration_revision=Mock(side_effect=(4, 4, 4, 4)),
         get_catalog=AsyncMock(return_value=_available_audio_cpp_catalog()),
     )
-    monkeypatch.setattr(
-        STTS_Window,
-        "get_tts_service",
-        AsyncMock(return_value=service),
-    )
+    _patch_service(monkeypatch, AsyncMock(return_value=service))
     app = _SettingsHost()
 
     async with app.run_test(size=(180, 80)) as pilot:
         await pilot.pause()
-        await pilot.click("#audio-cpp-test-connection-btn")
+        await _click_setting_action(pilot, "#audio-cpp-test-connection-btn")
         await app.workers.wait_for_complete()
-        await pilot.click("#audio-cpp-refresh-models-btn")
+        await _click_setting_action(pilot, "#audio-cpp-refresh-models-btn")
         await app.workers.wait_for_complete()
 
     assert service.get_catalog.await_args_list == [
@@ -673,16 +690,12 @@ async def test_audio_cpp_settings_discovery_discards_changed_revision(
         configuration_revision=Mock(side_effect=(7, 8)),
         get_catalog=AsyncMock(return_value=_available_audio_cpp_catalog()),
     )
-    monkeypatch.setattr(
-        STTS_Window,
-        "get_tts_service",
-        AsyncMock(return_value=service),
-    )
+    _patch_service(monkeypatch, AsyncMock(return_value=service))
     app = _SettingsHost()
 
     async with app.run_test(size=(180, 80)) as pilot:
         await pilot.pause()
-        await pilot.click("#audio-cpp-test-connection-btn")
+        await _click_setting_action(pilot, "#audio-cpp-test-connection-btn")
         await app.workers.wait_for_complete()
 
     assert app.notices == [
@@ -712,16 +725,12 @@ async def test_audio_cpp_settings_discovery_failure_rechecks_revision(
         configuration_revision=Mock(side_effect=(7, 8)),
         get_catalog=get_catalog,
     )
-    monkeypatch.setattr(
-        STTS_Window,
-        "get_tts_service",
-        AsyncMock(return_value=service),
-    )
+    _patch_service(monkeypatch, AsyncMock(return_value=service))
     app = _SettingsHost()
 
     async with app.run_test(size=(180, 80)) as pilot:
         await pilot.pause()
-        await pilot.click("#audio-cpp-test-connection-btn")
+        await _click_setting_action(pilot, "#audio-cpp-test-connection-btn")
         await request_started.wait()
         release_request.set()
         await app.workers.wait_for_complete()
@@ -766,16 +775,12 @@ async def test_superseded_settings_discovery_failure_cannot_overwrite_success(
         configuration_revision=Mock(return_value=7),
         get_catalog=get_catalog,
     )
-    monkeypatch.setattr(
-        STTS_Window,
-        "get_tts_service",
-        AsyncMock(return_value=service),
-    )
+    _patch_service(monkeypatch, AsyncMock(return_value=service))
     app = _SettingsHost()
 
     async with app.run_test(size=(180, 80)) as pilot:
         await pilot.pause()
-        widget = app.query_one(TTSSettingsWidget)
+        widget = app.query_one(SpeechSettingsPane)
         widget._discover_audio_cpp("test")
         await first_started.wait()
         widget._discover_audio_cpp("refresh")

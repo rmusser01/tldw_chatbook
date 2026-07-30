@@ -52,13 +52,19 @@ class ImprovedDictationWindow(Widget):
     ]
 
     DEFAULT_CSS = """
+    /* `1fr`, not `100%`. A percentage height is measured against the
+       parent and ignores siblings, so the container claimed a full
+       viewport's worth beside the Lab chrome and everything below it was
+       squeezed: the transcript -- the thing this view exists to show --
+       measured FOUR rows of 26, starting at y=24, which is where the
+       viewport ends. */
     ImprovedDictationWindow {
-        height: 100%;
+        height: 1fr;
         width: 100%;
     }
-    
+
     .dictation-container {
-        height: 100%;
+        height: 1fr;
         layout: vertical;
     }
     
@@ -71,6 +77,15 @@ class ImprovedDictationWindow(Widget):
     .dictation-content {
         height: 1fr;
         layout: horizontal;
+    }
+
+    /* The status readouts are a few lines of text, but the container had no
+       height, so it split the body with the content: measured at 200x60,
+       the header and status took 30 of 54 rows and the transcript -- the
+       thing this view exists to show -- got 10. */
+    #status-container {
+        height: auto;
+        max-height: 4;
     }
     
     .transcript-area {
@@ -101,16 +116,24 @@ class ImprovedDictationWindow(Widget):
         margin-bottom: 1;
     }
     
+    /* One line, not a block. Measured on the running screen: this rendered
+       as a padded, bordered, full-background box FOUR rows tall, and there
+       are two of them -- 8 of a 26-row viewport spent on notices, while 30
+       of 34 controls sat below the fold. State is carried by the text and a
+       foreground colour instead. */
     .privacy-notice {
-        background: $warning;
-        padding: 1;
-        margin: 1 0;
-        border: round $warning-darken-1;
+        height: 1;
+        padding: 0;
+        margin: 0;
+        border: none;
+        background: transparent;
+        color: $warning;
     }
-    
+
     .privacy-enabled {
-        background: $success;
-        border: round $success-darken-1;
+        background: transparent;
+        border: none;
+        color: $success;
     }
     
     .error-message {
@@ -164,7 +187,6 @@ class ImprovedDictationWindow(Widget):
 
         # Transcript management
         self.transcript_segments = []
-        self.transcript_history = []
 
         # Settings
         self.settings = self._load_settings()
@@ -224,12 +246,16 @@ class ImprovedDictationWindow(Widget):
                             ):
                                 yield Static(self._get_privacy_status_text())
 
-                            # Privacy switches
-                            yield Switch(
-                                value=self.settings["privacy"]["save_history"],
-                                id="save-history-switch",
-                            )
-                            yield Label("Save transcription history")
+                            # "Save transcription history" was here. It
+                            # persisted a setting and nothing else:
+                            # `_add_to_history` was a `pass` stub, so no
+                            # transcript was ever recorded, and the History
+                            # list it implied was composed only if the
+                            # setting had been on at mount. A switch telling
+                            # the user their speech is being kept, when it
+                            # is not, is a privacy claim the code did not
+                            # honour -- removed rather than left as a
+                            # control that does nothing. See task-1331.
 
                             yield Switch(
                                 value=self.settings["privacy"]["local_only"],
@@ -318,21 +344,21 @@ class ImprovedDictationWindow(Widget):
                         yield Button("💾 Save as Text", id="save-text-button")
                         yield Button("📝 Save as Markdown", id="save-md-button")
 
-                    # History section (only if enabled)
-                    if self.settings["privacy"]["save_history"]:
-                        with Vertical(classes="control-section"):
-                            yield Label("History", classes="section-title")
-                            yield ListView(id="history-list", classes="history-list")
-                            yield Button("Clear History", id="clear-history-button")
 
     def on_mount(self):
         """Initialize on mount."""
+        # Textual posts `Changed` when a Switch or Input is created with a
+        # value, and every one of those handlers persists settings -- so
+        # merely opening this view wrote a [dictation] section, privacy
+        # included, that the user never asked for. The flag is cleared after
+        # the first refresh, by which point the mount-time events have been
+        # delivered; anything after that is a real edit.
+        self._settings_are_mounting = True
+        self.call_after_refresh(self._finish_mounting)
+
         # Update UI based on settings
         self._update_privacy_ui()
 
-        # Load history if enabled
-        if self.settings["privacy"]["save_history"]:
-            self._load_history()
 
     def _get_privacy_status_text(self) -> str:
         """Get privacy status description."""
@@ -430,33 +456,42 @@ class ImprovedDictationWindow(Widget):
             self._export_as_text()
         elif button_id == "save-md-button":
             self._export_as_markdown()
-        elif button_id == "clear-history-button":
-            self._clear_history()
+
+    def _finish_mounting(self) -> None:
+        """Stop treating control changes as mount noise."""
+        self._settings_are_mounting = False
+
+    def _persist_settings(self) -> None:
+        """Save settings unless the controls are still mounting.
+
+        The single gate. Handlers call this rather than `_save_settings`
+        directly, so a new handler cannot reintroduce the write-on-open by
+        forgetting to check.
+        """
+        if getattr(self, "_settings_are_mounting", False):
+            return
+        self._save_settings()
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         """Handle switch changes."""
-        if event.switch.id == "save-history-switch":
-            self.settings["privacy"]["save_history"] = event.value
-            self._save_settings()
-            self._update_privacy_ui()
-        elif event.switch.id == "local-only-switch":
+        if event.switch.id == "local-only-switch":
             self.settings["privacy"]["local_only"] = event.value
-            self._save_settings()
+            self._persist_settings()
             self._update_privacy_ui()
             # Update provider options
             provider_select = self.query_one("#provider-select", Select)
             provider_select.set_options(self._get_provider_options())
         elif event.switch.id == "auto-clear-switch":
             self.settings["privacy"]["auto_clear_buffer"] = event.value
-            self._save_settings()
+            self._persist_settings()
             if self.dictation_service:
                 self.dictation_service.update_privacy_settings(self.settings["privacy"])
         elif event.switch.id == "punctuation-switch":
             self.settings["punctuation"] = event.value
-            self._save_settings()
+            self._persist_settings()
         elif event.switch.id == "commands-switch":
             self.settings["commands"] = event.value
-            self._save_settings()
+            self._persist_settings()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle input changes."""
@@ -465,7 +500,7 @@ class ImprovedDictationWindow(Widget):
                 duration = int(event.value)
                 if 100 <= duration <= 2000:
                     self.settings["buffer_duration_ms"] = duration
-                    self._save_settings()
+                    self._persist_settings()
                     if self.dictation_service:
                         self.dictation_service.set_buffer_duration(duration)
             except ValueError:
@@ -550,8 +585,6 @@ class ImprovedDictationWindow(Widget):
         self._update_stats()
 
         # Save to history if enabled
-        if result.transcript and self.settings["privacy"]["save_history"]:
-            self._add_to_history(result.transcript)
 
         self._show_status("Dictation stopped", "info")
 
@@ -710,9 +743,6 @@ Performance Tips:
             "buffer_duration_ms": get_cli_setting("dictation.buffer_duration_ms", 500)
             or 500,
             "privacy": {
-                "save_history": get_cli_setting(
-                    "dictation.privacy.save_history", False
-                ),
                 "local_only": get_cli_setting("dictation.privacy.local_only", True),
                 "auto_clear_buffer": get_cli_setting(
                     "dictation.privacy.auto_clear_buffer", True
@@ -874,26 +904,8 @@ Performance Tips:
             logger.error(f"Error exporting transcript: {e}")
             self.app.notify("Failed to export transcript", severity="error")
 
-    def _load_history(self):
-        """Load transcription history if enabled."""
-        # TODO: Implement history loading from config/database
-        pass
 
-    def _add_to_history(self, transcript: str):
-        """Add transcript to history."""
-        # TODO: Implement history saving
-        pass
 
-    def _clear_history(self):
-        """Clear transcription history."""
-        try:
-            history_list = self.query_one("#history-list", ListView)
-            history_list.clear()
-            self.transcript_history = []
-            # TODO: Clear from persistent storage
-            self.app.notify("History cleared")
-        except Exception as e:
-            logger.error(f"Error clearing history: {e}")
 
     def _show_troubleshooting(self):
         """Show audio troubleshooting dialog."""

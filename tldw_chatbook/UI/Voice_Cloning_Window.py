@@ -10,8 +10,7 @@ from loguru import logger
 
 # Textual imports
 from textual.app import ComposeResult
-from textual.screen import Screen
-from textual.containers import Container, Horizontal
+from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import (
     Static,
     Button,
@@ -49,9 +48,15 @@ from tldw_chatbook.UI.Widgets.table_click_select import DataTableClickSelectMixi
 #
 
 
-class VoiceCloningWindow(DataTableClickSelectMixin, Screen):
+class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
     """
-    Voice Cloning management window supporting multiple TTS backends.
+    Voice Cloning management view supporting multiple TTS backends.
+
+    A view inside the Lab frame, not a pushed screen. As a screen, choosing
+    it from the Speech rail left the destination entirely -- rail, mode
+    strip and capability line all gone -- and the way back was a binding
+    rather than the rail the user had just clicked. Every other Speech view
+    stays in the frame; this one now does too.
 
     Features:
     - Multi-backend support (Higgs, Chatterbox, GPT-SoVITS)
@@ -61,7 +66,6 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Screen):
     """
 
     BINDINGS = [
-        Binding("escape", "close", "Close"),
         Binding("ctrl+n", "new_profile", "New Profile"),
         Binding("ctrl+d", "delete_profile", "Delete Profile"),
         Binding("ctrl+e", "export_profile", "Export Profile"),
@@ -72,20 +76,23 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Screen):
 
     DEFAULT_CSS = """
     VoiceCloningWindow {
-        align: center middle;
+        height: 1fr;
     }
     
+    /* Fills the Lab body. As a pushed screen this was a centred 90%x90%
+       box with a thick accent border -- correct for a modal, and wrong
+       inside a frame, where it rendered as a dialog floating in the body
+       with the rail and header still visible around it. */
     #voice-cloning-container {
-        width: 90%;
-        height: 90%;
-        max-width: 120;
-        max-height: 40;
-        border: thick $accent;
-        background: $surface;
+        width: 1fr;
+        height: 1fr;
+        border: none;
+        background: transparent;
+        padding: 0 1;
     }
     
     .window-title {
-        text-align: center;
+        text-align: left;
         text-style: bold;
         color: $text;
         margin: 1;
@@ -446,7 +453,8 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
         button_id = event.button.id
 
         if button_id == "close-btn":
-            self.app.pop_screen()
+            # Nothing to pop: this is a view. The rail is how you leave.
+            self._return_to_playground()
 
         elif button_id == "new-profile-btn":
             await self._create_new_profile()
@@ -675,9 +683,18 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
             severity="information",
         )
 
-    def action_close(self) -> None:
-        """Close the window"""
-        self.app.pop_screen()
+    def _return_to_playground(self) -> None:
+        """Switch the Speech destination back to its default view.
+
+        The window used to `pop_screen()` here. Inside a frame there is no
+        screen to pop, and doing it anyway would dismiss the whole Speech
+        destination.
+        """
+        window = getattr(self, "parent", None)
+        while window is not None and not hasattr(window, "current_view"):
+            window = getattr(window, "parent", None)
+        if window is not None:
+            window.current_view = "playground"
 
     def action_new_profile(self) -> None:
         """Create new profile action"""
