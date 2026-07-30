@@ -480,6 +480,9 @@ class _LegacyTranscriptionBackend:
         Returns:
             Dict with 'text' and 'segments' keys
         """
+        if not os.path.exists(audio_path):
+            raise TranscriptionError(f"Audio file not found: {audio_path}")
+
         provider = provider or self.config["default_provider"]
 
         # Handle provider-specific default models
