@@ -496,7 +496,8 @@ Update the tests to describe current behavior:
     `mcp_workbench_module._mcp_import_home` instead of the shared
     `os.path.expanduser` attribute. Preserve each temporary containment root and
     all picker-loading, unreadable-file, outside-home rejection, and size-cap
-    assertions; do not change production config or private-path handling.
+    assertions, and update the affected test rationale to name the seam actually
+    patched; do not change production config or private-path handling.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library

@@ -2142,7 +2142,8 @@ private-file guard fail before `MCPImportPanel` mounts.
 
 In all four import-file path regressions, patch
 `mcp_workbench_module._mcp_import_home` to the intended temporary root instead
-of patching `os.path.expanduser`. Preserve every existing assertion and do not
+of patching `os.path.expanduser`. Update the three affected test docstrings so
+they describe that narrow seam. Preserve every existing assertion and do not
 change production path validation or config loading.
 
 - [ ] **Step 3: Verify the import-file contracts**
@@ -2155,6 +2156,7 @@ change production path validation or config loading.
   Tests/UI/test_mcp_workbench.py::test_load_import_file_rejects_oversized_file \
   -q
 ../../.venv/bin/python -m ruff check Tests/UI/test_mcp_workbench.py
+../../.venv/bin/python -m ruff format --check Tests/UI/test_mcp_workbench.py
 git diff --check
 ```
 
