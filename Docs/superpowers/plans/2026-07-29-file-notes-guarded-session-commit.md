@@ -157,23 +157,23 @@ a remote.
 - Create: `tldw_chatbook/Notes/file_notes_git_commit.py`
 - Create: `Tests/Notes/test_file_notes_git_commit.py`
 
-- [ ] Write `test_commit_message_*` tests first for:
+- [x] Write `test_commit_message_*` tests first for:
   subject trimming; required 1–512-character subject; single-line subject;
   CRLF/CR normalization; surrounding blank-body-line removal; preservation of
   internal body whitespace/newlines; exact `subject\n` or
   `subject\n\nbody\n`; UTF-8/64-KiB bounds; emoji and ordinary RTL acceptance;
   and rejection of NUL, unsafe C0/C1 controls, lone surrogates, and
   directional-override/isolate controls.
-- [ ] Write `test_git_identity_*` tests first for parsing Git's effective
+- [x] Write `test_git_identity_*` tests first for parsing Git's effective
   `<name> <email> <timestamp> <offset>` ident from the right, missing/empty
   name/email, author/committer display collapse, hostile terminal controls,
   and markup-looking but otherwise printable text.
-- [ ] Write `test_raw_staged_delta_*` and `test_raw_commit_object_*` tests
+- [x] Write `test_raw_staged_delta_*` and `test_raw_commit_object_*` tests
   first for NUL-delimited additions/deletions/mode changes, malformed/truncated
   records, one exact parent, tree, author, committer, multiline headers,
   message bytes, and signature-header detection. Preserve filename bytes only
   long enough for proof comparison; diagnostics remain generic.
-- [ ] Run:
+- [x] Run:
 
 ```bash
 python -m pytest Tests/Notes/test_file_notes_git_commit.py -q -k "commit_message or git_identity or raw_staged_delta or raw_commit_object"
@@ -181,11 +181,11 @@ python -m pytest Tests/Notes/test_file_notes_git_commit.py -q -k "commit_message
 
 Expected: FAIL because the new module/contracts do not exist.
 
-- [ ] Implement only the frozen models and pure functions needed by these
+- [x] Implement only the frozen models and pure functions needed by these
   tests. Use `markup=False`-safe display strings and bounded generic
   diagnostics; do not import Textual or perform Git I/O.
-- [ ] Re-run the command. Expected: PASS.
-- [ ] Run:
+- [x] Re-run the command. Expected: PASS.
+- [x] Run:
 
 ```bash
 python -m ruff check tldw_chatbook/Notes/file_notes_git_commit.py Tests/Notes/test_file_notes_git_commit.py
@@ -193,7 +193,7 @@ python -m ruff format --check tldw_chatbook/Notes/file_notes_git_commit.py Tests
 git diff --check
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_git_commit.py Tests/Notes/test_file_notes_git_commit.py
@@ -209,16 +209,16 @@ git commit -m "feat(notes): add guarded commit contracts [TASK-1350]"
 - Modify: `Tests/Notes/test_file_notes_session_owner.py`
 - Modify: `Tests/Notes/test_file_notes_git_service.py`
 
-- [ ] Write `test_commit_authority_*` owner tests first for:
+- [x] Write `test_commit_authority_*` owner tests first for:
   a monotonic Git-authority generation; invalidation on binding, trust,
   staging ownership, relevant session-change, commit publication, and root
   transitions; and rejection of an ABA review after state changes away and
   back to equivalent values. Do not increment merely because an equivalent
   presentation/status object was republished.
-- [ ] Extend `SessionChangeGroup`/coalescing tests so every group records the
+- [x] Extend `SessionChangeGroup`/coalescing tests so every group records the
   exact ordered session sequence IDs it contains while preserving its stable
   earliest-sequence `group_id`.
-- [ ] Write atomic-publication tests first:
+- [x] Write atomic-publication tests first:
   - success consumes all old-HEAD staging ownership, retires only explicitly
     proven captured sequence IDs, and preserves later sequences plus groups
     with newer postcommit worktree divergence;
@@ -233,7 +233,7 @@ git commit -m "feat(notes): add guarded commit contracts [TASK-1350]"
     deriving or restoring ownership; and
   - an already-admitted exact token may publish during owner-first shutdown,
     while all new admissions remain sealed.
-- [ ] Run:
+- [x] Run:
 
 ```bash
 python -m pytest Tests/Notes/test_file_notes_session_owner.py Tests/Notes/test_file_notes_git_service.py -q -k "commit_authority or commit_publication or commit_quarantine or coalesce_session_changes"
@@ -242,18 +242,18 @@ python -m pytest Tests/Notes/test_file_notes_session_owner.py Tests/Notes/test_f
 Expected: FAIL on missing generation, sequence membership, publication, and
 recovery admission.
 
-- [ ] Add frozen owner-side capture/publication/recovery values. Validate the
+- [x] Add frozen owner-side capture/publication/recovery values. Validate the
   exact active mutation lease token, binding, authority generation,
   repository identity, attached branch, ownership, and captured sequence
   membership in one lock acquisition.
-- [ ] Add a single `publish_commit_outcome(...)` transition instead of
+- [x] Add a single `publish_commit_outcome(...)` transition instead of
   composing existing `clear_status`, `clear_ownership`, and list edits. Keep
   `StagingOwnership` session-path-only and expose at most a sanitized
   recovery-pending projection in `FileNotesSessionSnapshot`.
-- [ ] Extend coalescing with sequence membership without moving ownership or
+- [x] Extend coalescing with sequence membership without moving ownership or
   Git policy into the owner.
-- [ ] Re-run the focused command. Expected: PASS.
-- [ ] Commit:
+- [x] Re-run the focused command. Expected: PASS.
+- [x] Commit:
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_session_owner.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_session_owner.py Tests/Notes/test_file_notes_git_service.py
@@ -268,13 +268,13 @@ git commit -m "feat(notes): add atomic commit authority [TASK-1350]"
 - Modify: `Tests/Notes/test_file_notes_git_commit.py`
 - Modify: `Tests/Notes/test_file_notes_git_service.py`
 
-- [ ] Add `test_retained_commit_child_*` tests first with controlled fake
+- [x] Add `test_retained_commit_child_*` tests first with controlled fake
   subprocesses for:
   normal zero/nonzero exit; timeout with a still-live child; later natural
   nonzero exit; later zero exit; terminate/kill requested by shutdown;
   caller cancellation; repeated settlement; loop affinity; and bounded
   stderr. The exact retained token must never settle another child.
-- [ ] Run:
+- [x] Run:
 
 ```bash
 python -m pytest Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file_notes_git_service.py -q -k "retained_commit_child"
@@ -282,18 +282,18 @@ python -m pytest Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file
 
 Expected: FAIL because the runner has only global shutdown settlement.
 
-- [ ] Replace the runner's sticky-only uncertainty with operation-scoped
+- [x] Replace the runner's sticky-only uncertainty with operation-scoped
   retained-child records. Return an opaque retained-child token only when
   termination is uncertain; expose a non-sealing settlement/read API that can
   distinguish alive, known natural return code, Chatbook stop requested, and
   still-uncertain. Keep existing callers source-compatible.
-- [ ] Preserve runner-owned shielding. Never abandon `communicate()`, lose a
+- [x] Preserve runner-owned shielding. Never abandon `communicate()`, lose a
   final return code that is still knowable, or treat a force-stopped child as a
   known normal unsuccessful commit.
-- [ ] Keep global shutdown bounded and idempotent; it must settle all retained
+- [x] Keep global shutdown bounded and idempotent; it must settle all retained
   tokens and report uncertainty if termination still cannot be proved.
-- [ ] Re-run the focused command. Expected: PASS.
-- [ ] Commit:
+- [x] Re-run the focused command. Expected: PASS.
+- [x] Commit:
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file_notes_git_service.py
@@ -309,31 +309,31 @@ git commit -m "feat(notes): retain exact commit child outcomes [TASK-1350]"
 - Modify: `Tests/Notes/test_file_notes_git_commit.py`
 - Create: `Tests/Notes/test_file_notes_git_commit_integration.py`
 
-- [ ] Add pure argv/environment tests first for:
+- [x] Add pure argv/environment tests first for:
   `--no-replace-objects`; `core.fsmonitor=false`; no rename/external-diff/
   textconv; `GIT_NO_LAZY_FETCH=1`; repository/index/config redirection
   removal; prompt/editor suppression; ambient date removal; identity binding;
   exact commit argv; and exact stdin.
-- [ ] Add fake-runner review tests first for this order:
+- [x] Add fake-runner review tests first for this order:
   root/repository identity → local special-state/lock/graft/partial/promisor
   blockers → attached `refs/heads/*`/old-HEAD read → complete index/delta/tree
   → owned-worktree freshness → identities. Assert no object-resolving command
   runs after a local blocker and no commit child runs during review.
-- [ ] Add proof tests for exact union equality between the complete staged
+- [x] Add proof tests for exact union equality between the complete staged
   delta and current `StagingOwnership`, including additions, deletions, modes,
   move topology, intent-to-add, conflicts, gitlinks, sparse/semantic flags,
   unrelated staged state, stale ownership, and an included group with newer
   saved unstaged edits. Unrelated unstaged paths remain allowed. Ownership
   whose post-Stage entries equal its saved baseline contributes no staged
   delta, is not counted/included, and cannot authorize an empty commit.
-- [ ] Add hostile unrelated-path tests proving the path is absent from every
+- [x] Add hostile unrelated-path tests proving the path is absent from every
   public result, diagnostic, log capture, owner snapshot, and serialized
   representation after the proof call returns.
-- [ ] Add initial disposable-repository review tests for attached, detached,
+- [x] Add initial disposable-repository review tests for attached, detached,
   unborn, missing identity, unrelated staged, newer included edit, active
   operation, lock, graft, replacement ref, and partial/promisor cases. A
   promisor block must execute no fetch/network command.
-- [ ] Run:
+- [x] Run:
 
 ```bash
 python -m pytest Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file_notes_git_commit_integration.py -q -k "commit_argv or commit_environment or commit_review or complete_commit_proof"
@@ -341,23 +341,23 @@ python -m pytest Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file
 
 Expected: FAIL because no review API or complete proof path exists.
 
-- [ ] Implement exact commit builders and a commit-specific sanitized
+- [x] Implement exact commit builders and a commit-specific sanitized
   environment without changing ordinary Stage/Unstage environment behavior.
-- [ ] Implement local blocker inspection before object resolution. Check both
+- [x] Implement local blocker inspection before object resolution. Check both
   worktree/common Git operation markers and relevant locks; common
   `info/grafts`; repository-format partial-clone extension; promisor remote
   configuration; local `.promisor` object markers; sparse state; and
   unsupported index entries. Do not delete or repair anything.
-- [ ] Implement one bounded complete-index proof path separate from the normal
+- [x] Implement one bounded complete-index proof path separate from the normal
   session status parser. Compare raw logical records to owned post-Stage
   entries/topology, compute only signatures/object IDs needed after the call,
   and discard unrelated raw path identities before returning.
-- [ ] Resolve both effective identities with `git var`, normalize/validate the
+- [x] Resolve both effective identities with `git var`, normalize/validate the
   message, create one private immutable single-use snapshot, and return only
   an opaque handle plus sanitized projection. Release the owner mutation gate
   for human review.
-- [ ] Re-run the focused command. Expected: PASS.
-- [ ] Commit:
+- [x] Re-run the focused command. Expected: PASS.
+- [x] Commit:
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_git_commit.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file_notes_git_commit_integration.py
@@ -373,15 +373,15 @@ git commit -m "feat(notes): add guarded commit review proof [TASK-1350]"
 - Modify: `Tests/Notes/test_file_notes_git_commit.py`
 - Modify: `Tests/Notes/test_file_notes_git_commit_integration.py`
 
-- [ ] Add confirmation tests first for one-shot handle consumption, full
+- [x] Add confirmation tests first for one-shot handle consumption, full
   revalidation under the exact mutation lease, generation/repository/branch/
   index/worktree/message/identity drift, cancellation before child start, and
   refusal of cancellation after child start.
-- [ ] Add hooks-directory tests first: `mkdtemp` outside the repository,
+- [x] Add hooks-directory tests first: `mkdtemp` outside the repository,
   owner-only mode, same filesystem identity, verified empty, alive for the
   entire child, `rmdir` only after certain termination, retained while a child
   may be alive, and no recursive deletion.
-- [ ] Add outcome tests first:
+- [x] Add outcome tests first:
   - `Succeeded` requires normal zero exit or later exact recovery plus exact
     attached branch, raw single parent, complete tree, message, reviewed
     names/emails, no signature header, logical index equal to the new tree,
@@ -392,11 +392,11 @@ git commit -m "feat(notes): add guarded commit review proof [TASK-1350]"
     movement, extra/missing content, or uncertain child is `Uncertain`;
   - no outcome performs rollback, lock deletion, retry, worktree mutation, or
     replica mutation.
-- [ ] Add real-repository happy-path and definite-failure tests verifying
+- [x] Add real-repository happy-path and definite-failure tests verifying
   parent/tree/message/identities/unsigned object/ref/index, hook sentinel not
   run, configured signing overridden, configured fsmonitor not invoked,
   automatic maintenance disabled, and unrelated unstaged bytes unchanged.
-- [ ] Run:
+- [x] Run:
 
 ```bash
 python -m pytest Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file_notes_git_commit_integration.py -q -k "commit_confirmation or hooks_directory or commit_outcome or guarded_commit_success or guarded_commit_failure"
@@ -404,20 +404,20 @@ python -m pytest Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file
 
 Expected: FAIL because confirmation/execution/postflight are not implemented.
 
-- [ ] Implement final revalidation and atomically consume the confirmation
+- [x] Implement final revalidation and atomically consume the confirmation
   capability before execution. Use the exact direct argv/stdin/environment
   contract and bind reviewed names/emails while allowing Git to select current
   execution timestamps.
-- [ ] Keep the owner mutation lease through child completion, postflight, and
+- [x] Keep the owner mutation lease through child completion, postflight, and
   the single atomic owner publication. Publish success by retiring only
   postflight-proven captured sequences, retaining newer worktree groups,
   clearing old-HEAD ownership, and refreshing actual session status.
-- [ ] Emit the exact success summary and adjacent qualification:
+- [x] Emit the exact success summary and adjacent qualification:
   `Committed N session notes as <short-oid>; unrelated changes untouched.` and
   `No unrelated staged content was committed; Chatbook selected no unrelated
   worktree paths.`
-- [ ] Re-run the focused command. Expected: PASS.
-- [ ] Commit:
+- [x] Re-run the focused command. Expected: PASS.
+- [x] Commit:
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_git_commit.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file_notes_git_commit_integration.py
@@ -435,17 +435,17 @@ git commit -m "feat(notes): execute and prove guarded commit [TASK-1350]"
 - Modify:
   `Tests/ProductionApp/test_file_notes_session_owner_lifecycle.py`
 
-- [ ] Add recovery tests first for:
+- [x] Add recovery tests first for:
   child still alive; relevant lock/special state; later exact success; later
   exact unchanged state after known natural nonzero exit; later unchanged
   state without a known normal failure; repository differing from both states;
   repeated `Check again`; rebinding; and process exit. Assert `Check again`
   never starts a commit child.
-- [ ] Add lifecycle tests first for caller/UI waiter cancellation, panel
+- [x] Add lifecycle tests first for caller/UI waiter cancellation, panel
   unmount, owner-first application shutdown, bounded terminate/kill, exact
   owner publication before service cleanup, and hooks-directory retention or
   cleanup according to child certainty.
-- [ ] Run:
+- [x] Run:
 
 ```bash
 python -m pytest Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file_notes_git_commit_integration.py Tests/ProductionApp/test_file_notes_session_owner_lifecycle.py -q -k "commit_recovery or commit_check_again or retained_commit_shutdown"
@@ -454,20 +454,23 @@ python -m pytest Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file
 Expected: FAIL because uncertain evidence cannot yet converge and shutdown does
 not yet settle a commit cycle.
 
-- [ ] Quarantine captured staging ownership before releasing an uncertain
+- [x] Quarantine captured staging ownership before releasing an uncertain
   mutation lease. Clear cached status, preserve only immutable old-HEAD/tree/
   message/identity/index proof plus the exact retained child token, and block
   all ordinary Git mutations.
-- [ ] Make `Check again` unavailable while the exact child may be alive or a
-  relevant lock/special operation remains. After certain termination:
+- [x] Keep `Check again` available as a user-triggered, proof-only liveness
+  probe while uncertainty evidence is retained. While the exact child may
+  still be alive or a relevant lock/special operation remains, it performs no
+  repository proof or mutation and leaves the attempt `Uncertain`. After
+  certain termination:
   publish normal success on exact reviewed-child/index proof; restore captured
   ownership only on exact old-state proof plus known natural nonzero result;
   otherwise remain uncertain without deriving ownership from fresh status.
-- [ ] Extend service shutdown to settle review, confirmation, recovery, runner,
+- [x] Extend service shutdown to settle review, confirmation, recovery, runner,
   and hooks-directory lifecycles idempotently. Do not clear owner state before
   the retained operation publishes its exact outcome.
-- [ ] Re-run the focused command. Expected: PASS.
-- [ ] Commit:
+- [x] Re-run the focused command. Expected: PASS.
+- [x] Commit:
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_git_commit.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file_notes_git_commit_integration.py Tests/ProductionApp/test_file_notes_session_owner_lifecycle.py
@@ -486,7 +489,7 @@ git commit -m "feat(notes): recover uncertain guarded commits [TASK-1350]"
 - Modify only if a new test fails:
   `tldw_chatbook/Notes/file_notes_session_owner.py`
 
-- [ ] Add the remaining real-repository cases one at a time:
+- [x] Add the remaining real-repository cases one at a time:
   create/modify/delete/mode/grouped move/chained move; exact complete tree;
   unrelated staged block with unchanged branch/index and no path disclosure;
   trusted clean-filter freshness; conflict/intent-to-add/gitlink/semantic
@@ -494,11 +497,11 @@ git commit -m "feat(notes): recover uncertain guarded commits [TASK-1350]"
   grafts; partial/promisor repositories with no network; ambient dates;
   postflight `HEAD`/index drift with no rollback; retained newer worktree
   edits; and unchanged note bytes plus SQLite replica/revision/tombstone rows.
-- [ ] Add one 1,000-note repository with a representative session set, and
+- [x] Add one 1,000-note repository with a representative session set, and
   instrument the runner to assert the review/confirm/postflight Git process
   count is bounded by a constant and identical for the small and large
   repository. Do not enumerate 1,000 rows in the review UI.
-- [ ] Before any implementation adjustment, run:
+- [x] Before any implementation adjustment, run:
 
 ```bash
 python -m pytest Tests/Notes/test_file_notes_git_commit_integration.py -q
@@ -508,7 +511,7 @@ Expected: the new matrix either passes against Tasks 4–6 or identifies one
 specific contract defect. Fix only a demonstrated defect; do not add a new
 abstraction or broader repository feature.
 
-- [ ] Re-run until PASS. Also run:
+- [x] Re-run until PASS. Also run:
 
 ```bash
 python -m pytest Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file_notes_session_owner.py -q
@@ -517,7 +520,7 @@ git diff --check
 
 Expected: PASS.
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add Tests/Notes/test_file_notes_git_commit_integration.py tldw_chatbook/Notes/file_notes_git_commit.py tldw_chatbook/Notes/file_notes_git_service.py tldw_chatbook/Notes/file_notes_session_owner.py
@@ -534,7 +537,7 @@ Omit unchanged production files from `git add`.
   `tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py`
 - Modify: `Tests/UI/test_library_file_notes_git.py`
 
-- [ ] Add mounted panel tests first for:
+- [x] Add mounted panel tests first for:
   `Commit staged (0/N)` and its zero explanation; form entry and inline
   validation; current branch/count; typed intents; binding draft projection;
   exact `markup=False` message/identity/path preview; included-note
@@ -544,12 +547,12 @@ Omit unchanged production files from `git add`.
   transferring the Review Enter to Confirm; and state-aware Escape. The
   displayed count comes from service/owner-authorized groups that contribute
   an actual staged delta, never a panel guess from row count.
-- [ ] Add geometry tests first for one mounted panel at normal width and
+- [x] Add geometry tests first for one mounted panel at normal width and
   `40x20`. At 40 columns the fixed review footer must render Edit and Cancel
   on row one and full-width Confirm on row two, in keyboard order
   disclosure → Edit → Cancel → Confirm. Confirm is last and never initially
   focused.
-- [ ] Add result tests first proving running, success, failed, blocked, and
+- [x] Add result tests first proving running, success, failed, blocked, and
   uncertain copy wraps/scrolls and is never passed through
   `_fit_two_line_copy()`/`_fit_fixed_regions()`. Uncertainty exposes only safe
   inspection and `Check again`. Pin these required strings exactly:
@@ -557,7 +560,7 @@ Omit unchanged production files from `git add`.
   `Git is updating the branch; cancellation is unavailable.`; and
   `Commit may have succeeded. Git actions are disabled until the repository
   is checked. Run git status and git log -1, then choose Check again.`
-- [ ] Run:
+- [x] Run:
 
 ```bash
 python -m pytest Tests/UI/test_library_file_notes_git.py -q -k "commit_panel or commit_form or commit_review or commit_result or commit_footer"
@@ -565,20 +568,20 @@ python -m pytest Tests/UI/test_library_file_notes_git.py -q -k "commit_panel or 
 
 Expected: FAIL because the panel has only staged-note list actions.
 
-- [ ] Keep one mounted panel with a list surface and a hidden commit workflow
+- [x] Keep one mounted panel with a list surface and a hidden commit workflow
   surface; do not add a modal, screen, or recompose-driven second panel. Use a
   scrollable workflow body plus fixed footer and the existing `ListView` for
   included notes.
-- [ ] Add presentation phases `list`, `form`, `checking`, `review`,
+- [x] Add presentation phases `list`, `form`, `checking`, `review`,
   `confirming`, `executing`, and `result`, with render methods receiving only
   sanitized immutable projections. The panel emits typed intents and contains
   no Git command, proof, ownership, or service policy.
-- [ ] Make `Back to navigator` exist only at list level. Form/checking Cancel
+- [x] Make `Back to navigator` exist only at list level. Form/checking Cancel
   returns to the staged-note list; Review Escape/Edit returns to the form;
   Review `Cancel commit` returns to the staged-note list; executing ignores
   cancellation/navigation; uncertainty has no implicit mutation.
-- [ ] Re-run the focused command. Expected: PASS.
-- [ ] Commit:
+- [x] Re-run the focused command. Expected: PASS.
+- [x] Commit:
 
 ```bash
 git add tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py Tests/UI/test_library_file_notes_git.py
@@ -587,8 +590,19 @@ git commit -m "feat(notes): add guarded commit review UI [TASK-1350]"
 
 ## Task 9: Wire Draft, Editor Lease, Retained Operations, and Focus
 
+**Preflight correction (2026-07-29):** The service's retained review waiter is
+shielded from caller cancellation, while the exact child-start boundary is
+private. The workspace therefore cannot satisfy the already-approved
+review-cancellation, post-child no-cancel, or remount requirements without a
+small service-owned observation/cancellation seam. ADR-038 already governs
+this lifecycle boundary; no new ADR is required.
+
 **Files:**
 
+- Modify:
+  `tldw_chatbook/Notes/file_notes_git_service.py`
+- Modify:
+  `Tests/Notes/test_file_notes_git_service.py`
 - Modify:
   `tldw_chatbook/Widgets/Library/library_file_notes_workspace.py`
 - Modify:
@@ -597,64 +611,75 @@ git commit -m "feat(notes): add guarded commit review UI [TASK-1350]"
 - Modify only if required by a failing fresh-screen test:
   `Tests/UI/test_screen_navigation.py`
 
-- [ ] Add mounted workspace tests first for a draft keyed by exact repository
+- [x] Add mounted workspace tests first for a draft keyed by exact repository
   binding: it survives Edit, Cancel, blocked/stale review, definite failure,
   `Uncertain`, repeated `Check again`, later unchanged convergence, and panel
   replacement; proven success clears it, including success reached through
   `Check again`; root/repository rebinding clears it with visible explanation.
-- [ ] Add tokenized editor-read-only tests first. Acquire before autosave
+- [x] Add tokenized editor-read-only tests first. Acquire before autosave
   settlement for the exact `(editor identity, binding)`, block review on
   dirty/saving/conflict/save-error, preserve Stage's existing writable-editor
   behavior, and release only this flow's reason on cancellation/block/terminal
   outcome. Other read-only reasons remain effective.
-- [ ] Add retained-operation tests first for review cancellation, confirm
+- [x] Add retained-operation tests first for review cancellation, confirm
   revalidation cancellation, no cancellation/navigation after child start,
   operation-ID stale projection rejection, panel/workspace unmount, remount
   rehydration, and process-owned postflight/publication/lease finalization.
   With a deliberately delayed fake service operation over 100 ms, assert the
   Textual pilot remains responsive, can move focus, and can invoke allowed
   pre-child cancellation; Git work must not block the Textual event loop.
-- [ ] Add focus tests first:
+- [x] Add focused service tests first for the smallest binding-scoped public
+  seam that cancels the real retained review/revalidation cycle, exposes its
+  retained settlement, and signals the exact transition to branch-child
+  ownership. Caller waiter cancellation must remain shielded, and no UI
+  observer may own or suppress service postflight, publication, or lease
+  finalization.
+- [x] Add focus tests first:
   Subject after entering form; relevant field/action after validation/block;
   Edit first on review; prior focus after cancellation; first remaining row or
   Back after success; and no delayed `_focus_session_git_panel()` callback
   stealing focus from Subject, Edit, disclosure, or result actions.
-- [ ] Add a full keyboard flow at normal width and `40x20`, plus a
+- [x] Add a full keyboard flow at normal width and `40x20`, plus a
   representative session set in a 1,000-note repository. Assert editor action
   toolbars stay visually quiet and narrow Navigator/Editor remain alternate
   views. Assert the incumbent Textual status/notification mechanism announces
   checking, committing, success, failure, and uncertainty.
-- [ ] Run:
+- [x] Run:
 
 ```bash
 python -m pytest Tests/UI/test_library_file_notes_git.py Tests/UI/test_screen_navigation.py -q -k "guarded_commit or commit_editor_lease or commit_operation or commit_focus or commit_40x20 or commit_1000"
+python -m pytest Tests/Notes/test_file_notes_git_service.py -q -k "commit_review_cancel or retained_commit_operation or commit_child_started"
 ```
 
 Expected: FAIL because the workspace protocol/state/lifecycle are not wired.
 
-- [ ] Extend `_SessionGitService` with the typed review/commit/recovery API.
+- [x] Extend `_SessionGitService` with the typed review/commit/recovery API.
   Store draft, operation ID, opaque handle, sanitized projection, retained
   settlement, and prior focus per exact binding. Every async renderer checks
   binding plus operation ID; the service still publishes stale/unmounted
   operation outcomes.
-- [ ] Replace direct editor `read_only` assignments with
+- [x] Keep retained review cancellation and the exact pre-child/child-start
+  transition service-owned. The workspace may observe this typed state to
+  control presentation, but must not infer it from timing or cancel a shielded
+  caller waiter as a substitute.
+- [x] Replace direct editor `read_only` assignments with
   `_sync_editor_read_only()` and tokenized reason leases. Acquire the commit
   lease before `flush_pending_work()`. Attach final release to the retained
   service settlement, not to a disposable Textual waiter/render callback.
-- [ ] Separate confirm into cancelable read-only revalidation and
+- [x] Separate confirm into cancelable read-only revalidation and
   non-cancelable child-start phases. Rehydrate retained phase/outcome from the
   process service/owner when the panel remounts.
-- [ ] Restrict `_focus_session_git_panel()` retry behavior to the list state
+- [x] Restrict `_focus_session_git_panel()` retry behavior to the list state
   and its captured list/entry targets; it must never redirect focus from a
   commit-workflow descendant.
-- [ ] Route checking, committing, success, failure, and uncertainty through
+- [x] Route checking, committing, success, failure, and uncertainty through
   the incumbent Textual status/notification mechanism using the same
   operation-ID stale-projection guard as visible rendering.
-- [ ] Re-run the focused command. Expected: PASS.
-- [ ] Commit:
+- [x] Re-run the focused command. Expected: PASS.
+- [x] Commit:
 
 ```bash
-git add tldw_chatbook/Widgets/Library/library_file_notes_workspace.py tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py Tests/UI/test_library_file_notes_git.py Tests/UI/test_screen_navigation.py
+git add tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_service.py tldw_chatbook/Widgets/Library/library_file_notes_workspace.py tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py Tests/UI/test_library_file_notes_git.py Tests/UI/test_screen_navigation.py
 git commit -m "feat(notes): wire guarded commit workspace flow [TASK-1350]"
 ```
 
@@ -668,8 +693,12 @@ Omit `Tests/UI/test_screen_navigation.py` if unchanged.
   `backlog/tasks/task-1350 - Add-guarded-session-commit-to-File-Notes.md`
 - Modify this plan only to check completed steps or document an approved
   deviation.
+- Modify:
+  `Docs/superpowers/specs/2026-07-29-file-notes-guarded-session-commit-design.md`
+  only to align the documented `Check again` liveness-probe behavior with the
+  reviewed implementation and ADR-038.
 
-- [ ] Run the complete focused automated boundary once:
+- [x] Run the complete focused automated boundary once:
 
 ```bash
 python -m pytest Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file_notes_git_commit_integration.py Tests/Notes/test_file_notes_session_owner.py Tests/Notes/test_file_notes_git_service.py Tests/UI/test_library_file_notes_git.py Tests/ProductionApp/test_file_notes_session_owner_lifecycle.py -q
@@ -678,7 +707,7 @@ python -m pytest Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file
 Expected: PASS. If `Tests/UI/test_screen_navigation.py` changed, append that
 file to this command.
 
-- [ ] Run static checks only on changed Python files:
+- [x] Run static checks only on changed Python files:
 
 ```bash
 python -m ruff check tldw_chatbook/Notes/file_notes_git_commit.py tldw_chatbook/Notes/file_notes_session_owner.py tldw_chatbook/Notes/file_notes_git_service.py tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py tldw_chatbook/Widgets/Library/library_file_notes_workspace.py Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file_notes_git_commit_integration.py Tests/Notes/test_file_notes_session_owner.py Tests/Notes/test_file_notes_git_service.py Tests/UI/test_library_file_notes_git.py Tests/ProductionApp/test_file_notes_session_owner_lifecycle.py
@@ -693,7 +722,7 @@ if changed. If the documented lifecycle deviation changed
 the changed path to the Ruff check, Ruff format check, and `compileall`
 commands. Do not substitute a full-suite or broad-CI run.
 
-- [ ] Perform focused live UAT in a disposable real notes repository using the
+- [x] Perform focused live UAT in a disposable real notes repository using the
   real TUI:
   1. At a normal wide terminal, edit and stage two session notes; leave one
      unrelated worktree change unstaged; enter a subject and multiline body;
@@ -709,26 +738,65 @@ commands. Do not substitute a full-suite or broad-CI run.
      uncertainty instruction.
   4. Record the disposable repository commands, observed commit OID, terminal
      sizes, outcomes, and any deviations in TASK-1350 Implementation Notes.
-- [ ] Review the final diff for unrelated scope, unrelated-path disclosure,
+- [x] Review the final diff for unrelated scope, unrelated-path disclosure,
   note/SQLite mutation calls, shell command construction, durable state, and
   per-note Git loops.
-- [ ] Re-read TASK-1350 and ADR-038. Check all eight acceptance criteria only
+- [x] Re-read TASK-1350 and ADR-038. Check all eight acceptance criteria only
   when their evidence is present. Add concise Implementation Notes listing the
   approach, security boundaries, changed files, focused commands/counts/
   durations, UAT evidence, ADR links, and deviations.
-- [ ] Mark TASK-1350 Done only after all Definition of Done requirements are
+- [x] Mark TASK-1350 Done only after all Definition of Done requirements are
   satisfied:
 
 ```bash
 backlog task edit 1350 --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --check-ac 5 --check-ac 6 --check-ac 7 --check-ac 8 -s Done --plain
 ```
 
-- [ ] Commit task closure:
+- [x] Commit task closure:
 
 ```bash
-git add 'backlog/tasks/task-1350 - Add-guarded-session-commit-to-File-Notes.md' Docs/superpowers/plans/2026-07-29-file-notes-guarded-session-commit.md
+git add 'backlog/tasks/task-1350 - Add-guarded-session-commit-to-File-Notes.md' Docs/superpowers/plans/2026-07-29-file-notes-guarded-session-commit.md Docs/superpowers/specs/2026-07-29-file-notes-guarded-session-commit-design.md
 git commit -m "docs(backlog): close guarded session commit [TASK-1350]"
 ```
+
+### Verification record (2026-07-30)
+
+- Focused automated boundary after final review fixes:
+  `588 passed, 1 warning in 184.99s`.
+- Timing-sensitive harness checks were isolated before the final boundary:
+  `163 passed in 3.36s` for the service file and `138 passed in 42.54s` for
+  the mounted File Notes Git UI file. The harness now distinguishes operation
+  admission from the exact subprocess-spawn signal and waits for Textual row
+  projection before selection.
+- Final scope/security and clean-room review found and closed two fail-closed
+  gaps: repository includes/worktree config now participate in promisor
+  blocking without breaking ordinary linked worktrees, and repeated explicit
+  review cancellation retains the proof child plus mutation lease until exact
+  terminal token release. The nearby repository-proof selector passed
+  `51 tests in 19.95s`; both reviewers approved the fixes.
+- Changed-file Ruff checks, `compileall`, and `git diff --check` passed.
+- Approved formatter deviation: `ruff format --check` reports nine changed
+  files as needing reformatting. Eight also fail the pre-feature baseline; the
+  ninth is the new disposable-repository integration harness. Mechanically
+  reformatting these large files was kept out of this already-reviewed feature
+  closure, so TASK-1350 does not claim formatter cleanup.
+- Live UAT used the real session owner, Git service, SQLite replica, mounted
+  workspace, and disposable Git repositories at `120x40` and `40x20`.
+  Commit `0bc3cc655ee46bfd77fc23d2524bdf08627bd3f4` contained only `one.md`
+  and `two.md`; `unrelated.md` stayed unstaged, the index was clean, and disk
+  plus replica logical-byte hashes were unchanged. Unrelated staging blocked,
+  Cancel preserved the exact draft, and the narrow two-row footer/tab order
+  passed.
+- Manual UAT deliberately did not manufacture a genuinely ambiguous live
+  branch-mutating child or repeat every injected edge case. Newer-included-edit
+  blocking, uncertain draft retention, `Check again`, and exact convergence
+  are covered by the focused mounted/disposable-repository tests instead.
+- UAT evidence:
+  `/tmp/task1350-live-uat.O2BJB7/evidence.json`, with captures under
+  `/tmp/task1350-live-uat.O2BJB7/captures/`.
+- No review finding required changes to `app.py`,
+  `library_screen.py`, or `test_screen_navigation.py`; ADR-038 remains the
+  governing decision and no new ADR is required.
 
 ## Completion Evidence
 

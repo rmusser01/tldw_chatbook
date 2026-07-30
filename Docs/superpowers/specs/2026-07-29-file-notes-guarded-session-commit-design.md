@@ -505,10 +505,13 @@ Commit may have succeeded. Git actions are disabled until the repository is
 checked. Run git status and git log -1, then choose Check again.
 ```
 
-`Check again` is unavailable while the retained child might still be alive or
-a relevant lock/special operation remains. After certain termination, it
-performs fresh repository discovery, identity verification, branch inspection,
-complete internal branch/index proof, and fresh session status:
+`Check again` remains available as an explicit, proof-only liveness probe while
+uncertainty evidence exists. If the retained child might still be alive or a
+relevant lock/special operation remains, it performs no repository proof or
+mutation, reports that settlement is still pending, and leaves the attempt
+`Uncertain`. After certain termination, it performs fresh repository discovery,
+identity verification, branch inspection, complete internal branch/index
+proof, and fresh session status:
 
 - if the same branch tip is the matching reviewed child of old `HEAD` and the
   complete logical index equals its tree with no staged delta, publish the
