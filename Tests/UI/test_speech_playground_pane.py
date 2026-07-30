@@ -16,6 +16,7 @@ from Tests.UI.test_stts_playground_audio_cpp import (
     _wait_until,
 )
 from tldw_chatbook.UI.Speech.speech_axis_row import axis_chip_id
+from tldw_chatbook.UI.Speech.speech_playground_model import AXIS_CONTROLS
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.stts_playground_catalog import PlaygroundControls
 
@@ -178,12 +179,17 @@ class _AxisHarness(App[None]):
 
 
 def _force_default_provider(monkeypatch: pytest.MonkeyPatch, provider_id: str) -> None:
-    """Make the pane's default-provider read deterministic.
+    """Pin which provider `_load_provider_catalog`'s initialize branch picks.
 
-    Without this the initial provider selection falls through to whatever
-    the sandboxed test config happens to contain (usually the first
-    descriptor, but not guaranteed), which would make the override
-    assertions below flaky rather than a property of the code.
+    Unpatched, `_cli_setting("app_tts", "default_provider", options[0][1])`
+    is deterministic, not flaky: the sandboxed test config has no
+    `[app_tts]` section, so it falls through to `options[0][1]`, which is
+    always `audio_cpp` (`FakeTTSService`'s descriptor order matches
+    production's `adapter_bootstrap.build_default_tts_service`). These
+    tests pin the provider anyway because several exercise it explicitly
+    as `"openai"` (to get an unlocked speed axis) or want the assertion to
+    read as "this provider" rather than "whichever one happens to sort
+    first" -- not to route around nondeterminism that was never there.
     """
     monkeypatch.setattr(
         SpeechPlaygroundPane,
@@ -214,6 +220,55 @@ def faked_service(monkeypatch: pytest.MonkeyPatch) -> FakeTTSService:
         SpeechPlaygroundPane, "_check_higgs_installation", lambda self: None
     )
     return service
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_install_seeds_no_axis_defaults_and_paints_no_markers(
+    faked_service: FakeTTSService,
+) -> None:
+    """Contract 5: a missing preference leaves the axis absent from
+    `defaults`, never substituted with a hardcoded fallback.
+
+    Deliberately does NOT patch `get_cli_setting`/`_cli_setting` and does
+    NOT use `_force_default_provider`: `Tests/conftest.py`'s sandboxed
+    bootstrap config has no `[app_tts]` section at all, which is exactly
+    the fresh-install condition contract 5 describes -- and the resulting
+    provider selection is deterministic (`options[0][1]` = `audio_cpp`,
+    since `FakeTTSService`'s descriptor order matches production's
+    `adapter_bootstrap.build_default_tts_service`), not flaky, so this is a
+    real assertion rather than one that happens to pass.
+
+    An earlier version of `_seed_axis_defaults()` fabricated five defaults
+    here (`openai`/`tts-1`/`alloy`/`mp3`/`1.0`) by copying
+    `SpeechSettingsMixin._set_initial_values`'s form-populating fallbacks,
+    which marked four axes overridden the first time the pane was ever
+    opened -- against "saved defaults" that were never saved.
+    """
+    from tldw_chatbook.UI.STTS_Window import _seed_axis_defaults
+
+    seeded = _seed_axis_defaults()
+    assert seeded == {}, (
+        f"a fresh install (no [app_tts] section) must seed no axis "
+        f"defaults at all, got {seeded!r}"
+    )
+
+    app = _AxisHarness(axis_defaults=seeded)
+    async with app.run_test(size=(160, 60)) as pilot:
+        provider_select = app.query_one("#tts-provider-select", Select)
+        await _wait_until(pilot, lambda: isinstance(provider_select.value, str))
+        await pilot.pause()
+
+        marked = [
+            axis
+            for axis in AXIS_CONTROLS
+            if app.query_one(f"#{axis_chip_id(axis)}", Static).has_class(
+                "speech-chip-override"
+            )
+        ]
+        assert not marked, (
+            f"first run painted override markers with no saved defaults: "
+            f"{marked}"
+        )
 
 
 def _controls(
