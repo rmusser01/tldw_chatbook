@@ -198,6 +198,14 @@ def normalize_watchlist_run(
     dispositions = stats.get("dispositions")
     if isinstance(dispositions, Mapping):
         normalized["dispositions"] = dict(dispositions)
+    # Whole-branch review, Critical 1: the same lift for the withheld
+    # magnitude, which lives beside `dispositions` rather than inside it (see
+    # `_disposition_counts`, which returns integers only). Absent whenever the
+    # run withheld nothing, so `_stats_text` appends the number only when it
+    # has one.
+    max_withheld = stats.get("max_withheld_pct")
+    if isinstance(max_withheld, (int, float)) and not isinstance(max_withheld, bool):
+        normalized["max_withheld_pct"] = float(max_withheld)
     return normalized
 
 

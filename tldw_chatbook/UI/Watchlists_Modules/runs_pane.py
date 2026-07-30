@@ -141,11 +141,30 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         # missing for those, so no empty "Checks:" line is added.
         dispositions = run.get("dispositions") or {}
         if dispositions:
+            # Whole-branch review, Critical 1. `baseline` and `rebaselined` are
+            # rendered separately because they mean opposite things: a first
+            # check discarded nothing, while a settings-change re-baseline
+            # threw away a real diff window in which a change could have been
+            # lost. Spec §3 accepts that lost window only on the strength of
+            # this line saying so -- one `baseline` count could not, which left
+            # the disposition's `reason` with no consumer anywhere in the
+            # product.
+            withheld = dispositions.get("withheld", 0)
+            withheld_text = f"{withheld} withheld"
+            max_withheld = run.get("max_withheld_pct")
+            if withheld and isinstance(max_withheld, (int, float)):
+                # Spec §1: say what is being withheld, not merely that
+                # something was. Without the number the user cannot tell a
+                # threshold that is slightly too high from one that is
+                # swallowing everything.
+                withheld_text += f" (largest {float(max_withheld):.1f}%)"
             base += (
                 f"\nChecks: {dispositions.get('changed', 0)} changed | "
                 f"{dispositions.get('unchanged', 0)} unchanged | "
-                f"{dispositions.get('withheld', 0)} withheld | "
-                f"{dispositions.get('baseline', 0)} baseline"
+                f"{withheld_text} | "
+                f"{dispositions.get('baseline', 0)} baseline | "
+                f"{dispositions.get('rebaselined', 0)} re-baselined "
+                "(settings changed)"
             )
         return base
 

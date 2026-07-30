@@ -117,6 +117,20 @@ WC_SERVICE_ERROR_COPY = "Watchlists services unavailable; retry Watchlists later
 WC_SERVICE_UNAVAILABLE_COPY = "Watchlists services are unavailable in this runtime."
 WC_SNAPSHOT_TIMEOUT_SECONDS = 1.5
 
+#: Success copy for the Inspector's ignore-rule Save (TASK-1362).
+#:
+#: The third sentence is the whole-branch review's Critical 1. Spec §3 accepts
+#: that a settings edit costs one diff window -- a change the page makes before
+#: the next check is compared against nothing and is never reported -- and it
+#: accepts that cost only if the user is told. The Runs pane now says it after
+#: the fact ("N re-baselined (settings changed)"); this says it at the moment
+#: the user causes it, which is the only point at which they can decide to wait
+#: for a check before saving.
+NOISE_SELECTORS_SAVED_TOAST = (
+    "Ignore rules saved. The next check re-baselines this source. "
+    "A change the page makes before that check will not be reported."
+)
+
 #: Worker group for the two item read/unread status writes. They must
 #: supersede each other (a fast `j` run should not queue up one write per key)
 #: but must NOT supersede unrelated work -- see the note at
@@ -3307,7 +3321,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._patch_entity_ignore_selectors(source_id, text)
         if callable(notify):
             notify(
-                "Ignore rules saved. The next check re-baselines this source.",
+                NOISE_SELECTORS_SAVED_TOAST,
                 severity="information",
             )
 

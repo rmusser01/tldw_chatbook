@@ -97,6 +97,34 @@ def test_fingerprint_changes_when_extraction_actually_changes():
     assert extraction_fingerprint(None, "auto") == extraction_fingerprint("", "auto")
 
 
+def test_fingerprint_normalizes_a_null_method_to_the_branch_actually_taken():
+    """Whole-branch review, Minor 7: a falsy method is RAW, not "auto".
+
+    `URLMonitor._fetch_url_content` branches on
+    `extraction_method == "full" or extraction_method == "auto"` and sends
+    everything else -- including the explicit `None` a NULL
+    `extraction_method` column hands it -- down the raw-response-body path,
+    where `ignore_selectors` are never applied at all. Normalizing `None` to
+    "auto" here therefore gave two genuinely different extractions the same
+    fingerprint: a collision, in the one function whose entire contract is
+    "equal iff extraction behaviour is equal".
+
+    Both directions are asserted, because only pinning the equality would pass
+    if the normalization moved the "auto" case to "raw" instead.
+    """
+    from tldw_chatbook.Subscriptions.noise_defaults import extraction_fingerprint
+
+    assert extraction_fingerprint(".ad", None) == extraction_fingerprint(".ad", "raw"), (
+        "a NULL method extracts the raw body, exactly like an explicit 'raw'"
+    )
+    assert extraction_fingerprint(".ad", "") == extraction_fingerprint(".ad", "raw")
+    assert extraction_fingerprint(".ad", None) != extraction_fingerprint(".ad", "auto"), (
+        "'auto' strips the selectors from parsed HTML and a NULL does not -- "
+        "these two must never compare as the same extraction"
+    )
+    assert extraction_fingerprint(".ad", "auto") != extraction_fingerprint(".ad", "raw")
+
+
 def _fresh_db():
     from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 
@@ -294,14 +322,23 @@ def test_migration_rolls_back_atomically_on_mid_migration_failure():
 # the ambiguity the spec is about (§4, "silence means four different things")
 # got into the product in the first place.
 
-_NO_DISPOSITIONS = {"changed": 0, "unchanged": 0, "withheld": 0, "baseline": 0}
+_NO_DISPOSITIONS = {
+    "changed": 0,
+    "unchanged": 0,
+    "withheld": 0,
+    "baseline": 0,
+    "rebaselined": 0,
+}
 
 
 def _counts(**overrides: int) -> dict[str, int]:
-    """The full four-key disposition-count dict, with `overrides` applied.
+    """The full five-key disposition-count dict, with `overrides` applied.
 
     Written as the whole dict rather than a single-key lookup so a test cannot
-    pass while some *other* disposition also fired.
+    pass while some *other* disposition also fired. `baseline` and
+    `rebaselined` are separate keys (whole-branch review, Critical 1), which is
+    what lets these assertions distinguish "nothing existed to compare against"
+    from "a real diff window was thrown away".
     """
     return {**_NO_DISPOSITIONS, **overrides}
 
@@ -317,23 +354,72 @@ def test_disposition_count_keys_are_bound_to_the_real_constants():
     `KeyError` inside `_disposition_counts` and discard every item a run
     collected -- this pins the binding directly rather than trusting that the
     literals were copied correctly.
+
+    Extended for the whole-branch review's Critical 1: the key is the
+    `(kind, reason)` PAIR, because `DISPOSITION_BASELINE_STORED` has two causes
+    that must not be aggregated -- and the two `REASON_*` constants are pinned
+    to their own counters here for the same anti-drift reason the kinds are.
+    Collapsing `baseline`/`rebaselined` back into one counter reddens this.
     """
     from tldw_chatbook.Subscriptions import monitoring_engine
     from tldw_chatbook.Subscriptions.local_watchlists_service import (
+        _DISPOSITION_COUNTERS,
         _disposition_count_keys,
     )
 
     mapping = _disposition_count_keys()
     assert set(mapping) == {
-        monitoring_engine.DISPOSITION_CHANGED,
-        monitoring_engine.DISPOSITION_UNCHANGED,
-        monitoring_engine.DISPOSITION_WITHHELD,
-        monitoring_engine.DISPOSITION_BASELINE_STORED,
+        (monitoring_engine.DISPOSITION_CHANGED, None),
+        (monitoring_engine.DISPOSITION_UNCHANGED, None),
+        (
+            monitoring_engine.DISPOSITION_WITHHELD,
+            monitoring_engine.REASON_BELOW_CHANGE_THRESHOLD,
+        ),
+        (
+            monitoring_engine.DISPOSITION_BASELINE_STORED,
+            monitoring_engine.REASON_FIRST_CHECK,
+        ),
+        (
+            monitoring_engine.DISPOSITION_BASELINE_STORED,
+            monitoring_engine.REASON_EXTRACTION_SETTINGS_CHANGED,
+        ),
     }
-    assert mapping[monitoring_engine.DISPOSITION_CHANGED] == "changed"
-    assert mapping[monitoring_engine.DISPOSITION_UNCHANGED] == "unchanged"
-    assert mapping[monitoring_engine.DISPOSITION_WITHHELD] == "withheld"
-    assert mapping[monitoring_engine.DISPOSITION_BASELINE_STORED] == "baseline"
+    assert mapping[(monitoring_engine.DISPOSITION_CHANGED, None)] == "changed"
+    assert mapping[(monitoring_engine.DISPOSITION_UNCHANGED, None)] == "unchanged"
+    assert (
+        mapping[
+            (
+                monitoring_engine.DISPOSITION_WITHHELD,
+                monitoring_engine.REASON_BELOW_CHANGE_THRESHOLD,
+            )
+        ]
+        == "withheld"
+    )
+    # The split itself: one kind, two reasons, two DISTINCT counters.
+    first_check = mapping[
+        (
+            monitoring_engine.DISPOSITION_BASELINE_STORED,
+            monitoring_engine.REASON_FIRST_CHECK,
+        )
+    ]
+    settings_changed = mapping[
+        (
+            monitoring_engine.DISPOSITION_BASELINE_STORED,
+            monitoring_engine.REASON_EXTRACTION_SETTINGS_CHANGED,
+        )
+    ]
+    assert first_check == "baseline"
+    assert settings_changed == "rebaselined"
+    assert first_check != settings_changed, (
+        "spec §3 accepts a re-baseline's lost diff window only because the "
+        "Runs pane says why; one shared counter cannot, which is what left "
+        "the disposition's `reason` with no consumer in the product"
+    )
+
+    # And every counter the binding names is one `_disposition_counts` zero-
+    # fills, so a run can never omit a key the Runs pane reads.
+    assert set(mapping.values()) == set(_DISPOSITION_COUNTERS)
+    assert set(_DISPOSITION_COUNTERS) == set(_NO_DISPOSITIONS)
 
 
 async def _url_source(monkeypatch, pages: list[str], **payload):
@@ -532,9 +618,11 @@ async def test_editing_selectors_rebaselines_instead_of_phantom_item(monkeypatch
     await service.update_source(source_id, {"ignore_selectors": ".ad\n.promo"})
 
     second = await _check(service, source_id)
-    assert _dispositions(second) == _counts(baseline=1), (
+    assert _dispositions(second) == _counts(rebaselined=1), (
         "an extraction-settings edit must re-baseline, not report the noise "
-        "disappearing as a change the site made"
+        "disappearing as a change the site made -- and it must count as "
+        "`rebaselined`, not `baseline`: a real diff window was discarded here, "
+        "which is not true of a first check"
     )
     assert _stored_items(db, source_id) == [], "no phantom item may be stored"
 
@@ -551,7 +639,7 @@ async def test_editing_selectors_rebaselines_instead_of_phantom_item(monkeypatch
     )
 
     fourth = await _check(service, source_id)
-    assert _dispositions(fourth) == _counts(baseline=1), (
+    assert _dispositions(fourth) == _counts(rebaselined=1), (
         "the fingerprint comparison must run BEFORE the hash comparison: the "
         "stored hash was computed under the old settings, so a hash match "
         "across a settings change is not evidence of anything"
@@ -607,6 +695,166 @@ async def test_the_rebaseline_records_why_it_happened(monkeypatch):
     }
 
 
+def _migrated_page(price: str) -> str:
+    """A page carrying real content, default-stripped noise, and a promo.
+
+    The `.view-count` span is in `DEFAULT_IGNORE_SELECTORS`, so the one-time
+    migration's prefill changes this page's extracted text -- which is what
+    makes the NULL-fingerprint sequence below able to fail. The `.promo` div is
+    NOT in the default set, so it is still available for a later user edit.
+    """
+    return (
+        "<html><body><h1>Widget pricing</h1>"
+        '<div class="promo">Limited time offer, ends soon</div>'
+        f"<p>The price is {price}.</p>"
+        '<span class="view-count">100 views</span>'
+        "</body></html>"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_migrated_null_fingerprint_rebaselines_then_behaves_normally(
+    monkeypatch,
+):
+    """The self-healing path the spec's Testing section claims, end to end.
+
+    Whole-branch review, Important 2: `previous["extraction_fingerprint"] or ""`
+    is what makes the one-time migration self-healing, and it had NO test. The
+    reviewer's probe -- rewriting the guard as `if previous_fp and previous_fp
+    != current_fingerprint` -- reads as a harmless null-check and makes every
+    migrated source fire a phantom item on its very first check, because the
+    migration prefilled `ignore_selectors` and the stored snapshot's text was
+    extracted before that prefill existed. This sequence reddens under it.
+
+    The pre-migration state is produced by the REAL migration, not simulated:
+    dropping `url_snapshots.extraction_fingerprint` both destroys the stored
+    fingerprint (leaving NULL once re-added, exactly as a pre-migration row
+    does) and re-arms the migration's structural gate, so
+    `_ensure_watchlists_schema` then does the actual prefill.
+
+    Which counter the NULL case lands in is a deliberate decision, asserted
+    here: `rebaselined`, not `baseline`. A migrated snapshot holds real prior
+    content that IS discarded uncompared -- a diff window the user loses, which
+    is not true of a first check where nothing existed -- and the reason
+    `extraction_settings_changed` is literally accurate, because the migration
+    itself rewrote every url-family source's `ignore_selectors` and
+    `change_threshold`.
+    """
+    from tldw_chatbook.Subscriptions.noise_defaults import (
+        default_ignore_selectors_text,
+    )
+
+    db, service, source_id = await _url_source(
+        monkeypatch,
+        [_migrated_page("42 credits")],
+        # `_url_source` does not supply one, and `_upsert_subscription_items`
+        # skips any item whose `url` is empty -- so without this the final
+        # "a real change fires" assertion could never see a stored item.
+        url="https://example.com/page",
+        ignore_selectors="",  # a pre-migration source: nothing stripped
+    )
+
+    first = await _check(service, source_id)
+    assert _dispositions(first) == _counts(baseline=1)
+    assert _stored_items(db, source_id) == []
+
+    # --- become a pre-migration database, then run the real migration -------
+    with db.transaction() as conn:
+        conn.execute("ALTER TABLE url_snapshots DROP COLUMN extraction_fingerprint")
+    db._ensure_watchlists_schema()
+
+    stored_fp = db.conn.execute(
+        "SELECT extraction_fingerprint FROM url_snapshots"
+        " WHERE subscription_id = ? ORDER BY id DESC LIMIT 1",
+        (source_id,),
+    ).fetchone()["extraction_fingerprint"]
+    assert stored_fp is None, (
+        "the precondition: the existing snapshot must look exactly like a "
+        "pre-migration one, with a NULL fingerprint"
+    )
+    assert (
+        db.get_subscription(source_id)["ignore_selectors"]
+        == default_ignore_selectors_text()
+    ), (
+        "the precondition: the migration really did change this source's "
+        "extraction settings, which is why the stored snapshot is no longer "
+        "comparable"
+    )
+    snapshot_text = db.conn.execute(
+        "SELECT extracted_content FROM url_snapshots WHERE subscription_id = ?"
+        " ORDER BY id DESC LIMIT 1",
+        (source_id,),
+    ).fetchone()["extracted_content"]
+    assert "100 views" in snapshot_text, (
+        "the precondition that gives this test teeth: the pre-migration "
+        "snapshot contains noise the new selectors strip, so comparing against "
+        "it produces a phantom change rather than merely a redundant one"
+    )
+
+    # --- the NULL fingerprint re-baselines, and says why -------------------
+    item, disposition = await _direct_check(db, source_id)
+    assert item is None, (
+        "a migrated source must not fire an item on its first post-migration "
+        "check -- the whole diff would be the prefilled selectors' noise "
+        "disappearing, which the site never did"
+    )
+    assert disposition == {
+        "kind": "baseline_stored",
+        "reason": "extraction_settings_changed",
+        "withheld_percentage": None,
+    }
+
+    # Re-arm the identical migrated condition to observe the OTHER layer: the
+    # run-level counter this reason feeds. One NULL fingerprint can only be
+    # consumed once, so the disposition dict above and the aggregate below
+    # cannot both be read from the same check.
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE url_snapshots SET extraction_fingerprint = NULL"
+            " WHERE subscription_id = ?",
+            (source_id,),
+        )
+    migrated_run = await _check(service, source_id)
+    assert _dispositions(migrated_run) == _counts(rebaselined=1), (
+        "a migrated snapshot is discarded uncompared, so it belongs in "
+        "`rebaselined` -- counting it as `baseline` would tell the user "
+        "nothing was lost when a whole diff window was"
+    )
+    assert _stored_items(db, source_id) == []
+
+    # --- settled: the same page now compares normally ----------------------
+    settled = await _check(service, source_id)
+    assert _dispositions(settled) == _counts(unchanged=1), (
+        "the re-baseline must happen once, not on every check"
+    )
+
+    # --- a user selector edit re-baselines for its own, distinct reason -----
+    await service.update_source(
+        source_id,
+        {"ignore_selectors": default_ignore_selectors_text() + "\n.promo"},
+    )
+    edited = await _check(service, source_id)
+    assert _dispositions(edited) == _counts(rebaselined=1)
+    assert _stored_items(db, source_id) == []
+
+    # --- and a real page change finally fires ------------------------------
+    _serve(monkeypatch, [_migrated_page("99 credits")])
+    changed = await _check(service, source_id)
+    assert _dispositions(changed) == _counts(changed=1), (
+        "after all that re-baselining a genuine content change must still be "
+        "reported -- the point of the sequence"
+    )
+    items = _stored_items(db, source_id)
+    assert len(items) == 1
+    diff = items[0]["content"]
+    assert any(
+        line.startswith("+") and "99 credits" in line for line in diff.splitlines()
+    )
+    assert "views" not in diff and "Limited time offer" not in diff, (
+        "the stripped noise must not appear in the diff at all"
+    )
+
+
 def _priced_page(price: str) -> str:
     """Ten sentences, one of which carries `price`.
 
@@ -654,6 +902,17 @@ async def test_withheld_carries_the_scaled_percentage(monkeypatch):
         "withholding still produces no item -- that part is unchanged"
     )
 
+    # Whole-branch review, Critical 1: the magnitude has to reach the RUN's
+    # stats, not just the per-check disposition dict, or spec §1's "tells them
+    # what it is withholding" has no production consumer. Before this it had
+    # none: `withheld_percentage` was computed, returned and dropped.
+    run_pct = second["stats"]["max_withheld_pct"]
+    assert run_pct > 1.0, (
+        "the run's max withheld percentage must be the display-scaled value, "
+        f"not a 0.0-1.0 ratio (got {run_pct!r})"
+    )
+    assert run_pct < 50.0
+
     # The percentage itself, off the disposition dict. A below-threshold check
     # deliberately does NOT store a snapshot, so the baseline is still the
     # first page and this repeat check withholds identically.
@@ -662,6 +921,10 @@ async def test_withheld_carries_the_scaled_percentage(monkeypatch):
     assert disposition["kind"] == "withheld_below_threshold"
     assert disposition["reason"] == "below_change_threshold"
     pct = disposition["withheld_percentage"]
+    assert pct == pytest.approx(run_pct), (
+        "the run's `max_withheld_pct` must be the same number the check "
+        "measured, not a re-derived or rounded one"
+    )
     assert pct > 1.0, (
         "the withheld percentage must be scaled ×100 like the reader's "
         f"`change_percentage`, not left as a 0.0-1.0 ratio (got {pct!r})"
@@ -878,6 +1141,10 @@ async def test_run_row_surfaces_dispositions_for_the_runs_pane(monkeypatch):
     assert "0 unchanged" in detail_text
     assert "0 withheld" in detail_text
     assert "0 baseline" in detail_text
+    # Whole-branch review, Critical 1: the split counter has to survive the
+    # whole chain -- engine reason -> service counter -> persisted stats_json
+    # -> `list_runs` row -> rendered line -- not merely exist in the binding.
+    assert "0 re-baselined" in detail_text
 
 
 def test_every_default_threshold_site_agrees_on_zero():
@@ -918,5 +1185,16 @@ def test_every_default_threshold_site_agrees_on_zero():
     # Drift tripwire (source text, not behaviour): the engine reads
     # change_threshold with no default at all (see the comment at its call
     # site), so the old `, 0.1)` fallback must not have crept back in.
+    #
+    # DO NOT "strengthen" this grep (whole-branch review, Minor 9). It matches
+    # one exact spelling and a reintroduction in another shape -- `or 0.1`, a
+    # module constant, a `setdefault` -- slips straight past it. That is
+    # deliberate, because the grep is not what catches a reintroduction:
+    # `test_the_engines_own_fallback_threshold_is_zero` above drives `check_url`
+    # with the `change_threshold` key ABSENT, so ANY non-zero fallback in ANY
+    # spelling makes that ~0.1% edit fall under the threshold and turns it RED
+    # (and `test_null_threshold_does_not_typeerror` covers the explicit-NULL
+    # shape the same way). Broadening this pattern buys nothing behavioural and
+    # costs a false failure the first time an unrelated 0.1 appears in the file.
     engine = (root / "Subscriptions" / "monitoring_engine.py").read_text()
     assert 'subscription.get("change_threshold", 0.1)' not in engine

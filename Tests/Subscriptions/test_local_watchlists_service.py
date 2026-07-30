@@ -293,6 +293,10 @@ async def test_local_watchlists_service_executes_url_list_sources_with_default_u
         "unchanged": 0,
         "withheld": 0,
         "baseline": 0,
+        # Split from `baseline` by the whole-branch review's Critical 1: a
+        # first check discarded nothing, a settings-change re-baseline threw
+        # away a real diff window.
+        "rebaselined": 0,
     }, "the url_list arm must aggregate one disposition per URL checked"
     assert seen_urls == ["https://example.com/a", "https://example.com/b"]
     assert [dict(row) for row in stored_items] == [
@@ -386,6 +390,7 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
         "unchanged": 0,
         "withheld": 0,
         "baseline": 0,
+        "rebaselined": 0,
     }, "the sitemap arm must aggregate one disposition per URL checked"
     assert [dict(row) for row in stored_items] == [
         {

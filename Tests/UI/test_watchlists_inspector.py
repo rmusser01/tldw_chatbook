@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from textual.geometry import Region
 from textual.widgets import Button, DataTable, Static, TextArea
 
 # The end-to-end check harness (TASK-1362 tests below): the real service, the
@@ -877,6 +878,35 @@ async def test_the_editor_fits_on_screen_with_the_source_actions(selectors, size
             "harness is not measuring the product"
         )
 
+        # Whole-branch review, Important 5: the border title must FIT. Textual
+        # truncates an over-wide border label with an ellipsis and reports
+        # nothing, so the 65-character label this field started with painted as
+        # "Ignore elements (CSS s…" in the ~26-column rail -- the truncation ate
+        # the syntax note that was the whole reason the label was long, and the
+        # 75-character border subtitle below it fared no better.
+        #
+        # Measured off the painted strip rather than off `field.border_title`,
+        # because the attribute holds the full string whether or not it fits:
+        # only `render_lines` knows what the user actually sees.
+        top_border = field.render_lines(
+            Region(0, 0, field.outer_size.width, 1)
+        )[0].text
+        assert "…" not in top_border, (
+            f"the noise field's border title is truncated at {size[0]}x{size[1]}: "
+            f"{top_border!r} -- shorten the label, do not widen the rail"
+        )
+        assert str(field.border_title) in top_border, (
+            f"the whole title must be painted, not merely fit: {top_border!r}"
+        )
+        assert field.border_subtitle in (None, ""), (
+            "a second rail-width border label is a second silent truncation, "
+            "and this one duplicated the Save button's tooltip one row below it"
+        )
+        assert "silence" in str(field.tooltip), (
+            "the guidance the shortened title dropped has to live somewhere -- "
+            "the tooltip, which has no width budget"
+        )
+
         width, height = size
         for control_id in (
             "#inspector-noise-selectors",
@@ -936,10 +966,12 @@ async def test_saving_selectors_makes_the_next_check_rebaseline(monkeypatch):
                 break
 
         after = await _check(service, source_id)
-        assert _dispositions(after) == _counts(baseline=1), (
+        assert _dispositions(after) == _counts(rebaselined=1), (
             "the check following a selector edit must re-baseline -- not "
             "report the now-stripped noise as a change the site made, and "
-            "not report `unchanged` off a hash computed under the old settings"
+            "not report `unchanged` off a hash computed under the old settings. "
+            "It counts as `rebaselined`, not `baseline`: this save cost the "
+            "user a real diff window (whole-branch review, Critical 1)"
         )
         assert _stored_items(db, source_id) == [], "no phantom item may be stored"
 
@@ -1047,3 +1079,56 @@ async def test_a_save_that_cannot_write_says_so():
         message, kwargs = toasts[-1]
         assert "Nothing to save" in message
         assert kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_a_successful_save_warns_that_the_next_check_loses_a_window():
+    """Whole-branch review, Critical 1, third leg: warn at the source.
+
+    Spec §3 sanctions the re-baseline's cost -- a change the page makes before
+    the next check is compared against nothing and is never reported -- on the
+    strength of the user being told. The Runs pane now says it after the fact,
+    which is too late to act on; this toast says it at the one moment the user
+    could still decide to wait for a check before saving.
+
+    Asserted on the delivered message's SUBSTANCE, deliberately not against
+    `NOISE_SELECTORS_SAVED_TOAST`: comparing to the constant would stay green
+    if the warning sentence were deleted from the constant itself, which is the
+    exact regression this guards.
+    """
+    app = _build_test_app()
+    db, _service, source_id = await _seed_url_source(app)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    toasts: list[tuple[str, dict]] = []
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        await _select_real_source(pilot, screen, source_id)
+        app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+
+        await _save_selectors(pilot, screen, ".ad\n.promo")
+        for _ in range(40):
+            await pilot.pause()
+            if db.get_subscription(source_id)["ignore_selectors"] != ".ad":
+                break
+        for _ in range(10):
+            await pilot.pause()
+
+        assert toasts, "a successful save must confirm itself"
+        message, kwargs = toasts[-1]
+        assert kwargs.get("severity") == "information"
+        assert "saved" in message.lower(), "precondition: this is the success toast"
+        assert "re-baselines" in message
+        # The added sentence: the consequence, not just the mechanism.
+        # "re-baselines" alone is jargon that does not tell the user a change
+        # can be lost.
+        assert "will not be reported" in message, (
+            "the toast must state the consequence of the re-baseline, not only "
+            "that one will happen -- spec §3's cost is only acceptable if the "
+            "user is told about it while they can still act on it"
+        )
+        assert "before" in message.lower(), (
+            "and it must say WHEN: a change landing before the next check is "
+            "the window that is lost"
+        )

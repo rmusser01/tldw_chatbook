@@ -53,8 +53,9 @@ def extraction_fingerprint(
 
     Args:
         ignore_selectors: The raw newline-separated selector text, or None.
-        extraction_method: The subscription's extraction method, or None
-            (normalized to "auto", the code's effective default).
+        extraction_method: The subscription's extraction method. A falsy value
+            (``None``, as every DB row with a NULL ``extraction_method``
+            carries, or ``""``) normalizes to ``"raw"`` -- see below.
 
     Returns:
         A hex digest; equal iff extraction behaviour is equal.
@@ -62,7 +63,22 @@ def extraction_fingerprint(
     lines = sorted(
         {s.strip() for s in str(ignore_selectors or "").splitlines() if s.strip()}
     )
-    payload = {"selectors": lines, "method": (extraction_method or "auto")}
+    # Falsy -> "raw", NOT "auto" (whole-branch review, Minor 7). This has to
+    # name the branch `URLMonitor._fetch_url_content` actually takes, and that
+    # branch is `if extraction_method == "full" or extraction_method == "auto"`
+    # -- so an explicit `None` (the value a DB row with a NULL
+    # `extraction_method` hands us, which is the common case) falls through to
+    # the raw response body, where `ignore_selectors` are never applied at all.
+    # Normalizing it to "auto" made a raw-extraction source fingerprint
+    # identically to an HTML-extraction one with the same selectors: a
+    # collision across genuinely different extraction, which is precisely the
+    # comparison this hash exists to prevent.
+    #
+    # The engine's own `.get("extraction_method", "auto")` default covers the
+    # other direction -- an ABSENT key really does mean "auto" -- and
+    # `check_url` passes that same default in, so absent and NULL stay
+    # distinguishable here.
+    payload = {"selectors": lines, "method": (extraction_method or "raw")}
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True).encode("utf-8")
     ).hexdigest()

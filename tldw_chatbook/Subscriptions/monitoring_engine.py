@@ -493,7 +493,21 @@ DISPOSITION_WITHHELD = "withheld_below_threshold"
 #: A change was detected and an item produced.
 DISPOSITION_CHANGED = "changed"
 
-#: ``reason`` values for ``DISPOSITION_BASELINE_STORED``.
+#: ``reason`` values for ``DISPOSITION_BASELINE_STORED``. These two are NOT
+#: interchangeable and must never be aggregated together (whole-branch review,
+#: Critical 1): spec §3 accepts that a re-baseline throws away one diff window
+#: -- a real change landing in it is never reported -- and it accepts that cost
+#: *only because* "the Runs pane says why". A single ``baseline`` counter
+#: cannot say why, and the difference is exactly the part the user needs:
+#:
+#: * ``first_check`` -- there was no previous snapshot, so nothing was
+#:   discarded and no change could have been lost.
+#: * ``extraction_settings_changed`` -- there WAS a snapshot with real prior
+#:   content and it was discarded uncompared, so a change the page made in
+#:   that window is gone.
+#:
+#: `local_watchlists_service._disposition_count_keys` binds each to its own
+#: run counter (``baseline`` / ``rebaselined``) for that reason.
 REASON_FIRST_CHECK = "first_check"
 REASON_EXTRACTION_SETTINGS_CHANGED = "extraction_settings_changed"
 #: ``reason`` for ``DISPOSITION_WITHHELD``.
@@ -1018,9 +1032,13 @@ class URLMonitor:
         # The settings that shape extracted text, hashed. Computed before the
         # fetch so the value written to the new snapshot and the value compared
         # against the old one are provably the same one (spec §3).
+        # The `"auto"` default is the SAME one `_fetch_url_content` applies
+        # (whole-branch review, Minor 7): an absent key extracts HTML, an
+        # explicit NULL does not, and the fingerprint has to agree with the
+        # fetch on both or it hashes two different extractions alike.
         current_fingerprint = extraction_fingerprint(
             subscription.get("ignore_selectors"),
-            subscription.get("extraction_method"),
+            subscription.get("extraction_method", "auto"),
         )
 
         # Check circuit breaker
@@ -1102,6 +1120,21 @@ class URLMonitor:
             # A stored NULL (every pre-migration snapshot) counts as a
             # mismatch, which makes the migration self-healing: each existing
             # source re-baselines exactly once and the Runs pane says why.
+            #
+            # That NULL case lands in the ``rebaselined`` counter with reason
+            # ``extraction_settings_changed``, deliberately and not by
+            # accident (whole-branch review, Important 2). Both halves are
+            # honest: a pre-migration snapshot holds real prior content that
+            # IS discarded uncompared -- a lost window the user must be
+            # warned about, unlike a true `first_check` where nothing existed
+            # -- and the settings really did change, because
+            # `_ensure_watchlists_schema`'s one-time migration rewrote every
+            # url-family source's `ignore_selectors` (to the shipped default
+            # set) and `change_threshold` in the same breath as adding this
+            # column. Guarding on truthiness instead (`if previous_fp and
+            # previous_fp != current`) would compare text extracted WITHOUT
+            # those selectors against text extracted WITH them and fire a
+            # phantom item, on the first check of every migrated source.
             previous_fingerprint = previous["extraction_fingerprint"] or ""
             if previous_fingerprint != current_fingerprint:
                 await self._store_snapshot(

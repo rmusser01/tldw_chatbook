@@ -174,16 +174,35 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
     #: here because a hand-built or server-side entity can still carry it.
     _URL_FAMILY_SOURCE_TYPES = frozenset({"url", "url_list", "sitemap", "site"})
 
-    #: Shared with `SourcesPane`'s create-form field so the same control reads
-    #: identically wherever it appears. Duplicated as literals rather than
-    #: imported because `sources_pane` imports FROM this module
-    #: (`CheckNowRequested`, `PreviewRequested`) -- importing back would close
-    #: an import cycle.
-    _IGNORE_SELECTORS_LABEL = (
-        "Ignore elements (CSS selectors — one rule per line; commas group)"
-    )
+    #: Deliberately SHORTER than `SourcesPane`'s copy of the same field's
+    #: label, which is the one thing about the two that cannot match (whole-
+    #: branch review, Important 5). Textual's border-label renderer truncates
+    #: with an ellipsis and says nothing about it: the create form's field is
+    #: ~91 columns wide in the centre column and comfortably holds a 65-char
+    #: label, while this one lives in the right rail -- measured at ~26 columns
+    #: -- where that same label painted as "Ignore elements (CSS s…". The
+    #: truncation ate the syntax note that was the entire reason the label was
+    #: long, so the label states only what the field is and the syntax moves to
+    #: the tooltip, which has no width budget at all.
+    #:
+    #: There is no `border_subtitle` here for the same reason. Two rail-width
+    #: border labels is two truncations, and the help copy it carried
+    #: duplicated the Save button's tooltip one row below it.
+    #:
+    #: Duplicated as literals rather than imported because `sources_pane`
+    #: imports FROM this module (`CheckNowRequested`, `PreviewRequested`) --
+    #: importing back would close an import cycle.
+    _IGNORE_SELECTORS_LABEL = "Ignore (CSS)"
+    #: The guidance the label no longer has room for. A tooltip is the right
+    #: home for it here (and the wrong one in the create form, where the field
+    #: is the thing the user is filling in): the Inspector's field is prefilled
+    #: with rules that already work, so the syntax matters only to someone
+    #: reaching for it.
     _IGNORE_SELECTORS_HELP = (
-        "Too noisy? The item diff names what churned; add a rule here to silence it."
+        "One CSS rule per line; a comma within a line groups selectors. "
+        "Matching elements are stripped before this page is compared, so "
+        "changes inside them are not reported. Too noisy? The item diff names "
+        "what churned; add a rule here to silence it."
     )
     _IGNORE_SELECTORS_MAX_LENGTH = 4000
 
@@ -252,7 +271,10 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             soft_wrap=True,
         )
         field.border_title = self._IGNORE_SELECTORS_LABEL
-        field.border_subtitle = self._IGNORE_SELECTORS_HELP
+        # No `border_subtitle`: see `_IGNORE_SELECTORS_LABEL`. The rail is too
+        # narrow for a second border label, and this text is the full guidance
+        # the shortened title dropped.
+        field.tooltip = self._IGNORE_SELECTORS_HELP
         yield field
         yield Button(
             "Save selectors",

@@ -44,16 +44,40 @@ _ALERT_CONDITION_TYPES = frozenset(
     }
 )
 
-def _disposition_count_keys() -> dict[str, str]:
-    """`check_url`'s disposition `kind` -> the run-stats counter it increments.
+#: Every counter `_disposition_counts` can return, in the order the Runs pane
+#: renders them. Named here rather than inline so the zero-fill and the
+#: binding below cannot disagree about which counters exist.
+_DISPOSITION_COUNTERS: tuple[str, ...] = (
+    "changed",
+    "unchanged",
+    "withheld",
+    "baseline",
+    "rebaselined",
+)
 
-    Keyed off `monitoring_engine`'s real ``DISPOSITION_*`` constants rather
-    than re-spelled string literals, so the two cannot drift apart (TASK-1362
-    ledgered Minor from Task 3's review: a re-spelled literal here would
-    silently `KeyError` inside a run the moment `monitoring_engine` renamed a
-    kind, discarding every item that run collected). `withheld` is shortened
-    from `DISPOSITION_WITHHELD`'s value for the stats key, which is read by
-    the Runs pane as a one-line summary.
+
+def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
+    """`check_url`'s `(kind, reason)` -> the run-stats counter it increments.
+
+    Keyed off `monitoring_engine`'s real ``DISPOSITION_*``/``REASON_*``
+    constants rather than re-spelled string literals, so the two cannot drift
+    apart (TASK-1362 ledgered Minor from Task 3's review: a re-spelled literal
+    here would silently `KeyError` inside a run the moment `monitoring_engine`
+    renamed a kind, discarding every item that run collected). `withheld` is
+    shortened from `DISPOSITION_WITHHELD`'s value for the stats key, which is
+    read by the Runs pane as a one-line summary.
+
+    The key is the `(kind, reason)` PAIR, not the kind alone (whole-branch
+    review, Critical 1). `DISPOSITION_BASELINE_STORED` has two causes and they
+    mean opposite things to the user -- `first_check` discarded nothing,
+    `extraction_settings_changed` threw away a real diff window in which a
+    change could have been lost -- so they get separate counters. Collapsing
+    them back into one leaves the `reason` with no production consumer at all,
+    which is what made spec §3's "the Runs pane says why" untrue.
+
+    The five pairs below are exactly the five `_disposition` call sites in
+    `check_url`; an unlisted pair raises `KeyError` in `_disposition_counts`,
+    deliberately.
 
     The `monitoring_engine` import is deliberately local, not module-level:
     this module loads unconditionally from `Subscriptions/__init__.py`
@@ -69,40 +93,74 @@ def _disposition_count_keys() -> dict[str, str]:
         DISPOSITION_CHANGED,
         DISPOSITION_UNCHANGED,
         DISPOSITION_WITHHELD,
+        REASON_BELOW_CHANGE_THRESHOLD,
+        REASON_EXTRACTION_SETTINGS_CHANGED,
+        REASON_FIRST_CHECK,
     )
 
     return {
-        DISPOSITION_CHANGED: "changed",
-        DISPOSITION_UNCHANGED: "unchanged",
-        DISPOSITION_WITHHELD: "withheld",
-        DISPOSITION_BASELINE_STORED: "baseline",
+        (DISPOSITION_CHANGED, None): "changed",
+        (DISPOSITION_UNCHANGED, None): "unchanged",
+        (DISPOSITION_WITHHELD, REASON_BELOW_CHANGE_THRESHOLD): "withheld",
+        (DISPOSITION_BASELINE_STORED, REASON_FIRST_CHECK): "baseline",
+        (
+            DISPOSITION_BASELINE_STORED,
+            REASON_EXTRACTION_SETTINGS_CHANGED,
+        ): "rebaselined",
     }
 
 
 def _disposition_counts(dispositions: list[dict[str, Any]]) -> dict[str, int]:
-    """Aggregate one run's per-URL dispositions into four counters.
+    """Aggregate one run's per-URL dispositions into the five counters.
 
     Spec §4. A run that produced no items used to be indistinguishable from a
     run that produced no items *because it withheld them*; these counters are
-    what makes the difference visible. All four keys are always present, so the
+    what makes the difference visible. All five keys are always present, so the
     reader never has to distinguish "zero" from "not recorded".
 
     Args:
         dispositions: One disposition dict per URL checked, in check order.
 
     Returns:
-        ``{"changed": n, "unchanged": n, "withheld": n, "baseline": n}``.
+        ``{"changed": n, "unchanged": n, "withheld": n, "baseline": n,
+        "rebaselined": n}``.
 
     Raises:
-        KeyError: If a disposition carries a ``kind`` outside the vocabulary --
-            deliberately loud, because a silently dropped disposition is
-            exactly the ambiguity this record exists to remove.
+        KeyError: If a disposition carries a ``(kind, reason)`` pair outside
+            the vocabulary -- deliberately loud, because a silently dropped
+            disposition is exactly the ambiguity this record exists to remove.
     """
     count_keys = _disposition_count_keys()
-    counts = {"changed": 0, "unchanged": 0, "withheld": 0, "baseline": 0}
+    counts = {counter: 0 for counter in _DISPOSITION_COUNTERS}
     for disposition in dispositions:
-        counts[count_keys[str(disposition.get("kind"))]] += 1
+        key = (str(disposition.get("kind")), disposition.get("reason"))
+        counts[count_keys[key]] += 1
     return counts
+
+
+def _max_withheld_percentage(dispositions: list[dict[str, Any]]) -> float | None:
+    """The largest change any check in this run held back, display-scaled.
+
+    Spec §1 requires the app to tell the user *what* it is withholding, not
+    merely that it withheld something (whole-branch review, Critical 1): a
+    bare "2 withheld" gives no way to judge whether the threshold is set too
+    high. The maximum is the useful single number -- it is the one the user
+    would have to lower the threshold past to see anything at all.
+
+    Args:
+        dispositions: One disposition dict per URL checked.
+
+    Returns:
+        The largest ``withheld_percentage`` present, or ``None`` when this run
+        withheld nothing (so the key can be omitted from stats entirely rather
+        than fabricating a 0.0 that reads as "withheld 0%").
+    """
+    percentages = [
+        float(disposition["withheld_percentage"])
+        for disposition in dispositions
+        if disposition.get("withheld_percentage") is not None
+    ]
+    return max(percentages) if percentages else None
 
 
 class LocalWatchlistsService:
@@ -877,9 +935,18 @@ class LocalWatchlistsService:
             # `execute_run` already does `stats = dict(result.get("stats") or {})`
             # and persists it to the run's `stats_json`, so this reaches the Runs
             # pane with nothing further to wire.
-            result_payload["stats"] = {
+            run_stats: dict[str, Any] = {
                 "dispositions": _disposition_counts(dispositions)
             }
+            # A sibling key rather than a sixth entry inside `dispositions`,
+            # which is a dict of counters and stays one: a float in among the
+            # integers would break every whole-dict comparison of the counts.
+            # Omitted entirely when nothing was withheld (spec §1) -- see
+            # `_max_withheld_percentage`.
+            max_withheld = _max_withheld_percentage(dispositions)
+            if max_withheld is not None:
+                run_stats["max_withheld_pct"] = max_withheld
+            result_payload["stats"] = run_stats
         return result_payload
 
     @classmethod
