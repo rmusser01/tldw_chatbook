@@ -464,6 +464,15 @@ class SpeechPlaygroundPane(
         self._sync_split_layout()
         self._refresh_provider_ids()
         self._rehydrate_handler_state()
+        # dev's mount sequence for the profile preset, kept in order: a pane
+        # opened on an exact profile shows that profile immediately, before
+        # discovery runs, rather than showing a catalog the user did not ask
+        # for and then replacing it.
+        if self._profile_preset is not None:
+            self._prime_profile_preset_controls()
+            self.query_one("#tts-text-input", TextArea).focus()
+        else:
+            self._sync_profile_preview_status()
         self._load_provider_catalog(initialize=True)
 
     def _sync_split_layout(self) -> None:

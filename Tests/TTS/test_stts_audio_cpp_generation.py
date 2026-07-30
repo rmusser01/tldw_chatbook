@@ -530,7 +530,7 @@ async def test_audio_cpp_playground_runs_end_to_end_through_handler(
     monkeypatch.setattr(
         SpeechPlaygroundPane,
         "_tts_service_factory",
-        lambda self: (lambda: _resolved(catalog_service))(),
+        lambda self: lambda: _resolved(catalog_service),
     )
     app = _EndToEndHost(native_service)
 
@@ -577,7 +577,7 @@ async def test_catalog_refresh_does_not_cancel_handler_generation(
     monkeypatch.setattr(
         SpeechPlaygroundPane,
         "_tts_service_factory",
-        lambda self: (lambda: _resolved(catalog_service))(),
+        lambda self: lambda: _resolved(catalog_service),
     )
     app = _EndToEndHost(native_service)
 

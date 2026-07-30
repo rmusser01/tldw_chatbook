@@ -1,6 +1,6 @@
 """The Playground's keyboard shortcuts must survive its rebuild.
 
-`TTSPlaygroundWidget` bound five of them. Deleting that class took its
+`SpeechPlaygroundPane` bound five of them. Deleting that class took its
 BINDINGS with it while the `action_*` methods moved into
 `SpeechPlaybackMixin` -- so every method still existed, was still callable,
 and no test failed, while Ctrl+G through Ctrl+S quietly stopped doing

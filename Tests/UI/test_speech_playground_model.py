@@ -1,6 +1,6 @@
 """The Playground's axis/knob classification.
 
-Pure data, so it is testable without mounting `TTSPlaygroundWidget` -- a
+Pure data, so it is testable without mounting `SpeechPlaygroundPane` -- a
 5,900-line widget that builds a TTS playground on compose.
 """
 
@@ -104,7 +104,7 @@ def test_every_classified_control_is_a_known_playground_control():
 
 
 # `test_the_inventory_matches_the_live_widget` lived here. It parsed
-# `TTSPlaygroundWidget`'s source and diffed the ids both ways, which is what
+# `SpeechPlaygroundPane`'s source and diffed the ids both ways, which is what
 # kept the rebuild honest while the two playgrounds coexisted. That widget is
 # now deleted, so there is no live source to diff against -- and the guard it
 # provided has moved to `test_speech_playground_completeness.py`, which
