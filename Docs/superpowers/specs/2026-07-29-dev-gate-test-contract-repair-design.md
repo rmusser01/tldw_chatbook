@@ -84,6 +84,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   valid `#evals-primary-action-reason` explaining why Run Bench is deferred.
   The target-readiness owner `#evals-inspector-bench` contains no recovery
   callout; the test conflates two unrelated uses of the shared callout style.
+- The duplicate-target Evals regression similarly counts `.ds-status-badge`
+  beneath broad `#evals-inspector-pane`. Its two intended target readiness rows
+  now share that pane and class with the valid sibling
+  `#evals-primary-action-status`, so the count is three even though both
+  duplicate target rows compose correctly with distinct ids.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -446,6 +451,10 @@ Update the tests to describe current behavior:
     the positive `Not yet checked` and negative Ready/Blocked/Unavailable
     assertions, and leave the unrelated screen-level action-deferral callout
     intact.
+51. Query duplicate-target readiness badges beneath
+    `#evals-inspector-bench` rather than its broader pane. Preserve the exact
+    two-row count, nonzero geometry checks, and all four index-derived editor
+    and inspector ids; leave the sibling primary-action status unchanged.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -629,6 +638,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   weaken different contracts. Querying the existing recovery class beneath its
   target-readiness owner proves the original intent without production changes
   or a broad query-idiom rewrite.
+- Filtering duplicate-target badges by text or weakening the exact count would
+  make the mount-collision regression less precise. Moving only the query root
+  to the existing EvalsInspector owner keeps the shared class and all rendered
+  row/id assertions meaningful.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

@@ -78,6 +78,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #50 Expanded Watchlists source rows paint strictly to the right of their parent watchlist names at both visual-parity viewport sizes after tree labels are left-aligned; the existing relative-column regression remains intact, and source plus generated CSS documentation matches the four-space textual indent.
 - [ ] #51 The generic disabled-action recovery suite mounts current `STTSScreen` ownership under missing local speech dependencies, verifies the exact phase-five recovery taxonomy in the inspector, and verifies install guidance on the rail summary tooltip.
 - [ ] #52 A never-run bench renders `Not yet checked` for its target and no target-readiness recovery callout inside `#evals-inspector-bench`, while unrelated screen-level recovery callouts remain permitted.
+- [ ] #53 A legacy Evals bench with a duplicate target id composes exactly two target rows in the editor and exactly two readiness rows in `#evals-inspector-bench`; all four rows render with nonzero regions and retain distinct index-derived ids despite the shared underlying target id and sibling primary-action status.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -135,6 +136,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 44. Restore visible Watchlists source nesting at the existing textual-indentation seam, update only the explanatory comments, and regenerate the bundled stylesheet.
 45. Retarget the generic Speech recovery regression to the current screen-owned inspector detail and rail summary tooltip.
 46. Scope the never-run Evals recovery absence assertion to the target-readiness inspector owner.
-47. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-48. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+47. Scope duplicate-target Evals readiness-row counting to the target-readiness inspector owner.
+48. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+49. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

@@ -1966,6 +1966,40 @@ git diff --check
 Expected: never-run, warned, blocked, ready, editor, and inspector coverage pass
 with the screen-level action recovery unchanged.
 
+### Task 4au: Scope duplicate-target readiness rows to EvalsInspector
+
+**Files:**
+- Modify: `Tests/UI/test_evals_bench_editor.py`
+
+- [ ] **Step 1: Identify the third badge**
+
+Run `test_bench_with_duplicate_target_id_composes_without_raising`. Expected:
+the broad `#evals-inspector-pane` query returns the two intended
+`#evals-inspector-target-{0,1}` badges plus the unrelated, valid
+`#evals-primary-action-status`.
+
+- [ ] **Step 2: Count rows inside their current owner**
+
+Change only the query root to `#evals-inspector-bench` before selecting
+`.ds-status-badge`. Retain the exact two-row count, nonzero region checks, and
+all four distinct index-derived editor/inspector id assertions. Do not change
+production or filter by incidental text.
+
+- [ ] **Step 3: Verify the focused Evals contract**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_evals_bench_editor.py::test_bench_with_duplicate_target_id_composes_without_raising \
+  Tests/UI/test_evals_bench_editor.py \
+  -q
+../../.venv/bin/python -m ruff check Tests/UI/test_evals_bench_editor.py
+../../.venv/bin/python -m ruff format --check Tests/UI/test_evals_bench_editor.py
+git diff --check
+```
+
+Expected: the duplicate-target regression and the complete Evals bench editor
+module pass with the sibling action status untouched.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
