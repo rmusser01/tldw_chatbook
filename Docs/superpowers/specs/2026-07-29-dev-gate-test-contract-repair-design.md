@@ -315,6 +315,24 @@ Update the tests to describe current behavior:
     nonzero-size, fixed-width, non-overlap, compact-height, container-height,
     and action-position assertion. Do not change production layout or weaken
     the CSS contract to accommodate a test-only mount-order inversion.
+35. In Schedules and Workflows recent-work regressions, seed the current
+    `screen_state_store` under the `RuntimeIdentity` projected from the active
+    runtime policy instead of assigning retired `_screen_states`. In the
+    Artifacts requested-target regression, stage
+    `HandoffChannel.ARTIFACT_CHATBOOK_TARGET`, give the local Chatbook fake the
+    existing exact `get_chatbook` service seam, and prove the target is
+    consumed before latest-item fallback. In the Home flashcards regression,
+    claim the staged `HandoffChannel.STUDY_INITIAL_SECTION`, verify
+    `"flashcards"`, acknowledge it, and prove terminal settlement. Preserve
+    positive recent-work, exact target/launch payload, requested-before-latest,
+    row/button, one-hop navigation, and destination-isolation coverage. Do not
+    restore any app-root compatibility field or change production.
+36. In the MCP approval-cancellation execution-log regression, assert the
+    current metadata-only record: denied decision, blocked/failed outcome, and
+    `error_category == "approval_cancelled"`. Retain server/tool identity and
+    durable-record coverage. Do not restore free-form error text to the
+    persistent MCP audit log; ADR-029 requires bounded metadata rather than
+    payload-derived diagnostic strings.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -430,6 +448,14 @@ compatibility shims. No broad deletion of live tests.
   hide a fixture-ordering mistake: the test installs a batch before the card's
   deferred mount-time hide runs. Settling that callback first mirrors the live
   lifecycle and the existing single-row geometry fixture.
+- Restoring `_screen_states` or destination-specific pending attributes would
+  recreate competing application state owners. Seeding the current
+  `screen_state_store` and typed channels exercises the accepted paths with
+  less fixture-only state.
+- Restoring the approval-cancellation error sentence to the persistent MCP log
+  would violate the metadata-only audit boundary. The bounded
+  `approval_cancelled` category preserves the actionable outcome without
+  durable free-form text.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

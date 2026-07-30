@@ -1368,6 +1368,81 @@ git add Tests/UI/test_console_mcp_approval.py
 git commit -m "test(console): settle approval card mount"
 ```
 
+### Task 4ae: Follow screen-state and destination-handoff ownership
+
+**Files:**
+- Modify: `Tests/UI/test_console_live_work_handoffs.py`
+- Modify: `Tests/UI/test_home_screen.py`
+
+- [ ] **Step 1: Reproduce the four retired-owner failures**
+
+Run the two modules' Schedules, Workflows, Artifacts, and Home flashcards
+cases. Expected: Schedules/Workflows assign deleted `_screen_states`, Artifacts
+stages a deleted target field and lacks the exact lookup seam on its fake, and
+Home inspects a deleted Study pending field. Production correctly reads the
+screen-state store and typed handoff channels.
+
+- [ ] **Step 2: Seed and settle current owners**
+
+Save the Schedules/Workflows Chat snapshot through `screen_state_store` under
+the current `RuntimeIdentity`. Stage the Artifacts target through
+`ARTIFACT_CHATBOOK_TARGET`, add the fake's exact async `get_chatbook` seam, and
+assert requested-before-latest selection plus terminal consumption. Claim,
+verify, and acknowledge the Home-to-Study `STUDY_INITIAL_SECTION` value.
+Preserve every existing UI route, payload, launch, and isolation assertion.
+Do not change production or add compatibility state.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_home_screen.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_home_screen.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_home_screen.py
+git diff --check
+git add \
+  Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_home_screen.py
+git commit -m "test(navigation): follow typed state owners"
+```
+
+### Task 4af: Follow metadata-only MCP cancellation audit records
+
+**Files:**
+- Modify: `Tests/UI/test_console_mcp_approval.py`
+
+- [ ] **Step 1: Reproduce the stale free-form error assertion**
+
+Run the full Console MCP approval module. Expected: cancellation still writes a
+denied, failed audit record, but the regression expects the retired
+`"run stopped while approval pending"` error string instead of the current
+bounded `approval_cancelled` category.
+
+- [ ] **Step 2: Assert the metadata-only outcome**
+
+Replace only the free-form error assertion with the exact
+`error_category == "approval_cancelled"` contract. Retain record existence,
+server/tool identity, denied decision, and failed outcome assertions. Do not
+change production persistence or reintroduce an `error` field.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_mcp_approval.py \
+  Tests/MCP/test_control_plane_bridge.py -q
+../../.venv/bin/python -m ruff check Tests/UI/test_console_mcp_approval.py
+../../.venv/bin/python -m ruff format --check Tests/UI/test_console_mcp_approval.py
+git diff --check
+git add Tests/UI/test_console_mcp_approval.py
+git commit -m "test(mcp): follow metadata-only cancellation audit"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -1437,6 +1512,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/Library/test_library_skills_state.py \
   Tests/Local_Ingestion/test_quick_ingest_db_path.py \
   Tests/Local_Ingestion/test_local_file_ingestion.py \
+  Tests/MCP/test_control_plane_bridge.py \
   Tests/Performance/test_rag_citation_provenance_benchmark.py \
   Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/ProductionApp/test_media_state_ownership.py \

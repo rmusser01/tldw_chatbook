@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-29 08:11'
-updated_date: '2026-07-29 17:24'
+updated_date: '2026-07-29 17:30'
 labels:
   - testing
   - baseline
@@ -62,6 +62,8 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #34 Library prompt editor initialization and post-save recomposition ignore mount-time field-change echoes when the rendered fields still match canonical editor state, while genuine edits remain dirty; successful save/conflict recovery clears dirty state and the clean, empty, and dirty Console-insert paths retain their exact behavior.
 - [ ] #35 The nested Library UI harness executes app-owned prompt-import workers through the active harness worker manager, retaining all exact import status and database assertions without changing production worker ownership; the real-app durable-owner and survive-unmount coverage remains green.
 - [ ] #36 The bundled-CSS multi-row Console approval geometry regression lets the card's deferred mount-time hide settle before installing a batch, then retains all nonzero-size, fixed-width, non-overlap, compact-height, and action-position assertions.
+- [ ] #37 Schedules/Workflows recent-work, Artifacts target, and Home-to-Study regressions seed and settle the current screen-state and typed handoff owners instead of retired app-root fields, while retaining positive recent-work, requested-before-latest, exact payload, consumption, launch, and one-hop routing coverage.
+- [ ] #38 The MCP approval-cancellation audit regression expects the current metadata-only `approval_cancelled` category rather than retired persisted error text, while retaining the denied decision, blocked outcome, identity, and durable-record coverage required by ADR-029.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -103,6 +105,8 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 28. Retarget Console live-work and Home-isolation regressions to the typed pending-handoff launch channel.
 29. Ignore prompt-editor mount echoes that match canonical rendered state, and bridge the nested Library test harness to the active worker manager without changing production import ownership.
 30. Settle the Console approval card's deferred mount callback before the multi-row geometry fixture installs its batch.
-31. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-32. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+31. Seed Schedules/Workflows recent-work and Artifacts/Study destination tests through the current screen-state and typed handoff stores.
+32. Align the MCP approval-cancellation regression with the metadata-only audit record.
+33. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+34. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
