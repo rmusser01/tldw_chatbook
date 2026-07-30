@@ -201,6 +201,18 @@ The failures reproduce on an exact `origin/dev` checkout:
   missing `_console_chat_store` before reaching the worker-count assertion.
   The production sync sequence is covered elsewhere; this focused regression
   owns only responsiveness instrumentation around that sequence.
+- The service-backed destination policy sentinel still allows exactly four
+  Library `@work(thread=True)` decorators. Library now has six: the original
+  export-count, export, search-history, and rail-preference workers, plus the
+  reviewed verified-Parakeet installer and source-ingest preflight scanner.
+  Both additions perform blocking download/file, URL-probe, or directory-scan
+  work and marshal results back to the Textual loop; neither uses
+  `asyncio.run`, and Personas/Skills still have zero thread workers. The
+  count failure masks two weaknesses in the same sentinel: its line-prefix
+  counter can miss valid reordered/multiline decorators, and its
+  `asyncio.run` annotation check reads only the opening line even though one
+  of the three current annotations is correctly attached to the multiline
+  call's closing line.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -705,6 +717,18 @@ Update the tests to describe current behavior:
     retain the final zero-worker assertion. Remove retired stub names and
     unused fake fields. Do not mount a full application, alter production, or
     replace the method under test with direct monitor calls.
+69. Update the service-backed worker-policy sentinel's Library explanation to
+    name verified model installation and source-ingest preflight alongside
+    export and preference persistence, and raise Library's exact reviewed
+    worker count from four to six. Parse each screen once and count function
+    decorators whose call is `work(...)` with a literal `thread=True`, so
+    formatting or keyword order cannot evade the inventory. For each
+    `asyncio.run` call, search its complete AST source-line span for the
+    required worker-thread-loop annotation rather than only the opening line.
+    Retain exact counts rather than lower bounds, zero defaults for
+    Personas/Skills, the three annotated `asyncio.run` exceptions, and the ban
+    on `_run_maybe_awaitable`. Do not change production decorators or weaken
+    the sentinel into pattern-only acceptance.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -979,6 +1003,15 @@ behavior. No compatibility shims. No broad deletion of live tests.
   and timer behavior while duplicating native Console integration coverage.
   Stubbing the current collaborator list keeps this test focused on the real
   outer worker-instrumentation wrapper and explicitly proves its core seam ran.
+- Converting the Parakeet installer or source path analyzer to an async
+  worker without removing their blocking I/O would put that work back on the
+  event loop. Allowing `>= 4` or deleting the sentinel would stop detecting
+  unreviewed thread-worker growth. Updating the exact count and explanation
+  preserves the intended review gate for the two already-live exceptions.
+  Updating only the count would expose the multiline-annotation false
+  negative, while keeping line-prefix decorator counting would let harmless
+  formatting changes evade the exact inventory; the existing AST parse can
+  cover both syntax boundaries without a new helper or production change.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

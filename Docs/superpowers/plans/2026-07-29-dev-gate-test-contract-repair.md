@@ -2750,6 +2750,62 @@ git diff --check
 Expected: the focused and full responsiveness module pass, static checks pass,
 and no production file changes.
 
+### Task 4bm: Synchronize the Library thread-worker policy sentinel
+
+**Files:**
+- Modify: `Tests/UI/test_unified_shell_phase5_recovery_taxonomy.py`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This updates an exact static test allowlist for two existing,
+reviewed blocking operations; it does not change a runtime or ownership
+boundary.
+
+- [ ] **Step 1: Preserve the focused RED and inventory**
+
+Run
+`test_service_backed_policy_destinations_use_async_workers_without_asyncio_run`.
+Expected before repair: the test inventories six Library
+`@work(thread=True)` decorators but expects four. Verify the six functions are
+export counts, export execution, search-history persistence, rail-preference
+persistence, verified Parakeet installation, and source-ingest preflight;
+Personas and Skills remain at zero and the annotated `asyncio.run` count
+remains three. Also record the masked annotation failure: one multiline
+`asyncio.run` call places its required marker on the closing line, while the
+current sentinel inspects only the opening line.
+
+- [ ] **Step 2: Make the exact inventory syntax-aware**
+
+Expand the explanatory comment to include verified model installation and
+source-ingest preflight, then change Library's exact allowed thread-worker
+count from four to six. Parse each source once. Count function decorators whose
+call target is `work` and whose keyword list contains literal `thread=True`.
+For each `asyncio.run` node, inspect all source lines from `lineno` through
+`end_lineno` for the required annotation. Retain exact equality, every screen
+path, the three-call `asyncio.run` inventory, and `_run_maybe_awaitable`
+rejection. Do not add a helper or change production.
+
+- [ ] **Step 3: Verify the policy boundary**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_unified_shell_phase5_recovery_taxonomy.py::test_service_backed_policy_destinations_use_async_workers_without_asyncio_run \
+  -q
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_unified_shell_phase5_recovery_taxonomy.py \
+  -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_unified_shell_phase5_recovery_taxonomy.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_unified_shell_phase5_recovery_taxonomy.py
+git diff --check
+```
+
+Expected: the focused policy sentinel and full recovery-taxonomy module pass,
+static checks pass, and no production file changes.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

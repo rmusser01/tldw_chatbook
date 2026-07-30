@@ -97,6 +97,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #68 The first-time character-chat UAT observes the typed Chat payload at the real handoff store's staging boundary, forwards it unchanged for live Console consumption, and proves settlement by the absence of pending/in-flight work plus a character-bound Console session, without polling the retired app-root handoff field or weakening the import, recovery, send, reply, and persistence journey.
 - [ ] #69 The first-time character-chat UAT waits for the Personas destination to be both active and mounted before invoking its import continuation, so production's stale-owner guard cannot discard the selection presentation while the imported database row, full handoff journey, and exact selected-character assertions remain covered.
 - [ ] #70 The app-free Console responsiveness regression stubs the current native-sync collaborators, proves the instrumented core sync executes while one worker is active, and proves the worker count returns to zero afterward without constructing a full application or bypassing the production lifecycle instrumentation.
+- [ ] #71 The service-backed destination worker-policy sentinel uses syntax-aware decorator inventory to account for Library's six reviewed blocking-thread workers—including verified Parakeet installation and source-ingest preflight—while retaining exact zero-thread-worker enforcement for Personas and Skills and recognizing the required worker-loop annotation anywhere in each complete `asyncio.run` call span.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -172,6 +173,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 62. Observe the first-time character-chat UAT payload and settlement through the typed Chat handoff owner.
 63. Wait for mounted Personas ownership before the UAT invokes its import continuation.
 64. Retarget the app-free Console responsiveness fixture to the current native-sync collaborator set.
-65. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-66. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+65. Synchronize the Library thread-worker policy sentinel with its two reviewed blocking operations.
+66. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+67. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
