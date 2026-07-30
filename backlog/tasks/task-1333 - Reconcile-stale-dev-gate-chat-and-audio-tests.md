@@ -82,6 +82,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #54 The real Lab route mounts Models without a lifecycle `NoMatches`; local-model delete confirmation is hidden on first paint and its mounted reactive state can show and hide it without mount-order errors; Lab strip navigation still completes.
 - [ ] #55 Selected and empty Library Collections retain all current copy, selection, and geometry coverage while asserting the established pressable-but-blocked Console handoff state rather than a disabled button.
 - [ ] #56 When an ingest completes while Notes is selected, the transiently recomposed Library rail eventually remounts its Media row with count 1, Notes remains selected, and ingest-path plus ingest-job widgets remain absent.
+- [ ] #57 MCP import-file regressions override only the workbench's import-containment-root seam, so temporary picked files remain valid without replacing process-wide home expansion or redirecting the isolated application config path to a directory; picker loading, unreadable-file, outside-home rejection, and size-cap coverage remain intact.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -143,6 +144,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 48. Make local-model delete-confirm visibility independent of parent/child mount ordering and retain a real-shell show/hide regression.
 49. Align both Library Collections handoff assertions with the established pressable-but-blocked recovery contract.
 50. Make the different-canvas ingest isolation regression tolerate the current Library rail remount while still requiring the updated Media count.
-51. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-52. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+51. Retarget MCP import-file path fixtures from process-wide `os.path.expanduser` replacement to the workbench's existing import-root seam.
+52. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+53. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

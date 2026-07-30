@@ -2124,6 +2124,43 @@ git diff --check
 Expected: completion survives the rail remount, publishes Media count 1, and
 does not change the selected Notes canvas or leak ingest controls.
 
+### Task 4ay: Isolate MCP import-file containment fixtures
+
+**Files:**
+- Modify: `Tests/UI/test_mcp_workbench.py`
+
+- [ ] **Step 1: Preserve the config-path failure**
+
+Run
+`test_file_requested_pushes_picker_and_loads_selected_file_into_panel`.
+Expected before repair: replacing
+`mcp_workbench_module.os.path.expanduser` also changes process-wide home
+expansion, redirects the isolated config lookup to a directory, and makes the
+private-file guard fail before `MCPImportPanel` mounts.
+
+- [ ] **Step 2: Patch the narrow import-root seam**
+
+In all four import-file path regressions, patch
+`mcp_workbench_module._mcp_import_home` to the intended temporary root instead
+of patching `os.path.expanduser`. Preserve every existing assertion and do not
+change production path validation or config loading.
+
+- [ ] **Step 3: Verify the import-file contracts**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_mcp_workbench.py::test_file_requested_pushes_picker_and_loads_selected_file_into_panel \
+  Tests/UI/test_mcp_workbench.py::test_non_utf8_import_file_does_not_crash_app \
+  Tests/UI/test_mcp_workbench.py::test_load_import_file_rejects_path_outside_home_directory \
+  Tests/UI/test_mcp_workbench.py::test_load_import_file_rejects_oversized_file \
+  -q
+../../.venv/bin/python -m ruff check Tests/UI/test_mcp_workbench.py
+git diff --check
+```
+
+Expected: config isolation remains valid while all four import-path contracts
+exercise their intended branch.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

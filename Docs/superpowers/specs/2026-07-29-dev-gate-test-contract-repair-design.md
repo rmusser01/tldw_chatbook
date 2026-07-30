@@ -104,6 +104,13 @@ The failures reproduce on an exact `origin/dev` checkout:
   calls `query_one("#library-row-browse-media")` on every poll, so it raises
   during a legitimate teardown frame before it can observe the remounted
   `Media (1)` row while Notes remains selected.
+- Four MCP import-file regressions replace
+  `mcp_workbench_module.os.path.expanduser`, but that attribute is the shared
+  process-wide `os.path.expanduser` function. During workbench mount the patch
+  therefore also makes the isolated `TLDW_CONFIG_PATH` resolve to the temporary
+  directory itself, which the private-file guard correctly rejects before the
+  import panel can mount. The workbench already exposes `_mcp_import_home()` as
+  the narrow containment-root seam those fixtures intend to control.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -485,6 +492,11 @@ Update the tests to describe current behavior:
     `_wait_for_condition` until it remounts with count 1. Preserve the final
     Notes selection and ingest-widget absence assertions; do not change
     production or add another wait abstraction.
+55. In the four MCP import-file path regressions, patch
+    `mcp_workbench_module._mcp_import_home` instead of the shared
+    `os.path.expanduser` attribute. Preserve each temporary containment root and
+    all picker-loading, unreadable-file, outside-home rejection, and size-cap
+    assertions; do not change production config or private-path handling.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -683,6 +695,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
 - Catching `NoMatches` broadly or increasing sleeps would obscure whether the
   Media row ever returns. Treating only temporary row absence as a false
   bounded predicate keeps the count and canvas-isolation contracts exact.
+- Relaxing the private-file guard or special-casing a directory-valued config
+  path would hide a fixture leak and weaken production safety. Patching the
+  existing workbench-local import-root seam expresses the test's intended home
+  boundary without changing process-wide path resolution.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
