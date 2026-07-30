@@ -6,15 +6,21 @@ keeps the history model simple, and it means undo/redo restores plain
 text -- a snapshot never carries a segment's `label` or its `expanded`/
 `confirm` display state, so a restored segment is always either an
 ordinary literal or a generic collapsed paste token (`_apply_history_
-snapshot` re-collapses any restored text over `paste_collapse_threshold`,
-review NEW-2), never the exact original presentation (a labeled file/
-attachment segment, or one the user had manually unfurled, comes back as
-a plain "Pasted Text: N Characters" token if it's still over threshold,
-or as ordinary literal text if it isn't). What undo/redo does NOT do
-anymore is repaint a large restored segment as one giant literal: that
-used to run the composer's O(n^2) wrap/render path against the full
-text on every undo/redo (measured up to 283s frozen for a 2.4 MB
-snapshot), which is why the re-collapse exists.
+snapshot` re-collapses any restored text over `UNDO_RECOLLAPSE_CHAR_
+THRESHOLD`, review NEW-2/W-1/W-2 -- a large, performance-driven threshold
+deliberately distinct from the small, cosmetic `paste_collapse_threshold`
+a real paste uses), never the exact original presentation (a labeled
+file/attachment segment, or one the user had manually unfurled, comes
+back as a plain "Pasted Text: N Characters" token if it's still over the
+recollapse threshold, or as ordinary literal text otherwise). What
+undo/redo does NOT do anymore is repaint a large restored segment as one
+giant literal: that used to run the composer's O(n^2) wrap/render path
+against the full text on every undo/redo (measured up to 283s frozen for
+a 2.4 MB snapshot), which is why the re-collapse exists -- gated on a
+threshold sized from the measured render cost, not on the paste-cosmetics
+threshold or preference, so it can never itself turn an ordinary
+human-typed draft into an opaque token (review W-1) or be disabled by a
+user's paste-collapse preference (review W-2).
 """
 
 from __future__ import annotations
@@ -95,11 +101,13 @@ class _DraftHistorySnapshot:
     architecture this task specified trades away exact display-state
     fidelity across an undo/redo (`_apply_history_snapshot` reconstructs a
     single segment from `text` alone, re-collapsing it into a generic
-    paste token when it's over `paste_collapse_threshold` -- review NEW-2 --
-    but never recovering the ORIGINAL segment's `label` or `expanded`/
-    `confirm` state) for a much simpler history model. `restore_stashed_
-    draft`/`ConsoleDraftStash` already own the "preserve real segment
-    objects" contract for the send flow; this is a separate, narrower one.
+    paste token when it's over `UNDO_RECOLLAPSE_CHAR_THRESHOLD` -- review
+    NEW-2/W-1/W-2, a performance-sized threshold, deliberately NOT the
+    cosmetic `paste_collapse_threshold` -- but never recovering the
+    ORIGINAL segment's `label` or `expanded`/`confirm` state) for a much
+    simpler history model. `restore_stashed_draft`/`ConsoleDraftStash`
+    already own the "preserve real segment objects" contract for the send
+    flow; this is a separate, narrower one.
     """
 
     text: str
@@ -169,6 +177,24 @@ class ConsoleComposerBar(Horizontal):
     #: by 20 ordinary pastes retained >20,000,000 characters across just
     #: 21 entries -- nowhere near the 100-entry depth cap.
     UNDO_HISTORY_CHAR_BUDGET = 2_000_000
+    #: TASK-1281 review W-1 (HIGH): the perf-guard re-collapse in
+    #: `_apply_history_snapshot` must NOT reuse `paste_collapse_threshold`
+    #: -- that constant is a cosmetic PASTE-display preference (shipped
+    #: default 50 characters) and, applied to undo/redo, converted ORDINARY
+    #: TYPED draft text into an opaque "Pasted Text: N Characters" token on
+    #: every restore over 50 characters, including the AC's own flagship
+    #: Ctrl+U -> Ctrl+Z recovery path (one Backspace then destroyed the
+    #: whole recovered draft in a single step, since a collapsed token
+    #: deletes as one unit). This constant is chosen from the reviewer's
+    #: own measured `_refresh_visible_draft` repaint cost -- 0.01s @ 10K
+    #: chars, 0.05s @ 25K, 0.19s @ 50K -- and keeps an undo/redo repaint
+    #: comfortably under ~50ms while leaving every ordinary human-typed
+    #: draft as plain literal text. Checked UNCONDITIONALLY of
+    #: `collapse_large_pastes_enabled` (review W-2): that preference
+    #: governs collapse-ON-PASTE cosmetics, not whether the UI thread
+    #: freezes repainting a large restored draft -- a performance guard
+    #: must not hang off a display preference a user can turn off.
+    UNDO_RECOLLAPSE_CHAR_THRESHOLD = 20_000
     #: Shared with the mic button's initial `compose()` tooltip and
     #: `sync_dictation_state`'s idle tooltip, and used as the fallback in
     #: `set_dictation_availability` -- an `Availability(ok=False)` with no
@@ -1689,41 +1715,60 @@ class ConsoleComposerBar(Horizontal):
     def _apply_history_snapshot(self, snapshot: _DraftHistorySnapshot) -> None:
         """Replace the live draft with a recorded undo/redo snapshot.
 
-        TASK-1281 review NEW-2: a restored segment over the paste-collapse
-        threshold is created COLLAPSED -- the same paste-token mechanics
-        `insert_pasted_text` already uses for a real paste over threshold --
+        TASK-1281 review NEW-2 (fix shape corrected by review W-1/W-2): a
+        restored segment over `UNDO_RECOLLAPSE_CHAR_THRESHOLD` is created
+        COLLAPSED -- the same paste-token mechanics `insert_pasted_text`
+        already uses for a real paste over `paste_collapse_threshold` --
         rather than as one giant literal segment. Restoring it as a flat
         literal used to run `_refresh_visible_draft`'s O(n^2) wrap/render
         path against the FULL text on every undo/redo: measured up to 283s
-        frozen on the main thread for a 2.4 MB restored draft, and a
-        realistic one-keystroke repro (attach 200 KB, type one character,
-        undo) froze for 2.89s. F6's char-budget eviction deliberately keeps
-        such large snapshots revertible, which is exactly what made this
-        reachable by an ordinary Ctrl+Z rather than only a contrived one.
-        This also means a redo landing back on a snapshot taken while a
-        large paste was still collapsed now correctly shows the collapsed
-        token again, not the fully expanded literal text -- see the module
-        docstring for the (narrower) limitation that remains: the restored
-        token is always a generic "Pasted Text: N Characters" collapse,
-        never the original segment's label (a labeled file/attachment
-        segment, or one already `expanded`/mid-`confirm`, is not carried
-        through the flat snapshot -- only the raw text and whether it
-        crosses the threshold are).
+        frozen on the main thread for a 2.4 MB restored draft. F6's
+        char-budget eviction deliberately keeps such large snapshots
+        revertible, which is exactly what made this reachable by an
+        ordinary Ctrl+Z rather than only a contrived one.
+
+        The gate is `UNDO_RECOLLAPSE_CHAR_THRESHOLD` (20,000 chars),
+        deliberately NOT `paste_collapse_threshold` (a cosmetic
+        paste-display preference, shipped default 50) and NOT gated on
+        `collapse_large_pastes_enabled` -- an earlier version of this fix
+        used both, which converted ordinary typed draft text into an
+        opaque token on every undo/redo over 50 characters (review W-1,
+        HIGH) and let a user disabling the display preference bring the
+        freeze back in full (review W-2, LOW). See the constant's own
+        docstring for the measurements behind the threshold value.
+
+        A redo landing back on a snapshot taken while a large paste was
+        still collapsed correctly shows the collapsed token again, not the
+        fully expanded literal text -- see the module docstring for the
+        (narrower) limitation that remains: the restored token is always a
+        generic "Pasted Text: N Characters" collapse, never the original
+        segment's label (a labeled file/attachment segment, or one already
+        `expanded`/mid-`confirm`, is not carried through the flat snapshot
+        -- only the raw text and whether it crosses the threshold are).
+
+        Collapsed tokens are atomic for the caret everywhere else in this
+        widget (no other code path leaves it mid-token), so when the
+        restored segment collapses, `snapshot.cursor_index` -- recorded
+        against whatever the segment structure was AT SNAPSHOT time, which
+        may not have been collapsed at all -- is snapped to whichever
+        token edge (0 or the full text length) it was nearer to, rather
+        than restored verbatim into what is now the middle of a token.
         """
         self._draft_selection_all = False
+        text_length = len(snapshot.text)
+        raw_cursor = max(0, min(snapshot.cursor_index, text_length))
         if not snapshot.text:
             self._segments = []
-        elif (
-            self.collapse_large_pastes_enabled
-            and len(snapshot.text) > self.paste_collapse_threshold
-        ):
+            self._cursor_index = 0
+        elif text_length > self.UNDO_RECOLLAPSE_CHAR_THRESHOLD:
             self._segments = [
                 _DraftSegment(snapshot.text, collapse_state="collapsed")
             ]
+            self._cursor_index = 0 if raw_cursor * 2 < text_length else text_length
         else:
             self._segments = [_DraftSegment(snapshot.text)]
+            self._cursor_index = raw_cursor
         self._segments_initialized = True
-        self._cursor_index = max(0, min(snapshot.cursor_index, len(snapshot.text)))
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
