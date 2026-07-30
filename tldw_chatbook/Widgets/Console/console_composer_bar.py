@@ -844,6 +844,14 @@ class ConsoleComposerBar(Horizontal):
         visible_slices = list(
             line_slices[first_visible : first_visible + cls.MAX_DRAFT_ROWS]
         )
+        if first_visible == 0:
+            # Nothing is scrolled off above this window -- row 0 IS the
+            # draft's true first row, not a continuation. Prefixing/trimming
+            # it here would delete real leading content (and the caret
+            # glyph, when the caret is on this row -- reachable by ordinary
+            # Home/click-at-start on any draft over MAX_DRAFT_ROWS) to make
+            # room for an ellipsis that has nothing above it to elide.
+            return visible_slices
         effective_width = max(8, width)
         first_slice = visible_slices[0]
         first_line_stripped = first_slice.text.lstrip()
