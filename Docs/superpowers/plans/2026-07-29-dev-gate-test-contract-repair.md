@@ -3546,6 +3546,37 @@ Expected: the ordinary offline gate performs no model download, unit/mock
 coverage remains active, and real inference stays available through
 `--run-slow`.
 
+### Task 4cg: Isolate shared-RAG construction races
+
+**Files:**
+- Modify: `Tests/RAG/test_ingestion_indexing.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This isolates controlled concurrency tests from unrelated
+full-suite background work without changing the accepted production lock
+design.
+
+- [x] **Step 1: Reproduce lock pollution**
+
+The full gate shows a real application embedding build holding the global
+construction lock. A deterministic held-lock reproducer makes the exact test
+fail before its patched constructor starts.
+
+- [x] **Step 2: Isolate the controlled race**
+
+Install a fresh build lock for every method through a class autouse fixture.
+Do not change production code or the fast reset/set lock.
+
+- [x] **Step 3: Verify RAG concurrency coverage**
+
+Run the held-lock reproducer, the complete shared-lock class, the full
+ingestion-indexing module, Ruff/format, and `git diff --check`.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

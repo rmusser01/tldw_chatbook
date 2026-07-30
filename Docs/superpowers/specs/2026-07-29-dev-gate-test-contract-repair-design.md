@@ -308,6 +308,10 @@ The failures reproduce on an exact `origin/dev` checkout:
   lack the `slow` marker used by every neighboring real-inference case. An
   offline package run therefore attempts to download that model even though
   the normal gate does not opt into live model execution.
+- Shared-RAG concurrency regressions patch construction but reuse the
+  process-wide construction lock. A background application initializer can
+  still hold that lock on a real embedding-model build, preventing the test's
+  controlled constructor from starting before its timeout.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -913,6 +917,9 @@ Update the tests to describe current behavior:
 88. Mark the two remaining faster-whisper cases that instantiate a real model
     as slow. Keep the invalid-file integration case in the normal gate because
     it fails before model initialization and requires no artifact.
+89. Give every shared-RAG concurrency regression a fresh construction lock
+    through a class autouse fixture. This confines each race to the threads
+    created by that test without changing production locking.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
