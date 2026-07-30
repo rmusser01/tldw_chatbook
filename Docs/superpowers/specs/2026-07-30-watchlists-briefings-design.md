@@ -1,7 +1,7 @@
 # Watchlists Briefings & Podcasts — design (spec #2)
 
 **Date:** 2026-07-30
-**Status:** proposed
+**Status:** phase 1 implemented (2026-07-30); phases 2-4 pending
 **Predecessor:** `2026-07-25-watchlists-console-rebuild-design.md` (spec #1), which deferred this
 slice: *"Spec #2 covers artifact generation (briefings, 2-speaker podcasts) and its scheduled
 delivery."* One correction to that charter, from the user directly: podcasts are **not** fixed at
