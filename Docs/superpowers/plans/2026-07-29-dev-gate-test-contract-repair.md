@@ -3298,6 +3298,41 @@ test, and `git diff --check`.
 Expected: the synthetic v17 database replays through v28, dedicated authority
 migration coverage remains green, and no production file changes.
 
+### Task 4bz: Distinguish Console identity from persona presentation
+
+**Files:**
+- Modify: `Tests/Chat/test_console_session_settings.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no new ADR
+
+**ADR path:** `backlog/decisions/037-roleplay-assistant-identity-and-persona-user-profile-separation.md`
+
+**Reason:** This aligns a stale schema assertion with ADR-037's accepted
+assistant-identity ownership without changing either production schema.
+
+- [x] **Step 1: Confirm the focused failure**
+
+Run the exact Console schema-ownership regression. Expected before repair:
+`ConsoleChatSession` correctly contains durable `assistant_kind` and
+`assistant_id`, contradicting the stale disjointness assertion.
+
+- [x] **Step 2: Assert both accepted ownership boundaries**
+
+Require runtime backend, assistant kind/id, and assistant authority on the
+native session and reject them from session settings. Reject user/persona
+labels and `assistant_name` from both schemas. Do not change production.
+
+- [x] **Step 3: Verify focused and adjacent Console coverage**
+
+Run the exact node, the full Console session-settings module, the Console chat
+store module, the Console display-state module, Ruff/format on the changed
+test, and `git diff --check`.
+
+Expected: identity persistence and presentation separation remain explicit,
+and all adjacent Console ownership coverage passes.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

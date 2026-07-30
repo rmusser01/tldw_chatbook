@@ -275,6 +275,10 @@ The failures reproduce on an exact `origin/dev` checkout:
   version back. After v28 added `assistant_authority_id`, the fixture still
   leaves that column behind, so replaying v27-to-v28 fails on a duplicate
   column instead of reaching its system-prompt assertions.
+- A Console schema-ownership regression still forbids `assistant_kind` and
+  `assistant_id` on `ConsoleChatSession`. ADR-037 now requires native sessions
+  to retain complete durable assistant identity while keeping persona
+  presentation names out of both settings and session schemas.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -852,6 +856,11 @@ Update the tests to describe current behavior:
     version, restored system-prompt column, and sync-trigger assertions
     unchanged; do not make the v27-to-v28 migration tolerate an invalid partial
     schema.
+82. Split the Console schema-ownership assertion into identity and
+    presentation sets. Require the ADR-037 identity fields on
+    `ConsoleChatSession`, reject them from `ConsoleSessionSettings`, and reject
+    user/persona labels plus `assistant_name` from both. Keep production
+    session/settings schemas unchanged.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1195,6 +1204,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   Removing the current-only column from the synthetic v17 fixture accurately
   states that test's premise while leaving production migration validation and
   the dedicated authority suite intact.
+- Removing assistant identity from `ConsoleChatSession` would violate ADR-037
+  and break persisted conversation authority. Dropping the stale assertion
+  entirely would lose the presentation boundary. Explicit identity and
+  presentation sets preserve both contracts in one focused schema test.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
