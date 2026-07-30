@@ -24,6 +24,19 @@ class WatchlistBundleService:
     def __init__(self, db: SubscriptionsDB) -> None:
         self._db = db
 
+    @property
+    def db(self) -> SubscriptionsDB:
+        """The store these bundles live in.
+
+        Exposed because the app wires this service, not the database, onto
+        the app instance (`app.watchlist_bundle_service`), so a caller that
+        legitimately owns its own queries against the same store -- the
+        Artifacts pane's briefing reads and the briefing service's writes --
+        has no other honest way to reach it. Callers must not use this to
+        re-implement anything this class already offers.
+        """
+        return self._db
+
     # --- Helpers ---
 
     @staticmethod

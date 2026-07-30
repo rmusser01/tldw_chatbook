@@ -23,6 +23,7 @@ SECTIONS: tuple[tuple[str, str], ...] = (
     ("runs", "Runs"),
     ("rules", "Rules"),
     ("notifications", "Notifications"),
+    ("artifacts", "Artifacts"),
 )
 
 

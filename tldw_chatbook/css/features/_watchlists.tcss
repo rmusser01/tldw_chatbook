@@ -1032,3 +1032,49 @@ WatchlistSourcePickerDialog {
     text-wrap: wrap;
     color: $ds-text-muted;
 }
+
+/* Artifacts pane (spec #2 phase 1, task 4): a briefing list over a briefing
+ * body, inside the ITEMS region's fixed budget.
+ *
+ * Both halves need an explicit `fr` share, and the DETAIL half is the one
+ * that actually bites. `ArtifactsPane` is a `Vertical`, so its children lay
+ * out top to bottom: scope note (1), toolbar (1), table, "Briefing detail"
+ * title (1), detail. The detail is a `Static` holding a `rich.markdown`
+ * render of a whole briefing -- naturally dozens of rows -- and a `Static`
+ * sizes to its content by default. Left to that default it does not stop at
+ * the bottom of the region: the region's own height is fixed (`2fr` of the
+ * centre column, see `.watchlists-region-items` above), so the surplus is
+ * laid out BELOW the terminal's last row, where a reader can neither see it
+ * nor scroll to it -- measured at 160x42, a 40-line body put the detail's
+ * lower edge ~30 rows past the viewport.
+ *
+ * `1fr` + `overflow-y: auto` is the fix, and it is the same idiom
+ * `.watchlists-region-feeds` and `.watchlists-region-content` already use
+ * for the same reason: give the box a share of the budget it cannot exceed
+ * and let its content scroll inside it. `min-height` on both halves keeps
+ * the split from degenerating -- neither the list nor the body may be
+ * squeezed to nothing by the other.
+ */
+#artifacts-table {
+    width: 100%;
+    height: 1fr;
+    min-height: 4;
+}
+
+#artifacts-detail {
+    width: 100%;
+    height: 1fr;
+    min-height: 4;
+    overflow-y: auto;
+}
+
+/* The scope line states which watchlist these briefings belong to and that
+ * they are written locally -- muted, like every other standing statement of
+ * provenance on this screen (`.watchlists-region-placeholder`).
+ */
+#artifacts-scope-note {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+    color: $ds-text-muted;
+}

@@ -31,6 +31,11 @@ from ...Constants import (
     WATCHLISTS_SECTION_RUNS,
 )
 from ...runtime_policy.types import PolicyDeniedError
+from ...Subscriptions.briefing_service import (
+    STATUS_GENERATING,
+    fail_interrupted_briefings,
+    generate_briefing,
+)
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Widgets.confirmation_dialog import ConfirmationDialog
@@ -50,6 +55,12 @@ from ..Watchlists_Modules.inspector_pane import (
     SaveNoiseSelectorsRequested,
     PreviewRequested,
     StageInConsoleRequested,
+)
+from ..Watchlists_Modules.artifacts_pane import (
+    ArtifactsPane,
+    BriefingSelected,
+    GenerateBriefingRequested,
+    RefreshBriefingsRequested,
 )
 from ..Watchlists_Modules.content_pane import ContentPane, UnreadToggleRequested
 from ..Watchlists_Modules.items_pane import (
@@ -208,6 +219,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ("4", "switch_section('runs')", "Runs"),
         ("5", "switch_section('rules')", "Rules"),
         ("6", "switch_section('notifications')", "Notifications"),
+        ("7", "switch_section('artifacts')", "Artifacts"),
         ("question", "show_help", "Help"),
         ("n", "new_source", "New source"),
         ("d", "delete_selected", "Delete"),
@@ -279,6 +291,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         "runs": "Runs",
         "rules": "Rules",
         "notifications": "Notifications",
+        "artifacts": "Artifacts",
     }
 
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
@@ -309,6 +322,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._loaded_sources: list[dict[str, Any]] = []
         self._loaded_items: list[dict[str, Any]] = []
         self._loaded_rules: list[dict[str, Any]] = []
+        # Artifacts (spec #2 phase 1, task 4): the same rebuild-survival
+        # mirror as the four lists above, plus the selection the pane's
+        # detail area renders.
+        self._loaded_briefings: list[dict[str, Any]] = []
+        self._selected_briefing: dict[str, Any] | None = None
+        # True only while THIS screen's `wl-briefing` worker is running.
+        # `fail_interrupted_briefings` cannot tell a crashed worker's row
+        # from a live one -- both read `generating` -- so the live case is
+        # answered from memory here and the sweep is only ever asked about
+        # rows this session did not create. See
+        # `handle_generate_briefing_requested`.
+        self._briefing_in_flight = False
         # The item currently open in the CONTENT reader (Task 4). Held here
         # for the identical reason as `_loaded_items` above: `_build_content_pane`
         # is a factory the workbench calls on every region rebuild, and a
@@ -1230,6 +1255,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             notifications_pane.notifications = self._loaded_notifications
             notifications_pane.selected_notification = self.selected_notification
             children.append(notifications_pane)
+        elif self.active_section == "artifacts":
+            # Seeded from screen state for the same reason every sibling
+            # above is -- this is a factory the workbench calls on every
+            # region rebuild, so a fresh pane's reactives start at their
+            # class defaults.
+            artifacts_pane = ArtifactsPane(id="watchlists-artifacts-pane")
+            artifacts_pane.briefings = self._loaded_briefings
+            artifacts_pane.selected_briefing = self._selected_briefing
+            artifacts_pane.scope_label = self._briefing_scope_label()
+            artifacts_pane.can_generate = self._can_generate_briefing()
+            children.append(artifacts_pane)
         return Vertical(
             *children,
             id="watchlists-detail-pane",
@@ -1815,16 +1851,27 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # "prompt, then write, then reload" readable as one function. That is
     # only legal inside a worker, which is why every handler defers.
 
-    def _notify_watchlists(self, message: str, severity: str = "information") -> None:
+    def _notify_watchlists(
+        self, message: str, severity: str = "information", *, markup: bool = True
+    ) -> None:
         """Notify through the app instance, degrading when it has none.
 
         Matches the `getattr(self.app_instance, "notify", None)` idiom every
         other action on this screen uses -- the app instance is a stub in
         several harnesses.
+
+        Args:
+            message: The toast body.
+            severity: Textual severity level.
+            markup: Textual renders toast bodies as Rich markup by default.
+                Callers whose message can contain content this app did not
+                author -- a watchlist name, a provider's error text -- pass
+                `False` so a bracket-shaped fragment paints instead of being
+                interpreted (or swallowed as an unclosed tag).
         """
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
-            notify(message, severity=severity)
+            notify(message, severity=severity, markup=markup)
 
     def _watchlist_display_name(self, watchlist_id: int) -> str:
         """A watchlist's name from data already loaded, RAW (unescaped).
@@ -2191,6 +2238,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.query_one("#wl-tree", WatchlistTree).active_scope = self.tree_scope
         except NoMatches:
             pass
+        if self.active_section == "artifacts":
+            # Artifacts is the one section whose entire subject is the tree
+            # scope: a briefing belongs to exactly one watchlist. Moving the
+            # tree therefore changes what this pane is about, and without
+            # this it would keep showing the previous watchlist's briefings
+            # (and offer Generate against the new one) -- the split-brain
+            # shape, on a surface that spends the user's provider quota.
+            self._selected_briefing = None
+            self.run_worker(
+                self._load_briefings(), exclusive=True, group="wl-briefings-load"
+            )
 
     @work(exclusive=True, group="wc_feeds_scope_refresh")
     async def _refresh_feeds_region_for_scope(self) -> None:
@@ -2263,6 +2321,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.run_worker(self._load_sources(), exclusive=True)
         elif self.active_section == "notifications":
             self.run_worker(self._load_notifications(), exclusive=True)
+        elif self.active_section == "artifacts":
+            # Own group (TASK-1362): `exclusive=True` without one cancels
+            # every other worker in the default group, which here would
+            # include an in-flight briefing generation.
+            self.run_worker(
+                self._load_briefings(), exclusive=True, group="wl-briefings-load"
+            )
 
     def _open_sources_create_form(self) -> None:
         if not self.is_mounted:
@@ -2925,6 +2990,276 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if dismissed:
             await self._load_notifications()
 
+    # --- Artifacts: the briefings a watchlist has produced -----------------
+    #
+    # Spec #2 phase 1, task 4. Briefings are per-watchlist by schema
+    # (`briefings.watchlist_id` is NOT NULL), local by construction (they are
+    # written into this device's `SubscriptionsDB`, whatever the Backend
+    # selector says), and generated only on request.
+
+    def _briefings_db(self) -> Any:
+        """The local `SubscriptionsDB` briefings live in, or `None`.
+
+        Reached through `WatchlistBundleService` rather than a second
+        accessor onto the database, which is the rule `_load_tree_data`
+        already states for this screen; degrades to `None` in harnesses
+        where the service is not wired.
+        """
+        service = self._watchlist_bundle_service()
+        return getattr(service, "db", None) if service is not None else None
+
+    def _briefing_watchlist_id(self) -> int | None:
+        """The watchlist Artifacts is scoped to, or `None`.
+
+        `tree_scope` rather than `selected_scope`: this is a question about
+        what the user is looking at in the rail, which is exactly the split
+        those two reactives exist to keep (see their declarations). A
+        "source" scope deliberately does not answer it -- one source can sit
+        in several watchlists, and briefings belong to exactly one.
+        """
+        scope = self.tree_scope
+        if scope is not None and scope.kind == "watchlist":
+            return scope.watchlist_id
+        return None
+
+    def _can_generate_briefing(self) -> bool:
+        """Whether Generate has both a store and a watchlist to act on."""
+        return self._briefings_db() is not None and (
+            self._briefing_watchlist_id() is not None
+        )
+
+    def _briefing_scope_label(self) -> str:
+        """The pane's one-line statement of what it is showing, and from where."""
+        watchlist_id = self._briefing_watchlist_id()
+        if watchlist_id is None:
+            return (
+                "Select a watchlist in the rail to see or write its briefings — "
+                "a briefing covers one watchlist."
+            )
+        name = self._watchlist_display_name(watchlist_id)
+        # RAW, deliberately: the pane wraps this in a `rich.text.Text`, which
+        # is never markup-parsed, so escaping here would put visible
+        # backslashes in front of every bracket a real name contains. See
+        # `ArtifactsPane.compose` for why that wrapper is load-bearing --
+        # a bare `str` in a `Static` IS parsed as markup.
+        return f"Briefings for {name} · written on this device, on request"
+
+    async def _load_briefings(
+        self, *, select_briefing_id: int | None = None
+    ) -> None:
+        """Re-read this watchlist's briefings and repaint the pane.
+
+        Repaints the PANE, never the screen: `self.refresh(recompose=True)`
+        would rebuild every region through its factory and hand any live
+        reference a defunct widget (the Phase D lesson `watch_tree_scope`
+        records). Pushing the rows into the mounted `ArtifactsPane` lets the
+        pane's own `recompose=True` reactives rebuild just its children,
+        with the pane instance itself surviving.
+
+        Args:
+            select_briefing_id: Select this row after loading -- used by the
+                generation worker so a finished briefing is the one on
+                screen. Otherwise the current selection is re-resolved
+                against the reloaded rows and dropped if it is gone.
+        """
+        db = self._briefings_db()
+        watchlist_id = self._briefing_watchlist_id()
+        if db is None or watchlist_id is None:
+            self._loaded_briefings = []
+            self._selected_briefing = None
+        else:
+            try:
+                self._loaded_briefings = [
+                    dict(row) for row in db.list_briefings(watchlist_id)
+                ]
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                # Type only, never `logger.opt(exception=True)`: this app's
+                # file sink runs with `diagnose=True`, so a traceback here
+                # would dump the failing frame's locals -- which on this
+                # path are briefing rows, i.e. item-derived content. Same
+                # rule `briefing_service` states for its own failure log.
+                logger.warning(
+                    f"Failed to list briefings for watchlist {watchlist_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Failed to read this watchlist's briefings.",
+                    severity="error",
+                    markup=False,
+                )
+                self._loaded_briefings = []
+            wanted = (
+                select_briefing_id
+                if select_briefing_id is not None
+                else (self._selected_briefing or {}).get("id")
+            )
+            self._selected_briefing = next(
+                (
+                    row
+                    for row in self._loaded_briefings
+                    if wanted is not None and row.get("id") == wanted
+                ),
+                None,
+            )
+        if not self.is_mounted:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.briefings = self._loaded_briefings
+        pane.selected_briefing = self._selected_briefing
+        pane.scope_label = self._briefing_scope_label()
+        pane.can_generate = self._can_generate_briefing()
+
+    @on(BriefingSelected)
+    def handle_briefing_selected(self, event: BriefingSelected) -> None:
+        """Mirror the pane's selection so a region rebuild can re-seed it.
+
+        Deliberately NOT routed through `_select_entity`, unlike every other
+        pane's selection: the Inspector's verbs (Preview, Check now, Ingest,
+        Ignore, Delete) are all things you do to a monitored source or the
+        items it produced. A briefing is an artifact those verbs cannot act
+        on, and handing one to the Inspector would render its fields under
+        actions that do not apply to it.
+        """
+        event.stop()
+        self._selected_briefing = event.briefing
+
+    @on(RefreshBriefingsRequested)
+    def handle_refresh_briefings_requested(
+        self, event: RefreshBriefingsRequested
+    ) -> None:
+        event.stop()
+        self.run_worker(
+            self._load_briefings(), exclusive=True, group="wl-briefings-load"
+        )
+
+    @on(GenerateBriefingRequested)
+    def handle_generate_briefing_requested(
+        self, event: GenerateBriefingRequested
+    ) -> None:
+        """Guard the one-generation-per-watchlist rule, then generate.
+
+        The guard is the caller's, deliberately: `generate_briefing` neither
+        checks nor recovers, because folding either in would make the
+        service both the thing guarded and the guard (see its module
+        docstring). So the order here is the contract:
+
+        1. A generation this screen started is answered from memory. A live
+           worker's row reads `generating` in the database exactly like a
+           crashed one's, and only this process knows which it is.
+        2. `fail_interrupted_briefings` -- the zombie sweep -- runs BEFORE
+           the generating-check, so a row orphaned by a crash cannot wedge
+           the guard shut forever.
+        3. Anything the sweep actually recovered is REPORTED and the press
+           stops there rather than silently generating. That row may have
+           belonged to another live instance of this app against the same
+           database file, and starting a second generation over the top of
+           one still running would spend the user's provider quota twice on
+           the same window. Telling them what was found and letting them
+           press again is the honest, non-destructive half of that
+           ambiguity.
+        4. A `generating` row that survives the sweep cannot be recovered
+           from here at all, so it refuses.
+        """
+        event.stop()
+        db = self._briefings_db()
+        watchlist_id = self._briefing_watchlist_id()
+        if db is None or watchlist_id is None:
+            self._notify_watchlists(
+                "Select a watchlist in the rail to brief it.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._briefing_in_flight:
+            self._notify_watchlists(
+                "A briefing is already being written for this watchlist.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        try:
+            recovered = fail_interrupted_briefings(db, watchlist_id)
+            still_generating = any(
+                str(row.get("status") or "").strip().lower() == STATUS_GENERATING
+                for row in db.list_briefings(watchlist_id)
+            )
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.warning(
+                f"Briefing guard failed for watchlist {watchlist_id}: "
+                f"{type(exc).__name__}"
+            )
+            self._notify_watchlists(
+                "Failed to read this watchlist's briefings.",
+                severity="error",
+                markup=False,
+            )
+            return
+        if recovered:
+            self._notify_watchlists(
+                f"{recovered} briefing(s) were still marked in progress and have "
+                "been marked interrupted. Press Generate again to write a new one.",
+                severity="warning",
+                markup=False,
+            )
+            self.run_worker(
+                self._load_briefings(), exclusive=True, group="wl-briefings-load"
+            )
+            return
+        if still_generating:
+            self._notify_watchlists(
+                "A briefing for this watchlist is already in progress.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        self.run_worker(
+            self._generate_briefing(db, watchlist_id),
+            exclusive=True,
+            group="wl-briefing",
+        )
+
+    async def _generate_briefing(self, db: Any, watchlist_id: int) -> None:
+        """Worker body: one generation, then repaint the pane.
+
+        Wraps `generate_briefing` in a bare `except` on purpose. That
+        function turns *provider* failures into `failed` rows rather than
+        exceptions, but deliberately lets database errors propagate -- a
+        database error is not a briefing outcome. An exception escaping a
+        Textual worker with the default `exit_on_error=True` takes the whole
+        application down, so the escape hatch has to be here.
+
+        The log line names the exception TYPE only. `logger.opt(exception=True)`
+        would dump the failing frame's locals into a file sink running with
+        `diagnose=True`, and the frames under this call hold the prompt --
+        item titles and excerpts the user never chose to write to disk. Task
+        3's review found exactly that leak in the service; this is the same
+        rule, one layer up.
+        """
+        self._briefing_in_flight = True
+        generated_id: int | None = None
+        try:
+            row = await generate_briefing(db, watchlist_id)
+            generated_id = (row or {}).get("id")
+        except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+            logger.warning(
+                f"Briefing generation failed for watchlist {watchlist_id}: "
+                f"{type(exc).__name__}"
+            )
+            self._notify_watchlists(
+                "Could not write a briefing: the watchlist database could not "
+                "be reached. Nothing was recorded.",
+                severity="error",
+                markup=False,
+            )
+        finally:
+            self._briefing_in_flight = False
+        # Repaint either way: on the failure path the pane may still be
+        # showing a `generating` row this attempt inserted before it broke.
+        await self._load_briefings(select_briefing_id=generated_id)
+
     async def _load_items(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
         try:
@@ -3579,8 +3914,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def action_show_help(self) -> None:
         """Show a notification with available keyboard shortcuts."""
         self.app_instance.notify(
-            "1=Overview 2=Sources 3=Items 4=Runs 5=Rules 6=Notifications | "
-            "n=new d=delete c=check p=preview ?=help",
+            "1=Overview 2=Sources 3=Items 4=Runs 5=Rules 6=Notifications "
+            "7=Artifacts | n=new d=delete c=check p=preview ?=help",
             severity="information",
             timeout=8,
         )
