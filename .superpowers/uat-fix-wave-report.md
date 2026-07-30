@@ -383,3 +383,137 @@ asserts the RadioSet's rendered labels no longer include
   tests (`TestLoadSettingsProjectsFirstRun`).
 - `Tests/Wizards/test_first_run_setup_wizard.py` — regression tests for
   F-A (5), F-B (3), F-C (1), F-D (1), F-F (1).
+
+---
+
+## Round 2 — regression in the F-B fix, plus F-D confirmation
+
+### Regression: `show_step()` always refocused the nav bar
+
+**Confirmed by the coordinator, live.** The round-1 F-B fix
+(`SetupWizardContainer.show_step()`) unconditionally refocused
+`"#wizard-next"` after every step change. That over-corrected: landing on
+Provider with focus already parked on the Next button meant Down/Space
+(RadioSet-only bindings — they only act on a *focused* RadioSet) silently
+did nothing. A user who never thinks to Tab away from the nav bar hits
+`F-A`'s exact "selection doesn't commit" symptom again, one layer up in the
+UI — `pressed_button`/`selected_provider_key` never populate because the
+RadioSet was never focused to receive Down/Space in the first place.
+
+**Fix.** `show_step()` now prefers the incoming step's own first focusable
+descendant, found via `current_step.walk_children(Widget)` (DOM order,
+matching `compose()`'s visual top-to-bottom order) and a `.focusable` filter
+— e.g. the RadioSet on Provider/Model (first composed widget that is
+`can_focus=True`), the first exit `Button` on Summary (no RadioSet there) —
+falling back to the nav bar's Next/Cancel only when the step truly has no
+focusable widget of its own. The F-B mechanism is preserved either way: the
+focused widget is always a descendant of `SetupWizardContainer`, so
+ctrl+n/ctrl+b still resolve their bindings through it regardless of exactly
+which widget within the step holds focus.
+
+Needed `from textual.widget import Widget` (added to both
+`FirstRunSetupWizard.py` and the test file, `walk_children(Widget)` needs
+the type to filter by).
+
+**Tests.**
+- `test_ctrl_n_still_works_after_focus_was_on_a_now_hidden_widget`
+  (existing, round-1 test) rewritten: it previously asserted focus always
+  lands on the nav bar after a step change — that assertion is now the
+  *wrong* invariant. It now asserts focus lands on the current step's own
+  first focusable widget (computed independently in the test via the same
+  `walk_children(Widget)` + `.focusable` approach, so the assertion is not
+  circular with the fix's own logic, just the same well-defined DOM-order
+  concept) after each transition, while still driving the exact live
+  sequence (focus inside Provider's RadioSet, advance; focus inside Model's
+  own Input — simulating "click the custom-model field", the live UAT
+  action — advance; ctrl+n through to completion).
+- `test_down_space_selects_provider_with_no_tab_presses` (new, exactly as
+  requested): `ctrl+n` from Welcome, assert focus is already on Provider's
+  RadioSet with **no Tab press**, then `Down` + `Space`, then assert
+  `radio_set.pressed_button is not None` and
+  `provider_step.selected_provider_key != ""`.
+
+Both confirmed **red** against the round-1 (nav-bar-always) code (verified
+by temporarily reverting `show_step()` to the round-1 body and re-running:
+2 failures, matching exactly the reported regression) and **green** against
+the round-2 fix. Full required test command
+(`Tests/Wizards/ Tests/UI/test_first_run_wizard_live_contract.py Tests/UI/test_product_maturity_phase1_first_run.py`)
+→ **162 passed**, same 1 pre-existing unrelated warning as round 1.
+
+### Live re-verification, zero Tab presses, long scratch path
+
+Fresh scratch `HOME`/`TLDW_CONFIG_PATH` (config path deliberately 227
+characters, to force the Summary footer to wrap), 120×55 tmux pane:
+
+1. **Boot → Welcome.** `ctrl+n` → **Provider**, RadioSet already shows a
+   *solid* focused border immediately (no Tab pressed):
+
+   ```
+   Connect a provider
+   Cloud providers need an API key. Local servers just need to be running — we'll look for them.
+   ┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+   │ ▐●▌ Anthropic                                                                                          │
+   │ ▐●▌ Cohere                                                                                             │
+   ```
+
+2. **`Down` then `Space`, no Tab at all**, then `ctrl+n` → **Model** step
+   immediately reports `Models for cohere.` — proving the second radio
+   button (Cohere) was actually pressed by keyboard alone:
+
+   ```
+   Pick a default model
+   Models for cohere.
+   ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+   │ ▐●▌ command-a-03-2025
+   ...
+   ```
+
+3. Clicked the custom-model `Input` (mouse click, not Tab — the field sits
+   below several curated radio rows) and typed `round2-verify-model`, then
+   `ctrl+n` → **Summary**. Full footer capture (the confirmation task):
+
+   ```
+   ✗ Provider — no credentials or endpoint
+   ✓ Default model — round2-verify-model
+   ✗ RAG — embeddings deps not installed
+   ✗ Tools — all off (default)
+   ✗ Notes sync — off
+   ✓ Theme — textual-dark
+   ✗ Key encryption — off
+   Config file:
+   /tmp/wizard-uat-round2-33789/deeply/nested/scratch/directory/structure/to/force/the/config/file/path/text/to/wrap/
+   onto/a/second/line/within/the/one-hundred-twenty/column/terminal/pane/used/for/this/verification/walk/config.toml
+   Re-run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard.
+   ```
+
+   **F-D confirmed a grep/screenshot artifact, not a real defect.** The
+   227-character path is never blank: with `"Config file: "` plus the path
+   together far exceeding the pane width, Rich's word-wrap puts the whole
+   path on its own line(s) below the label — here even across *two* wrapped
+   lines, since the path alone is longer than one row. The label line reads
+   `Config file:` with nothing after it (because there was no room to start
+   the path on the same line), which is exactly what a naive same-line grep
+   for the path would miss, reproducing the original report's "empty path"
+   symptom without any code defect behind it.
+
+4. `ctrl+n` on Summary → **dismissed immediately** (main app's Home tab
+   shown), zero Tab presses anywhere in the entire walk. Config after:
+
+   ```
+   [first_run]
+   setup_started = true
+   setup_completed = true
+
+   [chat_defaults]
+   provider = "cohere"
+   model = "round2-verify-model"
+   ```
+
+5. Relaunched against the same scratch config: booted straight to Home, no
+   wizard re-offer.
+
+No code change was made for F-D; the existing F-D hardening (split
+try/except, fallback string, `logger.warning` on a genuine
+`get_cli_config_path()` failure) stands as defensive coverage for a
+different failure mode than the one originally reported, which this
+round's evidence shows was never actually present.

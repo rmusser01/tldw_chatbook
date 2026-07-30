@@ -14,6 +14,7 @@ from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
+from textual.widget import Widget
 from textual.widgets import Button, Input, Label, RadioButton, RadioSet, Static, Switch
 
 from tldw_chatbook.UI.Wizards.BaseWizard import (
@@ -1393,18 +1394,38 @@ class SetupWizardContainer(WizardContainer):
         container, several ancestors up from wherever the user last
         interacted) have no focus chain left to resolve bindings through
         and go silently inert -- the wizard "stays open" with no error or
-        indication anything happened. Re-focus a widget on the persistent
-        nav bar after every step change so a valid focus target always
-        exists, regardless of what the just-hidden step's own controls were
-        doing.
+        indication anything happened.
+
+        Round-2 regression fix: the first cut of this fix always refocused
+        the persistent nav bar's Next/Cancel button. That broke direct
+        keyboard interaction with the NEW step's own content -- landing on
+        Provider with focus already parked on "Next" meant Down/Space (which
+        only act on a FOCUSED RadioSet) silently did nothing, and a user who
+        never thinks to Tab away from the nav bar gets the exact "selection
+        doesn't commit" symptom F-A already fixed at the commit layer, one
+        level up in the UI. Prefer the incoming step's own first focusable
+        descendant (DOM order, matching compose()'s visual top-to-bottom
+        order -- e.g. the RadioSet on Provider/Model, the first exit Button
+        on Summary) so arrow/space/typing keep working with no Tab-hunting
+        required; fall back to the nav bar only when the step truly has no
+        focusable widget of its own. Either way the container remains in
+        the focused widget's ancestry, so ctrl+n/ctrl+b still resolve.
         """
         super().show_step(step_index)
         try:
-            next_button = self.query_one("#wizard-next", Button)
-            if not next_button.disabled:
-                next_button.focus()
-            else:
-                self.query_one("#wizard-cancel", Button).focus()
+            current_step = self.steps[self.current_step]
+            target = next(
+                (widget for widget in current_step.walk_children(Widget) if widget.focusable),
+                None,
+            )
+            if target is None:
+                next_button = self.query_one("#wizard-next", Button)
+                target = (
+                    next_button
+                    if not next_button.disabled
+                    else self.query_one("#wizard-cancel", Button)
+                )
+            target.focus()
         except Exception:
             logger.debug("Wizard step-change focus fix skipped", exc_info=True)
 

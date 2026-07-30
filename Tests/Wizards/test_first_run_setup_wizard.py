@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widget import Widget
 from textual.widgets import Button, Input, RadioButton, RadioSet, Static, Switch
 
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
@@ -1546,12 +1547,19 @@ async def test_ctrl_n_still_works_after_focus_was_on_a_now_hidden_widget():
     while clicking the same "Finish" button worked immediately after and
     also proved app.focused had indeed become None by then.
 
-    The fix (SetupWizardContainer.show_step()) makes this deterministic by
-    always explicitly re-focusing the persistent nav bar's own Next/Cancel
-    button after every step change, regardless of what Textual's own
-    fallback would have picked. Pin exactly that invariant -- "not None" is
-    too weak a check, since Textual's incidental fallback can accidentally
-    satisfy it without the wizard being reliably keyboard-navigable."""
+    Round-2 regression + fix: the FIRST cut of this fix always re-focused
+    the persistent nav bar's own Next/Cancel button after every step change.
+    That broke direct keyboard interaction with the new step's own content
+    -- landing on Provider with focus already parked on "Next" meant
+    Down/Space (which only act on a FOCUSED RadioSet) silently did nothing,
+    reproducing the exact "selection doesn't commit" symptom one level up
+    in the UI. The corrected fix prefers the incoming step's own first
+    focusable descendant (DOM order) and falls back to the nav bar only
+    when the step truly has none. Pin that exact invariant -- "not None" is
+    too weak a check, since Textual's own incidental fallback can
+    accidentally satisfy it without the wizard being reliably
+    keyboard-navigable, and "always the nav bar" is now the wrong
+    behavior."""
     wizard = _make_wizard()
     app = _HostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -1560,29 +1568,35 @@ async def test_ctrl_n_still_works_after_focus_was_on_a_now_hidden_widget():
         container.select_track(TRACK_QUICK)
         await pilot.pause(0.1)
 
-        def _assert_focus_on_nav_bar() -> None:
-            nav_next = container.query_one("#wizard-next", Button)
-            nav_cancel = container.query_one("#wizard-cancel", Button)
-            assert app.focused in (nav_next, nav_cancel), (
-                f"expected focus on the persistent nav bar, got {app.focused!r}"
+        def _first_focusable(step):
+            return next((w for w in step.walk_children(Widget) if w.focusable), None)
+
+        def _assert_focus_on_current_step_content() -> None:
+            current = container.steps[container.current_step]
+            expected = _first_focusable(current)
+            assert expected is not None, f"{current!r} has no focusable widget"
+            assert app.focused is expected, (
+                f"expected focus on {current!r}'s first focusable widget "
+                f"{expected!r}, got {app.focused!r}"
             )
 
         await pilot.press("ctrl+n")  # Welcome -> Provider
         await pilot.pause(0.2)
-        _assert_focus_on_nav_bar()
+        _assert_focus_on_current_step_content()
         provider_step = container.steps[container.current_step]
         assert isinstance(provider_step, ProviderStep)
         radio_set = provider_step.query_one("#setup-provider-choice", RadioSet)
-        radio_set.focus()
-        await pilot.pause(0.1)
-        assert app.focused is radio_set  # sanity: focus really is inside the step
+        assert app.focused is radio_set  # the auto-focus landed here, no Tab needed
 
         await pilot.press("ctrl+n")  # Provider -> Model
         await pilot.pause(0.2)
-        _assert_focus_on_nav_bar()
+        _assert_focus_on_current_step_content()
 
         model_step = container.steps[container.current_step]
         assert isinstance(model_step, ModelStep)
+        # Simulate the live UAT sequence: the user clicks into the custom-
+        # model Input specifically (overriding the RadioSet the auto-focus
+        # landed on) rather than accepting a curated radio option.
         custom_input = model_step.query_one("#setup-model-custom", Input)
         custom_input.focus()
         await pilot.pause(0.1)
@@ -1596,11 +1610,44 @@ async def test_ctrl_n_still_works_after_focus_was_on_a_now_hidden_widget():
             # Once the wizard has actually completed, the screen is
             # dismissed and app.focused legitimately going None reflects
             # that there is no more wizard to hold it -- only check the
-            # nav-bar-focus invariant while the wizard is still open.
+            # focus invariant while the wizard is still open.
             if app.wizard_result == "UNSET":
-                _assert_focus_on_nav_bar()
+                _assert_focus_on_current_step_content()
 
         assert app.wizard_result == {"completed": True, "exit_route": None}
+
+
+@pytest.mark.asyncio
+async def test_down_space_selects_provider_with_no_tab_presses():
+    """Round-2 regression pin (live-confirmed by the controller): Down then
+    Space on the Provider step, immediately after ctrl+n from Welcome, with
+    NO Tab press in between, must select a provider. The first cut of the
+    F-B focus fix parked focus on the nav bar's Next button after every step
+    change, so Down/Space (RadioSet-only bindings) landed on the wrong
+    widget and silently selected nothing -- reproducing F-A's "no provider
+    commit" symptom purely through keyboard navigation, no click/RadioSet
+    stub involved."""
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        await pilot.pause(0.1)
+
+        await pilot.press("ctrl+n")  # Welcome -> Provider
+        await pilot.pause(0.2)
+        provider_step = container.steps[container.current_step]
+        assert isinstance(provider_step, ProviderStep)
+        radio_set = provider_step.query_one("#setup-provider-choice", RadioSet)
+        assert app.focused is radio_set  # sanity: no Tab needed to reach it
+
+        await pilot.press("down")
+        await pilot.press("space")
+        await pilot.pause(0.2)
+
+        assert radio_set.pressed_button is not None
+        assert provider_step.selected_provider_key != ""
 
 
 def test_finalize_worker_uses_a_dedicated_group_not_wizard_advance():
