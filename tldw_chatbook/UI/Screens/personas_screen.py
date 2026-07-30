@@ -662,6 +662,7 @@ class PersonasScreen(BaseAppScreen):
         self._dictionaries_cache: list[dict] = []
         self._selected_dictionary_version: int | None = None
         self._lore_books_cache: list[dict] = []
+        self._dictionary_lore_request_generation: int = 0
         # Full record + entries for the currently-selected lore book, kept in
         # memory so Try-it can build a WorldInfoProcessor without a re-fetch.
         self._selected_lore_book: dict | None = None
@@ -1982,6 +1983,8 @@ class PersonasScreen(BaseAppScreen):
 
     async def _render_dictionary_rows(self, query: str = "") -> None:
         """Fetch and render dictionary rows; degrade to recovery copy on failure."""
+        self._dictionary_lore_request_generation += 1
+        request_generation = self._dictionary_lore_request_generation
         expected_mode = "dictionaries"
         expected_query = query
         if not self._library_render_snapshot_is_current(
@@ -2021,9 +2024,12 @@ class PersonasScreen(BaseAppScreen):
         )
         rows = tuple(self._dictionary_row(r) for r in visible)
         async with self._render_lock:
-            if not self._library_render_snapshot_is_current(
-                expected_query=expected_query,
-                expected_mode=expected_mode,
+            if (
+                request_generation != self._dictionary_lore_request_generation
+                or not self._library_render_snapshot_is_current(
+                    expected_query=expected_query,
+                    expected_mode=expected_mode,
+                )
             ):
                 return
             if recovery_copy is None:
@@ -2065,6 +2071,8 @@ class PersonasScreen(BaseAppScreen):
 
     async def _render_lore_rows(self, query: str = "") -> None:
         """Fetch and render lore/world-book rows; degrade to recovery copy on failure."""
+        self._dictionary_lore_request_generation += 1
+        request_generation = self._dictionary_lore_request_generation
         expected_mode = "lore"
         expected_query = query
         if not self._library_render_snapshot_is_current(
@@ -2101,9 +2109,12 @@ class PersonasScreen(BaseAppScreen):
         )
         rows = tuple(self._lore_row(r) for r in visible)
         async with self._render_lock:
-            if not self._library_render_snapshot_is_current(
-                expected_query=expected_query,
-                expected_mode=expected_mode,
+            if (
+                request_generation != self._dictionary_lore_request_generation
+                or not self._library_render_snapshot_is_current(
+                    expected_query=expected_query,
+                    expected_mode=expected_mode,
+                )
             ):
                 return
             if recovery_copy is None:

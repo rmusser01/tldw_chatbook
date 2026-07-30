@@ -4856,6 +4856,217 @@ class TestServerCharacterSourceIsolation:
             }
             assert _shared_pane_publication(screen) == current_publication
 
+    @pytest.mark.parametrize("source_mode", ("dictionaries", "lore"))
+    @pytest.mark.parametrize("older_outcome", ("success", "failure"))
+    async def test_shared_mode_query_aba_drops_older_completion(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        source_mode,
+        older_outcome,
+    ):
+        """Dictionary/Lore X→Y→X keeps the newer X rows and cache."""
+        import asyncio
+
+        fetch_started = asyncio.Event()
+        release_fetch = asyncio.Event()
+        call_count = 0
+        kind = "dictionary" if source_mode == "dictionaries" else "lore"
+        cache_name = (
+            "_dictionaries_cache"
+            if source_mode == "dictionaries"
+            else "_lore_books_cache"
+        )
+        entry_count = 2 if source_mode == "dictionaries" else 3
+
+        def record(item_id: int, name: str) -> dict:
+            return {
+                "id": item_id,
+                "name": name,
+                "entry_count": entry_count,
+                "enabled": True,
+            }
+
+        old_x = record(71, "X older result")
+        y_result = record(72, "Y intermediate result")
+        newer_x = record(73, "X newer winner")
+
+        async def fetch_records() -> list[dict]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                fetch_started.set()
+                await release_fetch.wait()
+                if older_outcome == "failure":
+                    raise RuntimeError("older X failed")
+                return [old_x]
+            if call_count == 2:
+                return [y_result]
+            if call_count == 3:
+                return [newer_x]
+            raise AssertionError(f"Unexpected fetch call: {call_count}")
+
+        async def list_dictionaries(*, mode, include_inactive):
+            assert (mode, include_inactive) == ("local", True)
+            return {"dictionaries": await fetch_records()}
+
+        _configure_shared_mode_sources(mock_app_instance, monkeypatch)
+        mock_app_instance.chat_dictionary_scope_service.list_dictionaries = (
+            list_dictionaries
+        )
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                if function is PersonasScreen._list_world_books_with_counts:
+                    return await fetch_records()
+                raise AssertionError(f"Unexpected to_thread function: {function!r}")
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+            library = screen.query_one("#personas-library-pane")
+            screen.state.switch_mode(source_mode)
+            screen.state.search_query = "x"
+            library.set_mode(source_mode)
+            render = (
+                screen._render_dictionary_rows
+                if source_mode == "dictionaries"
+                else screen._render_lore_rows
+            )
+
+            older_x_request = asyncio.create_task(render(query="x"))
+            await fetch_started.wait()
+
+            screen.state.search_query = "y"
+            await render(query="y")
+            screen.state.search_query = "x"
+            await render(query="x")
+            await pilot.pause()
+
+            newer_publication = _shared_pane_publication(screen)
+            newer_cache = deepcopy(getattr(screen, cache_name))
+            assert newer_publication["rows"] == (
+                (
+                    f"personas-library-row-{kind}-73",
+                    ("X newer winner", f"{entry_count} entries · on"),
+                ),
+            )
+            assert newer_cache == [newer_x]
+
+            release_fetch.set()
+            await older_x_request
+            await pilot.pause()
+
+            assert _shared_pane_publication(screen) == newer_publication
+            assert getattr(screen, cache_name) == newer_cache
+
+    @pytest.mark.parametrize("source_mode", ("dictionaries", "lore"))
+    async def test_shared_mode_away_and_back_drops_older_completion(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        source_mode,
+    ):
+        """Dictionary/Lore mode-away→back keeps the newer request owner."""
+        import asyncio
+
+        fetch_started = asyncio.Event()
+        release_fetch = asyncio.Event()
+        call_count = 0
+        kind = "dictionary" if source_mode == "dictionaries" else "lore"
+        cache_name = (
+            "_dictionaries_cache"
+            if source_mode == "dictionaries"
+            else "_lore_books_cache"
+        )
+        entry_count = 2 if source_mode == "dictionaries" else 3
+
+        def record(item_id: int, name: str) -> dict:
+            return {
+                "id": item_id,
+                "name": name,
+                "entry_count": entry_count,
+                "enabled": True,
+            }
+
+        older_result = record(81, "Older before mode return")
+        newer_result = record(82, "Newer after mode return")
+
+        async def fetch_records() -> list[dict]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                fetch_started.set()
+                await release_fetch.wait()
+                return [older_result]
+            if call_count == 2:
+                return [newer_result]
+            raise AssertionError(f"Unexpected fetch call: {call_count}")
+
+        async def list_dictionaries(*, mode, include_inactive):
+            assert (mode, include_inactive) == ("local", True)
+            return {"dictionaries": await fetch_records()}
+
+        _configure_shared_mode_sources(mock_app_instance, monkeypatch)
+        mock_app_instance.chat_dictionary_scope_service.list_dictionaries = (
+            list_dictionaries
+        )
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                if function is PersonasScreen._list_world_books_with_counts:
+                    return await fetch_records()
+                raise AssertionError(f"Unexpected to_thread function: {function!r}")
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+            library = screen.query_one("#personas-library-pane")
+            screen.state.switch_mode(source_mode)
+            screen.state.search_query = ""
+            library.set_mode(source_mode)
+            render = (
+                screen._render_dictionary_rows
+                if source_mode == "dictionaries"
+                else screen._render_lore_rows
+            )
+
+            older_request = asyncio.create_task(render())
+            await fetch_started.wait()
+
+            await screen._apply_mode("prompts")
+            await screen._apply_mode(source_mode)
+            await pilot.pause()
+
+            newer_publication = _shared_pane_publication(screen)
+            newer_cache = deepcopy(getattr(screen, cache_name))
+            assert newer_publication["rows"] == (
+                (
+                    f"personas-library-row-{kind}-82",
+                    ("Newer after mode return", f"{entry_count} entries · on"),
+                ),
+            )
+            assert newer_cache == [newer_result]
+
+            release_fetch.set()
+            await older_request
+            await pilot.pause()
+
+            assert _shared_pane_publication(screen) == newer_publication
+            assert getattr(screen, cache_name) == newer_cache
+
     @pytest.mark.parametrize("older_outcome", ("success", "failure"))
     async def test_server_target_aba_drops_older_request(
         self, mock_app_instance, older_outcome
