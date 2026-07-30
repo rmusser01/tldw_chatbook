@@ -183,6 +183,7 @@ from ...Chat.console_voice_input import (
     STATE_LISTENING,
     TRANSCRIPTION_INCOMPLETE_REASON,
     TRANSCRIPTION_INCOMPLETE_REMEDY,
+    VAD_UNAVAILABLE_MESSAGE,
     ConsoleVoiceInputController,
     VoiceCommand,
     VoiceFailed,
@@ -191,6 +192,7 @@ from ...Chat.console_voice_input import (
     VoiceModelWarmupFailed,
     VoicePartial,
     VoiceProviderOverridden,
+    VoiceVadUnavailable,
     default_service_factory,
 )
 from ...Chat.console_display_state import (
@@ -5271,6 +5273,25 @@ class ChatScreen(BaseAppScreen):
                     f"using '{escape_markup(event.effective)}' instead.",
                     severity="warning",
                 )
+            return
+        if isinstance(event, VoiceVadUnavailable):
+            # Same two-tier latch as `VoiceProviderOverridden` just above,
+            # and for the same reason: the controller's own
+            # `_vad_unavailable_announced` only covers this one controller
+            # instance, and a fresh one is built on every new dictation
+            # session. The user only needs telling once per app run. The
+            # controller already logged this (see
+            # `_maybe_report_vad_unavailable`), so only the toast lives here.
+            if not getattr(
+                self.app_instance, "_console_dictation_vad_unavailable_notified", False
+            ):
+                self.app_instance._console_dictation_vad_unavailable_notified = True
+                # Not spoken (`spoken_feedback` never applies here): the
+                # microphone is open by the time this fires, and speaking
+                # over an open mic is exactly what that setting exists to
+                # avoid everywhere else in this file.
+                self.app_instance.notify(VAD_UNAVAILABLE_MESSAGE, severity="warning")
+            return
 
     def _on_console_dictation_buffer_limit(self, session: Any) -> None:
         """Marshal a recorder-thread memory-limit signal onto the UI thread.

@@ -564,12 +564,16 @@ class FakeAudioService:
 
     `abandon()` reaches for this private attribute on purpose: it is the
     teardown path that releases the microphone without going through
-    `stop_dictation()`'s 2s thread join.
+    `stop_dictation()`'s 2s thread join. `use_vad` mirrors the real
+    `AudioRecordingService` attribute `_maybe_report_vad_unavailable` reads;
+    it defaults to `True` (VAD came up fine) so every existing caller that
+    does not care about it gets today's non-degraded behaviour.
     """
 
-    def __init__(self, raise_on_stop: Exception | None = None):
+    def __init__(self, raise_on_stop: Exception | None = None, use_vad: bool = True):
         self.stop_called = False
         self._raise_on_stop = raise_on_stop
+        self.use_vad = use_vad
 
     def stop_recording(self):
         self.stop_called = True
@@ -730,6 +734,40 @@ def test_provider_override_is_announced_once(monkeypatch):
     overrides = [e for e in events if isinstance(e, cvi.VoiceProviderOverridden)]
     assert len(overrides) == 1
     assert overrides[0].effective == "faster-whisper"
+
+
+def test_vad_unavailable_is_announced_once_across_captures(monkeypatch):
+    """Mirrors `test_provider_override_is_announced_once` exactly.
+
+    `_maybe_report_vad_unavailable` reads `service._audio_service.use_vad`
+    the same defensive way `_release()` reads `_audio_service` itself; a
+    recorder that came up with `use_vad=False` means commands cannot finalize
+    mid-capture this session, which must be surfaced once, not once per
+    capture.
+    """
+    service = FakeDictationService()
+    service._audio_service = FakeAudioService(use_vad=False)
+    controller, events, _ = _controller(monkeypatch, service)
+
+    controller.start()
+    controller.stop()
+    controller.start()
+
+    unavailable = [e for e in events if isinstance(e, cvi.VoiceVadUnavailable)]
+    assert len(unavailable) == 1
+
+
+def test_vad_available_never_announces_unavailable(monkeypatch):
+    """The common case: VAD came up fine, so nothing degraded is reported."""
+    service = FakeDictationService()
+    service._audio_service = FakeAudioService(use_vad=True)
+    controller, events, _ = _controller(monkeypatch, service)
+
+    controller.start()
+    controller.stop()
+    controller.start()
+
+    assert [e for e in events if isinstance(e, cvi.VoiceVadUnavailable)] == []
 
 
 # -- Fix round 1: wedge-proofing (probe/resolve crash, throwing emit, --------

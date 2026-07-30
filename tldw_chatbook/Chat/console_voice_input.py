@@ -354,6 +354,26 @@ class VoiceModelWarmupFailed:
 
 
 @dataclass(frozen=True)
+class VoiceVadUnavailable:
+    """The capture started, but the recorder's voice-activity detection did not.
+
+    Dictation itself still works -- the recorder falls back to forwarding
+    every frame -- but a segment then only finalizes when the capture stops,
+    so a command spoken mid-capture (see `COMMAND_PHRASES`) can never fire.
+    """
+
+
+#: Shown once per app run when `VoiceVadUnavailable` fires (see
+#: `ConsoleVoiceInputController._maybe_report_vad_unavailable`). Not spoken:
+#: the microphone is open when this would need to be said, and speaking over
+#: an open mic is exactly what `spoken_feedback` avoids everywhere else.
+VAD_UNAVAILABLE_MESSAGE = (
+    "Voice commands unavailable this session: voice-activity detection "
+    "failed to load. Dictation still works; commands execute when you stop."
+)
+
+
+@dataclass(frozen=True)
 class CaptureOutcome:
     """What the dictation service reported about a finished capture.
 
@@ -649,6 +669,12 @@ class ConsoleVoiceInputController:
         self._state = STATE_IDLE
         self._state_lock = threading.Lock()
         self._override_announced = False
+        # Same shape as `_override_announced`: latches `VoiceVadUnavailable`
+        # to once per controller instance. `_handle_console_dictation_event`
+        # (chat_screen.py) latches it a second time on `self.app_instance`,
+        # the same two-tier scheme `VoiceProviderOverridden` uses, since a
+        # fresh controller is built on every new dictation session.
+        self._vad_unavailable_announced = False
         self.save_audio_requested = False
         # One-way latch: once `abandon()` has run, an in-flight `_begin()`
         # (still building/starting a service on another thread, a cold model
@@ -931,7 +957,8 @@ class ConsoleVoiceInputController:
             self._fail_not_started()
             return
 
-        self._enter_listening()
+        if self._enter_listening():
+            self._maybe_report_vad_unavailable(service)
 
     def _prepare_speech_model(self, service: Any, effective: EffectiveConfig) -> bool:
         """Load the speech model while still in `preparing`, before capture.
@@ -1166,7 +1193,7 @@ class ConsoleVoiceInputController:
             return
         self._fail("Could not start the microphone.")
 
-    def _enter_listening(self) -> None:
+    def _enter_listening(self) -> bool:
         """Atomically transition to `listening`, re-checking abandonment.
 
         Between claiming the service above (under `_state_lock`) and this
@@ -1176,12 +1203,49 @@ class ConsoleVoiceInputController:
         returned the machine to idle. Re-checking `_abandoned` here, under
         the same lock, closes that window instead of stomping the state back
         to `listening` with no service behind it.
+
+        Returns:
+            True once the transition to `listening` actually happened; False
+            when `abandon()` won the race and the machine is idle instead.
+            The caller uses this to skip work (e.g. the VAD-unavailable
+            check) that only makes sense for a capture that is actually live.
         """
         with self._state_lock:
             if self._abandoned:
-                return
+                return False
             self._state = STATE_LISTENING
         self._emit(VoiceStateChanged(STATE_LISTENING))
+        return True
+
+    def _maybe_report_vad_unavailable(self, service: Any) -> None:
+        """Emit `VoiceVadUnavailable` once per controller instance.
+
+        Voice commands rely on the recorder's own VAD to gate mid-capture
+        finalization (`LazyLiveDictationService.SILENCE_THRESHOLD_SECONDS`'s
+        docstring has the mechanism); without it the recorder forwards every
+        frame and a segment only finalizes when the capture stops, so a
+        command spoken mid-capture never fires. That degrade path is
+        otherwise silent, so this tells the user once.
+
+        `service._audio_service` is read with the same defensive
+        `getattr`-only pattern `_release()` uses: a fake or a service that
+        has not populated the attribute yet reports neither `True` nor
+        `False` from the inner `getattr`, and only an explicit `False` (VAD
+        was requested and did not come up) counts as degraded.
+
+        Args:
+            service: The dictation service this capture just started on.
+        """
+        if self._vad_unavailable_announced:
+            return
+        audio = getattr(service, "_audio_service", None)
+        if getattr(audio, "use_vad", None) is False:
+            self._vad_unavailable_announced = True
+            logger.warning(
+                "Console dictation started without VAD; voice commands "
+                "cannot finalize mid-capture this session"
+            )
+            self._emit(VoiceVadUnavailable())
 
     def stop(self) -> None:
         """End capture and commit. No-op unless currently listening."""

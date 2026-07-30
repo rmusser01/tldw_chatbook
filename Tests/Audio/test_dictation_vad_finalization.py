@@ -465,3 +465,103 @@ def test_an_unusable_threshold_falls_back_to_the_default(monkeypatch, bad):
         LazyLiveDictationService._resolve_silence_threshold()
         == LazyLiveDictationService.SILENCE_THRESHOLD_SECONDS
     )
+
+
+# --------------------------------------------------------------------------
+# `vad_aggressiveness` config
+#
+# Aggressiveness is the knob on the recorder-gate mechanism above: measured
+# on real hardware, aggressiveness 2 (the old hard-coded value) let ~30
+# speech-positive frames per 4s of ambient silence through, which keeps
+# `last_speech_time` fresh forever and means the silence threshold never
+# elapses -- voice commands simply never fire, silently. Aggressiveness 3
+# measured 0 false positives on the same room. A bad value is just as silent
+# a failure as a bad `silence_threshold_seconds`, so this mirrors that
+# resolver's coverage exactly, including the `nan`/`inf`/string cases --
+# `int(float("nan"))` raises `ValueError`, `int(float("inf"))` raises
+# `OverflowError` (not `ValueError`), and both must be caught or a typo'd
+# config value crashes dictation start instead of falling back.
+# --------------------------------------------------------------------------
+
+
+def _stub_aggressiveness_setting(monkeypatch, value) -> None:
+    """Make `get_cli_setting` report `value` for the aggressiveness key only."""
+    from tldw_chatbook.Audio import dictation_service_lazy
+
+    def _get(section: str, key: Any = None, default: Any = None) -> Any:
+        if key is not None and not isinstance(key, str):
+            key, default = None, key
+        path = section if key is None else f"{section}.{key}"
+        if path == "dictation.vad_aggressiveness":
+            return value
+        return default
+
+    monkeypatch.setattr(dictation_service_lazy, "get_cli_setting", _get)
+
+
+def test_a_configured_aggressiveness_is_honored(monkeypatch):
+    from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+    _stub_aggressiveness_setting(monkeypatch, 1)
+    assert LazyLiveDictationService._resolve_vad_aggressiveness() == 1
+
+
+@pytest.mark.parametrize("boundary", [0, 3])
+def test_a_boundary_aggressiveness_is_honored(monkeypatch, boundary):
+    """0 and 3 are both valid, unlike the threshold's exclusive `> 0`."""
+    from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+    _stub_aggressiveness_setting(monkeypatch, boundary)
+    assert LazyLiveDictationService._resolve_vad_aggressiveness() == boundary
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        float("nan"),
+        float("inf"),
+        "nan",
+        "inf",
+        -1,
+        4,
+        "not a number",
+        None,
+        [],
+    ],
+)
+def test_an_unusable_aggressiveness_falls_back_to_the_default(monkeypatch, bad):
+    """A typo must not silently disable ambient-noise gating (or crash)."""
+    from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+    _stub_aggressiveness_setting(monkeypatch, bad)
+    assert (
+        LazyLiveDictationService._resolve_vad_aggressiveness()
+        == LazyLiveDictationService.VAD_AGGRESSIVENESS
+    )
+
+
+def test_resolved_aggressiveness_reaches_the_recorder(monkeypatch):
+    """The whole point: the resolved value must actually reach the recorder.
+
+    Mirrors `Tests/Audio/test_dictation_capture_release.py`'s
+    `_spy_recorder` pattern: patch the class `audio_service` imports, so the
+    real `AudioRecordingService.__init__` (which opens a device) never runs.
+    """
+    from tldw_chatbook.Audio import recording_service
+    from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+    built = []
+
+    def factory(**kwargs):
+        recorder = type("RecorderSpy", (), {"kwargs": kwargs})()
+        built.append(recorder)
+        return recorder
+
+    monkeypatch.setattr(recording_service, "AudioRecordingService", factory)
+    _stub_aggressiveness_setting(monkeypatch, 1)
+
+    service = LazyLiveDictationService()
+    recorder = service.audio_service
+
+    assert recorder is built[0]
+    assert built[0].kwargs["vad_aggressiveness"] == 1

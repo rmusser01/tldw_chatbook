@@ -118,11 +118,22 @@ class LazyLiveDictationService:
     #: `dictation.silence_threshold_seconds`.
     SILENCE_THRESHOLD_SECONDS = 2.0
 
+    #: How aggressively the recorder's VAD classifies a frame as speech
+    #: (0 = least aggressive / most permissive, 3 = most aggressive). This
+    #: used to be hard-coded to 2, and measurement on real hardware showed
+    #: ambient silence still registering ~30 speech-positive frames per 4s at
+    #: that level -- enough that `last_speech_time` never goes stale and a
+    #: pause never finalizes a segment. Aggressiveness 3 measured 0 false
+    #: positives on the same room. Configurable as
+    #: `dictation.vad_aggressiveness`.
+    VAD_AGGRESSIVENESS = 3
+
     #: Instance defaults, declared on the class so a service built with
     #: `__new__` (teardown-path tests do exactly that) still stops cleanly
     #: instead of raising AttributeError while releasing the microphone.
     stop_join_timeout_seconds = STOP_JOIN_TIMEOUT_SECONDS
     silence_threshold_seconds = SILENCE_THRESHOLD_SECONDS
+    vad_aggressiveness = VAD_AGGRESSIVENESS
     captured_bytes = 0
     max_buffer_bytes: Optional[int] = None
     on_buffer_limit: Optional[Callable[[], None]] = None
@@ -221,6 +232,7 @@ class LazyLiveDictationService:
         )
         self.stop_join_timeout_seconds = self._resolve_stop_join_timeout()
         self.silence_threshold_seconds = self._resolve_silence_threshold()
+        self.vad_aggressiveness = self._resolve_vad_aggressiveness()
 
         # Bytes the recorder has handed us this session. The one fact that
         # separates "the microphone produced nothing" from "the transcriber
@@ -300,6 +312,44 @@ class LazyLiveDictationService:
             return cls.SILENCE_THRESHOLD_SECONDS
         return threshold
 
+    @classmethod
+    def _resolve_vad_aggressiveness(cls) -> int:
+        """Read `dictation.vad_aggressiveness`, falling back to the default.
+
+        Returns:
+            An integer from 0 to 3 (inclusive) controlling how aggressively
+            the recorder's VAD filters ambient noise out of "speech". Higher
+            values classify more borderline audio as non-speech, which is
+            what lets a pause finalize a segment instead of ambient noise
+            holding `last_speech_time` fresh forever.
+        """
+        raw = get_cli_setting(
+            "dictation.vad_aggressiveness", cls.VAD_AGGRESSIVENESS
+        )
+        try:
+            aggressiveness = int(raw)
+        except (TypeError, ValueError, OverflowError):
+            # Same trap as the two resolvers above: `nan`/`inf` are valid
+            # TOML floats. `int(float("nan"))` raises `ValueError` and
+            # `int(float("inf"))` raises `OverflowError` (not `ValueError`),
+            # so both must be caught here or a typo'd config value crashes
+            # dictation start instead of falling back.
+            logger.warning(
+                "Invalid dictation.vad_aggressiveness {!r}; using {}",
+                raw,
+                cls.VAD_AGGRESSIVENESS,
+            )
+            return cls.VAD_AGGRESSIVENESS
+        if not 0 <= aggressiveness <= 3:
+            logger.warning(
+                "dictation.vad_aggressiveness must be an integer between 0 "
+                "and 3 (got {!r}); using {}",
+                raw,
+                cls.VAD_AGGRESSIVENESS,
+            )
+            return cls.VAD_AGGRESSIVENESS
+        return aggressiveness
+
     def _load_privacy_settings(self):
         """Load privacy settings from configuration."""
         self.privacy_settings = {
@@ -328,7 +378,7 @@ class LazyLiveDictationService:
                 self._audio_service = AudioRecordingService(
                     backend=self.audio_backend_preference,
                     use_vad=True,
-                    vad_aggressiveness=2,
+                    vad_aggressiveness=self.vad_aggressiveness,
                     chunk_size=int(
                         self.buffer_duration_ms * 16
                     ),  # 16 samples/ms at 16kHz

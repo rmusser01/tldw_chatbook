@@ -355,11 +355,12 @@ must each complete before their segments finalize, a full "pause, command,
 pause" round trip costs roughly **two** threshold intervals, not one —
 budget for that rather than reading it as lag.
 
-Voice-activity detection needs the optional `webrtcvad` package. Without it
-the recorder forwards every frame, nothing ever looks like a pause, and
-segments finalize only when the capture stops — so inline commands and
-mid-capture finalization do not fire, though dictation itself still works
-end to end.
+Voice-activity detection needs the optional `webrtcvad-wheels` package
+(installed by the `speech_recording` extra; it still imports as `webrtcvad`,
+unchanged). Without it the recorder forwards every frame, nothing ever looks
+like a pause, and segments finalize only when the capture stops — so inline
+commands and mid-capture finalization do not fire, though dictation itself
+still works end to end. The Console notifies once per run when this happens.
 
 **Configuring the prefix.** `dictation.command_prefix` accepts multi-word
 prefixes and is normalized the same way as spoken commands. Leaving it
@@ -687,6 +688,11 @@ spoken_feedback = false
 # default. Lowering it shortens command latency at the cost of shorter,
 # choppier dictation segments.
 silence_threshold_seconds = 2.0
+# How aggressively the recorder's VAD classifies a frame as speech, 0-3.
+# Must be an integer in that range; invalid values fall back to this default.
+# Lower values admit more ambient noise as speech and can prevent
+# pause-finalization entirely.
+vad_aggressiveness = 3
 
 [dictation.privacy]
 save_history = false
