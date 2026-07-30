@@ -2904,6 +2904,20 @@ class ChatScreen(BaseAppScreen):
         self._console_conversation_browser_total: int | None = None
         self._console_conversation_browser_error = ""
         self._console_visible_draft_session_id: str | None = None
+        # TASK-1281: composer undo/redo history, scoped per Console session.
+        # Exported (`ConsoleComposerBar.export_undo_history`) on switch-away
+        # and restored on switch-in inside `_sync_console_session_draft`, so
+        # Ctrl+Z/Ctrl+Shift+Z in one session's tab never sees or touches
+        # another session's edits. Entries are dropped when a tab is
+        # explicitly closed (see the `console-close-session-tab-` button
+        # handler); a session that goes away some other way (e.g. a full
+        # `restore_state` rehydration) leaves a stale, unreachable entry
+        # here rather than being actively pruned -- bounded by how many
+        # distinct session ids this screen instance has ever shown a
+        # composer for, same tradeoff as the other per-session caches above.
+        self._console_undo_histories: dict[
+            str, tuple[list[Any], list[Any]]
+        ] = {}
         self._console_dictation_session: Any | None = None
         self._console_dictation_state: Literal[
             "idle", "starting", "recording", "transcribing"
@@ -6192,10 +6206,23 @@ class ChatScreen(BaseAppScreen):
                 store.set_session_draft(visible_session_id, save_text)
             except KeyError:
                 pass
+            # TASK-1281: this composer is about to start showing a DIFFERENT
+            # session's draft -- bank its undo/redo history under the
+            # session it actually belongs to before the swap below discards
+            # it, so a later switch back can restore it.
+            self._console_undo_histories[visible_session_id] = (
+                composer.export_undo_history()
+            )
         try:
             composer.load_draft(store.session_draft(active_session_id))
         except KeyError:
             composer.clear_draft()
+        # TASK-1281: restore (or start fresh) BEFORE re-inserting any
+        # settle-window keystrokes below, so those keystrokes land in --
+        # and are recorded onto -- the session they actually typed into.
+        composer.restore_undo_history(
+            self._console_undo_histories.get(active_session_id)
+        )
         if typed_suffix:
             composer.insert_text(typed_suffix)
         self._console_visible_draft_session_id = active_session_id
@@ -18028,6 +18055,44 @@ class ChatScreen(BaseAppScreen):
             self._build_console_control_state(self._pending_console_launch_context)
         )
 
+    def _persist_console_composer_draft_after_history_navigation(
+        self, composer: ConsoleComposerBar
+    ) -> None:
+        """Re-sync store + Workbench state after an undo/redo mutates the draft.
+
+        Mirrors `_insert_console_dictation`'s own re-persist (TASK-1281):
+        undo/redo mutate the composer directly, bypassing every other
+        draft-mutation call site's own `store.set_session_draft` follow-up,
+        so without this the store and the visible composer would split-brain
+        the instant a session switch (or app restore) next reads the store's
+        copy instead of the live widget.
+        """
+        store = self._ensure_console_chat_store()
+        if store.active_session_id is not None:
+            try:
+                store.set_session_draft(store.active_session_id, composer.draft_text())
+            except KeyError:
+                pass
+        self._sync_console_workbench_actions_from_draft()
+
+    def _console_composer_undo(self) -> None:
+        """Undo the most recent Console composer draft mutation (TASK-1281).
+
+        A no-op composer-side and here when there is nothing to undo -- no
+        store write, no Workbench resync, matching the "silent no-op" AC.
+        """
+        composer = self._console_composer_or_none()
+        if composer is None or not composer.undo():
+            return
+        self._persist_console_composer_draft_after_history_navigation(composer)
+
+    def _console_composer_redo(self) -> None:
+        """Redo a Console composer draft mutation that was just undone (TASK-1281)."""
+        composer = self._console_composer_or_none()
+        if composer is None or not composer.redo():
+            return
+        self._persist_console_composer_draft_after_history_navigation(composer)
+
     def _sync_console_pending_delete_confirmation(self) -> None:
         """Clear stale destructive-action confirmation when transcript selection changes."""
         if self._pending_console_delete_message_id is None:
@@ -18332,8 +18397,30 @@ class ChatScreen(BaseAppScreen):
             event.prevent_default()
             return
         if event.key == "ctrl+u":
-            composer.clear_draft()
+            # TASK-1281: this is the one call site that opts into undo --
+            # an accidental full clear is exactly what undo exists for.
+            composer.clear_draft(record_history=True)
             self._sync_console_workbench_actions_from_draft()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "ctrl+z":
+            self._console_composer_undo()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key in {"ctrl+shift+z", "ctrl+shift+Z"}:
+            # TASK-1281: both tokens are real Textual key strings for this
+            # chord depending on how the terminal (or its keyboard protocol)
+            # reports the shifted keycap's codepoint -- verified against
+            # `textual._xterm_parser.XTermParser._parse_extended_key` with
+            # synthetic Kitty CSI-u sequences: codepoint 122 ('z') + shift+
+            # ctrl modifiers yields "ctrl+shift+z", while codepoint 90 ('Z')
+            # with the same modifiers yields "ctrl+shift+Z". `Pilot.press()`
+            # (and this project's existing `ctrl+shift+p/c/a` bindings) use
+            # the lowercase form, which is the primary/expected token; the
+            # uppercase alias is defensive.
+            self._console_composer_redo()
             event.stop()
             event.prevent_default()
             return
@@ -19258,6 +19345,9 @@ class ChatScreen(BaseAppScreen):
 
                 async def _do_close() -> None:
                     self._ensure_console_chat_controller().close_session(session_id)
+                    # TASK-1281: drop the closed session's undo/redo history
+                    # too -- it can never be switched back into.
+                    self._console_undo_histories.pop(session_id, None)
                     _evict_closing_session_images()
                     await self._sync_native_console_chat_ui()
 
@@ -19271,6 +19361,7 @@ class ChatScreen(BaseAppScreen):
                 self.app.push_screen(dialog)
             else:
                 self._ensure_console_chat_controller().close_session(session_id)
+                self._console_undo_histories.pop(session_id, None)
                 _evict_closing_session_images()
                 await self._sync_native_console_chat_ui()
             return
