@@ -78,6 +78,7 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     voice_id_for_request,
 )
 from tldw_chatbook.UI.Speech.speech_effects_pane import SpeechEffectsPane
+from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
 from tldw_chatbook.UI.stts_profile_library import (
     PROFILE_ACTION_FAILED_COPY,
@@ -4255,6 +4256,72 @@ class TTSPlaygroundWidget(Widget):
         return f"{minutes}:{secs:02d}"
 
 
+def _seed_axis_defaults() -> dict[str, str]:
+    """Seed `SpeechPlaygroundPane.axis_defaults` from persisted preferences.
+
+    `SpeechPlaygroundPane.axis_values`/`axis_defaults` are the model of
+    record for the axis row's override markers
+    (`Docs/superpowers/specs/2026-07-30-speech-preset-axis-ownership.md`).
+    Reads the same `get_cli_setting` values `SpeechSettingsMixin._set_initial_values`
+    already reads, so a first-run pane and Settings agree on what "default"
+    means, and builds one `TTSPreferencesSnapshot` -- its `model_mode`/
+    `voice_mode` are what "only when its mode is exact" needs to check.
+
+    A missing preference is OMITTED rather than stored as a sentinel: the
+    axis row's `is_override` treats a missing default as "not an override",
+    which is the correct first-run behaviour.
+
+    Returns:
+        A ``{control_id: value}`` mapping, or ``{}`` if preferences cannot
+        be read for any reason -- this seeds `compose()`, which must never
+        raise (an escaping exception there exits the whole app).
+    """
+    try:
+        default_provider = get_cli_setting("app_tts", "default_provider", "openai")
+        is_audio_cpp = default_provider == AUDIO_CPP_PROVIDER_ID
+        preference_values: dict[str, object] = {
+            "default_provider": default_provider,
+            "default_model": get_cli_setting(
+                "app_tts",
+                "default_model",
+                "" if is_audio_cpp else "tts-1",
+            ),
+            "default_voice": get_cli_setting(
+                "app_tts",
+                "default_voice",
+                "" if is_audio_cpp else "alloy",
+            ),
+            "default_format": get_cli_setting(
+                "app_tts",
+                "default_format",
+                "wav" if is_audio_cpp else "mp3",
+            ),
+            "default_speed": get_cli_setting("app_tts", "default_speed", 1.0),
+        }
+        missing_mode = object()
+        for mode_key in ("default_model_mode", "default_voice_mode"):
+            mode = get_cli_setting("app_tts", mode_key, missing_mode)
+            if mode is not missing_mode:
+                preference_values[mode_key] = mode
+        preferences = TTSPreferencesSnapshot.from_settings(
+            {"app_tts": preference_values}
+        )
+    except Exception:  # noqa: BLE001 - compose() must never raise
+        logger.debug("Could not seed Playground axis defaults from preferences")
+        return {}
+
+    defaults: dict[str, str] = {
+        "tts-provider-select": preferences.provider_id,
+        "tts-format-select": preferences.response_format,
+        "tts-speed-input": str(preferences.speed),
+    }
+    if preferences.model_mode == "exact" and preferences.model_id:
+        defaults["tts-model-select"] = preferences.model_id
+    if preferences.voice_mode == "exact" and preferences.voice_id:
+        defaults["tts-voice-select"] = preferences.voice_id
+    return defaults
+
+
 class STTSWindow(Container):
     """Main S/TT/S window containing all sub-windows"""
 
@@ -4307,8 +4374,13 @@ class STTSWindow(Container):
         matching content widget; the screen only points it at a view.
         """
         with Container(classes="stts-content"):
-            # Show playground by default
-            yield TTSPlaygroundWidget()
+            # Show playground by default. The rebuilt pane, not the legacy
+            # widget -- see the takeover ruling above the module-level
+            # `_seed_axis_defaults` helper.
+            yield SpeechPlaygroundPane(
+                id="speech-playground-pane",
+                axis_defaults=_seed_axis_defaults(),
+            )
         self._mounted_view = "playground"
 
     def _speech_capability_status_text(self) -> str:
@@ -4388,7 +4460,13 @@ class STTSWindow(Container):
         if new_view == "playground":
             preset = self._pending_playground_preset
             self._pending_playground_preset = None
-            content_container.mount(TTSPlaygroundWidget(preset))
+            content_container.mount(
+                SpeechPlaygroundPane(
+                    id="speech-playground-pane",
+                    profile_preset=preset,
+                    axis_defaults=_seed_axis_defaults(),
+                )
+            )
         elif new_view == "profiles":
             content_container.mount(STTSProfileLibrary(self._load_profile_service))
         elif new_view == "settings":
