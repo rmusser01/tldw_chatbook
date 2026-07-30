@@ -71,6 +71,23 @@ class ConsoleDraftStash:
 
 
 @dataclass(frozen=True)
+class _DraftHistorySnapshot:
+    """Undo/redo entry (TASK-1281): the canonical draft text plus caret offset.
+
+    Deliberately flat text+cursor rather than a copy of `_segments` -- the
+    architecture this task specified trades away paste-token collapse
+    fidelity across an undo/redo (a restored segment always comes back as
+    plain literal text, never a re-collapsed paste token) for a much
+    simpler history model. `restore_stashed_draft`/`ConsoleDraftStash`
+    already own the "preserve real segment objects" contract for the send
+    flow; this is a separate, narrower one.
+    """
+
+    text: str
+    cursor_index: int
+
+
+@dataclass(frozen=True)
 class _DraftSegmentDisplayRange:
     """Visible character range occupied by a segment display token."""
 
@@ -106,6 +123,9 @@ class ConsoleComposerBar(Horizontal):
     PASTE_CONFIRM_STYLE = "bold black on yellow"
     CURSOR_GLYPH = "▌"  # LEFT HALF BLOCK, terminal-style caret
     CURSOR_BLINK_INTERVAL = 0.53
+    #: TASK-1281: max entries kept per undo/redo stack; the oldest entry is
+    #: dropped once a push would exceed this.
+    UNDO_HISTORY_DEPTH_CAP = 100
     #: Shared with the mic button's initial `compose()` tooltip and
     #: `sync_dictation_state`'s idle tooltip, and used as the fallback in
     #: `set_dictation_availability` -- an `Availability(ok=False)` with no
@@ -150,6 +170,15 @@ class ConsoleComposerBar(Horizontal):
         # programmatic load/clear/restore leave it untouched so callers can
         # detect "the user typed since X".
         self._user_edit_serial = 0
+        # TASK-1281: undo/redo history. `_undo_stack`/`_redo_stack` hold
+        # `_DraftHistorySnapshot`s; `_coalescing_active` is True only while
+        # the top of `_undo_stack` is still open to absorbing more
+        # consecutive single-character printable inserts (see
+        # `_record_undo_snapshot`). Session-scoped export/import lives in
+        # `export_undo_history`/`restore_undo_history`.
+        self._undo_stack: list[_DraftHistorySnapshot] = []
+        self._redo_stack: list[_DraftHistorySnapshot] = []
+        self._coalescing_active = False
         self._run_active = False
         self._send_blocked = False
         self._setup_blocked_reason = ""
@@ -1494,8 +1523,21 @@ class ConsoleComposerBar(Horizontal):
         """Monotonic count of user-originated draft edits (TASK-339)."""
         return self._user_edit_serial
 
-    def clear_draft(self) -> None:
-        """Clear the native Console draft without falling back to stale input."""
+    def clear_draft(self, *, record_history: bool = False) -> None:
+        """Clear the native Console draft without falling back to stale input.
+
+        Args:
+            record_history: Whether this clear is user-intent and should be
+                undoable (TASK-1281). Defaults to False -- most callers use
+                this to swap draft scope programmatically (session switches,
+                the post-send clear, restore-then-replace flows), and none
+                of those should be revertable with Ctrl+Z. The one caller
+                that must pass ``True`` is the Ctrl+U "clear draft" key
+                handler in `ChatScreen.on_key` -- an accidental full clear is
+                exactly what undo exists for.
+        """
+        if record_history and self._has_any_draft_content():
+            self._record_undo_snapshot(coalesce=False)
         self._draft_selection_all = False
         self._segments = []
         self._segments_initialized = True
@@ -1504,6 +1546,126 @@ class ConsoleComposerBar(Horizontal):
         self._refresh_visible_draft()
         self._sync_interaction_classes()
         self._sync_current_action_state()
+
+    # -- Undo/redo history (TASK-1281) ------------------------------------
+    #
+    # Coalescing rule: consecutive single-character *printable* inserts
+    # (ordinary typing) merge into one undo entry, so one Ctrl+Z reverts a
+    # whole typed run. Every other mutation kind (paste, a file/attachment
+    # segment, a delete, a full clear) always opens a fresh entry, and a
+    # cursor reposition between keystrokes also closes the run -- both are
+    # implemented by having every mutation/reposition entry point call
+    # either `_record_undo_snapshot` (mutations) or set
+    # `_coalescing_active = False` directly (repositions).
+
+    def _record_undo_snapshot(self, *, coalesce: bool) -> None:
+        """Push the pre-mutation draft state onto the undo stack.
+
+        Must be called with the *current* (pre-mutation) segments/cursor
+        still in place -- every call site here calls it after any lazy
+        segment initialization but before the mutation itself splices
+        anything.
+
+        Args:
+            coalesce: Whether this mutation is a candidate to merge into an
+                already-open typed run. When True and the immediately
+                previous recorded mutation was also coalescable and still
+                open, this call is a no-op -- the run's original snapshot
+                stays on top so a single undo reverts the whole run.
+        """
+        if coalesce and self._coalescing_active:
+            return
+        self._undo_stack.append(
+            _DraftHistorySnapshot(text=self.draft_text(), cursor_index=self._cursor_index)
+        )
+        if len(self._undo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
+            del self._undo_stack[0]
+        self._redo_stack.clear()
+        self._coalescing_active = coalesce
+
+    def _apply_history_snapshot(self, snapshot: _DraftHistorySnapshot) -> None:
+        """Replace the live draft with a recorded undo/redo snapshot."""
+        self._draft_selection_all = False
+        self._segments = [_DraftSegment(snapshot.text)] if snapshot.text else []
+        self._segments_initialized = True
+        self._cursor_index = max(0, min(snapshot.cursor_index, len(snapshot.text)))
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
+
+    def undo(self) -> bool:
+        """Revert the most recent recorded composer draft mutation.
+
+        A silent no-op when there is nothing to undo -- callers should not
+        toast or bell on an empty stack.
+
+        Returns:
+            True when a snapshot was applied (the caller is then
+            responsible for re-persisting `draft_text()`, mirroring
+            dictation insertion).
+        """
+        if not self._undo_stack:
+            return False
+        self._user_edit_serial += 1
+        current = _DraftHistorySnapshot(text=self.draft_text(), cursor_index=self._cursor_index)
+        self._redo_stack.append(current)
+        if len(self._redo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
+            del self._redo_stack[0]
+        snapshot = self._undo_stack.pop()
+        self._apply_history_snapshot(snapshot)
+        self._coalescing_active = False
+        return True
+
+    def redo(self) -> bool:
+        """Reapply a composer draft mutation that was just undone.
+
+        A silent no-op when there is nothing to redo.
+
+        Returns:
+            True when a snapshot was applied.
+        """
+        if not self._redo_stack:
+            return False
+        self._user_edit_serial += 1
+        current = _DraftHistorySnapshot(text=self.draft_text(), cursor_index=self._cursor_index)
+        self._undo_stack.append(current)
+        if len(self._undo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
+            del self._undo_stack[0]
+        snapshot = self._redo_stack.pop()
+        self._apply_history_snapshot(snapshot)
+        self._coalescing_active = False
+        return True
+
+    def export_undo_history(
+        self,
+    ) -> tuple[list[_DraftHistorySnapshot], list[_DraftHistorySnapshot]]:
+        """Return a copy of this composer's undo/redo stacks.
+
+        Used by `ChatScreen` to scope history per Console session (TASK-1281
+        AC4): exported on switch-away, restored after `load_draft` on
+        switch-in. The returned lists are copies -- safe for the caller to
+        hold in a dict keyed by session id without aliasing this composer's
+        live stacks.
+        """
+        return (list(self._undo_stack), list(self._redo_stack))
+
+    def restore_undo_history(
+        self,
+        history: tuple[list[_DraftHistorySnapshot], list[_DraftHistorySnapshot]]
+        | None,
+    ) -> None:
+        """Replace the undo/redo stacks wholesale (TASK-1281 session scoping).
+
+        Args:
+            history: A prior `export_undo_history()` result, or None for an
+                empty history (a session that has never had a recorded
+                edit -- freshly created, or never visited before).
+        """
+        undo_entries, redo_entries = history if history is not None else ([], [])
+        self._undo_stack = list(undo_entries)
+        self._redo_stack = list(redo_entries)
+        self._coalescing_active = False
 
     def select_all_draft(self) -> bool:
         """Mark the full visible Console draft as selected without mutating it.
@@ -1521,6 +1683,9 @@ class ConsoleComposerBar(Horizontal):
             self._segments_initialized = True
         self._draft_selection_all = True
         self._cursor_index = len(self._canonical_draft_text())
+        # TASK-1281: a select-all is a cursor reposition (to the tail) for
+        # undo-coalescing purposes -- it closes any open typed run.
+        self._coalescing_active = False
         self._refresh_visible_draft()
         return True
 
@@ -1548,6 +1713,11 @@ class ConsoleComposerBar(Horizontal):
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
             self._cursor_index = len(existing)
+        # TASK-1281: a single printable character (ordinary typing) coalesces
+        # into an already-open typed run; anything else (a multi-character
+        # insert -- e.g. dictation -- or a non-printable one, like the
+        # Shift+Enter newline) always opens a fresh undo entry.
+        self._record_undo_snapshot(coalesce=len(text) == 1 and text.isprintable())
         if self._draft_selection_all:
             self._segments = []
             self._draft_selection_all = False
@@ -1575,6 +1745,10 @@ class ConsoleComposerBar(Horizontal):
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
             self._cursor_index = len(existing)
+        # TASK-1281: a paste is always its own undo entry, even a
+        # single-character one -- it is a different mutation kind from
+        # typing and must never silently merge into an open typed run.
+        self._record_undo_snapshot(coalesce=False)
         if self._draft_selection_all:
             self._segments = []
             self._draft_selection_all = False
@@ -1629,6 +1803,8 @@ class ConsoleComposerBar(Horizontal):
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
             self._cursor_index = len(existing)
+        # TASK-1281: an attachment/file segment is always its own undo entry.
+        self._record_undo_snapshot(coalesce=False)
         if self._draft_selection_all:
             self._segments = []
             self._draft_selection_all = False
@@ -1655,9 +1831,16 @@ class ConsoleComposerBar(Horizontal):
         """Delete the character (or paste token) immediately left of the caret."""
         self._user_edit_serial += 1
         if self._draft_selection_all:
+            # TASK-1281: record before dispatching to `clear_draft` -- its
+            # own `record_history` default is False (most callers are
+            # programmatic), so a Backspace-over-a-full-selection must record
+            # its own entry here rather than rely on the callee.
+            self._record_undo_snapshot(coalesce=False)
             self.clear_draft()
             return
         if not self._segments_initialized:
+            if self.draft_text():
+                self._record_undo_snapshot(coalesce=False)
             self.load_draft(self.draft_text()[:-1])
             return
         self._clamp_cursor()
@@ -1666,6 +1849,7 @@ class ConsoleComposerBar(Horizontal):
             self._sync_current_action_state()
             return
 
+        self._record_undo_snapshot(coalesce=False)
         segment_index, offset = self._locate_canonical(self._cursor_index)
         segment = self._segments[segment_index]
         if segment.collapse_state in {"collapsed", "confirm"}:
@@ -1687,6 +1871,7 @@ class ConsoleComposerBar(Horizontal):
         """Delete the character (or paste token) immediately right of the caret."""
         self._user_edit_serial += 1
         if self._draft_selection_all:
+            self._record_undo_snapshot(coalesce=False)
             self.clear_draft()
             return
         self._ensure_editable_segments()
@@ -1698,6 +1883,7 @@ class ConsoleComposerBar(Horizontal):
             self._sync_current_action_state()
             return
 
+        self._record_undo_snapshot(coalesce=False)
         segment_index, offset = self._locate_canonical(self._cursor_index)
         segment = self._segments[segment_index]
         if offset == len(segment.text):
@@ -1732,6 +1918,7 @@ class ConsoleComposerBar(Horizontal):
         """
         self._user_edit_serial += 1
         if self._draft_selection_all:
+            self._record_undo_snapshot(coalesce=False)
             self.clear_draft()
             return True
         self._ensure_editable_segments()
@@ -1774,6 +1961,7 @@ class ConsoleComposerBar(Horizontal):
                 start -= 1
         if start == cursor:
             return False
+        self._record_undo_snapshot(coalesce=False)
         self._delete_canonical_range(start, cursor)
         self._sync_hidden_input()
         self._refresh_visible_draft()
@@ -1783,6 +1971,9 @@ class ConsoleComposerBar(Horizontal):
 
     def _move_cursor_to(self, index: int) -> bool:
         """Move the caret to a canonical offset, collapsing any selection."""
+        # TASK-1281: every caller of this helper (arrow keys, Home/End) is a
+        # cursor reposition, which always closes an open typed run.
+        self._coalescing_active = False
         self._draft_selection_all = False
         if not self._segments_initialized:
             self._refresh_visible_draft()
@@ -1863,6 +2054,8 @@ class ConsoleComposerBar(Horizontal):
             True when the caret was positioned.
         """
         self._ensure_editable_segments()
+        # TASK-1281: click-to-position is a cursor reposition too.
+        self._coalescing_active = False
         self._draft_selection_all = False
         self._cursor_index = self._canonical_index_at_display(display_index)
         self._clamp_cursor()
