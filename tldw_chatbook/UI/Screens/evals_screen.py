@@ -110,6 +110,24 @@ class EvalsScreen(LabScreen):
         #: 3c, per this program's own PR numbering) should not need a
         #: second plumbing pass to reach it.
         self._sample_bench_cancel_token: Optional[CancelToken] = None
+        #: True for the duration of one run-existing-bench flow. Same
+        #: double-guard rationale as ``_sample_bench_running`` (see that
+        #: field's own comment above): this flag stops a second press once
+        #: a worker has already set it, while ``exclusive=True`` on the
+        #: worker (below) covers the tighter race of two presses already
+        #: queued before either dispatches.
+        self._bench_run_running: bool = False
+        #: The bench (``eval_tasks``) id the in-flight run worker is
+        #: running, resolved from the current selection at PRESS time (see
+        #: ``_on_primary_action_pressed``) and never re-read from
+        #: ``self._selection`` inside the worker -- the selection can move
+        #: (another rail click) while the worker is still in flight.
+        self._bench_run_task_id: Optional[str] = None
+        #: The active run's cooperative cancel token, or ``None`` -- same
+        #: no-current-caller status as ``_sample_bench_cancel_token`` above
+        #: (no Cancel affordance exists in this screen yet): kept as a
+        #: real, threaded seam rather than a decorative parameter.
+        self._bench_run_cancel_token: Optional[CancelToken] = None
 
     def _current_app_config(self) -> dict[str, Any]:
         """The app's loaded settings, read fresh on every recompose (not
@@ -330,12 +348,133 @@ class EvalsScreen(LabScreen):
             return
         inspector.show_cell(event)
 
-    # No `#evals-primary-action` press handler: `_primary_action_state`
-    # below keeps the button disabled unconditionally (even for a found,
-    # selected bench) until PR 3b wires real bench execution to it. An
-    # enabled button whose only handler shows a "not wired yet" toast is
-    # itself the dead-end-toast anti-pattern this button's own design note
-    # exists to avoid -- see _primary_action_state's docstring.
+    @on(Button.Pressed, "#evals-primary-action")
+    def _on_primary_action_pressed(self, event: Button.Pressed) -> None:
+        """Runs the selected bench (see ``sample_bench.run_existing_bench``).
+
+        Mirrors ``_on_sample_bench_requested``'s double-guard rationale
+        exactly. If two presses are already queued before either dispatches,
+        both see ``_bench_run_running`` as ``False`` and both reach
+        ``run_worker(exclusive=True, ...)``; it is ``exclusive=True`` that
+        protects there, cancelling the second worker's Task before it takes
+        its first step, so only one worker body (and one flag-set) ever
+        runs. Once a worker IS running and has set the flag, THIS check is
+        what stops a later press from calling ``run_worker`` again --
+        without it, that call would cancel the already-running worker via
+        the same ``exclusive`` group after it has done real work,
+        abandoning its in-flight DB rows (see
+        ``sample_bench._mark_orphaned_runs_cancelled`` for the cleanup that
+        path needs).
+
+        The selected bench id is resolved and stored on the instance HERE,
+        not re-read from ``self._selection`` inside the worker -- selection
+        can move (another rail click) while the worker is in flight, and
+        the worker must keep running the bench it was actually launched
+        against.
+        """
+        event.stop()
+        if self._bench_run_running:
+            return
+        selection = self._selection
+        if selection.kind != "bench" or not selection.id:
+            # Defensive only: `_primary_action_state` keeps the button
+            # disabled (so Textual never emits `Pressed` at all) for every
+            # selection kind but a found bench.
+            return
+        self._bench_run_task_id = selection.id
+        self.run_worker(
+            self._run_bench_worker,
+            exclusive=True,
+            group="evals-run-bench",
+        )
+
+    async def _run_bench_worker(self) -> None:
+        """Runs ``self._bench_run_task_id`` via
+        ``sample_bench.run_existing_bench``. Mirrors
+        ``_create_sample_bench_worker`` structure exactly -- see that
+        method's own comments for the parts not re-explained here.
+        """
+        app_config = self._current_app_config()
+        task_id = self._bench_run_task_id
+        cancel_token = CancelToken()
+        self._bench_run_running = True
+        self._bench_run_cancel_token = cancel_token
+        self._set_bench_run_running_ui()
+        result = None
+        try:
+            result = await sample_bench.run_existing_bench(
+                self._view_model,
+                app_config,
+                task_id,
+                client_factory=self._sample_bench_client_factory,
+                progress=self._on_bench_run_progress,
+                cancel_token=cancel_token,
+            )
+        except asyncio.CancelledError:
+            # run_existing_bench's own except-and-re-raise already marked
+            # any of this bench's still-"running" run rows "cancelled"
+            # before this propagated here -- log and let it continue
+            # propagating; swallowing a CancelledError is its own bug
+            # (Textual's worker bookkeeping needs to observe the real
+            # cancellation).
+            logger.info("Bench run worker was cancelled.")
+            raise
+        except Exception as exc:
+            logger.opt(exception=True).warning("Bench run failed.")
+            self.app_instance.notify(
+                f"Could not run the bench: {exc}", severity="error"
+            )
+        finally:
+            self._bench_run_running = False
+            self._bench_run_cancel_token = None
+            self._reset_bench_run_running_ui()
+        if result is not None:
+            self.app_instance.notify("Bench run finished.", severity="information")
+            self.select(kind="run_group", id=result.run_group_id)
+
+    def _on_bench_run_progress(self, done: int, total: int) -> None:
+        """``sample_bench.ProgressFn`` -- called synchronously from within
+        ``WordBenchRunner.run``'s own coroutine (this worker's, not a
+        separate OS thread), so mutating the button directly here is safe,
+        mirroring ``_on_sample_bench_progress``."""
+        self._set_bench_run_running_ui(done=done, total=total)
+
+    def _set_bench_run_running_ui(self, *, done: int = 0, total: int = 0) -> None:
+        """Disables the primary-action button and gives it a live running
+        label for as long as a run is in flight -- see
+        ``_set_sample_bench_running_ui``'s own note on why a disabled-but-
+        not-yet-rerendered button is only a visible signal, not by itself a
+        sufficient guard against a second press."""
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            button = self.query_one("#evals-primary-action", Button)
+        except QueryError:
+            return
+        button.disabled = True
+        button.label = f"Running… ({done}/{total})" if total else "Running…"
+
+    def _reset_bench_run_running_ui(self) -> None:
+        """Restores the primary-action button after a run ends, from
+        ``_primary_action_state()`` -- the current selection's own fresh
+        label/disabled/tooltip, not a hardcoded constant, since (unlike
+        ``_reset_sample_bench_running_ui``'s "Create sample bench") the
+        ready-state label here is per-bench (``f"Run {name}"``). A no-op
+        (via the same ``QueryError`` guard) on the success path, where
+        ``self.select(...)`` immediately recomposes the inspector pane and
+        replaces this button entirely -- this only matters on the failure
+        path, where the SAME button instance survives and must not be left
+        permanently disabled with a stale "Running…" label."""
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            button = self.query_one("#evals-primary-action", Button)
+        except QueryError:
+            return
+        label, disabled, tooltip = self._primary_action_state()
+        button.disabled = disabled
+        button.label = label
+        button.tooltip = tooltip
 
     def lab_header_state(self) -> WorkbenchHeaderState:
         """Return the Evals destination header copy.
@@ -612,13 +751,11 @@ class EvalsScreen(LabScreen):
         note) -- every branch here names the concrete object the action
         would run, or states a concrete reason it can't.
 
-        Every branch is currently disabled, including a found, selected
-        bench: this PR (3a) wires selection and the shell, not execution --
-        the word bench runner (PR 2) has no button connecting to it yet,
-        and that wiring is PR 3b's job (the results grid it runs into). An
-        *enabled* button whose only handler pops a "not wired yet" toast
-        would be exactly the dead-end-toast pattern this function's naming
-        rule exists to avoid, just moved one click later.
+        The found-bench branch is the only one that ever enables the
+        button -- every other branch (an unresolvable bench, a dataset, a
+        completed run group, or no selection at all) stays disabled with
+        its own stated reason, since none of those names an object this
+        action can actually run.
         """
         selection = self._selection
 
@@ -636,9 +773,8 @@ class EvalsScreen(LabScreen):
             name = str(bench.get("name") or "Untitled bench")
             return (
                 f"Run {name}",
-                True,
-                "Running a bench from this workbench isn't wired up yet; "
-                "that lands with the results grid in a later PR.",
+                False,
+                f"Runs {name} against its configured targets.",
             )
 
         # No "classic" branch: `_compose_inspector_pane` never calls this
