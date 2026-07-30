@@ -96,7 +96,13 @@ class WatchlistCheckHandler:
             if subscription_type in _FEED_TYPES:
                 items = await self.feed_monitor.check_feed(subscription)
             elif subscription_type in _URL_TYPES:
-                result = await self.url_monitor.check_url(subscription)
+                # TASK-1362: `check_url` returns `(item, disposition)`. The
+                # disposition is recorded per run by
+                # `LocalWatchlistsService._default_run_executor`; this handler
+                # writes through `record_check_result`, whose stats have no
+                # disposition field, so it is deliberately dropped here rather
+                # than invented into a schema that does not carry it.
+                result, _disposition = await self.url_monitor.check_url(subscription)
                 if result is not None:
                     items = [result]
             else:

@@ -38,6 +38,12 @@ from tldw_chatbook.Subscriptions.watchlist_normalizers import (
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
 
+# Whole-branch review (Important): without this, CI's `pytest -m unit` run
+# DESELECTS this entire module, so every assertion here -- including the ones
+# this branch changed when Task 5 deleted the Inspector's "Mark reviewed"
+# button -- was only ever exercised locally.
+pytestmark = pytest.mark.unit
+
 # Exactly the row shape `SubscriptionsDB.get_new_items` returns for a scraped
 # feed entry, put through the same normalizer the Items pane is fed from.
 REAL_ITEM = normalize_watchlist_item(
@@ -86,9 +92,13 @@ async def test_selected_item_reports_type_item_and_offers_item_actions():
             "beneath it were source actions (TASK-1120)"
         )
 
-        assert inspector.query_one("#inspector-mark-reviewed-button", Button)
         assert inspector.query_one("#inspector-ingest-button", Button)
         assert inspector.query_one("#inspector-ignore-button", Button)
+        # "Mark reviewed" was removed (Task 5 fix round 1, Important):
+        # `selected_entity` is set by the same `ItemSelected` that now marks
+        # an item read on open, so this button was only ever reachable on an
+        # item already at "reviewed" -- dead in practice.
+        assert not inspector.query("#inspector-mark-reviewed-button")
         assert not inspector.query("#inspector-preview-button"), (
             "Preview is a source action and must not be offered for an item"
         )
@@ -166,67 +176,14 @@ def test_item_is_typed_from_its_kind_not_its_shape():
     assert InspectorPane._entity_type(REAL_ITEM) == "item"
 
 
-@pytest.mark.asyncio
-async def test_mark_reviewed_writes_the_new_status_to_the_database():
-    """AC#3, against the real local subscriptions database.
-
-    Before this task the Inspector never offered the button; behind it, the
-    scope service had no item-status method at all, so
-    `WatchlistsBackendController.update_item_status` raised
-    `NotImplementedError` into a debug log (see TASK-1090). Both halves are
-    asserted here by reading the row back.
-    """
-    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
-
-    app = _build_test_app()
-    # The LOCAL WATCHLISTS service's database, which is what `list_items` and
-    # `update_item` read and write. `watchlist_bundle_service` is wired to a
-    # different SQLite file in this harness, so seeding through it would leave
-    # the Items pane empty and this test asserting nothing.
-    db = app.local_watchlists_service._db()
-    source_id = db.add_subscription(
-        name="Summit Route", type="rss", source="https://summitroute.com/blog/feed.xml"
-    )
-    with db.transaction() as conn:
-        item_id = persist_subscription_item(
-            conn,
-            source_id,
-            {
-                "url": "https://summitroute.com/blog/2024/lightsail-part-2/",
-                "title": "Lightsail object storage concerns - Part 2",
-                "content_hash": "hash-2",
-                "status": "new",
-            },
-            run_id=None,
-            now="2026-07-28T09:00:00+00:00",
-        )
-
-    host = DestinationHarness(app, "watchlists_collections")
-    async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
-        screen = host.screen_stack[-1]
-        screen.active_section = "items"
-        await pilot.pause(0.3)
-
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
-        for _ in range(40):
-            await pilot.pause()
-            if pane.items:
-                break
-        assert pane.items, "the seeded item must reach the Items pane"
-
-        pane.select_item_by_id(str(pane.items[0]["id"]))
-        await pilot.pause(0.3)
-
-        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
-        inspector.query_one("#inspector-mark-reviewed-button", Button).press()
-        for _ in range(60):
-            await pilot.pause()
-            rows = db.get_new_items(status="reviewed", limit=10)
-            if rows:
-                break
-
-    rows = db.get_new_items(status="reviewed", limit=10)
-    assert [row["id"] for row in rows] == [item_id], (
-        "Mark reviewed must change the item's status in the database"
-    )
+# `test_mark_reviewed_writes_the_new_status_to_the_database` (AC#3) lived
+# here through TASK-1120, pressing `#inspector-mark-reviewed-button` and
+# reading the "reviewed" status back from the database. That button was
+# removed in the Phase D content-pane plan's Task 5, fix round 1 (Important):
+# `selected_entity` is set by the same `ItemSelected` that now marks an item
+# read on open, so the button was only ever reachable on an item already
+# "reviewed" -- dead in practice. The same database-write assertion this
+# test made (opening/marking an item moves its row to "reviewed") is now
+# covered by `test_opening_an_item_marks_it_read` in
+# `Tests/UI/test_watchlists_read_status.py`, exercising the path that
+# actually writes that status today.

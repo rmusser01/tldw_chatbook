@@ -32,6 +32,7 @@ from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     post_message_to_conversation,
     retrieve_conversation_messages_for_ui,
 )
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration
@@ -310,6 +311,44 @@ class TestCharacterImport:
         assert messages[0]["content"] == "Hello"
         assert messages[1]["content"] == "Hi there"
         assert messages[1]["sender"] == char_name
+
+    def test_imported_tavern_history_stays_authority_unproven_after_reopen(
+        self, tmp_path
+    ):
+        db_path = tmp_path / "tavern-import-v28.sqlite"
+        db = CharactersRAGDB(db_path, client_id="tavern-import")
+        char_name = "SameNameLocalCard"
+        char_id = db.add_character_card({"name": char_name})
+        chat_log = {
+            "char_name": char_name,
+            "history": {"internal": [["Hello", "Imported reply"]]},
+        }
+
+        conv_id, imported_char_id = load_chat_history_from_file_and_save_to_db(
+            db,
+            io.BytesIO(json.dumps(chat_log).encode("utf-8")),
+        )
+
+        assert conv_id is not None
+        assert imported_char_id == char_id
+        assert db._CURRENT_SCHEMA_VERSION == 28
+        db.close_connection()
+
+        reopened = CharactersRAGDB(db_path, client_id="tavern-import")
+        try:
+            imported = reopened.get_conversation_by_id(conv_id)
+            assert imported["assistant_authority_id"] is None
+
+            session = ConsoleChatSession(
+                runtime_backend=imported["runtime_backend"],
+                assistant_kind=imported["assistant_kind"],
+                assistant_id=imported["assistant_id"],
+                assistant_authority_id=imported["assistant_authority_id"],
+                character_id=imported["character_id"],
+            )
+            assert session.character_ref() is None
+        finally:
+            reopened.close_connection()
 
 
 class TestHighLevelChatFlow:

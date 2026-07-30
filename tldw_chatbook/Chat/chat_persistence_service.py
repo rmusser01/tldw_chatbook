@@ -1,6 +1,6 @@
 import base64
 import json
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 from loguru import logger as _logger
 
@@ -13,6 +13,7 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 logger = _logger.bind(module="ChatPersistenceService")
+_ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
 
 
 class ChatPersistenceService:
@@ -75,6 +76,7 @@ class ChatPersistenceService:
         character_name: Optional[str] = None,
         assistant_kind: Optional[str] = None,
         assistant_id: Optional[str] = None,
+        assistant_authority_id: Optional[str] = _ASSISTANT_AUTHORITY_UNSET,
         persona_memory_mode: Optional[str] = None,
         runtime_backend: Optional[str] = None,
         discovery_owner: Optional[str] = None,
@@ -94,24 +96,25 @@ class ChatPersistenceService:
             assistant_id=assistant_id,
             explicit_title=conversation_title,
         )
-        conversation_id = self.db.add_conversation(
-            {
-                "character_id": character_id,
-                "assistant_kind": assistant_kind,
-                "assistant_id": assistant_id,
-                "persona_memory_mode": persona_memory_mode,
-                "runtime_backend": runtime_backend,
-                "discovery_owner": discovery_owner,
-                "discovery_entity_id": discovery_entity_id,
-                "scope_type": scope_type,
-                "workspace_id": safe_workspace_id
-                if safe_workspace_id is not None
-                else workspace_id,
-                "title": title,
-                "system_prompt": system_prompt,
-                "client_id": self.db.client_id,
-            }
-        )
+        conversation_data = {
+            "character_id": character_id,
+            "assistant_kind": assistant_kind,
+            "assistant_id": assistant_id,
+            "persona_memory_mode": persona_memory_mode,
+            "runtime_backend": runtime_backend,
+            "discovery_owner": discovery_owner,
+            "discovery_entity_id": discovery_entity_id,
+            "scope_type": scope_type,
+            "workspace_id": safe_workspace_id
+            if safe_workspace_id is not None
+            else workspace_id,
+            "title": title,
+            "system_prompt": system_prompt,
+            "client_id": self.db.client_id,
+        }
+        if assistant_authority_id is not _ASSISTANT_AUTHORITY_UNSET:
+            conversation_data["assistant_authority_id"] = assistant_authority_id
+        conversation_id = self.db.add_conversation(conversation_data)
         if safe_workspace_id is not None:
             try:
                 self._link_workspace_conversation(

@@ -5,7 +5,7 @@ def _db(tmp_path):
     return CharactersRAGDB(str(tmp_path / "c.db"), client_id="test-client")
 
 
-def test_fresh_db_is_v27_with_active_leaf_column(tmp_path):
+def test_fresh_db_is_v28_with_active_leaf_column(tmp_path):
     db = _db(tmp_path)
     with db.get_connection() as conn:
         version = conn.execute(
@@ -15,7 +15,7 @@ def test_fresh_db_is_v27_with_active_leaf_column(tmp_path):
     # A fresh DB always migrates to the CURRENT schema version, not the
     # version this column was introduced at -- this assertion moves with
     # each newer migration.
-    assert version == 27
+    assert version == 28
     assert "active_leaf_message_id" in cols
 
 

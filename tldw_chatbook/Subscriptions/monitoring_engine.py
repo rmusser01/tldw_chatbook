@@ -11,11 +11,13 @@
 # Imports
 import hashlib
 import json
+import re
+import textwrap
 import time
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
-from difflib import SequenceMatcher
+from difflib import SequenceMatcher, unified_diff
 
 #
 # Third-Party Imports
@@ -42,6 +44,14 @@ from ..DB.Subscriptions_DB import (
     SubscriptionError,
 )
 from ..Metrics.metrics_logger import log_histogram, log_counter
+from .item_persist import (
+    CONTENT_FORMAT_DIFF,
+    CONTENT_FORMAT_TEXT,
+    CONTENT_KIND_ARTICLE,
+    CONTENT_KIND_CHANGE,
+)
+from .noise_defaults import extraction_fingerprint, selector_parse_errors
+from .watchlist_rule_matching import RULE_MATCH_TEXT_KEY
 from ..Utils.egress import (
     EgressBlockedError,
     EgressFetchError,
@@ -58,6 +68,12 @@ from .security import SecurityValidator
 # Core Classes
 #
 ########################################################################################################################
+
+# Resolved once at import: this module hard-imports bs4, so soupsieve is
+# certainly present here. Kept in `noise_defaults` rather than inline so the
+# extraction guard and the two UI save-path validators share one definition of
+# "the selector is malformed" -- see `selector_parse_errors`.
+_SELECTOR_PARSE_ERRORS = selector_parse_errors()
 
 
 class FetchBlockedError(SubscriptionError):
@@ -192,10 +208,26 @@ class ContentExtractor:
         for script in soup(["script", "style"]):
             script.decompose()
 
-        # Remove elements matching ignore selectors
+        # Remove elements matching ignore selectors.
+        #
+        # The noise filter must never break the thing it filters. Selectors are
+        # user-typed (the create form and the Inspector both edit them), and
+        # `soup.select` RAISES on anything CSS cannot parse -- so before this
+        # guard one mistyped line aborted the whole URL check for that source,
+        # every check, until the user guessed which line was bad. A bad line
+        # may cost its own stripping and nothing more.
         if ignore_selectors:
             for selector in ignore_selectors:
-                for element in soup.select(selector):
+                try:
+                    matches = soup.select(selector)
+                except _SELECTOR_PARSE_ERRORS as exc:
+                    # One line per bad selector per extraction: named, so the
+                    # log says which rule to fix, not merely that one is broken.
+                    logger.warning(
+                        f"Skipping unparseable ignore selector {selector!r}: {exc}"
+                    )
+                    continue
+                for element in matches:
                     element.decompose()
 
         # Get text
@@ -233,6 +265,307 @@ class ContentExtractor:
         matcher = SequenceMatcher(None, old_content, new_content)
         similarity = matcher.ratio()
         return 1.0 - similarity
+
+
+########################################################################################################################
+#
+# content_kind / content_format production (TASK-1343)
+#
+########################################################################################################################
+
+# `content_pane.render_change` styles a diff line by its leading `+` or `-`, so
+# what `check_url` writes to `content` is a unified-diff *body*: `+`/`-` for
+# changed segments, a leading space for context, `@@` for position. The
+# `---`/`+++` file headers `difflib.unified_diff` emits first are dropped
+# deliberately -- they begin with `-` and `+`, so the renderer would paint them
+# red and green as if the header itself were part of the change.
+#
+# They are dropped POSITIONALLY (see `_HEADER_LINES`), never by pattern. Fix
+# round 1, Important #1: filtering `line.startswith(("---", "+++"))` also
+# deletes real content, because a removed segment beginning `--` becomes
+# `---...` and an added one beginning `++` becomes `+++...`. A page dropping a
+# literal `--- Deprecated notice ---` banner produced a persisted change whose
+# body showed nothing removed and whose headline said "0 line(s) added, 0
+# removed": the stored record misrepresented the change, which is worse than a
+# rendering glitch.
+_DIFF_CONTEXT_SEGMENTS = 1
+
+# `difflib.unified_diff` yields `--- <fromfile>` and `+++ <tofile>` together,
+# immediately before the first hunk, or yields nothing at all -- so when there
+# is any output at all they are exactly positions 0 and 1.
+_HEADER_LINES = 2
+
+# `ContentExtractor.extract_text_from_html` joins every chunk of a page with a
+# single space, so the extracted text of a whole page is ONE line containing no
+# newlines at all. A line-based diff of two such snapshots is therefore always
+# exactly `-<the entire old page>` / `+<the entire new page>`: the full text
+# twice, which is simultaneously the least readable and the largest possible
+# thing to store. Both sides are re-segmented before diffing -- see
+# `_segment_for_diff`, which splits on real line breaks when the text has any
+# and on sentence boundaries when it does not (sentences stay aligned under a
+# local edit in a way fixed-width chunking does not).
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+
+# A segment longer than this is wrapped at word boundaries, so no single diff
+# line is wider than the narrow reader pane can show without wrapping mid-word.
+_MAX_DIFF_SEGMENT_CHARS = 110
+
+# Bounds on the stored diff. The body goes into a TEXT column and into a pane
+# roughly nine rows tall, and the full page it was computed from is already
+# kept in `url_snapshots` (`_store_snapshot`) -- so the diff is a summary, not
+# an archive, and losing its tail loses nothing recoverable. 400 lines is far
+# more than a reader scrolls and ~40x the pane's height; 20,000 characters
+# keeps the item row small beside the snapshot. Whichever bound is reached
+# first wins, and the truncation is stated IN the body (see
+# `_DIFF_TRUNCATION_NOTICE`) so a partial change is never presented as a
+# complete one.
+_MAX_DIFF_LINES = 400
+_MAX_DIFF_CHARS = 20_000
+
+# Both notices are worded to start with `[` rather than `+`/`-`, so the
+# renderer does not colour them as though they were themselves a change.
+#
+# The truncation notice goes FIRST, not last (fix round 1, Important #2): as
+# the 401st line of 401 in a pane about nine rows tall it was unreachable
+# exactly when it mattered, so a reader saw the head of a cut-down diff with
+# nothing to say it had been cut. `_DIFF_TRUNCATION_SUMMARY_SUFFIX` puts it in
+# the headline too, which is on screen without any scrolling at all.
+_DIFF_TRUNCATION_NOTICE = (
+    "[diff truncated: showing the first {kept} of {total} diff lines "
+    "(cap {max_lines} lines / {max_chars} characters). This is a partial "
+    "view of the change; the full page is in this source's snapshot history.]"
+)
+_DIFF_TRUNCATION_SUMMARY_SUFFIX = " (diff truncated)"
+_NO_TEXTUAL_CHANGE_NOTICE = (
+    "[the page changed, but its extracted text is identical once whitespace "
+    "is normalized -- the difference was in markup or spacing only]"
+)
+
+
+def _segment_for_diff(text: str) -> List[str]:
+    """Split one side of a comparison into diffable, pane-width segments.
+
+    Splits on real line breaks when ``text`` contains any, and on sentence
+    boundaries when it does not -- which is the case for a whole page captured
+    through ``extract_text_from_html``, since that collapses everything onto
+    one line. Segments longer than ``_MAX_DIFF_SEGMENT_CHARS`` are then wrapped
+    at word boundaries, and blank segments are dropped.
+
+    (Fix round 1, Minor #4: this used to be described in terms of the
+    subscription's ``extraction_method``, which it never reads -- the only
+    switch is whether the text already has newlines in it. A raw-extraction
+    page usually does and a text-extracted one never does, but that is a
+    consequence, not the condition.)
+
+    Args:
+        text: Extracted page text, which may be a single very long line.
+
+    Returns:
+        Non-empty, whitespace-trimmed segments, none longer than
+        ``_MAX_DIFF_SEGMENT_CHARS``.
+    """
+    source = text or ""
+    units = source.splitlines() if "\n" in source else _SENTENCE_BOUNDARY.split(source)
+    segments: List[str] = []
+    for unit in units:
+        stripped = unit.strip()
+        if not stripped:
+            continue
+        if len(stripped) <= _MAX_DIFF_SEGMENT_CHARS:
+            segments.append(stripped)
+            continue
+        segments.extend(textwrap.wrap(stripped, _MAX_DIFF_SEGMENT_CHARS) or [stripped])
+    return segments
+
+
+def build_change_diff(previous_text: str, current_text: str) -> tuple[str, str]:
+    """Produce the stored diff body and its one-line summary for a site change.
+
+    Before TASK-1343 the site-change path stored the *entire new page text* as
+    the item's ``content``, which meant the reader could see what the page says
+    now but never what actually changed, and the change renderer it was written
+    for was never even dispatched to (nothing wrote ``content_kind``).
+
+    Args:
+        previous_text: The previous snapshot's ``extracted_content``.
+        current_text: The freshly fetched extracted text.
+
+    Returns:
+        ``(diff_body, diff_summary)``. ``diff_body`` is a bounded unified-diff
+        body whose changed lines start with ``+``/``-`` for
+        ``content_pane.render_change`` to colour; ``diff_summary`` is a single
+        line naming how many lines were added and removed, counted over the
+        *whole* diff so it stays true even when the body is truncated, and
+        saying so when it was.
+    """
+    old_segments = _segment_for_diff(previous_text)
+    new_segments = _segment_for_diff(current_text)
+
+    # The generator is consumed ONCE and never materialized (PR #1092 review,
+    # Bug #1): `list(unified_diff(...))` bounded what was *stored* but left peak
+    # memory proportional to the whole diff. The fetch layer admits pages up to
+    # `MAX_FETCH_BYTES_PAGE` (10 MB) and 110-char segmentation turns one of
+    # those into a very long segment list, so the intermediate diff of two of
+    # them can be enormous -- and this runs inside a scheduled fetch, where
+    # memory pressure is both least visible and least welcome. Counters are
+    # accumulated as the lines go past, and iteration DELIBERATELY continues
+    # after a cap is hit so `total_lines`, `added` and `removed` still describe
+    # the whole change rather than the retained slice.
+    kept: List[str] = []
+    chars = 0
+    total_lines = 0
+    added = 0
+    removed = 0
+    truncated = False
+    for index, line in enumerate(
+        unified_diff(
+            old_segments,
+            new_segments,
+            n=_DIFF_CONTEXT_SEGMENTS,
+            lineterm="",
+        )
+    ):
+        # Drop the two file headers by POSITION, never by pattern -- see
+        # `_HEADER_LINES` and `_DIFF_CONTEXT_SEGMENTS` for what a pattern match
+        # deletes along with them.
+        if index < _HEADER_LINES:
+            continue
+        total_lines += 1
+        if line.startswith("+"):
+            added += 1
+        elif line.startswith("-"):
+            removed += 1
+        if truncated:
+            continue
+        if len(kept) >= _MAX_DIFF_LINES or chars + len(line) + 1 > _MAX_DIFF_CHARS:
+            truncated = True
+            continue
+        kept.append(line)
+        chars += len(line) + 1
+
+    if not total_lines:
+        # Reachable: the content hash is taken over the raw extracted text,
+        # while segmentation trims and normalizes whitespace, so a
+        # whitespace-only or markup-only change hashes differently and diffs
+        # to nothing. Saying so beats an empty body, which `render_change`
+        # would replace with "no body captured for this item" -- a claim that
+        # content was never captured, when in fact it was and it matched.
+        return _NO_TEXTUAL_CHANGE_NOTICE, "no textual change after normalization"
+
+    summary = f"{added} line(s) added, {removed} removed"
+    if truncated:
+        # First line, not last -- see `_DIFF_TRUNCATION_NOTICE`. And in the
+        # headline as well, which needs no scrolling to reach.
+        kept.insert(
+            0,
+            _DIFF_TRUNCATION_NOTICE.format(
+                kept=len(kept),
+                total=total_lines,
+                max_lines=_MAX_DIFF_LINES,
+                max_chars=_MAX_DIFF_CHARS,
+            ),
+        )
+        summary += _DIFF_TRUNCATION_SUMMARY_SUFFIX
+    return "\n".join(kept), summary
+
+
+def classify_change_type(previous_text: str, current_text: str) -> str:
+    """Name what kind of change this is, from what ``check_url`` already has.
+
+    This replaces a hardcoded ``"content"`` literal. Only the three cases the
+    two snapshots can actually distinguish are reported: the richer vocabulary
+    in ``baseline_manager.ChangeReport`` also carries ``'structural'`` and
+    ``'semantic'``, but those need DOM-shape and embedding analysis that
+    ``check_url`` does not do, so claiming them here would be a guess. (That
+    module has no importers at all and its fate is TASK-1360; it is
+    deliberately not extended from here.)
+
+    Args:
+        previous_text: The previous snapshot's extracted text.
+        current_text: The freshly fetched extracted text.
+
+    Returns:
+        ``"new"`` when text appeared where there was none, ``"removed"`` when
+        it disappeared entirely, otherwise ``"content"``.
+    """
+    had_text = bool((previous_text or "").strip())
+    has_text = bool((current_text or "").strip())
+    if not had_text and has_text:
+        return "new"
+    if had_text and not has_text:
+        return "removed"
+    return "content"
+
+
+########################################################################################################################
+#
+# Check dispositions (TASK-1362, spec §4)
+#
+########################################################################################################################
+
+#: A fresh snapshot was written and no comparison was made -- either the first
+#: check of this URL or a re-baseline after an extraction-settings change. The
+#: ``reason`` says which.
+DISPOSITION_BASELINE_STORED = "baseline_stored"
+#: The extracted text hashed identically to the previous snapshot.
+DISPOSITION_UNCHANGED = "unchanged"
+#: A real change, deliberately not reported because it fell under the source's
+#: ``change_threshold``. Carries the percentage it measured.
+DISPOSITION_WITHHELD = "withheld_below_threshold"
+#: A change was detected and an item produced.
+DISPOSITION_CHANGED = "changed"
+
+#: ``reason`` values for ``DISPOSITION_BASELINE_STORED``. These two are NOT
+#: interchangeable and must never be aggregated together (whole-branch review,
+#: Critical 1): spec §3 accepts that a re-baseline throws away one diff window
+#: -- a real change landing in it is never reported -- and it accepts that cost
+#: *only because* "the Runs pane says why". A single ``baseline`` counter
+#: cannot say why, and the difference is exactly the part the user needs:
+#:
+#: * ``first_check`` -- there was no previous snapshot, so nothing was
+#:   discarded and no change could have been lost.
+#: * ``extraction_settings_changed`` -- there WAS a snapshot with real prior
+#:   content and it was discarded uncompared, so a change the page made in
+#:   that window is gone.
+#:
+#: `local_watchlists_service._disposition_count_keys` binds each to its own
+#: run counter (``baseline`` / ``rebaselined``) for that reason.
+REASON_FIRST_CHECK = "first_check"
+REASON_EXTRACTION_SETTINGS_CHANGED = "extraction_settings_changed"
+#: ``reason`` for ``DISPOSITION_WITHHELD``.
+REASON_BELOW_CHANGE_THRESHOLD = "below_change_threshold"
+
+
+def _disposition(
+    kind: str,
+    *,
+    reason: Optional[str] = None,
+    withheld_percentage: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Build the record that says what a check DID, not merely what it returned.
+
+    ``check_url`` used to return ``change_info | None``, and ``None`` meant four
+    different things: first check, unchanged page, change withheld under the
+    threshold, or (after TASK-1362) a re-baseline. The user could not tell
+    "nothing happened" from "something happened and the app decided not to
+    mention it" -- the same failure class as the watchlists that never ran at
+    all (TASK-1210).
+
+    Args:
+        kind: One of the four ``DISPOSITION_*`` values.
+        reason: Why, for the kinds that have more than one cause.
+        withheld_percentage: The measured change, scaled ×100 for display to
+            match ``change_percentage`` (TASK-1343's convention). ``None``
+            except for ``DISPOSITION_WITHHELD``.
+
+    Returns:
+        A three-key dict; the shape is fixed so consumers can index it.
+    """
+    return {
+        "kind": kind,
+        "reason": reason,
+        "withheld_percentage": withheld_percentage,
+    }
 
 
 class FeedMonitor:
@@ -494,6 +827,15 @@ class FeedMonitor:
                     cat.text for cat in item_elem.findall("category") if cat.text
                 ],
                 "enclosures": [],
+                # TASK-1343. Every feed item is an article, and `description`
+                # is whatever the publisher wrote -- plain text or HTML.
+                # Nothing on this path converts it to markdown, and
+                # `_VALID_PAIRINGS` allows only "text" or "markdown" for an
+                # article, so "text" is what was honestly captured; claiming
+                # "markdown" would make `render_article` hand publisher HTML
+                # to a CommonMark parser.
+                "content_kind": CONTENT_KIND_ARTICLE,
+                "content_format": CONTENT_FORMAT_TEXT,
             }
 
             # Get enclosures
@@ -535,6 +877,10 @@ class FeedMonitor:
                 ),
                 "categories": [],
                 "enclosures": [],
+                # TASK-1343, same reasoning as `_parse_rss_item`: `atom:content`
+                # arrives as the publisher's text or HTML, unconverted.
+                "content_kind": CONTENT_KIND_ARTICLE,
+                "content_format": CONTENT_FORMAT_TEXT,
             }
 
             # Get link
@@ -583,6 +929,12 @@ class FeedMonitor:
                     "published_date": self._parse_date(feed_item.get("date_published")),
                     "categories": feed_item.get("tags", []),
                     "enclosures": [],
+                    # TASK-1343. JSON Feed's `content_html` is HTML by
+                    # definition and `content_text` is plain; neither is
+                    # markdown and nothing converts them, so "text" is the
+                    # honest format for both.
+                    "content_kind": CONTENT_KIND_ARTICLE,
+                    "content_format": CONTENT_FORMAT_TEXT,
                 }
 
                 # Get author
@@ -680,7 +1032,9 @@ class URLMonitor:
         self.circuit_breakers = {}
         self.persist_snapshots = persist_snapshots
 
-    async def check_url(self, subscription: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def check_url(
+        self, subscription: Dict[str, Any]
+    ) -> tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
         """
         Check a URL for changes.
 
@@ -688,10 +1042,26 @@ class URLMonitor:
             subscription: Subscription dictionary
 
         Returns:
-            Change information if changed, None otherwise
+            ``(change_info, disposition)``. ``change_info`` is the item to
+            produce, or ``None`` when there is nothing to report. The
+            disposition (see :func:`_disposition`) always says which of the four
+            outcomes happened, because ``None`` alone is ambiguous between all
+            four -- spec §4.
         """
         subscription_id = subscription["id"]
         url = subscription["source"]
+
+        # The settings that shape extracted text, hashed. Computed before the
+        # fetch so the value written to the new snapshot and the value compared
+        # against the old one are provably the same one (spec §3).
+        # The `"auto"` default is the SAME one `_fetch_url_content` applies
+        # (whole-branch review, Minor 7): an absent key extracts HTML, an
+        # explicit NULL does not, and the fingerprint has to agree with the
+        # fetch on both or it hashes two different extractions alike.
+        current_fingerprint = extraction_fingerprint(
+            subscription.get("ignore_selectors"),
+            subscription.get("extraction_method", "auto"),
+        )
 
         # Check circuit breaker
         if subscription_id not in self.circuit_breakers:
@@ -707,26 +1077,99 @@ class URLMonitor:
             # Fetch current content
             current_content = await self._fetch_url_content(subscription)
 
-            # Get previous snapshot
+            # Get previous snapshot.
+            #
+            # TASK-1361. The `id DESC` tie-break is load-bearing, not tidiness:
+            # `created_at` is a DATETIME defaulting to CURRENT_TIMESTAMP, which
+            # has one-second resolution. Two checks of the same source inside
+            # one second therefore share a `created_at`, and with only that
+            # column in the ORDER BY, SQLite may return either row -- so a
+            # check can measure the change against a *stale* baseline and
+            # report the wrong percentage, the wrong diff, or a change that is
+            # not there. `id` is INTEGER PRIMARY KEY AUTOINCREMENT, so it is
+            # monotonic and breaks the tie by true insertion order. Same shape
+            # as `Workspaces/registry_service.py:171`, which already pairs
+            # `created_at` with a second key.
+            #
+            # Note for whoever resolves TASK-1360: `baseline_manager.py` has
+            # four more instances of this same unqualified ordering, one of
+            # them a pruning DELETE, so adopting that module means fixing
+            # them too.
+            # The `url` predicate is load-bearing for `url_list` and `sitemap`
+            # sources: every URL of such a source shares one `subscription_id`,
+            # so without it the "previous snapshot" is whichever URL was
+            # checked last. Two URLs on one source then measured each other --
+            # every URL after the first looked changed on the very first check,
+            # and no URL was ever reported unchanged. Found while making the
+            # per-run disposition counts (spec §4) come out right, which is
+            # impossible while the baselines are shared.
             cursor = self.db.conn.cursor()
             cursor.execute(
                 """
-                SELECT content_hash, extracted_content
+                SELECT content_hash, extracted_content, extraction_fingerprint
                 FROM url_snapshots
-                WHERE subscription_id = ?
-                ORDER BY created_at DESC
+                WHERE subscription_id = ? AND url = ?
+                ORDER BY created_at DESC, id DESC
                 LIMIT 1
             """,
-                (subscription_id,),
+                (subscription_id, url),
             )
 
             previous = cursor.fetchone()
 
             if not previous:
                 # First check - store baseline
-                await self._store_snapshot(subscription_id, url, current_content)
+                await self._store_snapshot(
+                    subscription_id,
+                    url,
+                    current_content,
+                    fingerprint=current_fingerprint,
+                )
                 breaker.record_success()
-                return None
+                return None, _disposition(
+                    DISPOSITION_BASELINE_STORED, reason=REASON_FIRST_CHECK
+                )
+
+            # Spec §3, and BEFORE the hash comparison: a snapshot holds text
+            # extracted under the settings in force when it was captured, so
+            # once those settings change the stored hash describes a different
+            # extraction and comparing it proves nothing. Equal hashes across a
+            # settings change are luck, not evidence, and a differing hash is
+            # the noise appearing or disappearing rather than anything the site
+            # did -- which is the phantom item this prevents. Re-baseline
+            # instead: one diff window is the honest, bounded cost.
+            #
+            # A stored NULL (every pre-migration snapshot) counts as a
+            # mismatch, which makes the migration self-healing: each existing
+            # source re-baselines exactly once and the Runs pane says why.
+            #
+            # That NULL case lands in the ``rebaselined`` counter with reason
+            # ``extraction_settings_changed``, deliberately and not by
+            # accident (whole-branch review, Important 2). Both halves are
+            # honest: a pre-migration snapshot holds real prior content that
+            # IS discarded uncompared -- a lost window the user must be
+            # warned about, unlike a true `first_check` where nothing existed
+            # -- and the settings really did change, because
+            # `_ensure_watchlists_schema`'s one-time migration rewrote every
+            # url-family source's `ignore_selectors` (to the shipped default
+            # set) and `change_threshold` in the same breath as adding this
+            # column. Guarding on truthiness instead (`if previous_fp and
+            # previous_fp != current`) would compare text extracted WITHOUT
+            # those selectors against text extracted WITH them and fire a
+            # phantom item, on the first check of every migrated source.
+            previous_fingerprint = previous["extraction_fingerprint"] or ""
+            if previous_fingerprint != current_fingerprint:
+                await self._store_snapshot(
+                    subscription_id,
+                    url,
+                    current_content,
+                    fingerprint=current_fingerprint,
+                )
+                breaker.record_success()
+                return None, _disposition(
+                    DISPOSITION_BASELINE_STORED,
+                    reason=REASON_EXTRACTION_SETTINGS_CHANGED,
+                )
 
             # Calculate change
             current_hash = ContentExtractor.calculate_content_hash(
@@ -736,40 +1179,100 @@ class URLMonitor:
             if current_hash == previous["content_hash"]:
                 # No change
                 breaker.record_success()
-                return None
+                return None, _disposition(DISPOSITION_UNCHANGED)
 
             # Calculate change details
+            previous_text = previous["extracted_content"] or ""
             change_percentage = ContentExtractor.calculate_change_percentage(
-                previous["extracted_content"] or "", current_content["text"]
+                previous_text, current_content["text"]
             )
 
-            # Check if change exceeds threshold
-            threshold = subscription.get("change_threshold", 0.1)
+            # Check if change exceeds threshold. Both sides of this comparison
+            # are 0.0-1.0 ratios -- the scaling to a percentage happens only
+            # where the value is handed to the reader (below, and in the
+            # disposition).
+            #
+            # The default is 0.0 (spec §1): the threshold was a *volume* filter
+            # being used as a *noise* filter, and at 0.1 a one-sentence edit to
+            # a long page moved whole-page similarity far too little to be
+            # reported at all. Noise is suppressed by `ignore_selectors`, which
+            # strips named elements before anything is hashed. The identical-
+            # hash check above already short-circuits unchanged pages, so 0.0
+            # means "any real difference in extracted text".
+            #
+            # `.get("change_threshold", 0.0)` would NOT be enough: the key
+            # exists whenever the row was read from the DB, so an explicit NULL
+            # comes back as `None` and `change_percentage < None` is a
+            # TypeError inside a scheduled fetch.
+            raw_threshold = subscription.get("change_threshold")
+            threshold = 0.0 if raw_threshold is None else float(raw_threshold)
             if change_percentage < threshold:
-                # Change too small
+                # Change too small -- recorded rather than silent, so a user who
+                # raised the threshold can see what it is holding back.
                 breaker.record_success()
-                return None
+                return None, _disposition(
+                    DISPOSITION_WITHHELD,
+                    reason=REASON_BELOW_CHANGE_THRESHOLD,
+                    withheld_percentage=change_percentage * 100.0,
+                )
 
-            # Significant change detected
+            # Significant change detected. TASK-1343: `content` is the DIFF, not
+            # the new page. The full page continues to live in `url_snapshots`
+            # (`_store_snapshot`, immediately below), which is where the
+            # reader's `[full page]` / `[previous snapshot]` affordances read
+            # from; storing it a second time here bought nothing and left the
+            # reader unable to see what had actually changed.
+            diff_body, diff_summary = build_change_diff(
+                previous_text, current_content["text"]
+            )
             change_info = {
                 "type": "url_change",
                 "url": url,
                 "title": f"Change detected: {subscription['name']}",
-                "content": current_content["text"],
+                "content": diff_body,
+                # Without these two, `content_pane.render_for` fell through to
+                # the article renderer for every site change ever detected, and
+                # `render_change` was unreachable in production.
+                "content_kind": CONTENT_KIND_CHANGE,
+                "content_format": CONTENT_FORMAT_DIFF,
                 "content_hash": current_hash,
                 "previous_hash": previous["content_hash"],
-                "change_percentage": change_percentage,
-                "change_type": "content",
+                # Scaled to a percentage, as the column name
+                # (`change_percentage`), the reader's headline
+                # (`f"{float(pct):.0f}% changed"`) and every renderer test
+                # fixture all read it. `calculate_change_percentage` returns a
+                # 0.0-1.0 ratio, so before TASK-1343 made the change renderer
+                # reachable at all, a real 35% change would have displayed as
+                # "0% changed" and a total rewrite as "1% changed".
+                "change_percentage": change_percentage * 100.0,
+                "change_type": classify_change_type(
+                    previous_text, current_content["text"]
+                ),
+                "diff_summary": diff_summary,
                 "published_date": datetime.now(timezone.utc).isoformat(),
+                # Filters and content-alert rules are evaluated on the raw
+                # fetched item, BEFORE persistence, and their haystack was
+                # built from `content`. With `content` now a diff, a rule that
+                # had matched a phrase anywhere on the page would silently have
+                # narrowed to "matches a changed segment" -- a user's alert
+                # quietly stopping after months, with nothing on screen to
+                # explain it. So the full page text travels alongside the diff
+                # for matching only; it is not a persisted column (see
+                # `watchlist_rule_matching`).
+                RULE_MATCH_TEXT_KEY: current_content["text"],
             }
 
             # Store new snapshot
             await self._store_snapshot(
-                subscription_id, url, current_content, current_hash
+                subscription_id,
+                url,
+                current_content,
+                current_hash,
+                fingerprint=current_fingerprint,
             )
 
             breaker.record_success()
-            return change_info
+            return change_info, _disposition(DISPOSITION_CHANGED)
 
         except Exception:
             breaker.record_failure()
@@ -865,8 +1368,23 @@ class URLMonitor:
         url: str,
         content: Dict[str, Any],
         content_hash: str = None,
+        fingerprint: Optional[str] = None,
     ) -> None:
-        """Store a URL snapshot."""
+        """Store a URL snapshot.
+
+        Args:
+            subscription_id: Owning subscription.
+            url: The exact URL fetched. For ``url_list``/``sitemap`` sources
+                many URLs share one ``subscription_id``, and this column is
+                what keeps their baselines apart.
+            content: The ``_fetch_url_content`` result.
+            content_hash: Precomputed hash of ``content["text"]``, or ``None``
+                to compute it here.
+            fingerprint: The ``extraction_fingerprint`` in force at capture
+                time. Stored so a later check can tell whether this snapshot's
+                text is still comparable (spec §3). ``None`` is written as
+                NULL, which every reader treats as a mismatch.
+        """
         if not self.persist_snapshots:
             return
         if not content_hash:
@@ -877,8 +1395,9 @@ class URLMonitor:
             cursor.execute(
                 """
                 INSERT INTO url_snapshots
-                (subscription_id, url, content_hash, extracted_content, raw_html, headers)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (subscription_id, url, content_hash, extracted_content, raw_html,
+                 headers, extraction_fingerprint)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     subscription_id,
@@ -887,6 +1406,7 @@ class URLMonitor:
                     content["text"],
                     content["html"],
                     json.dumps(content["headers"]),
+                    fingerprint,
                 ),
             )
 

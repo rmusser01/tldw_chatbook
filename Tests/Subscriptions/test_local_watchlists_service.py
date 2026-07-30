@@ -252,13 +252,17 @@ async def test_local_watchlists_service_executes_url_list_sources_with_default_u
             self.db = db
 
         async def check_url(self, subscription):
+            # TASK-1362: the real `check_url` returns `(item, disposition)`.
             seen_urls.append(subscription["source"])
-            return {
-                "url": subscription["source"],
-                "title": f"Changed {len(seen_urls)}",
-                "content_hash": f"hash-{len(seen_urls)}",
-                "published_date": "2026-04-25T00:00:00+00:00",
-            }
+            return (
+                {
+                    "url": subscription["source"],
+                    "title": f"Changed {len(seen_urls)}",
+                    "content_hash": f"hash-{len(seen_urls)}",
+                    "published_date": "2026-04-25T00:00:00+00:00",
+                },
+                {"kind": "changed", "reason": None, "withheld_percentage": None},
+            )
 
     monkeypatch.setattr(
         "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
@@ -284,6 +288,16 @@ async def test_local_watchlists_service_executes_url_list_sources_with_default_u
     assert completed["status"] == "completed"
     assert completed["stats"]["items_found"] == 2
     assert completed["stats"]["items_ingested"] == 2
+    assert completed["stats"]["dispositions"] == {
+        "changed": 2,
+        "unchanged": 0,
+        "withheld": 0,
+        "baseline": 0,
+        # Split from `baseline` by the whole-branch review's Critical 1: a
+        # first check discarded nothing, a settings-change re-baseline threw
+        # away a real diff window.
+        "rebaselined": 0,
+    }, "the url_list arm must aggregate one disposition per URL checked"
     assert seen_urls == ["https://example.com/a", "https://example.com/b"]
     assert [dict(row) for row in stored_items] == [
         {
@@ -335,13 +349,17 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
             self.db = db
 
         async def check_url(self, subscription):
+            # TASK-1362: the real `check_url` returns `(item, disposition)`.
             seen_urls.append(subscription["source"])
-            return {
-                "url": subscription["source"],
-                "title": f"Sitemap page {len(seen_urls)}",
-                "content_hash": f"sitemap-hash-{len(seen_urls)}",
-                "published_date": "2026-04-25T00:00:00+00:00",
-            }
+            return (
+                {
+                    "url": subscription["source"],
+                    "title": f"Sitemap page {len(seen_urls)}",
+                    "content_hash": f"sitemap-hash-{len(seen_urls)}",
+                    "published_date": "2026-04-25T00:00:00+00:00",
+                },
+                {"kind": "changed", "reason": None, "withheld_percentage": None},
+            )
 
     monkeypatch.setattr(
         "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
@@ -367,6 +385,13 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
     assert seen_urls == ["https://example.com/page-a", "https://example.com/page-b"]
     assert completed["status"] == "completed"
     assert completed["stats"]["items_found"] == 2
+    assert completed["stats"]["dispositions"] == {
+        "changed": 2,
+        "unchanged": 0,
+        "withheld": 0,
+        "baseline": 0,
+        "rebaselined": 0,
+    }, "the sitemap arm must aggregate one disposition per URL checked"
     assert [dict(row) for row in stored_items] == [
         {
             "url": "https://example.com/page-a",
@@ -629,3 +654,49 @@ async def test_execute_run_stores_content_alert_matches(tmp_path):
     matches = json.loads(row["alert_matches"])
     assert len(matches) == 1
     assert matches[0]["rule_name"] == "AI alert"
+
+
+@pytest.mark.asyncio
+async def test_get_item_status_reads_one_row_and_refuses_a_missing_one(tmp_path):
+    """PR #1091 review, F1: the new authoritative single-item status read.
+
+    The reader's `Mark unread` guard used to infer an item's status from a
+    paged `list_items` call per candidate status, so an item past the page
+    depth looked exactly like an item that did not hold the status at all,
+    and the guard let a destructive write through. This method exists so the
+    guard reads the item's own row instead.
+
+    A missing row raises rather than returning a falsy status: the guard's
+    caller treats an exception as a refusal, and "the item is gone" is an
+    unanswered question, not permission to overwrite.
+    """
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source_id = db.add_subscription(
+        name="Feed", type="rss", source="https://example.com/feed.xml"
+    )
+    with db.transaction() as conn:
+        item_id = persist_subscription_item(
+            conn,
+            source_id,
+            {
+                "url": "https://example.com/one/",
+                "title": "One",
+                "content_hash": "hash-status-read",
+            },
+            run_id=None,
+            now="2026-07-29T09:00:00+00:00",
+        )
+
+    assert await service.get_item_status(item_id) == "new"
+    await service.update_item(item_id=item_id, status="ingested")
+    assert await service.get_item_status(item_id) == "ingested"
+    # Namespaced ids are the screen's currency; the scope service strips the
+    # namespace, so the service itself takes the bare id -- and rejects a
+    # value it cannot read as one rather than guessing.
+    with pytest.raises(ValueError):
+        await service.get_item_status("local:watchlist_item:1")
+    with pytest.raises(KeyError):
+        await service.get_item_status(item_id + 10_000)

@@ -19,12 +19,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from loguru import logger
 from rich.text import Text
 from textual.containers import Vertical
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Button, Static
+from textual.widgets import Button, Static, TextArea
 
+from ...Subscriptions.noise_defaults import (
+    first_invalid_selector,
+    invalid_selector_message,
+)
+from ...Utils.input_validation import sanitize_string
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .overview_pane import OverviewPane
 from .watchlist_tree import TreeScope
@@ -62,14 +68,6 @@ class DeleteRequested(Message):
         super().__init__()
 
 
-class MarkReviewedRequested(Message):
-    """Posted when the user marks a watchlist item as reviewed."""
-
-    def __init__(self, entity: dict[str, Any] | None) -> None:
-        self.entity = entity
-        super().__init__()
-
-
 class IngestRequested(Message):
     """Posted when the user ingests a watchlist item."""
 
@@ -91,6 +89,34 @@ class EditRuleRequested(Message):
 
     def __init__(self, entity: dict[str, Any] | None) -> None:
         self.entity = entity
+        super().__init__()
+
+
+class SaveNoiseSelectorsRequested(Message):
+    """Posted when the user saves a url-family source's noise selectors.
+
+    TASK-1362 (spec §2). This is the ONLY edit path a source has: before it,
+    nothing on the Watchlists screen could change a source at all (only alert
+    rules had an Edit affordance), so the loop the spec is built around --
+    a noisy item's diff names what churned, the user adds one rule to silence
+    it -- required deleting the source and recreating it from scratch, losing
+    its history. Deliberately carries only the selector text: this is not a
+    general source-edit form, and widening it to one is a separate piece of
+    work.
+
+    Args:
+        source_id: The source's watchlist item id, namespaced
+            (``local:subscription:5``) exactly as `DeleteRequested` and the
+            other source actions carry it -- `WatchlistScopeService` resolves
+            either form.
+        text: The field's contents verbatim (sanitized, outer whitespace
+            trimmed). Empty means empty: a user who cleared the field is
+            saying "watch everything on this page".
+    """
+
+    def __init__(self, source_id: Any, text: str) -> None:
+        self.source_id = source_id
+        self.text = text
         super().__init__()
 
 
@@ -141,6 +167,129 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
     #: exist. The value is the same one the Overview region keys off, so the
     #: two regions cannot disagree.
     profile_state = reactive(OverviewPane.LOADING, recompose=True)
+
+    #: TASK-1362 (spec §2). The source types whose checks run through
+    #: `URLMonitor.check_url` -- the only ones that extract text from HTML and
+    #: therefore the only ones `ignore_selectors` means anything for. A feed
+    #: source's items come from the feed's own entries; nothing on that path
+    #: consults a selector, so offering the control there would be a field
+    #: that silently does nothing. `site` is the create form's alias for
+    #: `url` (`LocalWatchlistsService._local_type_for_source_type`), accepted
+    #: here because a hand-built or server-side entity can still carry it.
+    _URL_FAMILY_SOURCE_TYPES = frozenset({"url", "url_list", "sitemap", "site"})
+
+    #: Deliberately SHORTER than `SourcesPane`'s copy of the same field's
+    #: label, which is the one thing about the two that cannot match (whole-
+    #: branch review, Important 5). Textual's border-label renderer truncates
+    #: with an ellipsis and says nothing about it: the create form's field is
+    #: ~91 columns wide in the centre column and comfortably holds a 65-char
+    #: label, while this one lives in the right rail -- measured at ~26 columns
+    #: -- where that same label painted as "Ignore elements (CSS s…". The
+    #: truncation ate the syntax note that was the entire reason the label was
+    #: long, so the label states only what the field is and the syntax moves to
+    #: the tooltip, which has no width budget at all.
+    #:
+    #: There is no `border_subtitle` here for the same reason. Two rail-width
+    #: border labels is two truncations, and the help copy it carried
+    #: duplicated the Save button's tooltip one row below it.
+    #:
+    #: Duplicated as literals rather than imported because `sources_pane`
+    #: imports FROM this module (`CheckNowRequested`, `PreviewRequested`) --
+    #: importing back would close an import cycle.
+    _IGNORE_SELECTORS_LABEL = "Ignore (CSS)"
+    #: The guidance the label no longer has room for. A tooltip is the right
+    #: home for it here (and the wrong one in the create form, where the field
+    #: is the thing the user is filling in): the Inspector's field is prefilled
+    #: with rules that already work, so the syntax matters only to someone
+    #: reaching for it.
+    _IGNORE_SELECTORS_HELP = (
+        "One CSS rule per line; a comma within a line groups selectors. "
+        "Matching elements are stripped before this page is compared, so "
+        "changes inside them are not reported. Too noisy? The item diff names "
+        "what churned; add a rule here to silence it."
+    )
+    _IGNORE_SELECTORS_MAX_LENGTH = 4000
+
+    @classmethod
+    def _is_url_family_source(cls, entity: dict[str, Any] | None) -> bool:
+        """Whether `ignore_selectors` can affect how this source is checked.
+
+        Args:
+            entity: A normalized source entity, or None.
+
+        Returns:
+            True only for url/url_list/sitemap sources.
+        """
+        if not entity:
+            return False
+        source_type = entity.get("source_type")
+        if source_type is None:
+            source_type = entity.get("type")
+        return str(source_type or "").strip().lower() in cls._URL_FAMILY_SOURCE_TYPES
+
+    @staticmethod
+    def _ignore_selectors_text(entity: dict[str, Any]) -> str:
+        """The source's current selectors as the newline text a field holds.
+
+        `normalize_local_subscription_row` publishes them under
+        `settings["ignore_selectors"]` as a **list** (and omits the key
+        entirely when the column is empty), so the stored newline text has to
+        be reassembled here. The bare `ignore_selectors` key is the fallback
+        shape a hand-built dict uses.
+
+        Args:
+            entity: A normalized source entity.
+
+        Returns:
+            One rule per line, or "" when the source has none.
+        """
+        candidates = []
+        settings = entity.get("settings")
+        if isinstance(settings, dict):
+            candidates.append(settings.get("ignore_selectors"))
+        candidates.append(entity.get("ignore_selectors"))
+        for stored in candidates:
+            if isinstance(stored, (list, tuple)):
+                joined = "\n".join(str(selector) for selector in stored)
+                if joined:
+                    return joined
+            elif stored:
+                return str(stored)
+        return ""
+
+    def _noise_selectors_editor(self, entity: dict[str, Any]):
+        """The one editable field a source has, plus its Save button.
+
+        Placed with the entity detail rather than inside `#inspector-actions`:
+        the four buttons in that block are one-shot actions on the selected
+        source, and interleaving a multi-line text field among them would
+        either split them or put an edit control below `Delete`.
+        """
+        field = TextArea(
+            self._ignore_selectors_text(entity),
+            id="inspector-noise-selectors",
+            # Same reasoning as the create form's copy of this field: one rule
+            # per line is the stored format, but a rule can be wider than the
+            # rail, and a horizontal scrollbar would eat one of the field's
+            # two content rows.
+            soft_wrap=True,
+        )
+        field.border_title = self._IGNORE_SELECTORS_LABEL
+        # No `border_subtitle`: see `_IGNORE_SELECTORS_LABEL`. The rail is too
+        # narrow for a second border label, and this text is the full guidance
+        # the shortened title dropped.
+        field.tooltip = self._IGNORE_SELECTORS_HELP
+        yield field
+        yield Button(
+            "Save selectors",
+            id="inspector-save-selectors-button",
+            variant="success",
+            compact=True,
+            tooltip=(
+                "Save these rules. The next check re-baselines this source "
+                "instead of reporting the stripped noise as a change."
+            ),
+        )
 
     def compose(self):
         # No "Inspector" title here. `_build_inspector_pane` already opens the
@@ -214,6 +363,11 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             )
             yield Static(Text(f"Selected: {title}"), id="inspector-entity-title")
             yield Static(Text(f"Type: {deepest.kind}"), id="inspector-entity-type")
+            # TASK-1362 (spec §2). Only for a url-family SOURCE: an item, a
+            # run, a rule or a feed source has no extraction settings for
+            # these rules to shape.
+            if deepest.kind == "source" and self._is_url_family_source(entity):
+                yield from self._noise_selectors_editor(entity)
         else:
             yield Static(Text(deepest.label), id="inspector-entity-title")
             yield Static(Text(f"Type: {deepest.kind.capitalize()}"), id="inspector-entity-type")
@@ -228,7 +382,15 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                 yield Button("Stage in Console", id="inspector-stage-console-button")
                 yield Button("Delete", id="inspector-delete-button", variant="error")
             elif deepest.kind == "item":
-                yield Button("Mark reviewed", id="inspector-mark-reviewed-button", variant="primary")
+                # No "Mark reviewed" button here (Task 5 fix round 1,
+                # Important): `selected_entity` is set by the same
+                # `ItemSelected` that now marks an item read on open
+                # (`WatchlistsCollectionsScreen._mark_item_read_on_open`),
+                # so by the time an item's actions could render here it has
+                # already been marked "reviewed" -- this button was only
+                # ever reachable on an item already at that status, i.e.
+                # dead in practice. Ingest/Ignore are unrelated deliberate
+                # actions and are unaffected.
                 yield Button("Ingest", id="inspector-ingest-button", variant="primary")
                 yield Button("Ignore", id="inspector-ignore-button", variant="error")
             elif deepest.kind == "rule":
@@ -407,12 +569,77 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             self.post_message(StageInConsoleRequested(entity))
         elif button_id == "inspector-delete-button":
             self.post_message(DeleteRequested(entity))
-        elif button_id == "inspector-mark-reviewed-button":
-            self.post_message(MarkReviewedRequested(entity))
         elif button_id == "inspector-ingest-button":
             self.post_message(IngestRequested(entity))
         elif button_id == "inspector-ignore-button":
             self.post_message(IgnoreRequested(entity))
         elif button_id == "inspector-edit-rule-button":
             self.post_message(EditRuleRequested(entity))
+        elif button_id == "inspector-save-selectors-button":
+            self._post_noise_selectors_save(entity)
         event.stop()
+
+    def _post_noise_selectors_save(self, entity: dict[str, Any] | None) -> None:
+        """Read the field and ask the screen to persist it (TASK-1362).
+
+        The text is read off the mounted `TextArea` rather than mirrored into
+        a reactive on every keystroke: unlike the create form's copy of this
+        field, nothing here survives a rebuild that needs re-seeding -- a
+        rebuilt Inspector re-reads the stored value from the entity itself.
+        """
+        if entity is None:
+            # Fix round 1 (Minor 4): neither of these two paths may return
+            # silently. A button that produces no write, no error and no
+            # toast is indistinguishable from a broken one.
+            self._report_nothing_to_save(
+                "Ignore-rule save pressed with no entity selected."
+            )
+            return
+        try:
+            field = self.query_one("#inspector-noise-selectors", TextArea)
+        except Exception:
+            self._report_nothing_to_save(
+                "Ignore-rule save pressed but #inspector-noise-selectors is "
+                "not mounted."
+            )
+            return
+        text = sanitize_string(
+            field.text, max_length=self._IGNORE_SELECTORS_MAX_LENGTH
+        ).strip()
+        # Same refusal as the create form, same copy (see
+        # `invalid_selector_message`). Blocking the save is the point: writing
+        # an unparseable rule would leave the source permanently carrying a
+        # line that suppresses nothing, and the extraction guard's log warning
+        # is not a place a TUI user looks.
+        bad_selector = first_invalid_selector(text)
+        if bad_selector is not None:
+            self._report_invalid_selector(bad_selector)
+            return
+        self.post_message(SaveNoiseSelectorsRequested(entity.get("id"), text))
+
+    def _report_invalid_selector(self, selector: str) -> None:
+        """Refuse the save and name the line, in the log and on screen."""
+        logger.warning(
+            f"Ignore-rule save refused: unparseable CSS selector {selector!r}."
+        )
+        try:
+            notify = getattr(self.app, "notify", None)
+        except Exception:
+            notify = None
+        if callable(notify):
+            # markup=False -- see the note on the create form's copy of this.
+            notify(
+                invalid_selector_message(selector),
+                severity="error",
+                markup=False,
+            )
+
+    def _report_nothing_to_save(self, reason: str) -> None:
+        """Say so, in the log and on screen, when Save cannot do anything."""
+        logger.warning(reason)
+        try:
+            notify = getattr(self.app, "notify", None)
+        except Exception:
+            notify = None
+        if callable(notify):
+            notify("Nothing to save: no ignore rules field is open.", severity="warning")

@@ -15,10 +15,26 @@ from collections.abc import Mapping
 from typing import Any
 
 
+#: The vocabulary of ``content_kind``/``content_format``, named once.
+#:
+#: TASK-1343: producers used to write neither field, so
+#: ``content_pane.render_for`` fell through to the article renderer for every
+#: item including site changes. They now write both -- and since an invalid
+#: pairing *raises* out of ``persist_subscription_item``, inside a scheduled
+#: fetch, the producers import these names from here (the module that owns the
+#: rule) rather than repeat string literals that a typo would turn into a
+#: run-time failure. This module has no heavy imports of its own, so it is safe
+#: for any producer to import at module scope.
+CONTENT_KIND_ARTICLE = "article"
+CONTENT_KIND_CHANGE = "change"
+CONTENT_FORMAT_TEXT = "text"
+CONTENT_FORMAT_MARKDOWN = "markdown"
+CONTENT_FORMAT_DIFF = "diff"
+
 _VALID_PAIRINGS = {
-    ("article", "text"),
-    ("article", "markdown"),
-    ("change", "diff"),
+    (CONTENT_KIND_ARTICLE, CONTENT_FORMAT_TEXT),
+    (CONTENT_KIND_ARTICLE, CONTENT_FORMAT_MARKDOWN),
+    (CONTENT_KIND_CHANGE, CONTENT_FORMAT_DIFF),
 }
 
 

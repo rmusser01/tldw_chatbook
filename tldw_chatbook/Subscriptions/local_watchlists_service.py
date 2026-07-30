@@ -18,7 +18,11 @@ from ..Utils.egress import (
     guarded_fetch_httpx_async,
     origin_set,
 )
-from .item_persist import persist_subscription_item
+from .item_persist import (
+    CONTENT_FORMAT_TEXT,
+    CONTENT_KIND_ARTICLE,
+    persist_subscription_item,
+)
 from .watchlist_content_alert_service import WatchlistContentAlertService
 from .watchlist_filter_service import WatchlistFilterService
 from .watchlist_normalizers import (
@@ -39,6 +43,124 @@ _ALERT_CONDITION_TYPES = frozenset(
         "run_failed",
     }
 )
+
+#: Every counter `_disposition_counts` can return, in the order the Runs pane
+#: renders them. Named here rather than inline so the zero-fill and the
+#: binding below cannot disagree about which counters exist.
+_DISPOSITION_COUNTERS: tuple[str, ...] = (
+    "changed",
+    "unchanged",
+    "withheld",
+    "baseline",
+    "rebaselined",
+)
+
+
+def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
+    """`check_url`'s `(kind, reason)` -> the run-stats counter it increments.
+
+    Keyed off `monitoring_engine`'s real ``DISPOSITION_*``/``REASON_*``
+    constants rather than re-spelled string literals, so the two cannot drift
+    apart (TASK-1362 ledgered Minor from Task 3's review: a re-spelled literal
+    here would silently `KeyError` inside a run the moment `monitoring_engine`
+    renamed a kind, discarding every item that run collected). `withheld` is
+    shortened from `DISPOSITION_WITHHELD`'s value for the stats key, which is
+    read by the Runs pane as a one-line summary.
+
+    The key is the `(kind, reason)` PAIR, not the kind alone (whole-branch
+    review, Critical 1). `DISPOSITION_BASELINE_STORED` has two causes and they
+    mean opposite things to the user -- `first_check` discarded nothing,
+    `extraction_settings_changed` threw away a real diff window in which a
+    change could have been lost -- so they get separate counters. Collapsing
+    them back into one leaves the `reason` with no production consumer at all,
+    which is what made spec §3's "the Runs pane says why" untrue.
+
+    The five pairs below are exactly the five `_disposition` call sites in
+    `check_url`; an unlisted pair raises `KeyError` in `_disposition_counts`,
+    deliberately.
+
+    The `monitoring_engine` import is deliberately local, not module-level:
+    this module loads unconditionally from `Subscriptions/__init__.py`
+    (its own import is not wrapped in the `try/except` that guards the
+    package's `monitoring_engine` re-export), but `monitoring_engine` carries
+    a hard `beautifulsoup4`/`defusedxml` import that not every install has
+    (see the `websearch` extras group) -- a module-level import here would
+    make importing this module fail on any install that lacks them, exactly
+    like `_default_run_executor`'s existing local import of `URLMonitor`.
+    """
+    from .monitoring_engine import (
+        DISPOSITION_BASELINE_STORED,
+        DISPOSITION_CHANGED,
+        DISPOSITION_UNCHANGED,
+        DISPOSITION_WITHHELD,
+        REASON_BELOW_CHANGE_THRESHOLD,
+        REASON_EXTRACTION_SETTINGS_CHANGED,
+        REASON_FIRST_CHECK,
+    )
+
+    return {
+        (DISPOSITION_CHANGED, None): "changed",
+        (DISPOSITION_UNCHANGED, None): "unchanged",
+        (DISPOSITION_WITHHELD, REASON_BELOW_CHANGE_THRESHOLD): "withheld",
+        (DISPOSITION_BASELINE_STORED, REASON_FIRST_CHECK): "baseline",
+        (
+            DISPOSITION_BASELINE_STORED,
+            REASON_EXTRACTION_SETTINGS_CHANGED,
+        ): "rebaselined",
+    }
+
+
+def _disposition_counts(dispositions: list[dict[str, Any]]) -> dict[str, int]:
+    """Aggregate one run's per-URL dispositions into the five counters.
+
+    Spec §4. A run that produced no items used to be indistinguishable from a
+    run that produced no items *because it withheld them*; these counters are
+    what makes the difference visible. All five keys are always present, so the
+    reader never has to distinguish "zero" from "not recorded".
+
+    Args:
+        dispositions: One disposition dict per URL checked, in check order.
+
+    Returns:
+        ``{"changed": n, "unchanged": n, "withheld": n, "baseline": n,
+        "rebaselined": n}``.
+
+    Raises:
+        KeyError: If a disposition carries a ``(kind, reason)`` pair outside
+            the vocabulary -- deliberately loud, because a silently dropped
+            disposition is exactly the ambiguity this record exists to remove.
+    """
+    count_keys = _disposition_count_keys()
+    counts = {counter: 0 for counter in _DISPOSITION_COUNTERS}
+    for disposition in dispositions:
+        key = (str(disposition.get("kind")), disposition.get("reason"))
+        counts[count_keys[key]] += 1
+    return counts
+
+
+def _max_withheld_percentage(dispositions: list[dict[str, Any]]) -> float | None:
+    """The largest change any check in this run held back, display-scaled.
+
+    Spec §1 requires the app to tell the user *what* it is withholding, not
+    merely that it withheld something (whole-branch review, Critical 1): a
+    bare "2 withheld" gives no way to judge whether the threshold is set too
+    high. The maximum is the useful single number -- it is the one the user
+    would have to lower the threshold past to see anything at all.
+
+    Args:
+        dispositions: One disposition dict per URL checked.
+
+    Returns:
+        The largest ``withheld_percentage`` present, or ``None`` when this run
+        withheld nothing (so the key can be omitted from stats entirely rather
+        than fabricating a 0.0 that reads as "withheld 0%").
+    """
+    percentages = [
+        float(disposition["withheld_percentage"])
+        for disposition in dispositions
+        if disposition.get("withheld_percentage") is not None
+    ]
+    return max(percentages) if percentages else None
 
 
 class LocalWatchlistsService:
@@ -169,6 +291,33 @@ class LocalWatchlistsService:
     #: Statuses a watchlist item may be moved to from the UI. Mirrors
     #: `ItemsPane._STATUS_OPTIONS` minus its "all" filter entry.
     ITEM_STATUSES = ("new", "reviewed", "ingested", "ignored", "error")
+
+    async def get_item_status(self, item_id: Any) -> str:
+        """Read one item's current status, authoritatively.
+
+        Added for the reader's `Mark unread` guard (PR #1091 review, F1). The
+        guard previously inferred a status by listing each candidate status
+        and looking for the item in the result, which is a paged query: an
+        `ingested` item beyond the page depth simply was not in the list, and
+        "absent from a truncated page" was read as "does not hold this
+        status", so the guard let the destructive write through. This reads
+        the one row instead, so page size cannot enter into it.
+
+        Args:
+            item_id: The item's local row id (bare, not namespaced).
+
+        Returns:
+            The item's current status.
+
+        Raises:
+            ValueError: If `item_id` is not an integer id.
+            KeyError: If no item has that id.
+        """
+        try:
+            row_id = int(item_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
+        return self._db().get_item_status(row_id)
 
     async def update_item(self, *, item_id: Any, status: str) -> dict[str, Any]:
         """Move one watchlist item to a new status.
@@ -733,35 +882,43 @@ class LocalWatchlistsService:
 
         subscription_config = self._subscription_execution_config(subscription)
         source_type = str(subscription_config.get("type") or "").strip()
+        # `None` for the feed and API arms, which have no dispositions at all
+        # (spec §4) -- distinguished from `[]`, which would record four zeros.
+        dispositions: list[dict[str, Any]] | None = None
         if source_type in {"rss", "atom", "json_feed", "podcast"}:
             items = await FeedMonitor().check_feed(subscription_config)
         elif source_type == "url":
-            result = await URLMonitor(db).check_url(subscription_config)
+            result, disposition = await URLMonitor(db).check_url(subscription_config)
             items = [result] if result else []
+            dispositions = [disposition]
         elif source_type == "url_list":
             monitor = URLMonitor(db)
             items = []
+            dispositions = []
             for url in self._urls_for_url_list(subscription_config):
-                result = await monitor.check_url(
+                result, disposition = await monitor.check_url(
                     {
                         **subscription_config,
                         "source": url,
                         "type": "url",
                     }
                 )
+                dispositions.append(disposition)
                 if result:
                     items.append(result)
         elif source_type == "sitemap":
             monitor = URLMonitor(db)
             items = []
+            dispositions = []
             for url in await self._urls_for_sitemap(subscription_config):
-                result = await monitor.check_url(
+                result, disposition = await monitor.check_url(
                     {
                         **subscription_config,
                         "source": url,
                         "type": "url",
                     }
                 )
+                dispositions.append(disposition)
                 if result:
                     items.append(result)
         elif source_type == "api":
@@ -770,10 +927,27 @@ class LocalWatchlistsService:
             raise ValueError(
                 f"Unsupported local watchlist source type for execution: {source_type}"
             )
-        return {
+        result_payload: dict[str, Any] = {
             "items": items,
             "log_text": f"Local watchlist execution completed with {len(items)} item(s).",
         }
+        if dispositions is not None:
+            # `execute_run` already does `stats = dict(result.get("stats") or {})`
+            # and persists it to the run's `stats_json`, so this reaches the Runs
+            # pane with nothing further to wire.
+            run_stats: dict[str, Any] = {
+                "dispositions": _disposition_counts(dispositions)
+            }
+            # A sibling key rather than a sixth entry inside `dispositions`,
+            # which is a dict of counters and stays one: a float in among the
+            # integers would break every whole-dict comparison of the counts.
+            # Omitted entirely when nothing was withheld (spec §1) -- see
+            # `_max_withheld_percentage`.
+            max_withheld = _max_withheld_percentage(dispositions)
+            if max_withheld is not None:
+                run_stats["max_withheld_pct"] = max_withheld
+            result_payload["stats"] = run_stats
+        return result_payload
 
     @classmethod
     def _subscription_execution_config(
@@ -988,6 +1162,19 @@ class LocalWatchlistsService:
             "published_date": published_date,
             "author": author,
             "extracted_data": item if isinstance(item, Mapping) else {"value": item},
+            # TASK-1343. An API source produces articles, not site changes, so
+            # it must dispatch to `render_article` explicitly rather than rely
+            # on `render_for`'s fallback -- which is what silently rendered
+            # every kind the same way. `content` here is whatever JSON field
+            # the source's `field_map` points at, in whatever format the API
+            # chose; nothing converts it, and `_VALID_PAIRINGS` permits only
+            # "text" or "markdown" for an article, so "text" is the honest
+            # answer. Written even when the API supplied no content at all:
+            # the kind is still `article` (`render_article` then explains the
+            # missing body), and both values are non-None so they survive the
+            # filter below.
+            "content_kind": CONTENT_KIND_ARTICLE,
+            "content_format": CONTENT_FORMAT_TEXT,
         }
         return {key: value for key, value in normalized.items() if value is not None}
 

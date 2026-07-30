@@ -87,7 +87,7 @@ class SiteConfig:
         # Change detection
         self.ignore_selectors = config.get("ignore_selectors", [])
         self.ignore_patterns = config.get("ignore_patterns", [])
-        self.change_threshold = config.get("change_threshold", 0.1)
+        self.change_threshold = config.get("change_threshold", 0.0)
 
         # Content processing
         self.remove_scripts = config.get("remove_scripts", True)

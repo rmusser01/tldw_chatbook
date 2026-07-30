@@ -126,3 +126,36 @@ def installed_local_providers() -> tuple[str, ...]:
     return tuple(
         provider for provider in LOCAL_PROVIDER_MODULES if provider_installed(provider)
     )
+
+
+#: Provider ids the legacy Dictation windows (`UI/Dictation_Window.py`,
+#: `UI/Dictation_Window_Improved.py`) once persisted to
+#: `dictation.provider` before being corrected to their real dispatch id.
+#: `"lightning-whisper"` was the same misspelling of `"lightning-whisper-mlx"`
+#: described in this module's docstring above -- both dropdowns offered it as
+#: a `Select` option and a user who picked it got that string written to
+#: config. Fixing the dropdown option does not fix an already-saved config
+#: file, so read-side code must still translate the old value.
+LEGACY_PROVIDER_IDS: dict[str, str] = {
+    "lightning-whisper": "lightning-whisper-mlx",
+}
+
+
+def normalize_provider_id(provider: str | None) -> str | None:
+    """Translate a persisted legacy provider id to its current dispatch id.
+
+    Intended for read-side use only (e.g. loading `dictation.provider` from
+    config) -- callers must not write the normalized value back to config as
+    a side effect of merely reading it.
+
+    Args:
+        provider: A transcription provider id as read from config, or None.
+
+    Returns:
+        The current provider id `provider` maps to via `LEGACY_PROVIDER_IDS`,
+        or `provider` unchanged when it is not a known legacy alias
+        (including when it is None).
+    """
+    if provider is None:
+        return None
+    return LEGACY_PROVIDER_IDS.get(provider, provider)

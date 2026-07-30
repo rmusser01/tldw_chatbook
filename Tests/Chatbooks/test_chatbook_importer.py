@@ -416,6 +416,9 @@ Keywords: test, sample"""
         assert success is True
         assert status.processed_items > 0
         assert len(status.errors) == 0
+        imported_conversation = mock_db_instance.add_conversation.call_args.args[0]
+        assert imported_conversation["character_id"] == 1
+        assert imported_conversation["assistant_authority_id"] is None
 
     @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
     def test_import_chatbook_with_conflicts(

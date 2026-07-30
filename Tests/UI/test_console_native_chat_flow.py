@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
@@ -42,6 +43,10 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    HandoffChannel,
+    PendingHandoffStore,
+)
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_ACTIVE_RUN_STATUSES,
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
@@ -3013,6 +3018,791 @@ async def test_console_workspace_authority_rows_are_structured_for_scanning():
         assert "not configured" in _static_plain_text(
             console.query_one("#console-workspace-server-features-collapsed", Static)
         ).lower()
+
+
+class _CharacterHandoffStore:
+    """Capture character-session identity at greeting persistence time."""
+
+    def __init__(self) -> None:
+        self.create_kwargs: dict | None = None
+        self.session: ConsoleChatSession | None = None
+        self.messages: list[dict] = []
+        self.identity_at_append: dict | None = None
+
+    def create_session(self, **kwargs):
+        self.create_kwargs = dict(kwargs)
+        self.session = ConsoleChatSession(id="handoff-session", **kwargs)
+        return self.session
+
+    def append_message(self, session_id, *, role, content, persist):
+        assert self.session is not None
+        self.identity_at_append = {
+            "runtime_backend": self.session.runtime_backend,
+            "assistant_kind": self.session.assistant_kind,
+            "assistant_id": self.session.assistant_id,
+            "assistant_authority_id": self.session.assistant_authority_id,
+            "character_id": self.session.character_id,
+            "character_ref": self.session.character_ref(),
+        }
+        self.messages.append(
+            {
+                "session_id": session_id,
+                "role": role,
+                "content": content,
+                "persist": persist,
+            }
+        )
+
+
+def _character_start_handoff(
+    *,
+    runtime_backend: str = "local",
+    selected_kind: str = "character",
+    source: str = "personas",
+    active_server_profile_id: str | None = None,
+    character_id: object = "7",
+) -> ChatHandoffPayload:
+    return ChatHandoffPayload(
+        source=source,
+        item_type=f"{selected_kind}-card",
+        title="Elara",
+        body="Character summary",
+        runtime_backend=runtime_backend,
+        source_owner=runtime_backend,
+        source_selector_state=runtime_backend,
+        active_server_profile_id=active_server_profile_id,
+        metadata={
+            "intent": "start_chat",
+            "selected_kind": selected_kind,
+            "selected_record_id": character_id,
+            "selected_name": "Elara",
+            "selected_target_id": (
+                f"{runtime_backend}:{selected_kind}:{character_id}"
+            ),
+            "backend": runtime_backend,
+        },
+    )
+
+
+def _character_card() -> dict:
+    return {
+        "id": 7,
+        "name": "Elara",
+        "first_message": "Hello {{user}}, I am {{char}}.",
+        "system_prompt": "Stay curious.",
+    }
+
+
+_DEFAULT_HANDOFF_VALUE = object()
+
+
+def _character_handoff_runtime(
+    *,
+    active_server_id: str | None = None,
+    local_authority: str | None = "local-authority",
+    card=_DEFAULT_HANDOFF_VALUE,
+    server_authority: object = "server-user-v1:" + ("a" * 64),
+) -> SimpleNamespace:
+    """Build a source-aware handoff runtime with inspectable boundaries."""
+    scoped_card = _character_card() if card is _DEFAULT_HANDOFF_VALUE else card
+    db = SimpleNamespace(
+        get_local_authority_id=Mock(return_value=local_authority),
+        # A usable legacy card makes forbidden fallback observable: if the
+        # scoped lookup misses and production consults this seam, the test
+        # would incorrectly create a session instead of failing closed.
+        get_character_card_by_id=Mock(return_value=_character_card()),
+    )
+    scope_service = SimpleNamespace(
+        get_character=AsyncMock(return_value=scoped_card),
+    )
+    resolver = AsyncMock(return_value=server_authority)
+    initial_capture = SimpleNamespace(account="A")
+    authority_context_state = {"current": initial_capture}
+    capture_context = Mock(
+        side_effect=lambda *, expected_server_id: authority_context_state["current"]
+    )
+    capture_is_current = Mock(
+        side_effect=lambda capture: capture is authority_context_state["current"]
+    )
+    resolve_captures: list[object | None] = []
+
+    async def resolve_character_authority_id(
+        *,
+        expected_server_id: str,
+        context_capture: object | None = None,
+    ):
+        resolve_captures.append(context_capture)
+        return await resolver(expected_server_id=expected_server_id)
+
+    app = SimpleNamespace(
+        app_config={},
+        active_server_id=active_server_id,
+        chachanotes_db=db,
+        character_persona_scope_service=scope_service,
+        server_context_provider=SimpleNamespace(
+            capture_character_authority_context=capture_context,
+            is_character_authority_context_current=capture_is_current,
+            resolve_character_authority_id=resolve_character_authority_id,
+        ),
+    )
+    return SimpleNamespace(
+        app=app,
+        db=db,
+        scope_service=scope_service,
+        resolver=resolver,
+        initial_capture=initial_capture,
+        authority_context_state=authority_context_state,
+        capture_context=capture_context,
+        capture_is_current=capture_is_current,
+        resolve_captures=resolve_captures,
+    )
+
+
+def _handoff_chat_screen(monkeypatch, app, store: _CharacterHandoffStore) -> ChatScreen:
+    screen = ChatScreen(app)
+    monkeypatch.setattr(
+        ChatScreen,
+        "_ensure_console_chat_store",
+        lambda self: store,
+    )
+    monkeypatch.setattr(
+        ChatScreen,
+        "_default_console_session_settings",
+        lambda self: ConsoleSessionSettings(
+            provider="anthropic",
+            model="claude-3-haiku",
+        ),
+    )
+    monkeypatch.setattr(
+        ChatScreen,
+        "_sync_native_console_chat_ui",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        ChatScreen,
+        "_focus_console_composer_if_needed",
+        lambda self, **kwargs: None,
+    )
+    return screen
+
+
+async def _run_character_handoff(monkeypatch, runtime, payload):
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+    started = await screen._start_character_console_session(payload)
+    return started, store
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        pytest.param("source", "library", id="wrong-origin"),
+        pytest.param("item_type", "persona-card", id="wrong-item-type"),
+        pytest.param("runtime_backend", "LOCAL", id="non-exact-runtime-source"),
+        pytest.param("source_owner", "server", id="contradictory-owner"),
+        pytest.param(
+            "source_selector_state",
+            "server",
+            id="contradictory-selector",
+        ),
+    ),
+)
+def test_character_start_handoff_requires_exact_coherent_envelope(
+    field,
+    value,
+):
+    payload = _character_start_handoff()
+    setattr(payload, field, value)
+
+    assert (
+        chat_screen_module._character_session_identity_from_handoff(payload) is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("metadata_key", "value"),
+    (
+        pytest.param("intent", " start_chat", id="non-exact-intent"),
+        pytest.param("selected_kind", " character", id="non-exact-kind"),
+        pytest.param("backend", "server", id="contradictory-backend"),
+        pytest.param("backend", None, id="missing-backend"),
+    ),
+)
+def test_character_start_handoff_requires_exact_coherent_metadata(
+    metadata_key,
+    value,
+):
+    payload = _character_start_handoff()
+    payload.metadata[metadata_key] = value
+
+    assert (
+        chat_screen_module._character_session_identity_from_handoff(payload) is None
+    )
+
+
+@pytest.mark.parametrize(
+    "character_id",
+    (
+        pytest.param("01", id="leading-zero"),
+        pytest.param(" 7", id="leading-whitespace"),
+        pytest.param("7 ", id="trailing-whitespace"),
+        pytest.param("７", id="unicode-digit"),
+        pytest.param("0", id="zero"),
+        pytest.param("-1", id="negative"),
+        pytest.param(7.0, id="float"),
+        pytest.param(True, id="bool"),
+        pytest.param(7, id="integer"),
+        pytest.param("9" * 5000, id="overlong"),
+        pytest.param(str(1 << 63), id="signed-64-overflow"),
+    ),
+)
+def test_character_start_handoff_requires_canonical_positive_numeric_wire_id(
+    character_id,
+):
+    payload = _character_start_handoff(character_id=character_id)
+
+    assert (
+        chat_screen_module._character_session_identity_from_handoff(payload) is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("record_id", "target_id"),
+    (
+        pytest.param(None, "local:character:7", id="missing-record"),
+        pytest.param("7", None, id="missing-target"),
+        pytest.param("7", "local:character:8", id="conflicting-ids"),
+    ),
+)
+def test_character_start_handoff_requires_matching_record_and_target_ids(
+    record_id,
+    target_id,
+):
+    payload = _character_start_handoff()
+    payload.metadata["selected_record_id"] = record_id
+    payload.metadata["selected_target_id"] = target_id
+
+    assert (
+        chat_screen_module._character_session_identity_from_handoff(payload) is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_local_character_handoff_uses_db_authority_and_scoped_card_service(
+    monkeypatch,
+):
+    authority_id = "local-authority"
+    card_model = SimpleNamespace(model_dump=Mock(return_value=_character_card()))
+    runtime = _character_handoff_runtime(
+        local_authority=authority_id,
+        card=card_model,
+    )
+    runtime.resolver.side_effect = AssertionError(
+        "local handoff must not resolve server authority"
+    )
+    started, store = await _run_character_handoff(
+        monkeypatch,
+        runtime,
+        _character_start_handoff(runtime_backend="local"),
+    )
+
+    assert started is True
+    runtime.db.get_local_authority_id.assert_called_once_with()
+    runtime.db.get_character_card_by_id.assert_not_called()
+    runtime.scope_service.get_character.assert_awaited_once_with(7, mode="local")
+    card_model.model_dump.assert_called_once_with(mode="json")
+    runtime.resolver.assert_not_awaited()
+    assert store.create_kwargs is not None
+    assert store.create_kwargs["runtime_backend"] == "local"
+    assert store.create_kwargs["assistant_kind"] == "character"
+    assert store.create_kwargs["assistant_id"] == "7"
+    assert store.create_kwargs["assistant_authority_id"] == authority_id
+    assert store.create_kwargs["character_id"] == 7
+    assert store.session is not None
+    assert store.session.local_character_id() == 7
+    assert store.session.character_ref() is not None
+    assert store.session.character_ref().authority_id == authority_id
+    assert store.identity_at_append is not None
+    assert store.identity_at_append["character_ref"] == store.session.character_ref()
+    assert store.messages == [
+        {
+            "session_id": "handoff-session",
+            "role": ConsoleMessageRole.ASSISTANT,
+            "content": "Hello User, I am Elara.",
+            "persist": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_local_character_handoff_without_db_authority_falls_back(
+    monkeypatch,
+):
+    runtime = _character_handoff_runtime()
+    runtime.db.get_local_authority_id.side_effect = RuntimeError("unavailable")
+    started, store = await _run_character_handoff(
+        monkeypatch,
+        runtime,
+        _character_start_handoff(),
+    )
+
+    assert started is False
+    runtime.scope_service.get_character.assert_not_awaited()
+    assert store.session is None
+
+
+@pytest.mark.asyncio
+async def test_local_character_handoff_without_scoped_card_falls_back(monkeypatch):
+    runtime = _character_handoff_runtime(card=None)
+    started, store = await _run_character_handoff(
+        monkeypatch,
+        runtime,
+        _character_start_handoff(),
+    )
+
+    assert started is False
+    runtime.scope_service.get_character.assert_awaited_once_with(7, mode="local")
+    runtime.db.get_character_card_by_id.assert_not_called()
+    assert store.session is None
+
+
+@pytest.mark.parametrize("runtime_backend", ("local", "server"))
+@pytest.mark.parametrize(
+    "returned_character_id",
+    (
+        pytest.param(_DEFAULT_HANDOFF_VALUE, id="missing-id"),
+        pytest.param("07", id="noncanonical-id"),
+        pytest.param(8, id="mismatched-id"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_character_handoff_requires_exact_returned_card_identity(
+    monkeypatch,
+    runtime_backend,
+    returned_character_id,
+):
+    card = _character_card()
+    if returned_character_id is _DEFAULT_HANDOFF_VALUE:
+        card.pop("id")
+    else:
+        card["id"] = returned_character_id
+    active_server_id = (
+        "configured-target-7" if runtime_backend == "server" else None
+    )
+    runtime = _character_handoff_runtime(
+        active_server_id=active_server_id,
+        card=card,
+    )
+
+    started, store = await _run_character_handoff(
+        monkeypatch,
+        runtime,
+        _character_start_handoff(
+            runtime_backend=runtime_backend,
+            active_server_profile_id=active_server_id,
+        ),
+    )
+
+    assert started is False
+    runtime.scope_service.get_character.assert_awaited_once_with(
+        7,
+        mode=runtime_backend,
+    )
+    assert store.session is None
+    assert store.messages == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_after_character_session_commit_consumes_without_replay(
+    monkeypatch,
+):
+    runtime = _character_handoff_runtime()
+    runtime.app.pending_handoffs = PendingHandoffStore()
+    runtime.app.pending_handoffs.stage(
+        HandoffChannel.CHAT,
+        _character_start_handoff(),
+    )
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+    sync_started = asyncio.Event()
+    hold_sync = asyncio.Event()
+
+    async def _block_post_commit_sync():
+        sync_started.set()
+        await hold_sync.wait()
+
+    monkeypatch.setattr(
+        screen,
+        "_sync_native_console_chat_ui",
+        _block_post_commit_sync,
+    )
+
+    consume_task = asyncio.create_task(screen._consume_pending_chat_handoff())
+    await asyncio.wait_for(sync_started.wait(), timeout=1)
+    consume_task.cancel()
+    await consume_task
+
+    assert store.session is not None
+    assert len(store.messages) == 1
+    assert not runtime.app.pending_handoffs.has_pending(HandoffChannel.CHAT)
+
+    await screen._consume_pending_chat_handoff()
+
+    assert len(store.messages) == 1
+    assert not runtime.app.pending_handoffs.has_pending(HandoffChannel.CHAT)
+
+
+@pytest.mark.asyncio
+async def test_server_character_handoff_scopes_exact_target_without_local_projection(
+    monkeypatch,
+):
+    expected_server_id = "configured-target-7"
+    authority_id = "server-user-v1:" + ("a" * 64)
+    runtime = _character_handoff_runtime(
+        active_server_id=expected_server_id,
+        server_authority=authority_id,
+    )
+    runtime.db.get_local_authority_id.side_effect = AssertionError(
+        "server handoff must not use local authority"
+    )
+    started, store = await _run_character_handoff(
+        monkeypatch,
+        runtime,
+        _character_start_handoff(
+            runtime_backend="server",
+            active_server_profile_id=expected_server_id,
+        )
+    )
+
+    assert started is True
+    runtime.resolver.assert_awaited_once_with(
+        expected_server_id=expected_server_id
+    )
+    runtime.scope_service.get_character.assert_awaited_once_with(7, mode="server")
+    runtime.db.get_local_authority_id.assert_not_called()
+    runtime.db.get_character_card_by_id.assert_not_called()
+    assert store.create_kwargs is not None
+    assert store.create_kwargs["runtime_backend"] == "server"
+    assert store.create_kwargs["assistant_kind"] == "character"
+    assert store.create_kwargs["assistant_id"] == "7"
+    assert store.create_kwargs["assistant_authority_id"] == authority_id
+    assert store.create_kwargs["character_id"] is None
+    assert store.session is not None
+    assert store.session.local_character_id() is None
+    assert store.session.character_ref() is not None
+    assert store.session.character_ref().source == "server"
+    assert store.session.character_ref().authority_id == authority_id
+    assert store.session.character_ref().character_id == "7"
+    assert store.identity_at_append is not None
+    assert store.identity_at_append["character_ref"] == store.session.character_ref()
+
+
+@pytest.mark.asyncio
+async def test_server_identity_failure_still_seeds_unscoped_character_session(
+    monkeypatch,
+):
+    expected_server_id = "configured-target-7"
+    runtime = _character_handoff_runtime(
+        active_server_id=expected_server_id,
+    )
+    runtime.resolver.side_effect = RuntimeError("identity unavailable")
+    started, store = await _run_character_handoff(
+        monkeypatch,
+        runtime,
+        _character_start_handoff(
+            runtime_backend="server",
+            active_server_profile_id=expected_server_id,
+        )
+    )
+
+    assert started is True
+    runtime.resolver.assert_awaited_once_with(
+        expected_server_id=expected_server_id
+    )
+    runtime.scope_service.get_character.assert_awaited_once_with(7, mode="server")
+    assert store.session is not None
+    assert store.session.runtime_backend == "server"
+    assert store.session.assistant_kind == "character"
+    assert store.session.assistant_authority_id is None
+    assert store.session.character_id is None
+    assert store.session.character_ref() is None
+    assert [message["content"] for message in store.messages] == [
+        "Hello User, I am Elara."
+    ]
+
+
+@pytest.mark.parametrize(
+    "resolved_authority_id",
+    (
+        pytest.param(
+            "server-user-v2:" + ("a" * 64),
+            id="wrong-prefix",
+        ),
+        pytest.param(
+            "server-user-v1:" + ("a" * 63),
+            id="short-digest",
+        ),
+        pytest.param(
+            "server-user-v1:" + ("a" * 65),
+            id="long-digest",
+        ),
+        pytest.param(
+            "server-user-v1:" + ("A" * 64),
+            id="uppercase-digest",
+        ),
+        pytest.param(7, id="non-string"),
+        pytest.param(
+            " server-user-v1:" + ("a" * 64),
+            id="leading-whitespace",
+        ),
+        pytest.param(
+            "server-user-v1:" + ("a" * 64) + " ",
+            id="trailing-whitespace",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_server_character_handoff_rejects_malformed_resolver_authority(
+    monkeypatch,
+    resolved_authority_id,
+):
+    expected_server_id = "configured-target-7"
+    runtime = _character_handoff_runtime(
+        active_server_id=expected_server_id,
+        server_authority=resolved_authority_id,
+    )
+
+    started, store = await _run_character_handoff(
+        monkeypatch,
+        runtime,
+        _character_start_handoff(
+            runtime_backend="server",
+            active_server_profile_id=expected_server_id,
+        ),
+    )
+
+    assert started is True
+    assert store.session is not None
+    assert store.session.assistant_authority_id is None
+    assert store.session.character_ref() is None
+
+
+@pytest.mark.asyncio
+async def test_server_target_mismatch_before_resolver_fetches_nothing(monkeypatch):
+    runtime = _character_handoff_runtime(
+        active_server_id="different-target",
+    )
+    started, store = await _run_character_handoff(
+        monkeypatch,
+        runtime,
+        _character_start_handoff(
+            runtime_backend="server",
+            active_server_profile_id="configured-target-7",
+        )
+    )
+
+    assert started is False
+    runtime.resolver.assert_not_awaited()
+    runtime.scope_service.get_character.assert_not_awaited()
+    assert store.session is None
+
+
+@pytest.mark.asyncio
+async def test_server_target_switch_during_resolver_discards_authority(monkeypatch):
+    expected_server_id = "configured-target-7"
+    runtime = _character_handoff_runtime(
+        active_server_id=expected_server_id,
+    )
+
+    async def _switch_target(**kwargs):
+        assert kwargs == {"expected_server_id": expected_server_id}
+        runtime.app.active_server_id = "different-target"
+        return "server-user-v1:" + ("b" * 64)
+
+    runtime.resolver.side_effect = _switch_target
+    started, store = await _run_character_handoff(
+        monkeypatch,
+        runtime,
+        _character_start_handoff(
+            runtime_backend="server",
+            active_server_profile_id=expected_server_id,
+        )
+    )
+
+    assert started is False
+    runtime.resolver.assert_awaited_once_with(
+        expected_server_id=expected_server_id
+    )
+    runtime.scope_service.get_character.assert_not_awaited()
+    assert store.session is None
+
+
+@pytest.mark.asyncio
+async def test_server_target_switch_during_card_fetch_discards_card(monkeypatch):
+    expected_server_id = "configured-target-7"
+    runtime = _character_handoff_runtime(
+        active_server_id=expected_server_id,
+    )
+
+    async def _fetch_then_switch(character_id, *, mode):
+        assert (character_id, mode) == (7, "server")
+        runtime.app.active_server_id = "different-target"
+        return _character_card()
+
+    runtime.scope_service.get_character.side_effect = _fetch_then_switch
+    started, store = await _run_character_handoff(
+        monkeypatch,
+        runtime,
+        _character_start_handoff(
+            runtime_backend="server",
+            active_server_profile_id=expected_server_id,
+        )
+    )
+
+    assert started is False
+    runtime.resolver.assert_awaited_once_with(
+        expected_server_id=expected_server_id
+    )
+    runtime.scope_service.get_character.assert_awaited_once_with(7, mode="server")
+    assert store.session is None
+
+
+@pytest.mark.parametrize(
+    "authenticated_transition",
+    ("a_to_b", "a_to_b_to_a"),
+)
+@pytest.mark.asyncio
+async def test_server_authenticated_context_change_during_card_fetch_aborts_session(
+    monkeypatch,
+    authenticated_transition,
+):
+    expected_server_id = "configured-target-7"
+    runtime = _character_handoff_runtime(
+        active_server_id=expected_server_id,
+    )
+    card_fetch_started = asyncio.Event()
+    release_card_fetch = asyncio.Event()
+
+    async def _blocked_card_fetch(character_id, *, mode):
+        assert (character_id, mode) == (7, "server")
+        card_fetch_started.set()
+        await release_card_fetch.wait()
+        return _character_card()
+
+    runtime.scope_service.get_character.side_effect = _blocked_card_fetch
+    handoff = asyncio.create_task(
+        _run_character_handoff(
+            monkeypatch,
+            runtime,
+            _character_start_handoff(
+                runtime_backend="server",
+                active_server_profile_id=expected_server_id,
+            ),
+        )
+    )
+    await card_fetch_started.wait()
+
+    runtime.authority_context_state["current"] = SimpleNamespace(account="B")
+    if authenticated_transition == "a_to_b_to_a":
+        runtime.authority_context_state["current"] = SimpleNamespace(account="A")
+    assert runtime.app.active_server_id == expected_server_id
+
+    release_card_fetch.set()
+    started, store = await handoff
+
+    assert started is False
+    assert runtime.resolve_captures == [runtime.initial_capture]
+    runtime.scope_service.get_character.assert_awaited_once_with(7, mode="server")
+    assert store.session is None
+    assert store.messages == []
+
+
+@pytest.mark.asyncio
+async def test_server_authenticated_context_change_during_resolver_fetches_no_card(
+    monkeypatch,
+):
+    expected_server_id = "configured-target-7"
+    runtime = _character_handoff_runtime(
+        active_server_id=expected_server_id,
+    )
+
+    async def _resolve_then_change(**kwargs):
+        assert kwargs == {"expected_server_id": expected_server_id}
+        runtime.authority_context_state["current"] = SimpleNamespace(account="B")
+        return "server-user-v1:" + ("b" * 64)
+
+    runtime.resolver.side_effect = _resolve_then_change
+    started, store = await _run_character_handoff(
+        monkeypatch,
+        runtime,
+        _character_start_handoff(
+            runtime_backend="server",
+            active_server_profile_id=expected_server_id,
+        ),
+    )
+
+    assert started is False
+    assert runtime.resolve_captures == [runtime.initial_capture]
+    runtime.scope_service.get_character.assert_not_awaited()
+    assert store.session is None
+
+
+@pytest.mark.asyncio
+async def test_server_authenticated_context_change_immediately_before_commit_aborts(
+    monkeypatch,
+):
+    expected_server_id = "configured-target-7"
+    runtime = _character_handoff_runtime(
+        active_server_id=expected_server_id,
+    )
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+
+    def _settings_then_change_context():
+        runtime.authority_context_state["current"] = SimpleNamespace(account="B")
+        return ConsoleSessionSettings(
+            provider="anthropic",
+            model="claude-3-haiku",
+        )
+
+    monkeypatch.setattr(
+        screen,
+        "_default_console_session_settings",
+        _settings_then_change_context,
+    )
+    started = await screen._start_character_console_session(
+        _character_start_handoff(
+            runtime_backend="server",
+            active_server_profile_id=expected_server_id,
+        )
+    )
+
+    assert started is False
+    assert runtime.resolve_captures == [runtime.initial_capture]
+    assert store.session is None
+    assert store.messages == []
+
+
+@pytest.mark.asyncio
+async def test_persona_start_chat_does_not_create_character_session(monkeypatch):
+    runtime = _character_handoff_runtime(
+        active_server_id="configured-target-7",
+    )
+    started, store = await _run_character_handoff(
+        monkeypatch,
+        runtime,
+        _character_start_handoff(
+            runtime_backend="server",
+            selected_kind="persona",
+            active_server_profile_id="configured-target-7",
+            character_id="p-7",
+        )
+    )
+
+    assert started is False
+    runtime.resolver.assert_not_awaited()
+    runtime.scope_service.get_character.assert_not_awaited()
+    assert store.session is None
 
 
 @pytest.mark.asyncio
@@ -6558,6 +7348,245 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
 
 
 @pytest.mark.asyncio
+async def test_console_resume_restores_server_character_identity_without_local_lookup():
+    """Server opaque identity comes only from the selected persisted row."""
+    scoped_authority = "server-user-v1:" + ("c" * 64)
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "server-scoped": {
+                "conversation": {
+                    "id": "server-scoped",
+                    "title": "Scoped server character",
+                    "runtime_backend": "server",
+                    "assistant_kind": "character",
+                    "assistant_id": "opaque-character",
+                    "assistant_authority_id": scoped_authority,
+                    "character_id": None,
+                },
+                "root_threads": [],
+            },
+            "server-unscoped": {
+                "conversation": {
+                    "id": "server-unscoped",
+                    "title": "Unscoped server character",
+                    "runtime_backend": "server",
+                    "assistant_kind": "character",
+                    "assistant_id": "other-opaque-character",
+                    "assistant_authority_id": None,
+                    "character_id": None,
+                },
+                "root_threads": [],
+            },
+            "malformed-local-scalars": {
+                "conversation": {
+                    "id": "malformed-local-scalars",
+                    "title": "Malformed local character",
+                    "runtime_backend": "local",
+                    "assistant_kind": "character",
+                    "assistant_id": 7,
+                    "assistant_authority_id": 123,
+                    "character_id": 7,
+                },
+                "root_threads": [],
+            },
+            "noncanonical-local-id": {
+                "conversation": {
+                    "id": "noncanonical-local-id",
+                    "title": "Noncanonical local character",
+                    "runtime_backend": "local",
+                    "assistant_kind": "character",
+                    "assistant_id": "007",
+                    "assistant_authority_id": "local-authority",
+                    "character_id": 7,
+                },
+                "root_threads": [],
+            },
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        active = store.switch_session(store.active_session_id)
+        active.runtime_backend = "server"
+        active.assistant_kind = "character"
+        active.assistant_id = "active-server-character"
+        active.assistant_authority_id = "server-user-v1:" + ("d" * 64)
+        active.settings = ConsoleSessionSettings(
+            provider="llama_cpp",
+            character_label="Wrong active character",
+        )
+        local_lookup = AsyncMock(
+            side_effect=AssertionError("server identity must not use local cards")
+        )
+        console._resolve_resumed_character_name = local_lookup
+
+        assert (
+            await console._resume_console_workspace_conversation("server-scoped")
+            is True
+        )
+        scoped = store.switch_session(store.active_session_id)
+        assert scoped.runtime_backend == "server"
+        assert scoped.assistant_kind == "character"
+        assert scoped.assistant_id == "opaque-character"
+        assert scoped.assistant_authority_id == scoped_authority
+        assert scoped.character_id is None
+        assert scoped.character_ref() is not None
+        assert scoped.settings is not None
+        assert scoped.settings.character_label == ""
+
+        assert (
+            await console._resume_console_workspace_conversation("server-unscoped")
+            is True
+        )
+        unscoped = store.switch_session(store.active_session_id)
+        assert unscoped.runtime_backend == "server"
+        assert unscoped.assistant_kind == "character"
+        assert unscoped.assistant_id == "other-opaque-character"
+        assert unscoped.assistant_authority_id is None
+        assert unscoped.character_id is None
+        assert unscoped.character_ref() is None
+        assert unscoped.settings is not None
+        assert unscoped.settings.character_label == ""
+
+        assert (
+            await console._resume_console_workspace_conversation(
+                "malformed-local-scalars"
+            )
+            is True
+        )
+        malformed = store.switch_session(store.active_session_id)
+        assert malformed.runtime_backend == "local"
+        assert malformed.assistant_kind == "character"
+        assert malformed.assistant_id is None
+        assert malformed.assistant_authority_id is None
+        assert malformed.character_id is None
+        assert malformed.character_ref() is None
+
+        assert (
+            await console._resume_console_workspace_conversation(
+                "noncanonical-local-id"
+            )
+            is True
+        )
+        noncanonical = store.switch_session(store.active_session_id)
+        assert noncanonical.runtime_backend == "local"
+        assert noncanonical.assistant_kind == "character"
+        assert noncanonical.assistant_id == "007"
+        assert noncanonical.assistant_authority_id == "local-authority"
+        assert noncanonical.character_id is None
+        assert noncanonical.character_ref() is None
+        local_lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("include_runtime_backend", "runtime_backend"),
+    (
+        pytest.param(False, None, id="missing"),
+        pytest.param(True, None, id="none"),
+        pytest.param(True, 123, id="non-string"),
+    ),
+)
+async def test_console_resume_rejects_character_identity_without_valid_source(
+    include_runtime_backend,
+    runtime_backend,
+):
+    """A persisted row cannot infer local provenance from its other fields."""
+    conversation = {
+        "id": "invalid-source",
+        "title": "Invalid source",
+        "assistant_kind": "character",
+        "assistant_id": "7",
+        "assistant_authority_id": "local-authority",
+        "character_id": 7,
+    }
+    if include_runtime_backend:
+        conversation["runtime_backend"] = runtime_backend
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "invalid-source": {
+                "conversation": conversation,
+                "root_threads": [],
+            }
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        local_lookup = AsyncMock(return_value="Must not resolve")
+        console._resolve_resumed_character_name = local_lookup
+
+        assert (
+            await console._resume_console_workspace_conversation("invalid-source")
+            is True
+        )
+
+        store = console._ensure_console_chat_store()
+        session = store.switch_session(store.active_session_id)
+        assert session.runtime_backend == ""
+        assert session.assistant_kind == "character"
+        assert session.assistant_id == "7"
+        assert session.assistant_authority_id == "local-authority"
+        assert session.character_id is None
+        assert session.character_ref() is None
+        local_lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_console_resume_rehydrates_local_character_name_from_local_projection():
+    """Only a local character row drives the local card/name lookup."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "local-character": {
+                "conversation": {
+                    "id": "local-character",
+                    "title": "Local character",
+                    "runtime_backend": "local",
+                    "assistant_kind": "character",
+                    "assistant_id": "7",
+                    "assistant_authority_id": "local-authority",
+                    "character_id": 7,
+                },
+                "root_threads": [],
+            }
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        name_lookup = AsyncMock(return_value="Elara")
+        console._resolve_resumed_character_name = name_lookup
+
+        assert (
+            await console._resume_console_workspace_conversation("local-character")
+            is True
+        )
+
+        store = console._ensure_console_chat_store()
+        session = store.switch_session(store.active_session_id)
+        assert session.runtime_backend == "local"
+        assert session.assistant_kind == "character"
+        assert session.assistant_id == "7"
+        assert session.assistant_authority_id == "local-authority"
+        assert session.character_id == 7
+        assert session.character_name == "Elara"
+        name_lookup.assert_awaited_once_with(7)
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_conversation_resume_restores_system_prompt():
     """Resuming a saved conversation restores its persisted system prompt.
 
@@ -7529,19 +8558,16 @@ def test_native_console_restore_ignores_legacy_identity_without_mutation_or_conf
         callback.assert_not_called()
 
 
-def test_native_console_state_round_trip_preserves_character_identity():
-    """A character-bound session must keep ``character_id``/``character_name``
-    across a native Console screen-state save/restore (task-427).
-
-    Without round-tripping these fields, a screen-state restore silently
-    flips a character session back to a generic one (``character_id=None``),
-    disabling the plain-provider gate and losing the character identity that
-    ``_serialize_native_console_state`` is supposed to preserve.
-    """
+def test_native_console_state_round_trip_preserves_source_aware_character_identity():
+    """Screen state keeps exact assistant provenance and local presentation."""
     store = ConsoleChatStore()
     session = ConsoleChatSession(
         id="session-a",
         title="Chat with Elara",
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        assistant_authority_id="local-authority",
         character_id=7,
         character_name="Elara",
     )
@@ -7554,16 +8580,241 @@ def test_native_console_state_round_trip_preserves_character_identity():
 
     payload = screen._serialize_native_console_state()
     assert payload is not None
-    assert payload["sessions"][0]["character_id"] == 7
-    assert payload["sessions"][0]["character_name"] == "Elara"
+    assert {
+        key: payload["sessions"][0][key]
+        for key in (
+            "runtime_backend",
+            "assistant_kind",
+            "assistant_id",
+            "assistant_authority_id",
+            "character_id",
+            "character_name",
+        )
+    } == {
+        "runtime_backend": "local",
+        "assistant_kind": "character",
+        "assistant_id": "7",
+        "assistant_authority_id": "local-authority",
+        "character_id": 7,
+        "character_name": "Elara",
+    }
 
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
     restored_screen._restore_native_console_state(payload)
 
     restored_session = restored_store.sessions()[0]
+    assert restored_session.runtime_backend == "local"
+    assert restored_session.assistant_kind == "character"
+    assert restored_session.assistant_id == "7"
+    assert restored_session.assistant_authority_id == "local-authority"
     assert restored_session.character_id == 7
     assert restored_session.character_name == "Elara"
+    assert restored_session.character_ref() is not None
+
+
+def test_live_server_session_never_exposes_local_character_projection():
+    """A stray server-side numeric ID cannot drive local rail/card state."""
+    session = ConsoleChatSession(
+        id="session-a",
+        title="Server character",
+        runtime_backend="server",
+        assistant_kind="character",
+        assistant_id="opaque-character",
+        assistant_authority_id="server-user-v1:" + ("f" * 64),
+        character_id=7,
+        character_name="Unrelated local card",
+    )
+    store = ConsoleChatStore()
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    screen = _bare_console_screen(store)
+
+    assert screen._current_console_rail_character_id() is None
+
+    payload = screen._serialize_native_console_state()
+    assert payload is not None
+    assert payload["sessions"][0]["character_id"] is None
+    assert session.character_id == 7
+
+
+def test_native_console_state_restore_adapts_legacy_local_character_without_authority():
+    """Legacy numeric character state keeps direct-chat kind but stays unproven."""
+    payload = {
+        "version": "1.0",
+        "active_session_id": "session-a",
+        "sessions": [
+            {
+                "id": "session-a",
+                "title": "Chat with Elara",
+                "workspace_id": CONSOLE_GLOBAL_WORKSPACE_ID,
+                "persisted_conversation_id": None,
+                "draft": "",
+                "settings": None,
+                "character_id": 7,
+                "character_name": "Elara",
+            }
+        ],
+        "messages_by_session": {"session-a": []},
+    }
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+
+    restored_screen._restore_native_console_state(payload)
+
+    restored_session = restored_store.sessions()[0]
+    assert restored_session.runtime_backend == "local"
+    assert restored_session.assistant_kind == "character"
+    assert restored_session.assistant_id == "7"
+    assert restored_session.assistant_authority_id is None
+    assert restored_session.character_id == 7
+    assert restored_session.character_ref() is None
+
+
+@pytest.mark.parametrize(
+    ("include_runtime_backend", "runtime_backend"),
+    (
+        pytest.param(False, None, id="missing"),
+        pytest.param(True, None, id="none"),
+        pytest.param(True, 123, id="non-string"),
+    ),
+)
+def test_source_aware_native_console_state_rejects_character_without_valid_source(
+    include_runtime_backend,
+    runtime_backend,
+):
+    """Partial source-aware state cannot infer local character provenance."""
+    raw_session = {
+        "id": "session-a",
+        "title": "Invalid source",
+        "workspace_id": CONSOLE_GLOBAL_WORKSPACE_ID,
+        "persisted_conversation_id": None,
+        "draft": "",
+        "settings": None,
+        "assistant_kind": "character",
+        "assistant_id": "7",
+        "assistant_authority_id": "local-authority",
+        "character_id": 7,
+    }
+    if include_runtime_backend:
+        raw_session["runtime_backend"] = runtime_backend
+    payload = {
+        "version": "1.0",
+        "active_session_id": "session-a",
+        "sessions": [raw_session],
+        "messages_by_session": {"session-a": []},
+    }
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+
+    restored_screen._restore_native_console_state(payload)
+
+    session = restored_store.sessions()[0]
+    assert session.runtime_backend == ""
+    assert session.assistant_kind == "character"
+    assert session.assistant_id == "7"
+    assert session.assistant_authority_id == "local-authority"
+    assert session.character_id is None
+    assert session.character_ref() is None
+
+
+def test_native_console_state_restore_does_not_coerce_identity_scalars():
+    """Malformed scalar types cannot be promoted into proven provenance."""
+    payload = {
+        "version": "1.0",
+        "active_session_id": "session-a",
+        "sessions": [
+            {
+                "id": "session-a",
+                "title": "Malformed identity",
+                "workspace_id": CONSOLE_GLOBAL_WORKSPACE_ID,
+                "persisted_conversation_id": None,
+                "draft": "",
+                "settings": None,
+                "runtime_backend": "local",
+                "assistant_kind": "character",
+                "assistant_id": 7,
+                "assistant_authority_id": 123,
+                "character_id": 7,
+            },
+            {
+                "id": "session-b",
+                "title": "Malformed source",
+                "workspace_id": CONSOLE_GLOBAL_WORKSPACE_ID,
+                "persisted_conversation_id": None,
+                "draft": "",
+                "settings": None,
+                "runtime_backend": 123,
+                "assistant_kind": "character",
+                "assistant_id": "8",
+                "assistant_authority_id": "local-authority",
+                "character_id": 8,
+            },
+        ],
+        "messages_by_session": {"session-a": [], "session-b": []},
+    }
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+
+    restored_screen._restore_native_console_state(payload)
+
+    session = restored_store.sessions()[0]
+    assert session.runtime_backend == "local"
+    assert session.assistant_kind == "character"
+    assert session.assistant_id is None
+    assert session.assistant_authority_id is None
+    assert session.character_id is None
+    assert session.character_ref() is None
+
+    invalid_source = restored_store.sessions()[1]
+    assert invalid_source.runtime_backend == ""
+    assert invalid_source.assistant_kind == "character"
+    assert invalid_source.assistant_id == "8"
+    assert invalid_source.assistant_authority_id == "local-authority"
+    assert invalid_source.character_id is None
+    assert invalid_source.character_ref() is None
+
+
+def test_native_console_state_restore_drops_server_numeric_local_projection():
+    """A server character keeps opaque provenance but no local lookup key."""
+    authority_id = "server-user-v1:" + ("e" * 64)
+    payload = {
+        "version": "1.0",
+        "active_session_id": "session-a",
+        "sessions": [
+            {
+                "id": "session-a",
+                "title": "Server identity",
+                "workspace_id": CONSOLE_GLOBAL_WORKSPACE_ID,
+                "persisted_conversation_id": None,
+                "draft": "",
+                "settings": None,
+                "runtime_backend": "server",
+                "assistant_kind": "character",
+                "assistant_id": "opaque-character",
+                "assistant_authority_id": authority_id,
+                "character_id": 7,
+                "character_name": "Server Card",
+            }
+        ],
+        "messages_by_session": {"session-a": []},
+    }
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+
+    restored_screen._restore_native_console_state(payload)
+
+    session = restored_store.sessions()[0]
+    assert session.runtime_backend == "server"
+    assert session.assistant_kind == "character"
+    assert session.assistant_id == "opaque-character"
+    assert session.assistant_authority_id == authority_id
+    assert session.character_id is None
+    assert session.character_name == "Server Card"
+    assert session.character_ref() is not None
 
 
 def test_native_console_state_restore_tolerates_legacy_payload_without_updated_at():

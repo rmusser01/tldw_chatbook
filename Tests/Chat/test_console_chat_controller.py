@@ -3443,10 +3443,8 @@ class _SpyAgentBridge:
 
 
 @pytest.mark.asyncio
-async def test_character_session_forces_plain_provider():
-    """task-427: a session with character_id set always takes the plain
-    provider branch, even with the global agent runtime enabled and a
-    bridge present."""
+async def test_server_character_session_without_local_projection_forces_plain_provider():
+    """Trusted character kind, not a local numeric projection, owns routing."""
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
     controller = ConsoleChatController(
@@ -3455,7 +3453,11 @@ async def test_character_session_forces_plain_provider():
     bridge = _SpyAgentBridge()
     controller._agent_bridge = bridge
     session = _arm_session(store)
-    session.character_id = 7
+    session.runtime_backend = "server"
+    session.assistant_kind = "character"
+    session.assistant_id = "opaque-character"
+    session.assistant_authority_id = None
+    assert session.character_id is None
 
     result = await controller.submit_draft("Hi")
 
@@ -3465,9 +3467,19 @@ async def test_character_session_forces_plain_provider():
 
 
 @pytest.mark.asyncio
-async def test_normal_session_still_uses_agent_when_enabled():
-    """Control for test_character_session_forces_plain_provider: a session
-    with no character_id keeps using the agent bridge as before."""
+@pytest.mark.parametrize(
+    ("assistant_kind", "assistant_id", "character_id"),
+    [
+        ("generic", "console", None),
+        ("persona", "persona-1", None),
+        ("generic", "console", 7),
+    ],
+    ids=["generic", "persona", "stray-numeric-character-id"],
+)
+async def test_non_character_session_still_uses_agent_when_enabled(
+    assistant_kind, assistant_id, character_id
+):
+    """Generic/Persona sessions do not become direct chat from a stray id."""
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
     controller = ConsoleChatController(
@@ -3483,7 +3495,9 @@ async def test_normal_session_still_uses_agent_when_enabled():
 
     controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
     session = _arm_session(store)
-    assert session.character_id is None
+    session.assistant_kind = assistant_kind
+    session.assistant_id = assistant_id
+    session.character_id = character_id
 
     await controller.submit_draft("Hi")
 

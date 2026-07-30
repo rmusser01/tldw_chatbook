@@ -4,19 +4,52 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import Button, Static
+from textual.geometry import Region
+from textual.widgets import Button, DataTable, Static, TextArea
 
-from Tests.UI.test_destination_shells import DestinationHarness, StaticWatchlistsScopeService
+# The end-to-end check harness (TASK-1362 tests below): the real service, the
+# real DB and the real `URLMonitor.check_url` persistence path. See its own
+# module docstring for why a hand-built item dict would prove nothing.
+from Tests.Subscriptions.test_watchlist_content_kind_producer import (
+    _check,
+    _serve,
+    _stored_items,
+)
+from Tests.Subscriptions.test_watchlist_noise_not_volume import (
+    _counts,
+    _direct_check,
+    _dispositions,
+)
+from Tests.UI.test_destination_shells import (
+    DestinationHarness,
+    StaticWatchlistsScopeService,
+    _active_destination_screen,
+)
+from Tests.UI.test_destination_visual_parity_correction import (
+    _assert_visible_in_viewport,
+    _visual_destination_harness,
+)
 from Tests.UI.test_screen_navigation import _build_test_app
+from tldw_chatbook.Subscriptions.noise_defaults import DEFAULT_IGNORE_SELECTORS
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
-from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import BreadcrumbScopeSelected, InspectorPane
+from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
+    BreadcrumbScopeSelected,
+    InspectorPane,
+    SaveNoiseSelectorsRequested,
+)
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import (
     NotificationSelected,
     RefreshNotificationsRequested,
 )
+from tldw_chatbook.UI.Watchlists_Modules.rules_pane import RuleSelected
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+
+# Whole-branch review (Important): without this, CI's `pytest -m unit` run
+# DESELECTS this entire module. See the identical note in
+# `test_watchlists_item_actions.py`.
+pytestmark = pytest.mark.unit
 
 
 def _app_with_watchlists(watch_items):
@@ -200,10 +233,13 @@ async def test_actions_belong_to_the_deepest_level():
 
         assert inspector.query_one("#inspector-check-now-button", Button)
         assert inspector.query_one("#inspector-delete-button", Button)
-        assert not inspector.query("#inspector-mark-reviewed-button"), (
+        # "Mark reviewed" was removed entirely (Task 5 fix round 1), so an
+        # absence check for it here would no longer discriminate anything --
+        # Ingest/Ignore below are the item actions that still exist and must
+        # not show while a watchlist is the deepest selection.
+        assert not inspector.query("#inspector-ingest-button"), (
             "an item action must not show while a watchlist is the deepest selection"
         )
-        assert not inspector.query("#inspector-ingest-button")
         assert not inspector.query("#inspector-ignore-button")
         assert not inspector.query("#inspector-preview-button")
 
@@ -231,7 +267,10 @@ async def test_selected_entity_is_deeper_than_scope():
         # itself.
         assert inspector.query_one("#inspector-breadcrumb-0", Button)
         assert inspector.query_one("#inspector-breadcrumb-1", Button)
-        assert inspector.query_one("#inspector-mark-reviewed-button", Button)
+        # "Mark reviewed" was removed (Task 5 fix round 1); Ingest is the
+        # still-present item action used here to prove the item's action
+        # set is showing.
+        assert inspector.query_one("#inspector-ingest-button", Button)
         assert not inspector.query("#inspector-check-now-button")
 
 
@@ -363,7 +402,10 @@ async def test_changing_scope_clears_a_stale_entity_selection():
         await pilot.pause()
 
         inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
-        assert inspector.query_one("#inspector-mark-reviewed-button", Button)
+        # "Mark reviewed" was removed (Task 5 fix round 1); Ingest is the
+        # still-present item action used here to prove item-level actions
+        # are showing.
+        assert inspector.query_one("#inspector-ingest-button", Button)
 
         screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=2)))
         await pilot.pause()
@@ -372,7 +414,7 @@ async def test_changing_scope_clears_a_stale_entity_selection():
             "switching the tree scope must drop the now-stale entity selection"
         )
         assert inspector.breadcrumb_labels == ["Second Watchlist"]
-        assert not inspector.query("#inspector-mark-reviewed-button"), (
+        assert not inspector.query("#inspector-ingest-button"), (
             "the breadcrumb now names Watchlist 2 -- Watchlist 1's item "
             "actions must not still be showing beneath it"
         )
@@ -410,7 +452,10 @@ async def test_selecting_an_entity_clears_a_stale_watchlist_ancestor():
             "no breadcrumb ancestor is known for a pane-selected item in "
             "this slice -- it must not keep showing the tree's old one"
         )
-        assert inspector.query_one("#inspector-mark-reviewed-button", Button)
+        # "Mark reviewed" was removed (Task 5 fix round 1); Ingest is the
+        # still-present item action used here to prove the item's action
+        # set is showing.
+        assert inspector.query_one("#inspector-ingest-button", Button)
 
 
 @pytest.mark.asyncio
@@ -556,3 +601,635 @@ async def test_apply_tree_scope_clears_all_persisted_selection_shadows():
         assert screen.selected_source is None
         assert screen.selected_run is None
         assert screen.selected_notification is None
+
+
+# -- TASK-1362 (spec §2): the Inspector's noise-selector editor --------------
+#
+# The only edit path a source has. Before this, nothing on the Watchlists
+# screen could change a source at all (only alert rules had Edit), so the
+# spec's core loop -- a noisy item's diff names what churned, the user adds
+# one rule to silence it -- meant deleting the source and recreating it,
+# losing its history.
+#
+# The three assertions that matter are on the REAL stored row, the REAL check
+# disposition after the edit, and the screen surviving the save. A test that
+# only pressed the button and inspected a posted message would pass whether or
+# not the text ever reached `subscriptions.ignore_selectors`.
+
+_NOISY_PAGE = """<html><body>
+<h1>Anthropic status</h1>
+<div class="ad">BUY NOW</div>
+<div class="promo">Limited time offer, ends today</div>
+<p>All systems operational.</p>
+<p>Latest release: Opus 4.5 is available.</p>
+</body></html>"""
+
+
+async def _seed_url_source(app, *, ignore_selectors: str = ".ad"):
+    """Create one real url-family source in the app's real subscriptions DB.
+
+    Goes through `LocalWatchlistsService.create_source` rather than
+    `db.add_subscription` so the row is built by the same code path the create
+    form uses -- including `_subscription_config_fields`, which is what
+    `ignore_selectors` has to survive.
+
+    Returns:
+        `(db, service, source_id)`.
+    """
+    service = app.local_watchlists_service
+    source = await service.create_source(
+        {
+            "name": "Anthropic status",
+            "url": "https://example.com/page",
+            "source_type": "site",
+            "ignore_selectors": ignore_selectors,
+        }
+    )
+    return service._db(), service, int(source["source_id"])
+
+
+async def _select_real_source(pilot, screen, source_id: int) -> SourcesPane:
+    """Open Sources, wait for the real list, and select `source_id`'s row."""
+    screen.active_section = "sources"
+    await pilot.pause(0.3)
+    pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+    for _ in range(40):
+        await pilot.pause()
+        if pane.sources:
+            break
+    assert pane.sources, "the real source list must reach the Sources pane"
+    pane.select_source_by_id(f"local:subscription:{source_id}")
+    await pilot.pause()
+    return pane
+
+
+async def _save_selectors(pilot, screen, text: str) -> None:
+    """Type `text` into the Inspector's field and press Save, as a user does.
+
+    The press goes through `InspectorPane.on_button_pressed` ->
+    `SaveNoiseSelectorsRequested` -> the screen's `@on` handler -> the real
+    controller. Nothing is called directly.
+    """
+    inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+    field = inspector.query_one("#inspector-noise-selectors", TextArea)
+    field.text = text
+    await pilot.pause()
+    inspector.query_one("#inspector-save-selectors-button", Button).press()
+
+
+@pytest.mark.asyncio
+async def test_saving_selectors_writes_them_to_the_database():
+    """Step 1: the field, the real message path, and the stored row."""
+    app = _build_test_app()
+    db, _service, source_id = await _seed_url_source(app)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        await _select_real_source(pilot, screen, source_id)
+
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        field = inspector.query_one("#inspector-noise-selectors", TextArea)
+        assert field.text == ".ad", (
+            "the field must open seeded with what the source actually stores, "
+            "not blank and not the shipped default"
+        )
+
+        await _save_selectors(pilot, screen, ".ad\n.promo")
+        for _ in range(40):
+            await pilot.pause()
+            if db.get_subscription(source_id)["ignore_selectors"] != ".ad":
+                break
+
+        assert db.get_subscription(source_id)["ignore_selectors"] == ".ad\n.promo", (
+            "the saved text must reach the subscriptions row -- the whole "
+            "point of the affordance"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_editor_renders_only_for_url_family_sources():
+    """Step 1's second half: `ignore_selectors` shapes `URLMonitor.check_url`
+    and nothing else, so a feed source, an item and a rule must not offer it.
+
+    A feed's items come from the feed's own entries; no selector is consulted
+    anywhere on that path, so the control there would be a field that silently
+    does nothing. The url source in the same test is the positive control --
+    without it, deleting the affordance entirely would pass this test.
+    """
+    sources = [
+        {
+            "id": "source-rss",
+            "name": "AI News RSS",
+            "source_type": "rss",
+            "url": "http://example.com/feed",
+            "active": True,
+        },
+        {
+            "id": "source-url",
+            "name": "Anthropic status",
+            "source_type": "url",
+            "url": "http://example.com/page",
+            "active": True,
+        },
+    ]
+    app = _app_with_watchlists(sources)
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+
+        sources_pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        sources_pane.sources = sources
+        await pilot.pause()
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+
+        sources_pane.select_source_by_id("source-url")
+        await pilot.pause()
+        assert inspector.query_one("#inspector-noise-selectors", TextArea)
+        assert inspector.query_one("#inspector-save-selectors-button", Button)
+        # Geometry is NOT asserted here. `DestinationHarness` declares no
+        # `CSS_PATH`, so none of the shipped rules
+        # (`#inspector-noise-selectors { max-height: 4 }`) are applied and a
+        # measurement taken on it describes framework defaults, not the
+        # product -- see `test_the_editor_fits_on_screen_with_the_source_actions`
+        # below, which runs on the production stylesheet instead.
+
+        sources_pane.select_source_by_id("source-rss")
+        await pilot.pause()
+        assert not inspector.query("#inspector-noise-selectors"), (
+            "a feed source has no extraction settings for CSS selectors to "
+            "shape -- offering the field there would be inert"
+        )
+        assert not inspector.query("#inspector-save-selectors-button")
+
+        screen.post_message(ItemSelected({"item_id": "item-1", "title": "RAG Eval"}))
+        await pilot.pause()
+        assert inspector.query_one("#inspector-ingest-button", Button), (
+            "precondition: the item's own action set is what is showing"
+        )
+        assert not inspector.query("#inspector-noise-selectors")
+
+        screen.post_message(
+            RuleSelected({"rule_id": 3, "name": "Price drop", "condition_type": "keyword"})
+        )
+        await pilot.pause()
+        assert inspector.query_one("#inspector-edit-rule-button", Button), (
+            "precondition: the rule's own action set is what is showing"
+        )
+        assert not inspector.query("#inspector-noise-selectors")
+
+
+#: Both ends of the range the Watchlists parity suite covers. The small size
+#: is the one that constrains this: the right rail has to hold the source's
+#: four action buttons AND a five-row editor, and 42 rows is where the rest of
+#: the screen has already been shown to run out (see `SIZES` in
+#: `test_watchlists_source_create_form.py`, whose form had zero spare rows).
+_GEOMETRY_SIZES = [(160, 42), (180, 50)]
+
+#: Two stored values a real source holds, because ONE of them cannot exercise
+#: the rule under test. `shipped-default` is what every migrated url source
+#: carries after Task 2's migration -- six rules, so an uncapped `height:
+#: auto` field wants eight rows, and the right rail has roughly nine rows
+#: spare below the Inspector's content at both sizes. Measured: removing the
+#: cap changes that layout and evicts nothing. So the default set alone cannot
+#: tell a working cap from an absent one.
+#:
+#: `accumulated` is the case the cap exists for. `_IGNORE_SELECTORS_MAX_LENGTH`
+#: is 4000 characters precisely because "a long-watched page legitimately
+#: accumulates rules" (`sources_pane.py`), and thirty of them in an uncapped
+#: field is thirty-two rows in a thirty-two-row rail: the four source actions
+#: have nowhere left to go.
+_GEOMETRY_SELECTOR_SETS = {
+    "shipped-default": list(DEFAULT_IGNORE_SELECTORS),
+    "accumulated": [f".noise-rule-{index}" for index in range(30)],
+}
+
+
+@pytest.mark.parametrize("size", _GEOMETRY_SIZES)
+@pytest.mark.parametrize(
+    "selectors", _GEOMETRY_SELECTOR_SETS.values(), ids=_GEOMETRY_SELECTOR_SETS
+)
+@pytest.mark.asyncio
+async def test_the_editor_fits_on_screen_with_the_source_actions(selectors, size):
+    """The editor must not push a source action off the bottom of the screen.
+
+    Fix round 1 (Important). Two things were wrong with the first version of
+    this check, and each on its own made it unable to fail for the defect it
+    names:
+
+    * It asserted `region.height > 0`, which detects a zero-height collapse
+      and nothing else. Run at 160x18 every control was at y=28..40 --
+      entirely below the screen -- and it passed. On-screen placement is
+      asserted here instead, via the parity suite's own
+      `_assert_visible_in_viewport` (x/y >= 0, and both far edges inside the
+      viewport).
+    * It ran on `DestinationHarness`, which declares no `CSS_PATH`. None of
+      the shipped rules applied -- `styles.max_height` was `None`, i.e. the
+      probe measured framework defaults, not `#inspector-noise-selectors {
+      max-height: 4 }`. This runs on `_visual_destination_harness`, the
+      production-stylesheet harness `test_watchlists_source_create_form.py`
+      and the visual parity suite already use, so the geometry measured is
+      the geometry that ships.
+
+    The source carries real stored selectors (see `_GEOMETRY_SELECTOR_SETS`),
+    which is what makes `max-height` load-bearing rather than decorative: an
+    EMPTY field resolves `height: auto` to three rows and never reaches the
+    cap at all, so a fixture without selectors measures a control the rule
+    does not constrain.
+    """
+    sources = [
+        {
+            "id": "source-url",
+            "name": "Anthropic status",
+            "source_type": "url",
+            "url": "http://example.com/page",
+            "active": True,
+            "settings": {"ignore_selectors": list(selectors)},
+        },
+    ]
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService(sources)
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=size) as pilot:
+        await pilot.pause(0.2)
+        screen = _active_destination_screen(host)
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+
+        sources_pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        sources_pane.sources = sources
+        await pilot.pause()
+        sources_pane.select_source_by_id("source-url")
+        await pilot.pause()
+
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        field = inspector.query_one("#inspector-noise-selectors", TextArea)
+        # The precondition that makes the rest meaningful: the production
+        # stylesheet really did reach this widget. Without it a regression
+        # that silently drops the rule (a renamed id, a rebuilt bundle that
+        # lost the block) would leave every assertion below measuring
+        # TextArea's own defaults and still pass.
+        assert field.styles.max_height is not None, (
+            "the shipped #inspector-noise-selectors rule did not apply -- this "
+            "harness is not measuring the product"
+        )
+
+        # Whole-branch review, Important 5: the border title must FIT. Textual
+        # truncates an over-wide border label with an ellipsis and reports
+        # nothing, so the 65-character label this field started with painted as
+        # "Ignore elements (CSS s…" in the ~26-column rail -- the truncation ate
+        # the syntax note that was the whole reason the label was long, and the
+        # 75-character border subtitle below it fared no better.
+        #
+        # Measured off the painted strip rather than off `field.border_title`,
+        # because the attribute holds the full string whether or not it fits:
+        # only `render_lines` knows what the user actually sees.
+        top_border = field.render_lines(
+            Region(0, 0, field.outer_size.width, 1)
+        )[0].text
+        assert "…" not in top_border, (
+            f"the noise field's border title is truncated at {size[0]}x{size[1]}: "
+            f"{top_border!r} -- shorten the label, do not widen the rail"
+        )
+        assert str(field.border_title) in top_border, (
+            f"the whole title must be painted, not merely fit: {top_border!r}"
+        )
+        assert field.border_subtitle in (None, ""), (
+            "a second rail-width border label is a second silent truncation, "
+            "and this one duplicated the Save button's tooltip one row below it"
+        )
+        assert "silence" in str(field.tooltip), (
+            "the guidance the shortened title dropped has to live somewhere -- "
+            "the tooltip, which has no width budget"
+        )
+
+        width, height = size
+        for control_id in (
+            "#inspector-noise-selectors",
+            "#inspector-save-selectors-button",
+            "#inspector-preview-button",
+            "#inspector-check-now-button",
+            "#inspector-stage-console-button",
+            "#inspector-delete-button",
+        ):
+            control = inspector.query_one(control_id)
+            assert control.region.height > 0, f"{control_id} collapsed to no height"
+            _assert_visible_in_viewport(
+                control,
+                height=height,
+                viewport_width=width,
+                context=(
+                    f"{control_id} is not on screen at {width}x{height} -- the "
+                    "noise editor pushed a source action past the edge"
+                ),
+            )
+
+
+@pytest.mark.asyncio
+async def test_saving_selectors_makes_the_next_check_rebaseline(monkeypatch):
+    """The payoff (spec §3): the edit re-baselines instead of firing a phantom.
+
+    Same page for every fetch, so nothing a human wrote ever changes. Adding
+    `.promo` -- which this page HAS -- changes the extracted text, so the
+    stored hash (computed under the old selectors) no longer matches. Without
+    Task 3's fingerprint comparison that produces an item whose entire diff is
+    the promo banner disappearing: the app reporting its own setting change
+    back to the user as news from the site.
+
+    The check before the save is the precondition that makes the assertion
+    mean something -- it proves the page really is unchanged, so
+    `baseline_stored` afterwards can only have come from the edit.
+    """
+    app = _build_test_app()
+    db, service, source_id = await _seed_url_source(app)
+    _serve(monkeypatch, [_NOISY_PAGE])
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        assert _dispositions(await _check(service, source_id)) == _counts(baseline=1)
+        assert _dispositions(await _check(service, source_id)) == _counts(unchanged=1), (
+            "precondition: the served page does not change between checks"
+        )
+
+        await _select_real_source(pilot, screen, source_id)
+        await _save_selectors(pilot, screen, ".ad\n.promo")
+        for _ in range(40):
+            await pilot.pause()
+            if db.get_subscription(source_id)["ignore_selectors"] != ".ad":
+                break
+
+        after = await _check(service, source_id)
+        assert _dispositions(after) == _counts(rebaselined=1), (
+            "the check following a selector edit must re-baseline -- not "
+            "report the now-stripped noise as a change the site made, and "
+            "not report `unchanged` off a hash computed under the old settings. "
+            "It counts as `rebaselined`, not `baseline`: this save cost the "
+            "user a real diff window (whole-branch review, Critical 1)"
+        )
+        assert _stored_items(db, source_id) == [], "no phantom item may be stored"
+
+        assert _dispositions(await _check(service, source_id)) == _counts(unchanged=1), (
+            "and once re-baselined the very next check compares normally"
+        )
+
+        # Fix round 1 (Minor 3): the `reason`, off the disposition dict the
+        # aggregated run counts deliberately cannot carry. A second save --
+        # this time a rule matching nothing on the page, so the extracted text
+        # and therefore the hash are IDENTICAL -- is what distinguishes "the
+        # fingerprint decided" from "the text happened to differ": only a
+        # fingerprint comparison running BEFORE the hash comparison can
+        # re-baseline here at all.
+        await _save_selectors(pilot, screen, ".ad\n.promo\n.matches-nothing-at-all")
+        for _ in range(40):
+            await pilot.pause()
+            if "matches-nothing" in db.get_subscription(source_id)["ignore_selectors"]:
+                break
+
+        item, disposition = await _direct_check(db, source_id)
+        assert item is None
+        assert disposition == {
+            "kind": "baseline_stored",
+            "reason": "extraction_settings_changed",
+            "withheld_percentage": None,
+        }, (
+            "the re-baseline must say WHY it happened -- the Runs pane has to "
+            "distinguish a first-ever check from a settings change the user "
+            "just made in this very Inspector"
+        )
+        assert _stored_items(db, source_id) == []
+
+
+@pytest.mark.asyncio
+async def test_saving_selectors_does_not_recompose_the_screen():
+    """Phase D Task 5's regression class, guarded for this new write path.
+
+    `_refresh_overview_data()` sets `overview_data`, `reactive({}, recompose=
+    True)` on the screen -- calling it (as `_create_source` does) rebuilds
+    every region through its factory and replaces the mounted panes wholesale,
+    which was proven live to detach the `ItemsPane`, reset the `DataTable`
+    cursor and drop keyboard focus. Nothing visible is derived from a source's
+    selectors, so `_save_noise_selectors` patches the entity dict in place
+    instead; this pins that it stays that way.
+    """
+    app = _build_test_app()
+    db, _service, source_id = await _seed_url_source(app)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        sources_pane = await _select_real_source(pilot, screen, source_id)
+        table = sources_pane.query_one("#sources-table", DataTable)
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        field = inspector.query_one("#inspector-noise-selectors", TextArea)
+
+        await _save_selectors(pilot, screen, ".ad\n.promo")
+        for _ in range(40):
+            await pilot.pause()
+            if db.get_subscription(source_id)["ignore_selectors"] != ".ad":
+                break
+        for _ in range(20):
+            await pilot.pause()
+
+        assert sources_pane.is_attached and table.is_attached
+        assert screen.query_one("#watchlists-sources-pane", SourcesPane) is sources_pane, (
+            "saving selectors must not rebuild the screen's regions -- the "
+            "same SourcesPane instance must still be mounted"
+        )
+        assert sources_pane.query_one("#sources-table", DataTable) is table
+        assert screen.query_one("#watchlists-entity-inspector", InspectorPane) is inspector
+        assert inspector.query_one("#inspector-noise-selectors", TextArea) is field, (
+            "not even the Inspector may recompose: the entity dict is patched "
+            "in place, so the field the user is typing in survives the save"
+        )
+
+        # The in-place patch is the reason no rebuild is needed -- the entity
+        # every surface holds already reports the saved value.
+        assert InspectorPane._ignore_selectors_text(screen.selected_entity) == ".ad\n.promo"
+
+
+@pytest.mark.asyncio
+async def test_a_save_that_cannot_write_says_so():
+    """Fix round 1 (Minor 4): no silent no-op behind the Save button.
+
+    An entity carrying no `id` cannot be written, and the handler used to
+    `return` on it -- no write, no error, no toast, indistinguishable from a
+    broken button. Driven through the real message rather than the private
+    handler, since the message is the reachable surface.
+    """
+    app = _app_with_watchlists([])
+    host = DestinationHarness(app, "watchlists_collections")
+    toasts = []
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        app.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.post_message(SaveNoiseSelectorsRequested(None, ".ad"))
+        await pilot.pause()
+
+        assert toasts, "a Save that cannot write anything must still say so"
+        message, kwargs = toasts[-1]
+        assert "Nothing to save" in message
+        assert kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_a_successful_save_warns_that_the_next_check_loses_a_window():
+    """Whole-branch review, Critical 1, third leg: warn at the source.
+
+    Spec §3 sanctions the re-baseline's cost -- a change the page makes before
+    the next check is compared against nothing and is never reported -- on the
+    strength of the user being told. The Runs pane now says it after the fact,
+    which is too late to act on; this toast says it at the one moment the user
+    could still decide to wait for a check before saving.
+
+    Asserted on the delivered message's SUBSTANCE, deliberately not against
+    `NOISE_SELECTORS_SAVED_TOAST`: comparing to the constant would stay green
+    if the warning sentence were deleted from the constant itself, which is the
+    exact regression this guards.
+    """
+    app = _build_test_app()
+    db, _service, source_id = await _seed_url_source(app)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    toasts: list[tuple[str, dict]] = []
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        await _select_real_source(pilot, screen, source_id)
+        app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+
+        await _save_selectors(pilot, screen, ".ad\n.promo")
+        for _ in range(40):
+            await pilot.pause()
+            if db.get_subscription(source_id)["ignore_selectors"] != ".ad":
+                break
+        for _ in range(10):
+            await pilot.pause()
+
+        assert toasts, "a successful save must confirm itself"
+        message, kwargs = toasts[-1]
+        assert kwargs.get("severity") == "information"
+        assert "saved" in message.lower(), "precondition: this is the success toast"
+        assert "re-baselines" in message
+        # The added sentence: the consequence, not just the mechanism.
+        # "re-baselines" alone is jargon that does not tell the user a change
+        # can be lost.
+        assert "will not be reported" in message, (
+            "the toast must state the consequence of the re-baseline, not only "
+            "that one will happen -- spec §3's cost is only acceptable if the "
+            "user is told about it while they can still act on it"
+        )
+        assert "before" in message.lower(), (
+            "and it must say WHEN: a change landing before the next check is "
+            "the window that is lost"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_save_with_an_unparseable_selector_is_refused_and_says_why():
+    """Whole-branch fix F1, UI side (Inspector half).
+
+    Same refusal as the create form, and the same reason: `soup.select` raises
+    on anything CSS cannot parse, so an unparseable line silently suppresses
+    nothing forever. Writing it would leave the source carrying a dead rule the
+    user believes is working -- the extraction guard's log warning is not a
+    place a TUI user looks. Mutation: delete the `first_invalid_selector` check
+    in `_post_noise_selectors_save` and this reddens (the row is overwritten
+    and no error toast arrives).
+
+    Driven through the real button, so the message path and the screen handler
+    are the ones that would run for a user.
+    """
+    app = _build_test_app()
+    db, _service, source_id = await _seed_url_source(app)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    toasts: list[tuple[str, dict]] = []
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        await _select_real_source(pilot, screen, source_id)
+        # `host`, not `app`: the refusal is raised by the PANE, and a widget's
+        # `self.app` is the running App -- which under `DestinationHarness` is
+        # `host`, while `app` is only the mock instance handed to the screen.
+        # The screen-level toasts elsewhere in this module go through `app`
+        # because the screen holds that instance explicitly; patching the wrong
+        # one here captures nothing and looks like a missing toast.
+        host.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+
+        await _save_selectors(pilot, screen, ".ad\n:::nonsense\n.promo")
+        for _ in range(30):
+            await pilot.pause()
+
+        assert db.get_subscription(source_id)["ignore_selectors"] == ".ad", (
+            "the stored row must be untouched -- a refused save that still "
+            "wrote would be worse than no validation at all"
+        )
+
+        assert toasts, "the refusal must be visible, not a silent no-op button"
+        message, kwargs = toasts[-1]
+        assert kwargs.get("severity") == "error"
+        assert ":::nonsense" in message, (
+            f"the toast must name the offending line; got {message!r}"
+        )
+        assert kwargs.get("markup") is False, (
+            "selectors carry `[`, which Textual's toast markup would consume"
+        )
+        # The field keeps the user's text so the fix is one edit away.
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        assert (
+            inspector.query_one("#inspector-noise-selectors", TextArea).text
+            == ".ad\n:::nonsense\n.promo"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_inspector_still_saves_every_shipped_default_selector():
+    """The refusal's other direction, on the real prefill plus the hard cases.
+
+    `DEFAULT_IGNORE_SELECTORS` is what a user saves first, so it must pass. It
+    is NOT sufficient on its own: every default's comma groups happen to be
+    valid selectors individually, so a validator that re-split lines on commas
+    would still accept all of them (measured -- that mutation left this test
+    green until `:is(.a, .b)` and `[data-x="a,b"]` were added, where splitting
+    produces `:is(.a` and `[data-x="a`, neither of which parses).
+    """
+    app = _build_test_app()
+    db, _service, source_id = await _seed_url_source(app)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    toasts: list[tuple[str, dict]] = []
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        await _select_real_source(pilot, screen, source_id)
+        # Both sinks: the pane's refusal would land on `host`, the screen's
+        # success toast on `app`. Watching only one would let a refusal here
+        # pass as "no error toast".
+        host.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+        app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+
+        wanted = "\n".join(
+            (*DEFAULT_IGNORE_SELECTORS, ':is(.a, .b)', '[data-x="a,b"]')
+        )
+        await _save_selectors(pilot, screen, wanted)
+        for _ in range(40):
+            await pilot.pause()
+            if db.get_subscription(source_id)["ignore_selectors"] != ".ad":
+                break
+
+        assert db.get_subscription(source_id)["ignore_selectors"] == wanted, (
+            "every shipped default line is valid CSS and must save"
+        )
+        assert not [t for t in toasts if t[1].get("severity") == "error"], (
+            f"the shipped defaults produced an error toast: {toasts!r}"
+        )

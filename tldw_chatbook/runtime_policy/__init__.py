@@ -110,8 +110,13 @@ _EXPORTS = {
     ),
     "ServerContextUnavailable": (".server_context", "ServerContextUnavailable"),
     "ServerCredentialsUnavailable": (".server_context", "ServerCredentialsUnavailable"),
+    "ServerIdentityUnavailable": (".server_context", "ServerIdentityUnavailable"),
     "SyncIdentityMapEntry": (".server_parity_models", "SyncIdentityMapEntry"),
     "SyncReadinessReport": (".server_parity_models", "SyncReadinessReport"),
+    "encode_server_user_character_authority": (
+        ".server_context",
+        "encode_server_user_character_authority",
+    ),
     "validate_unsupported_capability_report": (
         ".unsupported_capabilities",
         "validate_unsupported_capability_report",
@@ -169,8 +174,10 @@ __all__ = [
     "ServerParityStateRepositories",
     "ServerContextUnavailable",
     "ServerCredentialsUnavailable",
+    "ServerIdentityUnavailable",
     "SyncIdentityMapEntry",
     "SyncReadinessReport",
+    "encode_server_user_character_authority",
     "validate_unsupported_capability_report",
     "validate_registry_completeness",
 ]

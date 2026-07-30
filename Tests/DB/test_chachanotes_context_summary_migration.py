@@ -5,7 +5,7 @@ def _db(tmp_path):
     return CharactersRAGDB(str(tmp_path / "c.db"), client_id="test-client")
 
 
-def test_fresh_db_is_v27_with_context_summary_columns(tmp_path):
+def test_fresh_db_is_v28_with_context_summary_columns(tmp_path):
     db = _db(tmp_path)
     with db.get_connection() as conn:
         version = conn.execute(
@@ -14,7 +14,7 @@ def test_fresh_db_is_v27_with_context_summary_columns(tmp_path):
         cols = {row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
     # Fresh databases always reach the current schema, not merely the version
     # where these columns were introduced.
-    assert version == 27
+    assert version == 28
     assert "context_summary" in cols
     assert "summary_boundary_message_id" in cols
 

@@ -168,7 +168,8 @@ def normalize_watchlist_run(
     job_id = payload.get("job_id")
     if source_id is None and source == "local":
         source_id = job_id
-    return {
+    stats = dict(payload.get("stats") or {})
+    normalized = {
         "id": build_watchlist_item_id(source, "watchlist_run", run_id),
         "backend": source,
         "entity_kind": "watchlist_run",
@@ -178,7 +179,7 @@ def normalize_watchlist_run(
         "status": payload.get("status") or "unknown",
         "started_at": payload.get("started_at"),
         "finished_at": payload.get("finished_at"),
-        "stats": dict(payload.get("stats") or {}),
+        "stats": stats,
         "error_msg": payload.get("error_msg"),
         "filter_tallies": payload.get("filter_tallies"),
         "log_text": payload.get("log_text"),
@@ -186,6 +187,26 @@ def normalize_watchlist_run(
         "truncated": bool(payload.get("truncated", False)),
         "filtered_sample": payload.get("filtered_sample"),
     }
+    # TASK-1362 Task 7 (spec §4): lift a url-family run's check dispositions
+    # from the nested `stats` blob onto the run dict's own top level, the
+    # same way the Runs pane reads every other per-run counter (`found_count`
+    # and friends) -- so `RunsPane._stats_text` can render them without also
+    # knowing the `stats` nesting. Only added when present at all: a feed/API
+    # run's `stats` never carries `dispositions` (see `test_feed_runs_record_
+    # no_dispositions`), and a run dict with no key renders identically to
+    # one whose key is an empty dict, so there is no reason to fabricate one.
+    dispositions = stats.get("dispositions")
+    if isinstance(dispositions, Mapping):
+        normalized["dispositions"] = dict(dispositions)
+    # Whole-branch review, Critical 1: the same lift for the withheld
+    # magnitude, which lives beside `dispositions` rather than inside it (see
+    # `_disposition_counts`, which returns integers only). Absent whenever the
+    # run withheld nothing, so `_stats_text` appends the number only when it
+    # has one.
+    max_withheld = stats.get("max_withheld_pct")
+    if isinstance(max_withheld, (int, float)) and not isinstance(max_withheld, bool):
+        normalized["max_withheld_pct"] = float(max_withheld)
+    return normalized
 
 
 def _coerce_condition_value(value: Any) -> dict[str, Any]:
@@ -245,4 +266,23 @@ def normalize_watchlist_item(source: str, row: Mapping[str, Any]) -> dict[str, A
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "published_date": row.get("published_date"),
+        # Phase D reader fields. `get_new_items` is `SELECT i.*`, so these are
+        # already on the row -- this dict was simply not carrying them, which
+        # made every item title-only downstream regardless of what Phase A
+        # persisted.
+        "content": row.get("content"),
+        "content_kind": row.get("content_kind"),
+        # Read by `content_pane.render_article` to decide whether the body is
+        # markdown source or plain text.
+        "content_format": row.get("content_format"),
+        # `change`-kind items render from these three
+        # (`content_pane.render_change`).
+        "change_percentage": row.get("change_percentage"),
+        "change_type": row.get("change_type"),
+        "diff_summary": row.get("diff_summary"),
+        # `canonical_url` is deliberately NOT re-exported as its own key: it
+        # is already folded into `url` two lines above (`row.get("url") or
+        # row.get("canonical_url")`), and a second copy under a second name
+        # had no consumer, so it was one more thing for a reader to have to
+        # rule out.
     }
