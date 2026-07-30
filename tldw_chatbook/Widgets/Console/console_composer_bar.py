@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 import textwrap
 from typing import Any, Literal
 
+from rich.cells import cell_len
 from rich.markup import escape
 from rich.text import Text
 from textual import on
@@ -768,12 +769,41 @@ class ConsoleComposerBar(Horizontal):
         visible_slices = list(
             line_slices[first_visible : first_visible + cls.MAX_DRAFT_ROWS]
         )
+        effective_width = max(8, width)
         first_slice = visible_slices[0]
         first_line_stripped = first_slice.text.lstrip()
         if first_line_stripped:
-            trimmed_columns = len(first_slice.text) - len(first_line_stripped)
+            prefix = "... "
+            lstripped_columns = len(first_slice.text) - len(first_line_stripped)
+            # The ellipsis must CONSUME leading content, not extend the row:
+            # a whitespace-flush row that already fills `width` would
+            # otherwise grow to `width + len(prefix)` once prefixed, and an
+            # unbudgeted row that long gets rewrapped at paint time by
+            # anything that isn't `no_wrap` -- silently pushing the true
+            # last row out of the fixed-height window (the bug this guards
+            # against). Measured in cells, not characters: a row can be at
+            # the cell budget with fewer characters than that when it holds
+            # double-width text, and a char-counted trim would under-trim it.
+            budget_cells = max(0, effective_width - cell_len(prefix))
+            overflow_columns = 0
+            remaining_cells = cell_len(first_line_stripped)
+            while (
+                remaining_cells > budget_cells
+                and overflow_columns < len(first_line_stripped)
+            ):
+                remaining_cells -= cell_len(
+                    first_line_stripped[overflow_columns]
+                )
+                overflow_columns += 1
+            visible_text = first_line_stripped[overflow_columns:]
+            # Advance the source-offset start past every trimmed character:
+            # the whitespace `lstrip()` already dropped, plus the additional
+            # leading characters just trimmed to make room for the prefix.
+            # Keeps `_row_index_for_source_offset`, style-span remapping, and
+            # click-to-position mapping consistent with what is now painted.
+            trimmed_columns = lstripped_columns + overflow_columns
             visible_slices[0] = _DraftLineSlice(
-                f"... {first_line_stripped}",
+                f"{prefix}{visible_text}",
                 first_slice.start + trimmed_columns,
                 first_slice.end,
                 synthetic_prefix_columns=4,
