@@ -263,7 +263,7 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
                 yield Button(self._label(self._cancel_button, "Cancel"), id="cancel")
 
     def on_mount(self) -> None:
-        """Focus directory widget on mount and set initial path."""
+        """Focus the initial widget on mount and set the initial path."""
         dir_nav = self.query_one(DirectoryNavigation)
         current_path_label = self.query_one("#current_path_display", Label)
         current_path_label.update(str(dir_nav.location))
@@ -274,7 +274,29 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
         # Load recent locations
         self._load_recent_locations()
 
-        dir_nav.focus()
+        self._focus_initial_widget()
+
+    def _focus_initial_widget(self) -> None:
+        """Focus whichever widget should hold focus right after mounting.
+
+        Defaults to the directory listing. Subclasses override this to
+        steer initial focus elsewhere -- e.g. ``FileSave`` (file_save.py)
+        focuses its filename input instead, so a keyboard user can press
+        Enter immediately to confirm the seeded default filename rather
+        than have Enter activate the highlighted directory row (usually
+        ``..``) (task-1479).
+
+        This is a plain method call, not a message handler: overriding it
+        resolves via normal Python MRO, unlike Textual's ``on_mount``/`@on`
+        dispatch, which invokes a handler defined on *every* class in the
+        MRO rather than just the most-derived one -- a subclass adding its
+        own ``on_mount`` here would run *before*, not instead of, this
+        class's own ``on_mount`` (dispatch order walks the MRO
+        most-derived-first, so a naming-convention override defined earlier
+        in the walk fires and then gets clobbered by this method's own
+        ``dir_nav.focus()`` call afterwards).
+        """
+        self.query_one(DirectoryNavigation).focus()
 
     def _set_error(self, message: str = "") -> None:
         """Set or clear the error message.

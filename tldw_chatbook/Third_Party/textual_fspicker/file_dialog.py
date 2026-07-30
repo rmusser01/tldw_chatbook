@@ -18,7 +18,7 @@ from textual.widgets import Button, Input, Select
 
 ##############################################################################
 # Local imports.
-from .base_dialog import ButtonLabel, FileSystemPickerScreen
+from .base_dialog import ButtonLabel, FileSystemPickerScreen, InputBar
 from .parts import DirectoryNavigation, DriveNavigation
 from .path_filters import Filters
 from .path_maker import MakePath
@@ -41,10 +41,19 @@ class BaseFileDialog(FileSystemPickerScreen):
     DEFAULT_CSS = """
     BaseFileDialog InputBar {
         Input {
-            width: 2fr;
+            /* The filename field owns all of the row's flexible space; the
+            file-type filter Select next to it gets a fixed width instead
+            (see below) so it can't eat the Input's share (task-1479). */
+            width: 1fr;
         }
         Select {
-            width: 1fr;
+            /* Fixed, not `1fr`: a flexible Select would still starve the
+            Input for width even without the app-bundle CSS-origin issue
+            documented in components/_dialogs.tcss (that file pins this
+            same width for FileSave/FileOpen so it also wins there, since
+            no amount of specificity in *this* DEFAULT_CSS can beat a
+            CSS_PATH-sourced bundle rule -- see that file's comment). */
+            width: 24;
         }
     }
     """
@@ -79,6 +88,16 @@ class BaseFileDialog(FileSystemPickerScreen):
         """The filters for the dialog."""
         self._default_file = default_file
         """The default filename to put in the input field."""
+        self._filter_select_changed_by_user = False
+        """Whether ``_change_filter`` has seen a real, user-driven change yet.
+
+        ``Select`` posts its own ``Changed`` message as a side effect of
+        mounting with an explicit initial ``value=`` (not from anyone
+        picking a filter) -- ``_change_filter`` must not treat that
+        synthetic first event the same as a real one, or it steals focus
+        away from wherever ``_focus_initial_widget()`` put it right after
+        mount (task-1479).
+        """
 
     def _input_bar(self) -> ComposeResult:
         """Provide any widgets for the input before, before the buttons."""
@@ -104,7 +123,12 @@ class BaseFileDialog(FileSystemPickerScreen):
         Args:
             event: The event to handle.
         """
-        file_name = self.query_one(Input)
+        # Scoped through InputBar, not a bare `self.query_one(Input)`: the
+        # screen also carries a hidden `#path-input` (Ctrl+L) and a hidden
+        # `#search-input` (Ctrl+F), both mounted before InputBar's own
+        # filename Input in the compose tree, so an unscoped query_one(Input)
+        # silently grabs one of those instead (task-1479).
+        file_name = self.query_one(InputBar).query_one(Input)
         file_name.value = str(event.path.name)
         file_name.focus()
 
@@ -124,6 +148,14 @@ class BaseFileDialog(FileSystemPickerScreen):
             self.query_one(DirectoryNavigation).file_filter = self._filters[event.value]
         else:
             self.query_one(DirectoryNavigation).file_filter = None
+        if not self._filter_select_changed_by_user:
+            # The first Changed event is Select's own mount-time side effect
+            # (see `_filter_select_changed_by_user`'s docstring), not a user
+            # picking a filter -- apply the filter above (matches
+            # `_initial_filter`'s own mount-time assignment) but don't move
+            # focus for it (task-1479).
+            self._filter_select_changed_by_user = True
+            return
         self.query_one(DirectoryNavigation).focus()
 
     def _should_return(self, candidate: Path) -> bool:
@@ -152,7 +184,14 @@ class BaseFileDialog(FileSystemPickerScreen):
             event: The event to handle.
         """
         event.stop()
-        file_name = self.query_one(Input)
+        # Scoped through InputBar -- see `_select_file` above for why a bare
+        # `self.query_one(Input)` is ambiguous on this screen (task-1479).
+        # Getting this wrong means the real filename Input is never read: a
+        # keyboard user presses Enter on the (correctly focused, correctly
+        # filled) filename field, but this handler reads back the empty
+        # hidden `#path-input` instead and rejects with "A file must be
+        # chosen" -- the dialog silently refuses to confirm at all.
+        file_name = self.query_one(InputBar).query_one(Input)
 
         # Only even try and process this if there's some input.
         if not file_name.value:
@@ -191,7 +230,7 @@ class BaseFileDialog(FileSystemPickerScreen):
                             pass  # Silently ignore if DriveNavigation isn't there (e.g. non-Windows)
                 self.query_one(DirectoryNavigation).location = chosen
                 self.query_one(DirectoryNavigation).focus()
-                self.query_one(Input).value = ""
+                self.query_one(InputBar).query_one(Input).value = ""
                 return
         except PermissionError:
             self._set_error(self.ERROR_PERMISSION_ERROR)

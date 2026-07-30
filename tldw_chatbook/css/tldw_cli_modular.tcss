@@ -1477,9 +1477,35 @@ ChatMessage.-ai .message-actions.-generating {
 /* ===== MODULE: components/_dialogs.tcss ===== */
 /* ========================================
  * COMPONENTS: Dialogs
- * ======================================== 
+ * ========================================
  * Modal dialogs and popup styles
  * ======================================== */
+
+/* FileSave/FileOpen (vendored Third_Party/textual_fspicker) input bar --
+   the filename Input + file-type filter Select row shared by every
+   FileOpen/FileSave dialog in the app (Evals export, STTS, library
+   import/export, Voice Cloning, LLM model browsing, etc).
+   `_conversations.tcss`'s bare, unscoped `Select { width: 100%; }` rule
+   always beats `file_dialog.py`'s own `DEFAULT_CSS` regardless of source
+   order -- Textual's cascade ranks EVERY CSS_PATH-sourced rule (this
+   bundle) above any widget's own DEFAULT_CSS no matter how specific the
+   DEFAULT_CSS selector is (same Defect 1 lesson as
+   `#mcp-tools-filter-server-slot Select` / `.approval-row-decision`
+   elsewhere in this bundle). Without this override, the filter Select
+   claims the ENTIRE input-bar row, squeezing the filename Input down to a
+   handful of columns -- observed ~5 at 235x52, where a keyboard-only
+   export/save flow needs to both read and type into that field
+   (task-1479). A 3-type compound selector already outranks the bare
+   1-type `Select {}` rule on specificity, so no id is needed for it to
+   win here. Scoped to the vendored dialogs themselves (`FileSave`/
+   `FileOpen`), not the separate `EnhancedFileDialog` picker
+   (`Widgets/enhanced_file_picker.py`), which composes its own Input/Select
+   with its own ids and is out of scope for this fix. */
+FileSave InputBar Select,
+FileOpen InputBar Select {
+    width: 24;
+    margin-bottom: 0;
+}
 
 /* ===== MODULE: components/_status.tcss ===== */
 /* ========================================

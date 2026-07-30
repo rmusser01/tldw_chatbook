@@ -120,6 +120,49 @@ The enhancements have been tested with:
 - Breadcrumb navigation
 - Keyboard shortcuts
 
+### 6. Usable Filename Input for Save Dialogs (task-1479)
+
+Live UAT of a keyboard-only export flow (Evals results-grid export, at a
+235x52 terminal) found the `FileSave`/`FileOpen` input bar unusable:
+
+- The filename `Input`'s rendered width could collapse to a handful of
+  columns because the file-type filter `Select` next to it was set to
+  `width: 1fr` -- flexible, not fixed, so it competed with the Input for
+  space and, once the app's own `Select { width: 100%; }` bundle rule
+  (`components/_dialogs.tcss` documents this in full) wins the CSS-origin
+  battle against this package's `DEFAULT_CSS` regardless of source order,
+  the Select claimed the entire row. The filter `Select` now gets a fixed
+  `width: 24` in `file_dialog.py`'s `DEFAULT_CSS`, and the app bundle pins
+  the same width with a selector specific enough to win there too.
+- `FileSave` (not `FileOpen`) now focuses its filename `Input` on mount
+  instead of the directory listing (`FileSystemPickerScreen._focus_initial_widget`,
+  overridden in `file_save.py`), so a keyboard user can press Enter right
+  away to confirm the seeded default filename, instead of Enter activating
+  the highlighted directory row (usually `..`).
+- `Select` posts its own `Changed` message as a side effect of mounting
+  with an explicit initial `value=` -- not from a user picking a filter.
+  `BaseFileDialog._change_filter` used to unconditionally move focus back
+  to the directory listing on every `Select.Changed`, including that first,
+  synthetic one, which raced with (and usually beat) the new mount-time
+  focus above. It now ignores focus-stealing for the first event only,
+  tracked via `BaseFileDialog._filter_select_changed_by_user`.
+- `_select_file`/`_confirm_file` (`file_dialog.py`) read the filename back
+  via `self.query_one(Input)`, which is ambiguous: the screen also carries
+  a hidden `#path-input` (Ctrl+L) and `#search-input` (Ctrl+F), both
+  mounted before the input bar's own filename `Input`. An unscoped
+  `query_one(Input)` silently grabbed one of those instead, so even once
+  focus and width were fixed, pressing Enter on the (correctly focused,
+  correctly filled) filename field read back an empty, unrelated Input and
+  rejected with "A file must be chosen". Both call sites now query through
+  `InputBar` first (`self.query_one(InputBar).query_one(Input)`), which is
+  unambiguous since InputBar's own children are exactly one `Input` (the
+  filename) and, if filters were supplied, one `Select`.
+
+None of this touches `FileOpen`'s own default focus behaviour (still the
+directory listing) or the separate `EnhancedFileDialog` picker in
+`Widgets/enhanced_file_picker.py`, which composes its own, differently-`id`d
+Input/Select and is unaffected.
+
 ## Contributing Upstream
 
 These enhancements are designed to be contributed back to the original textual-fspicker project. They:
