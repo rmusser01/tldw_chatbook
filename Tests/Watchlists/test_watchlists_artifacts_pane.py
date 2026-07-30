@@ -28,6 +28,7 @@ could plausibly have shipped:
 from __future__ import annotations
 
 import sqlite3
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from io import StringIO
@@ -35,9 +36,10 @@ from unittest.mock import Mock
 
 import pytest
 from rich.console import Console
+from textual.coordinate import Coordinate
 from textual.widgets import Button, DataTable, Static
 
-from Tests.UI.test_destination_shells import DestinationHarness
+from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from Tests.UI.test_destination_visual_parity_correction import (
     _visual_destination_harness,
 )
@@ -48,7 +50,10 @@ from tldw_chatbook.UI.Screens import watchlists_collections_screen as screen_mod
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
-from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import ArtifactsPane
+from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import (
+    ArtifactsPane,
+    GenerateBriefingRequested,
+)
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_tab_strip import SECTIONS
 
@@ -146,15 +151,44 @@ async def _open_artifacts(app, watchlist_id, *, size=(180, 50), visual=False):
         yield screen, pilot, host
 
 
-async def _press_generate(screen, pilot, *, ticks: int = 40):
-    """Press the real Generate button and let the worker settle."""
+async def _press_generate(screen, pilot, app, watchlist_id, *, timeout: float = 20.0):
+    """Press the real Generate button and wait until the press is answered.
+
+    Waits on observable state, never on a fixed sleep (fix round 1, Finding
+    4). The first loop ends when the press has been *answered* -- the guard
+    was claimed (the handler sets `_briefing_in_flight` synchronously, so
+    that is the acceptance signal), or a toast refused it before dispatch,
+    or the rows already changed. The second waits out the worker. The third
+    waits for the repaint to agree with the database, which is the last
+    thing a press causes. A generous timeout bounds all three, so a hung
+    worker fails as a test failure rather than as a confident assertion
+    about a half-finished state.
+    """
+    db = app.watchlist_bundle_service.db
+    rows_before = len(db.list_briefings(watchlist_id))
+    notes_before = getattr(app.notify, "call_count", 0)
+
     pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
     pane.query_one("#artifacts-generate-button", Button).press()
-    for _ in range(ticks):
-        await pilot.pause(0.05)
-        if not screen._briefing_in_flight:
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        if (
+            screen._briefing_in_flight
+            or getattr(app.notify, "call_count", 0) > notes_before
+            or len(db.list_briefings(watchlist_id)) != rows_before
+        ):
             break
-    await pilot.pause(0.1)
+    while time.monotonic() < deadline and screen._briefing_in_flight:
+        await pilot.pause(0.02)
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        table = screen.query_one(
+            "#watchlists-artifacts-pane", ArtifactsPane
+        ).query_one("#artifacts-table", DataTable)
+        if table.row_count == len(db.list_briefings(watchlist_id)):
+            return
 
 
 def _briefing_rows(app, watchlist_id) -> list[dict]:
@@ -212,12 +246,12 @@ async def test_artifacts_is_a_section_and_opening_it_leaves_content_unmounted():
     watchlist_id = _seed_watchlist(app)
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
         assert screen.query_one("#wl-tab-artifacts", Button)
-        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
-        detail_pane = screen.query_one("#watchlists-detail-pane")
+        assert screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
 
-        # Full centre width, like Sources/Runs/Rules -- the pane fills the
-        # region it was routed into rather than sharing it with a reader.
-        assert pane.region.width == detail_pane.region.width > 0
+        # (The full-width claim is asserted in the real-CSS geometry test
+        # below, against the width Sources gets on the same terminal --
+        # comparing this pane to its own parent under a harness that applies
+        # no stylesheet could not have failed. Fix round 1, Minor d.)
 
         # The CONTENT gate keys on `active_section != "items"` and needed no
         # change for this section -- but nothing was asserting that, so a
@@ -230,6 +264,31 @@ async def test_artifacts_is_a_section_and_opening_it_leaves_content_unmounted():
             "CONTENT must still be reachable as its collapsed header"
         )
         assert screen.query_one("#watchlists-detail-title", Static)
+
+
+@pytest.mark.asyncio
+async def test_artifacts_says_it_is_local_like_the_notifications_inbox():
+    """Parity with the one sibling section that has no server half.
+
+    Briefings are written to, and read from, this device's `SubscriptionsDB`
+    whatever the Backend selector says. Offering the choice anyway would be
+    a lie about where the rows come from, so the selector is disabled and
+    the label states the truth -- exactly what Notifications already does.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        backend_select = screen.query_one("#watchlists-backend-select")
+        assert backend_select.disabled is True
+        assert "local" in _static_text(
+            screen.query_one("#watchlists-backend-label", Static)
+        )
+
+        # And the parity is real, not a coincidence of copy: Sources gets
+        # the live selector back.
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+        assert screen.query_one("#watchlists-backend-select").disabled is False
 
 
 # --- 2. Generate writes a briefing, and its body renders inert -------------
@@ -251,7 +310,7 @@ async def test_generate_records_a_complete_briefing_and_renders_its_body(monkeyp
         _host,
     ):
         pane_before = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
-        await _press_generate(screen, pilot)
+        await _press_generate(screen, pilot, app, watchlist_id)
 
         assert len(chat.calls) == 1, "exactly one provider call per briefing"
         rows = _briefing_rows(app, watchlist_id)
@@ -311,7 +370,7 @@ async def test_a_stuck_generating_row_is_refused_then_recovered(monkeypatch):
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
         # First press: refuses, and says why.
-        await _press_generate(screen, pilot)
+        await _press_generate(screen, pilot, app, watchlist_id)
 
         assert chat.calls == [], "nothing may be generated while a row is in flight"
         assert app.notify.called, "a refusal must be visible, not silent"
@@ -325,7 +384,7 @@ async def test_a_stuck_generating_row_is_refused_then_recovered(monkeypatch):
 
         # Second press: the zombie has been recovered, so this one proceeds.
         app.notify.reset_mock()
-        await _press_generate(screen, pilot)
+        await _press_generate(screen, pilot, app, watchlist_id)
 
         assert len(chat.calls) == 1, (
             "after zombie recovery the same button must actually generate"
@@ -337,6 +396,88 @@ async def test_a_stuck_generating_row_is_refused_then_recovered(monkeypatch):
         assert any(
             row["status"] == "complete" for row in rows if row["id"] != zombie_id
         ), "the second press must have written a real briefing"
+
+
+# --- The guard is claimed at dispatch, not inside the worker ---------------
+
+
+@pytest.mark.asyncio
+async def test_two_fast_presses_generate_exactly_once(monkeypatch):
+    """Outcome half: hammering Generate must produce one briefing, not two.
+
+    `run_worker` only *schedules*, so a guard checked inside the worker body
+    leaves a window in which two presses both pass -- and `exclusive=True`
+    then cancels the first mid-generation, leaving the `generating` row the
+    guard exists to prevent.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    chat = _FakeChat()
+    _use_fake_chat(monkeypatch, chat)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        button = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane).query_one(
+            "#artifacts-generate-button", Button
+        )
+        # Both in one tick, with nothing awaited between them.
+        button.press()
+        button.press()
+
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            await pilot.pause(0.02)
+            if not screen._briefing_in_flight and chat.calls:
+                break
+        await pilot.pause(0.1)
+
+        assert len(chat.calls) == 1, "two presses must not buy two generations"
+        rows = _briefing_rows(app, watchlist_id)
+        assert [row["status"] for row in rows] == ["complete"], (
+            f"expected exactly one complete briefing, got {[r['status'] for r in rows]}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_guard_is_claimed_before_the_worker_runs(monkeypatch):
+    """Mechanism half, and the deterministic one.
+
+    The outcome test above cannot see the dispatch window: whichever way the
+    flag is set, `exclusive=True` collapses two same-tick dispatches to one
+    generation, so it passes either way (measured -- see the task report).
+    This one pins the invariant itself, with no race in it: the handler is
+    synchronous and has no `await`, so when it returns, no worker code can
+    yet have run. If the guard is claimed there, it is already True at that
+    instant; if it is claimed inside the worker body, it is still False.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    chat = _FakeChat()
+    _use_fake_chat(monkeypatch, chat)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        screen.handle_generate_briefing_requested(GenerateBriefingRequested())
+
+        assert screen._briefing_in_flight is True, (
+            "the guard must be claimed by the handler, before `run_worker` "
+            "has scheduled anything"
+        )
+        assert chat.calls == [], "and no worker code can have run yet"
+
+        # A press arriving in that window is refused rather than dispatched.
+        app.notify.reset_mock()
+        screen.handle_generate_briefing_requested(GenerateBriefingRequested())
+        assert app.notify.call_count == 1
+        _args, kwargs = app.notify.call_args
+        assert kwargs.get("markup") is False
+
+        # Let the one accepted generation finish so the worker is not
+        # cancelled out from under the harness at teardown.
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline and screen._briefing_in_flight:
+            await pilot.pause(0.02)
+        assert len(chat.calls) == 1
 
 
 # --- 4. A database error is reported, not fatal ----------------------------
@@ -356,7 +497,7 @@ async def test_a_database_error_during_generation_does_not_exit_the_app(monkeypa
     monkeypatch.setattr(screen_module, "generate_briefing", _explode)
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
-        await _press_generate(screen, pilot)
+        await _press_generate(screen, pilot, app, watchlist_id)
 
         assert host.is_running, "a worker failure must not exit the application"
         assert host.screen_stack[-1] is screen, "the screen must still be standing"
@@ -369,10 +510,22 @@ async def test_a_database_error_during_generation_does_not_exit_the_app(monkeypa
             "the in-flight guard must clear even when generation raises"
         )
 
-        # The guard is genuinely re-armed: a second press is accepted.
+        # The guard is genuinely re-armed. Asserted on the SERVICE, not on
+        # "some toast happened" (fix round 1, Finding 3): a refusal toasts
+        # identically, so the old assertion could not tell a re-armed button
+        # from a permanently wedged one. With the database reachable again,
+        # the same button must reach the service and leave a briefing behind.
+        chat = _FakeChat()
+        _use_fake_chat(monkeypatch, chat)
         app.notify.reset_mock()
-        await _press_generate(screen, pilot)
-        assert app.notify.called
+        await _press_generate(screen, pilot, app, watchlist_id)
+
+        assert len(chat.calls) == 1, (
+            "the second press must have reached the generation service"
+        )
+        assert any(
+            row["status"] == "complete" for row in _briefing_rows(app, watchlist_id)
+        ), "and must have left a finished briefing behind"
 
 
 # --- Every status has a body of its own ------------------------------------
@@ -417,14 +570,55 @@ async def test_failed_and_empty_briefings_explain_themselves():
 
 
 @pytest.mark.asyncio
+async def test_only_a_focused_tables_highlight_selects(monkeypatch):
+    """The `has_focus` gate, asserted rather than assumed (fix round 1, 5e).
+
+    Assigning `briefings` recomposes this pane, which builds a BRAND NEW
+    `DataTable` whose cursor starts on row 0 and announces it. Forwarding
+    that announcement to selection makes the pane fight its own rebuild --
+    the 157-selections-from-one-tab-open shape. A table that has just been
+    mounted holds no focus, which is the discriminator
+    `highlight_is_user_driven` uses.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    first = db.insert_briefing(watchlist_id)
+    db.update_briefing(first, status="empty")
+    second = db.insert_briefing(watchlist_id)
+    db.update_briefing(second, status="empty")
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        table = pane.query_one("#artifacts-table", DataTable)
+        assert table.row_count == 2
+        assert not table.has_focus, "the fixture needs an unfocused table"
+
+        # The rebuild's own row-0 announcement must change nothing.
+        assert pane.selected_briefing is None
+        assert screen._selected_briefing is None
+
+        # A user-driven highlight on the focused table does select.
+        table.focus()
+        await pilot.pause()
+        table.cursor_coordinate = Coordinate(1, 0)
+        await pilot.pause(0.1)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.selected_briefing is not None
+        assert pane.selected_briefing["id"] == db.list_briefings(watchlist_id)[1]["id"]
+
+
+@pytest.mark.asyncio
 async def test_a_bracket_shaped_watchlist_name_paints_instead_of_exploding():
     """`Static` parses Rich markup by default, and the scope line names a
     watchlist the user typed.
 
-    An unclosed tag would raise out of `compose()`, which exits the whole
-    application -- so the pane wraps the line in a `Text`, and this pins
-    both halves: the app survives, and the name paints verbatim rather than
-    being interpreted or backslash-escaped.
+    Measured behaviour: with a bare `str` the tag is silently SWALLOWED and
+    the name loses characters (Textual tolerated the unclosed `[brief`
+    rather than raising). The pane wraps the line in a `Text`, and this pins
+    that the name paints verbatim -- neither interpreted nor
+    backslash-escaped.
     """
     app = _build_test_app()
     app.notify = Mock()
@@ -495,7 +689,7 @@ async def test_the_list_the_button_and_the_body_are_all_on_screen(size, monkeypa
         pilot,
         _host,
     ):
-        await _press_generate(screen, pilot)
+        await _press_generate(screen, pilot, app, watchlist_id)
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         assert pane.selected_briefing is not None, "the fixture must select a body"
 
@@ -516,3 +710,18 @@ async def test_the_list_the_button_and_the_body_are_all_on_screen(size, monkeypa
 
         # The Generate label is really painted, not merely placed.
         assert "Generate" in _painted(screen, button.region)
+
+        # Full centre width, asserted against a SIBLING section rather than
+        # against this pane's own parent (fix round 1, Minor d): Sources is
+        # one of the sections the spec says takes the whole centre column,
+        # and it is measured here under the same stylesheet on the same
+        # terminal. A reader stealing width from Artifacts, or a stray
+        # `max-width` on the pane, would show up as a difference.
+        artifacts_width = pane.region.width  # before the section switch
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+        sources_width = screen.query_one("#watchlists-sources-pane").region.width
+        assert artifacts_width == sources_width > size[0] // 2, (
+            f"Artifacts is {artifacts_width} columns wide where Sources gets "
+            f"{sources_width} on the same {size[0]}x{size[1]} terminal"
+        )

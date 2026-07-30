@@ -171,3 +171,142 @@ regenerated via `build_css.py` after (d) and the suite re-run green.
   `tldw_chatbook/css/tldw_cli_modular.tcss`
 - `Tests/Watchlists/test_watchlists_artifacts_pane.py` (new),
   `Tests/Watchlists/test_watchlists_tab_strip.py`
+
+---
+
+# Fix round 1
+
+Six findings, all addressed. Two of them changed the shape of the feature;
+the rest tightened tests and copy.
+
+## 1 (Important) — the guard no longer runs on the UI thread
+
+`fail_interrupted_briefings` is a transactional UPDATE and `list_briefings`
+is a read, and both ran inside the message handler. No busy timeout beyond
+SQLite's default is configured, and this feature's own design admits a second
+app instance against the same database file, so a contended write froze the
+interface.
+
+The handler now does only what the UI thread is entitled to do: answer from
+memory (no store / no watchlist / already in flight) and dispatch. Everything
+touching the database moved into the worker as one sequence —
+`_sweep_and_guard` (sweep, then the generating-check, in that order, still)
+runs through `asyncio.to_thread`, and the refuse decision is made and toasted
+from inside the worker. `SubscriptionsDB` holds thread-local connections, so
+the worker thread gets its own; this is the idiom the rest of the UI already
+uses (`mcp_inspector.py`, `ccp_character_handler.py`, …).
+
+## 2 (Important) — the guard is claimed at dispatch
+
+`_briefing_in_flight = True` moved out of the worker body and into the
+handler, before `run_worker`. `run_worker` only *schedules*: a check made
+inside the worker leaves a window in which two presses both pass, and
+`exclusive=True` then cancels the first one mid-generation — the guard
+manufacturing the `generating` row it exists to prevent.
+
+**Two tests, and they are not equivalent.** The outcome test the review asked
+for (two same-tick presses → exactly one service call, one `complete` row)
+**passes under the mutation as well**: `exclusive=True` collapses two
+same-tick dispatches into one generation, so the outcome is identical either
+way. What the mutation *does* leave behind on that test is a
+`PytestUnraisableExceptionWarning: Exception ignored in: <coroutine object
+WatchlistsCollectionsScreen._generate_briefing …>` — the discarded first
+dispatch, never awaited. So the outcome test is kept for the property, and a
+second, deterministic test pins the mechanism: the handler is synchronous and
+has no `await`, so when it returns no worker code can have run — the flag
+must already be True. That one fails immediately under the mutation.
+
+## 3 (Important) — the re-arm assertion discriminates
+
+`test_a_database_error_during_generation_does_not_exit_the_app` asserted only
+`app.notify.called` on the second press, which a refusal satisfies
+identically. It now restores a working seam, presses again, and asserts the
+service was reached (`len(chat.calls) == 1`) **and** that a `complete` row
+exists.
+
+## 4 (Important) — the settle loop waits on state
+
+`_press_generate` now waits, with a 20s bound and no fixed sleep as the
+carrier, on: the press being answered (guard claimed / a toast / the rows
+changed), then the worker finishing, then the repaint agreeing with the
+database.
+
+**Measured, since the round-0 helper's fragility deserves a number rather
+than an argument.** With fix 2 in place, the round-0 loop is no longer
+vacuous — the flag is set before `press()` returns to the pump, so
+`if not _briefing_in_flight: break` now genuinely waits. I could not
+construct a failure for it: 0.6s injected into the service, then 0.6s
+injected into the sweep, then both *plus* the round-0 flag placement, all
+still green (the worker starts within one 0.05s tick on this machine). So the
+honest claim is narrower than "it was broken": the round-0 loop depended on
+worker-start timing for its correctness and the new one does not, and the new
+one additionally covers the pre-dispatch refusal path (which never sets the
+flag at all) and the repaint.
+
+## 5 (Minors)
+
+- **(a)** Both refusal toasts now name the row: `briefing 3 (started
+  2026-07-30 21:02:11)`, from `_briefing_row_label`. `_sweep_and_guard`
+  returns labels rather than counts precisely so they can.
+- **(b)** Artifacts joins Notifications in `_LOCAL_ONLY_SECTIONS`: the
+  Backend `Select` is disabled with its own tooltip and the header reads
+  `Artifacts: local`. `watch_runtime_backend`'s duplicate ternary collapsed
+  into the same `_backend_label_text()`. A test pins both halves — Artifacts
+  disabled, Sources still live.
+- **(c)** The pane comment now states what was measured (`[bold red]Morning
+  [brief` paints as `Morning [brief` — the tag is swallowed, Textual did not
+  raise on the unclosed one) instead of claiming a compose crash.
+- **(d)** The parent-child width assertion is gone. The full-width claim now
+  lives in the real-CSS geometry test, against the width **Sources** gets on
+  the same terminal (93 at 160×42, 113 at 180×50), which is a claim that can
+  fail.
+- **(e)** New test: an unfocused table's rebuild announcement must not select,
+  and a focused table's cursor move must. **Precise mutation result:**
+  dropping the guard from `on_data_table_row_highlighted` alone is **GREEN** —
+  this table's cursor is cell-shaped, so the announcement arrives as
+  `CellHighlighted`. Dropping both guards REDs two tests: the new one
+  (`selected_briefing` is the row-0 announcement instead of `None`) and
+  `test_failed_and_empty_briefings_explain_themselves` (the feedback loop
+  dragging a selection back). Both handlers are kept, for parity with the
+  sibling panes and because the row-shaped path is one `cursor_type` away —
+  but the row-handler guard is, today, unexercised, and that is worth knowing
+  rather than assuming.
+
+## Round-1 mutation checks
+
+| # | Mutation | Result |
+|---|----------|--------|
+| g | `_briefing_in_flight = True` moved back inside the worker body | RED, `test_the_guard_is_claimed_before_the_worker_runs`: `the guard must be claimed by the handler, before run_worker has scheduled anything — assert False is True`. The double-press outcome test stays green (see §2) but emits the never-awaited-coroutine warning. |
+| h | `has_focus` guard dropped from `on_data_table_row_highlighted` only | **GREEN** — see §5e. |
+| h2 | dropped from both highlight handlers | RED ×2: `test_only_a_focused_tables_highlight_selects` (`assert {'id': 2, …} is None`) and `test_failed_and_empty_briefings_explain_themselves`. |
+
+## Round-1 test runs
+
+- `Tests/Watchlists/test_watchlists_artifacts_pane.py` — **13 passed** (9 → 13).
+- `Tests/Watchlists/` — **213 passed**.
+- `Tests/UI/ -k watchlist`, run with nothing else on the machine —
+  **245 passed, 3 failed**: the two known chevron baselines, plus one
+  `test_watchlists_source_create_form.py` test.
+
+### That create-form file, now with four data points
+
+It is not a regression from this task, and the evidence is that it is never
+the same test twice:
+
+| run | conditions | which create-form test failed |
+|-----|-----------|-------------------------------|
+| 1 | another pytest running alongside | `test_the_whole_create_form_fits_inside_the_sources_pane[size0]` — `#sources-create-name at Region(0,0,0,0)` |
+| 2 | another pytest running alongside | same |
+| 3 | machine idle, pre-round-1 | none — file green |
+| 4 | machine idle, post-round-1 | `test_a_source_can_be_created_end_to_end_through_the_form[size0]` — `assert 'orning' == 'Morning'` |
+| 5 | parity module + this file only | `test_tab_walks_the_create_form_in_visual_order[size1]` — `nothing focused` |
+
+Run alone the file is **15/15 green** (measured after round 1). Three
+different tests, three different symptoms, all of the same shape: a fixed
+`pilot.pause(0.3)` after `New Source`, asserted against a form whose focus
+and layout have not settled — a dropped first keystroke, an unfocused field,
+a zero region. Nothing in this task touches the Sources pane, its CSS, or its
+layout; `_local_only_section()` returns `None` for Sources, so its header bar
+composes exactly as before. Flagging rather than filing: the fix is the same
+one applied to `_press_generate` here — wait on observable state, not on a
+fixed pause — and it belongs to whoever owns that file.

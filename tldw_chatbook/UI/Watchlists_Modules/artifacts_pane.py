@@ -147,10 +147,18 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     def compose(self):
         # `Text`, not a bare `str`: `Static` parses Rich markup by default
         # (`Static(..., markup=True)`), and this line carries a user-authored
-        # watchlist name. A name containing `[bold]` would be interpreted,
-        # and one containing an unclosed `[` raises -- out of `compose()`,
-        # which exits the whole application. `Text` is never re-parsed, so
-        # the name paints exactly as the user typed it.
+        # watchlist name.
+        #
+        # Measured, not assumed (fix round 1, Minor c): with a bare `str`, a
+        # watchlist named `[bold red]Morning [brief` paints as
+        # `Morning [brief` -- the tag is SWALLOWED, so the name silently
+        # loses characters and the user cannot tell which watchlist the pane
+        # is talking about. Textual tolerated the unclosed `[brief` rather
+        # than raising, so this is a corruption bug, not a crash bug; the
+        # test that pins it asserts the painted characters. Wrapping in
+        # `Text` -- which is never re-parsed -- is the whole fix, and it also
+        # avoids `escape_markup`, whose backslashes would corrupt every
+        # ordinary bracket a real name contains.
         yield Static(
             Text(
                 self.scope_label

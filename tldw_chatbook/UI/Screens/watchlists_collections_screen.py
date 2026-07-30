@@ -1433,6 +1433,37 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             classes="destination-workbench-pane ds-inspector",
         )
 
+    #: Sections whose data has no server half at all, and the two pieces of
+    #: header copy that have to say so. The Backend selector is disabled on
+    #: these, because offering a choice that changes nothing is a lie about
+    #: where the rows come from. Notifications established the pattern;
+    #: Artifacts joins it -- briefings are written to, and read from, this
+    #: device's `SubscriptionsDB` whatever the selector says.
+    _LOCAL_ONLY_SECTIONS: dict[str, dict[str, str]] = {
+        "notifications": {
+            "label": "Inbox: local",
+            "tooltip": "The notifications inbox is local to this device.",
+        },
+        "artifacts": {
+            "label": "Artifacts: local",
+            "tooltip": (
+                "Briefings are written to and read from this device's "
+                "watchlist store."
+            ),
+        },
+    }
+
+    def _local_only_section(self) -> dict[str, str] | None:
+        """Header copy for the active section if it has no server half."""
+        return self._LOCAL_ONLY_SECTIONS.get(self.active_section)
+
+    def _backend_label_text(self) -> str:
+        """What the header bar says about where this section's rows live."""
+        local_only = self._local_only_section()
+        if local_only is not None:
+            return local_only["label"]
+        return f"Backend: {self.runtime_backend}"
+
     def compose_content(self) -> ComposeResult:
         latest_console_item = self._console_handoff.resolve_latest_follow_item()
         with Vertical(id="watchlists-collections-shell"):
@@ -1453,19 +1484,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     id="watchlists-backend-select",
                     allow_blank=False,
                     compact=True,
-                    disabled=self.active_section == "notifications",
+                    disabled=self._local_only_section() is not None,
                     tooltip=(
-                        "The notifications inbox is local to this device."
-                        if self.active_section == "notifications"
-                        else "Choose the Watchlists data backend."
-                    ),
+                        self._local_only_section() or {}
+                    ).get("tooltip")
+                    or "Choose the Watchlists data backend.",
                 )
                 yield Static(
-                    (
-                        "Inbox: local"
-                        if self.active_section == "notifications"
-                        else f"Backend: {self.runtime_backend}"
-                    ),
+                    self._backend_label_text(),
                     id="watchlists-backend-label",
                 )
             attach_disabled, attach_tooltip = self._wc_attach_state()
@@ -2354,11 +2380,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         try:
             label = self.query_one("#watchlists-backend-label", Static)
-            label.update(
-                "Inbox: local"
-                if self.active_section == "notifications"
-                else f"Backend: {self.runtime_backend}"
-            )
+            label.update(self._backend_label_text())
         except Exception:
             pass
         # task-895: push the new write-availability into the still-mounted
@@ -3139,29 +3161,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_generate_briefing_requested(
         self, event: GenerateBriefingRequested
     ) -> None:
-        """Guard the one-generation-per-watchlist rule, then generate.
+        """Claim the one-generation-per-watchlist guard, then dispatch.
 
-        The guard is the caller's, deliberately: `generate_briefing` neither
-        checks nor recovers, because folding either in would make the
-        service both the thing guarded and the guard (see its module
-        docstring). So the order here is the contract:
+        This handler runs on the UI thread, so it does exactly two things
+        that thread is entitled to do: answer from memory, and dispatch.
+        Everything that touches the database -- the zombie sweep, the
+        generating-check, the generation itself -- happens in the worker
+        (fix round 1, Finding 1). `fail_interrupted_briefings` is a
+        transactional UPDATE, no busy timeout beyond SQLite's default is
+        configured, and this feature's own design admits a second app
+        instance against the same database file: a contended write here
+        would freeze the interface.
 
-        1. A generation this screen started is answered from memory. A live
-           worker's row reads `generating` in the database exactly like a
-           crashed one's, and only this process knows which it is.
-        2. `fail_interrupted_briefings` -- the zombie sweep -- runs BEFORE
-           the generating-check, so a row orphaned by a crash cannot wedge
-           the guard shut forever.
-        3. Anything the sweep actually recovered is REPORTED and the press
-           stops there rather than silently generating. That row may have
-           belonged to another live instance of this app against the same
-           database file, and starting a second generation over the top of
-           one still running would spend the user's provider quota twice on
-           the same window. Telling them what was found and letting them
-           press again is the honest, non-destructive half of that
-           ambiguity.
-        4. A `generating` row that survives the sweep cannot be recovered
-           from here at all, so it refuses.
+        `_briefing_in_flight` is claimed HERE, before `run_worker`, and not
+        inside the worker body (fix round 1, Finding 2). `run_worker` only
+        schedules; a check made inside the worker leaves a window in which
+        two presses both pass, and `exclusive=True` then cancels the first
+        one *mid-generation* -- leaving behind exactly the `generating` row
+        this guard exists to prevent. The guard would be manufacturing the
+        state it guards against.
         """
         event.stop()
         db = self._briefings_db()
@@ -3180,85 +3198,135 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 markup=False,
             )
             return
-        try:
-            recovered = fail_interrupted_briefings(db, watchlist_id)
-            still_generating = any(
-                str(row.get("status") or "").strip().lower() == STATUS_GENERATING
-                for row in db.list_briefings(watchlist_id)
-            )
-        except Exception as exc:  # noqa: BLE001 - reported, not raised
-            logger.warning(
-                f"Briefing guard failed for watchlist {watchlist_id}: "
-                f"{type(exc).__name__}"
-            )
-            self._notify_watchlists(
-                "Failed to read this watchlist's briefings.",
-                severity="error",
-                markup=False,
-            )
-            return
-        if recovered:
-            self._notify_watchlists(
-                f"{recovered} briefing(s) were still marked in progress and have "
-                "been marked interrupted. Press Generate again to write a new one.",
-                severity="warning",
-                markup=False,
-            )
-            self.run_worker(
-                self._load_briefings(), exclusive=True, group="wl-briefings-load"
-            )
-            return
-        if still_generating:
-            self._notify_watchlists(
-                "A briefing for this watchlist is already in progress.",
-                severity="warning",
-                markup=False,
-            )
-            return
+        self._briefing_in_flight = True
         self.run_worker(
             self._generate_briefing(db, watchlist_id),
             exclusive=True,
             group="wl-briefing",
         )
 
+    @staticmethod
+    def _briefing_row_label(row: Mapping[str, Any]) -> str:
+        """Name one briefing the way a toast has to: which row, and when."""
+        return (
+            f"briefing {row.get('id')} "
+            f"(started {row.get('created_at') or 'at an unknown time'})"
+        )
+
+    def _sweep_and_guard(
+        self, db: Any, watchlist_id: int
+    ) -> tuple[list[str], list[str]]:
+        """Zombie sweep, then the generating-check. Runs off the UI thread.
+
+        The order is the contract `briefing_service` states: the service
+        neither checks nor recovers -- folding either in would make it both
+        the thing guarded and the guard -- so the caller sweeps FIRST, and
+        only then asks whether anything is still generating. A row orphaned
+        by a crashed worker can therefore never wedge the guard shut.
+
+        Returns:
+            `(recovered, blocking)` -- labels for the rows this sweep failed
+            as interrupted, and labels for any row still `generating`
+            afterwards. Labels rather than counts so the toast can name what
+            it is talking about (fix round 1, Minor a).
+        """
+        stuck = [
+            self._briefing_row_label(row)
+            for row in db.list_briefings(watchlist_id)
+            if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
+        ]
+        fail_interrupted_briefings(db, watchlist_id)
+        blocking = [
+            self._briefing_row_label(row)
+            for row in db.list_briefings(watchlist_id)
+            if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
+        ]
+        return stuck, blocking
+
     async def _generate_briefing(self, db: Any, watchlist_id: int) -> None:
-        """Worker body: one generation, then repaint the pane.
+        """Worker body: recover, guard, generate, repaint.
 
-        Wraps `generate_briefing` in a bare `except` on purpose. That
-        function turns *provider* failures into `failed` rows rather than
-        exceptions, but deliberately lets database errors propagate -- a
-        database error is not a briefing outcome. An exception escaping a
-        Textual worker with the default `exit_on_error=True` takes the whole
-        application down, so the escape hatch has to be here.
+        The whole sequence is one worker so the guard cannot come apart from
+        the generation it guards, and every database call inside it is
+        awaited off the UI thread (`asyncio.to_thread`) -- see the handler.
 
-        The log line names the exception TYPE only. `logger.opt(exception=True)`
+        `generate_briefing` is wrapped in a bare `except` on purpose. It
+        turns *provider* failures into `failed` rows rather than exceptions,
+        but deliberately lets database errors propagate -- a database error
+        is not a briefing outcome. An exception escaping a Textual worker
+        with the default `exit_on_error=True` takes the whole application
+        down, so the escape hatch has to be here.
+
+        The log lines name the exception TYPE only. `logger.opt(exception=True)`
         would dump the failing frame's locals into a file sink running with
         `diagnose=True`, and the frames under this call hold the prompt --
         item titles and excerpts the user never chose to write to disk. Task
         3's review found exactly that leak in the service; this is the same
         rule, one layer up.
         """
-        self._briefing_in_flight = True
         generated_id: int | None = None
         try:
-            row = await generate_briefing(db, watchlist_id)
-            generated_id = (row or {}).get("id")
-        except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
-            logger.warning(
-                f"Briefing generation failed for watchlist {watchlist_id}: "
-                f"{type(exc).__name__}"
-            )
-            self._notify_watchlists(
-                "Could not write a briefing: the watchlist database could not "
-                "be reached. Nothing was recorded.",
-                severity="error",
-                markup=False,
-            )
+            try:
+                recovered, blocking = await asyncio.to_thread(
+                    self._sweep_and_guard, db, watchlist_id
+                )
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                logger.warning(
+                    f"Briefing guard failed for watchlist {watchlist_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Failed to read this watchlist's briefings. Nothing was "
+                    "started.",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            if blocking:
+                # Survived the sweep, so it was inserted after it: another
+                # live writer against this same database file. Not ours to
+                # cancel, and not ours to duplicate.
+                self._notify_watchlists(
+                    f"{', '.join(blocking)} is already in progress for this "
+                    "watchlist. Nothing was started.",
+                    severity="warning",
+                    markup=False,
+                )
+                return
+            if recovered:
+                # Recovered, and reported rather than silently regenerated:
+                # that row may have belonged to another live instance of
+                # this app, and starting a second generation over the top of
+                # one still running would spend the user's provider quota
+                # twice on the same window.
+                self._notify_watchlists(
+                    f"{', '.join(recovered)} was still marked in progress and "
+                    "has been marked interrupted. Press Generate again to "
+                    "write a new one.",
+                    severity="warning",
+                    markup=False,
+                )
+                return
+            try:
+                row = await generate_briefing(db, watchlist_id)
+                generated_id = (row or {}).get("id")
+            except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+                logger.warning(
+                    f"Briefing generation failed for watchlist {watchlist_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Could not write a briefing: the watchlist database could "
+                    "not be reached. Nothing was recorded.",
+                    severity="error",
+                    markup=False,
+                )
         finally:
             self._briefing_in_flight = False
-        # Repaint either way: on the failure path the pane may still be
-        # showing a `generating` row this attempt inserted before it broke.
-        await self._load_briefings(select_briefing_id=generated_id)
+            # Repaint on every path: a refusal has just changed a row's
+            # status, and the failure path may leave a `generating` row this
+            # attempt inserted before it broke.
+            await self._load_briefings(select_briefing_id=generated_id)
 
     async def _load_items(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
