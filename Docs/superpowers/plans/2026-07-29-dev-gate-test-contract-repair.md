@@ -3061,6 +3061,56 @@ git diff --check
 
 Expected: the module and static checks pass with no production changes.
 
+### Task 4bt: Reject missing local audio before Parakeet model loading
+
+**Files:**
+- Modify: `tldw_chatbook/Local_Ingestion/transcription_service.py`
+- Modify: `Tests/Transcription/test_mlx_parakeet_transcription.py`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This is a routine input-validation bug fix at the existing
+transcription service boundary and does not change provider or runtime
+ownership.
+
+- [ ] **Step 1: Pin the focused RED without network access**
+
+Extend `test_real_transcription_invalid_file` so the Parakeet loader raises if
+called, then retain the `TranscriptionError` assertion. Expected before repair:
+the loader sentinel proves invalid input reaches model setup.
+
+- [ ] **Step 2: Validate the shared local-file boundary**
+
+Before conversion and provider dispatch, reject an audio path that does not
+exist with `TranscriptionError`. Remove the conditional Parakeet-only
+missing-file check because the public boundary now owns this invariant. Do not
+change existing-file, conversion, empty-file, routing, or managed-download
+behavior.
+
+- [ ] **Step 3: Verify the focused and provider-adjacent coverage**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Transcription/test_mlx_parakeet_transcription.py::TestMLXParakeetIntegration::test_real_transcription_invalid_file \
+  Tests/Transcription/test_mlx_parakeet_integration.py::TestMLXParakeetIntegration::test_error_handling_invalid_file \
+  -q
+../../.venv/bin/python -m pytest \
+  Tests/Transcription/test_mlx_parakeet_transcription.py \
+  -q
+../../.venv/bin/python -m ruff check \
+  tldw_chatbook/Local_Ingestion/transcription_service.py \
+  Tests/Transcription/test_mlx_parakeet_transcription.py
+../../.venv/bin/python -m ruff format --check \
+  tldw_chatbook/Local_Ingestion/transcription_service.py \
+  Tests/Transcription/test_mlx_parakeet_transcription.py
+git diff --check
+```
+
+Expected: the invalid-file regressions finish without model or network access,
+the Parakeet transcription module passes, and static checks remain green.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

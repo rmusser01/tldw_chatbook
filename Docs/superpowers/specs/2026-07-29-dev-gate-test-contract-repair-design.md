@@ -247,6 +247,12 @@ The failures reproduce on an exact `origin/dev` checkout:
   its fake `soundfile.info()`. The accepted empty-audio fast path now returns
   before model import, so this loader-focused test no longer reaches the seam
   it intends to assert.
+- The real Parakeet MLX invalid-file regression passes a nonexistent `.wav`
+  through `_ensure_wav_format()` because the suffix shortcut does not validate
+  existence. The provider-specific missing-file guard is accidentally
+  conditional on SoundFile being unavailable, so an installed SoundFile
+  environment reaches model loading and may attempt a managed download before
+  the bad local input fails.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -794,6 +800,12 @@ Update the tests to describe current behavior:
     and `samplerate` metadata. Retain its import sentinel, chained
     `TranscriptionError`, exact loader call, and stale-debug assertion. Do not
     weaken the zero-frame production fast path.
+76. At the shared `transcribe()` local-file boundary, reject a path that does
+    not exist before `_ensure_wav_format()` or provider dispatch. Raise the
+    existing `TranscriptionError` with the missing path, retain conversion and
+    provider behavior for existing inputs, and pin the Parakeet regression so
+    model loading cannot run. Remove the now-unreachable conditional Parakeet
+    check rather than retaining two competing validators.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1104,6 +1116,12 @@ behavior. No compatibility shims. No broad deletion of live tests.
   zero-frame files and reverse the accepted behavior. Mocking the fast-path
   predicate itself would couple the test to implementation; truthful non-empty
   metadata states the loader test's existing premise directly.
+- Fixing only the Parakeet MLX guard would leave other providers free to do
+  setup work before rejecting the same invalid local input. Teaching
+  `_ensure_wav_format()` to validate would mix path validation into a conversion
+  helper and still leave direct provider helpers inconsistent. The public
+  `transcribe()` entry is the smallest shared boundary and already documents a
+  local audio path.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
