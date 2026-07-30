@@ -69,7 +69,27 @@ class _FakeAppInstance:
         #: test_evals_empty_states.py for scenarios that set this.
         self.app_config: dict = app_config or {}
 
-    def notify(self, message: str, *, severity: str = "information", **kwargs) -> None:
+    def notify(
+        self, message: str, *, severity: str = "information", markup: bool = True,
+        **kwargs,
+    ) -> None:
+        """A pure recorder, except for one deliberate exception: when
+        ``markup`` is left at its (Textual-matching) default of ``True``,
+        this parses ``message`` through the SAME ``Content.from_markup``
+        call the real ``Toast.render()`` uses (``textual/widgets/_toast.py``)
+        -- raising the same ``textual.markup.MarkupError`` on unbalanced
+        markup (e.g. a bare ``[/]``) that crashes the real app. TASK-1476's
+        review found this reachable: ``EvalsScreen`` interpolates exception
+        text (which can carry a user-controlled dataset/bench name) into
+        `notify()` calls, and a bare recorder that never looks at the text
+        would let a regression here pass silently. ``markup=False`` (what
+        every real call site now passes) skips this entirely, matching
+        ``Toast.render()``'s own ``else`` branch.
+        """
+        if markup:
+            from textual.content import Content  # noqa: PLC0415 -- narrow, mirrors _toast.py's own import
+
+            Content.from_markup(message)
         self.notifications.append((message, severity))
 
 
@@ -638,6 +658,68 @@ async def test_pressing_the_primary_action_runs_the_bench_and_selects_its_run_gr
         assert len(run_groups) == 1
         assert screen._selection.id == run_groups[0]["id"]
         assert run_groups[0]["task_id"] == runnable_bench
+
+
+class _RaisingCaptureClient:
+    """A client whose ``preflight`` raises with markup-hazard text baked
+    into the message -- stands in for the real hazard
+    (``sample_bench._load_snippets``'s ``RuntimeError(f"Dataset {name!r}
+    has no snippets to run.")``, where an imported dataset's name defaults
+    to the imported filename's stem, so a file named ``notes[/].txt``
+    would carry it) without needing a REAL dataset/bench/target actually
+    named with a bare ``[/]`` -- that would ALSO crash
+    ``LibraryRail``'s own rail-row ``Button(label=...)`` the moment the
+    rail composes (a separate, pre-existing, out-of-scope hazard the
+    controller is tracking on its own), which would fail this test for
+    the wrong reason before the click under test even happens."""
+
+    async def preflight(self, target, mode, top_k):
+        raise RuntimeError("Target 'notes[/].txt' could not be reached.")
+
+    async def capture(self, snippet, target, mode, top_k):
+        raise AssertionError("capture must not be reached -- preflight fails first")
+
+
+@pytest.mark.asyncio
+async def test_bench_run_failure_toast_with_markup_hazard_text_does_not_crash_the_app(
+    evals_app, runnable_bench
+):
+    """TASK-1476 review Critical: ``_run_bench_worker``'s error ``notify()``
+    interpolates the caught exception's message, which can carry user-
+    controlled text (see ``_RaisingCaptureClient``'s own docstring for the
+    real-world shape) -- a bare ``[/]`` is unbalanced Rich/Textual markup
+    (``textual.markup.MarkupError``). That path was unreachable before
+    this task wired up the button (it was always disabled); this pins
+    that a bench run failing with hazard text in its exception message
+    produces an error toast WITHOUT crashing the app, and that the toast
+    carries the raw, unmangled text. ``_FakeAppInstance.notify`` parses
+    real markup exactly like ``Toast.render()`` does when ``markup=True``
+    -- see its own docstring -- so this fails loudly (a real
+    ``MarkupError``, propagating out of the worker as an unhandled
+    exception) if a future edit ever drops ``markup=False`` from that call
+    again.
+    """
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        screen._sample_bench_client_factory = lambda t: _RaisingCaptureClient()
+
+        button = screen.query_one("#evals-primary-action")
+        button.scroll_visible(animate=False)
+        await pilot.pause()
+        await pilot.click("#evals-primary-action")  # must not crash the app
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+        assert pilot.app.is_running, "the app must survive the failure toast"
+        notifications = evals_app.app_instance.notifications
+        assert notifications, "the failure must still produce a toast"
+        message, severity = notifications[-1]
+        assert severity == "error"
+        assert "[/]" in message, message
+        assert "could not be reached" in message
 
 
 @pytest.mark.asyncio

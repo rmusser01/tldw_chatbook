@@ -277,8 +277,16 @@ class EvalsScreen(LabScreen):
             raise
         except Exception as exc:
             logger.opt(exception=True).warning("Sample bench creation failed.")
+            # markup=False: `exc` can carry user-controlled text (e.g. a
+            # dataset name derived from an imported filename stem) and
+            # `notify()` defaults to markup=True -- unbalanced markup in
+            # that text (a bare `[/]`) raises MarkupError inside the toast
+            # renderer and crashes the whole app. See the identical fix on
+            # `_run_bench_worker`'s two notify() calls below.
             self.app_instance.notify(
-                f"Could not create the sample bench: {exc}", severity="error"
+                f"Could not create the sample bench: {exc}",
+                severity="error",
+                markup=False,
             )
         finally:
             self._sample_bench_running = False
@@ -286,7 +294,9 @@ class EvalsScreen(LabScreen):
             self._reset_sample_bench_running_ui()
         if result is not None:
             self.app_instance.notify(
-                "Sample bench created and run.", severity="information"
+                "Sample bench created and run.",
+                severity="information",
+                markup=False,
             )
             self.select(kind="run_group", id=result.run_group_id)
 
@@ -421,15 +431,32 @@ class EvalsScreen(LabScreen):
             raise
         except Exception as exc:
             logger.opt(exception=True).warning("Bench run failed.")
+            # markup=False: `exc` can carry user-controlled text -- e.g.
+            # `sample_bench._load_snippets` raises `RuntimeError(f"Dataset
+            # {name!r} has no snippets to run.")`, and an imported dataset's
+            # name defaults to the imported filename's stem, so a file named
+            # `notes[/].txt` puts live markup straight into this string.
+            # `notify()` defaults to markup=True; unbalanced markup (a bare
+            # `[/]`) raises MarkupError inside the toast renderer and takes
+            # down the whole app -- this path was unreachable before this
+            # button was wired up (it was always disabled), so it is new
+            # here.
             self.app_instance.notify(
-                f"Could not run the bench: {exc}", severity="error"
+                f"Could not run the bench: {exc}",
+                severity="error",
+                markup=False,
             )
         finally:
             self._bench_run_running = False
             self._bench_run_cancel_token = None
             self._reset_bench_run_running_ui()
         if result is not None:
-            self.app_instance.notify("Bench run finished.", severity="information")
+            # markup=False for uniformity with the error toast above -- this
+            # string is static today, but pinning it keeps the pair
+            # consistent if it ever starts interpolating the bench name.
+            self.app_instance.notify(
+                "Bench run finished.", severity="information", markup=False
+            )
             self.select(kind="run_group", id=result.run_group_id)
 
     def _on_bench_run_progress(self, done: int, total: int) -> None:
