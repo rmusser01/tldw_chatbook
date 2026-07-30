@@ -22,10 +22,15 @@ from tldw_chatbook.DB.Prompts_DB import PromptsDatabase, DatabaseError, Conflict
 #
 # Hypothesis Setup:
 
-# A custom profile for DB tests to avoid timeouts on complex operations.
+# Child of the central 'tldw' profile (Tests/conftest.py, task-1452): inherits
+# deadline=None and the env-scaled max_examples, adds the fixture suppression
+# these DB tests need. NOTE: this file is currently named tests_* and is never
+# collected (task-1463 tracks enabling it); the profile hygiene is applied now
+# so enabling it does not reintroduce a profile leak. The central profile is
+# restored at the end of the module.
 settings.register_profile(
     "db_friendly",
-    deadline=1500,  # Increased deadline for potentially slow DB I/O
+    parent=settings.default,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
 )
 settings.load_profile("db_friendly")
@@ -653,3 +658,9 @@ class TestPromptLifecycleAsTest(PromptLifecycleMachine):
     def inject_db(self, db_instance):
         """Injects the clean db_instance fixture into the state machine."""
         self.db = db_instance
+
+
+# Restore the central profile: everything above bound "db_friendly" at
+# decoration time; without this, every module imported after this one binds
+# "db_friendly" too (task-1452).
+settings.load_profile("tldw")

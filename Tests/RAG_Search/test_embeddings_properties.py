@@ -17,14 +17,10 @@ from tldw_chatbook.RAG_Search.simplified import (
 # Import test utilities from conftest
 
 
-# Hypothesis settings for embeddings tests
-settings.register_profile(
-    "embeddings",
-    deadline=5000,  # 5 seconds for complex operations
-    max_examples=50,
-    suppress_health_check=[HealthCheck.too_slow],
-)
-settings.load_profile("embeddings")
+# Hypothesis settings come from the central 'tldw' profile (Tests/conftest.py,
+# task-1452): deadline=None and env-scaled max_examples supersede the old
+# module-level "embeddings" profile (deadline=5000, max_examples=50), whose
+# import-time load_profile() also leaked into every later-imported module.
 
 
 # Custom strategies for embeddings domain
