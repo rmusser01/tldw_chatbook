@@ -347,6 +347,7 @@ class _ControlledCommitRunner(_RecordingRunner):
         super().__init__()
         self.mode = mode
         self.token = RetainedGitChildToken(git_service._RETAINED_CHILD_TOKEN_SECRET)
+        self.commit_admitted = asyncio.Event()
         self.commit_started = asyncio.Event()
         self.release_commit = asyncio.Event()
         self.commit_calls = 0
@@ -387,6 +388,7 @@ class _ControlledCommitRunner(_RecordingRunner):
         self.calls.append((tuple(argv), dict(environment)))
         self.commit_calls += 1
         assert cancel_before_spawn
+        self.commit_admitted.set()
         hooks_argument = next(
             value
             for value in argv
@@ -2399,7 +2401,7 @@ async def test_commit_outcome_authority_drift_always_falls_back_to_quarantine(
     old_head = _git(repository, "rev-parse", "HEAD").decode().strip()
 
     waiter = service.start_commit(binding, review.handle)
-    await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+    await asyncio.wait_for(runner.commit_admitted.wait(), 1.0)
     assert service._owner.record_change(
         binding,
         SessionChange("modified", "later.md"),
@@ -2436,7 +2438,7 @@ async def test_active_commit_refuses_root_rebind_and_publishes_original_session(
     assert review.handle is not None
 
     waiter = service.start_commit(binding, review.handle)
-    await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+    await asyncio.wait_for(runner.commit_admitted.wait(), 1.0)
     with pytest.raises(RuntimeError, match="Git mutation is in progress"):
         service._owner.select_root(tmp_path / "other")
     assert service._owner.current_binding() == binding

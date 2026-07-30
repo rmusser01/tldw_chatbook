@@ -4535,13 +4535,17 @@ async def test_narrow_git_navigation_retains_editor_search_tree_and_row_selectio
             lambda: len(git_service.status_calls) == 1,
             "Session Git did not refresh",
         )
+        await _wait_for_current_git_row_projection(workspace)
         panel = workspace.query_one(
             "#file-notes-git-panel",
             LibraryFileNotesGitPanel,
         )
         panel.query_one("#file-notes-git-rows", ListView).index = 1
-        await pilot.pause()
-        assert panel.selected_group_id == 2
+        await _wait_until(
+            pilot,
+            lambda: panel.selected_group_id == 2,
+            "second Git row selection did not settle",
+        )
         panel.query_one("#file-notes-git-back", Button).press()
         await pilot.pause()
 
