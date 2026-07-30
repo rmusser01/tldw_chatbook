@@ -2261,9 +2261,12 @@ retired by TASK-577.
 
 Retarget the Collapsible hover test to the Library/RAG settings card's existing
 `CollapsibleTitle` base/hover rules in source and bundle, and retarget the
-global focus test to the existing live `CollapsibleTitle` focus selectors.
-Delete the unused `_chat_tabs.tcss` and conversations path constants, the
-legacy chat-tab tests, the preset active/hover tests, and only the retired
+focus test to assert both expanded/collapsed global `CollapsibleTitle` focus
+selectors and the matching ID-scoped Library/RAG focus overrides in source and
+bundle. Apply the same non-obscuring focus and accent-border checks to the
+scoped rules so their higher specificity cannot regress the reviewed focus
+state. Delete the unused `_chat_tabs.tcss` and conversations path constants,
+the legacy chat-tab tests, the preset active/hover tests, and only the retired
 preset/resize parameters from the shared sidebar hover test. Delete the passing
 conversation `Collapsible.-active` test because it asserts a nonexistent title
 class for a state no live Collapsible owns. Preserve every remaining contract.

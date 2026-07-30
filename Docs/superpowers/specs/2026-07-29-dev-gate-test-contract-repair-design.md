@@ -539,13 +539,17 @@ Update the tests to describe current behavior:
     production.
 58. Retarget the Collapsible hover regression to the existing
     `#settings-library-rag-card Collapsible > CollapsibleTitle` base/hover rules
-    in source and bundle, and retarget the global focus regression to the live
-    `CollapsibleTitle` selectors. Remove the retired chat-tabs path constant and
-    its three test cases, remove the two preset active/hover tests, and drop
-    preset plus resize selectors from the shared sidebar-hover parameters.
-    Remove the dead conversation `Collapsible.-active` assertion and its now
-    unused path constant because no live Collapsible owns that state. Do not
-    restore retired CSS or activate the unscoped dead conversation selectors.
+    in source and bundle. Retarget the focus regression to assert the live
+    global expanded/collapsed `CollapsibleTitle:focus` rules and the matching
+    ID-scoped Library/RAG overrides in both source and bundle; the scoped rules
+    must retain the same non-obscuring focus contract because their ID
+    specificity outranks the global rule. Remove the retired chat-tabs path
+    constant and its three test cases, remove the two preset active/hover tests,
+    and drop preset plus resize selectors from the shared sidebar-hover
+    parameters. Remove the dead conversation `Collapsible.-active` assertion
+    and its now unused path constant because no live Collapsible owns that
+    state. Do not restore retired CSS or activate the unscoped dead conversation
+    selectors.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
