@@ -3261,6 +3261,43 @@ the changed file, and `git diff --check`.
 Expected: the exact node and module pass, all STT package tests pass, and the
 production missing-file contract remains exercised by its dedicated tests.
 
+### Task 4by: Keep the historical migration fixture at a truthful v17 shape
+
+**Files:**
+- Modify: `Tests/ChaChaNotesDB/test_chachanotes_db.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This updates a synthetic historical-schema fixture for a newer
+already-accepted migration and does not change storage architecture or
+production migration behavior.
+
+- [x] **Step 1: Confirm the focused failure**
+
+Run the exact v17-to-v18 system-prompt migration regression. Expected before
+repair: replay reaches v27-to-v28 and fails because the current-only
+`assistant_authority_id` column was not removed by the synthetic rollback.
+
+- [x] **Step 2: Remove the post-v17 authority column**
+
+Drop `assistant_authority_id` from the current conversations table before
+dropping `system_prompt` and setting the recorded schema version to 17. Keep
+the existing removal of later provenance tables and every migration/trigger
+assertion. Do not change production.
+
+- [x] **Step 3: Verify focused and adjacent migration coverage**
+
+Run the exact node, the full ChaChaNotesDB initialization module, the dedicated
+v27-to-v28 character-authority migration module, Ruff/format on the changed
+test, and `git diff --check`.
+
+Expected: the synthetic v17 database replays through v28, dedicated authority
+migration coverage remains green, and no production file changes.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

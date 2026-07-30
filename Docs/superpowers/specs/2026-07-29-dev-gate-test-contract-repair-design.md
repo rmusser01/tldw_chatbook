@@ -270,6 +270,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   `audio.wav` while mocking only the recognizer. The shared missing-file guard
   correctly rejects that input before provider dispatch, so the regression no
   longer reaches the forwarding seam it intends to assert.
+- The historical v17-to-current ChaChaNotes migration regression starts from a
+  current database and removes post-v17 schema before rolling its recorded
+  version back. After v28 added `assistant_authority_id`, the fixture still
+  leaves that column behind, so replaying v27-to-v28 fails on a duplicate
+  column instead of reaching its system-prompt assertions.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -841,6 +846,12 @@ Update the tests to describe current behavior:
     `tmp_path`, pass that existing path to the real facade, and retain the exact
     configured model/source-language forwarding assertions against the mocked
     recognizer. Do not bypass or weaken the production missing-file guard.
+81. In the v17-to-current ChaChaNotes migration fixture, drop the post-v17
+    `assistant_authority_id` column before dropping `system_prompt` and rolling
+    the recorded version back. Keep the complete migration replay, final
+    version, restored system-prompt column, and sync-trigger assertions
+    unchanged; do not make the v27-to-v28 migration tolerate an invalid partial
+    schema.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1179,6 +1190,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   public precondition the production path now owns. Creating an empty temporary
   file is the smallest truthful fixture: it reaches the already-mocked
   recognizer without decoding audio or changing runtime behavior.
+- Making the v27-to-v28 authority migration ignore a pre-existing column would
+  accept a partial or corrupted schema and weaken its rollback-safe contract.
+  Removing the current-only column from the synthetic v17 fixture accurately
+  states that test's premise while leaving production migration validation and
+  the dedicated authority suite intact.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
