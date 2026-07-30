@@ -17,8 +17,20 @@ import sys
 # This must happen before importing any modules that use optional_deps
 os.environ.pop("PYTEST_CURRENT_TEST", None)  # Remove pytest env var temporarily
 
-# Set environment variables to prevent meta tensors in transformers
-os.environ["TRANSFORMERS_OFFLINE"] = "0"  # Allow downloading if needed
+# HuggingFace stays offline unless a suite explicitly opts into real model
+# downloads (TLDW_RUN_REAL_EMBEDDINGS gates the real-integration suite;
+# TLDW_TEST_ALLOW_HF_DOWNLOADS is the general escape hatch). setdefault so an
+# externally-set value always wins.
+_TRUTHY = {"1", "true", "yes", "on"}
+_ALLOW_HF_DOWNLOADS = (
+    os.environ.get("TLDW_RUN_REAL_EMBEDDINGS", "").strip().lower() in _TRUTHY
+    or os.environ.get("TLDW_TEST_ALLOW_HF_DOWNLOADS", "").strip().lower() in _TRUTHY
+)
+if _ALLOW_HF_DOWNLOADS:
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "0")
+else:
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ["HF_HUB_DISABLE_EXPERIMENTAL_WARNING"] = "1"  # Disable warnings
 os.environ["TOKENIZERS_PARALLELISM"] = "false"  # Avoid tokenizer warnings in tests
 
@@ -641,15 +653,18 @@ requires_numpy = pytest.mark.skipif(
 
 
 # ===========================================
-# Session-scoped fixture to ensure dependencies are initialized
+# Session-scoped fixture for suites that load REAL transformers models.
+# Deliberately NOT autouse (task-1451): as an autouse fixture it ran
+# transformers.utils.move_cache() plus a tiny-bert download/load for every
+# session that touched Tests/RAG_Search — including fully-mocked ones — and
+# hit the network on cold caches. Suites that load real models request it
+# explicitly (see test_embeddings_real_integration.py).
 # ===========================================
 
 
-@pytest.fixture(scope="session", autouse=True)
-def initialize_test_dependencies():
-    """Ensure dependencies are initialized before any tests run."""
-    # Dependencies should already be initialized at module import time
-    # This fixture just ensures they stay initialized
+@pytest.fixture(scope="session")
+def real_transformers_session():
+    """Warm torch/transformers for suites that load real models (meta-tensor guard)."""
     print(f"[Session Start] Dependencies available: {DEPENDENCIES_AVAILABLE}")
 
     # Force proper model initialization for transformers
