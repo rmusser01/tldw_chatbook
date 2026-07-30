@@ -37,22 +37,27 @@ The exclusion is therefore per-watchlist and comes from the junction:
 queued item still selects for a different watchlist -- that is the rule, not
 a leak.
 
-Two consequences worth stating out loud rather than leaving to be
-discovered:
+Consequences worth stating out loud rather than leaving to be discovered:
 
 - `covers_through_item_id` is the max id **considered**, which includes items
   the cap dropped. Those items are not silently lost: they are counted in
   `overflow_count` and the briefing body states the overflow ("12 more items
   arrived in this window and are not covered"). Having been reported, they
   are covered; re-selecting them next time would duplicate coverage.
-- In `curated` mode the coverage window is never computed, so the only items
-  considered are queued ones -- and the watermark advances to the newest of
-  *those*. A curated briefing can therefore step the coverage line past
-  window items it did not include. That follows directly from the recorded
-  contract ("max id considered"), and it matches curated mode's intent: the
-  user of a curated watchlist has said they want queued items, not a sweep.
-  `latest_completed_watermark` takes a MAX, so this can only ever move the
-  line forward, never rewind it.
+- **`curated` never moves the window.** The watermark is the *window's* line,
+  and curated mode is defined as selecting "regardless of the window" -- it
+  never reads the window, so it must not move it. Curated selection echoes
+  the prior watermark back unchanged (an echo rather than `None`, so a future
+  consumer reading the latest row rather than a `MAX` still sees the right
+  line). Three things follow, all of them honest:
+  - Switching a watchlist from `curated` to `auto`/`auto_featured` delivers
+    the accumulated backlog, capped like any other window, with the overflow
+    stated in the body -- never a silent hole.
+  - An item briefed while curated can appear once more in the auto leg after
+    the switch: the junction only excludes the *curated* leg, so this is
+    redundant, never lossy.
+  - A watchlist curated since inception has no watermark at all, so its first
+    non-curated briefing takes the ordinary 7-day first-window rule.
 """
 
 from __future__ import annotations
@@ -84,7 +89,18 @@ DEFAULT_ITEM_CAP = 40
 # `SELECT i.*` mirrors `get_new_items`, so rows arrive with every column
 # `normalize_watchlist_item` reads (including `queued_for_briefing`); the two
 # joined columns are the source name/type it also reports.
-_ITEM_COLUMNS = "i.*, s.name AS subscription_name, s.type AS subscription_type"
+#
+# `created_at_utc` is `created_at` normalized by SQLite for COMPARISON only:
+# `created_at` is genuinely mixed-format in this table (a
+# `DEFAULT CURRENT_TIMESTAMP` row reads `'2026-07-25 09:00:00'`,
+# `persist_subscription_item` writes `'2026-07-25T08:00:00+00:00'`), and a raw
+# string `min()` over the two sorts on the space versus the `T` -- so it can
+# pick the LATER instant as the earliest. The extra column is dropped by
+# `normalize_watchlist_item`, which builds an explicit dict.
+_ITEM_COLUMNS = (
+    "i.*, s.name AS subscription_name, s.type AS subscription_type, "
+    "datetime(i.created_at) AS created_at_utc"
+)
 
 # Membership: an item belongs to a watchlist if its source is in that
 # watchlist's CURRENT sources. `watchlist_sources.added_at` is deliberately
@@ -111,12 +127,14 @@ class BriefingSelection:
         overflow_count: How many considered items the cap dropped. Stated in
             the briefing body; never a silent truncation.
         covers_through_item_id: The new watermark -- the max item id
-            considered, including dropped ones. `None` means the window held
-            nothing, so the caller must NOT advance coverage.
-        covers_from_ts: ISO-8601 timestamp this briefing's coverage starts
-            at: the 7-day floor for a first briefing, otherwise the oldest
-            considered item's `created_at` (or `now` when nothing was
-            considered -- an empty window spans no time).
+            considered, including dropped ones. In `curated` mode it is the
+            prior watermark, echoed: that mode never reads the window, so it
+            never moves it. `None` means there is no line to record, so the
+            caller must NOT advance coverage.
+        covers_from_ts: Timestamp this briefing's coverage starts at: the
+            7-day floor for a first briefing, otherwise the oldest considered
+            item's `created_at` normalized to UTC (or `now` when nothing was
+            considered -- an empty window spans no time). Display only.
     """
 
     items: list[dict[str, Any]]
@@ -171,10 +189,20 @@ def _window_rows(
 def _curated_rows(db: "SubscriptionsDB", watchlist_id: int) -> list[dict[str, Any]]:
     """Queued items of this watchlist's sources not yet covered BY IT, newest first.
 
-    The `NOT EXISTS` is scoped through `briefings.watchlist_id`: only this
-    watchlist's own briefings exclude an item. Dropping that scope would make
-    one watchlist's briefing silently consume another's curation -- exactly
-    what keeping the flag global was meant to prevent.
+    Two predicates, both load-bearing:
+
+    - The `NOT EXISTS` is scoped through `briefings.watchlist_id`: only this
+      watchlist's own briefings exclude an item. Dropping that scope would
+      make one watchlist's briefing silently consume another's curation --
+      exactly what keeping the flag global was meant to prevent.
+    - Only a briefing that actually *reached the user* excludes an item, hence
+      the positive status allowlist. A junction row belonging to a `failed`
+      briefing must not bury a queued item forever -- writing junction rows
+      before the LLM call is a perfectly natural way for the service to
+      implement generation, so this is a live hazard rather than a
+      hypothetical. Stated as an allowlist rather than `!= 'failed'` so a
+      zombie `generating` row (a crashed worker, TASK-1090's shape) is
+      covered by the same rule instead of needing a second one.
     """
     sql = (
         f"SELECT {_ITEM_COLUMNS}{_FROM_WATCHLIST_ITEMS}"
@@ -183,6 +211,7 @@ def _curated_rows(db: "SubscriptionsDB", watchlist_id: int) -> list[dict[str, An
         "          SELECT 1 FROM briefing_items bi\n"
         "          JOIN briefings b ON b.id = bi.briefing_id\n"
         "          WHERE bi.item_id = i.id AND b.watchlist_id = ?\n"
+        "            AND b.status IN ('complete', 'empty')\n"
         "      )\n"
         "    ORDER BY i.id DESC"
     )
@@ -191,8 +220,13 @@ def _curated_rows(db: "SubscriptionsDB", watchlist_id: int) -> list[dict[str, An
 
 
 def _covers_from(rows: Sequence[dict[str, Any]], now: datetime) -> str:
-    """Oldest considered `created_at`, or `now` when nothing was considered."""
-    stamps = [row["created_at"] for row in rows if row["created_at"]]
+    """Oldest considered timestamp, or `now` when nothing was considered.
+
+    Compares `created_at_utc` -- SQLite's normalization of `created_at` -- not
+    the raw column, because the raw column holds two different string formats
+    for the same instant (see `_ITEM_COLUMNS`).
+    """
+    stamps = [row["created_at_utc"] for row in rows if row["created_at_utc"]]
     return min(stamps) if stamps else now.isoformat()
 
 
@@ -211,7 +245,8 @@ def select_briefing_items(
         watchlist_id: The watchlist being briefed.
         mode: One of `VALID_MODES`. `auto` takes window items only;
             `curated` takes queued-and-not-covered-by-this-watchlist items
-            only, ignoring the window entirely; `auto_featured` (the default
+            only, ignoring the window entirely -- and therefore leaving the
+            watermark exactly where it found it; `auto_featured` (the default
             a watchlist is created with) takes the union and features the
             queued ones.
         item_cap: Total items to hand the LLM call. Newest win; featured
@@ -260,7 +295,16 @@ def select_briefing_items(
         featured, auto = [], curated
 
     considered = featured + auto
-    covers_through = max((row["id"] for row in considered), default=None)
+    if mode == MODE_CURATED:
+        # Curated never reads the coverage window, so it must not move it:
+        # echo the prior line back (None when there is none yet, which the
+        # caller already reads as "do not advance"). Advancing to the newest
+        # queued id would walk the line past window items no briefing ever
+        # covered -- with no overflow count, no body text, and no status to
+        # show for it. See the module docstring.
+        covers_through = watermark
+    else:
+        covers_through = max((row["id"] for row in considered), default=None)
 
     # The cap squeezes the auto side first. Only when featured items alone
     # exceed the cap do featured items themselves overflow -- newest kept.

@@ -536,6 +536,132 @@ def test_empty_window_returns_none_watermark_and_does_not_advance():
     assert selection.covers_through_item_id is None
 
 
+def test_curated_selection_echoes_the_prior_watermark():
+    """Curated mode never reads the coverage window, so it must not move it.
+
+    The watermark is the *window's* line. Advancing it to the newest queued
+    id would step it past window items no briefing ever covered -- silently:
+    no `overflow_count`, no body text, no status.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Curated")["id"]
+    source = _new_source(db, watchlist, "curated")
+
+    covered = _add_item(db, source, "Covered", "2026-07-20T09:00:00+00:00")
+    _complete_briefing(db, watchlist, covered, item_ids=[covered])
+    # Everything below arrives AFTER the watermark, so the naive "max id
+    # considered" rule would drag the line forward to `queued`.
+    _add_item(db, source, "Uncovered window item", "2026-07-21T09:00:00+00:00")
+    queued = _add_item(db, source, "Queued", "2026-07-22T09:00:00+00:00", queued=True)
+
+    selection = select_briefing_items(db, watchlist, mode="curated")
+
+    assert _ids(selection) == [queued]
+    assert selection.covers_through_item_id == covered  # the prior line, echoed
+    assert selection.covers_through_item_id != queued
+
+
+def test_switching_off_curated_still_delivers_the_accumulated_window():
+    """The scenario the echo protects: a run of curated briefings must not
+    quietly consume the window items that piled up beside them.
+
+    Recorded end to end -- the curated briefing is written back with the
+    watermark selection returned, exactly as the service will -- so this
+    fails if either half of the contract slips.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Switcher")["id"]
+    source = _new_source(db, watchlist, "switcher")
+
+    first = _add_item(db, source, "First", "2026-07-01T09:00:00+00:00")
+    _complete_briefing(db, watchlist, first, item_ids=[first])
+
+    window = [
+        _add_item(db, source, f"Window {n}", "2026-07-20T09:00:00+00:00")
+        for n in range(3)
+    ]
+    queued = _add_item(db, source, "Queued", "2026-07-21T09:00:00+00:00", queued=True)
+
+    # A month of curated briefings, each recorded the way the service will.
+    for _ in range(3):
+        curated = select_briefing_items(db, watchlist, mode="curated")
+        _complete_briefing(
+            db,
+            watchlist,
+            curated.covers_through_item_id,
+            item_ids=[item["item_id"] for item in curated.items],
+        )
+
+    assert db.latest_completed_watermark(watchlist) == first
+
+    # Now the user switches the watchlist to auto_featured.
+    after_switch = select_briefing_items(db, watchlist, mode="auto_featured")
+
+    assert sorted(_ids(after_switch)) == sorted(window + [queued])
+    assert after_switch.overflow_count == 0
+    # The queued item was covered by the curated briefings, so it is no
+    # longer featured -- it arrives once more through the auto leg
+    # (redundant, never lossy).
+    assert after_switch.featured_ids == set()
+    assert after_switch.covers_through_item_id == queued
+
+
+def test_a_failed_briefings_junction_rows_do_not_bury_a_queued_item():
+    """Only a briefing that reached the user excludes an item from curation.
+
+    Writing junction rows before the LLM call is a natural implementation, so
+    a `failed` briefing plausibly leaves junction rows behind. If those rows
+    counted, one failure would bury the queued item forever -- the user's
+    curation destroyed by an error they were already shown.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Flaky")["id"]
+    source = _new_source(db, watchlist, "flaky")
+    queued = _add_item(db, source, "Queued", "2026-07-20T09:00:00+00:00", queued=True)
+
+    for status in ("failed", "generating"):
+        briefing = db.insert_briefing(watchlist)
+        db.update_briefing(briefing, status=status, error="boom")
+        with db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO briefing_items (briefing_id, item_id, featured) "
+                "VALUES (?, ?, 1)",
+                (briefing, queued),
+            )
+
+    # A failure and a zombie `generating` row (crashed worker) later, the
+    # item is still curated.
+    assert _ids(select_briefing_items(db, watchlist, mode="curated")) == [queued]
+
+    # ... and a briefing that DID reach the user still excludes it.
+    _complete_briefing(db, watchlist, queued, item_ids=[queued])
+    assert select_briefing_items(db, watchlist, mode="curated").items == []
+
+
+def test_covers_from_ts_compares_normalized_timestamps():
+    """`created_at` is mixed-format in this table: `CURRENT_TIMESTAMP` writes
+    `'2026-07-25 09:00:00'` and the persist path writes
+    `'2026-07-25T08:00:00+00:00'`. A raw string `min()` sorts on the space
+    versus the `T` and picks the LATER instant as the earliest.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Formats")["id"]
+    source = _new_source(db, watchlist, "formats")
+
+    anchor = _add_item(db, source, "Anchor", "2026-07-01T09:00:00+00:00")
+    _complete_briefing(db, watchlist, anchor, item_ids=[anchor])
+
+    # Same day; the ISO one is an hour EARLIER but sorts LATER as a string.
+    _add_item(db, source, "Iso format", "2026-07-25T08:00:00+00:00")
+    _add_item(db, source, "Space format", "2026-07-25 09:00:00")
+
+    selection = select_briefing_items(db, watchlist, mode="auto")
+
+    assert len(selection.items) == 2
+    assert selection.covers_from_ts == "2026-07-25 08:00:00"
+    assert selection.covers_from_ts != "2026-07-25 09:00:00"
+
+
 def test_unknown_mode_is_rejected_by_name():
     db = SubscriptionsDB(":memory:", "test")
     watchlist = WatchlistBundleService(db).create(name="Modes")["id"]
