@@ -102,6 +102,10 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                     await pilot.pause(0.01)
                 else:
                     raise AssertionError("Library contextual footer did not update.")
+                assert (
+                    screen_footer.shortcut_text
+                    == "u use Library context in Console"
+                )
 
                 footer_before = screen_footer
                 screen.refresh(recompose=True)
@@ -118,6 +122,10 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                     raise AssertionError(
                         "Library footer registration did not survive recompose."
                     )
+                assert (
+                    footer_after.shortcut_text
+                    == "u use Library context in Console"
+                )
 
                 await app.handle_screen_navigation(NavigateToScreen("settings"))
                 screen = await _wait_for_screen(
