@@ -770,6 +770,56 @@ async def test_a_second_press_while_a_bench_run_is_in_flight_is_a_no_op(
 
 
 @pytest.mark.asyncio
+async def test_rail_run_row_shows_the_running_glyph_while_the_run_is_in_flight(
+    evals_app, runnable_bench
+):
+    """TASK-1480: ``46d56f371``/``da4967a7a`` wired the primary action to a
+    real ``WordBenchRunner`` pass, which sets every run in a group to
+    "running" in the DB before capturing a single cell (``runner.py``,
+    right after ``create_run_group``) -- a group CAN genuinely be
+    "running" while the rail composes. This pins that a rail recompose
+    landing in that window (mirrors a user clicking a rail row again
+    while a run is in flight -- ``EvalsScreen.select()`` always schedules
+    ``refresh(recompose=True)``, even for a no-op reselection; the
+    progress callback itself only touches the primary-action button, see
+    ``_on_bench_run_progress``) renders the run row with the ``●`` glyph,
+    and that it flips to ``✓`` once the run completes -- i.e. that the
+    view-model's roll-up (TASK-1480) actually reaches the mounted rail
+    row, not just ``run_groups()``'s own return value.
+    """
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        button = screen.query_one("#evals-primary-action", Button)
+        button.scroll_visible(animate=False)
+        await pilot.pause()
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+
+        # Force a fresh rail recompose while the run is still in flight.
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+
+        run_row = screen.query_one("#evals-rail-row-runs-0", Button)
+        assert str(run_row.label).startswith("● "), str(run_row.label)
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+        run_row = screen.query_one("#evals-rail-row-runs-0", Button)
+        assert str(run_row.label).startswith("✓ "), str(run_row.label)
+
+
+@pytest.mark.asyncio
 async def test_inspector_reports_an_unexpected_load_bench_failure_instead_of_going_blank(
     evals_app, seeded_bench, monkeypatch
 ):

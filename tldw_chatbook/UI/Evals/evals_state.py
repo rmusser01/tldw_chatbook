@@ -98,6 +98,22 @@ class EvalsViewModel:
         group. Runs with no ``run_group_id`` (never grouped) are not
         selectable here -- there is nothing for a "run_group" selection to
         resolve to.
+
+        Each row also carries a rolled-up ``"status"`` (TASK-1480): the
+        rail's run-row label needs one status per GROUP, but the DB tracks
+        status per per-target run, and those can genuinely disagree --
+        ``46d56f371``/``da4967a7a`` wired the primary action to a live
+        ``WordBenchRunner`` pass (``runner.py`` moves each run
+        pending -> running -> completed/cancelled independently), so a
+        group composing mid-run can have one target still "running" while
+        another has already finished. Precedence, computed in this same
+        pivot pass so it never re-reads ``list_runs()``: any run
+        "running" makes the whole group "running"; else any run
+        "cancelled" makes it "cancelled"; else "completed" -- this also
+        folds "pending" and "failed" runs into "completed", since the
+        rail has no separate glyph for those and a group with no run
+        still running or explicitly cancelled reads as done from the
+        library rail's point of view.
         """
         if self._db is None:
             return []
@@ -115,11 +131,30 @@ class EvalsViewModel:
                     "task_name": run.get("task_name"),
                     "created_at": run.get("created_at"),
                     "run_count": 0,
+                    "_has_running": False,
+                    "_has_cancelled": False,
                 }
                 groups[group_id] = group
                 order.append(group_id)
             group["run_count"] += 1
-        return [groups[group_id] for group_id in order]
+            run_status = run.get("status")
+            if run_status == "running":
+                group["_has_running"] = True
+            elif run_status == "cancelled":
+                group["_has_cancelled"] = True
+        results: list[dict[str, Any]] = []
+        for group_id in order:
+            group = groups[group_id]
+            has_running = group.pop("_has_running")
+            has_cancelled = group.pop("_has_cancelled")
+            if has_running:
+                group["status"] = "running"
+            elif has_cancelled:
+                group["status"] = "cancelled"
+            else:
+                group["status"] = "completed"
+            results.append(group)
+        return results
 
     def library_is_empty(self) -> bool:
         """Whether the whole workbench library -- benches, classic tasks,

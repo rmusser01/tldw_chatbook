@@ -174,3 +174,100 @@ async def test_unavailable_service_raises_runtime_error():
     unavailable_view_model = EvalsViewModel(None)
     with pytest.raises(RuntimeError):
         await run_existing_bench(unavailable_view_model, {}, "whatever")
+
+
+# ---------------------------------------------------------------------------
+# TASK-1480 -- EvalsViewModel.run_groups() status roll-up.
+#
+# A word bench run group shares one run_group_id across N per-target
+# eval_runs rows (word_bench/storage.create_run_group), and runner.py moves
+# each one independently through pending -> running -> completed/cancelled
+# (see runner.py:203/244/304/308) -- a group composing mid-run can
+# genuinely have targets disagreeing on status. `_run_with_status` builds a
+# group with an arbitrary status per run directly via the DB, rather than
+# going through a full `run_existing_bench`/`WordBenchRunner` pass (which
+# only ever produces a single terminal status for every run in one call),
+# so these tests can exercise every precedence combination the pivot in
+# `evals_state.run_groups()` needs to handle.
+# ---------------------------------------------------------------------------
+
+
+def _run_with_status(
+    db: EvalsDB, task_id: str, target_id: str, group_id: str, status: str
+) -> str:
+    run_id = db.create_run(name=f"run-{status}", task_id=task_id, model_id=target_id)
+    db.update_run(run_id, {"run_group_id": group_id})
+    if status != "pending":
+        db.update_run_status(run_id, status)
+    return run_id
+
+
+def test_run_groups_status_is_running_when_any_run_in_the_group_is_running(
+    db, view_model, task_id, target_id
+):
+    group_id = uuid.uuid4().hex
+    _run_with_status(db, task_id, target_id, group_id, "completed")
+    _run_with_status(db, task_id, target_id, group_id, "running")
+
+    group = view_model.run_group_by_id(group_id)
+    assert group is not None
+    assert group["status"] == "running"
+
+
+def test_run_groups_status_is_cancelled_when_no_run_is_running_but_one_is_cancelled(
+    db, view_model, task_id, target_id
+):
+    group_id = uuid.uuid4().hex
+    _run_with_status(db, task_id, target_id, group_id, "completed")
+    _run_with_status(db, task_id, target_id, group_id, "cancelled")
+
+    group = view_model.run_group_by_id(group_id)
+    assert group["status"] == "cancelled"
+
+
+def test_run_groups_status_is_completed_when_every_run_in_the_group_is_completed(
+    db, view_model, task_id, target_id
+):
+    group_id = uuid.uuid4().hex
+    _run_with_status(db, task_id, target_id, group_id, "completed")
+    _run_with_status(db, task_id, target_id, group_id, "completed")
+
+    group = view_model.run_group_by_id(group_id)
+    assert group["status"] == "completed"
+
+
+def test_run_groups_status_running_outranks_cancelled_in_the_same_group(
+    db, view_model, task_id, target_id
+):
+    """Pins the roll-up's precedence order (brief: running, else
+    cancelled, else completed) rather than e.g. last-run-in-the-list-wins
+    or first-run-wins."""
+    group_id = uuid.uuid4().hex
+    _run_with_status(db, task_id, target_id, group_id, "cancelled")
+    _run_with_status(db, task_id, target_id, group_id, "running")
+
+    group = view_model.run_group_by_id(group_id)
+    assert group["status"] == "running"
+
+
+def test_run_groups_status_folds_a_failed_run_into_completed(
+    db, view_model, task_id, target_id
+):
+    """"failed" has no dedicated rail glyph (TASK-1480's brief only ever
+    names three: running/cancelled/completed) -- a group with a failed
+    run but nothing still running or cancelled rolls up to "completed"."""
+    group_id = uuid.uuid4().hex
+    _run_with_status(db, task_id, target_id, group_id, "failed")
+
+    group = view_model.run_group_by_id(group_id)
+    assert group["status"] == "completed"
+
+
+def test_run_groups_status_folds_a_pending_run_into_completed(
+    db, view_model, task_id, target_id
+):
+    group_id = uuid.uuid4().hex
+    _run_with_status(db, task_id, target_id, group_id, "pending")
+
+    group = view_model.run_group_by_id(group_id)
+    assert group["status"] == "completed"

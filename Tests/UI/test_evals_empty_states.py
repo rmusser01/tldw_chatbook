@@ -28,7 +28,11 @@ from tldw_chatbook.Evals.word_bench.storage import load_grid
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Evals import sample_bench
 from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
-from tldw_chatbook.UI.Evals.library_rail import LibraryRail
+from tldw_chatbook.UI.Evals.library_rail import (
+    LibraryRail,
+    _run_group_row_label,
+    _run_group_row_time,
+)
 from tldw_chatbook.UI.Evals.results_grid import ResultsGrid
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
@@ -1156,3 +1160,117 @@ async def test_export_rejects_an_invalid_path_without_crashing(
         monkeypatch.setattr(results_grid_module, "validate_path_simple", _reject)
         # Must not raise.
         grid._write_export_file(Path("/tmp/whatever.json"))
+
+
+# ---------------------------------------------------------------------------
+# TASK-1480 -- run-row status glyph + timestamp. Pure functions, no Textual
+# mount required: `_run_group_row_label`/`_run_group_row_time` take a plain
+# row dict (the shape `EvalsViewModel.run_groups()` returns) and return a
+# str, so these test the rendering logic directly rather than through a
+# mounted rail. `test_evals_screen.py` has the complementary live-run
+# integration test (a genuinely "running" DB row reaching a mounted rail
+# row via a real recompose).
+# ---------------------------------------------------------------------------
+
+
+def test_run_group_row_label_completed_uses_check_glyph_and_hh_mm_time():
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "completed",
+    }
+    assert _run_group_row_label(row) == "✓ 14:02 · loaded-nouns v1"
+
+
+def test_run_group_row_label_cancelled_uses_cross_glyph():
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 13:55:00",
+        "status": "cancelled",
+    }
+    assert _run_group_row_label(row) == "✗ 13:55 · loaded-nouns v1"
+
+
+def test_run_group_row_label_running_uses_dot_glyph():
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:31:00",
+        "status": "running",
+    }
+    assert _run_group_row_label(row) == "● 14:31 · loaded-nouns v1"
+
+
+def test_run_group_row_label_glyphs_are_single_cell_width():
+    """Per the brief/module docstring: never emoji -- double-width in this
+    app's terminal, a repeated past defect. Verify with Rich's own cell
+    width, not just "looks like one character to the eye"."""
+    from rich.cells import cell_len
+
+    for status, glyph in (
+        ("running", "●"), ("cancelled", "✗"), ("completed", "✓"),
+    ):
+        row = {"task_name": "x", "created_at": "2026-07-30 14:02:00", "status": status}
+        label = _run_group_row_label(row)
+        assert label.startswith(glyph), label
+        assert cell_len(glyph) == 1, f"{status} glyph {glyph!r} is not single-width"
+
+
+def test_run_group_row_time_falls_back_to_the_raw_string_on_parse_failure():
+    """`created_at` is a free-text DB column with no format enforcement at
+    this layer -- an unparseable value must never crash the rail, and the
+    brief pins the fallback as the raw string, not a placeholder."""
+    assert _run_group_row_time("not-a-timestamp") == "not-a-timestamp"
+
+
+def test_run_group_row_time_falls_back_when_created_at_is_missing():
+    assert _run_group_row_time(None) == ""
+
+
+def test_run_group_row_label_does_not_crash_over_an_unparseable_timestamp():
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "not-a-timestamp",
+        "status": "completed",
+    }
+    assert _run_group_row_label(row) == "✓ not-a-timestamp · loaded-nouns v1"
+
+
+def test_run_group_row_label_folds_a_failed_run_into_the_completed_glyph():
+    """`run_groups()`'s roll-up (evals_state.py) only ever hands this
+    function "running"/"cancelled"/"completed" -- a "failed" (or
+    "pending") run rolls up to "completed" there. Pinned here too since
+    TASK-1480's own AC calls out "failed" runs by name."""
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "failed",
+    }
+    assert _run_group_row_label(row) == "✓ 14:02 · loaded-nouns v1"
+
+
+def test_run_group_row_label_missing_task_name_falls_back_to_untitled_run():
+    row = {"task_name": None, "created_at": "2026-07-30 14:02:00", "status": "completed"}
+    assert _run_group_row_label(row) == "✓ 14:02 · Untitled run"
+
+
+def test_run_group_row_label_escapes_a_markup_hazard_in_the_task_name():
+    """`Button(label=...)` parses its argument as Textual markup by
+    default (`Content.from_text`'s own `markup=True` default) -- an
+    unescaped bench name containing a bare `[/]` raises `MarkupError` the
+    instant the rail composes (the same hazard task-1476 fixed for
+    bench-run toast text; see `_run_group_row_label`'s own docstring).
+    This proves the label round-trips through the REAL parser without
+    raising, and that the rendered text still contains the raw,
+    unmangled brackets -- not that some other string merely "looks
+    escaped"."""
+    from textual.content import Content
+
+    row = {
+        "task_name": "loaded-nouns[/]v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "completed",
+    }
+    label = _run_group_row_label(row)
+
+    content = Content.from_markup(label)  # must not raise MarkupError
+    assert content.plain == "✓ 14:02 · loaded-nouns[/]v1"

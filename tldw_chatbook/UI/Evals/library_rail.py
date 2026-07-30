@@ -60,9 +60,11 @@ satisfies ``provider_is_configured``) adds no row at all.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
@@ -128,11 +130,66 @@ def _dataset_row_label(row: dict[str, Any]) -> str:
     return str(row.get("name") or "Untitled dataset")
 
 
+#: Single-cell-width status glyphs for run rows -- NEVER emoji, which
+#: render double-width in this app's terminal (a repeated past defect).
+#: Status must never be conveyed by colour alone; the glyph itself is the
+#: signal. Keyed by ``EvalsViewModel.run_groups()``'s rolled-up
+#: ``"status"`` (TASK-1480) -- an unrecognised/missing status (there
+#: should never be one; kept only so a stale or malformed row degrades to
+#: a glyph rather than a ``KeyError`` crashing the rail) falls back to the
+#: "done" glyph.
+_RUN_STATUS_GLYPHS: dict[str, str] = {
+    "running": "●",  # ● BLACK CIRCLE
+    "cancelled": "✗",  # ✗ BALLOT X
+    "completed": "✓",  # ✓ CHECK MARK
+}
+
+
+def _run_group_row_time(created_at: Any) -> str:
+    """``created_at`` as ``HH:MM``, per the design spec's rail mock.
+
+    ``EvalsDB`` stores ``eval_runs.created_at`` via SQLite's
+    ``datetime('now', 'utc')`` (``"YYYY-MM-DD HH:MM:SS"``, no ``T`` or UTC
+    offset) -- a format ``datetime.fromisoformat`` happens to accept
+    directly on Python 3.11+. It is still a free-text column with no
+    format enforcement at the DB layer, so this parses defensively and
+    falls back to the raw string on any parse failure rather than crash
+    the rail over a timestamp.
+    """
+    text = "" if created_at is None else str(created_at)
+    try:
+        return datetime.fromisoformat(text).strftime("%H:%M")
+    except (TypeError, ValueError):
+        return text
+
+
 def _run_group_row_label(row: dict[str, Any]) -> str:
-    name = row.get("task_name") or "Untitled run"
-    count = row.get("run_count") or 0
-    target_word = "target" if count == 1 else "targets"
-    return f"{name} ({count} {target_word})"
+    """``● 14:31 · <task_name>`` / ``✓ 14:02 · <task_name>`` / ``✗ 13:55 ·
+    <task_name>`` -- the design spec's own rail mock
+    (``Docs/superpowers/specs/2026-07-25-evals-console-rebuild-design.md``).
+
+    TASK-1480: before this, every run row rendered the exact same shape a
+    bench row did (``"<name> (N targets)"``), so a live UAT pass could not
+    tell a bench apart from one of its own past runs at a glance, and had
+    no way to see a run currently in flight. See ``run_groups()``'s own
+    docstring for how the leading glyph's status is rolled up from the
+    group's per-target runs.
+
+    ``task_name`` reaches this function as a free-text bench name;
+    ``Button(label=...)`` parses its argument as Textual markup by
+    default (``Content.from_text``'s ``markup=True`` default), so an
+    unescaped name containing a bare ``[/]`` would raise ``MarkupError``
+    and crash the rail the instant it composes -- the same hazard
+    task-1476 fixed for bench-run toast text (``evals_screen.py``'s
+    ``_run_bench_worker``/``_create_sample_bench_worker``), left open
+    there as a separate, out-of-scope issue in this exact function (see
+    that commit's ``_RaisingCaptureClient`` docstring in
+    ``Tests/UI/test_evals_screen.py``). Escaping here closes it.
+    """
+    name = str(row.get("task_name") or "Untitled run")
+    glyph = _RUN_STATUS_GLYPHS.get(row.get("status"), _RUN_STATUS_GLYPHS["completed"])
+    time_text = _run_group_row_time(row.get("created_at"))
+    return f"{glyph} {time_text} · {escape_markup(name)}"
 
 
 class LibraryRail(NotifyMixin, Vertical):
