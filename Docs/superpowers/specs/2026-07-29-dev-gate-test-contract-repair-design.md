@@ -253,6 +253,10 @@ The failures reproduce on an exact `origin/dev` checkout:
   conditional on SoundFile being unavailable, so an installed SoundFile
   environment reaches model loading and may attempt a managed download before
   the bad local input fails.
+- Two Model Artifacts regressions monkeypatch `service_module.os.scandir`, which
+  replaces the process-wide standard-library function through the shared
+  module object. The test bodies pass, but pytest teardown calls the spy with
+  an integer directory descriptor and raises `TypeError`.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -807,6 +811,11 @@ Update the tests to describe current behavior:
     model loading cannot run. Retain the private Parakeet helper's existing
     conditional defense because direct helper coverage depends on it to avoid
     initializing MLX when SoundFile is unavailable and the path is missing.
+77. In both Model Artifacts regressions that replace
+    `service_module.os.scandir`, use `monkeypatch.context()` around only the
+    `list_installed()` or `disk_usage()` call. Retain the exact no-traversal and
+    directory-identity assertions while restoring the real function before
+    pytest cleanup.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1126,6 +1135,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   direct helper calls initialize MLX for an input that is already known to be
   invalid, so it remains as a narrow defense rather than a competing public
   owner.
+- Teaching the Model Artifacts `os.scandir` spies to accept pytest's integer
+  directory descriptors would make process-global cleanup calls part of each
+  test's observation surface. Scoping the existing monkeypatches to the service
+  invocation restores the real standard-library function before teardown while
+  preserving the exact no-traversal and identity-change assertions.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

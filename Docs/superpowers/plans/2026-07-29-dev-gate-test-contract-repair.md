@@ -3111,6 +3111,43 @@ git diff --check
 Expected: the invalid-file regressions finish without model or network access,
 the Parakeet transcription module passes, and static checks remain green.
 
+### Task 4bu: Scope Model Artifacts scandir spies to the service call
+
+**Files:**
+- Modify: `Tests/Model_Artifacts/test_service.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This is a test-isolation correction and does not change production
+architecture or behavior.
+
+- [x] **Step 1: Confirm the teardown failure**
+
+Run the focused inventory test. Expected before repair: the test body passes,
+then pytest teardown calls the process-wide `os.scandir` spy with an integer
+directory descriptor and raises `TypeError`.
+
+- [x] **Step 2: Bound both process-wide monkeypatches**
+
+Use `monkeypatch.context()` around only the `list_installed()` and
+`disk_usage()` calls in the two tests that replace `service_module.os.scandir`.
+Keep their existing assertions and production code unchanged.
+
+- [x] **Step 3: Verify the focused module**
+
+```bash
+../../.venv/bin/python -m pytest -q Tests/Model_Artifacts/test_service.py
+../../.venv/bin/python -m ruff check Tests/Model_Artifacts/test_service.py
+../../.venv/bin/python -m ruff format --check Tests/Model_Artifacts/test_service.py
+```
+
+Expected: all checks pass and pytest teardown uses the restored standard-library
+function.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

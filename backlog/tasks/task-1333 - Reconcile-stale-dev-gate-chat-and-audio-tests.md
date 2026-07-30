@@ -105,6 +105,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #76 The Console pending-skill-script preservation regression seeds and reads the current screen-owned task-resume state instead of the retired `chat_state` wrapper, while retaining exact preservation and clear behavior.
 - [ ] #77 The Parakeet MLX file-loader construction regression supplies non-empty audio metadata so it reaches the loader seam instead of the zero-frame fast path, while retaining exact loader-error chaining and stale-debug coverage.
 - [ ] #78 Transcription rejects a nonexistent local audio path before format conversion, provider setup, or model loading, returning `TranscriptionError` without attempting a Parakeet MLX download while preserving existing-file behavior for every provider.
+- [ ] #79 Model-artifact regressions that observe `os.scandir` scope their process-wide monkeypatches to the service call, preserving the traversal and directory-identity assertions without intercepting pytest's integer-file-descriptor cleanup.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -188,6 +189,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 70. Retarget the pending-skill-script preservation test to the screen-owned task-resume state.
 71. Give the Parakeet MLX loader-construction fixture non-empty audio metadata.
 72. Validate the shared local-audio input boundary before conversion or provider dispatch so a missing WAV cannot trigger Parakeet model loading.
-73. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-74. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+73. Scope both Model Artifacts `os.scandir` monkeypatches to their service calls so pytest cleanup sees the original standard-library function.
+74. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+75. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
