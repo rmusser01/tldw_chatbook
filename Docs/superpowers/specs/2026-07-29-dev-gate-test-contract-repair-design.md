@@ -124,6 +124,14 @@ The failures reproduce on an exact `origin/dev` checkout:
   `search_media` completes, but `_is_current_media_owner()` correctly rejects
   presentation because the isolated mock app has no screen stack and the
   mounted host screen does not name this widget as its `media_window`.
+- The non-obscuring focus module has nine stale failures. Its generic
+  Collapsible hover/focus checks still target Textual's nonexistent
+  `.collapsible--header` class even though TASK-503 intentionally moved global
+  focus to `CollapsibleTitle` and scoped the QA-reviewed decorative hover to
+  `#settings-library-rag-card`. The other seven failures read `_chat_tabs.tcss`
+  or assert preset/resize selectors explicitly retired by TASK-577. A separate
+  passing conversation test also blesses the dead header class for an
+  `-active` state no live Collapsible owns.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -529,6 +537,15 @@ Update the tests to describe current behavior:
     existing pilot pauses for reactive presentation; do not bypass
     `_is_current_media_owner()`, add sleeps or a polling helper, or change
     production.
+58. Retarget the Collapsible hover regression to the existing
+    `#settings-library-rag-card Collapsible > CollapsibleTitle` base/hover rules
+    in source and bundle, and retarget the global focus regression to the live
+    `CollapsibleTitle` selectors. Remove the retired chat-tabs path constant and
+    its three test cases, remove the two preset active/hover tests, and drop
+    preset plus resize selectors from the shared sidebar-hover parameters.
+    Remove the dead conversation `Collapsible.-active` assertion and its now
+    unused path constant because no live Collapsible owns that state. Do not
+    restore retired CSS or activate the unscoped dead conversation selectors.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -744,6 +761,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   route-ownership contract that protects replacement Media windows from stale
   writes. Wiring the already-mounted screen and mock stack makes the isolated
   fixture satisfy the real contract without another test abstraction.
+- Recreating `_chat_tabs.tcss`, preset controls, or the resize control solely
+  for static assertions would reverse TASK-577 retirement. Renaming the bare
+  conversation selector to `CollapsibleTitle` would make a formerly inert,
+  globally bundled rule style every Collapsible; removing its ownerless test is
+  safer and more honest than introducing unreviewed app-wide UI behavior.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

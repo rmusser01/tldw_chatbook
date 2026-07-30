@@ -2245,6 +2245,45 @@ git diff --check
 Expected: all seven current-shell nodes pass with deterministic worker
 ownership and unchanged user-facing behavior.
 
+### Task 4bb: Reconcile retired focus-contract selectors
+
+**Files:**
+- Modify: `Tests/UI/test_non_obscuring_focus_contract.py`
+
+- [ ] **Step 1: Preserve the complete stale cluster**
+
+Run the full module. Expected before repair: 9 failures and 92 passes. Two
+failures target Textual's dead `.collapsible--header`; three read/assert the
+deleted legacy chat-tabs stylesheet; and four assert preset/resize selectors
+retired by TASK-577.
+
+- [ ] **Step 2: Follow live focus owners and delete dead assertions**
+
+Retarget the Collapsible hover test to the Library/RAG settings card's existing
+`CollapsibleTitle` base/hover rules in source and bundle, and retarget the
+global focus test to the existing live `CollapsibleTitle` focus selectors.
+Delete the unused `_chat_tabs.tcss` and conversations path constants, the
+legacy chat-tab tests, the preset active/hover tests, and only the retired
+preset/resize parameters from the shared sidebar hover test. Delete the passing
+conversation `Collapsible.-active` test because it asserts a nonexistent title
+class for a state no live Collapsible owns. Preserve every remaining contract.
+Do not restore retired CSS, change production, or activate the dead unscoped
+conversation rules.
+
+- [ ] **Step 3: Verify all remaining focus contracts**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_non_obscuring_focus_contract.py \
+  -q
+../../.venv/bin/python -m ruff check Tests/UI/test_non_obscuring_focus_contract.py
+../../.venv/bin/python -m ruff format --check Tests/UI/test_non_obscuring_focus_contract.py
+git diff --check
+```
+
+Expected: all 93 remaining current-owner contracts pass, and Ruff plus diff
+checks remain clean.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
