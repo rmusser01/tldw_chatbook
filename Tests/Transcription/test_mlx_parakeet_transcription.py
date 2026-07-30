@@ -21,6 +21,7 @@ from tldw_chatbook.Local_Ingestion.transcription_service import (
     TranscriptionError,
     PARAKEET_MLX_AVAILABLE,
 )
+from tldw_chatbook.Utils.optional_deps import MODULES as OPTIONAL_MODULES
 
 
 class MockAudioInfo:
@@ -599,6 +600,9 @@ class TestMLXParakeetIntegration:
         """Create a real TranscriptionService instance."""
         if not PARAKEET_MLX_AVAILABLE:
             pytest.skip("Parakeet MLX not available")
+        loader = getattr(OPTIONAL_MODULES.get("parakeet_mlx"), "from_pretrained", None)
+        if not callable(loader):
+            pytest.skip("Parakeet MLX from_pretrained API not available")
 
         service = TranscriptionService()
         return service

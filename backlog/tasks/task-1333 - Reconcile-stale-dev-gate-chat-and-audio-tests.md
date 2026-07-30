@@ -116,6 +116,8 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #86 Incremental Chatbook import performance compares robust early and late medians so sustained slowdown still fails while a single millisecond-scale host scheduling outlier cannot fail an otherwise successful import sequence.
 - [ ] #87 The ChaChaNotes thread-local connection regression retains each returned connection object through its identity assertion, so short-lived thread and object-id reuse cannot collapse five distinct connections into four.
 - [ ] #88 TTS profile cleanup regressions scope process-wide `tempfile.mkstemp` and `os.unlink` replacements to the candidate-validation call, preserving cleanup signal/error precedence without intercepting pytest temporary-directory removal.
+- [ ] #89 Real Parakeet MLX integration tests run only when the installed cached module exposes the callable `from_pretrained` API required by production, while all mocked unit coverage continues to run on macOS when that runtime API is absent.
+- [ ] #90 Faster-whisper tests that instantiate a real model are consistently classified as slow, so the mandatory offline gate does not download model artifacts while explicit `--run-slow` runs retain the real integration coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -209,6 +211,8 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 80. Replace the incremental Chatbook import test's single-sample maximum-deviation assertion with an early-versus-late median degradation check.
 81. Retain live connection objects in the thread-local ChaChaNotes identity regression until all worker results have been asserted.
 82. Scope the two TTS profile unlink-cleanup tests' process-global standard-library patches to their candidate-validation calls.
-83. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-84. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+83. Gate both real Parakeet MLX integration entry points on the loader API production actually calls, not package discoverability alone.
+84. Mark the remaining faster-whisper tests that load the real tiny model as slow, matching the rest of that real-model integration class.
+85. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+86. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

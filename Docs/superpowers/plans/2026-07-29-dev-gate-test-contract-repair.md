@@ -3440,7 +3440,7 @@ Run the exact node, the full ChaChaNotes property module, Ruff/format, and
 Expected: five distinct retained connection objects are observed under normal
 thread scheduling and all adjacent property tests remain green.
 
-### Task 4ce: Scope TTS unlink cleanup fakes to candidate validation
+### Task 4cd: Scope TTS unlink cleanup fakes to candidate validation
 
 **Files:**
 - Modify: `Tests/TTS/test_profile_schema.py`
@@ -3474,6 +3474,77 @@ and `git diff --check`.
 
 Expected: exact cleanup signal/error precedence remains green and pytest
 temporary-directory teardown sees the real standard library.
+
+### Task 4ce: Gate real Parakeet MLX tests on the loader API
+
+**Files:**
+- Modify: `Tests/Transcription/test_mlx_parakeet_transcription.py`
+- Modify: `Tests/Transcription/test_mlx_parakeet_integration.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This aligns optional real-integration test selection with the
+existing production loader contract without changing provider behavior or
+dependency architecture.
+
+- [x] **Step 1: Confirm the capability mismatch**
+
+Record the full-suite real-integration failure and inspect the dependency
+cache. Expected: package discovery reports Parakeet MLX installed, but the
+cached module lacks the callable `from_pretrained` API used by production.
+
+- [x] **Step 2: Gate only real-model integration**
+
+Require a callable `from_pretrained` on the already-cached optional module in
+both real-integration entry points. Keep unit/mock tests active. Do not import
+the package again, initialize MLX, or download a model during skip selection.
+
+- [x] **Step 3: Verify Parakeet MLX coverage**
+
+Run the failing exact node with skip reasons, both complete Parakeet MLX test
+modules, the full Transcription package, Ruff/format, and `git diff --check`.
+
+Expected: real-model cases skip with the precise missing-API reason on this
+host, while mocked provider behavior remains green.
+
+### Task 4cf: Classify all faster-whisper real-model tests as slow
+
+**Files:**
+- Modify: `Tests/Transcription/test_faster_whisper_transcription.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This corrects test classification within the existing opt-in
+real-inference boundary; it does not change provider behavior, artifact
+ownership, or dependency architecture.
+
+- [x] **Step 1: Reproduce the offline artifact download**
+
+Run the complete Transcription package without `--run-slow`. Expected: the
+unmarked empty-audio and progress tests instantiate `faster-whisper-tiny` and
+attempt a Hugging Face download, while neighboring real-model tests skip.
+
+- [x] **Step 2: Apply the existing slow-test contract**
+
+Add `pytest.mark.slow` only to those two real-model cases. Leave the
+invalid-file real integration active because it exits before model loading.
+
+- [x] **Step 3: Verify faster-whisper and Transcription coverage**
+
+Run the two exact nodes with skip reasons, the complete faster-whisper module,
+the full Transcription package, Ruff/format, and `git diff --check`.
+
+Expected: the ordinary offline gate performs no model download, unit/mock
+coverage remains active, and real inference stays available through
+`--run-slow`.
 
 ### Task 5: Review and refresh the diagnostic inventory
 

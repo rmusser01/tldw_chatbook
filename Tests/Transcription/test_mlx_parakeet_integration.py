@@ -18,6 +18,7 @@ from tldw_chatbook.Local_Ingestion.transcription_service import (
     TranscriptionError,
     PARAKEET_MLX_AVAILABLE,
 )
+from tldw_chatbook.Utils.optional_deps import MODULES as OPTIONAL_MODULES
 
 # Skip all tests if not on macOS
 pytestmark = pytest.mark.skipif(
@@ -425,8 +426,12 @@ class TestMLXParakeetIntegration:
 
 
 @pytest.mark.skipif(
-    not PARAKEET_MLX_AVAILABLE or sys.platform != "darwin",
-    reason="Parakeet MLX not available or not on macOS",
+    not PARAKEET_MLX_AVAILABLE
+    or sys.platform != "darwin"
+    or not callable(
+        getattr(OPTIONAL_MODULES.get("parakeet_mlx"), "from_pretrained", None)
+    ),
+    reason="Parakeet MLX from_pretrained API not available or not on macOS",
 )
 class TestMLXParakeetRealIntegration:
     """Real integration tests that use actual Parakeet MLX if available."""
