@@ -77,6 +77,15 @@ class SpeechProfileMixin:
         self._profile_voice_validation_token: Any = None
         #: True while an exact-profile preview is still resolving.
         self._profile_preview_loading = profile_preset is not None
+        #: Whether `_apply_controls` has run at least once for this preset.
+        #: `_end_profile_preset` reads this without a guard; a plain pane
+        #: (no preset) starts True since there is nothing to apply, and a
+        #: preset pane starts False until priming's own `_apply_controls`
+        #: call (during `on_mount`) flips it. Set here rather than left to
+        #: `_apply_controls` alone: `TTSPlaygroundWidget.__init__` sets the
+        #: same attribute in its constructor, and this pane's preset path
+        #: is production-reachable now that `STTS_Window` mounts it.
+        self._profile_controls_applied = profile_preset is None
         #: Catalog revision the preview was admitted against.
         self._profile_configuration_revision: int | None = None
         #: Set while saving is deliberately unavailable.
@@ -145,6 +154,9 @@ class SpeechProfileMixin:
             # separately or the row keeps describing whatever `axis_values`
             # held at construction, not the preset that was just primed.
             axis_values["tts-provider-select"] = provider_id
+            # `_refresh_axis_markers` is defined only on `SpeechPlaygroundPane`;
+            # the `axis_values is not None` check above is what makes calling
+            # it safe on a host with no axis row.
             self._refresh_axis_markers()
         provider_select.disabled = True
         self.query_one("#tts-refresh-catalog-btn", Button).disabled = True
