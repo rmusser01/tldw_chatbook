@@ -523,8 +523,10 @@ Update the tests to describe current behavior:
     `media_window` to the mounted widget before dispatch. Then await the widget
     host app's existing worker manager before any action that depends on the
     initial search. In the search-button and pagination tests, also await the
-    newly dispatched worker before inspecting its call. Retain the existing
-    pilot pause for reactive presentation; do not bypass
+    newly dispatched worker before inspecting its call. In the item-selection
+    test, await the separate detail worker scheduled by
+    `handle_media_item_selected()` before reading the viewer. Retain the
+    existing pilot pauses for reactive presentation; do not bypass
     `_is_current_media_owner()`, add sleeps or a polling helper, or change
     production.
 
@@ -736,7 +738,8 @@ behavior. No compatibility shims. No broad deletion of live tests.
 - Adding more unbounded `pilot.pause()` calls would keep the Media tests
   scheduler-dependent, while changing `_perform_search()` solely to return a
   test handle would alter production for fixture convenience. Textual's worker
-  manager already owns the exact completion boundary these tests need.
+  manager already owns the exact browse and detail completion boundaries these
+  tests need.
 - Monkeypatching `_is_current_media_owner()` to return true would skip the
   route-ownership contract that protects replacement Media windows from stale
   writes. Wiring the already-mounted screen and mock stack makes the isolated

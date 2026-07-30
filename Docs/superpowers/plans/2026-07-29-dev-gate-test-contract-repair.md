@@ -2226,8 +2226,10 @@ live contract. After each activation, await
 the search mock, or selects a row, then keep the existing pilot pause. In the
 search-button and pagination tests, also await worker completion after the
 user action and before inspecting the new service call. Keep all assertions.
-Do not monkeypatch the ownership guard, add sleeps or a helper, or change
-production behavior.
+In the item-selection test, await worker completion again after
+`handle_media_item_selected()` schedules the separate detail load and before
+the existing pilot pause and viewer assertions. Do not monkeypatch the
+ownership guard, add sleeps or a helper, or change production behavior.
 
 - [ ] **Step 3: Verify the current Media shell**
 
