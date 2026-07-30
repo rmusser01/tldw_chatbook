@@ -1006,3 +1006,68 @@ _JSON_FEED = """{
     }
   ]
 }"""
+
+
+# --- TASK-1361: the baseline must be the newest snapshot, not either of two --
+
+
+@pytest.mark.asyncio
+async def test_two_snapshots_in_one_second_compare_against_the_newer(monkeypatch):
+    """The baseline is picked by `created_at DESC`, which ties at one second.
+
+    `url_snapshots.created_at` is a DATETIME defaulting to CURRENT_TIMESTAMP,
+    so two checks of one source inside the same second share it. With only
+    that column in the ORDER BY, SQLite may return either row, and a check can
+    measure the change against a *stale* baseline -- wrong percentage, wrong
+    diff, or an item for a change that already happened.
+
+    This forces the tie directly rather than racing the clock: two snapshots
+    are written with an identical `created_at` and different bodies, so the
+    only thing that can order them is the `id` tie-break. The assertion is on
+    the *diff*, not on the percentage: the diff names which body was treated
+    as "before", which is the thing that was ambiguous.
+
+    Args:
+        monkeypatch: Used by `_site_source` to serve the fetched pages.
+    """
+    stale = "Version 1.0 is current. Everything else on this page is stable."
+    recent = "Version 2.0 is current. Everything else on this page is stable."
+    latest = "Version 3.0 is current. Everything else on this page is stable."
+
+    db, service, source_id = await _site_source(
+        monkeypatch, [f"<html><body><p>{latest}</p></body></html>"],
+        change_threshold=0.0,
+    )
+
+    # Two snapshots, deliberately sharing one `created_at`, inserted stale
+    # first so `id` order and "correct baseline" order agree only if the
+    # tie-break is present.
+    tied = "2026-07-30 00:00:00"
+    with db.transaction() as conn:
+        for body in (stale, recent):
+            conn.execute(
+                """
+                INSERT INTO url_snapshots
+                    (subscription_id, url, content_hash, extracted_content,
+                     created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (source_id, "https://example.com/page", f"hash-{body[:9]}",
+                 body, tied),
+            )
+
+    result = await _check(service, source_id)
+    assert result["status"] == "completed"
+
+    items = _stored_items(db, source_id)
+    assert len(items) == 1, "the change against the newest snapshot must persist"
+    diff = str(items[0]["content"])
+
+    assert "Version 2.0" in diff, (
+        "the newest snapshot (Version 2.0) must be the baseline, so it appears "
+        f"as the removed side of the diff; got:\n{diff}"
+    )
+    assert "Version 1.0" not in diff, (
+        "the stale snapshot must not be the baseline -- the tie-break on `id` "
+        f"is missing or reversed; got:\n{diff}"
+    )

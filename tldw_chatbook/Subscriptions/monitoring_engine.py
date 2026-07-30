@@ -965,14 +965,31 @@ class URLMonitor:
             # Fetch current content
             current_content = await self._fetch_url_content(subscription)
 
-            # Get previous snapshot
+            # Get previous snapshot.
+            #
+            # TASK-1361. The `id DESC` tie-break is load-bearing, not tidiness:
+            # `created_at` is a DATETIME defaulting to CURRENT_TIMESTAMP, which
+            # has one-second resolution. Two checks of the same source inside
+            # one second therefore share a `created_at`, and with only that
+            # column in the ORDER BY, SQLite may return either row -- so a
+            # check can measure the change against a *stale* baseline and
+            # report the wrong percentage, the wrong diff, or a change that is
+            # not there. `id` is INTEGER PRIMARY KEY AUTOINCREMENT, so it is
+            # monotonic and breaks the tie by true insertion order. Same shape
+            # as `Workspaces/registry_service.py:171`, which already pairs
+            # `created_at` with a second key.
+            #
+            # Note for whoever resolves TASK-1360: `baseline_manager.py` has
+            # four more instances of this same unqualified ordering, one of
+            # them a pruning DELETE, so adopting that module means fixing
+            # them too.
             cursor = self.db.conn.cursor()
             cursor.execute(
                 """
                 SELECT content_hash, extracted_content
                 FROM url_snapshots
                 WHERE subscription_id = ?
-                ORDER BY created_at DESC
+                ORDER BY created_at DESC, id DESC
                 LIMIT 1
             """,
                 (subscription_id,),
