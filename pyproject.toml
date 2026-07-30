@@ -461,8 +461,9 @@ exclude = [
 
 [tool.pytest.ini_options]
 testpaths = ["Tests"]
-# Exclude server tests that don't belong in the TUI
-addopts = "--ignore=STests --import-mode=importlib"
+# Exclude server tests that don't belong in the TUI.
+# --durations: always report the slowest tests (>=1s) so wall-clock regressions are visible in every run.
+addopts = "--ignore=STests --import-mode=importlib --durations=25 --durations-min=1.0"
 # Default timeout for all tests (in seconds)
 timeout = 300
 # Timeout method: thread (default) or signal
