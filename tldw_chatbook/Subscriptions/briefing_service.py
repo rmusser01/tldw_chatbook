@@ -35,7 +35,12 @@ would make the service both the thing being guarded and the guard.
 Egress, stated plainly (spec §Egress): building the prompt sends item
 titles, excerpts and diffs to whichever provider is configured. That is the
 user's choice of provider; local providers are the private option. Nothing
-here is logged with content.
+here is logged with content -- and that claim is pinned by a test rather
+than merely asserted here, because the obvious way to log a provider failure
+breaks it: this app's file sink runs with `diagnose=True`, so
+`logger.opt(exception=True)` dumps the failing frame's locals, and the frame
+at the failure site holds the prompt. See
+`test_a_failed_generation_logs_no_item_content`.
 """
 
 from __future__ import annotations
@@ -426,8 +431,15 @@ async def generate_briefing(
             chat, endpoint=endpoint, model=model, system=system, user=user
         )
     except Exception as exc:  # noqa: BLE001 - every provider failure is a row
-        logger.opt(exception=True).warning(
-            f"briefing {briefing_id}: generation failed against {endpoint}"
+        # No traceback: the log file sink runs with diagnose=True, which would
+        # dump frame locals into the log file -- and the frame here is
+        # `_invoke_chat`, whose locals are the prompt. That would put item
+        # titles and excerpts in a file the user never chose to send anywhere,
+        # falsifying this module's egress claim. The provider's own message
+        # still reaches the user, on the row, where they are already looking.
+        logger.warning(
+            f"briefing {briefing_id}: generation failed against {endpoint}: "
+            f"{type(exc).__name__}"
         )
         return _fail(_error_text(exc))
 

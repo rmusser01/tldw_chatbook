@@ -25,6 +25,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook import config as app_config
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
@@ -256,11 +257,28 @@ async def test_llm_failure_is_honest_and_loses_nothing():
     assert failed["body_markdown"] is None
     # No junction rows: nothing was delivered, so nothing was covered.
     assert _junction(db, failed["id"]) == []
-    # The watermark is exactly where the last COMPLETE briefing left it.
-    assert failed["covers_through_item_id"] is None
-    assert db.latest_completed_watermark(watchlist) == old_item
 
-    # Retry: the same three items, by identity.
+    # The next three assertions are THREE INDEPENDENT LEGS of one invariant,
+    # and none of them is redundant. Two separate guards hold the line, one
+    # per task, so a mutation of either alone is absorbed by the other:
+    #
+    #   - the service's failure branch writes no `covers_through_item_id`
+    #     (task 3, this module), and
+    #   - `latest_completed_watermark` excludes `failed` rows from its MAX
+    #     (task 1, Subscriptions_DB).
+    #
+    # Make the service write the watermark on failure and leg 1 REDs while
+    # legs 2 and 3 stay green -- the DB allowlist absorbs it. Widen the DB
+    # allowlist and legs 2/3 stay green too, because the service wrote NULL.
+    # Only the composed mutation -- both guards disabled -- reaches the leg
+    # the user actually feels: the same three items are selected again.
+    # Deleting any of these as "redundant" deletes the proof that the
+    # surviving guard is doing the work.
+    assert failed["covers_through_item_id"] is None  # leg 1: the service
+    assert db.latest_completed_watermark(watchlist) == old_item  # leg 2: the DB
+
+    # Leg 3: the consequence the user feels -- the retry re-selects the same
+    # three items, by identity. This is the leg the composed mutation REDs.
     ok = _FakeChat()
     second = await generate_briefing(db, watchlist, chat=ok)
     assert second["status"] == "complete"
@@ -353,6 +371,20 @@ def test_prompt_labels_diffs_as_diffs():
     assert "not an article" in lowered
     assert "2 lines changed" in change_section
 
+    # The label must name the page and its source BY IDENTITY, not merely sit
+    # in a section whose heading happens to carry them. A generic "a
+    # monitored page" label passes every assertion above and still leaves the
+    # model unable to say which page changed once two changes arrive in one
+    # briefing -- so the identity is asserted on the label line itself.
+    label_lines = [
+        line
+        for line in change_section.splitlines()
+        if line.startswith("Kind:") and "page change" in line.lower()
+    ]
+    assert len(label_lines) == 1
+    assert "Acme Pricing" in label_lines[0]
+    assert "Acme Docs" in label_lines[0]
+
     # The article section carries its excerpt and is NOT called a page change.
     article_section = user[article_at:]
     assert "A new benchmark for retrieval quality." in article_section
@@ -384,6 +416,14 @@ def test_long_article_excerpt_is_capped_in_the_prompt():
     assert tail not in user  # the tail was cut, not merely wrapped
     assert long_body[:EXCERPT_CHAR_CAP] in user
     assert "truncated" in user.lower()
+
+    # The bound itself, in the real constants: "~800 characters" is a checked
+    # property of the contribution, not prose in a docstring. Without this a
+    # cap of 4000 still cuts the tail and still says "truncated".
+    marker = briefing_service._TRUNCATION_MARKER.format(cap=EXCERPT_CHAR_CAP)
+    contribution = user.split(f"Excerpt (up to {EXCERPT_CHAR_CAP} characters):\n", 1)[1]
+    assert contribution.endswith(marker)
+    assert len(contribution) <= EXCERPT_CHAR_CAP + len(marker)
     # No overflow -> no overflow note.
     assert "not covered" not in user
 
@@ -456,6 +496,54 @@ async def test_an_empty_model_response_is_a_failure_not_an_empty_briefing():
         entry["item_id"]
         for entry in select_briefing_items(db, watchlist, mode="auto_featured").items
     ] == [item]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_generation_logs_no_item_content():
+    """The module's egress claim, pinned: no item content reaches the log.
+
+    Generation sends titles, excerpts and diffs to the configured provider --
+    that is the user's choice. The log file is not: it is a local artifact
+    the user never chose to send anywhere, and this app's file sink runs with
+    `diagnose=True`, which dumps the frame locals of any exception logged
+    with `opt(exception=True)`. The frame at the failure site is the chat
+    call, whose locals ARE the prompt, so `logger.opt(exception=True)` there
+    writes item titles and excerpt heads into the log. Review round 1 found
+    exactly that. The sink below is configured the same way, so this test
+    fails the moment the traceback comes back.
+    """
+    # The canary must be SHORT and sit at the head of the prompt: loguru's
+    # diagnose renderer truncates each frame-local's repr at ~120 characters,
+    # so a canary further in is cut off and the test passes for the wrong
+    # reason. Round 1's first draft used a 15-character title and the repr
+    # ended one character short of it -- green against a live leak.
+    canary = "ZEBRACANARY"
+    db = _db()
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, canary)
+    _add_article(db, source, canary)
+
+    captured: list[str] = []
+    handler = logger.add(
+        captured.append, level="DEBUG", diagnose=True, backtrace=True, catch=False
+    )
+    try:
+        row = await generate_briefing(
+            db, watchlist, chat=_FakeChat(error=RuntimeError("upstream 503"))
+        )
+    finally:
+        logger.remove(handler)
+
+    assert row["status"] == "failed"
+    log_text = "".join(captured)
+    assert log_text  # the failure IS logged -- silence is not the fix
+    assert "generation failed" in log_text
+    assert "RuntimeError" in log_text  # the type, which carries no content
+    assert canary not in log_text
+    # Not merely "the prompt string is absent" -- the whole kwargs frame of
+    # the chat call must be, since every one of its values is item content or
+    # a route to it.
+    assert "messages_payload" not in log_text
 
 
 @pytest.mark.asyncio

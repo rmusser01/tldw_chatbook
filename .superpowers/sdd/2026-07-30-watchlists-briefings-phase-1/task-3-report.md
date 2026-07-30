@@ -121,3 +121,70 @@ direct column assertion commented out. RED at the consequence:
 The finding: the invariant has **two independent guards**, one per task, and this test asserts
 both. Either alone holds the line; neither alone is sufficient documentation of why. Do not
 delete either assertion. All three edits were reverted with an editor.
+
+---
+
+# Fix round 1
+
+Four changes, one new test. Runs: `Tests/Subscriptions/test_briefing_service.py` **11 passed in
+0.84s**; `Tests/Subscriptions/` **223 passed in 36.00s**.
+
+## 1 (Important) — the failure log leaked prompt content
+
+Upheld, and worse than "a style deviation": my own module docstring claimed "Nothing here is
+logged with content" while `logger.opt(exception=True)` at the failure site handed loguru a
+traceback whose innermost frame is `_invoke_chat`, whose locals are the prompt. With the file
+sink's `diagnose=True` the renderer writes ~120 characters of each local, so the first item's
+title and the head of the user prompt land in a local file the user never chose to send
+anywhere. Three sibling files (`app.py:7078`, `settings_screen.py:7209`,
+`local_llm_provider_catalog_service.py:669`) carry the convention verbatim; I did not follow it.
+
+Now a plain `logger.warning` with `type(exc).__name__` and no message text, carrying the sibling
+comment plus the reason specific to this site (the frame here *is* the prompt). The provider's
+own message still reaches the user on the row, where they are already looking. The docstring
+claim now names the trap and points at the test.
+
+**New test `test_a_failed_generation_logs_no_item_content`** — a loguru sink configured the same
+way the file sink is (`diagnose=True, backtrace=True`), a canary item title, and assertions that
+the failure IS logged (silence is not the fix), that the exception *type* is logged, and that
+neither the canary nor the string `messages_payload` appears.
+
+**The trap inside the trap, worth recording:** the first draft of that test used a 15-character
+canary and **passed against the live leak** — loguru truncates each frame-local repr at ~120
+characters and the cut landed one character into the title
+(`'...### [item 1] ZEBRAFISHCANAR...'`). I only caught it because the mutation refused to RED,
+and then probed the captured text instead of trusting the green. A canary must sit near the head
+of the value being probed, or it measures the truncation rather than the leak.
+
+## 2 (Important) — the double-guard reasoning moved to the assertions
+
+`test_llm_failure_is_honest_and_loses_nothing` now labels the three legs inline (leg 1 the
+service's failure branch, leg 2 the DB's status allowlist, leg 3 the identity consequence) and
+states what the review established: each guard alone absorbs a mutation of the other, so only the
+composed mutation reaches leg 3, and deleting any assertion as "redundant" deletes the proof that
+the surviving guard is doing the work. Future readers read code, not task reports — agreed.
+
+## 3 (Important) — the page label now names the page by identity
+
+Reproduced: genericizing the label to "a monitored page" left all 10 tests green, because
+`change_at` was located from the section *heading* (which still carried the title) and the
+remaining assertions were all generic wording. The test now extracts the `Kind:` label line
+itself and asserts the page title and source name appear in it. Matching the label line needed
+`line.startswith("Kind:")` as well — the `Change:` headline contains "page changed" and matched a
+bare substring test.
+
+## 4 (Minor) — the excerpt bound is now a checked property
+
+`test_long_article_excerpt_is_capped_in_the_prompt` asserts
+`len(contribution) <= EXCERPT_CHAR_CAP + len(marker)` using the real constants, so a cap of 4000
+(which would still cut the tail and still say "truncated") fails.
+
+## Mutation checks (restored with an editor; `git diff` clean afterwards)
+
+| # | Mutation | Observed |
+|---|---|---|
+| 5 | page label genericized to "a diff of a monitored page" | RED: `assert 'Acme Pricing' in 'Kind: page change. This is a diff of a monitored page -- it is not an article...'`. 1 failed, 9 passed (pre-round-1 count). |
+| 6 | `logger.opt(exception=True)` restored | First run **GREEN** — the canary was past loguru's repr truncation. With the canary shortened and moved to the head: RED, `assert 'ZEBRACANARY' not in '2026-07-30 ...stream 503\n'`. |
+
+Mutation 6 is the round's real lesson: a mutation that fails to RED is information about the
+*test*, not permission to move on.
