@@ -82,7 +82,7 @@ avatar, dictionary, and lore projections remain local-only; review-driven
 request-generation, ownership, cancellation, authentication, and stale-result
 fences prevent cross-source or superseded UI publication.
 
-Final validation at rebased code revision `00bcdd925` over `origin/dev`
+Full validation at the then-rebased code revision `00bcdd925` over `origin/dev`
 `f3ecd8672`:
 
 - The final 20-file changed-test union produced 1292 passes and 5 inherited
@@ -122,6 +122,12 @@ The final rebase retained `dev`'s non-blocking Personas mount worker and moved
 the source-aware server page reload into that deferred loader. The dedicated
 mount-freeze, exact-server-handoff, and source-switch isolation regressions all
 pass on the rebased history.
+
+Immediately before merge, the branch was rebased without conflict onto the
+newer `origin/dev` revision `13b7f6ee2`. The intervening base changes are
+Watchlists-scoped. The non-blocking Personas mount, exact server handoff,
+source-switch isolation, and legacy Tavern authority regressions passed again
+(4 passed), and `git diff --check origin/dev..HEAD` remained clean.
 <!-- SECTION:NOTES:END -->
 
 ## Definition of Done
