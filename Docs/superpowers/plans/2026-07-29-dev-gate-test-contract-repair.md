@@ -2306,9 +2306,12 @@ Keep `pilot.click("#personas-library-new")` because opening the editor is the
 user-navigation setup under test. For controls already inside the returned
 mounted editor, query the `Button` and call `press()` instead of asking the
 pilot to resolve pointer geometry while programmatic field changes are posting
-dirty/validation events. Retain the existing pauses, worker completion
-barriers, and every behavior assertion. Do not add sleeps, helpers, production
-changes, or validation-timer changes.
+dirty/validation events. A direct press only queues `Button.Pressed`, so every
+worker-producing press must be followed by `await pilot.pause()` before
+`await pilot.app.workers.wait_for_complete()` snapshots the current workers;
+retain the existing post-worker pause and every behavior assertion. Non-worker
+presses still receive their existing pause before dependent reads or actions.
+Do not add sleeps, helpers, production changes, or validation-timer changes.
 
 - [ ] **Step 3: Verify isolated and collection-sensitive coverage**
 

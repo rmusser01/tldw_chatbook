@@ -562,8 +562,10 @@ Update the tests to describe current behavior:
     selectors.
 59. In the Personas generation wiring module, keep the real library-entry
     pointer click that opens the editor, but dispatch controls owned by the
-    mounted editor through `Button.press()`. Preserve the existing pauses and
-    worker-manager completion barriers, plus every controller argument,
+    mounted editor through `Button.press()`. After every press that schedules
+    a worker, pause once so Textual dispatches the queued `Button.Pressed`
+    handler before asking the worker manager to wait; then retain the existing
+    post-worker pause and assertions. Preserve every controller argument,
     preview, failure, regeneration, concept, and non-clobbering assertion.
     Verify the focused module both alone and while the Library/RAG settings
     test is collected. Do not add sleeps, change validation timing, or modify
