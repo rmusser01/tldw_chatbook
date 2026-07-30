@@ -44,7 +44,9 @@ Default `change_threshold` becomes **`0.0`** everywhere a default exists:
 The identical-hash check already short-circuits unchanged pages before the threshold is consulted,
 so `0.0` means: any real difference in extracted text — i.e. after noise stripping — produces an
 item. The column and comparison stay: a user who wants a volume filter may still raise the value
-per source, and the disposition record (§4) tells them what it is withholding.
+per source, and the disposition record (§4) tells them what it is withholding. The read must
+coerce an explicit NULL: `subscription.get("change_threshold", 0.0)` returns `None` when the column
+holds NULL — the key exists — and `pct < None` is a `TypeError` inside a scheduled fetch.
 
 The `[subscriptions.templates.*]` presets in `config.py` (e.g. `0.05` for "Documentation Monitor")
 are explicit user-facing template choices, not defaults, and are left alone.
@@ -55,21 +57,28 @@ The Watchlists source create/edit form gains a multi-line **"Ignore elements (CS
 field, prefilled for new sources with the default set below. Prefilled means *written into the
 source's own `ignore_selectors`*, visible and deletable line by line — nothing is ever stripped
 invisibly, and future changes to the default set deliberately do not propagate to existing sources
-(they own their copy).
+(they own their copy). The prefill lives in the **form**, not in `create_source`: a source created
+programmatically gets no silent defaults, because invisible stripping is the thing this design
+forbids.
 
 Default set (conservative; each line carries a short trailing comment in the form's placeholder
 help, not in the stored value):
 
 ```
-[class*="cookie"]          — cookie/consent banners
-[class*="consent"]
-[id*="cookie"]
+[class*="cookie-consent"], [class*="cookie-banner"], [id*="cookie-consent"], .cc-banner
+[class*="consent-manager"]
 .ad, .ads, .advertisement  — ad slots (comma = CSS group, one rule)
-[class*="sponsor"]
-input[name="csrf_token"], input[name="_token"]
+.sponsored, [class*="sponsored-"]
 .view-count, .views, [class*="viewcount"]
 .timestamp               — explicit timestamp classes only
 ```
+
+Two lines that look obvious are deliberately absent, both verified empirically. CSRF/session
+token inputs: `<input value=…>` contributes nothing to extracted text (`get_text()` ignores
+attribute values), so a token selector strips nothing and would only teach users that dead lines
+are normal. And the broad `[class*="cookie"]`: it matches `class="cookie-recipe-card"` and strips
+"Best cookie recipe" — substring selectors are narrowed to consent-banner forms for exactly this
+reason.
 
 Deliberately excluded: `time[datetime]` and anything date-*like* beyond the explicit `.timestamp`
 class — a release date lives in exactly those elements, and dates are often the payload being
@@ -88,9 +97,11 @@ selectors in force at capture time. Editing `ignore_selectors` (or `extraction_m
 extraction, so the next check's hash differs and a phantom "change" fires whose diff is just the
 noise disappearing. Today nobody edits selectors (no UI); after §2 everybody will.
 
-Each snapshot therefore stores an **extraction fingerprint**: a stable hash of the normalized
-selector list plus `extraction_method`. On check, if the stored fingerprint differs from the
-current one, the check **re-baselines** — stores a fresh snapshot, produces no item, and records
+Each snapshot therefore stores an **extraction fingerprint**: a stable hash of the selector list
+— normalized by stripping, dropping empties, deduplicating and **sorting**, so cosmetic reordering
+does not re-baseline — plus `extraction_method`. The fingerprint comparison runs **before** the
+hash comparison: the stored hash was computed under the old settings, so comparing it across a
+settings change is meaningless. On mismatch the check **re-baselines** — stores a fresh snapshot, produces no item, and records
 disposition `baseline_stored` with reason `extraction_settings_changed` (§4).
 
 Existing snapshots have no fingerprint; absence is treated as a mismatch. This makes the migration
@@ -110,7 +121,9 @@ things. It now returns a disposition alongside any item:
 
 Multi-URL sources (`url_list`, `sitemap`) aggregate **counts** per run:
 `{"changed": n, "unchanged": n, "withheld": n, "baseline": n}`. The counts are recorded in the
-run's existing `stats` and rendered as one line in the Runs pane's run detail. With the new `0.0`
+run's existing `stats_json` and rendered as one line in the Runs pane's run detail. Dispositions
+apply to **URL checks only**: feeds deduplicate per item and have no baseline, so their runs keep
+today's semantics. With the new `0.0`
 default `withheld` should be rare; its visibility exists for anyone who raises a threshold, and as
 the tell-tale that noise selectors are stripping too much (everything `unchanged` while the page
 visibly moves).
@@ -122,7 +135,10 @@ than preserving behaviour:
 
 - `change_threshold` → `0.0` for all existing sources.
 - Empty `ignore_selectors` → prefilled with the default set. Non-empty values are left untouched.
-- Schema version bump for the snapshot fingerprint column.
+- The snapshot fingerprint column is added via this DB's actual migration idiom — a
+  `PRAGMA table_info` column-presence check with `ALTER TABLE` (the same pattern that added
+  `content_kind`). The `schema_version` table exists but is pinned at 1 and never consulted; do
+  not invent a versioning scheme around it.
 
 Phase D's migration lessons apply mechanically: the corrected values must actually be **written**
 (not just returned), the write's success must gate any marker, and `save`-style helpers that signal
