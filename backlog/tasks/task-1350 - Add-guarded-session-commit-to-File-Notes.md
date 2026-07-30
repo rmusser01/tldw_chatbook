@@ -105,4 +105,18 @@ draft/editor leases, and the panel remains presentation-only.
   duplicate every injected edge case. Newer-edit blocking, uncertainty,
   `Check again`, and exact convergence are covered by the focused automated
   boundary.
+
+Post-merge full-app UAT correction (2026-07-30):
+
+- The earlier `/tmp/task1350-live-uat.O2BJB7` run was a mounted Textual
+  `WorkspaceHarness`, not a launch and traversal of the complete Chatbook
+  application. Its Git, SQLite, autosave, staging, review, commit, and safety
+  evidence remains valid automated end-to-end coverage.
+- A subsequent real `python -m tldw_chatbook.app` PTY walkthrough proved the
+  guarded two-note commit and unrelated-staged-content block, but found that
+  the Files source choice is not rendered at normal widths and Prepare actions
+  are unreachable at `40x20` with a realistic linked-root path. Full UX
+  acceptance is therefore blocked pending TASK-1411.
+- Durable evidence:
+  `Docs/superpowers/qa/file-notes-full-app-uat-2026-07-30/README.md`.
 <!-- SECTION:NOTES:END -->

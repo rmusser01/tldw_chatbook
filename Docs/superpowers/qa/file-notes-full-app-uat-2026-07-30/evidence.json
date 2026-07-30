@@ -1,0 +1,40 @@
+{
+  "date": "2026-07-30",
+  "verdict": "ux_acceptance_blocked_core_guarded_commit_passed",
+  "feature_source_head": "c07fef609f9b6eec0732b8ab28ec13d086515f1d",
+  "dev_merge_commit": "665ef1c01a48130b8da3bd80eea17054de54e976",
+  "method": {
+    "application": "python -m tldw_chatbook.app",
+    "terminal": "tmux PTY",
+    "headless_textual_harness": false,
+    "disposable_environment": "/private/tmp/chatbook-fullapp-uat.z0StBm",
+    "runtime_entry_probe_modified_repository": false
+  },
+  "fixture": {
+    "repository": "/private/tmp/chatbook-fullapp-uat.z0StBm/repo",
+    "notes_root": "/private/tmp/chatbook-fullapp-uat.z0StBm/repo/notes",
+    "replica": "/private/tmp/chatbook-fullapp-uat.z0StBm/data/uat_operator/file_notes.sqlite",
+    "baseline_commit": "a6dac2e9bdc19b0db0c9e0a0dfc549b4b09d48a7",
+    "successful_commit": "540f5e02da489216a3b9bc1bd87c538b03d67c21"
+  },
+  "checks": {
+    "visible_files_source_120x40": "fail",
+    "visible_files_source_160x45": "fail",
+    "native_folder_picker": "pass_after_entry_only_runtime_probe",
+    "process_only_trust": "pass_after_entry_only_runtime_probe",
+    "body_edit_and_autosave": "pass",
+    "exact_frontmatter_preservation": "pass",
+    "session_only_stage_all": "pass",
+    "commit_review_cancel_preserves_draft": "pass",
+    "guarded_commit_two_notes_only": "pass",
+    "success_count_and_promise": "pass",
+    "narrow_navigator_editor_switch": "pass",
+    "narrow_prepare_actions_reachable_40x20": "fail",
+    "unrelated_staged_content_blocks_commit": "pass"
+  },
+  "hashes": {
+    "notes/one.md": "c740cfaca39684b68a49d9085a7b903cd097e66f8416c457531e7c312ed6fdad",
+    "notes/study/two.md": "1f7c3a6f8b2b7dbcbd1a5f6ebd4d0ea19a2abc028a38388d49c03737d9a2526f"
+  },
+  "next_task": "TASK-1411"
+}
