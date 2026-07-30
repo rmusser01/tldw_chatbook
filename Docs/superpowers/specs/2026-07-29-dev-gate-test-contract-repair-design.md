@@ -399,6 +399,13 @@ Update the tests to describe current behavior:
     regressions. Preserve the non-execution, preserved draft, uncalled submit,
     and exact second-Enter arming assertions. Do not derive the expected copy
     from production or change command registration.
+46. In `CONSOLE_PARITY_MATRIX["attachments_images"]`, replace the deleted
+    `Tests/UI/test_chat_image_attachment.py` file reference with the current
+    native Console integration node
+    `Tests/UI/test_console_native_chat_flow.py::test_console_attachment_worker_stages_image_and_inlines_text`.
+    Retain the existing chat-functions image/RAG reference and the matrix's
+    exact file/test existence gate. Confirm no other matrix reference is
+    missing. Do not recreate the retired Chat UI test or weaken validation.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -560,6 +567,10 @@ compatibility shims. No broad deletion of live tests.
   same live registry already pinned by the composer suite. Updating its one
   independent literal preserves the regression without a shared tautological
   helper.
+- Recreating a deleted Chat image test solely to satisfy parity metadata would
+  revive retired UI ownership. The native Console flow already verifies image
+  staging plus text inlining, so pointing the matrix at that exact node keeps
+  the gate meaningful with a one-line repair.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

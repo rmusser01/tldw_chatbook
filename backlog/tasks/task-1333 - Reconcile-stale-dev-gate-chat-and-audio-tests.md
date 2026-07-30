@@ -73,6 +73,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #45 The Console resolution-view regression stages its user provider override through the current Console-owned control state instead of retired app-root provider/model reactives, while retaining fresh persisted-default fallback and Console-over-default precedence coverage.
 - [ ] #46 Normal-send and picker-driven skill regressions assert the active dispatch-time Console session id alongside the exact raw `$name [args]` draft, while retaining controller-side skill execution and transcript behavior.
 - [ ] #47 The retired bare-slash skill regression expects the complete current unknown-command hint, including image generation and rewind, while retaining non-execution, draft preservation, and second-Enter arming coverage.
+- [ ] #48 The Console Workbench parity matrix references current native Console image-attachment coverage instead of a deleted legacy Chat UI test, and every matrix file/test reference resolves.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -125,6 +126,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 39. Retarget the resolution-view user override to the Console-owned control state.
 40. Align all skill-send spy assertions with the dispatch-time session id.
 41. Align the skill module's curated unknown-command hint with the complete registry.
-42. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-43. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+42. Retarget the parity matrix's deleted image-attachment reference to current native Console coverage.
+43. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+44. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

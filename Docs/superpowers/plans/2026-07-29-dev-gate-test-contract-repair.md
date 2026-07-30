@@ -1778,6 +1778,42 @@ git add \
 git commit -m "test(console): complete skill command hint"
 ```
 
+### Task 4ap: Retarget the Console image parity reference
+
+**Files:**
+- Modify: `Tests/UI/test_console_workbench_parity_matrix.py`
+
+- [ ] **Step 1: Reproduce and inventory missing references**
+
+Run the parity-matrix module. Expected: the existence gate fails on deleted
+`Tests/UI/test_chat_image_attachment.py`. Evaluate every matrix entry and
+confirm this is the only missing file/test reference.
+
+- [ ] **Step 2: Point to current native Console coverage**
+
+Replace that file reference with
+`Tests/UI/test_console_native_chat_flow.py::test_console_attachment_worker_stages_image_and_inlines_text`.
+Keep the existing image/RAG reference, parity categories, and exact
+file/test-name validation unchanged. Do not recreate the retired test or
+weaken the gate.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_workbench_parity_matrix.py \
+  Tests/UI/test_console_native_chat_flow.py::test_console_attachment_worker_stages_image_and_inlines_text \
+  Tests/Chat/test_chat_functions.py::TestChatFunction::test_chat_with_image_and_rag -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_console_workbench_parity_matrix.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_console_workbench_parity_matrix.py
+git diff --check
+git add \
+  Tests/UI/test_console_workbench_parity_matrix.py
+git commit -m "test(console): retarget image parity coverage"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
