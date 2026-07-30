@@ -73,14 +73,24 @@ async def test_each_rail_entry_switches_the_view(view_key):
 
 
 @pytest.mark.asyncio
-async def test_the_playground_view_shows_the_rebuilt_pane():
-    """Routing through the window must not resurrect a legacy playground."""
+async def test_the_playground_view_mounts_a_playground():
+    """The playground view must mount *something* that is a playground.
+
+    It is dev's `TTSPlaygroundWidget` for now, not the rebuilt pane. dev
+    shipped a profile library into that widget while this rebuild was in
+    flight, and retiring it would delete the UI half of that feature; the
+    pane takes the view over once its axis row and dev's profile presets are
+    reconciled. Asserting the pane here would assert a decision that has not
+    been made yet.
+    """
     app = _build_test_app()
     async with app.run_test(size=(200, 60)) as pilot:
         screen = STTSScreen(app)
         await app.push_screen(screen)
         await pilot.pause()
         await pilot.pause()
-        assert screen.query("#speech-playground-pane"), (
-            "the playground view is not the rebuilt pane"
-        )
+        from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
+
+        assert screen.query(TTSPlaygroundWidget) or screen.query(
+            "#speech-playground-pane"
+        ), "the playground view mounts no playground at all"

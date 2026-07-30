@@ -3,14 +3,45 @@
 from __future__ import annotations
 
 import pytest
+from textual.containers import Vertical
+from textual.screen import Screen
 from textual.widgets import Button, Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
+from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
+
+
+class _PaneScreen(Screen):
+    """Hosts the pane on its own, under the real app CSS.
+
+    The pane is not the mounted `playground` view yet: dev's
+    `TTSPlaygroundWidget` keeps that while its profile presets and this
+    pane's axis row are reconciled. So these mount the pane directly rather
+    than navigating to Speech and asserting on whatever is there -- which
+    would be testing the routing, not the pane.
+    """
+
+    def compose(self):
+        body = Vertical(
+            SpeechPlaygroundPane(id="speech-playground-pane"), id="lab-body"
+        )
+        # Inline, because the app-tier bundle outranks a test Screen's
+        # DEFAULT_CSS. The Lab frame constrains its body to the viewport;
+        # without that the pane is sized by its own content -- measured 236
+        # cells wide in a 60-column terminal -- so nothing ever looks narrow
+        # and the stacking rule never fires.
+        body.styles.width = "100%"
+        body.styles.height = "100%"
+        yield body
+
+    def on_mount(self) -> None:
+        """Pin the pane to the viewport width once it exists."""
+        pane = self.query_one("#speech-playground-pane")
+        pane.styles.width = "100%"
 
 
 async def _speech_screen(app):
-    screen = STTSScreen(app)
+    screen = _PaneScreen()
     await app.push_screen(screen)
     return screen
 
@@ -87,7 +118,12 @@ async def test_the_pane_scrolls_rather_than_clipping_when_stacked():
     """`1fr` children compress instead of overflowing, which clips content
     that should scroll. The pane must be genuinely taller than its viewport."""
     app = _build_test_app()
-    async with app.run_test(size=(80, 24)) as pilot:
+    # 60 cells, not 80. Hosted directly the pane gets the whole terminal
+    # width, where inside the Lab frame it got the body minus rail and
+    # inspector -- so 80 columns used to leave it under its own 64-cell
+    # threshold and now does not. The test is about what the pane does when
+    # it IS too narrow, so it is measured below the threshold.
+    async with app.run_test(size=(60, 24)) as pilot:
         screen = await _speech_screen(app)
         await pilot.pause()
         await pilot.pause()

@@ -14,7 +14,7 @@ from textual.widgets import ProgressBar, Select
 
 from tldw_chatbook.UI.Speech.speech_playground_model import AXIS_CONTROLS
 from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
+from Tests.UI.test_speech_playground_pane import _PaneScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 
 BOX_DRAWING = set("▔▁▊▎│─┌┐└┘━╸╺")
@@ -50,7 +50,7 @@ async def test_the_axis_select_has_no_inner_border_under_the_real_css():
 
     app = _build_test_app()
     async with app.run_test(size=(200, 60)) as pilot:
-        screen = STTSScreen(app)
+        screen = _PaneScreen()
         await app.push_screen(screen)
         await pilot.pause()
         await pilot.pause()

@@ -33,11 +33,11 @@ from tldw_chatbook.UI.stts_profile_library import (
     PROFILE_STORE_UNAVAILABLE_COPY,
     STTSProfileLibrary,
 )
+from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
 from tldw_chatbook.UI.STTS_Window import (
     AudioBookGenerationWidget,
     STTSWindow,
-    SpeechPlaygroundPane,
-    SpeechSettingsPane,
+    TTSPlaygroundWidget,
 )
 
 
@@ -521,7 +521,7 @@ async def test_voice_profiles_view_mounts_focused_library_without_hiding_other_v
         await pilot.pause()
         assert isinstance(
             app.query_one(".stts-content").children[0],
-            SpeechPlaygroundPane,
+            TTSPlaygroundWidget,
         )
         assert app.query_one("#tts-generate-btn", Button)
 
@@ -550,7 +550,7 @@ async def test_voice_profiles_view_mounts_focused_library_without_hiding_other_v
         await _open_stts_view(app, pilot, "playground")
         assert isinstance(
             app.query_one(".stts-content").children[0],
-            SpeechPlaygroundPane,
+            TTSPlaygroundWidget,
         )
         assert app.query_one("#tts-generate-btn", Button)
 
@@ -1338,7 +1338,7 @@ async def test_stts_window_consumes_exact_profile_preview_once_on_playground_rem
             pilot,
             lambda: app.query_one(STTSWindow).current_view == "playground",
         )
-        first_playground = app.query_one(SpeechPlaygroundPane)
+        first_playground = app.query_one(TTSPlaygroundWidget)
         window = app.query_one(STTSWindow)
 
         assert first_playground._profile_preset is not None
@@ -1348,7 +1348,7 @@ async def test_stts_window_consumes_exact_profile_preview_once_on_playground_rem
 
         await _open_stts_view(app, pilot, "settings")
         await _open_stts_view(app, pilot, "playground")
-        second_playground = app.query_one(SpeechPlaygroundPane)
+        second_playground = app.query_one(TTSPlaygroundWidget)
 
         assert second_playground is not first_playground
         assert second_playground._profile_preset is None
@@ -1394,7 +1394,7 @@ async def test_exact_preview_at_80x24_focuses_playground_with_visible_recovery_b
         )
         await pilot.pause()
 
-        playground = app.query_one(SpeechPlaygroundPane)
+        playground = app.query_one(TTSPlaygroundWidget)
         text_input = playground.query_one("#tts-text-input", TextArea)
         banner = playground.query_one("#tts-profile-preview-status", Static)
         copy = str(banner.render())
