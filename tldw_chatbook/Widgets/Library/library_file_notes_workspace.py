@@ -31,7 +31,14 @@ from tldw_chatbook.Notes.file_notes_git_service import (
     GitActionResult,
     GitMutationAdmissionError,
     GitStatusAdmissionError,
+    RetainedCommitOperation,
     coalesce_session_changes,
+)
+from tldw_chatbook.Notes.file_notes_git_commit import (
+    CommitOutcome,
+    CommitRecoveryProjection,
+    CommitReviewHandle,
+    CommitReviewResult,
 )
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
 from tldw_chatbook.Notes.file_notes_session_owner import (
@@ -54,6 +61,11 @@ from tldw_chatbook.Notes.file_notes_service import (
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
+    CommitDraftProjection,
+    CommitExecutionProjection,
+    CommitPanelReviewProjection,
+    CommitResultProjection,
+    CommitReviewNoteProjection,
     LibraryFileNotesGitPanel,
     SessionGitTrustDialog,
 )
@@ -85,6 +97,41 @@ class _GitLastAction:
     repository: RepositoryIdentity
     changes: tuple[SequencedSessionChange, ...]
     text: str
+
+
+@dataclass(frozen=True, slots=True)
+class _CommitBindingKey:
+    """Exact root-generation and repository identity for one commit draft."""
+
+    binding: SessionBinding
+    repository: RepositoryIdentity
+
+
+@dataclass(frozen=True, slots=True)
+class _CommitDraftState:
+    """Literal commit message retained only for one exact binding key."""
+
+    key: _CommitBindingKey
+    subject: str = ""
+    body: str = ""
+
+
+@dataclass(slots=True)
+class _EditorReadOnlyLease:
+    """Idempotent token for one exact editor and binding."""
+
+    token: object
+    editor: TextArea
+    binding: SessionBinding
+    _release_callback: Callable[["_EditorReadOnlyLease"], None]
+    _released: bool = False
+
+    def release(self) -> None:
+        """Release only this exact reason once."""
+        if self._released:
+            return
+        self._released = True
+        self._release_callback(self)
 
 
 class _SessionGitService(Protocol):
@@ -120,6 +167,37 @@ class _SessionGitService(Protocol):
         binding: SessionBinding,
         group_ids: Collection[int],
     ) -> asyncio.Task[GitActionResult]: ...
+
+    def start_commit_review(
+        self,
+        binding: SessionBinding,
+        subject: str,
+        body: str = "",
+    ) -> asyncio.Task[CommitReviewResult]: ...
+
+    def start_commit(
+        self,
+        binding: SessionBinding,
+        handle: CommitReviewHandle,
+        *,
+        subject: str | None = None,
+        body: str = "",
+    ) -> asyncio.Task[CommitOutcome]: ...
+
+    def retained_commit_operation(
+        self,
+        binding: SessionBinding,
+    ) -> RetainedCommitOperation | None: ...
+
+    def cancel_commit(
+        self,
+        binding: SessionBinding,
+    ) -> bool: ...
+
+    def check_commit_again(
+        self,
+        binding: SessionBinding,
+    ) -> asyncio.Task[CommitOutcome]: ...
 
 
 class LibraryFileNotesWorkspace(Vertical):
@@ -347,6 +425,27 @@ class LibraryFileNotesWorkspace(Vertical):
         self._git_refresh_timer: Timer | None = None
         self._git_refresh_after_mutation = False
         self._git_last_action: _GitLastAction | None = None
+        self._commit_availability: CommitDraftProjection | None = None
+        self._commit_draft: _CommitDraftState | None = None
+        self._commit_view_phase: Literal[
+            "list",
+            "form",
+            "checking",
+            "review",
+            "confirming",
+            "executing",
+            "result",
+        ] = "list"
+        self._commit_operation_id = 0
+        self._commit_operation: RetainedCommitOperation | None = None
+        self._commit_review_handle: CommitReviewHandle | None = None
+        self._commit_review_projection: CommitPanelReviewProjection | None = None
+        self._commit_result_projection: CommitResultProjection | None = None
+        self._commit_editor_lease: _EditorReadOnlyLease | None = None
+        self._commit_settlement_tasks: set[asyncio.Task[None]] = set()
+        self._git_commit_worker: Worker[Any] | None = None
+        self._git_commit_child_worker: Worker[Any] | None = None
+        self._editor_read_only_leases: dict[object, _EditorReadOnlyLease] = {}
         self._git_panel_widget = LibraryFileNotesGitPanel()
         # The editor itself is retained across parent Library recompositions.
         # Textual calls ``compose`` again when this same workspace object is
@@ -569,6 +668,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._save_worker = None
         self._git_status_worker = None
         self._git_action_worker = None
+        self._git_commit_worker = None
+        self._git_commit_child_worker = None
         self._editor_action_layout_sync_scheduled = False
 
     async def shutdown(self) -> None:
@@ -813,6 +914,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 binding_changed = binding != self._session_binding
                 if binding_changed:
                     self._clear_git_last_action()
+                    self._invalidate_commit_binding(
+                        "Selected notes root changed; the commit draft was cleared."
+                    )
                     self._git_observed_changes = None
                     self._git_status_task = None
                     self._git_status_task_binding = None
@@ -1178,6 +1282,97 @@ class LibraryFileNotesWorkspace(Vertical):
             and repository.git_common_dir_identity is not None
         )
 
+    def _commit_key_for_status(
+        self,
+        binding: SessionBinding,
+        status: SessionGitStatus,
+    ) -> _CommitBindingKey | None:
+        """Return an exact key only for current, complete ready authority."""
+        repository = status.repository
+        if (
+            status.state != "ready"
+            or status.binding_generation != binding.generation
+            or not self._repository_identity_is_complete(repository)
+        ):
+            return None
+        snapshot = self._session_owner.snapshot(binding)
+        if snapshot.trusted_repository != repository or snapshot.git_status != status:
+            return None
+        assert repository is not None
+        return _CommitBindingKey(binding, repository)
+
+    def _sync_commit_availability(
+        self,
+        binding: SessionBinding,
+        status: SessionGitStatus,
+    ) -> None:
+        """Render exact owned-staging availability without replacing a draft."""
+        key = self._commit_key_for_status(binding, status)
+        if key is None:
+            self._commit_availability = None
+            self._git_panel_widget.clear_commit_availability()
+            return
+        draft = self._commit_draft
+        if draft is not None and draft.key != key:
+            self._invalidate_commit_binding(
+                "Repository changed; the previous commit draft was cleared."
+            )
+            draft = None
+        if draft is None:
+            draft = _CommitDraftState(key)
+        head = status.head
+        branch = (
+            head.branch
+            if head is not None and head.kind == "attached" and head.branch
+            else "detached or unavailable HEAD"
+        )
+        projection = CommitDraftProjection(
+            binding_key=key,
+            branch=branch,
+            staged_note_count=sum(row.unstage_eligible for row in status.rows),
+            subject=draft.subject,
+            body=draft.body,
+        )
+        self._commit_availability = projection
+        self._git_panel_widget.render_commit_availability(projection)
+
+    def _invalidate_commit_binding(self, detail: str) -> None:
+        """Clear every draft projection that cannot cross repository binding."""
+        self._commit_operation_id += 1
+        self._commit_availability = None
+        self._commit_draft = None
+        self._commit_view_phase = "list"
+        self._commit_operation = None
+        self._commit_review_handle = None
+        self._commit_review_projection = None
+        self._commit_result_projection = None
+        self._release_commit_editor_lease()
+        if self._active and self.is_mounted:
+            self._git_panel_widget.invalidate_commit_binding()
+            self._set_action_status(detail)
+
+    def _clear_commit_draft_after_success(self) -> None:
+        """Clear only message/workflow state after a proven commit success."""
+        self._commit_draft = None
+        self._commit_view_phase = "list"
+        self._commit_review_handle = None
+        self._commit_review_projection = None
+        self._commit_result_projection = None
+        if not self._active or not self.is_mounted:
+            self._commit_availability = None
+            return
+        self._git_panel_widget.invalidate_commit_binding()
+        binding = self._session_binding
+        if binding is None:
+            self._commit_availability = None
+            return
+        status = self._session_owner.snapshot(binding).git_status
+        if status is None:
+            self._commit_availability = None
+            return
+        self._git_panel_widget.render_status(status)
+        self._sync_commit_availability(binding, status)
+
     def _capture_git_action_key(
         self,
         binding: SessionBinding,
@@ -1269,6 +1464,101 @@ class LibraryFileNotesWorkspace(Vertical):
             exclusive=True,
         )
 
+    def _rehydrate_commit_presentation(
+        self,
+        service: _SessionGitService,
+        binding: SessionBinding,
+    ) -> bool:
+        """Reattach UI observers without restarting process-owned commit work."""
+        draft = self._commit_draft
+        if draft is None or draft.key.binding != binding:
+            return False
+        key = draft.key
+        if not self._commit_key_is_current(key):
+            if (
+                self._session_owner.snapshot(binding).trusted_repository
+                is None
+            ):
+                return False
+            self._invalidate_commit_binding(
+                "Repository changed; the previous commit draft was cleared."
+            )
+            return False
+        if (
+            self._commit_view_phase == "review"
+            and self._commit_review_handle is not None
+            and self._commit_review_projection is not None
+        ):
+            self._git_panel_widget.render_commit_review(self._commit_review_projection)
+            return True
+        if (
+            self._commit_view_phase == "result"
+            and self._commit_result_projection is not None
+        ):
+            self._git_panel_widget.render_commit_result(self._commit_result_projection)
+            return True
+        if self._commit_view_phase == "form":
+            projection = self._current_commit_draft_projection()
+            if projection is not None:
+                self._git_panel_widget.render_commit_form(projection)
+                return True
+        if self._commit_view_phase == "list":
+            return False
+
+        operation = service.retained_commit_operation(binding)
+        if operation is None:
+            return False
+        if self._commit_operation is not operation:
+            operation_id = self._begin_commit_operation(
+                operation,
+                "checking" if operation.kind != "commit" else "confirming",
+            )
+        else:
+            operation_id = self._commit_operation_id
+        if operation.kind == "review":
+            self._commit_view_phase = "checking"
+            self._git_panel_widget.render_commit_checking()
+            self._git_commit_worker = self.run_worker(
+                self._observe_commit_review(operation, key, operation_id),
+                name="file-notes-git-commit-review",
+                group="file-notes-git-commit",
+                exclusive=True,
+            )
+            return True
+        if operation.kind == "commit":
+            if operation.child_started and not operation.settled:
+                review = self._commit_review_projection
+                count = 0 if review is None else review.review.included_note_count
+                self._commit_view_phase = "executing"
+                self._git_panel_widget.render_commit_executing(
+                    CommitExecutionProjection(count)
+                )
+            else:
+                self._commit_view_phase = "confirming"
+                self._git_panel_widget.render_commit_confirming()
+            self._git_commit_child_worker = self.run_worker(
+                self._observe_commit_child_start(operation, key, operation_id),
+                name="file-notes-git-commit-child",
+                group="file-notes-git-commit-child",
+                exclusive=True,
+            )
+            self._git_commit_worker = self.run_worker(
+                self._observe_commit_outcome(operation, key, operation_id),
+                name="file-notes-git-commit-outcome",
+                group="file-notes-git-commit",
+                exclusive=True,
+            )
+            return True
+        self._commit_view_phase = "executing"
+        self._git_panel_widget.render_commit_recovery_checking()
+        self._git_commit_worker = self.run_worker(
+            self._observe_commit_outcome(operation, key, operation_id),
+            name="file-notes-git-commit-recovery",
+            group="file-notes-git-commit",
+            exclusive=True,
+        )
+        return True
+
     def _rehydrate_git_presentation(self) -> bool:
         """Render retained owner/task state without starting hidden Git work."""
         if (
@@ -1283,6 +1573,11 @@ class LibraryFileNotesWorkspace(Vertical):
             return False
         snapshot = self._session_owner.snapshot(binding)
         self._sync_git_last_action()
+        service = self._session_git_service()
+        if service is not None and self._rehydrate_commit_presentation(
+            service, binding
+        ):
+            return True
         if self._session_owner.mutation_active(binding):
             if snapshot.git_status is not None:
                 self._git_panel_widget.render_status(
@@ -1295,7 +1590,6 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             self._git_refresh_after_mutation = True
             return True
-        service = self._session_git_service()
         retained_task = (
             None if service is None else service.retained_status(binding)
         )
@@ -1321,6 +1615,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 snapshot.git_status,
                 retain_rows=self._git_can_retain_rows(binding),
             )
+            self._sync_commit_availability(binding, snapshot.git_status)
             self._sync_git_last_action()
             return True
         if (
@@ -1391,9 +1686,35 @@ class LibraryFileNotesWorkspace(Vertical):
         repository = discovery.repository
         if discovery.state != "ready" or repository is None:
             self._clear_git_last_action()
+            snapshot = self._session_owner.snapshot(binding)
+            if discovery.state == "unavailable":
+                service.cancel_commit(binding)
+            self._session_owner.clear_trust_if_matches(
+                binding,
+                snapshot.trusted_repository,
+            )
+            if discovery.state == "unavailable":
+                self._commit_operation_id += 1
+                self._commit_availability = None
+                self._commit_view_phase = "list"
+                self._commit_operation = None
+                self._commit_review_handle = None
+                self._commit_review_projection = None
+                self._commit_result_projection = None
+                self._release_commit_editor_lease()
+                self._git_panel_widget.invalidate_commit_binding()
+            else:
+                self._invalidate_commit_binding(
+                    "Repository check failed; the commit draft was cleared."
+                )
             self._git_panel_widget.render_unavailable(
                 self._git_discovery_failure_detail(discovery)
             )
+            if discovery.state == "unavailable":
+                self._set_action_status(
+                    "Git discovery is temporarily unavailable; "
+                    "the commit draft was preserved."
+                )
             return
         snapshot = self._session_owner.snapshot(binding)
         needs_trust = (
@@ -1523,6 +1844,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 status,
                 retain_rows=self._git_can_retain_rows(binding),
             )
+            self._sync_commit_availability(binding, status)
             self._sync_git_last_action()
             return
         if snapshot.git_status is not None:
@@ -1530,6 +1852,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 snapshot.git_status,
                 retain_rows=self._git_can_retain_rows(binding),
             )
+            self._sync_commit_availability(binding, snapshot.git_status)
             self._sync_git_last_action()
             return
         if (
@@ -1552,6 +1875,197 @@ class LibraryFileNotesWorkspace(Vertical):
         self._action_detail = text
         if self._active and self.is_mounted:
             self.query_one("#file-notes-action-status", Static).update(text)
+
+    def _acquire_editor_read_only(
+        self,
+        binding: SessionBinding,
+    ) -> _EditorReadOnlyLease | None:
+        """Acquire one exact token without owning other read-only state."""
+        editor = self._editor_widget
+        if (
+            binding != self._session_binding
+            or binding != self._session_owner.current_binding()
+        ):
+            return None
+        token = object()
+        lease = _EditorReadOnlyLease(
+            token,
+            editor,
+            binding,
+            self._release_editor_read_only,
+        )
+        self._editor_read_only_leases[token] = lease
+        self._sync_editor_read_only()
+        return lease
+
+    def _release_editor_read_only(
+        self,
+        lease: _EditorReadOnlyLease,
+    ) -> None:
+        """Remove only a still-registered exact lease."""
+        if self._editor_read_only_leases.get(lease.token) is not lease:
+            return
+        self._editor_read_only_leases.pop(lease.token, None)
+        self._sync_editor_read_only()
+
+    def _sync_editor_read_only(self) -> None:
+        """Combine document, transition, and tokenized read-only reasons."""
+        editor = self._editor_widget
+        binding = self._session_binding
+        leased = any(
+            not lease._released and lease.editor is editor and lease.binding == binding
+            for lease in self._editor_read_only_leases.values()
+        )
+        editor.read_only = (
+            self._root_transitioning
+            or self._path_transitioning
+            or self._opened is None
+            or not self._opened.editable
+            or leased
+        )
+
+    async def _settle_commit_editor(
+        self,
+        lease: _EditorReadOnlyLease,
+    ) -> bool:
+        """Settle autosave while the exact editor is already read-only."""
+        try:
+            flushed = await self.flush_pending_work()
+        except BaseException:
+            if self._commit_editor_lease is lease:
+                self._commit_editor_lease = None
+            lease.release()
+            raise
+        unresolved = self._save_state in {
+            "dirty",
+            "saving",
+            "conflict",
+            "error",
+        }
+        if (
+            flushed
+            and not unresolved
+            and lease.binding == self._session_binding
+            and lease.editor is self._editor_widget
+        ):
+            return True
+        state = self._save_state
+        lease.release()
+        if state == "conflict":
+            detail = "Save conflict must be resolved before reviewing the commit."
+        elif state == "error":
+            detail = "Fix the save error before reviewing the commit."
+        else:
+            detail = "Save the note before reviewing the commit."
+        self._set_action_status(detail)
+        return False
+
+    def _release_commit_editor_lease(self) -> None:
+        """Release the guarded-flow reason without changing other reasons."""
+        lease = self._commit_editor_lease
+        self._commit_editor_lease = None
+        if lease is not None:
+            lease.release()
+
+    def _commit_key_is_current(self, key: _CommitBindingKey) -> bool:
+        """Validate the exact root and repository without requiring status."""
+        if (
+            key.binding != self._session_binding
+            or key.binding != self._session_owner.current_binding()
+        ):
+            return False
+        return (
+            self._session_owner.snapshot(key.binding).trusted_repository
+            == key.repository
+        )
+
+    def _active_commit_key(self) -> _CommitBindingKey | None:
+        draft = self._commit_draft
+        if draft is None or not self._commit_key_is_current(draft.key):
+            return None
+        return draft.key
+
+    def _current_commit_draft_projection(
+        self,
+        *,
+        form_error: str | None = None,
+        subject_error: str | None = None,
+        body_error: str | None = None,
+    ) -> CommitDraftProjection | None:
+        """Project the retained draft with optional bounded recovery copy."""
+        draft = self._commit_draft
+        availability = self._commit_availability
+        if (
+            draft is None
+            or availability is None
+            or availability.binding_key != draft.key
+            or not self._commit_key_is_current(draft.key)
+        ):
+            return None
+        return replace(
+            availability,
+            subject=draft.subject,
+            body=draft.body,
+            form_error=form_error,
+            subject_error=subject_error,
+            body_error=body_error,
+        )
+
+    def _begin_commit_operation(
+        self,
+        operation: RetainedCommitOperation,
+        phase: Literal["checking", "confirming"],
+    ) -> int:
+        """Install one service observation and return its monotonic UI ID."""
+        self._commit_operation_id += 1
+        self._commit_operation = operation
+        self._commit_view_phase = phase
+        return self._commit_operation_id
+
+    def _commit_operation_is_current(
+        self,
+        operation: RetainedCommitOperation,
+        key: _CommitBindingKey,
+        operation_id: int,
+    ) -> bool:
+        """Reject stale renderers while leaving service settlement untouched."""
+        return (
+            self._commit_operation is operation
+            and self._commit_operation_id == operation_id
+            and operation.binding == key.binding
+            and self._commit_key_is_current(key)
+        )
+
+    def _attach_commit_lease_settlement(
+        self,
+        operation: RetainedCommitOperation,
+        key: _CommitBindingKey,
+        lease: _EditorReadOnlyLease,
+        *,
+        hold_ready_review: bool,
+    ) -> None:
+        """Retain lease finalization outside disposable Textual workers."""
+
+        async def finalize() -> None:
+            try:
+                result = await operation.wait()
+            except BaseException:
+                result = None
+            if (
+                hold_ready_review
+                and isinstance(result, CommitReviewResult)
+                and result.state == "ready"
+                and self._commit_operation is operation
+                and self._commit_key_is_current(key)
+            ):
+                return
+            if self._commit_editor_lease is lease:
+                self._commit_editor_lease = None
+            lease.release()
+
+        task = asyncio.create_task(finalize())
+        self._commit_settlement_tasks.add(task)
+        task.add_done_callback(self._commit_settlement_tasks.discard)
 
     def _update_controls(self) -> None:
         if not self._active or not self.is_mounted:
@@ -1602,10 +2116,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self.query_one("#file-notes-search-results", Tree).disabled = (
             transitioning or mutation_active
         )
-        editor = self.query_one("#file-notes-editor", TextArea)
-        editor.read_only = transitioning or not (
-            self._opened is not None and self._opened.editable
-        )
+        self._sync_editor_read_only()
         self._git_panel_widget.set_mutating(mutation_active)
 
     @contextmanager
@@ -1785,7 +2296,7 @@ class LibraryFileNotesWorkspace(Vertical):
         editor = self.query_one("#file-notes-editor", TextArea)
         with editor.prevent(TextArea.Changed):
             editor.load_text(opened.body)
-        editor.read_only = not opened.editable
+        self._sync_editor_read_only()
         self.query_one("#file-notes-path", Input).value = opened.relative_path
         self.query_one("#file-notes-breadcrumb", Static).update(opened.relative_path)
         if opened.editable:
@@ -1815,7 +2326,7 @@ class LibraryFileNotesWorkspace(Vertical):
         editor = self.query_one("#file-notes-editor", TextArea)
         with editor.prevent(TextArea.Changed):
             editor.load_text("")
-        editor.read_only = True
+        self._sync_editor_read_only()
         if not keep_restore_path:
             self.query_one("#file-notes-path", Input).value = ""
             self.query_one("#file-notes-breadcrumb", Static).update("No file selected")
@@ -2252,24 +2763,20 @@ class LibraryFileNotesWorkspace(Vertical):
             not self._active
             or not self.is_mounted
             or self._navigator_mode != "git"
+            or self._git_panel_widget.commit_phase != "list"
         ):
             return
         entry = self.query_one("#file-notes-session-changes", Button)
         back = self.query_one("#file-notes-git-back", Button)
+        rows = self.query_one("#file-notes-git-rows", ListView)
         focused = self.app.focused
         if not (
             focused is entry
             or focused is back
-            or (
-                focused is not None
-                and (
-                    focused is self._git_panel_widget
-                    or self._git_panel_widget in focused.ancestors
-                )
-            )
+            or focused is rows
+            or (focused is not None and rows in focused.ancestors)
         ):
             return
-        rows = self.query_one("#file-notes-git-rows", ListView)
         if self._git_panel_widget.rows:
             if rows.display:
                 self.screen.set_focus(rows, scroll_visible=False)
@@ -2313,6 +2820,567 @@ class LibraryFileNotesWorkspace(Vertical):
             self._open_session_git(force_prompt=True),
             name="file-notes-git-trust",
             group="file-notes-git-open",
+            exclusive=True,
+        )
+
+    @on(LibraryFileNotesGitPanel.CommitStagedRequested)
+    def _session_git_commit_staged(
+        self,
+        event: LibraryFileNotesGitPanel.CommitStagedRequested,
+    ) -> None:
+        """Adopt only the exact current availability projection as a draft."""
+        event.stop()
+        projection = self._commit_availability
+        if (
+            projection is None
+            or event.binding_key != projection.binding_key
+            or not isinstance(event.binding_key, _CommitBindingKey)
+            or event.binding_key.binding != self._session_binding
+        ):
+            self._git_panel_widget.invalidate_commit_binding()
+            self._set_action_status(
+                "Commit availability changed; Refresh and try again."
+            )
+            return
+        draft = self._commit_draft
+        if draft is None or draft.key != event.binding_key:
+            self._commit_draft = _CommitDraftState(
+                event.binding_key,
+                projection.subject,
+                projection.body,
+            )
+        self._commit_view_phase = "form"
+
+    @on(LibraryFileNotesGitPanel.CommitDraftChanged)
+    def _session_git_commit_draft_changed(
+        self,
+        event: LibraryFileNotesGitPanel.CommitDraftChanged,
+    ) -> None:
+        """Retain literal message edits only for their exact active key."""
+        event.stop()
+        draft = self._commit_draft
+        if (
+            draft is None
+            or event.binding_key != draft.key
+            or draft.key.binding != self._session_binding
+        ):
+            return
+        self._commit_draft = replace(
+            draft,
+            subject=event.subject,
+            body=event.body,
+        )
+        projection = self._commit_availability
+        if projection is not None and projection.binding_key == draft.key:
+            self._commit_availability = replace(
+                projection,
+                subject=event.subject,
+                body=event.body,
+            )
+
+    @on(LibraryFileNotesGitPanel.ReviewCommitRequested)
+    async def _session_git_review_commit(
+        self,
+        event: LibraryFileNotesGitPanel.ReviewCommitRequested,
+    ) -> None:
+        """Settle the editor, then start one retained service review."""
+        event.stop()
+        draft = self._commit_draft
+        service = self._session_git_service()
+        if (
+            draft is None
+            or service is None
+            or event.binding_key != draft.key
+            or event.subject != draft.subject
+            or event.body != draft.body
+            or not self._commit_key_is_current(draft.key)
+        ):
+            self._git_panel_widget.return_to_commit_list()
+            self._set_action_status(
+                "Commit draft changed before review; reopen it and try again."
+            )
+            return
+        self._release_commit_editor_lease()
+        lease = self._acquire_editor_read_only(draft.key.binding)
+        if lease is None:
+            self._git_panel_widget.return_to_commit_list()
+            self._set_action_status(
+                "Commit binding changed before review; Refresh and try again."
+            )
+            return
+        self._commit_editor_lease = lease
+        if not await self._settle_commit_editor(lease):
+            if self._commit_editor_lease is lease:
+                self._commit_editor_lease = None
+            projection = self._current_commit_draft_projection(
+                form_error=self._action_detail,
+            )
+            if projection is not None:
+                self._commit_view_phase = "form"
+                self._git_panel_widget.render_commit_form(projection)
+            return
+        if not self._commit_key_is_current(draft.key):
+            self._release_commit_editor_lease()
+            self._invalidate_commit_binding(
+                "Repository changed while saving; the commit draft was cleared."
+            )
+            return
+        try:
+            service.start_commit_review(
+                draft.key.binding,
+                draft.subject,
+                draft.body,
+            )
+            operation = service.retained_commit_operation(draft.key.binding)
+            if operation is None or operation.kind != "review":
+                raise RuntimeError("retained commit review is unavailable")
+        except (GitMutationAdmissionError, RuntimeError) as error:
+            self._release_commit_editor_lease()
+            projection = self._current_commit_draft_projection(
+                form_error=str(error),
+            )
+            if projection is not None:
+                self._commit_view_phase = "form"
+                self._git_panel_widget.render_commit_form(projection)
+            self._set_action_status(f"Commit review blocked: {error}")
+            return
+        operation_id = self._begin_commit_operation(operation, "checking")
+        self._commit_review_handle = None
+        self._commit_review_projection = None
+        self._commit_result_projection = None
+        self._attach_commit_lease_settlement(
+            operation,
+            draft.key,
+            lease,
+            hold_ready_review=True,
+        )
+        self._set_action_status("Checking commit…")
+        self._git_commit_worker = self.run_worker(
+            self._observe_commit_review(
+                operation,
+                draft.key,
+                operation_id,
+            ),
+            name="file-notes-git-commit-review",
+            group="file-notes-git-commit",
+            exclusive=True,
+        )
+
+    async def _observe_commit_review(
+        self,
+        operation: RetainedCommitOperation,
+        key: _CommitBindingKey,
+        operation_id: int,
+    ) -> None:
+        """Render one retained review settlement only while it is current."""
+        try:
+            result = await operation.wait()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            if self._commit_operation_is_current(operation, key, operation_id):
+                self._release_commit_editor_lease()
+                self._commit_view_phase = "form"
+                projection = self._current_commit_draft_projection(
+                    form_error=f"Commit review failed: {error}",
+                )
+                if projection is not None:
+                    self._git_panel_widget.render_commit_form(projection)
+            return
+        if not isinstance(
+            result, CommitReviewResult
+        ) or not self._commit_operation_is_current(
+            operation,
+            key,
+            operation_id,
+        ):
+            return
+        if (
+            result.state == "ready"
+            and result.handle is not None
+            and result.projection is not None
+        ):
+            projection = self._build_commit_review_projection(
+                key,
+                result.projection,
+            )
+            if projection is None:
+                service = self._session_git_service()
+                if service is not None:
+                    service.cancel_commit(key.binding)
+                self._release_commit_editor_lease()
+                self._commit_view_phase = "form"
+                draft_projection = self._current_commit_draft_projection(
+                    form_error=("Session notes changed; Refresh and review again."),
+                )
+                if draft_projection is not None:
+                    self._git_panel_widget.render_commit_form(draft_projection)
+                return
+            self._commit_review_handle = result.handle
+            self._commit_review_projection = projection
+            self._commit_view_phase = "review"
+            self._git_panel_widget.render_commit_review(projection)
+            self._set_action_status("Commit review ready.")
+            return
+        self._commit_review_handle = None
+        self._commit_review_projection = None
+        if result.state == "cancelled":
+            self._commit_view_phase = "list"
+            self._git_panel_widget.return_to_commit_list(
+                restore_entry_focus=True,
+            )
+            self._set_action_status("Commit review cancelled.")
+            return
+        self._commit_view_phase = "form"
+        detail = result.message or "Commit review was blocked."
+        projection = self._current_commit_draft_projection(
+            form_error=detail,
+        )
+        if projection is not None:
+            self._git_panel_widget.render_commit_form(projection)
+        self._set_action_status(detail)
+
+    def _build_commit_review_projection(
+        self,
+        key: _CommitBindingKey,
+        review,
+    ) -> CommitPanelReviewProjection | None:
+        """Render the service's immutable, Git-proven included-note facts."""
+        if not self._commit_key_is_current(key):
+            return None
+        try:
+            return CommitPanelReviewProjection(
+                review,
+                tuple(
+                    CommitReviewNoteProjection(note)
+                    for note in review.included_notes
+                ),
+            )
+        except ValueError:
+            return None
+
+    @on(LibraryFileNotesGitPanel.EditCommitMessageRequested)
+    def _session_git_edit_commit_message(
+        self,
+        event: LibraryFileNotesGitPanel.EditCommitMessageRequested,
+    ) -> None:
+        """Consume any ready review and restore editor writability."""
+        event.stop()
+        key = self._active_commit_key()
+        service = self._session_git_service()
+        if key is not None and service is not None:
+            service.cancel_commit(key.binding)
+        self._commit_review_handle = None
+        self._commit_review_projection = None
+        self._commit_result_projection = None
+        self._commit_view_phase = "form"
+        self._release_commit_editor_lease()
+
+    @on(LibraryFileNotesGitPanel.ConfirmCommitRequested)
+    def _session_git_confirm_commit(
+        self,
+        event: LibraryFileNotesGitPanel.ConfirmCommitRequested,
+    ) -> None:
+        """Start exact revalidation and observe the child-start boundary."""
+        event.stop()
+        key = self._active_commit_key()
+        draft = self._commit_draft
+        handle = self._commit_review_handle
+        review = self._commit_review_projection
+        lease = self._commit_editor_lease
+        service = self._session_git_service()
+        if (
+            key is None
+            or draft is None
+            or handle is None
+            or review is None
+            or lease is None
+            or service is None
+        ):
+            self._release_commit_editor_lease()
+            self._commit_view_phase = "form"
+            projection = self._current_commit_draft_projection(
+                form_error="Commit review expired; review again.",
+            )
+            if projection is not None:
+                self._git_panel_widget.render_commit_form(projection)
+            return
+        try:
+            service.start_commit(
+                key.binding,
+                handle,
+                subject=draft.subject,
+                body=draft.body,
+            )
+            operation = service.retained_commit_operation(key.binding)
+            if operation is None or operation.kind != "commit":
+                raise RuntimeError("retained commit operation is unavailable")
+        except (GitMutationAdmissionError, RuntimeError) as error:
+            self._release_commit_editor_lease()
+            self._commit_review_handle = None
+            self._commit_review_projection = None
+            self._commit_view_phase = "form"
+            projection = self._current_commit_draft_projection(
+                form_error=str(error),
+            )
+            if projection is not None:
+                self._git_panel_widget.render_commit_form(projection)
+            return
+        self._commit_review_handle = None
+        operation_id = self._begin_commit_operation(operation, "confirming")
+        self._attach_commit_lease_settlement(
+            operation,
+            key,
+            lease,
+            hold_ready_review=False,
+        )
+        self._set_action_status("Checking commit before branch update…")
+        self._git_commit_child_worker = self.run_worker(
+            self._observe_commit_child_start(operation, key, operation_id),
+            name="file-notes-git-commit-child",
+            group="file-notes-git-commit-child",
+            exclusive=True,
+        )
+        self._git_commit_worker = self.run_worker(
+            self._observe_commit_outcome(operation, key, operation_id),
+            name="file-notes-git-commit-outcome",
+            group="file-notes-git-commit",
+            exclusive=True,
+        )
+
+    async def _observe_commit_child_start(
+        self,
+        operation: RetainedCommitOperation,
+        key: _CommitBindingKey,
+        operation_id: int,
+    ) -> None:
+        """Render execution only after the exact service-owned transition."""
+        try:
+            child_started = await operation.wait_child_started()
+        except asyncio.CancelledError:
+            raise
+        if (
+            not child_started
+            or operation.settled
+            or not self._commit_operation_is_current(
+                operation,
+                key,
+                operation_id,
+            )
+        ):
+            return
+        review = self._commit_review_projection
+        count = 0 if review is None else review.review.included_note_count
+        self._commit_view_phase = "executing"
+        self._git_panel_widget.render_commit_executing(CommitExecutionProjection(count))
+        self._set_action_status(f"Committing {count} session notes…")
+
+    async def _observe_commit_outcome(
+        self,
+        operation: RetainedCommitOperation,
+        key: _CommitBindingKey,
+        operation_id: int,
+    ) -> None:
+        """Render one typed terminal/recoverable outcome with stale guards."""
+        try:
+            result = await operation.wait()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if self._commit_operation_is_current(operation, key, operation_id):
+                self._commit_operation_id += 1
+                self._commit_operation = None
+                self._commit_review_handle = None
+                self._commit_review_projection = None
+                self._commit_result_projection = None
+                self._release_commit_editor_lease()
+                self._commit_view_phase = "form"
+                detail = (
+                    "Commit result could not be observed. "
+                    "Inspect Git before trying again."
+                )
+                projection = self._current_commit_draft_projection(
+                    form_error=detail,
+                )
+                if projection is not None:
+                    self._git_panel_widget.render_commit_form(projection)
+                self._set_action_status(detail)
+            return
+        if not isinstance(
+            result, CommitOutcome
+        ) or not self._commit_operation_is_current(
+            operation,
+            key,
+            operation_id,
+        ):
+            return
+        self._commit_review_handle = None
+        if result.state == "cancelled":
+            self._commit_review_projection = None
+            self._commit_result_projection = None
+            self._commit_view_phase = "list"
+            self._git_panel_widget.return_to_commit_list(
+                restore_entry_focus=True,
+            )
+            self._set_action_status("Commit cancelled before branch update.")
+            return
+        if result.state == "blocked":
+            self._commit_review_projection = None
+            self._commit_result_projection = None
+            self._commit_view_phase = "form"
+            projection = self._current_commit_draft_projection(
+                form_error=result.message,
+            )
+            if projection is not None:
+                self._git_panel_widget.render_commit_form(projection)
+            self._set_action_status(result.message)
+            return
+        if result.state == "succeeded":
+            self._clear_commit_draft_after_success()
+            snapshot = self._session_owner.snapshot(key.binding)
+            if snapshot.trusted_repository == key.repository:
+                note_label = (
+                    "note" if result.committed_note_count == 1 else "notes"
+                )
+                self._git_last_action = _GitLastAction(
+                    binding=key.binding,
+                    repository=key.repository,
+                    changes=snapshot.changes,
+                    text=(
+                        f"Committed {result.committed_note_count} session "
+                        f"{note_label}; unrelated changes untouched."
+                    ),
+                )
+                self._sync_git_last_action()
+            self._git_panel_widget.return_to_commit_list()
+            self._set_action_status(result.message)
+            return
+        recovery = None
+        if result.state == "uncertain":
+            recovery = self._session_owner.snapshot(key.binding).commit_recovery
+            if recovery is None:
+                recovery = CommitRecoveryProjection(result.message, False)
+        projection = CommitResultProjection(result, recovery)
+        self._commit_result_projection = projection
+        self._commit_view_phase = "result"
+        self._git_panel_widget.render_commit_result(projection)
+        self._set_action_status(result.message)
+
+    @on(LibraryFileNotesGitPanel.CancelCommitRequested)
+    def _session_git_cancel_draft(
+        self,
+        event: LibraryFileNotesGitPanel.CancelCommitRequested,
+    ) -> None:
+        """Cancel only service-owned pre-child work and preserve the draft."""
+        event.stop()
+        phase = event.from_phase
+        if phase == "form":
+            self._commit_view_phase = "list"
+            return
+        key = self._active_commit_key()
+        service = self._session_git_service()
+        if phase in {"checking", "review", "confirming"}:
+            operation = self._commit_operation
+            accepted = (
+                key is not None
+                and service is not None
+                and service.cancel_commit(key.binding)
+            )
+            if accepted:
+                if operation is not None and not operation.settled:
+                    self._set_action_status(
+                        "Cancelling after Git finishes its current check…"
+                    )
+                    return
+                self._commit_operation_id += 1
+                self._commit_operation = None
+                self._commit_review_handle = None
+                self._commit_review_projection = None
+                self._commit_result_projection = None
+                self._release_commit_editor_lease()
+                self._commit_view_phase = "list"
+                if phase == "confirming":
+                    self._git_panel_widget.return_to_commit_list(
+                        restore_entry_focus=True,
+                    )
+                self._set_action_status(
+                    "Commit cancelled before branch update."
+                    if phase == "confirming"
+                    else "Commit review cancelled."
+                )
+                return
+            if (
+                phase == "confirming"
+                and operation is not None
+                and operation.child_started
+            ):
+                review = self._commit_review_projection
+                count = 0 if review is None else review.review.included_note_count
+                self._commit_view_phase = "executing"
+                self._git_panel_widget.render_commit_executing(
+                    CommitExecutionProjection(count)
+                )
+            return
+        if phase == "result":
+            self._commit_view_phase = "list"
+
+    @on(LibraryFileNotesGitPanel.CheckCommitAgainRequested)
+    async def _session_git_check_commit_again(
+        self,
+        event: LibraryFileNotesGitPanel.CheckCommitAgainRequested,
+    ) -> None:
+        """Inspect one retained uncertain attempt without starting a commit."""
+        event.stop()
+        key = self._active_commit_key()
+        service = self._session_git_service()
+        current_result = self._commit_result_projection
+        if (
+            key is None
+            or service is None
+            or current_result is None
+            or current_result.outcome.state != "uncertain"
+            or current_result.recovery is None
+        ):
+            return
+        self._release_commit_editor_lease()
+        lease = self._acquire_editor_read_only(key.binding)
+        if lease is None:
+            return
+        self._commit_editor_lease = lease
+        if not await self._settle_commit_editor(lease):
+            if self._commit_editor_lease is lease:
+                self._commit_editor_lease = None
+            self._git_panel_widget.render_commit_result(current_result)
+            return
+        try:
+            service.check_commit_again(key.binding)
+            operation = service.retained_commit_operation(key.binding)
+            if operation is None or operation.kind != "recovery":
+                raise RuntimeError("retained commit recovery is unavailable")
+        except (GitMutationAdmissionError, RuntimeError) as error:
+            self._release_commit_editor_lease()
+            recovery = CommitRecoveryProjection(str(error), False)
+            projection = CommitResultProjection(
+                current_result.outcome,
+                recovery,
+            )
+            self._commit_result_projection = projection
+            self._git_panel_widget.render_commit_result(projection)
+            return
+        operation_id = self._begin_commit_operation(operation, "checking")
+        self._commit_view_phase = "executing"
+        self._attach_commit_lease_settlement(
+            operation,
+            key,
+            lease,
+            hold_ready_review=False,
+        )
+        self._git_panel_widget.render_commit_recovery_checking()
+        self._set_action_status("Checking the retained commit attempt…")
+        self._git_commit_worker = self.run_worker(
+            self._observe_commit_outcome(operation, key, operation_id),
+            name="file-notes-git-commit-recovery",
+            group="file-notes-git-commit",
             exclusive=True,
         )
 

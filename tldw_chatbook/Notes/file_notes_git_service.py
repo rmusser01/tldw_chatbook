@@ -8,7 +8,14 @@ import os
 import shutil
 import stat
 import tempfile
-from collections.abc import Awaitable, Collection, Generator, Mapping, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Collection,
+    Generator,
+    Mapping,
+    Sequence,
+)
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Generic, Literal, Protocol, TypeVar
@@ -18,6 +25,7 @@ from tldw_chatbook.Notes.file_notes_git_commit import (
     CommitIncludedNote,
     CommitOutcome,
     CommitRecoveryProjection,
+    CommitReviewChangeType,
     CommitReviewHandle,
     CommitReviewProjection,
     CommitReviewResult,
@@ -72,6 +80,7 @@ DiscoveryState = Literal[
 ]
 HeadReadFailureKind = Literal["unavailable", "error"]
 GitActionState = Literal["success", "blocked", "stale", "error", "uncertain"]
+CommitOperationKind = Literal["review", "commit", "recovery"]
 RetainedGitChildState = Literal[
     "alive",
     "natural",
@@ -407,6 +416,8 @@ class GitProcessRunner(Protocol):
         timeout: float | None = None,
         stdout_limit: int | None = None,
         stderr_limit: int | None = None,
+        on_spawn: Callable[[], None] | None = None,
+        cancel_before_spawn: bool = False,
     ) -> GitCommandResult:
         """Run one command without accepting a shell option."""
 
@@ -460,6 +471,43 @@ class _RetainedSettlement(Generic[_SettlementValue]):
 
     def __await__(self) -> Generator[Any, None, _SettlementValue]:
         return asyncio.shield(self.task).__await__()
+
+
+@dataclass(frozen=True, slots=True)
+class RetainedCommitOperation:
+    """Cancellation-safe observation of one exact guarded commit operation."""
+
+    binding: SessionBinding
+    kind: CommitOperationKind
+    _settlement: asyncio.Task[CommitReviewResult | CommitOutcome]
+    _child_started_signal: asyncio.Future[bool] | None = None
+
+    @property
+    def settled(self) -> bool:
+        """Return whether the retained service operation has settled."""
+        return self._settlement.done()
+
+    @property
+    def child_started(self) -> bool:
+        """Return whether the exact branch-mutating child has started."""
+        signal = self._child_started_signal
+        return (
+            signal is not None
+            and signal.done()
+            and not signal.cancelled()
+            and signal.result()
+        )
+
+    async def wait(self) -> CommitReviewResult | CommitOutcome:
+        """Await settlement without allowing an observer to cancel it."""
+        return await asyncio.shield(self._settlement)
+
+    async def wait_child_started(self) -> bool:
+        """Await the exact child-start decision without owning its future."""
+        signal = self._child_started_signal
+        if signal is None:
+            return False
+        return await asyncio.shield(signal)
 
 
 @dataclass(slots=True)
@@ -959,6 +1007,8 @@ class AsyncGitProcessRunner:
         timeout: float | None = None,
         stdout_limit: int | None = None,
         stderr_limit: int | None = None,
+        on_spawn: Callable[[], None] | None = None,
+        cancel_before_spawn: bool = False,
     ) -> GitCommandResult:
         """Execute one direct child and preserve all standard streams as bytes."""
         if any(
@@ -988,6 +1038,7 @@ class AsyncGitProcessRunner:
                 timeout=timeout,
                 stdout_limit=stdout_limit,
                 stderr_limit=stderr_limit,
+                on_spawn=on_spawn,
             )
         )
         record.owned_task = run_task
@@ -1003,6 +1054,14 @@ class AsyncGitProcessRunner:
                 record.exposed = True
             return result
         except asyncio.CancelledError:
+            if cancel_before_spawn and record.process is None:
+                run_task.cancel()
+                await asyncio.gather(run_task, return_exceptions=True)
+                if record.process is None:
+                    self._discard_record(record)
+                    raise GitRunCancelled(
+                        result=GitCommandResult(1, b"", b"")
+                    ) from None
             if record.communication is not None:
                 settlement = self._read_record(record)
                 if settlement.state not in {"alive", "uncertain"}:
@@ -1031,6 +1090,7 @@ class AsyncGitProcessRunner:
         timeout: float | None,
         stdout_limit: int | None,
         stderr_limit: int | None,
+        on_spawn: Callable[[], None] | None,
     ) -> GitCommandResult:
         """Run one child in a runner-owned task immune to caller cancellation."""
         assert self._shutdown_event is not None
@@ -1049,6 +1109,9 @@ class AsyncGitProcessRunner:
                 stderr=asyncio.subprocess.PIPE,
             )
             self._processes.add(process)
+            record.process = process
+            if on_spawn is not None:
+                on_spawn()
             if stdout_limit is None and stderr_limit is None:
                 communication = asyncio.create_task(
                     process.communicate(stdin)
@@ -1063,7 +1126,6 @@ class AsyncGitProcessRunner:
                         stderr_limit=stderr_limit,
                     )
                 )
-            record.process = process
             record.communication = communication
             record.ready.set()
             shutdown_waiter = asyncio.create_task(
@@ -1665,6 +1727,8 @@ class FileNotesGitService:
         self._commit_recovery_cycle: asyncio.Task[CommitOutcome] | None = None
         self._commit_recovery_waiter: asyncio.Task[CommitOutcome] | None = None
         self._commit_child_started = False
+        self._commit_child_started_signal: asyncio.Future[bool] | None = None
+        self._retained_commit_operation: RetainedCommitOperation | None = None
         self._uncertain_commit: _UncertainCommitEvidence | None = None
         self._orphaned_commit: _OrphanedCommitLifecycle | None = None
         self._pending_hooks_cleanup: set[Path] = set()
@@ -2128,6 +2192,11 @@ class FileNotesGitService:
             raise
         self._commit_review_cycle = cycle
         self._commit_review_waiter = waiter
+        self._retained_commit_operation = RetainedCommitOperation(
+            binding,
+            "review",
+            cycle,
+        )
         cycle.add_done_callback(self._commit_review_cycle_completed)
         return waiter
 
@@ -2198,8 +2267,11 @@ class FileNotesGitService:
             )
         self._commit_review_snapshots.clear()
         cycle: asyncio.Task[CommitOutcome] | None = None
+        child_started_signal: asyncio.Future[bool] | None = None
         try:
-            cycle = asyncio.get_running_loop().create_task(
+            loop = asyncio.get_running_loop()
+            child_started_signal = loop.create_future()
+            cycle = loop.create_task(
                 self._run_commit_cycle(
                     binding,
                     snapshot,
@@ -2208,26 +2280,89 @@ class FileNotesGitService:
                     body=body,
                 )
             )
-            waiter = asyncio.get_running_loop().create_task(
-                self._shield_commit_cycle(cycle)
-            )
+            waiter = loop.create_task(self._shield_commit_cycle(cycle))
         except BaseException:
             if cycle is not None:
                 cycle.cancel()
+            if child_started_signal is not None and not child_started_signal.done():
+                child_started_signal.set_result(False)
             lease.release()
             raise
         self._commit_child_started = False
+        self._commit_child_started_signal = child_started_signal
         self._commit_cycle = cycle
         self._commit_waiter = waiter
+        self._retained_commit_operation = RetainedCommitOperation(
+            binding,
+            "commit",
+            cycle,
+            child_started_signal,
+        )
         cycle.add_done_callback(self._commit_cycle_completed)
         return waiter
 
-    def cancel_commit(self) -> bool:
-        """Cancel only confirmation work before the branch child starts."""
-        cycle = self._commit_cycle
-        if cycle is None or cycle.done() or self._commit_child_started:
+    def _mark_commit_child_started(self) -> None:
+        """Publish the exact successful-spawn boundary without yielding."""
+        self._commit_child_started = True
+        signal = self._commit_child_started_signal
+        if signal is not None and not signal.done():
+            signal.set_result(True)
+
+    def retained_commit_operation(
+        self,
+        binding: SessionBinding,
+    ) -> RetainedCommitOperation | None:
+        """Return the latest exact-binding operation without transferring ownership."""
+        self._observe_commit_rebinding()
+        operation = self._retained_commit_operation
+        if operation is None or operation.binding != binding:
+            return None
+        return operation
+
+    def cancel_commit(
+        self,
+        binding: SessionBinding,
+    ) -> bool:
+        """Cancel exact review/confirmation work before a commit child starts."""
+        operation = self._retained_commit_operation
+        if operation is None:
             return False
-        cycle.cancel()
+        if operation.binding != binding:
+            return False
+
+        review_cycle = self._commit_review_cycle
+        if (
+            operation.kind == "review"
+            and review_cycle is not None
+            and not review_cycle.done()
+        ):
+            review_cycle.cancel()
+            return True
+
+        cycle = self._commit_cycle
+        if (
+            operation.kind == "commit"
+            and cycle is not None
+            and not cycle.done()
+        ):
+            if self._commit_child_started:
+                return False
+            cycle.cancel()
+            return True
+
+        if (
+            operation.kind != "review"
+            or not operation.settled
+        ):
+            return False
+        matching_tokens = tuple(
+            token
+            for token, snapshot in self._commit_review_snapshots.items()
+            if snapshot.capture.binding == binding
+        )
+        for token in matching_tokens:
+            self._commit_review_snapshots.pop(token, None)
+        self._retained_commit_operation = None
         return True
 
     async def _shield_commit_cycle(
@@ -2241,9 +2376,13 @@ class FileNotesGitService:
         cycle: asyncio.Task[CommitOutcome],
     ) -> None:
         if self._commit_cycle is cycle:
+            signal = self._commit_child_started_signal
+            if signal is not None and not signal.done():
+                signal.set_result(False)
             self._commit_cycle = None
             self._commit_waiter = None
             self._commit_child_started = False
+            self._commit_child_started_signal = None
         if not cycle.cancelled():
             cycle.exception()
 
@@ -2251,7 +2390,7 @@ class FileNotesGitService:
         self,
         binding: SessionBinding,
     ) -> asyncio.Task[CommitOutcome]:
-        """Retain one exact proof-only recovery cycle for an uncertain commit."""
+        """Re-observe one exact attempt, proving it only when lifecycle-safe."""
         if self._sealed:
             raise GitMutationAdmissionError(
                 "shutdown",
@@ -2297,6 +2436,11 @@ class FileNotesGitService:
             raise
         self._commit_recovery_cycle = cycle
         self._commit_recovery_waiter = waiter
+        self._retained_commit_operation = RetainedCommitOperation(
+            binding,
+            "recovery",
+            cycle,
+        )
         cycle.add_done_callback(self._commit_recovery_cycle_completed)
         return waiter
 
@@ -2410,6 +2554,11 @@ class FileNotesGitService:
         body: str,
     ) -> CommitOutcome:
         hooks_directory: Path | None = None
+        confirmation: _CommitConfirmation | None = None
+        retained_child: RetainedGitChildToken | None = None
+        retained_claimed = False
+        child_termination_known = False
+        known_normal_returncode: int | None = None
         try:
             if subject is not None:
                 try:
@@ -2441,7 +2590,6 @@ class FileNotesGitService:
                     "blocked",
                     "A private commit hooks directory could not be prepared.",
                 )
-            self._commit_child_started = True
             try:
                 child_result = await self._runner.run(
                     build_commit_argv(
@@ -2458,8 +2606,17 @@ class FileNotesGitService:
                     timeout=self._status_timeout,
                     stdout_limit=DEFAULT_COMMIT_PROOF_STDERR_LIMIT_BYTES,
                     stderr_limit=DEFAULT_COMMIT_PROOF_STDERR_LIMIT_BYTES,
+                    on_spawn=self._mark_commit_child_started,
+                    cancel_before_spawn=True,
                 )
             except OSError:
+                if not self._commit_child_started:
+                    self._remove_hooks_directory(hooks_directory)
+                    hooks_directory = None
+                    return CommitOutcome(
+                        "blocked",
+                        "Git could not start the commit child.",
+                    )
                 outcome = self._retain_uncertain_commit(
                     snapshot,
                     confirmation.capture,
@@ -2470,7 +2627,6 @@ class FileNotesGitService:
                 return outcome
 
             retained_child = child_result.retained_child
-            retained_claimed = False
             if retained_child is not None:
                 try:
                     retained_claimed = self._runner.claim_retained_child(retained_child)
@@ -2503,6 +2659,8 @@ class FileNotesGitService:
                 and not child_result.stop_requested
                 and not child_result.force_stopped
             )
+            if child_is_natural:
+                known_normal_returncode = child_result.returncode
             if not child_is_natural:
                 if retained_child is not None and not retained_claimed:
                     try:
@@ -2564,11 +2722,109 @@ class FileNotesGitService:
                     and postflight.local_state_supported
                 ),
             )
-        except asyncio.CancelledError:
-            return CommitOutcome(
-                "cancelled",
-                "Commit confirmation was cancelled.",
+        except GitRunCancelled as cancellation:
+            if not self._commit_child_started or confirmation is None:
+                return CommitOutcome(
+                    "cancelled",
+                    "Commit confirmation was cancelled.",
+                )
+            cancelled_result = cancellation.result
+            if cancelled_result is not None:
+                retained_child = cancelled_result.retained_child
+                child_termination_known = (
+                    retained_child is None
+                    and cancelled_result.returncode is not None
+                )
+                if (
+                    child_termination_known
+                    and cancelled_result.returncode >= 0
+                    and not cancelled_result.termination_uncertain
+                    and not cancelled_result.stop_requested
+                    and not cancelled_result.force_stopped
+                ):
+                    known_normal_returncode = cancelled_result.returncode
+            else:
+                retained_child = cancellation.retained_child
+            if retained_child is not None and not retained_claimed:
+                try:
+                    retained_claimed = self._runner.claim_retained_child(
+                        retained_child
+                    )
+                except (RuntimeError, ValueError):
+                    retained_child = None
+            if (
+                child_termination_known
+                and hooks_directory is not None
+                and self._remove_hooks_directory(hooks_directory)
+            ):
+                hooks_directory = None
+            outcome = self._retain_uncertain_commit(
+                snapshot,
+                confirmation.capture,
+                lease,
+                retained_child=retained_child,
+                hooks_directory=hooks_directory,
+                termination_known=child_termination_known,
+                known_normal_returncode=known_normal_returncode,
+                can_check_again=child_termination_known,
             )
+            hooks_directory = None
+            return outcome
+        except asyncio.CancelledError:
+            if not self._commit_child_started or confirmation is None:
+                return CommitOutcome(
+                    "cancelled",
+                    "Commit confirmation was cancelled.",
+                )
+            if (
+                child_termination_known
+                and hooks_directory is not None
+                and self._remove_hooks_directory(hooks_directory)
+            ):
+                hooks_directory = None
+            outcome = self._retain_uncertain_commit(
+                snapshot,
+                confirmation.capture,
+                lease,
+                retained_child=retained_child,
+                hooks_directory=hooks_directory,
+                termination_known=child_termination_known,
+                known_normal_returncode=known_normal_returncode,
+                can_check_again=child_termination_known,
+            )
+            hooks_directory = None
+            return outcome
+        except Exception:
+            if not self._commit_child_started or confirmation is None:
+                return CommitOutcome(
+                    "blocked",
+                    "Commit preparation failed before Git started.",
+                )
+            if retained_child is not None and not retained_claimed:
+                try:
+                    retained_claimed = self._runner.claim_retained_child(
+                        retained_child
+                    )
+                except Exception:
+                    retained_child = None
+            if (
+                child_termination_known
+                and hooks_directory is not None
+                and self._remove_hooks_directory(hooks_directory)
+            ):
+                hooks_directory = None
+            outcome = self._retain_uncertain_commit(
+                snapshot,
+                confirmation.capture,
+                lease,
+                retained_child=retained_child,
+                hooks_directory=hooks_directory,
+                termination_known=child_termination_known,
+                known_normal_returncode=known_normal_returncode,
+                can_check_again=child_termination_known,
+            )
+            hooks_directory = None
+            return outcome
         finally:
             if hooks_directory is not None and not self._commit_child_started:
                 self._remove_hooks_directory(hooks_directory)
@@ -3141,6 +3397,9 @@ class FileNotesGitService:
         """Drop rebound proof and retain only exact child lifecycle resources."""
         evidence = self._uncertain_commit
         current_binding = self._owner.current_binding()
+        operation = self._retained_commit_operation
+        if operation is not None and operation.binding != current_binding:
+            self._retained_commit_operation = None
         if evidence is not None and current_binding is not None:
             current_repository = self._owner.snapshot(
                 current_binding
@@ -3342,18 +3601,27 @@ class FileNotesGitService:
             return _blocked_commit_review("Session staging authority changed.")
 
         token = object()
-        included_notes = tuple(
-            CommitIncludedNote(
-                group_id=group_id,
-                display_text=groups_by_id[group_id].display_text,
+        included_notes: list[CommitIncludedNote] = []
+        for group_id in proof.included_group_ids:
+            change_type = _commit_review_change_type(
+                repository_ownership[group_id]
             )
-            for group_id in proof.included_group_ids
-        )
+            if change_type is None:
+                return _blocked_commit_review(
+                    "The complete staged state cannot be classified safely."
+                )
+            included_notes.append(
+                CommitIncludedNote(
+                    group_id=group_id,
+                    display_text=groups_by_id[group_id].display_text,
+                    change_type=change_type,
+                )
+            )
         projection = CommitReviewProjection(
             branch=head.branch or "",
             old_commit=head.object_id or "",
             message=message.decode("utf-8"),
-            included_notes=included_notes,
+            included_notes=tuple(included_notes),
             author=author,
             committer=committer,
         )
@@ -3941,6 +4209,8 @@ class FileNotesGitService:
             self._commit_recovery_cycle = None
             self._commit_recovery_waiter = None
             self._commit_child_started = False
+            self._commit_child_started_signal = None
+            self._retained_commit_operation = None
             self._commit_review_snapshots.clear()
             if binding is not None:
                 self._owner.clear_ownership(binding)
@@ -4031,6 +4301,8 @@ class FileNotesGitService:
         self._commit_recovery_cycle = None
         self._commit_recovery_waiter = None
         self._commit_child_started = False
+        self._commit_child_started_signal = None
+        self._retained_commit_operation = None
         self._commit_review_snapshots.clear()
         self._pending_status = None
         self._rerun_available = False
@@ -6193,6 +6465,30 @@ def _expected_owned_delta(
                 status,
             )
     return expected
+
+
+def _commit_review_change_type(
+    ownership: StagingOwnership,
+) -> CommitReviewChangeType | None:
+    """Classify one included note from its exact proven Git delta."""
+    expected = _expected_owned_delta(
+        {
+            0: (
+                {
+                    path: baseline.entry
+                    for path, baseline in ownership.original_baselines.items()
+                },
+                ownership.post_stage_entries,
+            )
+        }
+    )
+    statuses = frozenset(item[-1] for item in expected.values())
+    return {
+        frozenset({"A"}): "New",
+        frozenset({"M"}): "Modified",
+        frozenset({"D"}): "Deleted",
+        frozenset({"A", "D"}): "Moved",
+    }.get(statuses)
 
 
 def _proof_index_entry_is_supported(path: str, entry: IndexEntry) -> bool:

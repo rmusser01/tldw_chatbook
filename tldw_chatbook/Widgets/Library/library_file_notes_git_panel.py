@@ -23,6 +23,7 @@ from tldw_chatbook.Notes.file_notes_git_commit import (
     CommitIncludedNote,
     CommitOutcome,
     CommitRecoveryProjection,
+    CommitReviewChangeType,
     CommitReviewProjection,
 )
 from tldw_chatbook.Notes.file_notes_session_owner import (
@@ -49,7 +50,6 @@ CommitPanelPhase = Literal[
     "executing",
     "result",
 ]
-CommitReviewChangeType = Literal["New", "Modified", "Deleted", "Moved"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +61,7 @@ class CommitDraftProjection:
     staged_note_count: int
     subject: str = ""
     body: str = ""
+    form_error: str | None = None
     subject_error: str | None = None
     body_error: str | None = None
 
@@ -74,12 +75,16 @@ class CommitReviewNoteProjection:
     """One sanitized included-note row for literal rendering."""
 
     note: CommitIncludedNote
-    change_type: CommitReviewChangeType
 
     @property
     def group_id(self) -> int:
         """Return the exact reviewed session-group identity."""
         return self.note.group_id
+
+    @property
+    def change_type(self) -> CommitReviewChangeType:
+        """Return the immutable Git-semantic review label."""
+        return self.note.change_type
 
     @property
     def display_path(self) -> str:
@@ -867,6 +872,8 @@ class LibraryFileNotesGitPanel(Vertical):
         self._commit_note_render_generation = 0
         self._commit_list_focus_pending = False
         self._commit_list_preferred_group_id: int | None = None
+        self._commit_list_focus_selector: str | None = None
+        self._commit_entry_focus: tuple[object, str] | None = None
 
     @property
     def selected_group_id(self) -> int | None:
@@ -987,6 +994,12 @@ class LibraryFileNotesGitPanel(Vertical):
                         "",
                         id="file-notes-git-commit-form-meta",
                         classes="file-notes-git-commit-copy",
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-commit-form-error",
+                        classes="file-notes-git-commit-error",
                         markup=False,
                     )
                     yield Static(
@@ -1187,7 +1200,7 @@ class LibraryFileNotesGitPanel(Vertical):
     def on_mount(self) -> None:
         self._sync_action_layout(self.size.width)
         self._sync_commit_footer_layout(self.size.width)
-        self._show_commit_phase("list")
+        self._show_commit_phase(self._commit_phase)
         self.call_after_refresh(self._sync_commit_availability)
         self._update_actions()
         self.call_after_refresh(self._fit_fixed_regions)
@@ -1301,6 +1314,12 @@ class LibraryFileNotesGitPanel(Vertical):
         body = self.query_one("#file-notes-git-commit-body-input", TextArea)
         subject.value = projection.subject
         body.load_text(projection.body)
+        form_error = self.query_one(
+            "#file-notes-git-commit-form-error",
+            Static,
+        )
+        form_error.update(projection.form_error or "")
+        form_error.display = projection.form_error is not None
         self._render_commit_form_error(
             "#file-notes-git-commit-subject-error",
             subject,
@@ -1312,11 +1331,14 @@ class LibraryFileNotesGitPanel(Vertical):
             projection.body_error,
         )
         self._show_commit_phase("form")
-        target_selector = (
-            "#file-notes-git-commit-body-input"
-            if projection.body_error is not None
-            else "#file-notes-git-commit-subject"
-        )
+        if projection.body_error is not None:
+            target_selector = "#file-notes-git-commit-body-input"
+        elif projection.subject_error is not None:
+            target_selector = "#file-notes-git-commit-subject"
+        elif projection.form_error is not None:
+            target_selector = "#file-notes-git-commit-review"
+        else:
+            target_selector = "#file-notes-git-commit-subject"
         self._focus_commit_control(target_selector)
 
     def _render_commit_form_error(
@@ -1459,6 +1481,18 @@ class LibraryFileNotesGitPanel(Vertical):
         )
         self._show_commit_phase("executing")
 
+    def render_commit_recovery_checking(self) -> None:
+        """Render non-cancelable proof-only recovery without implying a commit."""
+        self.query_one(
+            "#file-notes-git-commit-execution-title",
+            Static,
+        ).update("Checking the retained commit attempt...")
+        self.query_one(
+            "#file-notes-git-commit-execution-detail",
+            Static,
+        ).update("No new commit will be started.")
+        self._show_commit_phase("executing")
+
     def render_commit_result(
         self,
         projection: CommitResultProjection,
@@ -1498,10 +1532,10 @@ class LibraryFileNotesGitPanel(Vertical):
         )
         recovery_reason.update(
             (
-                "Check again is temporarily unavailable while the exact Git "
-                "child may still be settling or Git has a relevant lock or "
-                "operation. Inspect git status and git log -1, then wait and "
-                "try again."
+                "Check again performs a proof-only recheck and never starts "
+                "a new commit. If the exact Git child is still settling or "
+                "Git has a relevant lock or operation, the result remains "
+                "uncertain."
             )
             if recovery_unavailable
             else ""
@@ -1513,27 +1547,35 @@ class LibraryFileNotesGitPanel(Vertical):
         elif (
             outcome.state == "uncertain"
             and projection.recovery is not None
-            and projection.recovery.can_check_again
         ):
             self._focus_commit_control(
                 "#file-notes-git-commit-check-again"
             )
-        elif recovery_unavailable:
-            self._focus_commit_control("#file-notes-git-commit-body")
 
     def return_to_commit_list(
         self,
         *,
         preferred_group_id: int | None = None,
+        restore_entry_focus: bool = False,
     ) -> None:
         """Leave a retained result/workflow and focus a stable list target."""
         self._commit_review = None
         self._commit_result = None
         self._commit_notes = ()
         self._commit_included_expanded = False
-        self._replace_commit_review_notes()
         self._commit_list_focus_pending = True
         self._commit_list_preferred_group_id = preferred_group_id
+        self._commit_list_focus_selector = None
+        if restore_entry_focus:
+            active = self._active_commit_draft
+            entry_focus = self._commit_entry_focus
+            if (
+                active is not None
+                and entry_focus is not None
+                and entry_focus[0] == active.binding_key
+            ):
+                self._commit_list_focus_selector = entry_focus[1]
+            self._commit_entry_focus = None
         self._show_commit_phase("list")
         if not self._replacing_rows:
             self._settle_commit_list_focus()
@@ -1542,6 +1584,7 @@ class LibraryFileNotesGitPanel(Vertical):
         """Discard both binding-scoped projections and leave the workflow."""
         self._commit_availability = None
         self._active_commit_draft = None
+        self._commit_entry_focus = None
         self._sync_commit_availability()
         self.return_to_commit_list()
 
@@ -1641,7 +1684,7 @@ class LibraryFileNotesGitPanel(Vertical):
             self.query_one(
                 "#file-notes-git-commit-check-again",
                 Button,
-            ).disabled = recovery is None or not recovery.can_check_again
+            ).disabled = recovery is None
 
     def _focus_commit_control(self, selector: str) -> None:
         self.call_after_refresh(
@@ -1936,6 +1979,21 @@ class LibraryFileNotesGitPanel(Vertical):
             return
         self._commit_list_focus_pending = False
         list_view = self.query_one("#file-notes-git-rows", ListView)
+        focus_selector = self._commit_list_focus_selector
+        self._commit_list_focus_selector = None
+        if focus_selector is not None:
+            target = self.query_one(focus_selector)
+            if (
+                target.can_focus
+                and not getattr(target, "disabled", False)
+                and all(
+                    not isinstance(node, Widget) or node.display
+                    for node in target.ancestors_with_self
+                )
+            ):
+                self.screen.set_focus(target, scroll_visible=False)
+                self._commit_list_preferred_group_id = None
+                return
         group_ids = tuple(row.group_id for row in self._rows)
         preferred_group_id = self._commit_list_preferred_group_id
         target_group_id = (
@@ -2164,9 +2222,16 @@ class LibraryFileNotesGitPanel(Vertical):
             projection,
             subject=subject,
             body=body,
+            form_error=None,
             subject_error=None,
             body_error=None,
         )
+        form_error = self.query_one(
+            "#file-notes-git-commit-form-error",
+            Static,
+        )
+        form_error.update("")
+        form_error.display = False
         self._render_commit_form_error(
             "#file-notes-git-commit-subject-error",
             self.query_one("#file-notes-git-commit-subject", Input),
@@ -2238,12 +2303,37 @@ class LibraryFileNotesGitPanel(Vertical):
         projection = self._commit_availability
         if projection is None or projection.staged_note_count == 0:
             return
+        focused = self.screen.focused
+        list_surface = self.query_one("#file-notes-git-list-surface")
+        if (
+            focused is not None
+            and focused.id is not None
+            and focused.can_focus
+            and any(
+                node is list_surface
+                for node in focused.ancestors_with_self
+            )
+        ):
+            self._commit_entry_focus = (
+                projection.binding_key,
+                f"#{focused.id}",
+            )
+        else:
+            self._commit_entry_focus = None
         self.post_message(
             self.CommitStagedRequested(projection.binding_key)
         )
+        active = self._active_commit_draft
+        if active is not None and active.binding_key == projection.binding_key:
+            projection = replace(
+                projection,
+                subject=active.subject,
+                body=active.body,
+            )
         self.render_commit_form(
             replace(
                 projection,
+                form_error=None,
                 subject_error=None,
                 body_error=None,
             )
@@ -2268,6 +2358,7 @@ class LibraryFileNotesGitPanel(Vertical):
                 projection,
                 subject=subject,
                 body=body,
+                form_error=None,
                 subject_error="Commit subject is required.",
                 body_error=None,
             )
@@ -2277,6 +2368,7 @@ class LibraryFileNotesGitPanel(Vertical):
             projection,
             subject=subject,
             body=body,
+            form_error=None,
             subject_error=None,
             body_error=None,
         )
@@ -2314,11 +2406,14 @@ class LibraryFileNotesGitPanel(Vertical):
             "checking",
             "review",
             "confirming",
+            "result",
         }:
             return
-        self.return_to_commit_list(
-            preferred_group_id=self._selected_group_id,
-        )
+        if from_phase != "confirming":
+            self.return_to_commit_list(
+                preferred_group_id=self._selected_group_id,
+                restore_entry_focus=True,
+            )
         self.post_message(self.CancelCommitRequested(from_phase))
 
     @on(Button.Pressed, "#file-notes-git-commit-confirm")
@@ -2337,7 +2432,6 @@ class LibraryFileNotesGitPanel(Vertical):
             and self._commit_result is not None
             and self._commit_result.outcome.state == "uncertain"
             and self._commit_result.recovery is not None
-            and self._commit_result.recovery.can_check_again
         ):
             self.post_message(self.CheckCommitAgainRequested())
 

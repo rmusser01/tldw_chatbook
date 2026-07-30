@@ -17,6 +17,7 @@ CommitContractErrorCode = Literal[
     "malformed_commit_object",
 ]
 CommitReviewState = Literal["ready", "cancelled", "blocked"]
+CommitReviewChangeType = Literal["New", "Modified", "Deleted", "Moved"]
 CommitOutcomeState = Literal[
     "cancelled",
     "blocked",
@@ -104,10 +105,12 @@ class CommitIncludedNote:
     Attributes:
         group_id: Process-local session group identity.
         display_text: Control-safe note label for literal rendering.
+        change_type: Git-semantic change proven by the complete staged delta.
     """
 
     group_id: int
     display_text: str
+    change_type: CommitReviewChangeType
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,7 +205,9 @@ class CommitRecoveryProjection:
 
     Attributes:
         message: Literal-rendering recovery guidance.
-        can_check_again: Whether the exact attempt can be inspected now.
+        can_check_again: Whether full repository proof is already known safe.
+            When false, a proof-only check may only re-observe the exact
+            retained child and leave the attempt uncertain.
     """
 
     message: str

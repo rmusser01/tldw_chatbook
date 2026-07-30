@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 
 import pytest
@@ -16,11 +16,14 @@ from tldw_chatbook.Notes.file_notes_git_service import (
     GitCommandResult,
     GitIndexParseError,
     GitMutationAdmissionError,
+    GitRunCancelled,
     GitShutdownAffinityError,
     GitStatusAdmissionError,
     PorcelainV2ParseError,
     PorcelainPathOutsideSessionError,
     PorcelainRecord,
+    RetainedGitChildSettlement,
+    RetainedGitChildToken,
     build_git_environment,
     build_index_argv,
     build_file_notes_session_owner,
@@ -39,6 +42,12 @@ from tldw_chatbook.Notes.file_notes_git_service import (
     stage_group_is_closed,
     stage_pathspecs,
     unstage_group_is_closed,
+)
+from tldw_chatbook.Notes.file_notes_git_commit import (
+    CommitOutcome,
+    CommitReviewHandle,
+    CommitReviewResult,
+    GitIdentity,
 )
 from tldw_chatbook.Notes.file_notes_session_owner import (
     FileNotesSessionOwner,
@@ -1629,6 +1638,7 @@ async def test_runner_passes_direct_argv_and_byte_stdin_to_exec(
 ) -> None:
     child = _CompletedProcess()
     captured: dict[str, object] = {}
+    spawned: list[bool] = []
 
     async def fake_create_subprocess_exec(
         *argv: str | bytes,
@@ -1636,6 +1646,7 @@ async def test_runner_passes_direct_argv_and_byte_stdin_to_exec(
     ) -> _CompletedProcess:
         captured["argv"] = argv
         captured["kwargs"] = kwargs
+        captured["created"] = True
         return child
 
     monkeypatch.setattr(
@@ -1651,12 +1662,48 @@ async def test_runner_passes_direct_argv_and_byte_stdin_to_exec(
         environment={"PATH": "/bin"},
         stdin=b"input\0bytes",
         timeout=1,
+        on_spawn=lambda: spawned.append(bool(captured.get("created"))),
     )
 
     assert captured["argv"] == ("git", b"status")
     assert "shell" not in captured["kwargs"]  # type: ignore[operator]
+    assert spawned == [True]
     assert child.stdin == b"input\0bytes"
     assert result == GitCommandResult(0, b"stdout\0", b"stderr")
+
+
+@pytest.mark.asyncio
+async def test_runner_does_not_signal_child_when_exec_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawned = False
+
+    async def fail_create_subprocess_exec(
+        *_argv: str | bytes,
+        **_kwargs: object,
+    ) -> _CompletedProcess:
+        raise OSError("spawn failed")
+
+    def mark_spawned() -> None:
+        nonlocal spawned
+        spawned = True
+
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        fail_create_subprocess_exec,
+    )
+    runner = AsyncGitProcessRunner()
+
+    with pytest.raises(OSError, match="spawn failed"):
+        await runner.run(
+            ("git", "commit"),
+            cwd="/repo",
+            environment={"PATH": "/bin"},
+            on_spawn=mark_spawned,
+        )
+
+    assert not spawned
 
 
 class _StubbornProcess:
@@ -2134,6 +2181,60 @@ async def test_retained_commit_child_cancellation_before_spawn_keeps_operation(
     assert settlement.stdout == b"spawned-after-cancel"
     assert child.terminate_calls == 0
     assert child.kill_calls == 0
+    assert await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_child_opt_in_cancel_prevents_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawn_started = asyncio.Event()
+    spawn_cancelled = asyncio.Event()
+    callback_called = False
+
+    async def delayed_create_subprocess_exec(
+        *argv: str | bytes,
+        **kwargs: object,
+    ) -> _RetainedCommitChildProcess:
+        del argv, kwargs
+        spawn_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            spawn_cancelled.set()
+            raise
+
+    def mark_spawned() -> None:
+        nonlocal callback_called
+        callback_called = True
+
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        delayed_create_subprocess_exec,
+    )
+    runner = AsyncGitProcessRunner()
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "commit"),
+            cwd="/repo",
+            environment={},
+            on_spawn=mark_spawned,
+            cancel_before_spawn=True,
+        )
+    )
+    await spawn_started.wait()
+
+    command.cancel()
+    with pytest.raises(GitRunCancelled) as cancellation:
+        await command
+
+    assert cancellation.value.retained_child is None
+    assert cancellation.value.result is not None
+    assert spawn_cancelled.is_set()
+    assert not callback_called
+    assert not runner._run_tasks
+    assert not runner._processes
     assert await runner.shutdown()
 
 
@@ -4802,3 +4903,528 @@ async def test_shutdown_settles_active_stage_and_releases_mutation(
     transition = owner.try_acquire_transition(binding, "screen")
     assert transition is not None
     transition.release()
+
+
+class _PausedCommitLifecycleRunner:
+    """Pause the branch child so the public lifecycle seam is observable."""
+
+    def __init__(self) -> None:
+        self.commit_started = asyncio.Event()
+        self.release_commit = asyncio.Event()
+        self.commit_calls = 0
+        self.cancel_with_retained_child = False
+        self.token = RetainedGitChildToken(
+            git_service._RETAINED_CHILD_TOKEN_SECRET
+        )
+        self.claimed = False
+
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+        stdout_limit: int | None = None,
+        stderr_limit: int | None = None,
+        on_spawn: Callable[[], None] | None = None,
+        cancel_before_spawn: bool = False,
+    ) -> GitCommandResult:
+        assert cancel_before_spawn
+        del (
+            cwd,
+            environment,
+            stdin,
+            timeout,
+            stdout_limit,
+            stderr_limit,
+        )
+        command = tuple(os.fsdecode(argument) for argument in argv)
+        assert "commit" in command
+        self.commit_calls += 1
+        assert on_spawn is not None
+        on_spawn()
+        self.commit_started.set()
+        if self.cancel_with_retained_child:
+            raise GitRunCancelled(retained_child=self.token)
+        await self.release_commit.wait()
+        return GitCommandResult(1, b"", b"expected test refusal")
+
+    def read_retained_child(
+        self,
+        token: RetainedGitChildToken,
+    ) -> RetainedGitChildSettlement:
+        assert token is self.token
+        if not self.release_commit.is_set():
+            return RetainedGitChildSettlement("alive")
+        return RetainedGitChildSettlement("natural", returncode=1)
+
+    def claim_retained_child(self, token: RetainedGitChildToken) -> bool:
+        assert token is self.token
+        self.claimed = True
+        return True
+
+    def release_retained_child(self, token: RetainedGitChildToken) -> bool:
+        assert token is self.token
+        return self.claimed and self.release_commit.is_set()
+
+    def shutdown(self) -> None:
+        self.release_commit.set()
+        return None
+
+
+def _commit_lifecycle_service(
+    tmp_path: Path,
+    runner: _PausedCommitLifecycleRunner,
+) -> tuple[
+    FileNotesSessionOwner,
+    SessionBinding,
+    FileNotesGitService,
+    CommitReviewHandle,
+]:
+    """Build one exact owned review snapshot without running Git preflight."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "note.md").write_text("note\n", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    assert owner.record_change(binding, SessionChange("modified", "note.md"))
+    repository = _repository_at(root)
+    assert owner.publish_trust(binding, repository)
+    group = _single_group("note.md")
+    head = HeadIdentity.attached("refs/heads/main", OID_A)
+    ownership = StagingOwnership(
+        repository=repository,
+        head=head,
+        approved_endpoint_topology=group.endpoints,
+        approved_move_edges=group.move_edges,
+        approved_current_path=group.current_path,
+        original_baselines={
+            "note.md": IndexBaseline(_entry("note.md", object_id=OID_A))
+        },
+        post_stage_entries={"note.md": _entry("note.md", object_id=OID_B)},
+    )
+    assert owner.publish_ownership(binding, {1: ownership})
+    owner_snapshot = owner.snapshot(binding)
+    admission = owner.admit_mutation(binding)
+    assert admission.lease is not None
+    capture = owner.capture_commit_authority(
+        admission.lease,
+        binding=binding,
+        authority_generation=owner_snapshot.git_authority_generation,
+        repository=repository,
+        head=head,
+        group_sequence_ids={1: (1,)},
+    )
+    admission.lease.release()
+    assert capture is not None
+
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+    token = object()
+    handle = CommitReviewHandle(token)
+    service._commit_review_snapshots[token] = git_service._CommitReviewSnapshot(
+        capture=capture,
+        proof=git_service._CompleteCommitProof(
+            expected_tree=OID_C,
+            index_signature="reviewed-index",
+            delta_signature="reviewed-delta",
+            included_group_ids=(1,),
+        ),
+        message=b"Guarded commit\n",
+        author=GitIdentity("Author", "author@example.test"),
+        committer=GitIdentity("Committer", "committer@example.test"),
+    )
+    return owner, binding, service, handle
+
+
+def _install_commit_lifecycle_stubs(
+    monkeypatch: pytest.MonkeyPatch,
+    owner: FileNotesSessionOwner,
+    binding: SessionBinding,
+    service: FileNotesGitService,
+    *,
+    revalidation_started: asyncio.Event | None = None,
+    release_revalidation: asyncio.Event | None = None,
+) -> None:
+    """Keep this unit slice on lifecycle rather than Git proof mechanics."""
+
+    async def revalidate(
+        requested_binding,
+        snapshot,
+        lease,
+    ):
+        if revalidation_started is not None:
+            revalidation_started.set()
+        if release_revalidation is not None:
+            await release_revalidation.wait()
+        current = owner.snapshot(binding)
+        capture = owner.capture_commit_authority(
+            lease,
+            binding=requested_binding,
+            authority_generation=current.git_authority_generation,
+            repository=snapshot.capture.repository,
+            head=snapshot.capture.head,
+            group_sequence_ids=snapshot.capture.group_sequence_ids,
+        )
+        assert capture is not None
+        return git_service._CommitConfirmation(capture)
+
+    async def postflight(_binding, _repository):
+        return git_service._CommitPostflight(
+            repository_matches=True,
+            local_state_supported=True,
+            head=HeadIdentity.attached("refs/heads/main", OID_A),
+            index_signature="reviewed-index",
+            delta_signature="reviewed-delta",
+            tree_object_id=OID_C,
+            raw_commit=None,
+        )
+
+    async def publish_failed(*_args, **_kwargs):
+        return CommitOutcome(
+            "failed_unchanged",
+            "Git did not create a commit; state is unchanged.",
+        )
+
+    monkeypatch.setattr(
+        service,
+        "_revalidate_commit_confirmation",
+        revalidate,
+    )
+    monkeypatch.setattr(service, "_read_commit_postflight", postflight)
+    monkeypatch.setattr(
+        service,
+        "_postflight_is_unchanged",
+        lambda _snapshot, _postflight: True,
+    )
+    monkeypatch.setattr(service, "_publish_failed_commit", publish_failed)
+
+
+@pytest.mark.asyncio
+async def test_commit_review_cancel_is_exact_and_survives_waiter_cancellation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, binding, service, _runner = _status_service(tmp_path)
+    review_started = asyncio.Event()
+
+    async def delayed_review(*_args, **_kwargs):
+        review_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("cancelled review must not continue")
+
+    monkeypatch.setattr(service, "_prepare_commit_review", delayed_review)
+    waiter = service.start_commit_review(binding, "Retained review")
+    await asyncio.wait_for(review_started.wait(), 1.0)
+
+    operation = service.retained_commit_operation(binding)
+    assert operation is service.retained_commit_operation(binding)
+    assert operation is not None
+    assert operation.binding == binding
+    assert operation.kind == "review"
+    assert (
+        service.retained_commit_operation(
+            SessionBinding(binding.root_key, binding.generation + 1)
+        )
+        is None
+    )
+
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert not operation.settled
+    assert (
+        service.cancel_commit(SessionBinding(binding.root_key, binding.generation + 1))
+        is False
+    )
+    assert service.cancel_commit(binding) is True
+
+    result = await asyncio.wait_for(operation.wait(), 1.0)
+    assert result.state == "cancelled"
+    assert operation.settled
+    assert not owner.mutation_active(binding)
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_review_cancel_dismisses_settled_blocker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, binding, service, _runner = _status_service(tmp_path)
+
+    async def blocked_review(*_args: object, **_kwargs: object) -> CommitReviewResult:
+        return CommitReviewResult(
+            "blocked",
+            message="The staged review is no longer current.",
+        )
+
+    monkeypatch.setattr(service, "_prepare_commit_review", blocked_review)
+    waiter = service.start_commit_review(binding, "Settled blocker")
+    operation = service.retained_commit_operation(binding)
+    assert operation is not None
+    result = await operation.wait()
+    assert result.state == "blocked"
+
+    assert service.cancel_commit(binding) is True
+    assert service.retained_commit_operation(binding) is None
+    assert await waiter == result
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_operation_reports_pre_child_cancellation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _PausedCommitLifecycleRunner()
+    owner, binding, service, handle = _commit_lifecycle_service(
+        tmp_path,
+        runner,
+    )
+    revalidation_started = asyncio.Event()
+    release_revalidation = asyncio.Event()
+    _install_commit_lifecycle_stubs(
+        monkeypatch,
+        owner,
+        binding,
+        service,
+        revalidation_started=revalidation_started,
+        release_revalidation=release_revalidation,
+    )
+
+    waiter = service.start_commit(binding, handle)
+    await asyncio.wait_for(revalidation_started.wait(), 1.0)
+    operation = service.retained_commit_operation(binding)
+    assert operation is not None
+    assert operation.kind == "commit"
+    assert not operation.child_started
+    assert service.cancel_commit(binding) is True
+
+    outcome = await asyncio.wait_for(operation.wait(), 1.0)
+    assert outcome.state == "cancelled"
+    assert await operation.wait_child_started() is False
+    assert operation.settled
+    assert runner.commit_calls == 0
+    assert not owner.mutation_active(binding)
+    assert await waiter == outcome
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_child_started_signal_precedes_cancel_refusal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _PausedCommitLifecycleRunner()
+    owner, binding, service, handle = _commit_lifecycle_service(
+        tmp_path,
+        runner,
+    )
+    _install_commit_lifecycle_stubs(
+        monkeypatch,
+        owner,
+        binding,
+        service,
+    )
+
+    waiter = service.start_commit(binding, handle)
+    operation = service.retained_commit_operation(binding)
+    assert operation is not None
+    child_started = asyncio.create_task(operation.wait_child_started())
+    await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+
+    assert await asyncio.wait_for(child_started, 1.0) is True
+    assert operation.child_started
+    assert service.cancel_commit(binding) is False
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert not operation.settled
+
+    runner.release_commit.set()
+    outcome = await asyncio.wait_for(operation.wait(), 1.0)
+    assert outcome.state == "failed_unchanged"
+    assert operation.settled
+    assert runner.commit_calls == 1
+    assert not owner.mutation_active(binding)
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_child_started_runner_exception_publishes_quarantine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _PausedCommitLifecycleRunner()
+    owner, binding, service, handle = _commit_lifecycle_service(
+        tmp_path,
+        runner,
+    )
+    _install_commit_lifecycle_stubs(
+        monkeypatch,
+        owner,
+        binding,
+        service,
+    )
+
+    async def fail_after_child_start(
+        *_args: object,
+        on_spawn: Callable[[], None] | None = None,
+        **_kwargs: object,
+    ) -> GitCommandResult:
+        runner.commit_calls += 1
+        assert on_spawn is not None
+        on_spawn()
+        runner.commit_started.set()
+        raise RuntimeError("runner observation failed")
+
+    monkeypatch.setattr(runner, "run", fail_after_child_start)
+    waiter = service.start_commit(binding, handle)
+    operation = service.retained_commit_operation(binding)
+    assert operation is not None
+
+    outcome = await asyncio.wait_for(operation.wait(), 1.0)
+
+    assert outcome.state == "uncertain"
+    assert operation.child_started
+    snapshot = owner.snapshot(binding)
+    assert snapshot.commit_recovery is not None
+    assert snapshot.commit_recovery.can_check_again is False
+    assert not snapshot.staging_ownership
+    assert owner.admit_mutation(binding).reason == "recovery_required"
+    evidence = service._uncertain_commit
+    assert evidence is not None
+    assert evidence.termination_known is False
+    assert evidence.hooks_directory is not None
+    assert await waiter == outcome
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_pre_spawn_failure_is_blocked_without_quarantine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _PausedCommitLifecycleRunner()
+    owner, binding, service, handle = _commit_lifecycle_service(
+        tmp_path,
+        runner,
+    )
+    _install_commit_lifecycle_stubs(
+        monkeypatch,
+        owner,
+        binding,
+        service,
+    )
+    callback_received = False
+
+    async def fail_before_spawn(
+        *_args: object,
+        on_spawn: Callable[[], None] | None = None,
+        **_kwargs: object,
+    ) -> GitCommandResult:
+        nonlocal callback_received
+        callback_received = on_spawn is not None
+        raise OSError("exec failed before spawn")
+
+    monkeypatch.setattr(runner, "run", fail_before_spawn)
+    waiter = service.start_commit(binding, handle)
+    operation = service.retained_commit_operation(binding)
+    assert operation is not None
+
+    outcome = await asyncio.wait_for(operation.wait(), 1.0)
+
+    assert callback_received
+    assert outcome.state == "blocked"
+    assert not operation.child_started
+    assert owner.snapshot(binding).commit_recovery is None
+    assert not owner.mutation_active(binding)
+    assert await waiter == outcome
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_child_waiter_cancellation_retains_exact_quarantine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _PausedCommitLifecycleRunner()
+    runner.cancel_with_retained_child = True
+    owner, binding, service, handle = _commit_lifecycle_service(
+        tmp_path,
+        runner,
+    )
+    _install_commit_lifecycle_stubs(
+        monkeypatch,
+        owner,
+        binding,
+        service,
+    )
+    waiter = service.start_commit(binding, handle)
+    operation = service.retained_commit_operation(binding)
+    assert operation is not None
+
+    outcome = await asyncio.wait_for(operation.wait(), 1.0)
+
+    assert outcome.state == "uncertain"
+    assert operation.child_started
+    assert runner.claimed
+    evidence = service._uncertain_commit
+    assert evidence is not None
+    assert evidence.retained_child is runner.token
+    assert evidence.termination_known is False
+    assert owner.admit_mutation(binding).reason == "recovery_required"
+    assert await waiter == outcome
+    runner.release_commit.set()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_commit_child_started_postflight_exception_publishes_quarantine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _PausedCommitLifecycleRunner()
+    runner.release_commit.set()
+    owner, binding, service, handle = _commit_lifecycle_service(
+        tmp_path,
+        runner,
+    )
+    _install_commit_lifecycle_stubs(
+        monkeypatch,
+        owner,
+        binding,
+        service,
+    )
+
+    async def fail_postflight(*_args: object) -> git_service._CommitPostflight:
+        raise RuntimeError("postflight observation failed")
+
+    monkeypatch.setattr(service, "_read_commit_postflight", fail_postflight)
+    waiter = service.start_commit(binding, handle)
+    operation = service.retained_commit_operation(binding)
+    assert operation is not None
+
+    outcome = await asyncio.wait_for(operation.wait(), 1.0)
+
+    assert outcome.state == "uncertain"
+    assert operation.child_started
+    snapshot = owner.snapshot(binding)
+    assert snapshot.commit_recovery is not None
+    assert snapshot.commit_recovery.can_check_again is True
+    assert not snapshot.staging_ownership
+    assert owner.admit_mutation(binding).reason == "recovery_required"
+    evidence = service._uncertain_commit
+    assert evidence is not None
+    assert evidence.termination_known is True
+    assert evidence.known_normal_returncode == 1
+    assert evidence.hooks_directory is None
+    assert await waiter == outcome
+    await service.shutdown()

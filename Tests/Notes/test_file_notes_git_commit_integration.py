@@ -5,7 +5,7 @@ import os
 import shlex
 import stat
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -145,6 +145,8 @@ class _RecordingRunner(AsyncGitProcessRunner):
         timeout: float | None = None,
         stdout_limit: int | None = None,
         stderr_limit: int | None = None,
+        on_spawn: Callable[[], None] | None = None,
+        cancel_before_spawn: bool = False,
     ) -> GitCommandResult:
         self.calls.append((tuple(argv), dict(environment)))
         return await super().run(
@@ -155,6 +157,8 @@ class _RecordingRunner(AsyncGitProcessRunner):
             timeout=timeout,
             stdout_limit=stdout_limit,
             stderr_limit=stderr_limit,
+            on_spawn=on_spawn,
+            cancel_before_spawn=cancel_before_spawn,
         )
 
 
@@ -189,6 +193,8 @@ class _NoNetworkRunner(_RecordingRunner):
         timeout: float | None = None,
         stdout_limit: int | None = None,
         stderr_limit: int | None = None,
+        on_spawn: Callable[[], None] | None = None,
+        cancel_before_spawn: bool = False,
     ) -> GitCommandResult:
         decoded = tuple(os.fsdecode(value) for value in argv)
         if self._guarded_review_armed:
@@ -209,6 +215,8 @@ class _NoNetworkRunner(_RecordingRunner):
             timeout=timeout,
             stdout_limit=stdout_limit,
             stderr_limit=stderr_limit,
+            on_spawn=on_spawn,
+            cancel_before_spawn=cancel_before_spawn,
         )
 
 
@@ -243,6 +251,8 @@ class _ControlledRetainedReviewRunner(_RecordingRunner):
         timeout: float | None = None,
         stdout_limit: int | None = None,
         stderr_limit: int | None = None,
+        on_spawn: Callable[[], None] | None = None,
+        cancel_before_spawn: bool = False,
     ) -> GitCommandResult:
         if (
             self.mode != "passthrough"
@@ -280,6 +290,8 @@ class _ControlledRetainedReviewRunner(_RecordingRunner):
             timeout=timeout,
             stdout_limit=stdout_limit,
             stderr_limit=stderr_limit,
+            on_spawn=on_spawn,
+            cancel_before_spawn=cancel_before_spawn,
         )
 
     def read_retained_child(
@@ -354,6 +366,8 @@ class _ControlledCommitRunner(_RecordingRunner):
         timeout: float | None = None,
         stdout_limit: int | None = None,
         stderr_limit: int | None = None,
+        on_spawn: Callable[[], None] | None = None,
+        cancel_before_spawn: bool = False,
     ) -> GitCommandResult:
         if not any(
             isinstance(value, str) and value.startswith("core.hooksPath=")
@@ -367,9 +381,12 @@ class _ControlledCommitRunner(_RecordingRunner):
                 timeout=timeout,
                 stdout_limit=stdout_limit,
                 stderr_limit=stderr_limit,
+                on_spawn=on_spawn,
+                cancel_before_spawn=cancel_before_spawn,
             )
         self.calls.append((tuple(argv), dict(environment)))
         self.commit_calls += 1
+        assert cancel_before_spawn
         hooks_argument = next(
             value
             for value in argv
@@ -381,7 +398,19 @@ class _ControlledCommitRunner(_RecordingRunner):
         assert stat.S_IMODE(self.hooks_directory.stat().st_mode) == 0o700
         assert self.hooks_directory.stat().st_dev == Path(cwd).stat().st_dev
         assert not self.hooks_directory.is_relative_to(Path(cwd))
-        self.commit_started.set()
+        def mark_spawned() -> None:
+            if on_spawn is not None:
+                on_spawn()
+            self.commit_started.set()
+
+        uses_real_child = self.mode in {
+            "pause_then_commit",
+            "commit_then_branch_drift",
+            "commit_then_index_drift",
+            "commit_then_worktree_edit",
+        }
+        if not uses_real_child:
+            mark_spawned()
         if self.mode == "failure":
             return GitCommandResult(1, b"", b"commit refused")
         if self.mode == "zero_without_commit":
@@ -431,6 +460,8 @@ class _ControlledCommitRunner(_RecordingRunner):
                 timeout=timeout,
                 stdout_limit=stdout_limit,
                 stderr_limit=stderr_limit,
+                on_spawn=mark_spawned,
+                cancel_before_spawn=cancel_before_spawn,
             )
         if self.mode == "shutdown_stop":
             await self.release_commit.wait()
@@ -456,6 +487,8 @@ class _ControlledCommitRunner(_RecordingRunner):
                 timeout=timeout,
                 stdout_limit=stdout_limit,
                 stderr_limit=stderr_limit,
+                on_spawn=mark_spawned,
+                cancel_before_spawn=cancel_before_spawn,
             )
             if self.mode == "commit_then_branch_drift":
                 _git(Path(cwd), "checkout", "-q", "-b", "unexpected")
@@ -1996,7 +2029,7 @@ async def test_commit_confirmation_cancels_before_child_start(
 
     waiter = service.start_commit(binding, review.handle)
     await asyncio.wait_for(runner.exposed.wait(), 1.0)
-    assert service.cancel_commit() is True
+    assert service.cancel_commit(binding) is True
     runner.terminal.set()
     outcome = await asyncio.wait_for(waiter, 1.0)
 
@@ -2021,7 +2054,7 @@ async def test_commit_confirmation_cancel_refuses_after_child_begins(
     await asyncio.wait_for(runner.commit_started.wait(), 1.0)
     hooks_directory = runner.hooks_directory
     assert hooks_directory is not None and hooks_directory.is_dir()
-    assert service.cancel_commit() is False
+    assert service.cancel_commit(binding) is False
     runner.release_commit.set()
     outcome = await asyncio.wait_for(waiter, 1.0)
 
@@ -3241,18 +3274,19 @@ async def test_success_uses_one_status_snapshot_for_retirement_and_projection(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("change_kind", "relative_path"),
+    ("change_kind", "relative_path", "expected_change_type"),
     [
-        ("created", "created.md"),
-        ("modified", "note.md"),
-        ("deleted", "note.md"),
-        ("mode", "note.md"),
+        ("created", "created.md", "New"),
+        ("modified", "note.md", "Modified"),
+        ("deleted", "note.md", "Deleted"),
+        ("mode", "note.md", "Modified"),
     ],
 )
 async def test_guarded_commit_applies_basic_file_shapes_to_exact_complete_tree(
     tmp_path: Path,
     change_kind: str,
     relative_path: str,
+    expected_change_type: str,
 ) -> None:
     repository = _init_repository(tmp_path)
     (repository / "untouched.md").write_text("untouched\n", encoding="utf-8")
@@ -3280,6 +3314,8 @@ async def test_guarded_commit_applies_basic_file_shapes_to_exact_complete_tree(
     )
     assert review.state == "ready"
     assert review.handle is not None
+    assert review.projection is not None
+    assert review.projection.included_notes[0].change_type == expected_change_type
     old_head = _git(repository, "rev-parse", "HEAD").decode().strip()
     old_branch = _git(repository, "symbolic-ref", "HEAD")
     expected_tree = _git(repository, "write-tree").decode().strip()
@@ -3342,6 +3378,7 @@ async def test_guarded_commit_applies_grouped_and_chained_moves(
     assert review.handle is not None
     assert review.projection is not None
     assert review.projection.included_note_count == 1
+    assert review.projection.included_notes[0].change_type == "Moved"
     expected_tree = _git(repository, "write-tree").decode().strip()
 
     outcome = await service.start_commit(binding, review.handle)
