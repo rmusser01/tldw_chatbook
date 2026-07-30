@@ -1443,6 +1443,37 @@ git add Tests/UI/test_console_mcp_approval.py
 git commit -m "test(mcp): follow metadata-only cancellation audit"
 ```
 
+### Task 4ag: Align the curated Anthropic Console default
+
+**Files:**
+- Modify: `Tests/UI/test_console_session_settings.py`
+
+- [ ] **Step 1: Reproduce the stale curated default**
+
+Run the remote-default regression. Expected: production configuration resolves
+Anthropic to `claude-sonnet-5`, which is present in the provider catalog, while
+the test's independently curated literal still expects
+`claude-sonnet-4-20250514`.
+
+- [ ] **Step 2: Update only the stale literal**
+
+Change Anthropic's expected model to `claude-sonnet-5`. Preserve the complete
+representative mapping and each exact configuration-plus-catalog assertion.
+Do not change production or derive the expected values from production.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_session_settings.py::test_console_remote_defaults_use_smoke_verified_models \
+  Tests/test_config_model_catalog_defaults.py -q
+../../.venv/bin/python -m ruff check Tests/UI/test_console_session_settings.py
+../../.venv/bin/python -m ruff format --check Tests/UI/test_console_session_settings.py
+git diff --check
+git add Tests/UI/test_console_session_settings.py
+git commit -m "test(console): align curated Anthropic default"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -1529,6 +1560,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/UI/test_console_internals_decomposition.py \
   Tests/UI/test_console_live_work_handoffs.py \
   Tests/UI/test_console_mcp_approval.py \
+  Tests/UI/test_console_session_settings.py \
   Tests/UI/test_home_screen.py \
   Tests/UI/test_library_prompts_canvas.py \
   Tests/integration/test_library_ingest_flow.py \
@@ -1571,6 +1603,7 @@ Expected: all affected tests pass.
   Tests/UI/test_console_internals_decomposition.py \
   Tests/UI/test_console_live_work_handoffs.py \
   Tests/UI/test_console_mcp_approval.py \
+  Tests/UI/test_console_session_settings.py \
   Tests/UI/test_home_screen.py \
   Tests/UI/test_library_prompts_canvas.py \
   Tests/integration/test_library_ingest_flow.py \
@@ -1608,6 +1641,7 @@ Expected: all affected tests pass.
   Tests/UI/test_console_internals_decomposition.py \
   Tests/UI/test_console_live_work_handoffs.py \
   Tests/UI/test_console_mcp_approval.py \
+  Tests/UI/test_console_session_settings.py \
   Tests/UI/test_home_screen.py \
   Tests/UI/test_library_prompts_canvas.py \
   Tests/integration/test_library_ingest_flow.py \

@@ -333,6 +333,14 @@ Update the tests to describe current behavior:
     durable-record coverage. Do not restore free-form error text to the
     persistent MCP audit log; ADR-029 requires bounded metadata rather than
     payload-derived diagnostic strings.
+37. In the curated Console remote-default regression, replace only Anthropic's
+    retired `claude-sonnet-4-20250514` expectation with
+    `claude-sonnet-5`. Retain the independently curated expected mapping and
+    catalog-membership assertion for Anthropic, Cohere, Google, and
+    HuggingFace. Production configuration, the provider catalog, model
+    capabilities, and their dedicated default-model coverage already agree on
+    `claude-sonnet-5`; do not revert them or derive the expected mapping from
+    the values under test.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -456,6 +464,10 @@ compatibility shims. No broad deletion of live tests.
   would violate the metadata-only audit boundary. The bounded
   `approval_cancelled` category preserves the actionable outcome without
   durable free-form text.
+- Reverting the configured Anthropic default or deriving the expected Console
+  value from production would either undo the reviewed provider refresh or make
+  the regression tautological. Updating the one curated literal retains an
+  independent drift check against both configuration and catalog membership.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
