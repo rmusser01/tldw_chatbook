@@ -25,6 +25,7 @@ fixtures from `test_console_dictation.py`/`test_console_dictation_streaming.py`.
 from __future__ import annotations
 
 import pytest
+from textual.widgets import Input, Static
 
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from Tests.UI.test_console_native_chat_flow import (
@@ -36,6 +37,7 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_composer_bar import _DraftHistorySnapshot
@@ -749,3 +751,160 @@ async def test_console_prompt_append_undo_removes_separator_newline_too():
 
         assert composer.undo() is True
         assert composer.draft_text() == "existing draft"
+
+
+# ---------------------------------------------------------------------------
+# Re-review fix round (2026-07-30): NEW-1, NEW-2, NEW-5 -- pinned
+# reproductions of the reviewer's own re-review scenarios.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_console_composer_delete_left_uninitialized_fallback_is_undoable():
+    """NEW-1: `delete_left`'s uninitialized-segments fallback used to
+    record a snapshot immediately discarded by the `load_draft()` shortcut
+    it then called (F4 made `load_draft` unconditionally wipe history),
+    silently making that one deletion path non-undoable. The mounted
+    composer normally initializes segments immediately (`compose()` calls
+    `load_draft`), so this state is only reachable defensively; forced
+    directly here, matching how the reviewer reproduced it."""
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer._segments = []
+        composer._segments_initialized = False
+        composer.query_one("#console-command-input", Input).value = "legacy"
+
+        composer.delete_left()
+        assert composer.draft_text() == "legac"
+
+        assert composer.undo() is True
+        assert composer.draft_text() == "legacy"
+
+
+@pytest.mark.asyncio
+async def test_console_undo_redo_re_collapses_over_threshold_restored_segment():
+    """NEW-2 (MEDIUM, severity-corrected F7): a restored over-threshold
+    segment used to flatten into one giant LITERAL segment, so
+    `_refresh_visible_draft` ran its O(n^2) wrap/render path against the
+    full text on every undo/redo -- measured by the reviewer at up to 283s
+    frozen for a 2.4 MB restored draft, and 2.89s for a realistic
+    one-keystroke repro (attach 200 KB, type one character, undo). The
+    restored segment must instead re-collapse into the same paste-token
+    display a fresh over-threshold paste gets -- a BEHAVIOR pin (what
+    paints), not a timing pin."""
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        threshold = composer.paste_collapse_threshold
+        big_text = "x" * (threshold + 250)
+
+        composer.insert_file_segment(big_text, label="big.txt")
+        composer.focus()
+        await pilot.pause()
+
+        composer.insert_text("!")
+        assert composer.undo() is True
+
+        # The painted composer must show the collapsed token, not the
+        # literal payload -- painting the literal is exactly what froze
+        # the UI thread.
+        painted = visible_draft.render_line(0).text.rstrip()
+        assert f"Pasted Text: {len(big_text)} Characters" in painted
+        assert big_text not in painted
+
+        # Sanity: canonical text still round-trips the FULL content --
+        # store persistence and send must see the whole payload, not the
+        # short display token.
+        assert composer.draft_text() == big_text
+
+        # Redo lands back on the "!"-appended state, also over threshold --
+        # must repaint collapsed too, not expanded.
+        assert composer.redo() is True
+        painted_after_redo = visible_draft.render_line(0).text.rstrip()
+        assert "Pasted Text:" in painted_after_redo
+        assert big_text not in painted_after_redo
+        assert composer.draft_text() == big_text + "!"
+
+
+def test_composer_undo_redo_does_not_double_collapse_already_collapsed_snapshot():
+    """NEW-2 cross-check (requested explicitly): undoing back to a state
+    that itself contained an over-threshold paste -- already collapsed at
+    INSERTION time, not by the undo/redo re-collapse -- must show that
+    same token correctly: not a token wrapping a token, and not a wrong
+    character count. Confirms the re-collapse operates on the segment's
+    real underlying text, never on a previously-rendered display string."""
+    composer = ConsoleComposerBar()
+    threshold = composer.paste_collapse_threshold
+    big_text = "y" * (threshold + 100)
+
+    composer.insert_pasted_text(big_text)  # collapsed at insertion, not by undo/redo
+    composer.insert_text("!")  # a second, unrelated edit -- its own entry
+
+    assert composer.undo() is True
+    assert composer.draft_text() == big_text
+    assert [segment.collapse_state for segment in composer._segments] == ["collapsed"]
+    # The segment's real text is the raw payload, never the display string
+    # ("Pasted Text: N Characters") -- a token-of-a-token would fail this.
+    assert composer._segments[0].text == big_text
+
+    assert composer.undo() is True
+    assert composer.draft_text() == ""
+
+
+@pytest.mark.asyncio
+async def test_console_refused_send_preserves_undo_history(monkeypatch):
+    """NEW-5: a REFUSED send (`result.accepted=False`) must leave a
+    background session's banked undo/redo history intact -- nothing was
+    actually sent, so there is nothing to treat as a history barrier.
+    Previously `_console_undo_histories.pop(session_id, None)` ran
+    unconditionally after the accept-gated clear block, dropping the
+    banked history even on a refusal."""
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+
+        session_a = store.ensure_session(title="Session A")
+        composer.focus()
+        await pilot.pause()
+        composer.load_draft("")
+        console._sync_console_session_draft()
+
+        for character in "hello":
+            composer.insert_text(character)
+        assert composer.draft_text() == "hello"
+
+        # Switch away, banking A's history.
+        store.create_session(title="Session B")
+        console._sync_console_session_draft()
+        assert composer.draft_text() == ""
+        assert session_a.id in console._console_undo_histories
+
+        controller = console._ensure_console_chat_controller()
+
+        async def _refused(draft, *, session_id=None):
+            return ConsoleSubmitResult(accepted=False, should_clear_draft=False)
+
+        monkeypatch.setattr(controller, "submit_draft", _refused)
+
+        await console._submit_console_native_draft(
+            "attempted body", session_id=session_a.id
+        )
+
+        # The refusal must NOT have dropped A's banked history.
+        assert session_a.id in console._console_undo_histories
+
+        store.switch_session(session_a.id)
+        console._sync_console_session_draft()
+        assert composer.draft_text() == "hello"
+
+        console._console_composer_undo()
+        assert composer.draft_text() == ""
