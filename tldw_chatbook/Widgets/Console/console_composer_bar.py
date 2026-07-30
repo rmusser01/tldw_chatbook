@@ -864,19 +864,21 @@ class ConsoleComposerBar(Horizontal):
             # unbudgeted row that long gets rewrapped at paint time by
             # anything that isn't `no_wrap` -- silently pushing the true
             # last row out of the fixed-height window (the bug this guards
-            # against). Measured in cells, not characters: a row can be at
-            # the cell budget with fewer characters than that when it holds
-            # double-width text, and a char-counted trim would under-trim it.
+            # against). The candidate REMAINDER is measured directly with
+            # `cell_len` on each trimmed slice, not via a running per-
+            # character subtraction: a decrement seeded from the whole
+            # string's grapheme-aware `cell_len` but applied one character
+            # at a time over-subtracts across any grapheme cluster whose
+            # per-character sum exceeds the cluster's own width (ZWJ
+            # sequences), exiting the trim loop early and leaving the row
+            # still over budget -- confirmed via fuzzing during development
+            # (`"K‍TCCOtR"` at width 8: cluster-cells=6, per-char-sum=7).
             budget_cells = max(0, effective_width - cell_len(prefix))
             overflow_columns = 0
-            remaining_cells = cell_len(first_line_stripped)
             while (
-                remaining_cells > budget_cells
-                and overflow_columns < len(first_line_stripped)
+                overflow_columns < len(first_line_stripped)
+                and cell_len(first_line_stripped[overflow_columns:]) > budget_cells
             ):
-                remaining_cells -= cell_len(
-                    first_line_stripped[overflow_columns]
-                )
                 overflow_columns += 1
             visible_text = first_line_stripped[overflow_columns:]
             # Advance the source-offset start past every trimmed character:
@@ -889,7 +891,7 @@ class ConsoleComposerBar(Horizontal):
                 f"{prefix}{visible_text}",
                 first_slice.start + trimmed_columns,
                 first_slice.end,
-                synthetic_prefix_columns=4,
+                synthetic_prefix_columns=len(prefix),
             )
         else:
             visible_slices[0] = _DraftLineSlice(
