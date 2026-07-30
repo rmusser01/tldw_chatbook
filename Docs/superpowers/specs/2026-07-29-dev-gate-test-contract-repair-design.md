@@ -233,6 +233,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   `.library-source-action-blocked` rule now appears first, so the helper
   extracts that modifier's color-only block even though both source and
   bundled stylesheets still contain the complete exact base rule.
+- The Library footer-ownership regression still expects the `u` handoff hint
+  immediately after mount. The live registration now intentionally advertises
+  that shortcut only when Search/RAG is selected, because every other Library
+  row hard-gates the action. The mounted test starts with no selected row, so
+  its default footer is correct.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -765,6 +770,12 @@ Update the tests to describe current behavior:
 72. Pass the exact `.library-source-action {` selector to the existing CSS
     block helper for the source and bundled base-rule checks. Retain all style
     assertions and leave the live stylesheets and shared helper unchanged.
+73. In the Library footer-ownership regression, first retain the default
+    screen-owned footer outside Search/RAG, then set the current selected-row
+    owner to `LIBRARY_ROW_BROWSE_SEARCH` and invoke the live dynamic
+    registration method. Assert the `u` hint reaches only the screen footer and
+    the host app's footer remains default. Do not restore a screen-wide hint or
+    add a UI navigation journey to this focused ownership test.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1062,6 +1073,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   accommodate a prefix-based test parser. Rewriting the shared helper is
   unnecessary when only this base selector has the newly colliding prefix;
   selecting its already-asserted exact token is the smaller repair.
+- Restoring the `u` hint on every Library row would advertise an action that
+  production rejects outside Search/RAG. Driving a full rail-selection journey
+  would duplicate navigation coverage and introduce unrelated workers; setting
+  the registration owner's row state directly keeps this test focused on
+  footer ownership and dynamic shortcut projection.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

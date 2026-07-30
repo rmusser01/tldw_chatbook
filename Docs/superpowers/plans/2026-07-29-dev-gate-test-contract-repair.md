@@ -2942,6 +2942,47 @@ git diff --check
 
 Expected: the module and static checks pass with no production changes.
 
+### Task 4bq: Align Library footer ownership with its live shortcut gate
+
+**Files:**
+- Modify: `Tests/UI/test_screen_footer_hints.py`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This retargets a focused ownership test to the existing
+Search/RAG-only shortcut policy without changing navigation or footer behavior.
+
+- [ ] **Step 1: Preserve the focused RED**
+
+Run `test_library_registration_updates_the_screens_own_footer` alone. Expected
+before repair: the initial Library row has no live `u` action and therefore
+correctly leaves the screen footer at its default, while the stale test expects
+the retired screen-wide hint.
+
+- [ ] **Step 2: Exercise the live dynamic registration owner**
+
+Import `LIBRARY_ROW_BROWSE_SEARCH`. Retain the default screen-footer assertion,
+set the mounted screen's selected-row owner to Search/RAG, and call
+`_register_footer_shortcuts()`. Assert the existing `u` copy reaches the
+screen-owned footer and the host app's footer remains at its default. Do not
+change production or add a full navigation journey.
+
+- [ ] **Step 3: Verify footer ownership**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_screen_footer_hints.py \
+  -q
+../../.venv/bin/python -m ruff check Tests/UI/test_screen_footer_hints.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_screen_footer_hints.py
+git diff --check
+```
+
+Expected: the footer module and static checks pass with no production changes.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
