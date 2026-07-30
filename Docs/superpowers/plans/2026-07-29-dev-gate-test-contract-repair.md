@@ -1814,6 +1814,42 @@ git add \
 git commit -m "test(console): retarget image parity coverage"
 ```
 
+### Task 4aq: Finish the workspace marker sync migration
+
+**Files:**
+- Modify: `Tests/UI/test_console_workspace_context_rail.py`
+
+- [ ] **Step 1: Reproduce the stale helper signature**
+
+Run `test_console_workspace_context_syncs_active_conversation_marker`.
+Expected: after correctly restoring the persisted native session, the test
+passes a legacy `ChatSessionData` object to the now argument-free
+`_sync_console_workspace_context` method and raises `TypeError`.
+
+- [ ] **Step 2: Read the restored native owner**
+
+Remove the `ChatSessionData` import and call
+`console._sync_console_workspace_context()` with no argument. Keep the
+workspace membership, native persisted-session restoration, UI settle, and
+single selected “Planning thread” row assertions unchanged. Do not change
+production or add a compatibility parameter.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_workspace_context_rail.py::test_console_workspace_context_syncs_active_conversation_marker \
+  Tests/UI/test_console_workspace_context_rail.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_console_workspace_context_rail.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_console_workspace_context_rail.py
+git diff --check
+git add \
+  Tests/UI/test_console_workspace_context_rail.py
+git commit -m "test(console): follow workspace sync owner"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

@@ -406,6 +406,13 @@ Update the tests to describe current behavior:
     Retain the existing chat-functions image/RAG reference and the matrix's
     exact file/test existence gate. Confirm no other matrix reference is
     missing. Do not recreate the retired Chat UI test or weaken validation.
+47. In the active-conversation workspace marker regression, call
+    `_sync_console_workspace_context()` without the obsolete
+    `ChatSessionData` argument and remove that now-unused import. Preserve the
+    preceding `restore_persisted_session` setup and the exact assertion that
+    one selected row contains the restored conversation title. Do not add an
+    ignored compatibility parameter or revive the retired legacy tab session
+    path already described by the test's rationale.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -571,6 +578,10 @@ compatibility shims. No broad deletion of live tests.
   revive retired UI ownership. The native Console flow already verifies image
   staging plus text inlining, so pointing the matrix at that exact node keeps
   the gate meaningful with a one-line repair.
+- Allowing `_sync_console_workspace_context` to accept and ignore legacy
+  `ChatSessionData` would contradict its current owned-state contract. The test
+  already restores the native session that the sync reads, so dropping the
+  dead argument and import completes its earlier migration.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
