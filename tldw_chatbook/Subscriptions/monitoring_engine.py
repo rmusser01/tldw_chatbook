@@ -1008,6 +1008,36 @@ class FeedMonitor:
         return date_str
 
 
+#: How many snapshots `_store_snapshot` keeps per **(subscription, url)**
+#: (TASK-1393). Nothing in the repo ever deleted from `url_snapshots` -- the
+#: only DELETE lives in `baseline_manager.py`, which has zero importers
+#: (TASK-1360) -- while every significant change stores a full row including
+#: `raw_html`. TASK-1362's default `change_threshold` of 0.0 means every real
+#: change persists one, and TASK-1361's per-URL baselines multiply that by a
+#: source's URL count, so steady state was monotonic growth in the user's
+#: private database.
+#:
+#: Three, and why each one is needed:
+#:
+#: 1. The live baseline -- the row the next `check_url` reads. Losing it
+#:    re-baselines the URL and burns a diff window.
+#: 2. The previous snapshot. The design spec's Content-pane mockup
+#:    (`Docs/superpowers/specs/2026-07-25-watchlists-console-rebuild-design.md`,
+#:    "`[previous snapshot]` reading from `url_snapshots`") promises the reader
+#:    an affordance that is **not built yet** -- there is no reference to it
+#:    anywhere in `UI/`, and it is filed separately. Pruning must not foreclose
+#:    it, so the second-newest row per URL survives.
+#: 3. One row of slack for the same-second tie window of TASK-1361:
+#:    `created_at` is a DATETIME with one-second resolution, so two checks
+#:    inside one second are ordered only by the `id` tie-break.
+#:
+#: Deliberately NOT a config setting: there is no user question here that a
+#: number answers, and a knob would be one more surface to migrate, validate
+#: and document for a bound nobody has asked to move. `baseline_manager`'s
+#: `retention_days` is orphaned code and stays untouched (TASK-1360).
+_SNAPSHOTS_KEPT_PER_URL = 3
+
+
 class URLMonitor:
     """Monitor URLs for changes."""
 
@@ -1409,6 +1439,56 @@ class URLMonitor:
                     fingerprint,
                 ),
             )
+
+            # TASK-1393: prune here, and only here. This is the single live
+            # write path into `url_snapshots`, and it already holds a
+            # transaction -- so the INSERT and the DELETE commit together and
+            # the table is never observably over the cap. The shadow-mode
+            # guard above returns before both, so a dry run still deletes
+            # nothing.
+            #
+            # INVARIANT: survivors are chosen by `ORDER BY created_at DESC,
+            # id DESC`, the SAME ordering `check_url`'s baseline SELECT uses
+            # (TASK-1361's tie-break). The row the next check will read is
+            # therefore, by construction, the first survivor -- it can never be
+            # pruned, whatever the cap. Diverging the two orderings (dropping
+            # the tie-break here, or reversing it) would let this DELETE evict
+            # the very row the next check is about to ask for.
+            #
+            # The `url` predicate is the load-bearing part, and it is on BOTH
+            # halves. A `url_list` or `sitemap` source gives every one of its
+            # URLs the same `subscription_id`, so pruning per subscription
+            # would let a busy URL's snapshots evict a quiet URL's only
+            # baseline -- and that URL would re-baseline on its next check,
+            # for ever, reporting nothing each time. That is precisely the
+            # defect in the orphaned `baseline_manager._cleanup_old_baselines`
+            # (see TASK-1360).
+            cursor.execute(
+                """
+                DELETE FROM url_snapshots
+                WHERE subscription_id = ? AND url = ?
+                  AND id NOT IN (
+                      SELECT id FROM url_snapshots
+                      WHERE subscription_id = ? AND url = ?
+                      ORDER BY created_at DESC, id DESC
+                      LIMIT ?
+                  )
+                """,
+                (
+                    subscription_id,
+                    url,
+                    subscription_id,
+                    url,
+                    _SNAPSHOTS_KEPT_PER_URL,
+                ),
+            )
+            pruned = cursor.rowcount
+            if pruned > 0:
+                logger.debug(
+                    f"Pruned {pruned} snapshot(s) for subscription "
+                    f"{subscription_id} url {url}, keeping the newest "
+                    f"{_SNAPSHOTS_KEPT_PER_URL}"
+                )
 
 
 # End of monitoring_engine.py
