@@ -2,7 +2,7 @@
 id: TASK-1452
 title: >-
   Central env-scaled Hypothesis profile; stop module-level load_profile() leaks that made example counts collection-order-dependent
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-30 09:05'
 labels:
@@ -20,11 +20,11 @@ Hypothesis binds `settings.default` at decoration time (verified by probe on ins
 
 ## Acceptance Criteria
 
-- [ ] The central profile scales `max_examples`/`stateful_step_count` via `TLDW_HYPOTHESIS_PROFILE` (dev=25/20 default, ci=50/30, thorough=300/100), keeping TASK-1260's `deadline=None` policy
-- [ ] No module leaves a non-central profile active after import: property modules needing extra health-check suppressions register a child profile (`parent=settings.default`) and restore `tldw` at end of module
-- [ ] Redundant module profiles (RAG_Search "embeddings") are removed rather than inherited
-- [ ] The ChaChaNotesDB double-registration is consolidated with the fixture suppression retained
-- [ ] Affected property suites (ChaChaNotesDB, Media_DB, RAG_Search, Utils path-validation) pass; junit outcome diff vs baseline shows no regressions
+- [x] The central profile scales `max_examples`/`stateful_step_count` via `TLDW_HYPOTHESIS_PROFILE` (dev=25/20 default, ci=50/30, thorough=300/100), keeping TASK-1260's `deadline=None` policy
+- [x] No module leaves a non-central profile active after import: property modules needing extra health-check suppressions register a child profile (`parent=settings.default`) and restore `tldw` at end of module
+- [x] Redundant module profiles (RAG_Search "embeddings") are removed rather than inherited
+- [x] The ChaChaNotesDB double-registration is consolidated with the fixture suppression retained
+- [x] Affected property suites (ChaChaNotesDB, Media_DB, RAG_Search, Utils path-validation) pass; junit outcome diff vs baseline shows no regressions
 
 ## Implementation Plan
 

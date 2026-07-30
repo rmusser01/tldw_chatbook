@@ -83,12 +83,25 @@ try:  # pragma: no cover - hypothesis is a test-only dependency
     # parent=settings.default and MUST restore this one at end of module —
     # a leaked load_profile() silently reconfigures every later-imported
     # module's unannotated @given tests (the pre-task-1452 state).
-    _pt_profile = os.environ.get("TLDW_HYPOTHESIS_PROFILE", "dev")
-    _pt_scale = {
+    _HYPOTHESIS_SCALES = {
         "dev": {"max_examples": 25, "stateful_step_count": 20},
         "ci": {"max_examples": 50, "stateful_step_count": 30},
         "thorough": {"max_examples": 300, "stateful_step_count": 100},
-    }.get(_pt_profile, {"max_examples": 25, "stateful_step_count": 20})
+    }
+    _pt_profile = os.environ.get("TLDW_HYPOTHESIS_PROFILE", "dev")
+    if _pt_profile not in _HYPOTHESIS_SCALES:
+        # A typo'd profile silently running at dev depth is exactly the kind of
+        # quiet configuration rot this suite has been burned by — warn loudly
+        # (pytest surfaces it in the warnings summary) but do not brick every
+        # local run over it.
+        warnings.warn(
+            f"Unknown TLDW_HYPOTHESIS_PROFILE={_pt_profile!r}; expected one of "
+            f"{sorted(_HYPOTHESIS_SCALES)} — falling back to 'dev' scale",
+            UserWarning,
+            stacklevel=1,
+        )
+        _pt_profile = "dev"
+    _pt_scale = _HYPOTHESIS_SCALES[_pt_profile]
 
     _hypothesis_settings.register_profile(
         "tldw",
