@@ -41,12 +41,35 @@ def test_default_selectors_strip_noise_but_not_cookie_recipes():
 
 
 def test_fingerprint_ignores_cosmetic_selector_edits():
-    """Reordering, blank lines and duplicates must not re-baseline."""
+    """Reordering, blank lines and duplicates must not re-baseline.
+
+    A too-small fixture makes a missing ``sorted()`` invisible: CPython set
+    iteration order is fully determined by content (independent of
+    insertion order) whenever no two items land in the same hash-table
+    slot, and for a handful of items that "no collision at all" case is
+    common (empirically ~50-60% of hash seeds for 2-6 items, still ~10-25%
+    for a dozen or two, since the table itself grows with item count and
+    keeps the collision odds roughly constant across small sizes). When
+    that happens, *every* reordering of those items lands back in the same
+    slots, so comparing against one shuffle -- or even several -- still
+    passes by luck when ``sorted()`` is gone; more shuffles do not help
+    because it is one binary per-seed property of the whole item set, not
+    independent bad luck per comparison. What actually drives the
+    probability down is enough items that at least one pairwise collision
+    is close to certain: ~50 items pushes it below 1e-4. Verified directly:
+    dropping ``sorted()`` was RED under every one of ``PYTHONHASHSEED``
+    0-19 with this fixture, vs. failing to catch it under roughly half of
+    those seeds with 2 items and a third of them with 12-20 items.
+    """
     from tldw_chatbook.Subscriptions.noise_defaults import extraction_fingerprint
 
-    a = extraction_fingerprint(".ad\n.timestamp\n\n.ad", "auto")
-    b = extraction_fingerprint(".timestamp\n.ad", "auto")
-    assert a == b
+    selectors = tuple(f".noise-selector-{i}" for i in range(50))
+    forward = "\n".join(selectors) + "\n\n" + selectors[0]  # trailing blank + dup
+    reordered = "\n".join(reversed(selectors))
+
+    assert extraction_fingerprint(forward, "auto") == extraction_fingerprint(
+        reordered, "auto"
+    )
 
 
 def test_fingerprint_changes_when_extraction_actually_changes():
@@ -56,3 +79,7 @@ def test_fingerprint_changes_when_extraction_actually_changes():
     assert extraction_fingerprint(".ad\n.sponsored", "auto") != base
     assert extraction_fingerprint(".ad", "raw") != base
     assert extraction_fingerprint(None, "auto") != base
+    # None and "" must normalize identically (str(x or "")): a form
+    # round-trip that turns a NULL into an empty string must not silently
+    # re-baseline every source's fingerprint.
+    assert extraction_fingerprint(None, "auto") == extraction_fingerprint("", "auto")
