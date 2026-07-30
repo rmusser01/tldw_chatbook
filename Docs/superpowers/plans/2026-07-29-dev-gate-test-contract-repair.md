@@ -1931,6 +1931,41 @@ Expected: the exact inspector taxonomy, summary tooltip, ready refresh, and
 other disabled-action recovery contracts pass with static and diff checks
 clean.
 
+### Task 4at: Scope never-run Evals recovery to target readiness
+
+**Files:**
+- Modify: `Tests/UI/test_evals_bench_editor.py`
+
+- [ ] **Step 1: Identify the screen-level match**
+
+Run `test_never_run_bench_renders_unpreflighted_state` and inspect the
+screen-wide `.ds-recovery-callout` match. Expected: the target row correctly
+renders `Not yet checked`; the sole callout is the unrelated, valid
+`#evals-primary-action-reason`, while `#evals-inspector-bench` has no recovery
+callout.
+
+- [ ] **Step 2: Assert absence inside the current owner**
+
+Materialize the `.ds-recovery-callout` query beneath
+`#evals-inspector-bench` and assert it is empty. Keep every status assertion
+unchanged. Do not remove or restyle the primary-action explanation and do not
+rewrite unrelated query idioms.
+
+- [ ] **Step 3: Verify the focused Evals contract**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_evals_bench_editor.py::test_never_run_bench_renders_unpreflighted_state \
+  Tests/UI/test_evals_bench_editor.py \
+  -q
+../../.venv/bin/python -m ruff check Tests/UI/test_evals_bench_editor.py
+../../.venv/bin/python -m ruff format --check Tests/UI/test_evals_bench_editor.py
+git diff --check
+```
+
+Expected: never-run, warned, blocked, ready, editor, and inspector coverage pass
+with the screen-level action recovery unchanged.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

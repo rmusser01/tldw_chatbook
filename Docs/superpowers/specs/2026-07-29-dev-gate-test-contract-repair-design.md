@@ -79,6 +79,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   belongs to the rail `#speech-capability-summary` tooltip. The generic
   disabled-action suite still mounts the retired owner and therefore raises
   `NoMatches` before checking either distinct contract.
+- The never-run Evals bench correctly renders its target as `Not yet checked`,
+  but its screen-wide `.ds-recovery-callout` absence assertion also matches the
+  valid `#evals-primary-action-reason` explaining why Run Bench is deferred.
+  The target-readiness owner `#evals-inspector-bench` contains no recovery
+  callout; the test conflates two unrelated uses of the shared callout style.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -436,6 +441,11 @@ Update the tests to describe current behavior:
     assert the complete independent taxonomy against the inspector detail,
     and assert the exact install tooltip against the rail summary. Do not add
     a compatibility widget to `STTSWindow` or duplicate another harness.
+50. Scope the never-run Evals absence assertion to
+    `#evals-inspector-bench` before querying `.ds-recovery-callout`. Preserve
+    the positive `Not yet checked` and negative Ready/Blocked/Unavailable
+    assertions, and leave the unrelated screen-level action-deferral callout
+    intact.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -615,6 +625,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   regression would lose its exact Why/Next/Owner and tooltip assertions, so
   following the existing inspector/rail split preserves distinct coverage with
   one test-only migration.
+- Removing the Evals callout assertion or the valid Run Bench deferral would
+  weaken different contracts. Querying the existing recovery class beneath its
+  target-readiness owner proves the original intent without production changes
+  or a broad query-idiom rewrite.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
