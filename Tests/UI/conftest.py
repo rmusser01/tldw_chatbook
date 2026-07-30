@@ -16,6 +16,8 @@ _existing_test_config_root = os.environ.get(_TEST_CONFIG_ROOT_ENV)
 # (task-1453). Needed here too for runs rooted at Tests/UI, where the root
 # conftest is not loaded.
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
+if _XDIST_WORKER and not __import__("re").fullmatch(r"[A-Za-z0-9_-]+", _XDIST_WORKER):
+    _XDIST_WORKER = None  # never join an unexpected id into a path
 if _existing_test_config_root:
     _BOOTSTRAP_CONFIG_ROOT = Path(_existing_test_config_root)
     if _XDIST_WORKER and _BOOTSTRAP_CONFIG_ROOT.name != _XDIST_WORKER:

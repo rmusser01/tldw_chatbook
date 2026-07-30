@@ -2,7 +2,7 @@
 id: TASK-1453
 title: >-
   Adopt pytest-xdist: per-worker config sandboxes and parallel local runs
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-30 09:05'
 labels:
@@ -20,11 +20,11 @@ The suite (~11,600 tests, 23,793 collected items, 1+ hour) runs fully serially: 
 
 ## Acceptance Criteria
 
-- [ ] `pytest-xdist` installable via both `.[dev]` and `requirements-test.txt` (plus `pytest-mock`/`pytest-cov`, which the docs and tests already assume)
-- [ ] Each xdist worker gets its own config sandbox subtree (own HOME/XDG/TLDW_CONFIG_PATH); the controller still owns and removes the root
-- [ ] Works for both rootdirs: repo root and `pytest Tests/UI`
-- [ ] A full `-n auto --dist loadscope` run completes; its junit outcome set diffed against the serial baseline shows no unexplained regressions (new failures get fix-or-`xfail(strict=False)`+task, never silent skips)
-- [ ] Serial behavior is unchanged when xdist is not used (no `-n` in addopts — opt-in via CLI/CI)
+- [x] `pytest-xdist` installable via both `.[dev]` and `requirements-test.txt` (plus `pytest-mock`/`pytest-cov`, which the docs and tests already assume)
+- [x] Each xdist worker gets its own config sandbox subtree (own HOME/XDG/TLDW_CONFIG_PATH); the controller still owns and removes the root
+- [x] Works for both rootdirs: repo root and `pytest Tests/UI`
+- [x] A full `-n auto --dist loadscope` run completes; its junit outcome set diffed against the serial baseline shows no unexplained regressions (new failures get fix-or-`xfail(strict=False)`+task, never silent skips)
+- [x] Serial behavior is unchanged when xdist is not used (no `-n` in addopts — opt-in via CLI/CI)
 
 ## Implementation Plan
 
