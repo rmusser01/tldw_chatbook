@@ -392,6 +392,43 @@ def _make_two_by_two_run_group(
     return group_id, base_id, steered_id, snippets, run_ids
 
 
+def _make_single_target_run_group(
+    evals_db: EvalsDB, name: str, snippet_count: int
+) -> tuple[str, str, list, str]:
+    """A SINGLE target, ``snippet_count`` snippets, one run -- the
+    narrowest shape that lets a test control exactly which order
+    ``load_grid`` inserts cells into its ``cells`` dict (and therefore
+    which ``CellError.reason`` ``_failure_summary`` sees "first"), used by
+    the dominant-reason tie-break test below.
+
+    Two DB-layer ordering facts make a MULTI-target fixture unsuitable for
+    that test: ``_load_run_group_snapshot`` explicitly notes
+    ``list_runs`` is newest-first, so ``load_grid``'s ``for run in runs``
+    loop visits the LAST-created target's run FIRST -- the opposite of
+    ``targets`` construction order; and ``EvalsDB.get_run_results`` orders
+    each run's own rows ``ORDER BY created_at ASC``. With a single run,
+    only the second fact applies, so ``cells`` insertion order is exactly
+    this fixture's ``save_cell`` call order -- no target-interleaving to
+    reason about.
+    """
+    target_id = evals_db.create_model(name=f"{name}-base", provider="llama_cpp", model_id="m")
+    dataset_id = evals_db.create_dataset(
+        name=f"{name}-set", format="custom", source_path=f"inline:{name}-set"
+    )
+    config = BenchConfig(
+        name=f"{name} bench", prompt_mode="raw", top_k=20,
+        dataset_id=dataset_id, target_ids=(target_id,),
+    )
+    task_id = save_bench(evals_db, config)
+    targets = [Target(id=target_id, name=f"{name}-base", provider="llama_cpp", model_id="m")]
+    snippets = [
+        Snippet(id=f"s{i}", text=f"snippet {i}", group=None)
+        for i in range(1, snippet_count + 1)
+    ]
+    group_id, run_ids = create_run_group(evals_db, task_id, config, targets, snippets)
+    return group_id, target_id, snippets, run_ids[target_id]
+
+
 @pytest.fixture
 def all_cells_failed_run_group(evals_db: EvalsDB) -> dict:
     """2 targets x 2 snippets, EVERY cell failed with the same reason --
@@ -1164,6 +1201,66 @@ async def test_failure_callout_absent_when_nothing_failed(evals_app, clean_run_g
         grid = await _select_run_group(pilot, clean_run_group["group_id"])
 
         assert not grid.query("#evals-grid-failure-callout")
+
+
+@pytest.mark.asyncio
+async def test_failure_callout_dominant_reason_ties_broken_by_first_seen_majority_otherwise_wins(
+    evals_app, evals_db
+):
+    """``_failure_summary``'s docstring claims the dominant reason is "most
+    frequent, ties broken by first-seen" -- the three tests above only ever
+    exercise a SINGLE failure reason, so that claim was unpinned: a future
+    refactor to e.g. ``collections.Counter.most_common()`` (whose tie order
+    is an implementation detail, not a contract) could silently flip which
+    reason a tied run's callout names, with nothing in the suite noticing.
+
+    Two grids, one test, both built via ``_make_single_target_run_group``
+    so ``save_cell`` call order is exactly the order ``load_grid`` inserts
+    into ``cells`` (see that helper's docstring):
+
+    - 2-vs-2 TIE: two ``timeout`` cells saved BEFORE two ``unreachable``
+      cells -- the callout must name ``timeout``, the first-seen reason,
+      not ``unreachable`` (which would win under alphabetical or
+      most-recently-seen tie-breaking).
+    - 1-vs-3 MAJORITY: one ``timeout`` cell saved BEFORE three
+      ``unreachable`` cells -- the callout must name ``unreachable``, the
+      real majority, proving the tie-break only applies on an actual tie
+      rather than "first-seen always wins regardless of count".
+    """
+    tie_group_id, _tie_target_id, tie_snippets, tie_run_id = (
+        _make_single_target_run_group(evals_db, "tie-break", 4)
+    )
+    for snippet, reason in zip(
+        tie_snippets, ["timeout", "timeout", "unreachable", "unreachable"]
+    ):
+        save_cell(evals_db, tie_run_id, snippet, CellError(reason=reason, detail=""))
+
+    majority_group_id, _majority_target_id, majority_snippets, majority_run_id = (
+        _make_single_target_run_group(evals_db, "majority", 4)
+    )
+    for snippet, reason in zip(
+        majority_snippets, ["timeout", "unreachable", "unreachable", "unreachable"]
+    ):
+        save_cell(evals_db, majority_run_id, snippet, CellError(reason=reason, detail=""))
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+
+        tie_grid = await _select_run_group(pilot, tie_group_id)
+        tie_callout = tie_grid.query_one("#evals-grid-failure-callout", Static)
+        # .visual.plain -- see the canary/failure callout tests above for
+        # why (only .visual catches a lost markup=False).
+        assert tie_callout.visual.plain == (
+            "All 4 cells failed — timeout. Check that the target's "
+            "server is running and reachable, then run the bench again."
+        )
+
+        majority_grid = await _select_run_group(pilot, majority_group_id)
+        majority_callout = majority_grid.query_one("#evals-grid-failure-callout", Static)
+        assert majority_callout.visual.plain == (
+            "All 4 cells failed — unreachable. Check that the target's "
+            "server is running and reachable, then run the bench again."
+        )
 
 
 @pytest.mark.asyncio
