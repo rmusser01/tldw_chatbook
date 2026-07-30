@@ -5067,6 +5067,174 @@ class TestServerCharacterSourceIsolation:
             assert _shared_pane_publication(screen) == newer_publication
             assert getattr(screen, cache_name) == newer_cache
 
+    @pytest.mark.parametrize("valid_mode", ("dictionaries", "lore"))
+    @pytest.mark.parametrize(
+        "stale_callback",
+        ("wrong-mode", "wrong-query"),
+    )
+    @pytest.mark.parametrize("valid_outcome", ("success", "failure"))
+    async def test_invalid_shared_mode_callback_does_not_supersede_valid_owner(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        valid_mode,
+        stale_callback,
+        valid_outcome,
+    ):
+        """Rejected callbacks cannot invalidate an accepted suspended owner."""
+        import asyncio
+
+        fetch_started = asyncio.Event()
+        release_fetch = asyncio.Event()
+        fetch_calls = 0
+        kind = "dictionary" if valid_mode == "dictionaries" else "lore"
+        cache_name = (
+            "_dictionaries_cache"
+            if valid_mode == "dictionaries"
+            else "_lore_books_cache"
+        )
+        entry_count = 2 if valid_mode == "dictionaries" else 3
+        owner_record = {
+            "id": 93,
+            "name": f"Owner {kind.title()} Result",
+            "entry_count": entry_count,
+            "enabled": True,
+        }
+        prior_cache = [
+            {
+                "id": 90,
+                "name": f"Prior {kind.title()} Cache",
+                "entry_count": 1,
+                "enabled": True,
+            }
+        ]
+
+        async def fetch_records() -> list[dict]:
+            nonlocal fetch_calls
+            fetch_calls += 1
+            if fetch_calls != 1:
+                raise AssertionError(f"Unexpected fetch call: {fetch_calls}")
+            fetch_started.set()
+            await release_fetch.wait()
+            if valid_outcome == "failure":
+                raise RuntimeError("accepted owner failed")
+            return [owner_record]
+
+        async def list_dictionaries(*, mode, include_inactive):
+            assert (mode, include_inactive) == ("local", True)
+            return {"dictionaries": await fetch_records()}
+
+        _configure_shared_mode_sources(mock_app_instance, monkeypatch)
+        mock_app_instance.chat_dictionary_scope_service.list_dictionaries = (
+            list_dictionaries
+        )
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                if function is PersonasScreen._list_world_books_with_counts:
+                    return await fetch_records()
+                raise AssertionError(f"Unexpected to_thread function: {function!r}")
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+            library = screen.query_one("#personas-library-pane")
+            screen.state.switch_mode(valid_mode)
+            screen.state.search_query = "owner"
+            library.set_mode(valid_mode)
+            setattr(screen, cache_name, deepcopy(prior_cache))
+
+            valid_render = (
+                screen._render_dictionary_rows
+                if valid_mode == "dictionaries"
+                else screen._render_lore_rows
+            )
+            generation_before = screen._dictionary_lore_request_generation
+            valid_request = asyncio.create_task(valid_render(query="owner"))
+            await fetch_started.wait()
+            accepted_generation = screen._dictionary_lore_request_generation
+
+            if stale_callback == "wrong-mode":
+                invalid_render = (
+                    screen._render_lore_rows
+                    if valid_mode == "dictionaries"
+                    else screen._render_dictionary_rows
+                )
+                await invalid_render(query="owner")
+            else:
+                await valid_render(query="stale")
+            generation_after_invalid = screen._dictionary_lore_request_generation
+
+            release_fetch.set()
+            await valid_request
+            await pilot.pause()
+
+            publication = _shared_pane_publication(screen)
+            recovery_rows = list(
+                screen.query(".personas-library-recovery-row").results()
+            )
+            recovery_copy = (
+                str(recovery_rows[0].query_one(Static).renderable)
+                if recovery_rows
+                else None
+            )
+            if valid_outcome == "success":
+                expected_rows = (
+                    (
+                        f"personas-library-row-{kind}-93",
+                        (
+                            f"Owner {kind.title()} Result",
+                            f"{entry_count} entries · on",
+                        ),
+                    ),
+                )
+                expected_count = (
+                    "1 of 1 dictionary"
+                    if valid_mode == "dictionaries"
+                    else "1 of 1 lore book"
+                )
+                expected_cache = [owner_record]
+                expected_recovery = None
+            else:
+                expected_rows = ()
+                expected_count = (
+                    "Dictionaries unavailable"
+                    if valid_mode == "dictionaries"
+                    else "Lore books unavailable"
+                )
+                expected_cache = prior_cache
+                expected_recovery = (
+                    "Dictionaries could not be loaded.\n"
+                    "Switch modes and back to retry."
+                    if valid_mode == "dictionaries"
+                    else "Lore books could not be loaded.\n"
+                    "Switch modes and back to retry."
+                )
+
+            assert (
+                accepted_generation,
+                generation_after_invalid,
+                fetch_calls,
+                publication["rows"],
+                publication["count"],
+                getattr(screen, cache_name),
+                recovery_copy,
+            ) == (
+                generation_before + 1,
+                accepted_generation,
+                1,
+                expected_rows,
+                expected_count,
+                expected_cache,
+                expected_recovery,
+            )
+
     @pytest.mark.parametrize("older_outcome", ("success", "failure"))
     async def test_server_target_aba_drops_older_request(
         self, mock_app_instance, older_outcome

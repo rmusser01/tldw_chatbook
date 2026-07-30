@@ -1983,15 +1983,15 @@ class PersonasScreen(BaseAppScreen):
 
     async def _render_dictionary_rows(self, query: str = "") -> None:
         """Fetch and render dictionary rows; degrade to recovery copy on failure."""
-        self._dictionary_lore_request_generation += 1
-        request_generation = self._dictionary_lore_request_generation
         expected_mode = "dictionaries"
-        expected_query = query
+        expected_query = query.strip()
         if not self._library_render_snapshot_is_current(
             expected_query=expected_query,
             expected_mode=expected_mode,
         ):
             return
+        self._dictionary_lore_request_generation += 1
+        request_generation = self._dictionary_lore_request_generation
 
         service = self._dictionary_scope_service()
         recovery_copy: str | None = None
@@ -2016,7 +2016,7 @@ class PersonasScreen(BaseAppScreen):
                     "Switch modes and back to retry."
                 )
 
-        needle = query.strip().lower()
+        needle = expected_query.lower()
         visible = (
             [r for r in records if needle in str(r.get("name", "")).lower()]
             if needle
@@ -2071,15 +2071,15 @@ class PersonasScreen(BaseAppScreen):
 
     async def _render_lore_rows(self, query: str = "") -> None:
         """Fetch and render lore/world-book rows; degrade to recovery copy on failure."""
-        self._dictionary_lore_request_generation += 1
-        request_generation = self._dictionary_lore_request_generation
         expected_mode = "lore"
-        expected_query = query
+        expected_query = query.strip()
         if not self._library_render_snapshot_is_current(
             expected_query=expected_query,
             expected_mode=expected_mode,
         ):
             return
+        self._dictionary_lore_request_generation += 1
+        request_generation = self._dictionary_lore_request_generation
 
         manager = self._lore_manager()
         recovery_copy: str | None = None
@@ -2101,7 +2101,7 @@ class PersonasScreen(BaseAppScreen):
                     "Switch modes and back to retry."
                 )
 
-        needle = query.strip().lower()
+        needle = expected_query.lower()
         visible = (
             [r for r in records if needle in str(r.get("name", "")).lower()]
             if needle
