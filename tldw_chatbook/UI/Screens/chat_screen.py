@@ -1066,6 +1066,46 @@ def _character_session_identity_from_handoff(
     return runtime_backend, character_id, character_name, character_id_text
 
 
+def _character_session_prompt_seed(
+    card: Mapping[str, Any], name_hint: str = ""
+) -> tuple[str, str, str]:
+    """Return ``(name, system_prompt, greeting)`` seeded from a character card.
+
+    Joins the card's prompt-bearing fields into the Console session's system
+    prompt and picks the seeded greeting from ``first_message``.
+
+    Args:
+        card: The character card record.
+        name_hint: Fallback display name when the card has none.
+
+    Returns:
+        The character name, session system prompt, and greeting text.
+    """
+    # Local import matches this module's existing convention of deferring
+    # Character_Chat submodule imports (they pull in Pillow and
+    # CharactersRAGDB) rather than importing them at module scope.
+    from ...Character_Chat.Character_Chat_Lib import replace_placeholders
+
+    name = str(card.get("name") or name_hint or "").strip() or "Character"
+    parts = [
+        str(card.get(key) or "").strip()
+        for key in ("system_prompt", "personality", "description", "scenario")
+    ]
+    joined = "\n".join(p for p in parts if p)
+    # Cards are written against SillyTavern-style macros; resolve
+    # {{char}}/{{user}} (and aliases) before the text reaches session
+    # settings, or they leak verbatim into every provider payload
+    # (task-1530). "User" matches the greeting-display substitution used
+    # across the Personas surfaces.
+    system_prompt = (
+        replace_placeholders(joined, name, "User") if joined else "Stay in character."
+    )
+    greeting = replace_placeholders(
+        str(card.get("first_message") or ""), name, "User"
+    )
+    return name, system_prompt, greeting
+
+
 def _is_personas_preview_handoff(payload: ChatHandoffPayload) -> bool:
     """Return whether a handoff is a Personas "Open in Console" preview transcript.
 
@@ -12354,19 +12394,8 @@ class ChatScreen(BaseAppScreen):
             ):
                 return False
 
-        # Local import matches this module's existing convention of
-        # deferring Character_Chat submodule imports (they pull in Pillow
-        # and CharactersRAGDB) rather than importing them at module scope.
-        from ...Character_Chat.Character_Chat_Lib import replace_placeholders
-
-        name = str(card.get("name") or name_hint or "").strip() or "Character"
-        parts = [
-            str(card.get(key) or "").strip()
-            for key in ("system_prompt", "personality", "description", "scenario")
-        ]
-        system_prompt = "\n".join(p for p in parts if p) or "Stay in character."
-        greeting = replace_placeholders(
-            str(card.get("first_message") or ""), name, "User"
+        name, system_prompt, greeting = _character_session_prompt_seed(
+            card, name_hint=str(name_hint or "")
         )
 
         store = self._ensure_console_chat_store()

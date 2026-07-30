@@ -14,7 +14,10 @@ from loguru import logger
 from textual.css.query import QueryError
 
 from ...Character_Chat.Character_Chat_Lib import replace_placeholders
-from ...Chat.console_chat_models import ConsoleProviderSelection
+from ...Chat.console_chat_models import (
+    ConsoleProviderSelection,
+    fold_greeting_into_system_prompt,
+)
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...Chat.console_session_settings import build_default_console_session_settings
 from ...Chat.provider_catalog import PROVIDER_DISPLAY_NAMES
@@ -34,6 +37,37 @@ logger = logger.bind(module="PersonasPreviewController")
 
 # Cap on the preview transcript text staged into a Console handoff body.
 PREVIEW_HANDOFF_TRANSCRIPT_CHAR_LIMIT = 6000
+
+def build_preview_system_prompt(
+    record: Mapping[str, Any], *, greeting: str = ""
+) -> str:
+    """Build the preview's provider system prompt from a card/profile record.
+
+    Joins the record's prompt-bearing fields, resolves ``{{char}}``/``{{user}}``
+    macros against the record name (task-1530), and folds the seeded greeting
+    into the system row so the model knows the opener the user already read --
+    the preview's message history stays user-first for strict providers
+    (task-1531).
+
+    Args:
+        record: Character card or persona profile record.
+        greeting: The greeting currently seeding the preview transcript
+            (already macro-resolved at seed time); "" when none.
+
+    Returns:
+        The system prompt text; falls back to "Stay in character." when the
+        record carries no prompt fields and no greeting is seeded.
+    """
+    parts = [
+        str(record.get(key) or "").strip()
+        for key in ("system_prompt", "personality", "description", "scenario")
+    ]
+    joined = "\n".join(part for part in parts if part)
+    name = str(record.get("name") or "").strip() or "Character"
+    prompt = replace_placeholders(joined, name, "User") if joined else ""
+    folded = fold_greeting_into_system_prompt(prompt, greeting)
+    return folded or "Stay in character."
+
 
 class PersonasPreviewController:
     """Owns preview chat state, provider calls, and Console handoff."""
@@ -417,12 +451,15 @@ class PersonasPreviewController:
                 )
         elif screen.state.active_mode == "personas":
             record = screen._profile_record(screen.state.selected_entity_id) or {}
-        parts = [
-            str(record.get(key) or "").strip()
-            for key in ("system_prompt", "personality", "description", "scenario")
-        ]
-        prompt = "\n".join(part for part in parts if part)
-        return prompt or "Stay in character."
+        return build_preview_system_prompt(
+            record, greeting=self._active_greeting_text()
+        )
+
+    def _active_greeting_text(self) -> str:
+        """Return the greeting currently seeding the preview, or ""."""
+        if 0 <= self._current_greeting_index < len(self._greetings):
+            return self._greetings[self._current_greeting_index]
+        return ""
 
     def handle_reply_requested(self, user_message: str) -> None:
         """Append the user turn and schedule one provider reply.
