@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions import briefing_selection
 from tldw_chatbook.Subscriptions.briefing_selection import (
     BriefingSelection,
     select_briefing_items,
@@ -432,6 +433,77 @@ def test_overflow_counts_dropped_items_and_features_survive_the_cap():
     # Every dropped item was an auto item, and all four were seen.
     assert not set(window[:-1]) & set(_ids(selection))
     assert selection.covers_through_item_id == window[-1]
+
+
+def test_overflow_and_watermark_stay_exact_over_a_backlog_larger_than_the_cap():
+    """Whole-branch review fix 2: the window is bounded in SQL so a large
+    backlog is not materialised in full, but `overflow_count` and the
+    watermark must still be exact over the FULL window, not merely over
+    whatever got materialised.
+
+    Seeds `cap + 30` window items -- meaningfully more than any single call
+    could need to pull into Python.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Torrent")["id"]
+    source = _new_source(db, watchlist, "torrent")
+
+    cap = 5
+    backlog = [
+        _add_item(db, source, f"Item {n}", "2026-07-29T09:00:00+00:00")
+        for n in range(cap + 30)
+    ]
+
+    selection = select_briefing_items(db, watchlist, mode="auto", item_cap=cap)
+
+    assert len(selection.items) == cap
+    assert _ids(selection) == list(reversed(backlog[-cap:]))  # newest `cap`, id DESC
+    assert selection.overflow_count == len(backlog) - cap  # exact, not an estimate
+    assert selection.covers_through_item_id == backlog[-1]  # the TRUE max, not the max kept
+
+
+def test_the_window_materialisation_is_bounded_not_the_full_backlog(monkeypatch):
+    """The property fix 2 actually asked for: a large window backlog must
+    not be pulled into Python row by row just to compute a count and a cap.
+
+    Spies on the row-fetch seam (`_window_rows`) and asserts the number of
+    rows it actually fetched -- not the row count `select_briefing_items`
+    returns -- stays bounded by cap + featured count, never the full window.
+    Featured (queued) items are seeded below the watermark, mirroring
+    `test_overflow_counts_dropped_items_and_features_survive_the_cap`, so
+    the bound is exercised with a non-zero featured count.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Torrent")["id"]
+    source = _new_source(db, watchlist, "torrent")
+
+    queued = [
+        _add_item(db, source, f"Queued {n}", "2026-07-11T09:00:00+00:00", queued=True)
+        for n in range(2)
+    ]
+    _complete_briefing(db, watchlist, max(queued))
+    cap = 5
+    for n in range(cap + 30):
+        _add_item(db, source, f"Item {n}", "2026-07-29T09:00:00+00:00")
+
+    fetched_counts: list[int] = []
+    real_window_rows = briefing_selection._window_rows
+
+    def _spy(*args, **kwargs):
+        rows = real_window_rows(*args, **kwargs)
+        fetched_counts.append(len(rows))
+        return rows
+
+    monkeypatch.setattr(briefing_selection, "_window_rows", _spy)
+
+    selection = select_briefing_items(db, watchlist, mode="auto_featured", item_cap=cap)
+
+    assert len(selection.items) == cap
+    featured_count = len(selection.featured_ids)
+    assert fetched_counts, "the row-fetch seam must have been called"
+    assert all(count <= cap + featured_count for count in fetched_counts), fetched_counts
+    # Well short of the full backlog -- the whole property fix 2 exists for.
+    assert sum(fetched_counts) < (cap + 30)
 
 
 def test_overflowed_items_still_advance_the_watermark():

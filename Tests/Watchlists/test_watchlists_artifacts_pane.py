@@ -359,16 +359,28 @@ async def test_generate_records_a_complete_briefing_and_renders_its_body(monkeyp
 
 @pytest.mark.asyncio
 async def test_a_stuck_generating_row_is_refused_then_recovered(monkeypatch):
+    """The Generate path's OWN recovery-then-refuse-then-recover sequence.
+
+    The zombie is seeded AFTER Artifacts is already open, on purpose:
+    whole-branch review fix 3 wired zombie recovery into the Artifacts-load
+    path too, so a row seeded BEFORE opening would already be recovered by
+    the plain load, before the first press ever runs -- collapsing this
+    test's two presses into one and asserting nothing about the Generate
+    path's own sweep. Seeding it post-load isolates exactly what this test
+    is for: a row that appears while the screen is already sitting open
+    (a crash in another process, say) still gets caught by the button.
+    """
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
     chat = _FakeChat()
     _use_fake_chat(monkeypatch, chat)
 
-    # A worker that died mid-generation leaves exactly this behind.
-    zombie_id = app.watchlist_bundle_service.db.insert_briefing(watchlist_id)
-
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        # A worker that died mid-generation leaves exactly this behind --
+        # inserted only now, after the section's own load has already run.
+        zombie_id = app.watchlist_bundle_service.db.insert_briefing(watchlist_id)
+
         # First press: refuses, and says why.
         await _press_generate(screen, pilot, app, watchlist_id)
 
@@ -396,6 +408,101 @@ async def test_a_stuck_generating_row_is_refused_then_recovered(monkeypatch):
         assert any(
             row["status"] == "complete" for row in rows if row["id"] != zombie_id
         ), "the second press must have written a real briefing"
+
+
+@pytest.mark.asyncio
+async def test_a_zombie_generating_row_is_recovered_on_a_plain_artifacts_load():
+    """Whole-branch review fix 3: the spec says a `generating` row not
+    backed by a live worker is failed "on the next Generate attempt OR
+    Artifacts load" -- only the Generate path was wired. A user who opens
+    Artifacts after a crash, without ever touching the Generate button,
+    must not see a briefing stuck reading `generating` forever.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    zombie_id = app.watchlist_bundle_service.db.insert_briefing(watchlist_id)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        # Nothing pressed Generate -- this is a plain section open.
+        rows = _briefing_rows(app, watchlist_id)
+        by_id = {row["id"]: row for row in rows}
+        assert by_id[zombie_id]["status"] == "failed"
+        assert by_id[zombie_id]["error"] == "interrupted"
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_briefing_by_id(str(zombie_id))
+        await pilot.pause()
+        plain, _ansi = _render_to_console(
+            pane.query_one("#artifacts-detail", Static).renderable
+        )
+        assert "interrupted" in plain
+        assert "This briefing is being written now." not in plain
+
+
+@pytest.mark.asyncio
+async def test_a_live_in_flight_row_is_not_failed_by_a_concurrent_load():
+    """The other half of fix 3's guard: a row THIS screen's own worker is
+    still writing must not be treated as a zombie just because Artifacts
+    happens to reload while it is running.
+
+    `fail_interrupted_briefings` fails EVERY `generating` row for a
+    watchlist unconditionally -- it has no way to tell a live row from a
+    crashed one on its own. `_briefing_in_flight` is the one signal that
+    can, so the load path must respect it exactly like the Generate path
+    already does.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        # Stands in for a real live worker's row, claimed AFTER the
+        # section's initial load so it survives to the point being tested.
+        live_id = db.insert_briefing(watchlist_id)
+        screen._briefing_in_flight = True
+        try:
+            await screen._load_briefings()
+        finally:
+            screen._briefing_in_flight = False
+
+        assert db.get_briefing(live_id)["status"] == "generating", (
+            "a row the guard says is live must survive a concurrent load"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_toast_names_the_watchlist_actually_generating():
+    """Whole-branch review fix 4: `_briefing_in_flight` is deliberately
+    screen-global (the `wl-briefing` worker group is `exclusive=True`, so a
+    second dispatch would cancel a real generation mid-run -- it must not
+    become per-watchlist). But the refusal copy claimed the running
+    briefing was "for this watchlist", which is false the moment the
+    watchlist actually generating differs from the one on screen.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    running_id = _seed_watchlist(app)  # named "Morning AI Brief"
+    other_id = app.watchlist_bundle_service.create("Other Watch")["id"]
+
+    async with _open_artifacts(app, other_id) as (screen, pilot, _host):
+        # A generation for a DIFFERENT watchlist than the one on screen --
+        # exactly the scenario the old copy lied about.
+        screen._briefing_in_flight = True
+        screen._briefing_in_flight_watchlist_id = running_id
+        try:
+            screen.handle_generate_briefing_requested(GenerateBriefingRequested())
+        finally:
+            screen._briefing_in_flight = False
+            screen._briefing_in_flight_watchlist_id = None
+
+        assert app.notify.called
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert kwargs.get("markup") is False
+        assert "Morning AI Brief" in message, (
+            "the toast must name the watchlist actually generating"
+        )
+        assert "for this watchlist" not in message.lower()
 
 
 # --- The guard is claimed at dispatch, not inside the worker ---------------

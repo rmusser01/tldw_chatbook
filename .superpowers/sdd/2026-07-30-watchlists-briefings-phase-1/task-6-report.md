@@ -80,3 +80,182 @@ diff at all.
 `bd883151d6d2ee8b1cf22b0d0c8f2446ff4a0edf` —
 `docs(briefings): phase 1 close-out — spec status, tracking task, event-loop follow-up`
 (3 files changed: the spec edit + the two new task files).
+
+---
+
+# Whole-branch fix wave
+
+Six per-task reviews passed; the whole-branch review found six more findings across the
+generation service, the selection query, the Artifacts screen, and test/doc hygiene. All six
+fixed below.
+
+## Fix 1 (Important) — `generate_briefing`'s DB work off the event loop
+
+`generate_briefing` was `async` but every DB call inside it (`insert_briefing`,
+`select_briefing_items`, the junction writes, `update_briefing`, `get_briefing`,
+`latest_completed_watermark`) ran synchronously on the caller's event loop — the screen dispatches
+it from a Textual worker, so a contended sqlite write blocked the whole UI.
+
+Grouped the sync work into four small plain functions (`_start_generation`, `_finish_empty`,
+`_finish_success`, `_finish_failure`) and wrapped each in its own `asyncio.to_thread` hop —
+one hop per stage, not one per statement. `_invoke_chat` is still awaited directly (unthreaded at
+this layer; it already offloads the real network call itself), and the `try/except` still wraps
+only `_invoke_chat` — every `to_thread` call for DB work sits outside it, so a DB error from any
+of those hops still propagates to the caller uncaught, exactly as before.
+
+**Test-infrastructure fallout, found by running it:** `Tests/Subscriptions/test_briefing_service.py`
+used `SubscriptionsDB(":memory:", "test")` throughout. `SubscriptionsDB.conn` is thread-local
+(`Subscriptions_DB._initialize_schema`'s own docstring documents the trade-off), so a `:memory:`
+connection is private to the thread that opened it — the very first `to_thread` hop reached a
+brand-new, unmigrated, empty database on the executor thread ("no such table: briefings"), even
+though it was the same `db` object throughout. Converted the file's `_db()` helper to take
+`tmp_path` and use a real file (`tmp_path / "subs.db"`), matching the idiom
+`test_watchlist_name_and_copy.py`'s `_service(tmp_path)` already uses for the same DB class — a
+file-backed connection has no such limitation. All 8 call sites updated; 9th
+(`test_interrupted_recovery_only_touches_generating_rows`) switched too for consistency though it
+never crosses a thread boundary.
+
+**New test:** `test_the_db_work_runs_off_the_event_loop_thread` — spies on `insert_briefing`,
+`update_briefing`, `get_briefing` (the setup hop and the finishing hop), captures
+`threading.get_ident()` per call, asserts none match the event-loop thread. Same pattern as
+`test_the_queue_write_runs_off_the_event_loop_thread` in `Tests/UI/test_watchlists_inspector.py`.
+
+**Mutation:** reverted the `_start_generation` call from `await asyncio.to_thread(...)` to a
+direct synchronous call. RED: `AssertionError: generate_briefing's DB work must run off the
+event-loop thread`. Restored; `Tests/Subscriptions/test_briefing_service.py` back to 12 passed.
+
+## Fix 2 (Important) — bound the window query in SQL
+
+`briefing_selection._window_rows` had no `LIMIT`; it materialised the entire coverage window
+(every row with `id > watermark`) and the item cap was applied in Python afterward. A watchlist
+left unbriefed for a while could have a window backlog far larger than the ~40-item cap,
+materialised into full `dict` rows for nothing.
+
+Added `_window_predicate` (the shared WHERE-fragment builder), `_window_count` (exact `COUNT(*)`
+over the full window, optionally excluding ids already claimed by the featured side so
+`overflow_count` never double-counts an item that is both featured and inside the window), and
+`_window_bounds` (`MAX(id)`/`MIN(created_at)` over the full window, unfiltered — `covers_through`
+and `covers_from_ts` are properties of everything considered, featured or not). `_window_rows`
+gained a required `limit` and now issues `... ORDER BY i.id DESC LIMIT ?`, with the featured-id
+exclusion pushed into the SQL `NOT IN` clause too, so the materialised "auto" rows are already
+exact — no Python-side overfetch-then-dedup needed. `select_briefing_items`'s combination logic
+was rewritten around these three calls; `MODE_CURATED`'s path (a user's queue, not a window
+backlog) is untouched — still fully materialised, as the fix scoped it.
+
+All 22 pre-existing tests pass **unmodified** — verified by running them before touching any test
+code, then again after.
+
+**New tests:**
+- `test_overflow_and_watermark_stay_exact_over_a_backlog_larger_than_the_cap` — seeds `cap + 30`
+  window items; asserts `overflow_count` exact (`len(backlog) - cap`), `covers_through_item_id`
+  the TRUE max id (not the max kept), and the retained items are the newest `cap` by id.
+- `test_the_window_materialisation_is_bounded_not_the_full_backlog` — spies on `_window_rows`,
+  seeds featured (queued, below-watermark) items plus a `cap + 30` backlog, asserts every fetch is
+  `<= cap + featured_count`, never the full window.
+
+**Mutation:** dropped the `LIMIT ?` from `_window_rows`'s SQL (kept the params list under-fed so
+the query stayed syntactically valid). RED: `test_the_window_materialisation_is_bounded_...` —
+`assert 37 == 5` (all 37 backlog rows materialised instead of the 5-item cap). Restored;
+`Tests/Subscriptions/test_briefing_selection.py` back to 24 passed.
+
+## Fix 3 (Important) — zombie recovery on Artifacts load
+
+`fail_interrupted_briefings` had one production caller, `_sweep_and_guard` (the Generate path).
+The spec says a `generating` row not backed by a live worker is failed "on the next Generate
+attempt **or Artifacts load**" — the load half was never wired.
+
+Added `WatchlistsCollectionsScreen._zombie_sweep_is_safe()` (the shared predicate: unsafe exactly
+when `_briefing_in_flight` is true, because `fail_interrupted_briefings` fails every `generating`
+row unconditionally and a live `_generate_briefing` worker owns exactly one such row for the
+whole time it runs) and `_fail_interrupted_briefings_if_safe(db, watchlist_id)` (the async
+wrapper, `asyncio.to_thread`, off the UI thread). Wired into `_load_briefings` immediately before
+the `list_briefings` query, wrapped in its own best-effort `try/except` so a sweep failure cannot
+take the `wl-briefings-load` worker's default `exit_on_error=True` down with it. `_sweep_and_guard`
+itself needed no change — it always runs at the front of `_generate_briefing`, before that
+worker's own row exists, so it never needed this guard in the first place.
+
+**Existing-test fallout:** `test_a_stuck_generating_row_is_refused_then_recovered` seeded its
+zombie row *before* opening Artifacts, so the plain load now recovered it before the first press
+ever ran, collapsing the test's two-press structure. Moved the zombie's insertion to *after* the
+section is already open (post-load), which isolates what the test is actually for — a row that
+appears while the screen is already sitting open.
+
+**New tests:**
+- `test_a_zombie_generating_row_is_recovered_on_a_plain_artifacts_load` — seeds a zombie, opens
+  Artifacts with no button press, asserts the row is `failed`/`interrupted` and its detail pane
+  never shows `_GENERATING_COPY`.
+- `test_a_live_in_flight_row_is_not_failed_by_a_concurrent_load` — claims `_briefing_in_flight`,
+  calls `_load_briefings()` directly, asserts a pre-seeded `generating` row survives untouched.
+
+**Mutation:** removed the `_fail_interrupted_briefings_if_safe` call from `_load_briefings`. RED:
+`test_a_zombie_generating_row_is_recovered_on_a_plain_artifacts_load` (row stayed `generating`).
+Restored; `Tests/Watchlists/test_watchlists_artifacts_pane.py` back to 16 passed.
+
+## Fix 4 (Minor) — truthful refusal toast
+
+`_briefing_in_flight`'s refusal toast said "A briefing is already being written for this
+watchlist" — false whenever the running generation belongs to a different watchlist than the one
+on screen (the flag is deliberately screen-global; the `wl-briefing` worker group is
+`exclusive=True`, so making it per-watchlist would let a second dispatch cancel a real generation
+mid-run).
+
+Added `_briefing_in_flight_watchlist_id`, set alongside `_briefing_in_flight = True` in
+`handle_generate_briefing_requested` and cleared alongside it in `_generate_briefing`'s `finally`.
+The refusal toast now names the watchlist actually generating (`_watchlist_display_name`) when
+that id is set, falling back to watchlist-agnostic copy ("A briefing is already being written.
+Nothing else was started.") otherwise — never claiming "this watchlist" when it may not be.
+
+**New test:** `test_the_refusal_toast_names_the_watchlist_actually_generating` — opens Artifacts on
+one watchlist, simulates the guard being claimed by a *different* watchlist, presses Generate,
+asserts the toast names the running watchlist and never says "for this watchlist".
+
+**Mutation:** reverted the message to the old fixed string. RED: `assert 'Morning AI Brief' in
+'A briefing is already being written for this watchlist.'`. Restored;
+`Tests/Watchlists/test_watchlists_artifacts_pane.py` back to 16 passed.
+
+## Fix 5 (Minor) — unmarked tests
+
+`Tests/Watchlists/test_watchlists_items_pane.py` had no `pytestmark`, so the whole file — not
+just the two new task-5 tests — was invisible to `pytest -m unit`. Added
+`pytestmark = pytest.mark.unit` at module level, matching the convention three sibling files in
+the same directory already use (`test_watchlist_name_and_copy.py`, `test_region_layout_store.py`,
+`test_watchlist_dialogs_escape.py`).
+
+## Fix 6 — deferral notes (docs only)
+
+Added a "Phase 1 delivery notes (2026-07-30)" subsection immediately under the Status line in
+`Docs/superpowers/specs/2026-07-30-watchlists-briefings-design.md`, naming two honest deferrals —
+the selection-mode picker (column ships, no writer, `auto`/`curated` unreachable until phase 2)
+and citations (plain-text `[item N]` markers only; links-into-reader and pruned-item degradation,
+including the named `citation-to-pruned-item-degrades` invariant test, move to phase 2) — both
+noted as pending the project owner's confirmation. Mirrored as two unchecked sub-bullets under
+AC #2 in `backlog/tasks/task-1540 - Watchlists-briefings-spec-2-programme-tracking.md`. No code
+touched.
+
+## Verification
+
+- `Tests/Subscriptions/` — **226 passed**.
+- `Tests/Watchlists/` — **218 passed**.
+- `Tests/UI/test_watchlists_inspector.py` — **34 passed**.
+- Combined single run of all three — **478 passed, 0 failed** (190.14s).
+- The two documented tree-chevron baselines
+  (`test_watchlists_tree_chevron_shares_a_row_with_its_watchlist[size0]`/`[size1]` in
+  `Tests/UI/test_destination_visual_parity_correction.py`) reconfirmed failing in isolation, same
+  assertion as task 4's report (`assert 4 > 5`, the source row's indent). Not in any of the three
+  directories/files asked for above, so they do not appear in those runs; unrelated to this fix
+  wave, pre-existing.
+
+All six mutation checks performed with an editor (add/remove one call or clause), confirmed RED,
+then reverted; `git status --short` clean of any mutation artifact between each.
+
+## Files
+
+- `tldw_chatbook/Subscriptions/briefing_service.py` (fix 1)
+- `tldw_chatbook/Subscriptions/briefing_selection.py` (fix 2)
+- `tldw_chatbook/UI/Screens/watchlists_collections_screen.py` (fixes 3, 4)
+- `Tests/Subscriptions/test_briefing_service.py` (fix 1)
+- `Tests/Subscriptions/test_briefing_selection.py` (fix 2)
+- `Tests/Watchlists/test_watchlists_artifacts_pane.py` (fixes 3, 4)
+- `Tests/Watchlists/test_watchlists_items_pane.py` (fix 5)
+- `Docs/superpowers/specs/2026-07-30-watchlists-briefings-design.md` (fix 6)
+- `backlog/tasks/task-1540 - Watchlists-briefings-spec-2-programme-tracking.md` (fix 6)

@@ -345,6 +345,109 @@ def _write_junction(
             )
 
 
+# --- Sync DB work, grouped for `asyncio.to_thread` (whole-branch review ----
+# fix 1) -----------------------------------------------------------------
+#
+# `generate_briefing` is `async`, but every one of these calls is a plain
+# synchronous SQLite call. Before this fix they ran directly on the caller's
+# event loop -- the screen dispatches `generate_briefing` from a Textual
+# worker (`watchlists_collections_screen.py`'s `_generate_briefing`), so a
+# contended write blocked the whole UI. Grouped into one `to_thread` hop per
+# stage rather than one hop per statement: Task 4's `_sweep_and_guard`
+# already proved this `db` object is safe to drive from a worker thread.
+# Each helper below is plain -- no `db.transaction()` spanning a hop, no
+# `await` inside one -- so it is safe to run on whichever thread
+# `asyncio.to_thread` picks.
+
+
+def _start_generation(
+    db: "SubscriptionsDB", watchlist_id: int, now: datetime | None
+) -> tuple[int, str, int | None, BriefingSelection]:
+    """Everything before the chat call: insert the row, resolve the mode,
+    read the prior watermark, and select. Returns
+    `(briefing_id, mode, prior_watermark, selection)`.
+    """
+    briefing_id = db.insert_briefing(watchlist_id, status=STATUS_GENERATING)
+    mode = _selection_mode(db, watchlist_id)
+    prior_watermark = db.latest_completed_watermark(watchlist_id)
+    selection = select_briefing_items(db, watchlist_id, mode=mode, now=now)
+    return briefing_id, mode, prior_watermark, selection
+
+
+def _finish_empty(
+    db: "SubscriptionsDB",
+    briefing_id: int,
+    mode: str,
+    covers_through: int | None,
+    selection: BriefingSelection,
+) -> dict[str, Any]:
+    """Record the empty-window outcome and read the finished row back."""
+    db.update_briefing(
+        briefing_id,
+        status=STATUS_EMPTY,
+        item_count=0,
+        featured_count=0,
+        overflow_count=selection.overflow_count,
+        covers_through_item_id=covers_through,
+        covers_from_ts=selection.covers_from_ts,
+        selection_mode=mode,
+    )
+    return db.get_briefing(briefing_id)
+
+
+def _finish_success(
+    db: "SubscriptionsDB",
+    briefing_id: int,
+    mode: str,
+    model_used: str,
+    covers_through: int | None,
+    selection: BriefingSelection,
+    body: str,
+) -> dict[str, Any]:
+    """Write the junction rows, flip the row to `complete`, and read it back.
+
+    Junction rows first, status flip second -- see `_write_junction`'s own
+    docstring for why the order is load-bearing.
+    """
+    _write_junction(db, briefing_id, selection)
+    db.update_briefing(
+        briefing_id,
+        status=STATUS_COMPLETE,
+        body_markdown=_append_overflow(body, selection.overflow_count),
+        item_count=len(selection.items),
+        featured_count=len(selection.featured_ids),
+        overflow_count=selection.overflow_count,
+        covers_through_item_id=covers_through,
+        covers_from_ts=selection.covers_from_ts,
+        selection_mode=mode,
+        model_used=model_used,
+    )
+    return db.get_briefing(briefing_id)
+
+
+def _finish_failure(
+    db: "SubscriptionsDB",
+    briefing_id: int,
+    mode: str,
+    model_used: str,
+    message: str,
+) -> dict[str, Any]:
+    """Record the failure outcome and read the finished row back.
+
+    No `covers_through_item_id` and no junction rows: a briefing that never
+    reached the user covered nothing, so the next attempt re-selects the
+    same items. The spec's named invariant.
+    """
+    db.update_briefing(
+        briefing_id,
+        status=STATUS_FAILED,
+        error=message,
+        selection_mode=mode,
+        model_used=model_used,
+    )
+    return db.get_briefing(briefing_id)
+
+
 async def generate_briefing(
     db: "SubscriptionsDB",
     watchlist_id: int,
@@ -378,11 +481,21 @@ async def generate_briefing(
 
     Returns:
         The finished `briefings` row as a dict, whatever its status.
+
+    Whole-branch review fix 1: every DB call here is plain synchronous
+    SQLite, and the only genuinely async step is `_invoke_chat` (which
+    itself offloads the real network call). Each stage's DB work is grouped
+    into one small plain function and run in a single `asyncio.to_thread`
+    hop -- not one hop per statement -- so the caller's event loop (a
+    Textual worker thread, in the shipping caller) is never blocked by
+    sqlite contention. The error boundary is unchanged: the `try/except`
+    below still wraps `_invoke_chat` ONLY, so a database error from any of
+    the `to_thread` calls still propagates to the caller uncaught, exactly
+    as it did when these were plain statements.
     """
-    briefing_id = db.insert_briefing(watchlist_id, status=STATUS_GENERATING)
-    mode = _selection_mode(db, watchlist_id)
-    prior_watermark = db.latest_completed_watermark(watchlist_id)
-    selection = select_briefing_items(db, watchlist_id, mode=mode, now=now)
+    briefing_id, mode, prior_watermark, selection = await asyncio.to_thread(
+        _start_generation, db, watchlist_id, now
+    )
 
     # `None` means "selection found no line to record" -- curated mode with
     # no prior briefing, or a genuinely empty window. Writing the prior
@@ -394,37 +507,17 @@ async def generate_briefing(
         covers_through = prior_watermark
 
     if not selection.items:
-        db.update_briefing(
-            briefing_id,
-            status=STATUS_EMPTY,
-            item_count=0,
-            featured_count=0,
-            overflow_count=selection.overflow_count,
-            covers_through_item_id=covers_through,
-            covers_from_ts=selection.covers_from_ts,
-            selection_mode=mode,
+        row = await asyncio.to_thread(
+            _finish_empty, db, briefing_id, mode, covers_through, selection
         )
         logger.info(f"briefing {briefing_id}: empty window for watchlist {watchlist_id}")
-        return db.get_briefing(briefing_id)
+        return row
 
     system, user = build_briefing_prompt(
         selection.items, selection.featured_ids, selection.overflow_count
     )
     endpoint = provider or _default_provider()
     model_used = f"{endpoint}/{model}" if model else endpoint
-
-    def _fail(message: str) -> dict[str, Any]:
-        # No `covers_through_item_id` and no junction rows: a briefing that
-        # never reached the user covered nothing, so the next attempt
-        # re-selects the same items. The spec's named invariant.
-        db.update_briefing(
-            briefing_id,
-            status=STATUS_FAILED,
-            error=message,
-            selection_mode=mode,
-            model_used=model_used,
-        )
-        return db.get_briefing(briefing_id)
 
     try:
         raw = await _invoke_chat(
@@ -441,7 +534,9 @@ async def generate_briefing(
             f"briefing {briefing_id}: generation failed against {endpoint}: "
             f"{type(exc).__name__}"
         )
-        return _fail(_error_text(exc))
+        return await asyncio.to_thread(
+            _finish_failure, db, briefing_id, mode, model_used, _error_text(exc)
+        )
 
     body = extract_response_content(raw).strip()
     if not body:
@@ -449,26 +544,23 @@ async def generate_briefing(
         # error to explain it -- and would advance the window past items
         # nothing ever reported.
         logger.warning(f"briefing {briefing_id}: {endpoint} returned an empty response")
-        return _fail(f"{endpoint} returned an empty response")
+        return await asyncio.to_thread(
+            _finish_failure,
+            db,
+            briefing_id,
+            mode,
+            model_used,
+            f"{endpoint} returned an empty response",
+        )
 
-    _write_junction(db, briefing_id, selection)
-    db.update_briefing(
-        briefing_id,
-        status=STATUS_COMPLETE,
-        body_markdown=_append_overflow(body, selection.overflow_count),
-        item_count=len(selection.items),
-        featured_count=len(selection.featured_ids),
-        overflow_count=selection.overflow_count,
-        covers_through_item_id=covers_through,
-        covers_from_ts=selection.covers_from_ts,
-        selection_mode=mode,
-        model_used=model_used,
+    row = await asyncio.to_thread(
+        _finish_success, db, briefing_id, mode, model_used, covers_through, selection, body
     )
     logger.info(
         f"briefing {briefing_id}: complete -- {len(selection.items)} items, "
         f"{selection.overflow_count} overflow, watermark {covers_through}"
     )
-    return db.get_briefing(briefing_id)
+    return row
 
 
 def fail_interrupted_briefings(

@@ -22,6 +22,7 @@ same item identities.
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -71,8 +72,21 @@ class _FakeChat:
         return self.reply
 
 
-def _db() -> SubscriptionsDB:
-    return SubscriptionsDB(":memory:", "test")
+def _db(tmp_path) -> SubscriptionsDB:
+    """A real, file-backed `SubscriptionsDB` -- not `:memory:`.
+
+    Whole-branch review fix 1 moved `generate_briefing`'s DB work onto a
+    worker thread via `asyncio.to_thread`. `SubscriptionsDB.conn` is
+    thread-local (`Subscriptions_DB._initialize_schema`'s own docstring
+    documents this): a `:memory:` connection is private to the thread that
+    opened it, so a `to_thread` hop would reach a brand-new, unmigrated,
+    empty database on the executor thread -- "no such table: briefings" --
+    even though the SAME `db` object is passed throughout. A file-backed
+    database has no such limitation: every thread's own connection opens
+    the same file. Matches the idiom `test_watchlist_name_and_copy.py`'s
+    `_service(tmp_path)` already uses for the same class.
+    """
+    return SubscriptionsDB(tmp_path / "subs.db", "test")
 
 
 def _new_source(db, watchlist_id, name) -> int:
@@ -154,7 +168,7 @@ def _junction(db, briefing_id) -> list[tuple[int, int]]:
 
 
 @pytest.mark.asyncio
-async def test_generation_happy_path_writes_everything(monkeypatch):
+async def test_generation_happy_path_writes_everything(monkeypatch, tmp_path):
     """One generation, end to end: body, counts, junction flags, watermark.
 
     Seeds more items than `DEFAULT_ITEM_CAP` so the overflow leg is real
@@ -164,7 +178,7 @@ async def test_generation_happy_path_writes_everything(monkeypatch):
     app's configuration", which a hardcoded `"openai"` would fail.
     """
     monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
-    db = _db()
+    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
 
@@ -231,14 +245,14 @@ async def test_generation_happy_path_writes_everything(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_llm_failure_is_honest_and_loses_nothing():
+async def test_llm_failure_is_honest_and_loses_nothing(tmp_path):
     """THE named invariant: a failed generation never advances coverage.
 
     Asserted through its consequence -- the next attempt re-selects the same
     item identities -- rather than through the column alone, because that is
     the property the user actually has (no item is silently skipped).
     """
-    db = _db()
+    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
 
@@ -289,13 +303,13 @@ async def test_llm_failure_is_honest_and_loses_nothing():
 
 
 @pytest.mark.asyncio
-async def test_empty_window_is_a_row_not_an_absence():
+async def test_empty_window_is_a_row_not_an_absence(tmp_path):
     """No items -> a visible `empty` row, no provider call, watermark held.
 
     Silence is never a state (spec §Error-handling ethos): the user gets a
     row saying "nothing arrived", not an absent artifact they must interpret.
     """
-    db = _db()
+    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Quiet")["id"]
     source = _new_source(db, watchlist, "quiet")
 
@@ -428,14 +442,14 @@ def test_long_article_excerpt_is_capped_in_the_prompt():
     assert "not covered" not in user
 
 
-def test_interrupted_recovery_only_touches_generating_rows():
+def test_interrupted_recovery_only_touches_generating_rows(tmp_path):
     """Zombie recovery (TASK-1090's shape) fails only what is actually stuck.
 
     A crashed worker leaves a `generating` row that would wedge the
     one-generation-at-a-time guard shut forever. Recovery must not also
     rewrite finished history.
     """
-    db = _db()
+    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Main")["id"]
     other = WatchlistBundleService(db).create(name="Other")["id"]
 
@@ -473,14 +487,14 @@ def test_interrupted_recovery_only_touches_generating_rows():
 
 
 @pytest.mark.asyncio
-async def test_an_empty_model_response_is_a_failure_not_an_empty_briefing():
+async def test_an_empty_model_response_is_a_failure_not_an_empty_briefing(tmp_path):
     """A provider that returns nothing produced no briefing.
 
     Recording it `complete` with a blank body would show the user an empty
     artifact with no error to explain it -- and, worse, would advance the
     coverage window past items nothing ever reported.
     """
-    db = _db()
+    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     item = _add_article(db, source, "Something Happened")
@@ -499,7 +513,7 @@ async def test_an_empty_model_response_is_a_failure_not_an_empty_briefing():
 
 
 @pytest.mark.asyncio
-async def test_a_failed_generation_logs_no_item_content():
+async def test_a_failed_generation_logs_no_item_content(tmp_path):
     """The module's egress claim, pinned: no item content reaches the log.
 
     Generation sends titles, excerpts and diffs to the configured provider --
@@ -518,7 +532,7 @@ async def test_a_failed_generation_logs_no_item_content():
     # reason. Round 1's first draft used a 15-character title and the repr
     # ended one character short of it -- green against a live leak.
     canary = "ZEBRACANARY"
-    db = _db()
+    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, canary)
     _add_article(db, source, canary)
@@ -547,10 +561,10 @@ async def test_a_failed_generation_logs_no_item_content():
 
 
 @pytest.mark.asyncio
-async def test_explicit_provider_and_model_override_the_default(monkeypatch):
+async def test_explicit_provider_and_model_override_the_default(monkeypatch, tmp_path):
     """A preset's provider/model wins over the app default (spec §5)."""
     monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
-    db = _db()
+    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -566,7 +580,7 @@ async def test_explicit_provider_and_model_override_the_default(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_curated_mode_generation_leaves_the_window_alone():
+async def test_curated_mode_generation_leaves_the_window_alone(tmp_path):
     """The service honours the watchlist's stored mode, and curated's echo.
 
     Task 2's contract: curated selection echoes the prior watermark rather
@@ -574,7 +588,7 @@ async def test_curated_mode_generation_leaves_the_window_alone():
     a service that recomputed "max id covered" from its own item list would
     silently step the window past items no briefing ever covered.
     """
-    db = _db()
+    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Curated")["id"]
     source = _new_source(db, watchlist, "acme")
 
@@ -602,14 +616,14 @@ async def test_curated_mode_generation_leaves_the_window_alone():
 
 
 @pytest.mark.asyncio
-async def test_generation_accepts_an_async_chat_seam():
+async def test_generation_accepts_an_async_chat_seam(tmp_path):
     """`chat` may be a coroutine function; the service awaits it.
 
     The real seam is synchronous and is offloaded to a thread, but the UI
     (task 4) may wrap it, so both shapes must work rather than one of them
     returning an un-awaited coroutine object as the briefing body.
     """
-    db = _db()
+    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -625,3 +639,47 @@ async def test_generation_accepts_an_async_chat_seam():
     assert len(seen) == 1
     assert row["status"] == "complete"
     assert "## Async body" in row["body_markdown"]
+
+
+@pytest.mark.asyncio
+async def test_the_db_work_runs_off_the_event_loop_thread(tmp_path):
+    """Whole-branch review fix 1: `generate_briefing`'s DB work must not run
+    on the caller's event loop. The screen dispatches this from a Textual
+    worker, so a contended sqlite write used to block the whole UI.
+
+    Same pattern as `test_the_queue_write_runs_off_the_event_loop_thread`
+    (`Tests/UI/test_watchlists_inspector.py`): a mutation that drops
+    `asyncio.to_thread` and calls the DB directly passes every OTHER test in
+    this file unchanged, since the end state -- a `complete` row -- is
+    identical either way; only watching which thread executes the call can
+    tell the two apart. Spies on `insert_briefing`, `update_briefing` and
+    `get_briefing` -- the setup hop and the finishing hop -- so a mutation of
+    either grouped `to_thread` call is caught, not just one of them.
+    """
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Threaded")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+
+    loop_thread_id = threading.get_ident()
+    write_thread_ids: list[int] = []
+
+    for name in ("insert_briefing", "update_briefing", "get_briefing"):
+        original = getattr(db, name)
+
+        def _spy(*args, __original=original, **kwargs):
+            write_thread_ids.append(threading.get_ident())
+            return __original(*args, **kwargs)
+
+        setattr(db, name, _spy)
+
+    row = await generate_briefing(db, watchlist, chat=_FakeChat())
+
+    assert row["status"] == "complete"
+    # insert (setup) + update + get (finishing) -- at least three DB calls
+    # spied on, all of them off the loop thread.
+    assert len(write_thread_ids) >= 3, "the DB writes must have run at all"
+    assert all(tid != loop_thread_id for tid in write_thread_ids), (
+        "generate_briefing's DB work must run off the event-loop thread "
+        "(asyncio.to_thread), not synchronously on the loop"
+    )

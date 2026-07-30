@@ -2,6 +2,17 @@
 
 **Date:** 2026-07-30
 **Status:** phase 1 implemented (2026-07-30); phases 2-4 pending
+
+**Phase 1 delivery notes (2026-07-30):** two deferrals from the phase 1 plan, both pending the
+project owner's confirmation:
+
+- **Selection-mode picker.** `watchlists.briefing_selection_mode` ships with its default
+  (`auto_featured`) and no writer anywhere in the UI -- `auto` and `curated` are unreachable until
+  phase 2's preset/mode UI adds a picker.
+- **Citations.** Phase 1 renders `[item N]` markers as plain text (`hyperlinks=False` by
+  constraint -- see the Artifacts section). Links-into-reader and pruned-item degradation,
+  including the named `citation-to-pruned-item-degrades` invariant test, move to phase 2.
+
 **Predecessor:** `2026-07-25-watchlists-console-rebuild-design.md` (spec #1), which deferred this
 slice: *"Spec #2 covers artifact generation (briefings, 2-speaker podcasts) and its scheduled
 delivery."* One correction to that charter, from the user directly: podcasts are **not** fixed at

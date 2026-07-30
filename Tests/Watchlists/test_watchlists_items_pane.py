@@ -10,6 +10,13 @@ from tldw_chatbook.UI.Watchlists_Modules.items_pane import (
     RefreshItemsRequested,
 )
 
+# Marked so CI actually runs this file (whole-branch review fix 5): the unit
+# job selects `pytest -m unit`, and an unmarked file in `Tests/Watchlists`
+# is invisible to it. Matches the convention sibling files in this
+# directory already use (`test_watchlist_name_and_copy.py`,
+# `test_region_layout_store.py`, `test_watchlist_dialogs_escape.py`).
+pytestmark = pytest.mark.unit
+
 
 class ItemsPaneHarness(App):
     def __init__(self):

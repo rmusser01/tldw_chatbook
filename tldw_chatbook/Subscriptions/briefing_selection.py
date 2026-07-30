@@ -144,13 +144,13 @@ class BriefingSelection:
     covers_from_ts: str
 
 
-def _window_rows(
-    db: "SubscriptionsDB",
-    watchlist_id: int,
-    watermark: int | None,
-    floor_ts: str | None,
-) -> list[dict[str, Any]]:
-    """Items of the watchlist's sources inside the coverage window, newest first.
+def _window_predicate(
+    watermark: int | None, floor_ts: str | None
+) -> tuple[str, tuple[Any, ...]]:
+    """The window's WHERE fragment and its bound value, shared by every
+    query that reads the window (materialising rows, counting them, or
+    bounding them) so the three can never quietly disagree about what "in
+    the window" means.
 
     With a watermark, the window is `id > watermark`. Without one (the first
     briefing), it is the last `FIRST_WINDOW_DAYS` days by `created_at`,
@@ -158,32 +158,107 @@ def _window_rows(
     offset-bearing ISO timestamp and rows written by `CURRENT_TIMESTAMP`
     normalize to the same UTC form before comparison -- a raw string
     comparison between `'...T09:00:00+00:00'` and `'... 09:00:00'` sorts on
-    the `T` versus the space and is simply wrong. A NULL `created_at`
-    normalizes to NULL and is excluded: an item with no timestamp cannot be
-    placed inside a time window.
-
-    Ordering is by id descending in both cases. Ids are the tiebreaker the
-    one-second `created_at` resolution cannot provide.
+    the `T` versus the space and is simply wrong.
     """
     if watermark is not None:
-        predicate = "i.id > ?"
-        params: tuple[Any, ...] = (watchlist_id, watermark)
-    else:
-        predicate = "datetime(i.created_at) >= datetime(?)"
-        params = (watchlist_id, floor_ts)
+        return "i.id > ?", (watermark,)
+    return "datetime(i.created_at) >= datetime(?)", (floor_ts,)
 
-    # The interpolated fragments are module-level literals chosen by the
-    # branch above -- no caller value reaches the SQL text; every caller
-    # value is bound.
-    sql = (
-        f"SELECT {_ITEM_COLUMNS}{_FROM_WATCHLIST_ITEMS}"
-        f"      AND {predicate}\n"
-        "    ORDER BY i.id DESC"
-    )
+
+def _window_rows(
+    db: "SubscriptionsDB",
+    watchlist_id: int,
+    watermark: int | None,
+    floor_ts: str | None,
+    limit: int,
+    exclude_ids: Sequence[int] = (),
+) -> list[dict[str, Any]]:
+    """Up to `limit` window rows, newest first -- NOT the whole window.
+
+    Whole-branch review fix 2: a watchlist that has gone unbriefed for a
+    while can have a window backlog far larger than the item cap, and the
+    cap was previously applied in Python *after* every row was materialised
+    -- pulling the whole backlog into memory just to keep the newest `cap`
+    of it. The `LIMIT` here bounds materialisation to what the caller can
+    actually use; `_window_count` and `_window_bounds` answer "how many /
+    which line" over the FULL window without ever fetching a row.
+
+    `exclude_ids`, when given (auto_featured mode), removes ids already
+    claimed by the featured side directly in SQL -- so the rows returned
+    are exactly the deduplicated "auto" bucket the caller needs, not a
+    superset it would otherwise have to de-duplicate in Python (and risk
+    under-fetching if it didn't overfetch by enough).
+
+    Ordering is by id descending. Ids are the tiebreaker the one-second
+    `created_at` resolution cannot provide (first-briefing window only).
+    """
+    predicate, extra = _window_predicate(watermark, floor_ts)
+    params: list[Any] = [watchlist_id, *extra]
+
+    # The interpolated fragments are module-level literals chosen above --
+    # no caller value reaches the SQL text; every caller value is bound.
+    sql = f"SELECT {_ITEM_COLUMNS}{_FROM_WATCHLIST_ITEMS}      AND {predicate}"
+    if exclude_ids:
+        placeholders = ",".join("?" * len(exclude_ids))
+        sql += f" AND i.id NOT IN ({placeholders})"
+        params.extend(exclude_ids)
+    sql += "\n    ORDER BY i.id DESC LIMIT ?"
+    params.append(limit)
+
     # dict(), not the raw `sqlite3.Row`: `normalize_watchlist_item` reads
     # optional columns with `.get`, which a Row does not have. `get_new_items`
     # converts for the same reason.
     return [dict(row) for row in db.conn.execute(sql, params).fetchall()]
+
+
+def _window_count(
+    db: "SubscriptionsDB",
+    watchlist_id: int,
+    watermark: int | None,
+    floor_ts: str | None,
+    exclude_ids: Sequence[int] = (),
+) -> int:
+    """Exact `COUNT(*)` of the FULL window, without materialising a row.
+
+    `exclude_ids`, when given, excludes ids already claimed by the featured
+    side -- so this is exactly `len(auto)` from the pre-fix4 implementation,
+    computed in SQL instead of over a fully materialised Python list, and it
+    stays exact regardless of how small the row-fetch `limit` is.
+    """
+    predicate, extra = _window_predicate(watermark, floor_ts)
+    params: list[Any] = [watchlist_id, *extra]
+    sql = f"SELECT COUNT(*){_FROM_WATCHLIST_ITEMS}      AND {predicate}"
+    if exclude_ids:
+        placeholders = ",".join("?" * len(exclude_ids))
+        sql += f" AND i.id NOT IN ({placeholders})"
+        params.extend(exclude_ids)
+    return int(db.conn.execute(sql, params).fetchone()[0])
+
+
+def _window_bounds(
+    db: "SubscriptionsDB",
+    watchlist_id: int,
+    watermark: int | None,
+    floor_ts: str | None,
+) -> tuple[int | None, str | None]:
+    """`(MAX(id), MIN(created_at))` over the FULL window, unfiltered.
+
+    Deliberately NOT excluding the featured overlap the way `_window_count`
+    does: `covers_through_item_id` and `covers_from_ts` are properties of
+    everything the window considers, whether or not a row is ALSO featured
+    -- excluding it here would be wrong in a way excluding it from the
+    auto-side *count* is not (that count exists specifically to avoid
+    double-counting the same row on both sides of `overflow_count`).
+    Returns `(None, None)` when the window is empty.
+    """
+    predicate, extra = _window_predicate(watermark, floor_ts)
+    params: list[Any] = [watchlist_id, *extra]
+    sql = (
+        "SELECT MAX(i.id) AS max_id, MIN(datetime(i.created_at)) AS min_created"
+        f"{_FROM_WATCHLIST_ITEMS}      AND {predicate}"
+    )
+    row = db.conn.execute(sql, params).fetchone()
+    return row["max_id"], row["min_created"]
 
 
 def _curated_rows(db: "SubscriptionsDB", watchlist_id: int) -> list[dict[str, Any]]:
@@ -276,41 +351,87 @@ def select_briefing_items(
         else None
     )
 
-    window = (
-        []
-        if mode == MODE_CURATED
-        else _window_rows(db, watchlist_id, watermark, floor_ts)
-    )
     curated = [] if mode == MODE_AUTO else _curated_rows(db, watchlist_id)
 
     if mode == MODE_AUTO_FEATURED:
         featured = curated
-        featured_ids = {row["id"] for row in featured}
-        # A queued item that also falls inside the window appears once, on
-        # the featured side.
-        auto = [row for row in window if row["id"] not in featured_ids]
-    elif mode == MODE_AUTO:
-        featured, auto = [], window
-    else:  # MODE_CURATED -- every item is curated, so none is "featured".
-        featured, auto = [], curated
-
-    considered = featured + auto
-    if mode == MODE_CURATED:
-        # Curated never reads the coverage window, so it must not move it:
-        # echo the prior line back (None when there is none yet, which the
-        # caller already reads as "do not advance"). Advancing to the newest
-        # queued id would walk the line past window items no briefing ever
-        # covered -- with no overflow count, no body text, and no status to
-        # show for it. See the module docstring.
-        covers_through = watermark
-    else:
-        covers_through = max((row["id"] for row in considered), default=None)
+    else:  # MODE_AUTO and MODE_CURATED both feature nothing.
+        featured = []
+    featured_ids = tuple(row["id"] for row in featured)
 
     # The cap squeezes the auto side first. Only when featured items alone
     # exceed the cap do featured items themselves overflow -- newest kept.
     kept_featured = featured[:item_cap]
-    kept_auto = auto[: item_cap - len(kept_featured)] if len(kept_featured) < item_cap else []
-    overflow_count = (len(featured) - len(kept_featured)) + (len(auto) - len(kept_auto))
+    remaining_cap = item_cap - len(kept_featured) if len(kept_featured) < item_cap else 0
+
+    if mode == MODE_CURATED:
+        # Curated never reads the coverage window at all -- `curated` IS the
+        # "auto" bucket here (nothing is "featured": every item in the
+        # briefing is curated, so there is nothing to give top billing
+        # over). Small by construction (a user's queue, not a window
+        # backlog), so whole-branch review fix 2's bound does not apply to
+        # it -- it is already fully materialised above.
+        auto_full = curated
+        auto_full_count = len(auto_full)
+        kept_auto = auto_full[:remaining_cap]
+        # Curated never moves the coverage window: echo the prior line back
+        # (`None` when there is none yet, which the caller already reads as
+        # "do not advance"). Advancing to the newest queued id would walk
+        # the line past window items no briefing ever covered -- with no
+        # overflow count, no body text, and no status to show for it. See
+        # the module docstring.
+        covers_through = watermark
+        covers_from_ts = (
+            floor_ts if floor_ts is not None else _covers_from(auto_full, now)
+        )
+    else:
+        # Whole-branch review fix 2: the window is bounded in SQL rather
+        # than materialised in full and then sliced in Python. A watchlist
+        # left unbriefed for a while can have a window backlog far larger
+        # than the item cap; `_window_count`/`_window_bounds` answer the
+        # "how many / which line" questions over the FULL window without
+        # ever fetching a row, and `_window_rows` fetches only the rows this
+        # call can actually use (deduplicated against `featured` in SQL, via
+        # `exclude_ids`, so no Python-side dedup or overfetch is needed).
+        auto_full_count = _window_count(
+            db, watchlist_id, watermark, floor_ts, exclude_ids=featured_ids
+        )
+        window_max_id, window_min_created = _window_bounds(
+            db, watchlist_id, watermark, floor_ts
+        )
+        kept_auto = (
+            _window_rows(
+                db,
+                watchlist_id,
+                watermark,
+                floor_ts,
+                limit=remaining_cap,
+                exclude_ids=featured_ids,
+            )
+            if remaining_cap > 0
+            else []
+        )
+
+        id_candidates = [window_max_id, *featured_ids]
+        covers_through = max(
+            (value for value in id_candidates if value is not None), default=None
+        )
+
+        if floor_ts is not None:
+            covers_from_ts = floor_ts
+        else:
+            # `_covers_from` also folds in `featured`'s own timestamps: a
+            # featured item can be OLDER than the window entirely (a queued
+            # item below the watermark), so it may hold the true minimum
+            # even though it never appears in `_window_bounds`.
+            pseudo_rows = (
+                [{"created_at_utc": window_min_created}] if window_min_created else []
+            ) + featured
+            covers_from_ts = _covers_from(pseudo_rows, now)
+
+    overflow_count = (len(featured) - len(kept_featured)) + (
+        auto_full_count - len(kept_auto)
+    )
 
     kept = kept_featured + kept_auto
     return BriefingSelection(
@@ -318,5 +439,5 @@ def select_briefing_items(
         featured_ids={row["id"] for row in kept_featured},
         overflow_count=overflow_count,
         covers_through_item_id=covers_through,
-        covers_from_ts=floor_ts if floor_ts is not None else _covers_from(considered, now),
+        covers_from_ts=covers_from_ts,
     )

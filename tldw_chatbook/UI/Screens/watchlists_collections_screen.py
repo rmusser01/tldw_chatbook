@@ -335,6 +335,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # rows this session did not create. See
         # `handle_generate_briefing_requested`.
         self._briefing_in_flight = False
+        # Which watchlist `_briefing_in_flight` refers to, or `None`.
+        # `_briefing_in_flight` is deliberately screen-global (one
+        # `wl-briefing` worker at a time, `exclusive=True`), so a refusal
+        # while it is set may belong to a DIFFERENT watchlist than the one
+        # on screen. Set alongside the flag so the refusal toast can name
+        # the watchlist actually generating instead of falsely claiming
+        # "this watchlist" (whole-branch review fix 4).
+        self._briefing_in_flight_watchlist_id: int | None = None
         # The item currently open in the CONTENT reader (Task 4). Held here
         # for the identical reason as `_loaded_items` above: `_build_content_pane`
         # is a factory the workbench calls on every region rebuild, and a
@@ -3092,6 +3100,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._selected_briefing = None
         else:
             try:
+                # Zombie recovery, before the list query, so a row this
+                # sweep just failed shows up as failed/interrupted in THIS
+                # same load rather than requiring a second one (whole-branch
+                # review fix 3). Best-effort: a failure here must not stop
+                # the list query below, and must not exit the app -- this
+                # runs inside the `wl-briefings-load` worker, whose default
+                # `exit_on_error=True` would take the app down with it.
+                await self._fail_interrupted_briefings_if_safe(db, watchlist_id)
+            except Exception as exc:  # noqa: BLE001 - best-effort, not fatal
+                logger.warning(
+                    f"Zombie-briefing sweep failed for watchlist {watchlist_id}: "
+                    f"{type(exc).__name__}"
+                )
+            try:
                 self._loaded_briefings = [
                     dict(row) for row in db.list_briefings(watchlist_id)
                 ]
@@ -3193,13 +3215,29 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             return
         if self._briefing_in_flight:
-            self._notify_watchlists(
-                "A briefing is already being written for this watchlist.",
-                severity="warning",
-                markup=False,
-            )
+            # `_briefing_in_flight` is screen-global on purpose (one
+            # `wl-briefing` worker at a time -- see the field's own
+            # comment), so the running generation may belong to a
+            # DIFFERENT watchlist than the one on screen right now. Naming
+            # it when that name is cheaply available (whole-branch review
+            # fix 4) keeps the toast truthful instead of always claiming
+            # "this watchlist".
+            running_id = self._briefing_in_flight_watchlist_id
+            if running_id is not None:
+                running_name = self._watchlist_display_name(running_id)
+                message = (
+                    f"A briefing is already being written for {running_name}. "
+                    "Nothing else was started."
+                )
+            else:
+                message = (
+                    "A briefing is already being written. Nothing else was "
+                    "started."
+                )
+            self._notify_watchlists(message, severity="warning", markup=False)
             return
         self._briefing_in_flight = True
+        self._briefing_in_flight_watchlist_id = watchlist_id
         self.run_worker(
             self._generate_briefing(db, watchlist_id),
             exclusive=True,
@@ -3213,6 +3251,41 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             f"briefing {row.get('id')} "
             f"(started {row.get('created_at') or 'at an unknown time'})"
         )
+
+    def _zombie_sweep_is_safe(self) -> bool:
+        """Whether `fail_interrupted_briefings` may run right now.
+
+        `fail_interrupted_briefings` fails EVERY `generating` row for a
+        watchlist unconditionally -- it cannot itself tell a crashed
+        worker's row from a live one, both read `generating`. The Generate
+        path (`_sweep_and_guard`) never needs this guard: it always runs at
+        the very front of `_generate_briefing`, before that worker's own
+        row is inserted, so there is nothing of "its own" yet to protect.
+        The Artifacts-load path (`_load_briefings`) has no such ordering
+        guarantee -- it can run at any time, including while a generation
+        THIS screen started is still mid-flight and genuinely owns a
+        `generating` row -- so it consults the same signal
+        `handle_generate_briefing_requested` already trusts before ever
+        dispatching a worker, rather than inventing a second, possibly
+        weaker way to tell a zombie from a live row (whole-branch review
+        fix 3).
+        """
+        return not self._briefing_in_flight
+
+    async def _fail_interrupted_briefings_if_safe(
+        self, db: Any, watchlist_id: int
+    ) -> int:
+        """Zombie recovery for the Artifacts-load path, off the UI thread.
+
+        Spec: a `generating` row not backed by a live worker is failed "on
+        the next Generate attempt or Artifacts load" -- only the Generate
+        path was wired (`_sweep_and_guard`). Gated by
+        `_zombie_sweep_is_safe` so a load racing a live generation this
+        screen started cannot clobber that generation's own row.
+        """
+        if not self._zombie_sweep_is_safe():
+            return 0
+        return await asyncio.to_thread(fail_interrupted_briefings, db, watchlist_id)
 
     def _sweep_and_guard(
         self, db: Any, watchlist_id: int
@@ -3324,6 +3397,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 )
         finally:
             self._briefing_in_flight = False
+            self._briefing_in_flight_watchlist_id = None
             # Repaint on every path: a refusal has just changed a row's
             # status, and the failure path may leave a `generating` row this
             # attempt inserted before it broke.

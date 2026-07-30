@@ -33,6 +33,8 @@ land; do not fold phase implementation into it.
 <!-- AC:BEGIN -->
 - [x] #1 Phase 1: text briefings on demand -- tables, id-watermark selection, `chat_api_call` pipeline, Artifacts section (list + reader + Generate), queue-for-briefing affordance, preset-less
 - [ ] #2 Phase 2: N-speaker presets, script casting, and audio synthesis
+  - [ ] Selection-mode picker: `briefing_selection_mode` shipped in phase 1 with no writer (default `auto_featured` only, `auto`/`curated` unreachable) -- add the picker. Deferred from phase 1, pending the project owner's confirmation.
+  - [ ] Citations: phase 1 renders `[item N]` markers as plain text (`hyperlinks=False` by constraint) -- add links-into-reader and pruned-item degradation, incl. the named `citation-to-pruned-item-degrades` invariant test. Deferred from phase 1, pending the project owner's confirmation.
 - [ ] #3 Phase 3: markdown/audio exports and the podcast feed directory
 - [ ] #4 Phase 4: scheduled briefing generation via the TASK-1383 scheduler seam
 <!-- AC:END -->
