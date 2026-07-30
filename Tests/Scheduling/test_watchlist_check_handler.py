@@ -104,8 +104,14 @@ async def test_feed_check_records_result(handler):
 
 @pytest.mark.asyncio
 async def test_url_check_records_result(handler):
+    # TASK-1362: `check_url` returns `(item, disposition)`. This handler writes
+    # through `record_check_result`, whose stats carry no disposition field, so
+    # it takes the item and drops the disposition.
     result = {"changed": True, "url": "http://example.com/page"}
-    handler.url_monitor.check_url.return_value = result
+    handler.url_monitor.check_url.return_value = (
+        result,
+        {"kind": "changed", "reason": None, "withheld_percentage": None},
+    )
     handler.subscriptions_db.get_subscription.return_value = _subscription("url")
 
     await handler.handle(_task())
@@ -122,7 +128,16 @@ async def test_url_check_records_result(handler):
 
 @pytest.mark.asyncio
 async def test_url_check_with_none_result(handler):
-    handler.url_monitor.check_url.return_value = None
+    """A check that produced no item must still record a successful check.
+
+    The disposition (here `unchanged`) is what distinguishes this from the
+    three other reasons a check produces nothing; the handler's own stats
+    schema does not carry it, so it is dropped rather than invented.
+    """
+    handler.url_monitor.check_url.return_value = (
+        None,
+        {"kind": "unchanged", "reason": None, "withheld_percentage": None},
+    )
     handler.subscriptions_db.get_subscription.return_value = _subscription("url")
 
     await handler.handle(_task())

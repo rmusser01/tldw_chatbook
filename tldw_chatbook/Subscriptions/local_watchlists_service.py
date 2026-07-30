@@ -44,6 +44,41 @@ _ALERT_CONDITION_TYPES = frozenset(
     }
 )
 
+#: `check_url`'s disposition `kind` -> the run-stats counter it increments.
+#: `withheld_below_threshold` is shortened for the stats key, which is read by
+#: the Runs pane as a one-line summary.
+_DISPOSITION_COUNT_KEYS = {
+    "changed": "changed",
+    "unchanged": "unchanged",
+    "withheld_below_threshold": "withheld",
+    "baseline_stored": "baseline",
+}
+
+
+def _disposition_counts(dispositions: list[dict[str, Any]]) -> dict[str, int]:
+    """Aggregate one run's per-URL dispositions into four counters.
+
+    Spec §4. A run that produced no items used to be indistinguishable from a
+    run that produced no items *because it withheld them*; these counters are
+    what makes the difference visible. All four keys are always present, so the
+    reader never has to distinguish "zero" from "not recorded".
+
+    Args:
+        dispositions: One disposition dict per URL checked, in check order.
+
+    Returns:
+        ``{"changed": n, "unchanged": n, "withheld": n, "baseline": n}``.
+
+    Raises:
+        KeyError: If a disposition carries a ``kind`` outside the vocabulary --
+            deliberately loud, because a silently dropped disposition is
+            exactly the ambiguity this record exists to remove.
+    """
+    counts = {"changed": 0, "unchanged": 0, "withheld": 0, "baseline": 0}
+    for disposition in dispositions:
+        counts[_DISPOSITION_COUNT_KEYS[str(disposition.get("kind"))]] += 1
+    return counts
+
 
 class LocalWatchlistsService:
     """Thin adapter over `SubscriptionsDB` for the shared watchlists seam."""
@@ -764,35 +799,43 @@ class LocalWatchlistsService:
 
         subscription_config = self._subscription_execution_config(subscription)
         source_type = str(subscription_config.get("type") or "").strip()
+        # `None` for the feed and API arms, which have no dispositions at all
+        # (spec §4) -- distinguished from `[]`, which would record four zeros.
+        dispositions: list[dict[str, Any]] | None = None
         if source_type in {"rss", "atom", "json_feed", "podcast"}:
             items = await FeedMonitor().check_feed(subscription_config)
         elif source_type == "url":
-            result = await URLMonitor(db).check_url(subscription_config)
+            result, disposition = await URLMonitor(db).check_url(subscription_config)
             items = [result] if result else []
+            dispositions = [disposition]
         elif source_type == "url_list":
             monitor = URLMonitor(db)
             items = []
+            dispositions = []
             for url in self._urls_for_url_list(subscription_config):
-                result = await monitor.check_url(
+                result, disposition = await monitor.check_url(
                     {
                         **subscription_config,
                         "source": url,
                         "type": "url",
                     }
                 )
+                dispositions.append(disposition)
                 if result:
                     items.append(result)
         elif source_type == "sitemap":
             monitor = URLMonitor(db)
             items = []
+            dispositions = []
             for url in await self._urls_for_sitemap(subscription_config):
-                result = await monitor.check_url(
+                result, disposition = await monitor.check_url(
                     {
                         **subscription_config,
                         "source": url,
                         "type": "url",
                     }
                 )
+                dispositions.append(disposition)
                 if result:
                     items.append(result)
         elif source_type == "api":
@@ -801,10 +844,18 @@ class LocalWatchlistsService:
             raise ValueError(
                 f"Unsupported local watchlist source type for execution: {source_type}"
             )
-        return {
+        result_payload: dict[str, Any] = {
             "items": items,
             "log_text": f"Local watchlist execution completed with {len(items)} item(s).",
         }
+        if dispositions is not None:
+            # `execute_run` already does `stats = dict(result.get("stats") or {})`
+            # and persists it to the run's `stats_json`, so this reaches the Runs
+            # pane with nothing further to wire.
+            result_payload["stats"] = {
+                "dispositions": _disposition_counts(dispositions)
+            }
+        return result_payload
 
     @classmethod
     def _subscription_execution_config(

@@ -1027,9 +1027,17 @@ async def test_two_snapshots_in_one_second_compare_against_the_newer(monkeypatch
     the *diff*, not on the percentage: the diff names which body was treated
     as "before", which is the thing that was ambiguous.
 
+    Both fixture snapshots carry the source's CURRENT extraction fingerprint
+    (TASK-1362): the fingerprint comparison runs before the hash comparison, so
+    a NULL fingerprint here would re-baseline and the tie-break would never be
+    exercised at all. The fingerprint is computed from the source's own row
+    rather than hardcoded, so this stays true if the defaults move.
+
     Args:
         monkeypatch: Used by `_site_source` to serve the fetched pages.
     """
+    from tldw_chatbook.Subscriptions.noise_defaults import extraction_fingerprint
+
     stale = "Version 1.0 is current. Everything else on this page is stable."
     recent = "Version 2.0 is current. Everything else on this page is stable."
     latest = "Version 3.0 is current. Everything else on this page is stable."
@@ -1037,6 +1045,10 @@ async def test_two_snapshots_in_one_second_compare_against_the_newer(monkeypatch
     db, service, source_id = await _site_source(
         monkeypatch, [f"<html><body><p>{latest}</p></body></html>"],
         change_threshold=0.0,
+    )
+    subscription = db.get_subscription(source_id)
+    fingerprint = extraction_fingerprint(
+        subscription["ignore_selectors"], subscription["extraction_method"]
     )
 
     # Two snapshots, deliberately sharing one `created_at`, inserted stale
@@ -1049,11 +1061,11 @@ async def test_two_snapshots_in_one_second_compare_against_the_newer(monkeypatch
                 """
                 INSERT INTO url_snapshots
                     (subscription_id, url, content_hash, extracted_content,
-                     created_at)
-                VALUES (?, ?, ?, ?, ?)
+                     created_at, extraction_fingerprint)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (source_id, "https://example.com/page", f"hash-{body[:9]}",
-                 body, tied),
+                 body, tied, fingerprint),
             )
 
     result = await _check(service, source_id)
