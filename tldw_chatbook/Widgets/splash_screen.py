@@ -193,12 +193,15 @@ class SplashScreen(Container):
 
         # Try to load from config
         try:
-            config = get_cli_setting("splash_screen", default_config)
-
-            # Merge with defaults for any missing keys
-            for key, value in default_config.items():
-                if key not in config:
-                    config[key] = value
+            _EFFECTS_KEYS = {"fade_in_duration", "fade_out_duration", "animation_speed"}
+            config = {
+                key: get_cli_setting(
+                    "splash_screen.effects" if key in _EFFECTS_KEYS else "splash_screen",
+                    key,
+                    value,
+                )
+                for key, value in default_config.items()
+            }
 
             return config
         except Exception as e:

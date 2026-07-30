@@ -1415,6 +1415,53 @@ class LibraryIngestProvider(Provider):
             self.app.notify(f"Failed to open Library ingest: {e}", severity="error")
 
 
+class SetupWizardProvider(Provider):
+    """Provider for re-running the first-run setup wizard."""
+
+    COMMANDS = (
+        (
+            "Setup: Run setup wizard…",
+            "run_setup_wizard",
+            "Walk through providers, models, and app configuration",
+        ),
+    )
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        for command_text, action_id, help_text in self.COMMANDS:
+            score = matcher.match(command_text)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(command_text),
+                    partial(self.handle_setup_wizard_action, action_id),
+                    help=help_text,
+                )
+
+    async def discover(self) -> Hits:
+        for command_text, action_id, help_text in self.COMMANDS:
+            yield Hit(
+                1.0,
+                command_text,
+                partial(self.handle_setup_wizard_action, action_id),
+                help=help_text,
+            )
+
+    def handle_setup_wizard_action(self, action_id: str) -> None:
+        try:
+            if action_id == "run_setup_wizard":
+                from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+                    FirstRunSetupWizard,
+                )
+
+                self.app.push_screen(
+                    FirstRunSetupWizard(self.app, rerun=True),
+                    self.app.handle_first_run_wizard_result,
+                )
+        except Exception as e:
+            self.app.notify(f"Failed to open setup wizard: {e}", severity="error")
+
+
 class DeveloperProvider(Provider):
     """Provider for developer and debug commands."""
 
@@ -3301,6 +3348,7 @@ class TldwCli(
         CharacterProvider,
         MediaProvider,
         LibraryIngestProvider,
+        SetupWizardProvider,
         DeveloperProvider,
         ConsoleCommandProvider,
         ImageGenCommandProvider,
@@ -7019,11 +7067,6 @@ class TldwCli(
             group="scheduling",
         )
 
-        # Check if this is the first run (config was just created)
-        config_data = self.app_config
-        if config_data.get("_first_run", False):
-            self.call_later(self._show_first_run_notification)
-
         # ADR-020: non-blocking startup refresh of stale model catalogs.
         self.run_worker(
             self._refresh_model_catalogs(),
@@ -7140,19 +7183,53 @@ class TldwCli(
         )
         await forward_model_catalog_refreshed(self, event)
 
-    def _show_first_run_notification(self) -> None:
-        """Show a notification to the user on first run."""
+    def _maybe_offer_first_run_wizard(self) -> None:
+        """Offer the setup wizard once; otherwise nudge unfinished setups."""
         try:
-            self.notify(
-                "Welcome to tldw chatbook! Configuration file created at:\n"
-                f"{get_cli_config_path()}",
-                title="First Run",
-                severity="information",
-                timeout=10,
+            from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+                should_offer_wizard,
+                should_show_resume_toast,
             )
-            self.loguru_logger.info("First run notification shown to user")
+
+            if should_offer_wizard(self.app_config, os.environ):
+                self.call_after_refresh(self._push_first_run_wizard)
+            elif should_show_resume_toast(self.app_config, os.environ):
+                self.notify(
+                    "Setup isn't finished — run it any time from "
+                    "Settings ▸ Diagnostics ▸ Run setup wizard.",
+                    title="Finish setup",
+                    severity="information",
+                    timeout=8,
+                )
         except Exception as e:
-            self.loguru_logger.error(f"Error showing first run notification: {e}")
+            logger.error(f"First-run wizard offer failed: {e}")
+
+    def _push_first_run_wizard(self) -> None:
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
+
+        self.push_screen(FirstRunSetupWizard(self), self._handle_first_run_wizard_result)
+
+    def _handle_first_run_wizard_result(self, result: dict | None) -> None:
+        if not isinstance(result, dict):
+            return  # cancelled / finish-later: resume toast handles next launch
+        exit_route = result.get("exit_route")
+        if exit_route:
+            from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+            self.post_message(NavigateToScreen(str(exit_route)))
+
+    def handle_first_run_wizard_result(self, result: dict | None) -> None:
+        """Public alias for ``_handle_first_run_wizard_result``.
+
+        The wizard's re-entry points outside this module -- Settings'
+        "Run setup wizard" button and the command-palette provider below --
+        need a non-private way to wire this callback into their own
+        ``push_screen(FirstRunSetupWizard(...), ...)`` calls, so a truthy
+        exit_route from the Summary step still navigates on re-run instead
+        of silently being dropped (the auto-offer path already wires
+        ``_push_first_run_wizard`` with this same handler).
+        """
+        self._handle_first_run_wizard_result(result)
 
     def hide_inactive_windows(self) -> None:
         """Hides all windows that are not the current active tab."""
@@ -7206,6 +7283,7 @@ class TldwCli(
             f"Screen navigation: Pushed initial {screen_class.__name__}"
             f" (target={resolved_screen_name})"
         )
+        self._maybe_offer_first_run_wizard()
 
     async def _run_no_splash_post_mount_setup(self) -> None:
         """Run screen startup and post-mount setup when the splash screen is disabled."""

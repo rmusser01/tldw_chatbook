@@ -853,6 +853,15 @@ def load_settings(force_reload: bool = False) -> Dict:
     final_character_defaults_cli = get_toml_section("character_defaults")
     final_notes_settings_cli = get_toml_section("notes")
     final_image_generation_settings_cli = get_toml_section("image_generation")
+    # F-E fix: the first-run wizard's own state (setup_started/setup_completed)
+    # lives under [first_run] in the raw TOML and was never projected through
+    # here -- every other section the app reads via app_config (chat_defaults,
+    # notes, console, ...) is listed below, but first_run was simply absent,
+    # so should_offer_wizard()/should_show_resume_toast() (which read
+    # app_config, populated from THIS function's return value, not the raw
+    # loader) never saw a completed/started run and the wizard re-offered on
+    # every launch even after real completion.
+    final_first_run_settings_cli = get_toml_section("first_run")
     final_console_settings_cli = copy.deepcopy(get_toml_section("console"))
     if not isinstance(final_console_settings_cli, dict):
         final_console_settings_cli = {}
@@ -991,6 +1000,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         "character_defaults": final_character_defaults_cli,
         "notes": final_notes_settings_cli,  # For notes auto-save settings
         "console": final_console_settings_cli,  # For Console behavior settings
+        "first_run": final_first_run_settings_cli,  # Wizard setup_started/setup_completed flags
         "image_generation": final_image_generation_settings_cli,  # For Image_Generation/config.py loader
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,

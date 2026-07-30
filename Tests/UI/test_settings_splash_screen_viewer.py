@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch
 from textual.app import App
 from textual.widgets import Input, OptionList, Select, Switch
 
@@ -34,15 +35,28 @@ async def test_settings_splash_viewer_can_compose(splash_app):
 
 @pytest.mark.asyncio
 async def test_settings_splash_viewer_loads_defaults(splash_app):
-    async with splash_app.run_test(size=(120, 50)) as pilot:
-        await pilot.pause()
-        viewer = splash_app.query_one(SettingsSplashScreenViewer)
+    """Test that viewer loads defaults when config has no configured values."""
 
-        enabled = viewer.query_one("#settings-splash-enabled", Switch)
-        assert enabled.value == DEFAULT_SPLASH_CONFIG["enabled"]
+    def fake_get_cli_setting(section, key=None, default=None):
+        # Return the default parameter to simulate no configured values
+        # This tests the fallback behavior
+        return default
 
-        duration = viewer.query_one("#settings-splash-duration", Input)
-        assert float(duration.value) == DEFAULT_SPLASH_CONFIG["duration"]
+    with patch(
+        "tldw_chatbook.Widgets.settings_splash_screen_viewer.get_cli_setting",
+        side_effect=fake_get_cli_setting,
+    ):
+        # Recreate the app with patched get_cli_setting
+        splash_app = _SplashTestApp()
+        async with splash_app.run_test(size=(120, 50)) as pilot:
+            await pilot.pause()
+            viewer = splash_app.query_one(SettingsSplashScreenViewer)
+
+            enabled = viewer.query_one("#settings-splash-enabled", Switch)
+            assert enabled.value == DEFAULT_SPLASH_CONFIG["enabled"]
+
+            duration = viewer.query_one("#settings-splash-duration", Input)
+            assert float(duration.value) == DEFAULT_SPLASH_CONFIG["duration"]
 
 
 @pytest.mark.asyncio

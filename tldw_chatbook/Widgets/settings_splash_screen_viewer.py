@@ -52,7 +52,15 @@ class SettingsSplashScreenViewer(Vertical):
 
     def _load_config(self) -> dict[str, Any]:
         try:
-            config = get_cli_setting("splash_screen", DEFAULT_SPLASH_CONFIG)
+            _EFFECTS_KEYS = {"fade_in_duration", "fade_out_duration", "animation_speed"}
+            config = {
+                key: get_cli_setting(
+                    "splash_screen.effects" if key in _EFFECTS_KEYS else "splash_screen",
+                    key,
+                    value,
+                )
+                for key, value in DEFAULT_SPLASH_CONFIG.items()
+            }
         except Exception as exc:
             logger.warning("Failed to load splash_screen config: {}. Using defaults.", exc)
             config = dict(DEFAULT_SPLASH_CONFIG)

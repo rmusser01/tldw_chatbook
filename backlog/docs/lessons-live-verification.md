@@ -105,6 +105,33 @@ setup should fail the way the real broken environment fails.
 
 ---
 
+## A bare interpreter call is not an isolated test
+
+**What happened (TASK-1264/Task 5, first-run wizard skeleton).** After the
+required Pilot tests passed, extra ad hoc verification of the real
+Next-button click path was run via `python3 -c "..."` directly against the
+venv interpreter — not through `pytest`. `Tests/conftest.py`'s
+`isolate_test_environment` autouse fixture (which redirects `HOME`,
+`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `TLDW_CONFIG_PATH` to a temp directory)
+only runs inside a pytest session; a bare script gets none of it. The
+wizard's `on_mount()` fired a `@work(thread=True)` worker that called the
+real `save_settings_to_cli_config()`, which wrote
+`[first_run]\nsetup_started = true` into the actual
+`~/.config/tldw_cli/config.toml` — a real user's live config file, mutated
+by a "just checking" verification script. It was caught immediately from
+the write in the log output, diffed, and the exact three added lines were
+removed to restore the file; no other content had changed.
+
+**What to do.** Before running any ad hoc script (not just `pytest`) against
+code that can reach `save_settings_to_cli_config()` or any other real I/O
+path, set the same isolation env vars the test suite's autouse fixture
+uses — `TLDW_TEST_MODE=1`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `HOME`,
+`TLDW_CONFIG_PATH`, all pointed at a scratch directory — *before* importing
+anything from `tldw_chatbook`. "It's just a quick check outside the test
+suite" is exactly when the suite's isolation fixture is absent.
+
+---
+
 ## Credentials in a live run
 
 A live credential pasted into a session is a real secret. Keep it in an env var for the
@@ -195,6 +222,52 @@ byte-offset click bug above, a stale screenshot that produced a whole spec, and
 a defect filed against a control that was working. The pattern is consistent
 enough to state as a rule: **the harness is wrong more often than the app is.**
 Terminal art is a hint about where to look, never a finding.
+
+---
+
+## `pilot.click()` can silently miss and no one tells you
+
+**TASK-1264/Task 12, 2026-07-29.** An app-level Pilot test drove the
+first-run wizard's Summary step to completion after a burst of rapid,
+unsettled Back/Next clicks, then clicked its "Start chatting" exit button.
+The click reported no error, but the wizard never dismissed — `current_step`
+was unchanged 0.3s and then 10s later. `container._advancing` was `False`
+and `can_proceed` was `True` the whole time, so nothing about the
+container's own state explained it.
+
+`Button.query_one(...).region` reported a plausible, non-empty, on-screen
+rectangle, and `button.visible` was `True` — every pre-paint fact available
+said the click should have landed. It was resolved only by asking the
+compositor directly what widget actually owns that pixel:
+
+```python
+widget_at, _ = app.get_widget_at(*button.region.center)
+assert widget_at is button  # was SummaryStep (the parent), not the Button
+```
+
+`pilot.click(selector)` computes its target coordinate from the selected
+widget's own **cached** `region` attribute, then dispatches a mouse event at
+that screen position — it does **not** verify the region still matches
+reality. `Pilot.click()`'s own docstring says exactly this and is easy to
+miss: it returns `True` only "if ... the selected widget was under the
+mouse when the click was initiated" and `False` otherwise, with **no
+exception** either way. A test that does not check the return value (every
+test in this suite up to this point did not) cannot tell "clicked
+successfully" from "silently missed."
+
+**What to do.** For any Pilot test that drives a control through a **state
+machine** (a wizard step, not a one-shot visual check), prefer driving the
+widget directly over a pixel-coordinate click: `Button.press()` posts the
+identical `Button.Pressed` message a click ultimately posts, and setting
+`RadioButton.value = True` posts the identical `Changed` message a click's
+`toggle()` would. Both still honor `disabled`/`display` correctly, so they
+do not mask a genuinely un-interactable control — they only remove the
+irrelevant risk of stale-region hit-testing. Reserve pixel-coordinate
+`pilot.click()` for tests that are actually verifying the click surface
+itself (hit-region size/placement, obscured-widget detection); check its
+return value there, and cross-check with `app.get_widget_at()` or
+`Screen._compositor.render_strips()` (see the entry above) rather than
+trusting `region` alone.
 
 ---
 

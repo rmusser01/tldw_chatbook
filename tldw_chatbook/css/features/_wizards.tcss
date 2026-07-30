@@ -1026,3 +1026,15 @@ SmartContentTree Tree > .selected-node {
     color: $ds-focus-fg;
     text-style: bold underline;
 }
+
+/* ── First-run setup wizard ─────────────────────────────────────────── */
+.setup-welcome { padding: 2 4; }
+.setup-provider { padding: 2 4; }
+.setup-title { text-style: bold; text-align: center; margin-bottom: 1; }
+.setup-subtitle { color: $text-muted; margin-bottom: 2; }
+.setup-step-error { color: $error; margin-top: 1; }
+.setup-field-label { margin-top: 1; }
+.setup-probe-status { color: $text-muted; margin-top: 1; }
+.setup-summary-row { height: 1; }
+.setup-summary-ok { color: $success; }
+.setup-summary-missing { color: $error; }

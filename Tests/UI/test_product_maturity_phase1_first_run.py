@@ -215,6 +215,43 @@ async def test_clean_first_run_home_survives_supported_terminal_sizes(
             assert "Ctrl+P" in str(nav_overflow_hint.renderable)
 
 
+@pytest.mark.asyncio
+async def test_fresh_config_auto_offers_wizard_over_initial_screen(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Pins the task-11 app-level contract this file's other tests
+    deliberately opt OUT of: on a truly fresh config (no configured
+    provider, no first_run state at all), the setup wizard must be
+    auto-offered on top of whatever the initial screen is -- not silently
+    skipped. Every other test in this file builds via
+    _build_test_app()'s default (first_run_setup_completed=True, task-11's
+    fix for the regression this auto-offer caused here) so they can assert
+    against Home's content directly, exactly as they did before the wizard
+    existed; this is the one test in the file that intentionally leaves
+    the auto-offer live, so the new contract stays pinned at the real App
+    level rather than only at the pure-function level
+    (first_run_setup_state.should_offer_wizard, covered separately in
+    Tests/Wizards/test_first_run_setup_wizard.py::TestAppOfferGating).
+    """
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config["_first_run"] = True
+    app._initial_tab_value = "chat"
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: type(app.screen).__name__ == "FirstRunSetupWizard",
+            )
+            assert type(app.screen).__name__ == "FirstRunSetupWizard"
+            # The initial screen is still there, underneath -- the wizard is
+            # pushed ON TOP of it (per the approved design), not swapped in
+            # place of it.
+            assert app.current_tab == "home"
+
+
 @pytest.mark.parametrize("prefix", LOCAL_PATH_PREFIXES)
 def test_local_path_guard_rejects_common_home_and_temp_prefixes(prefix: str) -> None:
     with pytest.raises(AssertionError):
