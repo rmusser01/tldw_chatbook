@@ -133,14 +133,6 @@ def _stub_settings(monkeypatch, **overrides: Any) -> None:
         return values.get(path, default)
 
     monkeypatch.setattr(dictation_service_lazy, "get_cli_setting", _get)
-    # These fixtures feed synthetic, non-speech-shaped PCM purely as filler
-    # content unrelated to voice activity. A real VAD would (correctly) treat
-    # it as silence and gate it out; force the "no VAD available" path so
-    # `_chunk_has_speech` degrades to its pre-VAD always-true behavior, same
-    # as a machine without webrtcvad installed. See
-    # Tests/Audio/test_dictation_vad_finalization.py for the dedicated
-    # VAD-gating coverage.
-    monkeypatch.setattr(dictation_service_lazy, "WEBRTCVAD_AVAILABLE", False)
 
 
 def _build_service(

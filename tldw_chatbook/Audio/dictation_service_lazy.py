@@ -27,21 +27,6 @@ except ImportError:
         "NumPy not available. Audio level monitoring will use fallback method. Install with: pip install numpy"
     )
 
-# Import WebRTC VAD if available. Optional and imported defensively -- a
-# missing dependency must degrade `_chunk_has_speech` to "always speech"
-# (today's finals-at-stop-only behavior), never crash a live capture.
-try:
-    import webrtcvad
-
-    WEBRTCVAD_AVAILABLE = True
-except ImportError:
-    webrtcvad = None
-    WEBRTCVAD_AVAILABLE = False
-    logger.warning(
-        "WebRTC VAD not available. Mid-capture segment finalization will only "
-        "happen when capture stops. Install with: pip install webrtcvad"
-    )
-
 # Local imports
 from ..config import get_cli_setting, save_setting_to_cli_config
 
@@ -123,10 +108,14 @@ class LazyLiveDictationService:
     #: `dictation.stop_join_timeout_seconds`.
     STOP_JOIN_TIMEOUT_SECONDS = 30.0
 
-    #: How long a mid-capture pause in speech must last before
-    #: `_processing_loop` finalizes the segment in progress. Only takes
-    #: effect when a VAD is available -- see `_chunk_has_speech`. Configurable
-    #: as `dictation.silence_threshold_seconds`.
+    #: How long the recorder must go without delivering a speech frame before
+    #: `_processing_loop` finalizes the segment in progress. The gate is the
+    #: recorder's own VAD: `AudioRecordingService._process_audio_chunk` splits
+    #: capture into 20 ms frames and only hands VAD-positive ones to our
+    #: callback, so "no delivery" already means "no speech". Without
+    #: `webrtcvad` the recorder delivers everything and this check never
+    #: fires mid-capture (finals at stop only, as before). Configurable as
+    #: `dictation.silence_threshold_seconds`.
     SILENCE_THRESHOLD_SECONDS = 2.0
 
     #: Instance defaults, declared on the class so a service built with
@@ -137,10 +126,6 @@ class LazyLiveDictationService:
     captured_bytes = 0
     max_buffer_bytes: Optional[int] = None
     on_buffer_limit: Optional[Callable[[], None]] = None
-    #: Per-capture voice activity detector, built fresh in `start_dictation`.
-    #: `None` here (and for any `__new__`-built test double that never calls
-    #: it) makes `_chunk_has_speech` degrade to "always speech".
-    _vad: Optional[Any] = None
 
     # Privacy settings keys
     PRIVACY_KEY_PREFIX = "dictation.privacy"
@@ -236,10 +221,6 @@ class LazyLiveDictationService:
         )
         self.stop_join_timeout_seconds = self._resolve_stop_join_timeout()
         self.silence_threshold_seconds = self._resolve_silence_threshold()
-
-        # Per-capture VAD, built in `start_dictation` (needs a fresh instance
-        # per capture; `webrtcvad.Vad` carries no state worth reusing).
-        self._vad = None
 
         # Bytes the recorder has handed us this session. The one fact that
         # separates "the microphone produced nothing" from "the transcriber
@@ -473,24 +454,6 @@ class LazyLiveDictationService:
             self.start_time = time.time()
             self.save_audio = save_audio and not self.privacy_settings["local_only"]
 
-            # Build a VAD for this capture so `_audio_callback` can gate
-            # per-chunk queuing and finalization on real speech instead of
-            # every delivered chunk. Rebuilt every capture -- a `webrtcvad.Vad`
-            # carries no cross-session state worth keeping. Aggressiveness 2
-            # matches the recorder's own (stored but otherwise unused) VAD
-            # setting. Any failure here must not abort the capture; it simply
-            # degrades to today's finals-at-stop-only behavior.
-            self._vad = None
-            if WEBRTCVAD_AVAILABLE:
-                try:
-                    self._vad = webrtcvad.Vad(2)
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to initialize VAD; segment finalization will "
-                        f"only occur when capture stops: {e}"
-                    )
-                    self._vad = None
-
             # Initialize streaming transcriber
             self._initialize_streaming_transcriber()
 
@@ -615,45 +578,24 @@ class LazyLiveDictationService:
                 self.audio_buffer.append(audio_chunk)
                 self.captured_bytes += len(audio_chunk)
 
-            # A fully-silent chunk must not be queued (Whisper hallucinates on
-            # silence) and must not push the finalize deadline out (which
-            # would starve mid-capture finals forever, since every delivered
-            # chunk -- silent or not -- used to refresh it). Soft/partial
-            # speech is never dropped: `_chunk_has_speech` only excludes a
-            # chunk when *every* frame is silent, and degrades to "always
-            # speech" when no VAD is available, preserving today's
-            # finals-at-stop-only behavior in that case.
-            if self._chunk_has_speech(audio_chunk):
-                # Queue for processing
-                self.processing_queue.put(("audio", audio_chunk))
+            # Every delivered chunk is queued and refreshes the finalize
+            # deadline. Silence is filtered *upstream*, not here:
+            # `AudioRecordingService._process_audio_chunk` splits capture into
+            # 20 ms frames and only calls this callback for VAD-positive ones,
+            # so "a chunk arrived" already means "speech arrived". Re-gating
+            # here on a locally-built VAD is worse than redundant -- the
+            # recorder's frames are 640 bytes at 16 kHz, so any window larger
+            # than one frame matches nothing and silently drops the entire
+            # capture. Without `webrtcvad` the recorder delivers everything
+            # unconditionally and finals fire only at stop, as before.
+            # Queue for processing
+            self.processing_queue.put(("audio", audio_chunk))
 
-                # Update last speech time
-                self.last_speech_time = time.time()
+            # Update last speech time
+            self.last_speech_time = time.time()
 
         except Exception as e:
             logger.error(f"Audio callback error: {e}")
-
-    def _chunk_has_speech(self, audio_chunk: bytes) -> bool:
-        """Return True when any 30 ms frame of the chunk contains speech.
-
-        Args:
-            audio_chunk: 16-bit mono PCM at the recorder's sample rate.
-
-        Returns:
-            True if the VAD marks any complete frame as speech, or when no
-            VAD is available (degrading to today's always-speech behavior).
-        """
-        vad = self._vad
-        if vad is None:
-            return True
-        frame_bytes = 960  # 30 ms of 16-bit mono at 16 kHz
-        for start in range(0, len(audio_chunk) - frame_bytes + 1, frame_bytes):
-            try:
-                if vad.is_speech(audio_chunk[start : start + frame_bytes], 16000):
-                    return True
-            except Exception:  # noqa: BLE001 - a VAD failure must never kill capture
-                return True
-        return False
 
     def _processing_loop(self):
         """Simplified processing loop for single-user app."""
@@ -696,9 +638,8 @@ class LazyLiveDictationService:
 
                 # Check for silence timeout. Runs every ~0.1s iteration
                 # independent of chunk arrival -- deliberately not derived
-                # from queue activity, which is exactly why gating
-                # `_audio_callback` on VAD (skipping silent chunks) cannot
-                # starve this check.
+                # from queue activity, so it still fires while the recorder's
+                # VAD is withholding frames during a pause.
                 if (
                     self.last_speech_time
                     and (current_time - self.last_speech_time)

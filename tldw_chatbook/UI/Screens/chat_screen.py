@@ -664,6 +664,36 @@ _INLINE_BREAK_COMMANDS: dict[str, str] = {
 }
 
 
+#: Acknowledgements for the voice paths that decline to do what was asked.
+#: Each is used verbatim for both the toast and the spoken ack, so the two
+#: can never drift into telling the user two different things.
+_VOICE_ACK_SESSION_CHANGED = "Session changed — not sent."
+_VOICE_ACK_NOT_SENT = "Not sent."
+_VOICE_ACK_TOO_LATE_TO_DISCARD = "Too late to discard — text inserted."
+_VOICE_ACK_NOTHING_TO_INSERT = "Nothing to insert."
+
+
+def _voice_command_chip_ack(name: str) -> str:
+    """Return the short chip acknowledgement for a recognized voice command.
+
+    A break command has no words to echo, so it acks with the pilcrow every
+    editor uses for one. Everything else acks with its own name, de-kebabed
+    (`read-that-back` -> "read that back") so the chip reads as the phrase the
+    user actually said. Derived rather than tabulated: a future command name
+    then gets a sensible ack without a second list to keep in step.
+
+    Args:
+        name: `VoiceCommand.name`, as `classify_segment` produced it.
+
+    Returns:
+        Chip-sized plain text. Never markup -- the chip writes through
+        `Content` -- and never empty, so an ack is always visible.
+    """
+    if name in _INLINE_BREAK_COMMANDS:
+        return "¶"
+    return name.replace("-", " ")
+
+
 def _join_segments(segments: list[str]) -> str:
     """Join transcript segments with single spaces, without padding breaks.
 
@@ -2898,6 +2928,13 @@ class ChatScreen(BaseAppScreen):
         #: clears it without acting -- a failed dictation must never ship the
         #: message, open a new tab, or speak a reply.
         self._console_pending_voice_action: str | None = None
+        #: A spoken "discard" that arrived too late to abort anything (the
+        #: capture was already `transcribing`). Toasted at once, but the
+        #: SPOKEN ack has to wait for `idle` -- `_speak_status` refuses to
+        #: talk over an open microphone -- so it is deferred to
+        #: `_stop_console_dictation`'s tail, where it replaces the ordinary
+        #: "Capture ended." rather than doubling up with it.
+        self._console_dictation_late_discard_ack = False
         self._console_provider_gateway: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
         self._console_command_registry: ConsoleCommandRegistry = (
@@ -5056,6 +5093,10 @@ class ChatScreen(BaseAppScreen):
         # queued action must be dropped here rather than surviving to fire
         # on whatever capture succeeds next.
         self._console_pending_voice_action = None
+        # Likewise a deferred late-discard ack: the failure reason below is
+        # the better thing to say, and two spoken acks for one capture is
+        # worse than either alone.
+        self._console_dictation_late_discard_ack = False
         self._set_console_dictation_state("idle")
         reason = f"Dictation failed: {exc}"
         self.app_instance.notify(reason, severity="error")
@@ -5140,15 +5181,21 @@ class ChatScreen(BaseAppScreen):
             # success tail.
             if self._console_dictation_state not in ("recording", "transcribing"):
                 return
-            # Same as `VoiceFinal` above: the command is itself a finalized
-            # segment, so its own utterance ("console send") can be the last
-            # thing sitting in the chip -- clear it here, before dispatch
-            # below changes the dictation state out from under
-            # `set_voice_partial`'s own recording-only guard.
-            self._console_dictation_partial = ""
+            # The command is itself a finalized segment, so its own utterance
+            # ("console send") is the last thing sitting in the chip -- but
+            # clearing it to empty leaves an inline command with no feedback
+            # whatsoever, and the chip acknowledgement is the stated
+            # mitigation for the accepted staccato false-fire (a fired
+            # command has to be *visible* to be caught). Overwrite it with a
+            # short ack instead: the next partial replaces it, and the chip
+            # collapses at capture end. Written here, before dispatch below
+            # changes the dictation state out from under `set_voice_partial`'s
+            # own recording-only guard.
+            ack = _voice_command_chip_ack(event.name)
+            self._console_dictation_partial = ack
             composer = self._console_composer_or_none()
             if composer is not None:
-                composer.set_voice_partial("")
+                composer.set_voice_partial(ack)
             if event.name == "stop":
                 self._request_console_dictation_stop()
             elif event.name == "discard":
@@ -5695,14 +5742,36 @@ class ChatScreen(BaseAppScreen):
         self._console_dictation_origin_session_id = None
         self._console_dictation_partial = ""
         self._set_console_dictation_state("idle")
-        if self._console_pending_voice_action is None:
+        late_discard, self._console_dictation_late_discard_ack = (
+            self._console_dictation_late_discard_ack,
+            False,
+        )
+        if not transcript:
+            # A command-only capture ("Console, new paragraph." alone, or
+            # "Console, stop." with nothing dictated first). Not an error --
+            # `stop_and_transcribe` returns "" for it deliberately -- but the
+            # user's break IS silently dropped here, and saying nothing at all
+            # is indistinguishable from a capture that did land.
+            self.app_instance.notify(
+                _VOICE_ACK_NOTHING_TO_INSERT, severity="information"
+            )
+        if late_discard:
+            # A spoken "discard" that arrived too late to abort anything. It
+            # explains the outcome better than "Capture ended." does, so it
+            # takes that slot rather than adding a second spoken ack.
+            self._speak_status(_VOICE_ACK_TOO_LATE_TO_DISCARD)
+        elif self._console_pending_voice_action is None:
             # A plain stop -- no capture-ending command queued anything
             # further. The command acks below speak in its place, so this
             # and they never double up on the same capture.
-            self._speak_status("Capture ended.")
-        await self._run_pending_console_voice_action()
+            self._speak_status(
+                "Capture ended." if transcript else _VOICE_ACK_NOTHING_TO_INSERT
+            )
+        await self._run_pending_console_voice_action(origin_session_id)
 
-    async def _run_pending_console_voice_action(self) -> None:
+    async def _run_pending_console_voice_action(
+        self, origin_session_id: str | None
+    ) -> None:
         """Fire the action a capture-ending `VoiceCommand` queued, if any.
 
         Only ever reached from `_stop_console_dictation`'s success tail --
@@ -5711,12 +5780,31 @@ class ChatScreen(BaseAppScreen):
         routes through `_notify_console_dictation_error` and drops the
         pending action instead of acting on it. This is what keeps `send`
         from ever shipping a message for a capture that failed to transcribe.
+
+        Args:
+            origin_session_id: The session the capture began in, and therefore
+                the only session whose draft `send` may ship. The transcript
+                was inserted there (`_insert_console_dictation`), while Send
+                acts on whatever session is ACTIVE -- so if the user switched
+                tabs during the transcribe window, pressing Send would ship a
+                different session's half-written draft.
         """
         pending_action, self._console_pending_voice_action = (
             self._console_pending_voice_action,
             None,
         )
         if pending_action == "send":
+            store = self._ensure_console_chat_store()
+            if origin_session_id and store.active_session_id != origin_session_id:
+                # Refuse rather than send the wrong draft. Toasted
+                # unconditionally: this is a refusal the user did not ask for
+                # and cannot otherwise see, and the dictated text is sitting
+                # safely in the origin session's draft either way.
+                self.app_instance.notify(
+                    _VOICE_ACK_SESSION_CHANGED, severity="warning"
+                )
+                self._speak_status(_VOICE_ACK_SESSION_CHANGED)
+                return
             try:
                 send_button = self.query_one("#console-send-message", Button)
             except QueryError:
@@ -5724,8 +5812,14 @@ class ChatScreen(BaseAppScreen):
                     "Console voice send skipped; the send button is not mounted"
                 )
                 return
-            send_button.press()
-            self._speak_status("Sent.")
+            # Awaited through the real handler rather than `Button.press()`:
+            # a press only posts a message, so its outcome is unknowable here,
+            # and the dispatch refuses on several reachable paths (empty
+            # draft, send-blocked, a run already in progress, a `/`-command
+            # dispatch) -- each with its own toast. Speaking "Sent." over any
+            # of those is a straight lie about whether the message went out.
+            sent = await self.handle_console_send_message(Button.Pressed(send_button))
+            self._speak_status("Sent." if sent else _VOICE_ACK_NOT_SENT)
         elif pending_action == "new-session":
             self.action_new_console_tab()
             self._speak_status("New session.")
@@ -5741,6 +5835,14 @@ class ChatScreen(BaseAppScreen):
         speech, and resync so the transcript's action row reflects it. Only
         the completed target selection and the two ack cases are new here.
         """
+        # Own-guard for the microphone/speaker mutual-exclusion invariant.
+        # The one caller already reaches here at `idle`, so this is defensive
+        # rather than load-bearing -- but this method is the only dictation
+        # path that speaks UNCONDITIONALLY (an explicit request, not ambient
+        # feedback, so it deliberately bypasses `_speak_status`'s toggle), and
+        # therefore the only one whose own idle check is not inherited.
+        if self._console_dictation_state != "idle":
+            return
         if self._console_run_active():
             self.app_instance.notify("Still responding.", severity="warning")
             self._speak_status("Still responding.")
@@ -5802,6 +5904,12 @@ class ChatScreen(BaseAppScreen):
             logger.opt(exception=True).debug(
                 "Console dictation could not be cancelled cleanly"
             )
+        # Spoken only now, not by the caller: the release above holds the
+        # microphone for up to ~1.5 s after the UI is already back at `idle`,
+        # and `_speak_status`'s state check cannot see that -- so acking from
+        # the caller talks straight into a still-open mic. Its check is still
+        # what refuses if the user has opened a NEW capture in the meantime.
+        self._speak_status("Discarded.")
 
     def _request_console_dictation_cancel(self) -> None:
         """Abandon a capture that is `starting` or `recording`, without waiting.
@@ -5839,6 +5947,18 @@ class ChatScreen(BaseAppScreen):
         # Unconditional, ahead of the guard below, for exactly that reason.
         self._console_pending_voice_action = None
         if self._console_dictation_state not in ("starting", "recording"):
+            if self._console_dictation_state == "transcribing":
+                # A spoken "discard" the guard above cannot honor: the capture
+                # is already being transcribed and will insert. Silently
+                # doing nothing here reads as the command having been missed,
+                # when in fact it was heard and refused -- and the user is
+                # about to watch text appear that they just asked to throw
+                # away. The spoken half waits for `idle` (see the field's
+                # docstring); the toast does not.
+                self._console_dictation_late_discard_ack = True
+                self.app_instance.notify(
+                    _VOICE_ACK_TOO_LATE_TO_DISCARD, severity="warning"
+                )
             return
         session = self._console_dictation_session
         self._cancel_console_dictation_timer()
@@ -5848,13 +5968,17 @@ class ChatScreen(BaseAppScreen):
         self._console_dictation_partial = ""
         self._set_console_dictation_state("idle")
         if session is not None:
+            # The worker speaks "Discarded." once the microphone is actually
+            # released; see `_discard_console_dictation_session`.
             self.run_worker(
                 self._discard_console_dictation_session(session),
                 group="console-dictation-cancel",
                 exit_on_error=False,
             )
         self.app_instance.notify("Dictation cancelled.", severity="information")
-        self._speak_status("Discarded.")
+        if session is None:
+            # Nothing to release, so nothing to wait for.
+            self._speak_status("Discarded.")
 
     def _request_console_dictation_start(self) -> None:
         if self._console_dictation_state != "idle":
@@ -5874,6 +5998,7 @@ class ChatScreen(BaseAppScreen):
         # pending is the correct state regardless of how one might have
         # leaked in, so it is reset again on this end too.
         self._console_pending_voice_action = None
+        self._console_dictation_late_discard_ack = False
         self._set_console_dictation_state("starting")
         # Unconditional -- not gated on the spoken-feedback toggle: a status
         # ack or a "read that back" reply can be playing even with feedback
@@ -14665,13 +14790,33 @@ class ChatScreen(BaseAppScreen):
             return attachment_reason
         return ""
 
-    async def handle_console_send_message(self, event: Button.Pressed) -> None:
-        """Route the Console composer send action through the native controller."""
-        event.stop()
-        await self._send_console_message_from_visible_action()
+    async def handle_console_send_message(self, event: Button.Pressed) -> bool:
+        """Route the Console composer send action through the native controller.
 
-    async def _send_console_message_from_visible_action(self) -> None:
-        """Route the visible Console send action through the native controller."""
+        Args:
+            event: The Send button press. Stopped here, so a synthesized
+                `Button.Pressed` from a programmatic caller behaves the same
+                as a real one.
+
+        Returns:
+            Whether the draft was actually queued as a user turn. The button
+            path discards this; the spoken-command path (`Console, send.`)
+            needs it, because every refusal below returns without sending and
+            an ack that says otherwise is simply wrong.
+        """
+        event.stop()
+        return await self._send_console_message_from_visible_action()
+
+    async def _send_console_message_from_visible_action(self) -> bool:
+        """Route the visible Console send action through the native controller.
+
+        Returns:
+            True once the draft has been queued as a user turn; False on every
+            refusal -- an empty draft with no attachment, a `/`-command or
+            unknown-command dispatch (which never sends by design), and every
+            gate inside `_dispatch_console_draft_send`. Each refusal has
+            already shown its own toast or system row.
+        """
         # TASK-340: a keyboard send captured its payload at the Enter
         # keypress; the mouse path still reads the live draft here.
         stash = self._console_pending_send_stash
@@ -14686,7 +14831,7 @@ class ChatScreen(BaseAppScreen):
             if composer is not None:
                 composer.restore_stashed_draft(stash)
             self._focus_console_composer_if_needed(force=True)
-            return
+            return False
         self._dismiss_console_guidance()
 
         # Command parsing runs before any readiness/blocked gating: a
@@ -14715,7 +14860,7 @@ class ChatScreen(BaseAppScreen):
                 composer.restore_stashed_draft(stash)
             self._console_unknown_send_armed = None
             await self._dispatch_console_command(parse)
-            return
+            return False
 
         if parse.kind == KIND_UNKNOWN:
             # Fold-in (Task 9 fix-wave review; hard removal Task 4 -- there
@@ -14737,7 +14882,7 @@ class ChatScreen(BaseAppScreen):
             ):
                 if composer is not None:
                     composer.restore_stashed_draft(stash)
-                return
+                return False
             if self._console_unknown_send_armed == draft:
                 # Second consecutive Enter on the *same* unmodified draft:
                 # disarm and fall through to a normal send below.
@@ -14749,9 +14894,9 @@ class ChatScreen(BaseAppScreen):
                 await self._append_native_console_system_message(
                     self._console_unknown_command_hint(parse.name)
                 )
-                return
+                return False
 
-        await self._dispatch_console_draft_send(draft, stash=stash)
+        return await self._dispatch_console_draft_send(draft, stash=stash)
 
     async def _dispatch_console_draft_send(
         self, draft: str, stash: "ConsoleDraftStash | None" = None

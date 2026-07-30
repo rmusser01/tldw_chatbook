@@ -317,30 +317,49 @@ delete them.
 | "new paragraph" | inline | Inserts a paragraph break (`\n\n`); capture keeps running. |
 | "new line" | inline | Inserts a line break (`\n`); capture keeps running. |
 | "stop" | capture-ending | Ends the capture and inserts the accumulated text at the caret — the same as pressing the mic button again. |
-| "send" | capture-ending | Ends the capture, inserts the text, and sends the message once insertion has completed. |
-| "discard" | capture-ending | Ends the capture without inserting anything — the same as pressing Cancel. No confirmation is asked; saying it is treated as explicit intent. |
+| "send" | capture-ending | Ends the capture, inserts the text, and sends the message once insertion has completed. Refused if you switched tabs while it was transcribing (the text is in the *original* tab's draft, so sending would ship the other tab's), or if Send is blocked for any other reason — the refusal says which. |
+| "discard" | capture-ending | Ends the capture without inserting anything — the same as pressing Cancel. No confirmation is asked; saying it is treated as explicit intent. Once the capture has moved on to transcribing there is nothing left to abort, so it is refused with "Too late to discard" and the text still lands. |
 | "read that back" | capture-ending | Ends the capture (inserting the text first), then speaks the latest **completed** assistant reply. If the reply is still streaming, or there is none yet, it acknowledges instead of speaking a partial answer. |
 | "new session" | capture-ending | Ends the capture (inserting the text first), then opens a new session tab. |
 
 Inline commands leave the capture open; every other command in the table
 ends it. A capture whose spoken segments were entirely commands — for
 example, dictating nothing but "console, stop" — is not treated as a failed
-or empty capture: it produces no error and inserts no stray text.
+or empty capture: it produces no error and inserts no stray text, only a
+"Nothing to insert." notice so a capture that dropped your break is not
+silently indistinguishable from one that landed.
+
+Every refusal says so rather than looking like a missed command.
+"Session changed — not sent.", "Too late to discard — text inserted." and
+"Nothing to insert." each show as a notice always, and are spoken as well
+when `spoken_feedback` is on. A `send` that Send itself refused (empty draft,
+a run already in flight, send blocked, a typed `/`-command) already shows
+that reason in its own notice, so the spoken ack is just "Not sent." — never
+"Sent." for a message that never went out.
 
 **Choreography and latency.** A command only fires once its segment
 finalizes, and a segment finalizes on a pause in speech — so **pause
 briefly both before and after speaking a command**. A command executes
 roughly `dictation.silence_threshold_seconds` (default 2.0 s) after you
-stop talking. In practice the effective latency runs a little past the bare
-threshold: the voice-activity detector carries a short "hangover" — the
-chunk immediately following speech still classifies as speech — so the
-realistic budget is threshold + one buffer cycle (~500 ms). This is expected
-behavior, not a bug, and lowering the threshold shortens it (at the cost of
-finalizing plain dictation into more, shorter segments). Because the pause
-*before* the command and the pause *after* it must each complete before
-their segments finalize, a full "pause, command, pause" round trip costs
-roughly **two** threshold intervals, not one — budget for that rather than
-reading it as lag.
+stop talking. Concretely: the recorder runs voice-activity detection over
+20 ms frames and only forwards the ones that contain speech, so a segment
+finalizes once the recorder has forwarded nothing for the whole threshold.
+In practice the effective latency runs a little past the bare threshold —
+the detector carries a short per-frame "hangover" that keeps forwarding for
+a moment after you actually stop, and the transcription buffer flushes on a
+cycle of its own — so the realistic budget is threshold + one buffer cycle
+(~500 ms). This is expected behavior, not a bug, and lowering the threshold
+shortens it (at the cost of finalizing plain dictation into more, shorter
+segments). Because the pause *before* the command and the pause *after* it
+must each complete before their segments finalize, a full "pause, command,
+pause" round trip costs roughly **two** threshold intervals, not one —
+budget for that rather than reading it as lag.
+
+Voice-activity detection needs the optional `webrtcvad` package. Without it
+the recorder forwards every frame, nothing ever looks like a pause, and
+segments finalize only when the capture stops — so inline commands and
+mid-capture finalization do not fire, though dictation itself still works
+end to end.
 
 **Configuring the prefix.** `dictation.command_prefix` accepts multi-word
 prefixes and is normalized the same way as spoken commands. Leaving it
@@ -354,9 +373,11 @@ example is "Console. Send." finalizing as a single segment and firing
 `send`. This trade-off is deliberate: keeping punctuation would let the
 comma that recognizers almost universally insert after a vocative prefix
 ("Console, send.") break every real command, i.e. the feature would never
-fire at all. The false-fire is rare and visible — watch the composer's
-voice chip for the command acknowledgement — and is one of the checks in
-live verification before every release.
+fire at all. The false-fire is rare and visible — every recognized command
+acknowledges itself in the composer's voice chip (an inline break as `¶`,
+anything else by name), and a capture-ending one visibly ends the capture on
+the spot — and is one of the checks in live verification before every
+release.
 
 **Spoken feedback (opt-in).** `dictation.spoken_feedback` (default
 `false`) — when on, the Console speaks capture-ending acknowledgements

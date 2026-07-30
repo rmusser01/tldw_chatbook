@@ -28,6 +28,23 @@
 
 ### Task 0: VAD-gated segment finalization
 
+> **CORRECTION (final-review fix wave).** This task's premise below — "the
+> recorder delivers every chunk (VAD is stored, never applied)" — is **false**.
+> `AudioRecordingService._process_audio_chunk` (`recording_service.py:441-459`)
+> has always applied the VAD: it splits capture into 20 ms frames and calls the
+> callback only for VAD-positive ones, i.e. **640-byte** chunks at 16 kHz, not
+> ~500 ms ones. So silence never refreshed `last_speech_time` even before this
+> branch, and per-pause finalization was already achievable from the loop-level
+> check alone. Worse, the 960-byte (30 ms) window this task specifies matches
+> *nothing* in a 640-byte frame (`range(0, 640-960+1, 960)` is empty), so
+> `_chunk_has_speech` judged every real frame silent and dictation produced
+> nothing at all. `_chunk_has_speech` and the per-capture `Vad` were therefore
+> **removed**; `_audio_callback` queues and speech-stamps unconditionally and
+> relies on the recorder's existing gate. Everything else this task added
+> (`SILENCE_THRESHOLD_SECONDS`, `dictation.silence_threshold_seconds` and its
+> validation, the loop-level staleness check) is kept as specified. See
+> `task-fixwave-report.md`.
+
 Makes mid-capture segment finals real. Today `VoiceFinal` fires only at stop because `_audio_callback` refreshes `last_speech_time` on every delivered chunk (`dictation_service_lazy.py:539`) and the recorder delivers every chunk (VAD is stored, never applied).
 
 **Files:**
