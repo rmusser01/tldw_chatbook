@@ -138,6 +138,14 @@ class SpeechProfileMixin:
             provider_select.value = provider_id
         finally:
             self._applying_catalog_controls = False
+        axis_values = getattr(self, "axis_values", None)
+        if axis_values is not None:
+            # Provider is an axis like any other: this direct write bypasses
+            # `_apply_controls` (below), so the model needs telling
+            # separately or the row keeps describing whatever `axis_values`
+            # held at construction, not the preset that was just primed.
+            axis_values["tts-provider-select"] = provider_id
+            self._refresh_axis_markers()
         provider_select.disabled = True
         self.query_one("#tts-refresh-catalog-btn", Button).disabled = True
         self._show_provider_specific_controls(provider_id)

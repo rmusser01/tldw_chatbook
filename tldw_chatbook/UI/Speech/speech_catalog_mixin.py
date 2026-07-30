@@ -559,6 +559,8 @@ class SpeechCatalogMixin:
         finally:
             self._applying_catalog_controls = False
 
+        self._update_axis_model_from_controls(controls)
+
         restriction = self.query_one("#tts-audio-cpp-restrictions", Static)
         if controls.provider_id == AUDIO_CPP_PROVIDER_ID:
             restriction.remove_class("hidden")
@@ -626,6 +628,40 @@ class SpeechCatalogMixin:
                 "Available models or voices changed; a valid selection was chosen",
                 severity="warning",
             )
+
+    def _update_axis_model_from_controls(self, controls: PlaygroundControls) -> None:
+        """Mirror an applied catalog/preset projection into the axis model.
+
+        `SpeechPlaygroundPane.axis_values`/`axis_defaults` are the model of
+        record for the axis row's override markers
+        (`Docs/superpowers/specs/2026-07-30-speech-preset-axis-ownership.md`).
+        `_apply_controls` is one of three writers of that model -- this
+        keeps model/voice/format/speed and provider all in step with what
+        was just written to the Selects, then repaints the row.
+
+        A no-op for hosts with no `axis_values` -- `SpeechCatalogMixin` is
+        also inherited by the legacy `TTSPlaygroundWidget`, which carries no
+        axis row and no axis model.
+
+        Args:
+            controls: The projection just applied to the widgets.
+        """
+        axis_values = getattr(self, "axis_values", None)
+        if axis_values is None:
+            return
+        axis_values["tts-provider-select"] = controls.provider_id
+        if isinstance(controls.selected_model_id, str):
+            axis_values["tts-model-select"] = controls.selected_model_id
+        if controls.selected_voice_id is not None:
+            axis_values["tts-voice-select"] = (
+                controls.selected_voice_id
+                if isinstance(controls.selected_voice_id, str)
+                else str(controls.selected_voice_id)
+            )
+        if isinstance(controls.selected_format, str):
+            axis_values["tts-format-select"] = controls.selected_format
+        axis_values["tts-speed-input"] = str(controls.speed)
+        self._refresh_axis_markers()
 
     @staticmethod
     def _safe_select_options(
