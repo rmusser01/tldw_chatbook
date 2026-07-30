@@ -963,7 +963,27 @@ class ConsoleComposerBar(Horizontal):
                 width,
                 cursor_index=caret_position,
             )
-            rendered = Text("\n".join(line.text for line in line_slices))
+            # `no_wrap`/`overflow="crop"`: defense-in-depth, not the fix for
+            # any known bug. Each joined row is already budgeted to fit
+            # `width` by `_visible_draft_line_slices`; this only changes what
+            # happens if a *future* budgeting bug lets a row overflow again --
+            # cropping the one offending row in place instead of silently
+            # rewrapping it into an extra physical row, which would push the
+            # fixed 4-row window's true last row out of view without any
+            # visible sign something was wrong. Belt-and-suspenders only:
+            # Textual's `Static` converts a `rich.Text` to `Content` via
+            # `Content.from_rich_text`, which carries over the plain text and
+            # spans but *not* `no_wrap`/`overflow` -- the enforcement that
+            # actually reaches the screen is the `text_wrap`/`text_overflow`
+            # widget styles set on `#console-command-visible-text` in
+            # `compose()`. Kept here too for any renderer that (unlike
+            # `Static`) does respect `Text`'s own flags, and so this stays
+            # correct if a future Textual version stops dropping them.
+            rendered = Text(
+                "\n".join(line.text for line in line_slices),
+                no_wrap=True,
+                overflow="crop",
+            )
             if style_ranges:
                 output_offset = 0
                 for line_index, line_slice in enumerate(line_slices):
@@ -2345,6 +2365,15 @@ class ConsoleComposerBar(Horizontal):
             visible_draft.can_focus = False
             visible_draft.styles.width = "1fr"
             visible_draft.styles.min_width = 0
+            # Defense-in-depth (see `_draft_renderable`): each row `"\n"`-joined
+            # into the update is already budgeted to `_draft_render_width()`,
+            # so this is a no-op in the fitting case. If a future budgeting
+            # bug lets a row overflow again, `nowrap`/`clip` truncates that
+            # one row in place at paint time instead of Textual rewrapping it
+            # into an extra physical row -- which, inside this fixed-height
+            # 4-row Static, would silently push the true last row out of view.
+            visible_draft.styles.text_wrap = "nowrap"
+            visible_draft.styles.text_overflow = "clip"
             yield visible_draft
             recovery = Static(
                 "",
