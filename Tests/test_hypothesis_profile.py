@@ -17,6 +17,9 @@ up" as an apparent improvement.
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import pytest
 
 hypothesis = pytest.importorskip("hypothesis")
@@ -46,4 +49,34 @@ def test_the_profile_is_the_one_this_repo_registered() -> None:
     assert "tldw" in hypothesis.settings._profiles, (
         "the 'tldw' Hypothesis profile is not registered; Tests/conftest.py "
         "should register and load it"
+    )
+
+
+def test_collected_test_modules_do_not_mutate_the_global_profile() -> None:
+    """Only the suite root may register or load process-wide profiles."""
+    tests_root = Path(__file__).parent
+    offenders = []
+    for path in sorted(
+        {
+            *tests_root.rglob("test_*.py"),
+            *tests_root.rglob("*_test.py"),
+        }
+    ):
+        if path == Path(__file__):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"register_profile", "load_profile"}
+            ):
+                offenders.append(
+                    f"{path.relative_to(tests_root)}:{node.lineno} "
+                    f"{node.func.attr}"
+                )
+
+    assert offenders == [], (
+        "Collected test modules must use local @settings decorators instead of "
+        f"mutating the suite-wide Hypothesis profile: {offenders}"
     )
