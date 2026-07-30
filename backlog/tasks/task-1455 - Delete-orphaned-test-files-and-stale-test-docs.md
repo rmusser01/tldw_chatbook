@@ -2,7 +2,7 @@
 id: TASK-1455
 title: >-
   Delete orphaned test files and stale test docs; correct Tests/README.md's dead-marker and parallelism claims
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-30 09:05'
 labels:
@@ -20,9 +20,9 @@ The 2026-07-30 test-suite audit found mechanically-dead test infrastructure that
 
 ## Acceptance Criteria
 
-- [ ] The six dead files listed above are removed
-- [ ] `Tests/README.md` no longer documents the unused `optional_deps` marker or presents `-n auto` as available by default
-- [ ] `pytest --collect-only` count is unchanged vs baseline (none of the deleted files were collected)
+- [x] The six dead files listed above are removed
+- [x] `Tests/README.md` no longer documents the unused `optional_deps` marker or presents `-n auto` as available by default
+- [x] `pytest --collect-only` count is unchanged vs baseline (none of the deleted files were collected)
 
 ## Implementation Plan
 

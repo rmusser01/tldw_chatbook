@@ -176,12 +176,18 @@ class TestChatWindow:
 
 Example:
 ```python
+from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed
+
 @pytest.mark.optional
-@pytest.mark.skipif(not DEPENDENCIES_AVAILABLE.get("embeddings_rag"), reason="embeddings extras not installed")
+@pytest.mark.skipif(not embeddings_rag_deps_installed(), reason="embeddings extras not installed")
 class TestRAGFunctionality:
     def test_embedding_generation(self):
         # Test implementation
 ```
+
+Note: do NOT gate on `DEPENDENCIES_AVAILABLE.get("embeddings_rag")` — that
+registry initializes to `False` and is only populated by the deep dependency
+checker, so tests gated on it skip even when the extras are installed.
 
 ## Writing Tests
 
