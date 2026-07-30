@@ -11902,6 +11902,42 @@ Button:disabled {
     overflow-y: auto;
 }
 
+/* TASK-1476 whole-branch review, clipping blocker: `EvalsInspector`
+ * extends `Vertical`, and Textual's `Vertical`/`Container` DEFAULT_CSS is
+ * `height: 1fr` -- not `auto`. `#evals-inspector-bench` sits inside
+ * `#evals-inspector-pane` (`_lab.tcss`: `height: auto`, itself inside
+ * `#lab-inspector`, a `VerticalScroll`), so an UNSTYLED `1fr` child there
+ * has no real denominator to resolve against during the parent's `auto`
+ * measurement pass -- confirmed live (``run_test(size=(235, 52))``): with
+ * a bench selected, `EvalsInspector` claimed a ~43-row region regardless
+ * of its own (much shorter) actual content, pushing its sibling
+ * `#evals-primary-action` button to a row `#lab-inspector`'s own
+ * `virtual_size` never grew to cover -- the button painted nowhere, not
+ * even reachable by scrolling to the pane's max_scroll_y. Exactly the
+ * off-by-one/starved-sibling family `_lab.tcss` (see its own comment
+ * above `#lab-rail #evals-library-pane, #lab-inspector
+ * #evals-inspector-pane { height: auto; }`) already fixed one level up,
+ * for the PANE itself -- `EvalsInspector`, the pane's own child, needed
+ * the identical fix. `overflow-y: auto` above is KEPT (not removed) even
+ * though it becomes a no-op once this box always sizes to its own
+ * content -- `#evals-library-pane` carries the same now-redundant pairing
+ * after its own `_lab.tcss` fix, and this matches that established
+ * precedent rather than diverging from it.
+ *
+ * `#evals-classic-detail` (`ClassicTaskDetail`, also an unstyled
+ * `Vertical`) does NOT share this bug -- verified live, not assumed: its
+ * parent chain is `#evals-detail-pane` (`_lab.tcss`: `height: 100%`, a
+ * REAL bounded size, never `auto`) inside `#lab-body` (a plain `Vertical`,
+ * not a `VerticalScroll`), so its own `1fr` resolves against a
+ * well-defined remainder with no ambiguous `auto` pass involved -- and it
+ * has no trailing sibling below it to displace (`_compose_detail_pane`'s
+ * classic branch yields nothing after it), unlike `EvalsInspector`, whose
+ * badge/callout/button siblings are exactly what this bug pushed off
+ * screen. Left unchanged. */
+#evals-inspector-bench {
+    height: auto;
+}
+
 .evals-rail-section-header {
     height: 1;
     min-height: 1;

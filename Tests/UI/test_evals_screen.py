@@ -637,18 +637,14 @@ async def test_pressing_the_primary_action_runs_the_bench_and_selects_its_run_gr
         screen._sample_bench_client_factory = lambda t: _FakeCaptureClient(calls)
 
         assert screen._view_model.run_groups() == []
-        # `#evals-primary-action` sits at the bottom of `#evals-inspector-
-        # pane`, inside `#lab-inspector` (a VerticalScroll) -- a pre-
-        # existing virtual-size/container-size off-by-one in that pane
-        # (same shape as the rail's own, already fixed in _lab.tcss; see
-        # its comment there) leaves the button's own row scrolled one cell
-        # past the viewport with a fresh selection, painted-over by the
-        # footer rather than the button -- `pilot.click` would silently hit
-        # the footer instead. `scroll_visible` is exactly what a real user
-        # would need to do first; it is not a workaround for anything this
-        # task changed.
-        screen.query_one("#evals-primary-action").scroll_visible(animate=False)
-        await pilot.pause()
+        # No `scroll_visible()` needed here (unlike an earlier version of
+        # this test): `#evals-inspector-bench { height: auto; }` in
+        # _evals.tcss (whole-branch review clipping fix) stopped
+        # `EvalsInspector` from claiming the whole `#lab-inspector`
+        # viewport as an unstyled `1fr` child, which used to push
+        # `#evals-primary-action` out of the visible/painted area --
+        # see `test_primary_action_paints_inside_the_inspector_viewport_
+        # without_scrolling` for the dedicated regression test.
         await pilot.click("#evals-primary-action")
         await _wait_until(pilot, lambda: screen._selection.kind == "run_group")
         await pilot.pause()
@@ -706,9 +702,10 @@ async def test_bench_run_failure_toast_with_markup_hazard_text_does_not_crash_th
         await pilot.pause()
         screen._sample_bench_client_factory = lambda t: _RaisingCaptureClient()
 
-        button = screen.query_one("#evals-primary-action")
-        button.scroll_visible(animate=False)
-        await pilot.pause()
+        # No `scroll_visible()` needed -- see the whole-branch review
+        # clipping fix's own comment above
+        # `test_pressing_the_primary_action_runs_the_bench_and_selects_
+        # its_run_group`.
         await pilot.click("#evals-primary-action")  # must not crash the app
         await _wait_until(pilot, lambda: not screen._bench_run_running)
         await pilot.pause()
@@ -743,10 +740,8 @@ async def test_a_second_press_while_a_bench_run_is_in_flight_is_a_no_op(
         )
 
         button = screen.query_one("#evals-primary-action", Button)
-        # See the sibling press test's comment above -- scroll the button
-        # into its scroll container's viewport before clicking.
-        button.scroll_visible(animate=False)
-        await pilot.pause()
+        # No `scroll_visible()` needed -- see the whole-branch review
+        # clipping fix's own comment on the sibling press test above.
         await pilot.click("#evals-primary-action")
         await _wait_until(pilot, lambda: screen._bench_run_running)
         await pilot.pause()
@@ -801,9 +796,8 @@ async def test_action_buttons_stay_disabled_across_a_mid_run_recompose(
             calls, release
         )
 
-        button = screen.query_one("#evals-primary-action", Button)
-        button.scroll_visible(animate=False)
-        await pilot.pause()
+        # No `scroll_visible()` needed -- see the whole-branch review
+        # clipping fix's own comment on the earlier press tests above.
         await pilot.click("#evals-primary-action")
         await _wait_until(pilot, lambda: screen._bench_run_running)
 
@@ -860,9 +854,8 @@ async def test_rail_run_row_shows_the_running_glyph_while_the_run_is_in_flight(
             calls, release
         )
 
-        button = screen.query_one("#evals-primary-action", Button)
-        button.scroll_visible(animate=False)
-        await pilot.pause()
+        # No `scroll_visible()` needed -- see the whole-branch review
+        # clipping fix's own comment on the earlier press tests above.
         await pilot.click("#evals-primary-action")
         await _wait_until(pilot, lambda: screen._bench_run_running)
 
@@ -1127,3 +1120,115 @@ async def test_inspector_pane_widens_at_a_wide_terminal_instead_of_staying_fixed
     assert widths[80] < widths[200], (
         f"inspector did not scale with the terminal: {widths}"
     )
+
+
+@pytest.mark.asyncio
+async def test_primary_action_paints_inside_the_inspector_viewport_without_scrolling(
+    evals_app, runnable_bench
+):
+    """Clipping blocker found during live verification at 235x52 (real
+    terminal, not this harness's default). ``EvalsInspector``
+    (``#evals-inspector-bench``) is an unstyled ``Vertical``, and
+    Textual's ``Vertical``/``Container`` DEFAULT_CSS is ``height: 1fr`` --
+    not ``auto``. Inside ``#evals-inspector-pane`` (``_lab.tcss``:
+    ``height: auto``, itself inside ``#lab-inspector``, a
+    ``VerticalScroll``), an unstyled ``1fr`` child has no real denominator
+    during the parent's ``auto`` measurement pass, so ``EvalsInspector``
+    claimed nearly the WHOLE ``#lab-inspector`` viewport regardless of its
+    own (much shorter) actual content -- pushing its sibling
+    ``#evals-primary-action`` button to a row ``#lab-inspector``'s own
+    ``virtual_size`` never grew to cover. The button was unreachable even
+    by scrolling to ``max_scroll_y`` in the live repro (this harness's own
+    single-target repro happened to be reachable at ``max_scroll_y``, but
+    the ROOT CAUSE -- and the fix -- are identical either way: see
+    ``_evals.tcss``'s ``#evals-inspector-bench { height: auto; }`` comment
+    for the full mechanism and why ``#evals-classic-detail`` was verified
+    NOT to share it).
+
+    Exactly the off-by-one/starved-sibling family ``_lab.tcss`` already
+    fixed one level up, for the PANE itself.
+    """
+    async with evals_app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+
+        lab_inspector = screen.query_one("#lab-inspector")
+        button = screen.query_one("#evals-primary-action", Button)
+
+        assert lab_inspector.max_scroll_y == 0, (
+            "the inspector pane still needs to scroll to fit its content "
+            f"(max_scroll_y={lab_inspector.max_scroll_y}) -- EvalsInspector "
+            "is claiming more height than its own content needs"
+        )
+        assert button.region.width > 0 and button.region.height > 0, button.region
+        assert lab_inspector.region.contains_region(button.region), (
+            f"button {button.region} escapes the inspector's own visible "
+            f"viewport {lab_inspector.region}"
+        )
+
+        # Belt: a click with NO scroll_visible() call first must reach the
+        # real handler -- proves the button is genuinely PAINTED there, not
+        # merely LAID OUT there (a region can be geometrically correct on
+        # paper while still sitting under another widget's paint layer --
+        # see Task 2's own now-removed scroll_visible() workaround, which
+        # existed only because of this exact mismatch).
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _FakeCaptureClient(calls)
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._selection.kind == "run_group")
+        await pilot.pause()
+        assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_blocked_primary_action_badge_and_callout_paint_inside_the_inspector_viewport(
+    evals_app, runnable_bench
+):
+    """The DISABLED variant of the primary action -- badge + callout +
+    button, three widgets instead of one -- must ALSO stay fully inside
+    ``#lab-inspector``'s viewport after the ``height: auto`` fix; a fix
+    that only accounted for the (shorter) enabled-state content would be
+    an incomplete fix. The only selection state that mounts
+    ``EvalsInspector`` (i.e. actually exercises ``#evals-inspector-bench``)
+    AND renders a disabled button is a bench run genuinely in flight (see
+    ``_primary_action_state``'s in-flight branch, whole-branch review
+    Finding 1) -- reuses the same pausable-fake-client technique
+    ``test_action_buttons_stay_disabled_across_a_mid_run_recompose`` uses.
+    """
+    async with evals_app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        # Force a fresh recompose while the run is still in flight, so the
+        # rendered badge/callout/button are a genuinely FRESH instance from
+        # the fixed CSS, not the live-mutated original widget.
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+
+        lab_inspector = screen.query_one("#lab-inspector")
+        status = screen.query_one("#evals-primary-action-status")
+        reason = screen.query_one("#evals-primary-action-reason")
+        button = screen.query_one("#evals-primary-action", Button)
+
+        assert lab_inspector.max_scroll_y == 0, lab_inspector.max_scroll_y
+        for widget in (status, reason, button):
+            assert widget.region.width > 0 and widget.region.height > 0, widget.region
+            assert lab_inspector.region.contains_region(widget.region), (
+                f"{widget!r} at {widget.region} escapes the inspector's "
+                f"visible viewport {lab_inspector.region}"
+            )
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
