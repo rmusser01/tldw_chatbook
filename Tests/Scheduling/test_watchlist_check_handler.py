@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler import (
     WatchlistCheckHandler,
 )
+from tldw_chatbook.Subscriptions import LocalWatchlistsService
 
 
 def _task(subscription_id: int | str = 42, **overrides) -> dict:
@@ -38,6 +39,24 @@ def _subscription(sub_type: str = "rss", **overrides) -> dict:
     }
 
 
+def _service_mock(*, status: str = "completed", stats: dict | None = None):
+    """A stand-in for `LocalWatchlistsService`'s two-call execution contract.
+
+    TASK-1383: the handler no longer executes checks itself, so these unit
+    tests assert the delegation. What the service then *does* -- run rows,
+    dispositions, per-URL checks -- is covered against real objects in
+    `test_scheduled_watchlist_runs.py`, which is the point of that module.
+    """
+    service = AsyncMock()
+    service.launch_run.return_value = {"run_id": 7, "source_id": 42}
+    service.execute_run.return_value = {
+        "run_id": 7,
+        "status": status,
+        "stats": stats if stats is not None else {"new_items_found": 1},
+    }
+    return service
+
+
 @pytest.fixture
 def handler():
     db = MagicMock()
@@ -48,6 +67,7 @@ def handler():
         feed_monitor=feed_monitor,
         url_monitor=url_monitor,
         shadow_mode=False,
+        watchlists_service=_service_mock(),
     )
 
 
@@ -82,69 +102,46 @@ def _assert_metrics(counter, histogram, *, status, subscription_type, shadow=Non
         assert "shadow" not in histogram_kwargs["labels"]
 
 
+@pytest.mark.parametrize(
+    "sub_type", ["rss", "atom", "json_feed", "podcast", "url", "url_list", "sitemap", "api"]
+)
 @pytest.mark.asyncio
-async def test_feed_check_records_result(handler):
-    items = [{"title": "New post", "url": "http://example.com/1"}]
-    handler.feed_monitor.check_feed.return_value = items
-    handler.subscriptions_db.get_subscription.return_value = _subscription("rss")
+async def test_every_executable_type_is_launched_as_a_run(handler, sub_type):
+    """TASK-1383: every storable type goes through the run seam, `sitemap` included.
 
-    await handler.handle(_task())
-
-    handler.feed_monitor.check_feed.assert_awaited_once_with(
-        handler.subscriptions_db.get_subscription.return_value
-    )
-    handler.url_monitor.check_url.assert_not_awaited()
-    handler.subscriptions_db.record_check_result.assert_called_once()
-    call_args = handler.subscriptions_db.record_check_result.call_args
-    assert call_args.args[0] == 42
-    assert call_args.kwargs["items"] == items
-    assert call_args.kwargs["stats"]["new_items_found"] == 1
-    assert isinstance(call_args.kwargs["stats"]["response_time_ms"], int)
-
-
-@pytest.mark.asyncio
-async def test_url_check_records_result(handler):
-    # TASK-1362: `check_url` returns `(item, disposition)`. This handler writes
-    # through `record_check_result`, whose stats carry no disposition field, so
-    # it takes the item and drops the disposition.
-    result = {"changed": True, "url": "http://example.com/page"}
-    handler.url_monitor.check_url.return_value = (
-        result,
-        {"kind": "changed", "reason": None, "withheld_percentage": None},
-    )
-    handler.subscriptions_db.get_subscription.return_value = _subscription("url")
-
-    await handler.handle(_task())
-
-    handler.url_monitor.check_url.assert_awaited_once_with(
-        handler.subscriptions_db.get_subscription.return_value
-    )
-    handler.feed_monitor.check_feed.assert_not_awaited()
-    handler.subscriptions_db.record_check_result.assert_called_once()
-    call_args = handler.subscriptions_db.record_check_result.call_args
-    assert call_args.args[0] == 42
-    assert call_args.kwargs["items"] == [result]
-
-
-@pytest.mark.asyncio
-async def test_url_check_with_none_result(handler):
-    """A check that produced no item must still record a successful check.
-
-    The disposition (here `unchanged`) is what distinguishes this from the
-    three other reasons a check produces nothing; the handler's own stats
-    schema does not carry it, so it is dropped rather than invented.
+    `sitemap` is listed here deliberately: the handler's own `_URL_TYPES` tuple
+    omitted it, so a scheduled sitemap source was declared an unknown type and
+    never checked at all.
     """
-    handler.url_monitor.check_url.return_value = (
-        None,
-        {"kind": "unchanged", "reason": None, "withheld_percentage": None},
-    )
+    handler.subscriptions_db.get_subscription.return_value = _subscription(sub_type)
+
+    await handler.handle(_task())
+
+    handler.watchlists_service.launch_run.assert_awaited_once_with(source_id=42)
+    handler.watchlists_service.execute_run.assert_awaited_once_with(7)
+    # The service records the check; a second write here would double-count it
+    # into `subscription_stats` and re-bump the auto-pause counter.
+    handler.subscriptions_db.record_check_result.assert_not_called()
+    handler.subscriptions_db.record_check_error.assert_not_called()
+    # The handler's own monitors belong to the shadow path now.
+    handler.feed_monitor.check_feed.assert_not_awaited()
+    handler.url_monitor.check_url.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_failed_run_is_reported_without_a_second_error_record(handler):
+    """`execute_run` handles its own fetch failures and does not re-raise."""
+    handler.watchlists_service.execute_run.return_value = {
+        "run_id": 7,
+        "status": "failed",
+        "stats": {"error_msg": "boom"},
+    }
     handler.subscriptions_db.get_subscription.return_value = _subscription("url")
 
     await handler.handle(_task())
 
-    handler.subscriptions_db.record_check_result.assert_called_once()
-    call_args = handler.subscriptions_db.record_check_result.call_args
-    assert call_args.kwargs["items"] == []
+    handler.watchlists_service.record_run_failure.assert_not_awaited()
+    handler.subscriptions_db.record_check_error.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -157,6 +154,7 @@ async def test_paused_subscription_is_skipped(handler):
 
     handler.feed_monitor.check_feed.assert_not_awaited()
     handler.url_monitor.check_url.assert_not_awaited()
+    handler.watchlists_service.launch_run.assert_not_awaited()
     handler.subscriptions_db.record_check_result.assert_not_called()
     handler.subscriptions_db.record_check_error.assert_not_called()
 
@@ -171,20 +169,43 @@ async def test_inactive_subscription_is_skipped(handler):
 
     handler.feed_monitor.check_feed.assert_not_awaited()
     handler.url_monitor.check_url.assert_not_awaited()
+    handler.watchlists_service.launch_run.assert_not_awaited()
     handler.subscriptions_db.record_check_result.assert_not_called()
     handler.subscriptions_db.record_check_error.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_monitor_error_records_check_error(handler):
-    handler.feed_monitor.check_feed.side_effect = RuntimeError("feed unreachable")
+async def test_failure_escaping_execute_run_marks_the_launched_run_failed(handler):
+    """A fault around execution must not leave the launched row at `queued`.
+
+    `record_run_failure` also calls `SubscriptionsDB.record_check_error`, which
+    is the same call this handler used to make itself -- so the auto-pause
+    counter still advances, exactly once.
+    """
+    error = RuntimeError("feed unreachable")
+    handler.watchlists_service.execute_run.side_effect = error
     handler.subscriptions_db.get_subscription.return_value = _subscription("rss")
 
     await handler.handle(_task())
 
+    handler.watchlists_service.record_run_failure.assert_awaited_once_with(
+        7, source_id=42, error=error
+    )
     handler.subscriptions_db.record_check_result.assert_not_called()
+    handler.subscriptions_db.record_check_error.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_failure_before_a_run_exists_falls_back_to_record_check_error(handler):
+    """With no run row to fail, the error still reaches the subscription."""
+    handler.watchlists_service.launch_run.side_effect = RuntimeError("launch failed")
+    handler.subscriptions_db.get_subscription.return_value = _subscription("rss")
+
+    await handler.handle(_task())
+
+    handler.watchlists_service.record_run_failure.assert_not_awaited()
     handler.subscriptions_db.record_check_error.assert_called_once_with(
-        42, "feed unreachable"
+        42, "launch failed"
     )
 
 
@@ -216,10 +237,18 @@ async def test_shadow_mode_does_not_record_errors(handler):
 
 @pytest.mark.asyncio
 async def test_unknown_subscription_type_logs_and_returns(handler):
-    handler.subscriptions_db.get_subscription.return_value = _subscription("sitemap")
+    """A type with no executor is reported, not launched into a failed run.
+
+    `sitemap` used to be this test's example; it is a real, executable type and
+    the handler was simply refusing to check it (TASK-1383). No type the schema
+    accepts reaches this branch any more -- see
+    `test_executable_types_match_every_type_the_db_accepts`.
+    """
+    handler.subscriptions_db.get_subscription.return_value = _subscription("gopher")
 
     await handler.handle(_task())
 
+    handler.watchlists_service.launch_run.assert_not_awaited()
     handler.feed_monitor.check_feed.assert_not_awaited()
     handler.url_monitor.check_url.assert_not_awaited()
     handler.subscriptions_db.record_check_result.assert_not_called()
@@ -262,13 +291,12 @@ async def test_missing_subscription_logs_and_returns(handler):
 
 @pytest.mark.asyncio
 async def test_handler_is_callable(handler):
-    handler.feed_monitor.check_feed.return_value = []
     handler.subscriptions_db.get_subscription.return_value = _subscription("rss")
 
     await handler(_task())
 
-    handler.feed_monitor.check_feed.assert_awaited_once()
-    handler.subscriptions_db.record_check_result.assert_called_once()
+    handler.watchlists_service.launch_run.assert_awaited_once_with(source_id=42)
+    handler.watchlists_service.execute_run.assert_awaited_once_with(7)
 
 
 @pytest.mark.asyncio
@@ -289,10 +317,17 @@ async def test_default_monitors_are_constructed():
         url_cls.assert_called_once_with(db=db, persist_snapshots=True)
 
 
+def test_default_service_is_bound_to_the_handlers_db():
+    """Production wiring stays zero-config: `app.py` passes only the db."""
+    db = MagicMock()
+    handler = WatchlistCheckHandler(subscriptions_db=db)
+    assert isinstance(handler.watchlists_service, LocalWatchlistsService)
+    assert handler.watchlists_service.db_factory() is db
+
+
 @pytest.mark.asyncio
 async def test_metrics_success_path(handler, metrics_patch):
     counter, histogram = metrics_patch
-    handler.feed_monitor.check_feed.return_value = [{"title": "Post"}]
     handler.subscriptions_db.get_subscription.return_value = _subscription("rss")
 
     await handler.handle(_task())
@@ -343,7 +378,7 @@ async def test_metrics_skipped_subscription(handler, metrics_patch):
 @pytest.mark.asyncio
 async def test_metrics_unknown_type(handler, metrics_patch):
     counter, histogram = metrics_patch
-    handler.subscriptions_db.get_subscription.return_value = _subscription("sitemap")
+    handler.subscriptions_db.get_subscription.return_value = _subscription("gopher")
 
     await handler.handle(_task())
 
@@ -351,8 +386,24 @@ async def test_metrics_unknown_type(handler, metrics_patch):
         counter,
         histogram,
         status="unknown_type",
-        subscription_type="sitemap",
+        subscription_type="gopher",
     )
+
+
+@pytest.mark.asyncio
+async def test_metrics_error_path_for_a_failed_run(handler, metrics_patch):
+    """A run the service marked failed is an errored check, not a successful one."""
+    counter, histogram = metrics_patch
+    handler.watchlists_service.execute_run.return_value = {
+        "run_id": 7,
+        "status": "failed",
+        "stats": {},
+    }
+    handler.subscriptions_db.get_subscription.return_value = _subscription("url")
+
+    await handler.handle(_task())
+
+    _assert_metrics(counter, histogram, status="error", subscription_type="url")
 
 
 @pytest.mark.asyncio
@@ -372,7 +423,7 @@ async def test_metrics_missing_task_id(handler, metrics_patch):
 @pytest.mark.asyncio
 async def test_metrics_error_path(handler, metrics_patch):
     counter, histogram = metrics_patch
-    handler.feed_monitor.check_feed.side_effect = RuntimeError("feed unreachable")
+    handler.watchlists_service.execute_run.side_effect = RuntimeError("feed unreachable")
     handler.subscriptions_db.get_subscription.return_value = _subscription("rss")
 
     await handler.handle(_task())
