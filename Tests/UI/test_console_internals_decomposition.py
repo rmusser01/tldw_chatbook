@@ -924,6 +924,7 @@ async def test_console_composer_save_chatbook_routes_available_artifact_action()
 
     async with app.run_test(size=(140, 42)) as pilot:
         console = await _wait_for_production_chat_screen(app, pilot)
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
         save_button = await _wait_for_enabled_button(
             console, pilot, "#console-save-chatbook"
         )
@@ -3052,6 +3053,7 @@ async def test_console_staged_context_tray_stays_quiet_when_populated():
     async with app.run_test(size=(212, 64)) as pilot:
         console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-staged-context-row-0")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
         # Confirm the tray genuinely has content, so the quiet-border
         # assertion below is meaningful for the non-empty state (and not
@@ -3209,6 +3211,7 @@ async def test_console_non_empty_staged_context_keeps_room_for_source_details():
     async with app.run_test(size=(120, 40)) as pilot:
         console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-staged-context-row-0")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
         staged_context = console.query_one("#console-staged-context-tray")
         max_height = getattr(
@@ -3295,6 +3298,7 @@ async def test_console_native_control_bar_and_staged_context_reflect_pending_han
     async with app.run_test(size=(170, 42)) as pilot:
         console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-control-bar")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
         await _open_console_inspector(console, pilot)
 
         text = _visible_text(console)
@@ -3490,6 +3494,7 @@ async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_sour
         console = await _wait_for_production_chat_screen(app, pilot)
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-provider")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
         assert "Provider: blocked" in str(
             console.query_one("#console-inspector-provider", Static).renderable
@@ -3535,6 +3540,7 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
         console = await _wait_for_production_chat_screen(app, pilot)
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-review-approval")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
         assert "Approvals: 1 pending" in str(
             console.query_one("#console-inspector-approvals", Static).renderable

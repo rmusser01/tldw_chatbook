@@ -449,7 +449,8 @@ def test_open_console_for_live_work_routes_to_chat_route():
         "recovery": "Workflow is starting.",
         "action_label": "Open workflow run",
     }
-    assert app.pending_handoffs.acknowledge(claim)
+    assert app.pending_handoffs.acknowledge(claim) is True
+    assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
 
 def test_open_console_for_live_work_preserves_minimal_call_defaults():
@@ -470,7 +471,8 @@ def test_open_console_for_live_work_preserves_minimal_call_defaults():
         "recovery": "Console has staged this live-work request.",
         "action_label": "Open in Console",
     }
-    assert app.pending_handoffs.acknowledge(claim)
+    assert app.pending_handoffs.acknowledge(claim) is True
+    assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
 
 def test_console_live_work_status_card_state_derives_stable_rows_from_launch():
