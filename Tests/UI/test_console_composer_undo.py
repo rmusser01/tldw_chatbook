@@ -27,8 +27,18 @@ from __future__ import annotations
 import pytest
 
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
+from Tests.UI.test_console_native_chat_flow import (
+    CapturingGateway,
+    _configure_native_ready_console,
+    _wait_for_text,
+)
+from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console.console_composer_bar import _DraftHistorySnapshot
 
 
 # ---------------------------------------------------------------------------
@@ -166,16 +176,26 @@ def test_composer_clear_draft_default_does_not_record_history():
     assert composer.undo() is False
 
 
-def test_composer_load_draft_never_records_history():
+def test_composer_load_draft_never_records_history_and_wipes_stale_scope_history():
+    """`load_draft` never records its own replacement as an undo entry --
+    AND (review F4) it wipes whatever history the previous scope left
+    behind, since load_draft always represents a scope change (a session
+    switch or a launch-context prefill), never an edit. Leaving a prior
+    scope's stack live let one undo after a prefill return an unrelated
+    older state that had nothing to do with the new scope."""
     composer = ConsoleComposerBar()
     composer.insert_text("x")
     composer.load_draft("programmatic replacement")
     assert composer.draft_text() == "programmatic replacement"
 
-    # The "x" run is still the only thing on the stack; load_draft added
-    # nothing (and didn't touch what was already there either).
+    # The "x" run's entry must NOT survive the scope change.
+    assert composer.undo() is False
+    assert composer.draft_text() == "programmatic replacement"
+
+    # And the new scope records its own edits normally.
+    composer.insert_text("!")
     assert composer.undo() is True
-    assert composer.draft_text() == ""
+    assert composer.draft_text() == "programmatic replacement"
 
 
 def test_composer_redo_reapplies_undone_mutation():
@@ -251,6 +271,112 @@ def test_composer_restore_undo_history_none_gives_empty_stacks():
     composer.insert_text("x")
     composer.restore_undo_history(None)
     assert composer.undo() is False
+
+
+# ---------------------------------------------------------------------------
+# Review fix-round (2026-07-30): F3, F4, F6 -- pure composer-level, pinned
+# reproductions of the reviewer's own scenarios.
+# ---------------------------------------------------------------------------
+
+
+def test_composer_coalescing_reset_after_restore_stashed_draft():
+    """F3, exact reviewer repro: `_coalescing_active` used to survive
+    `stash_draft_for_send`/`restore_stashed_draft`'s non-recording clear,
+    so the first typed character after a rejected-send round trip silently
+    coalesced into (and was swallowed by) the pre-send typed run instead of
+    recording its own entry -- one Ctrl+Z skipped straight past "hello" to
+    empty instead of landing on "hello" first."""
+    composer = ConsoleComposerBar()
+    for character in "hello":
+        composer.insert_text(character)
+    assert composer.draft_text() == "hello"
+
+    stash = composer.stash_draft_for_send()
+    composer.restore_stashed_draft(stash)
+    assert composer.draft_text() == "hello"
+
+    composer.insert_text("X")
+    assert composer.draft_text() == "helloX"
+
+    # The "X" run must be its own undo entry -- one undo reverts only it.
+    assert composer.undo() is True
+    assert composer.draft_text() == "hello"
+
+
+def test_composer_coalescing_reset_after_clear_draft():
+    """F3: the same failure shape via the plain (non-recording) `clear_draft()`.
+
+    Uses a non-empty prior draft (via `load_draft`, itself non-recording)
+    so the stale pre-clear entry's pre-state ("existing") is distinguishable
+    from the correct one (the empty draft right after the clear) -- a
+    variant of this test that opens the coalescing run on a fresh, empty
+    composer would pass either way, since both the stale and the correct
+    entry happen to share the same "" pre-state there.
+    """
+    composer = ConsoleComposerBar()
+    composer.load_draft("existing")
+    composer.insert_text("Z")  # opens a coalescing run, pre="existing"
+    composer.clear_draft()  # default record_history=False
+    composer.insert_text("c")
+    composer.insert_text("d")
+    assert composer.draft_text() == "cd"
+
+    # "cd" must be its own entry (pre="" -- the state right after the
+    # clear) -- not merged into the stale "existingZ" run, whose pre-state
+    # is "existing", a different (and wrong) string to land back on.
+    assert composer.undo() is True
+    assert composer.draft_text() == ""
+
+
+def test_composer_load_draft_wipes_stale_scope_history():
+    """F4, exact reviewer repro: the launch-context prefill `load_draft`
+    call site left the PREVIOUS scope's undo stack live -- one undo after
+    the prefill returned an unrelated older state that had nothing to do
+    with the new scope."""
+    composer = ConsoleComposerBar()
+    for character in "typo":
+        composer.insert_text(character)
+    for _ in range(4):
+        composer.delete_left()
+    assert composer.draft_text() == ""
+
+    composer.load_draft("PREFILLED SUGGESTED PROMPT")
+
+    assert composer.undo() is False
+    assert composer.draft_text() == "PREFILLED SUGGESTED PROMPT"
+
+
+def test_composer_undo_history_capped_by_total_characters_not_just_entry_count():
+    """F6, measured reviewer repro: a large inlined attachment followed by
+    ordinary pastes multiplied to >20,000,000 retained characters across
+    just 21 entries -- nowhere near the 100-entry depth cap. The stacks
+    must also be bounded by a total character budget."""
+    composer = ConsoleComposerBar()
+    composer.insert_file_segment("x" * 1_000_000, label="big.txt")
+    for index in range(20):
+        composer.insert_pasted_text(f"paste-{index} ")
+
+    total_chars = sum(len(entry.text) for entry in composer._undo_stack)
+    assert total_chars <= composer.UNDO_HISTORY_CHAR_BUDGET
+    assert len(composer._undo_stack) <= composer.UNDO_HISTORY_DEPTH_CAP
+
+
+def test_composer_restore_undo_history_enforces_char_budget_too():
+    """F6: the budget also applies to a history handed in externally
+    (session-switch restore), not just to entries recorded live -- a
+    banked history built before this eviction existed (or handed in from
+    elsewhere) must not bypass it."""
+    composer = ConsoleComposerBar()
+    big_text = "y" * 1_500_000
+    bloated_undo = [
+        _DraftHistorySnapshot(text=big_text, cursor_index=0),
+        _DraftHistorySnapshot(text=big_text, cursor_index=0),
+        _DraftHistorySnapshot(text=big_text, cursor_index=0),
+    ]
+    composer.restore_undo_history((bloated_undo, []))
+
+    total_chars = sum(len(entry.text) for entry in composer._undo_stack)
+    assert total_chars <= composer.UNDO_HISTORY_CHAR_BUDGET
 
 
 # ---------------------------------------------------------------------------
@@ -432,3 +558,194 @@ async def test_console_undo_history_scoped_per_session_never_leaks():
         console._console_composer_undo()
         assert composer.draft_text() == ""
         assert store.session_draft(session_a.id) == ""
+
+
+# ---------------------------------------------------------------------------
+# Review fix-round (2026-07-30): F1 (HIGH), F2, F5, N1 -- pinned
+# reproductions of the reviewer's own scenarios, screen/pilot level.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_console_undo_during_switch_settle_window_does_not_apply_or_corrupt():
+    """F1 (HIGH), exact reviewer repro: `store.active_session_id` can change
+    (via `controller.switch_session`) before `_console_visible_draft_
+    session_id` catches up inside the deferred `_sync_console_session_
+    draft` -- the TASK-339 settle window. Ctrl+Z during that window used to
+    apply session A's undo history to the composer and then persist the
+    result to the store under session B's (now-active) id, permanently
+    overwriting B's own draft once the deferred swap finally landed."""
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+
+        session_a = store.ensure_session(title="Session A")
+        composer.focus()
+        await pilot.pause()
+        composer.load_draft("")
+        console._sync_console_session_draft()  # settle tracker onto A
+
+        for character in "aaa-secret":
+            composer.insert_text(character)
+        composer.insert_pasted_text(" MORE")
+        assert composer.draft_text() == "aaa-secret MORE"
+
+        session_b = store.create_session(title="Session B")
+        store.set_session_draft(session_b.id, "bbb-b-own-draft")
+        # Settle window open: the store already considers B active, but the
+        # composer still visibly shows A (`_sync_console_session_draft`
+        # has not run since B was created, so `_console_visible_draft_
+        # session_id` has not caught up yet).
+        assert console._console_visible_draft_session_id == session_a.id
+        assert store.active_session_id == session_b.id
+
+        console._console_composer_undo()
+
+        # Nothing may move while the window is open: the composer still
+        # shows A's untouched text, and B's own draft in the store must
+        # survive completely untouched.
+        assert composer.draft_text() == "aaa-secret MORE"
+        assert store.session_draft(session_b.id) == "bbb-b-own-draft"
+
+        # Now let the deferred swap actually run: A's real (untouched)
+        # draft reaches the store as A's draft, and switching to B shows
+        # B's own draft -- never A's leaked text.
+        console._sync_console_session_draft()
+        assert store.session_draft(session_a.id) == "aaa-secret MORE"
+        assert composer.draft_text() == "bbb-b-own-draft"
+
+
+@pytest.mark.asyncio
+async def test_console_redo_during_switch_settle_window_does_not_apply():
+    """F1 (HIGH): the same settle-window guard for redo."""
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+
+        session_a = store.ensure_session(title="Session A")
+        composer.focus()
+        await pilot.pause()
+        composer.load_draft("")
+        console._sync_console_session_draft()
+
+        composer.insert_text("x")
+        composer.undo()  # arm the redo stack
+        assert composer.draft_text() == ""
+
+        session_b = store.create_session(title="Session B")
+        store.set_session_draft(session_b.id, "b-own-draft")
+        assert console._console_visible_draft_session_id == session_a.id
+        assert store.active_session_id == session_b.id
+
+        console._console_composer_redo()
+
+        assert composer.draft_text() == ""
+        assert store.session_draft(session_b.id) == "b-own-draft"
+
+
+@pytest.mark.asyncio
+async def test_console_undo_after_accepted_send_does_not_resurrect_sent_content():
+    """F2, exact reviewer repro: the pre-send mutations stayed reachable on
+    the undo stack after an accepted send, so Ctrl+Z resurrected already-
+    sent content back into the composer AND re-persisted it into the store
+    as the session's "live" draft."""
+    gateway = CapturingGateway()
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        composer.focus()
+        await pilot.pause(0.1)
+
+        for character in "PASTED-SECRET":
+            composer.insert_text(character)
+        composer.insert_pasted_text(" q?")
+        assert composer.draft_text() == "PASTED-SECRET q?"
+
+        await pilot.press("enter")
+        await _wait_for_text(console, pilot, "accepted")
+        assert composer.draft_text() == ""
+
+        await pilot.press("ctrl+z")
+        await pilot.pause(0.1)
+
+        assert composer.draft_text() == ""
+        assert store.session_draft(store.active_session_id) == ""
+
+
+@pytest.mark.asyncio
+async def test_console_background_dictation_drops_stale_session_history():
+    """F5, exact reviewer repro: a dictation transcript that lands via the
+    store-only branch (the origin session isn't the visible one) left that
+    session's banked undo/redo history stale relative to the store draft it
+    is re-paired with on switch-in -- one Ctrl+Z after switching back
+    destroyed the dictated text AND the whole pre-existing draft in a
+    single step. The banked history must be dropped instead, making the
+    dictated text simply not undoable (safe) rather than destructively so."""
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+
+        session_a = store.ensure_session(title="Session A")
+        composer.focus()
+        await pilot.pause()
+        composer.load_draft("")
+        console._sync_console_session_draft()
+
+        for character in "hello":
+            composer.insert_text(character)
+        assert composer.draft_text() == "hello"
+
+        store.create_session(title="Session B")
+        console._sync_console_session_draft()
+        assert composer.draft_text() == ""
+
+        # Dictation finishes for A while B is visible -- the store-only branch.
+        console._insert_console_dictation(
+            origin_session_id=session_a.id, transcript="dictated words"
+        )
+        assert store.session_draft(session_a.id) == "hello dictated words"
+
+        store.switch_session(session_a.id)
+        console._sync_console_session_draft()
+        assert composer.draft_text() == "hello dictated words"
+
+        # Nothing to undo: the store-only mutation isn't recorded, and the
+        # stale pre-dictation history was dropped rather than left live.
+        console._console_composer_undo()
+        assert composer.draft_text() == "hello dictated words"
+
+
+@pytest.mark.asyncio
+async def test_console_prompt_append_undo_removes_separator_newline_too():
+    """N1: `_insert_prompt_text_into_composer(replace=False)` used to record
+    the separator newline and the pasted body as two separate undo entries,
+    so one Ctrl+Z left a stray blank line behind. They must undo together."""
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("existing draft")
+        await pilot.pause()
+
+        assert console._insert_prompt_text_into_composer("resolved body", replace=False)
+        assert composer.draft_text() == "existing draft\nresolved body"
+
+        assert composer.undo() is True
+        assert composer.draft_text() == "existing draft"
