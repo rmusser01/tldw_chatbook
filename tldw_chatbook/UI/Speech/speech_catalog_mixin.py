@@ -643,6 +643,13 @@ class SpeechCatalogMixin:
         also inherited by the legacy `TTSPlaygroundWidget`, which carries no
         axis row and no axis model.
 
+        Model, voice and format are each POPPED, not merely left alone, when
+        the projection resolves them to nothing (e.g. a provider whose
+        catalog has no models) or to a non-`str` sentinel (e.g. the
+        server-default voice): a stale key would otherwise keep describing
+        the previous provider's value, or leak an internal `SelectSentinel`
+        repr into the model of record.
+
         Args:
             controls: The projection just applied to the widgets.
         """
@@ -652,15 +659,21 @@ class SpeechCatalogMixin:
         axis_values["tts-provider-select"] = controls.provider_id
         if isinstance(controls.selected_model_id, str):
             axis_values["tts-model-select"] = controls.selected_model_id
-        if controls.selected_voice_id is not None:
-            axis_values["tts-voice-select"] = (
-                controls.selected_voice_id
-                if isinstance(controls.selected_voice_id, str)
-                else str(controls.selected_voice_id)
-            )
+        else:
+            axis_values.pop("tts-model-select", None)
+        if isinstance(controls.selected_voice_id, str):
+            axis_values["tts-voice-select"] = controls.selected_voice_id
+        else:
+            axis_values.pop("tts-voice-select", None)
         if isinstance(controls.selected_format, str):
             axis_values["tts-format-select"] = controls.selected_format
+        else:
+            axis_values.pop("tts-format-select", None)
         axis_values["tts-speed-input"] = str(controls.speed)
+        # `_refresh_axis_markers` is defined only on `SpeechPlaygroundPane`;
+        # reaching this line at all already required the `axis_values`
+        # getattr gate above, which is what makes calling it safe on the
+        # legacy `TTSPlaygroundWidget` host too.
         self._refresh_axis_markers()
 
     @staticmethod
