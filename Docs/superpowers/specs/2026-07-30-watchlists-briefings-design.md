@@ -61,24 +61,32 @@ spec #1 stated global read status: so it is a documented behaviour, not a discov
 
 1. **Trigger:** a Generate action on the watchlist (button on the Artifacts section + command
    palette entry). One generation per watchlist at a time; a second request while `generating`
-   is refused with a toast naming the running one.
+   is refused with a toast naming the running one. **Zombie recovery** (TASK-1090's shape): a
+   `generating` row not backed by a live worker — found on the next Generate attempt or Artifacts
+   load — is failed as `interrupted`, honestly, so a crash can never wedge the guard shut.
 2. **Selection:** per the watchlist's mode. `auto`: items in the coverage window. `curated`:
-   queued-and-not-yet-covered only. `auto+featured` (default): the union, with queued items
-   marked `featured` in the junction and given top billing in the prompt.
-3. **Coverage window — the invariant that must not break:** `covers_from` = the `covers_to` of the
-   watchlist's **last `complete` briefing** (never a `failed` or `empty` one advancing the clock
-   silently — `empty` does advance it, an empty window was genuinely covered). First briefing:
-   the last 7 days. Per-source clamp: a source added to the watchlist after `covers_from`
-   contributes only items from its membership date if the junction records one, else the item cap
-   absorbs the backlog. **A failed generation therefore never loses items** — the next attempt
-   re-covers the same window. This invariant gets a named test in every phase that touches
-   selection.
+   queued-and-not-yet-covered only — **regardless of the window**: a user who queues a
+   three-week-old item wants it in the next briefing. `auto+featured` (default): the union, queued
+   items likewise window-exempt, marked `featured` in the junction and given top billing in the
+   prompt.
+3. **Coverage window — an item-id watermark, not timestamps.** Each `complete` (or `empty`)
+   briefing records `covers_through_item_id`; the next window is items with `id >` that watermark
+   belonging to the watchlist's current sources. Why ids: item `created_at` has one-second
+   resolution (the TASK-1361 lesson), and the item upsert key is
+   `(subscription_id, url, content_hash)` — new content is a NEW row with a new id, identical
+   re-seen content updates in place — so the watermark is precise, monotonic, and immune to clock
+   ties. It also solves the new-source flood for free: a source added to the watchlist later has
+   historical items with old ids, auto-excluded; only its post-addition items enter the window
+   (`watchlist_sources.added_at` exists but is not needed for this). First briefing only: the last
+   7 days by `created_at`, item-capped. A `failed` briefing records no watermark advance —
+   **failure never loses items**; the next attempt re-covers the same window. This invariant gets
+   a named test in every phase that touches selection.
 4. **Prompt assembly is `content_kind`-aware** (TASK-1343 made `content` the *diff* for change
    items): article items contribute "what it says" (title, source, excerpt), change items
    contribute "what changed on the page" (the diff, labelled as such). Per-item excerpt cap and a
    total item cap (~40) keep the call bounded; overflow is **stated in the briefing body**
    ("12 more items arrived in this window and are not covered") — never silent truncation.
-5. **One `chat_with_provider` call** — the preset's provider/model, else the app default. The
+5. **One call through `Chat_Functions.chat_api_call` (the app's provider-dispatching chat seam; CLAUDE.md's `chat_with_provider` name is stale documentation — the only callable by that name is an MCP tool shim)** — the preset's provider/model, else the app default. The
    deleted `recursive_summarizer` stays deleted; if real briefings outgrow one call, map-reduce is
    a recorded follow-up, not a phase-1 speculation.
 6. **Output:** markdown, sections per theme/source, every claim cited to an item id (rendered as
@@ -96,7 +104,9 @@ spec #1 stated global read status: so it is a documented behaviour, not a discov
   a JSON array of `{"speaker": <roster display name>, "text": ...}` turns. Validation is strict
   and failure is honest: an unknown speaker name fails the script artifact naming the name; a
   malformed payload fails naming the parse error. The briefing is never touched by a script
-  failure. A roster of one produces narration through the identical path — no special mode.
+  failure. A preset whose roster names a deleted character card fails the cast at that point,
+  naming the card — snapshots protect existing artifacts; this rule protects the cast step. A
+  roster of one produces narration through the identical path — no special mode.
 - **Audio pass:** per-turn synthesis through the existing TTS adapter registry using each
   speaker's voice profile, long turns chunked by the TTS layer's own `text_processing`, stitched
   and stored with duration. A synthesis failure names the turn and speaker, keeps the script,
@@ -148,7 +158,7 @@ audio failure keeps the script, a failed generation never advances the coverage 
 
 ## Testing
 
-- Fake exactly three seams: `chat_with_provider` (scripted responses), the TTS adapter's
+- Fake exactly three seams: `Chat_Functions.chat_api_call` (scripted responses), the TTS adapter's
   `synthesize`, and the HTTP fetch (the existing `_serve` harness). Everything else real —
   real DB, real selection, real junction writes.
 - Named invariant tests: failed-generation-does-not-advance-coverage; global-queue-not-cleared-by-
@@ -169,7 +179,8 @@ audio failure keeps the script, a failed generation never advances the coverage 
 ## Phases
 
 1. **Text briefings on demand** — tables, selection, pipeline, Artifacts section with list +
-   reader + Generate, queue-for-briefing affordance.
+   reader + Generate, queue-for-briefing affordance. **Preset-less**: `preset_id` NULL, the app's
+   default provider, a built-in style — preset CRUD is phase 2's, not to be invented early.
 2. **Presets, scripts, audio** — preset CRUD + picker, casting pass, TTS synthesis, playback.
 3. **Exports** — markdown export, feed directory (+ optional localhost serving).
 4. **Scheduling** — the briefing job type, per-watchlist cadence, quiet `empty` runs.
