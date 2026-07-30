@@ -284,6 +284,10 @@ The failures reproduce on an exact `origin/dev` checkout:
   the strict v27 provenance objects but retain v28's
   `assistant_authority_id`, so all three replay paths fail at v27-to-v28 with
   the same duplicate-column error.
+- The incremental Chatbook import performance regression passes in isolation
+  but fails under full-suite load when one millisecond-scale import is delayed
+  by the host scheduler. Its maximum-deviation assertion measures any isolated
+  variance rather than the sustained late-import slowdown named by the test.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -870,6 +874,10 @@ Update the tests to describe current behavior:
     `assistant_authority_id` before setting the recorded version to 16, 20, or
     21. Preserve the local-marks and world-book migration assertions, their
     later-provenance cleanup, and the strict production v27-to-v28 migration.
+84. Compare the median of the first and last steady-state Chatbook imports,
+    allowing a small absolute jitter floor while retaining a relative
+    degradation bound. Keep all ten real exports/imports and success
+    assertions; do not change production or hide sustained slowdown.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1222,6 +1230,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   v16 fixture would defer the identical deterministic failures in the two
   inventory-confirmed world-book fixtures; correcting all three truthful
   historical fixtures is the smaller complete repair.
+- Raising the maximum-deviation floor would still let one sample decide the
+  gate and would not measure degradation. Removing timing coverage entirely
+  would discard the test's performance purpose. Early-versus-late medians use
+  the existing samples to detect a sustained regression without a benchmark
+  framework or retries.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

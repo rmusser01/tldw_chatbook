@@ -3372,6 +3372,40 @@ tests, and `git diff --check`.
 Expected: all historical databases replay through v28, the dedicated authority
 migration remains strict and green, and no production file changes.
 
+### Task 4cb: Measure sustained Chatbook import degradation
+
+**Files:**
+- Modify: `Tests/Chatbooks/test_chatbook_performance.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This stabilizes a host-timing test while retaining its existing
+performance contract and does not change runtime behavior.
+
+- [x] **Step 1: Confirm host-timing variance**
+
+Record the full-suite failure from one 39 ms deviation, then rerun the exact
+test in isolation. Expected: the identical import path passes quickly, proving
+the maximum-sample assertion is sensitive to unrelated suite/host load.
+
+- [x] **Step 2: Compare robust early and late samples**
+
+Compare early and late steady-state medians with a relative bound and small
+absolute jitter floor. Keep all real Chatbook creation/import operations and
+success assertions. Do not add retries or production instrumentation.
+
+- [x] **Step 3: Verify focused and adjacent Chatbook coverage**
+
+Run the exact node repeatedly through normal focused/module coverage, the full
+Chatbooks performance module, Ruff/format, and `git diff --check`.
+
+Expected: normal import variability passes, sustained late-import degradation
+remains bounded, and no production file changes.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

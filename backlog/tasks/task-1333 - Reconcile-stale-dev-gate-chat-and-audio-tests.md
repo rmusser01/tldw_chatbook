@@ -113,6 +113,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #83 The historical v17-to-current ChaChaNotes migration regression removes the post-v17 conversation authority column before rolling back its schema version, preserving full migration replay and system-prompt trigger coverage without weakening the dedicated v27-to-v28 authority migration suite.
 - [ ] #84 Console schema ownership coverage distinguishes durable assistant identity from persona presentation: identity remains absent from session settings and required on native sessions, while user/persona labels and `assistant_name` remain absent from both, consistent with ADR-037.
 - [ ] #85 Every remaining ChaChaNotes regression that synthesizes a pre-v28 database from the current schema removes the v28 conversation authority column before replay, preserving the v16 local-marks and v20/v21 world-book migration assertions without weakening production migration validation.
+- [ ] #86 Incremental Chatbook import performance compares robust early and late medians so sustained slowdown still fails while a single millisecond-scale host scheduling outlier cannot fail an otherwise successful import sequence.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -203,6 +204,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 77. Remove the post-v17 conversation authority column from the v17 migration fixture before replaying migrations to the current schema.
 78. Align the Console schema ownership regression with ADR-037's durable assistant identity versus persona presentation boundary.
 79. Remove the v28 conversation authority column from the remaining v16, v20, and v21 synthetic rollback fixtures before replaying migrations to the current schema.
-80. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-81. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+80. Replace the incremental Chatbook import test's single-sample maximum-deviation assertion with an early-versus-late median degradation check.
+81. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+82. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
