@@ -284,7 +284,9 @@ def test_parakeet_file_model_construction_uses_loader(
     ensure_import = Mock(side_effect=sentinel)
     soundfile = Mock()
     soundfile.read.return_value = (service_module.np.zeros(1), 16000)
-    soundfile.info.return_value = SimpleNamespace(duration=0.0)
+    soundfile.info.return_value = SimpleNamespace(
+        duration=1.0, frames=16000, samplerate=16000
+    )
     _install_fake_mlx(monkeypatch)
     monkeypatch.setattr(service_module, "PARAKEET_MLX_AVAILABLE", True)
     monkeypatch.setattr(service_module, "sf", soundfile)
