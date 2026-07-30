@@ -2549,6 +2549,10 @@ plus consumed pending state. Retain all existing behavior assertions.
   Tests/UI/test_product_maturity_phase3_knowledge_entry.py \
   Tests/UI/test_product_maturity_phase3_library_study_context.py \
   Tests/UI/test_product_maturity_phase3_source_study_generation.py \
+  -k "not test_app_level_runtime_backend_callback_updates_backend_and_forwards" \
+  -q
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_study_screen.py::test_app_level_runtime_backend_callback_updates_backend_and_forwards \
   -q
 ../../.venv/bin/python -m ruff check \
   Tests/UI/test_study_screen.py \
@@ -2561,9 +2565,9 @@ plus consumed pending state. Retain all existing behavior assertions.
 git diff --check
 ```
 
-Expected after this cluster: every missing-store/legacy-handoff failure is gone;
-only the separately documented runtime-callback fixture may remain. Static and
-diff checks introduce no new issues.
+Expected after this cluster: all 81 in-scope tests pass; the separately run
+runtime-callback fixture retains its independent RED for the next cluster.
+Static and diff checks introduce no new issues.
 
 ### Task 5: Review and refresh the diagnostic inventory
 
