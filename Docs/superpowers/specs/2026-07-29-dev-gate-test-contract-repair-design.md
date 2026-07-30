@@ -379,6 +379,13 @@ Update the tests to describe current behavior:
     the construction thread remain visible when `PriorityQueue.load` queries
     it through `asyncio.to_thread`. Do not disable scheduling, change
     production connection ownership, or point the fixture at host data.
+43. In the Console resolution-view regression, remove the retired app-root
+    provider/model reactive setup and stage the simulated user provider choice
+    on `ChatScreen._console_control_provider`, the current state written by the
+    mounted compact-provider handler. Preserve the fresh disk-backed
+    llama.cpp-default assertion followed by Anthropic Console-control
+    precedence. Update the test name/comments to describe the current owner.
+    Do not restore app-reactive coupling or add a compatibility path.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -529,6 +536,10 @@ compatibility shims. No broad deletion of live tests.
   loads subscriptions off-thread. A private file-backed fixture is the
   smallest faithful seam: it shares the initialized schema across those two
   connections without mocking away scheduler behavior.
+- Teaching `_effective_console_provider_model` to read app-root reactives again
+  would reverse the accepted explicit resolver boundary. Staging the existing
+  screen-owned control field keeps this integration check useful without
+  duplicating event or compatibility machinery.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

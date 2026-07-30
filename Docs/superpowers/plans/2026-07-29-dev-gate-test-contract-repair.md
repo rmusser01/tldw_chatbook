@@ -1668,6 +1668,44 @@ git add \
 git commit -m "test(console): share scheduler subscriptions fixture"
 ```
 
+### Task 4am: Stage resolution overrides through Console-owned state
+
+**Files:**
+- Modify: `Tests/UI/test_console_session_settings.py`
+
+- [ ] **Step 1: Reproduce the retired reactive expectation**
+
+Run `test_console_resolution_view_suppresses_boot_echo_reactives`. Expected:
+the fresh persisted llama.cpp defaults win correctly, but assigning
+`app.chat_api_provider_value = "Anthropic"` no longer affects
+`_effective_console_provider_model` because Task 648 removed app-reactive
+inputs from that resolver.
+
+- [ ] **Step 2: Follow the current Console owner**
+
+Remove the obsolete app-root provider/model setup. Rename the test and clarify
+its comments to describe fresh persisted fallback plus Console-control
+precedence. Stage `"Anthropic"` on `console._console_control_provider`, which
+the live compact-provider handler owns, and retain both exact provider/model
+assertions. Do not change production or restore app-reactive compatibility.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_session_settings.py::test_console_resolution_view_prefers_console_control_over_fresh_defaults \
+  Tests/Provider/test_provider_model_resolution.py \
+  Tests/UI/test_settings_configuration_hub.py::test_effective_provider_model_prefers_console_overrides -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_console_session_settings.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_console_session_settings.py
+git diff --check
+git add \
+  Tests/UI/test_console_session_settings.py
+git commit -m "test(console): follow resolution control owner"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

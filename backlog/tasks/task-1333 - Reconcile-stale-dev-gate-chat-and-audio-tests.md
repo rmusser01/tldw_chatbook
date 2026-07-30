@@ -70,6 +70,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #42 The Console “Choose model” action-routing regression explicitly configures a valid provider with no selected model before opening settings, retaining the live button-click and destination assertion without relying on an internally contradictory blank-provider fixture.
 - [ ] #43 The live-config Console journey publishes its fake local runtime state through the current runtime-policy projection owner instead of assigning deleted writable compatibility fields, while retaining real boot, Settings persistence, navigation, and no-restart unblocking coverage.
 - [ ] #44 The live-config Console journey gives its scheduler a private file-backed Subscriptions database so schema initialized during app construction remains visible to the scheduler thread, while retaining the real cross-thread scheduler and full no-restart journey.
+- [ ] #45 The Console resolution-view regression stages its user provider override through the current Console-owned control state instead of retired app-root provider/model reactives, while retaining fresh persisted-default fallback and Console-over-default precedence coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -119,6 +120,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 36. Give the Console choose-model routing regression an explicit valid provider and missing model.
 37. Publish the live-config Console fixture's fake runtime through the current projection owner.
 38. Use a private file-backed Subscriptions path in that live-config journey's cross-thread scheduler fixture.
-39. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-40. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+39. Retarget the resolution-view user override to the Console-owned control state.
+40. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+41. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
