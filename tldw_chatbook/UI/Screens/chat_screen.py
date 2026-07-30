@@ -323,6 +323,7 @@ from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
     ConsoleCitationSourcesModal,
     ConsoleComposerBar,
+    ConsoleComposerUndoHistory,
     ConsoleDraftStash,
     ConsoleControlBar,
     ConsoleEditMessageModal,
@@ -2915,9 +2916,7 @@ class ChatScreen(BaseAppScreen):
         # here rather than being actively pruned -- bounded by how many
         # distinct session ids this screen instance has ever shown a
         # composer for, same tradeoff as the other per-session caches above.
-        self._console_undo_histories: dict[
-            str, tuple[list[Any], list[Any]]
-        ] = {}
+        self._console_undo_histories: dict[str, ConsoleComposerUndoHistory] = {}
         self._console_dictation_session: Any | None = None
         self._console_dictation_state: Literal[
             "idle", "starting", "recording", "transcribing"
@@ -5723,6 +5722,22 @@ class ChatScreen(BaseAppScreen):
             draft = store.session_draft(origin_session_id)
             insertion = self._dictation_insertion(draft, len(draft), transcript)
             store.set_session_draft(origin_session_id, draft + insertion)
+            # TASK-1281 review F5: this session's composer isn't the live
+            # one, so nothing records this mutation into its banked undo/
+            # redo history -- correct on its own (a background session's
+            # history must not be touched by a mutation its own composer
+            # never saw), but it leaves that banked history stale relative
+            # to the store draft it will be re-paired with on switch-in.
+            # Left alone, the banked top entry predates BOTH this dictated
+            # text and whatever was in the draft before it, so a single
+            # Ctrl+Z after switching back in would destroy both in one
+            # step (reproduced: history top = pre-"hello", store draft =
+            # "hello dictated words", one undo -> ""). Dropping the banked
+            # history instead makes the dictated text simply not undoable
+            # via history (consistent with "history records composer
+            # mutations, not store writes") rather than undoable in a way
+            # that silently corrupts the draft.
+            self._console_undo_histories.pop(origin_session_id, None)
         except KeyError:
             self.app_instance.notify(
                 "Dictation finished, but its original Console session is gone.",
@@ -14706,6 +14721,13 @@ class ChatScreen(BaseAppScreen):
             # Stashed sends were cleared at the keypress — clearing again
             # here would eat keystrokes typed after Enter (the next draft).
             composer.clear_draft()
+            # TASK-1281 review F2: send is a history barrier -- see
+            # `_on_console_submission_accepted`'s identical comment. This
+            # site covers the same "content is genuinely gone" moment for
+            # sends that reach here without an inflight keypress stash
+            # (e.g. the mouse-click Send path).
+            composer.clear_history()
+        self._console_undo_histories.pop(session_id, None)
         if (
             result.accepted
             and controller.run_state.status is ConsoleRunStatus.COMPLETED
@@ -14757,6 +14779,23 @@ class ChatScreen(BaseAppScreen):
             self._console_inflight_send_stashes.pop(session_id, None)
         elif composer is not None and active_session_id == session_id:
             composer.clear_draft()
+        # TASK-1281 review F2: this hook fires ONLY once submit_draft has
+        # confirmed the turn actually proceeds (never for a blocked/refused
+        # send -- see the docstring above), so every call here represents a
+        # draft that is genuinely, irrevocably gone. Clearing just the
+        # draft text (above) is not enough: the mutations that PRODUCED it
+        # stay reachable on the undo stack either way (a `clear_draft()`
+        # with no `record_history=True` records nothing, so it doesn't
+        # cover them), and Ctrl+Z would resurrect already-sent content back
+        # into the composer -- and, via the undo/redo re-persist, right
+        # back into the store as the "live" draft for a message that has
+        # already shipped. Drops the banked history unconditionally (a sent
+        # session can never be usefully switched back into with anything
+        # from before the send), and the composer's own live stacks too
+        # when it still shows this exact session.
+        self._console_undo_histories.pop(session_id, None)
+        if composer is not None and self._console_visible_draft_session_id == session_id:
+            composer.clear_history()
         # task-351(a): echo the just-appended USER message immediately rather
         # than waiting up to a full 0.2s transcript-poll cycle (and a heavy
         # first poll after it). The composer clears here at acceptance, so
@@ -15296,14 +15335,21 @@ class ChatScreen(BaseAppScreen):
             return False
         if replace:
             composer.clear_draft()
+            composer.insert_text_as_paste(text)
         elif composer.draft_text():
             # Appending onto an existing draft must never mash the two
             # payloads together with no boundary between them. The composer
             # caret is editable now, so seek the end first to keep this an
-            # append rather than a mid-draft splice.
+            # append rather than a mid-draft splice. TASK-1281 review N1:
+            # the separator and the body are inserted as ONE
+            # `insert_text_as_paste` call (rather than a separate
+            # `insert_text("\n")` followed by the paste) so they also
+            # record as a single undo entry -- previously one Ctrl+Z only
+            # removed the pasted body and left a stray blank line behind.
             composer.move_cursor_end()
-            composer.insert_text("\n")
-        composer.insert_text_as_paste(text)
+            composer.insert_text_as_paste(f"\n{text}")
+        else:
+            composer.insert_text_as_paste(text)
         return True
 
     async def _consume_pending_console_prompt_insert(self) -> None:
@@ -18055,6 +18101,37 @@ class ChatScreen(BaseAppScreen):
             self._build_console_control_state(self._pending_console_launch_context)
         )
 
+    def _console_composer_history_session_synced(self) -> bool:
+        """Return whether the composer's visible session matches the active one.
+
+        TASK-1281 review F1 (HIGH): mirrors the guard `_insert_console_
+        dictation` already carries for exactly this reason. During the
+        session-switch settle window (TASK-339) -- `controller.switch_
+        session(...)` runs synchronously and `store.active_session_id`
+        changes immediately, but `_console_visible_draft_session_id` only
+        catches up later, inside `_sync_console_session_draft`, once the
+        deferred sync actually runs -- the composer can still be showing
+        session A's draft while the store already considers session B
+        active. Undo/redo must never run while that window is open: doing
+        so would apply session A's history against the composer, then
+        (via the re-persist below) write A's resulting text into the STORE
+        under session B's id -- permanently destroying B's own draft the
+        moment the deferred swap finally lands.
+
+        Returns:
+            True only when the composer is not None, an active session
+            exists, and the composer is provably showing that exact
+            session's draft right now.
+        """
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return False
+        store = self._ensure_console_chat_store()
+        return (
+            store.active_session_id is not None
+            and self._console_visible_draft_session_id == store.active_session_id
+        )
+
     def _persist_console_composer_draft_after_history_navigation(
         self, composer: ConsoleComposerBar
     ) -> None:
@@ -18066,6 +18143,12 @@ class ChatScreen(BaseAppScreen):
         so without this the store and the visible composer would split-brain
         the instant a session switch (or app restore) next reads the store's
         copy instead of the live widget.
+
+        Callers must have already confirmed
+        `_console_composer_history_session_synced()` before mutating the
+        composer at all (F1) -- this method persists to whatever session is
+        CURRENTLY active, trusting that check rather than re-deriving it,
+        so it must never be called from a stale window.
         """
         store = self._ensure_console_chat_store()
         if store.active_session_id is not None:
@@ -18080,14 +18163,27 @@ class ChatScreen(BaseAppScreen):
 
         A no-op composer-side and here when there is nothing to undo -- no
         store write, no Workbench resync, matching the "silent no-op" AC.
+        Also a no-op, with the composer left entirely untouched, while the
+        session-switch settle window is open (F1) -- applying an undo in
+        that window at all (not just skipping the persist) would leave the
+        composer showing content that belongs to neither the session it
+        still visibly reflects nor the one the store now considers active.
         """
+        if not self._console_composer_history_session_synced():
+            return
         composer = self._console_composer_or_none()
         if composer is None or not composer.undo():
             return
         self._persist_console_composer_draft_after_history_navigation(composer)
 
     def _console_composer_redo(self) -> None:
-        """Redo a Console composer draft mutation that was just undone (TASK-1281)."""
+        """Redo a Console composer draft mutation that was just undone (TASK-1281).
+
+        See `_console_composer_undo` -- the same settle-window guard (F1)
+        applies here.
+        """
+        if not self._console_composer_history_session_synced():
+            return
         composer = self._console_composer_or_none()
         if composer is None or not composer.redo():
             return
