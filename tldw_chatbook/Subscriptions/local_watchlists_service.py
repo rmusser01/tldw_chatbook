@@ -44,6 +44,23 @@ _ALERT_CONDITION_TYPES = frozenset(
     }
 )
 
+#: The source types `_default_run_executor`'s feed arm handles.
+_FEED_SOURCE_TYPES = frozenset({"rss", "atom", "json_feed", "podcast"})
+
+#: Every source type a local run can execute, i.e. exactly the arms of
+#: `_default_run_executor` below.
+#:
+#: TASK-1383. Exported because the scheduled-check handler
+#: (`Scheduling/scheduler/handlers/watchlist_check_handler.py`) has to decide
+#: whether a subscription is executable *before* it launches a run, and it
+#: used to answer that question from its own private tuples. Those tuples had
+#: drifted: they omitted `sitemap` entirely, so every scheduled sitemap source
+#: took an "unknown subscription type" branch and was never checked. One
+#: definition, read by both callers, is what stops that recurring.
+EXECUTABLE_SOURCE_TYPES = _FEED_SOURCE_TYPES | frozenset(
+    {"url", "url_list", "sitemap", "api"}
+)
+
 #: Every counter `_disposition_counts` can return, in the order the Runs pane
 #: renders them. Named here rather than inline so the zero-fill and the
 #: binding below cannot disagree about which counters exist.
@@ -885,7 +902,7 @@ class LocalWatchlistsService:
         # `None` for the feed and API arms, which have no dispositions at all
         # (spec §4) -- distinguished from `[]`, which would record four zeros.
         dispositions: list[dict[str, Any]] | None = None
-        if source_type in {"rss", "atom", "json_feed", "podcast"}:
+        if source_type in _FEED_SOURCE_TYPES:
             items = await FeedMonitor().check_feed(subscription_config)
         elif source_type == "url":
             result, disposition = await URLMonitor(db).check_url(subscription_config)

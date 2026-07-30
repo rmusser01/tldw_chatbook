@@ -21,6 +21,7 @@ from tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler import 
 )
 from tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
+from tldw_chatbook.Subscriptions import LocalWatchlistsService
 
 pytestmark = pytest.mark.unit
 
@@ -55,33 +56,52 @@ def _loop(subs_db: SubscriptionsDB, handler: WatchlistCheckHandler) -> Scheduler
 
 @pytest.mark.asyncio
 async def test_due_watchlist_is_dispatched_and_persisted(tmp_path):
-    """A due subscription is checked and its result written back to the DB."""
+    """A due subscription is checked and its result written back to the DB.
+
+    TASK-1383: the handler now executes through ``LocalWatchlistsService``, so
+    the stub goes in at the service's ``run_executor`` seam rather than at the
+    handler's monitors -- which keeps the real ``launch_run``/``execute_run``
+    persistence in the loop and lets this test assert the run row the Runs pane
+    reads, which is what was missing.
+    """
     subs_db = SubscriptionsDB(tmp_path / "subs.db")
     subscription_id = _due_subscription(subs_db)
     before = subs_db.get_subscription(subscription_id)["last_checked"]
 
-    feed_monitor = AsyncMock()
-    feed_monitor.check_feed.return_value = [
-        {
-            "url": "https://example.com/post-1",
-            "title": "Post 1",
-            "content": "hello",
-        }
-    ]
+    checked: list[str] = []
+
+    def fake_executor(subscription):
+        checked.append(subscription["name"])
+        return [
+            {
+                "url": "https://example.com/post-1",
+                "title": "Post 1",
+                "content": "hello",
+            }
+        ]
+
     handler = WatchlistCheckHandler(
         subscriptions_db=subs_db,
-        feed_monitor=feed_monitor,
-        url_monitor=AsyncMock(),
         shadow_mode=False,
+        watchlists_service=LocalWatchlistsService(
+            db_factory=lambda: subs_db, run_executor=fake_executor
+        ),
     )
 
     loop = _loop(subs_db, handler)
     loop.queue.load()
     await loop.tick()
 
-    feed_monitor.check_feed.assert_awaited_once()
+    assert checked == ["Due feed"], "the due subscription was not checked"
     after = subs_db.get_subscription(subscription_id)["last_checked"]
     assert after != before, "the check result was not persisted to Subscriptions_DB"
+
+    runs = await LocalWatchlistsService(db_factory=lambda: subs_db).list_runs(
+        source_id=subscription_id
+    )
+    assert len(runs) == 1, "a scheduled check must be visible to the Runs pane"
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["stats"]["new_items_found"] == 1
 
 
 @pytest.mark.asyncio
