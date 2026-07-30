@@ -25,6 +25,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Grid, Horizontal
+from textual.css.query import NoMatches
 from textual.widgets import Input, Select, Static
 
 from tldw_chatbook.UI.stts_playground_catalog import (
@@ -209,6 +210,42 @@ class SpeechAxisRow(Grid):
         if current is not None and current in {value for _, value in options}:
             select.value = current
         return select
+
+    def update_values(self, values: dict[str, str]) -> None:
+        """Repaint every axis's marker in place from new session values.
+
+        Recomputes exactly what `compose()` computed per axis -- label
+        text, the `speech-chip-override` class, and the tooltip -- from
+        `is_override`. No recompose: an instance does not survive one, and
+        the pane's writers call this mid-`_apply_controls`, before that
+        method's own `_applying_catalog_controls` guard clears.
+
+        Tolerates a chip not being mounted yet (`NoMatches`): the pane's
+        writers can run before `compose()` has yielded this row, or in a
+        unit-test context that never mounts it.
+
+        Args:
+            values: Effective value per axis for this session. Replaces
+                `self.values` (the row's own copy -- `defaults` are never
+                touched here; they are written exactly once, at
+                construction).
+        """
+        self.values = dict(values)
+        for axis in AXIS_CONTROLS:
+            try:
+                label = self.query_one(f"#{axis_chip_id(axis)}", Static)
+            except NoMatches:
+                continue
+            override = self.is_override(axis)
+            label.update(AXIS_LABELS[axis] + (OVERRIDE_MARKER if override else ""))
+            label.set_class(override, "speech-chip-override")
+            label.tooltip = (
+                "Session override — saved default is "
+                f"{self.defaults.get(axis, UNSET_VALUE)}"
+                if override
+                else "Matches the saved default "
+                f"({self.defaults.get(axis, UNSET_VALUE)})"
+            )
 
     def compose(self) -> ComposeResult:
         """Yield a labelled, editable control per axis, marking overrides."""
