@@ -89,6 +89,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   now share that pane and class with the valid sibling
   `#evals-primary-action-status`, so the count is three even though both
   duplicate target rows compose correctly with distinct ids.
+- The real Lab route mounts `LocalModelsWidget`, whose parent `on_mount()`
+  immediately queries `#delete-confirm-dialog` before composed children are
+  queryable and raises `NoMatches`. The dialog and delete flow remain live;
+  their initial hidden state and later reactive visibility are coupled to an
+  invalid parent/child lifecycle assumption.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -455,6 +460,11 @@ Update the tests to describe current behavior:
     `#evals-inspector-bench` rather than its broader pane. Preserve the exact
     two-row count, nonzero geometry checks, and all four index-derived editor
     and inspector ids; leave the sibling primary-action status unchanged.
+52. Make the local-model dialog hidden by its existing component CSS, remove
+    the eager child query from `on_mount()`, and defer reactive show/hide
+    application until after refresh through a helper that tolerates a not-yet
+    composed child. Exercise hidden-first, show, and hide state in the existing
+    real-shell Lab route regression without adding a harness.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -642,6 +652,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   make the mount-collision regression less precise. Moving only the query root
   to the existing EvalsInspector owner keeps the shared class and all rendered
   row/id assertions meaningful.
+- Removing the local-model dialog or suppressing Models construction would
+  discard a live delete flow or hide the real route defect. CSS owning initial
+  visibility and the watcher owning later visibility preserves behavior with
+  one lifecycle-safe seam and no compatibility surface.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

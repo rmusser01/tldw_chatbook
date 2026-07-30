@@ -2000,6 +2000,55 @@ git diff --check
 Expected: the duplicate-target regression and the complete Evals bench editor
 module pass with the sibling action status untouched.
 
+### Task 4av: Make local-model delete visibility lifecycle-safe
+
+**Files:**
+- Modify: `tldw_chatbook/Widgets/HuggingFace/local_models_widget.py`
+- Modify: `Tests/UI/test_lab_mode_strip.py`
+
+- [ ] **Step 1: Preserve the real-route failure**
+
+Run `test_lab_route_and_mode_strip_navigate_the_real_shell`. Expected before
+the fix: mounting the Models route raises `NoMatches` when
+`LocalModelsWidget.on_mount()` queries `#delete-confirm-dialog` before its
+composed children are queryable.
+
+- [ ] **Step 2: Split initial and reactive visibility ownership**
+
+Set the existing dialog class to `display: none` in component CSS, remove the
+eager child lookup from `on_mount()`, and make the reactive watcher apply
+visibility after refresh through a small query-materializing helper that
+returns safely when the child is not yet present. Do not remove the dialog or
+delete flow and do not cherry-pick the unrelated source commit.
+
+- [ ] **Step 3: Retain show/hide behavior in the existing real-shell test**
+
+After Models mounts, wait for `#delete-confirm-dialog`, assert it is hidden,
+set the mounted `LocalModelsWidget.show_delete_confirm` true and then false,
+and assert both deferred visibility changes after the pilot settles. Keep the
+existing Models/Evals/Speech route and active-chip assertions.
+
+- [ ] **Step 4: Verify focused Lab lifecycle**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_lab_mode_strip.py::test_lab_route_and_mode_strip_navigate_the_real_shell \
+  Tests/UI/test_lab_mode_strip.py \
+  Tests/UI/test_llm_screen_lab_adoption.py \
+  Tests/UI/test_lab_frame_mode_keys.py \
+  -q
+../../.venv/bin/python -m ruff check \
+  tldw_chatbook/Widgets/HuggingFace/local_models_widget.py \
+  Tests/UI/test_lab_mode_strip.py
+../../.venv/bin/python -m ruff format --check \
+  tldw_chatbook/Widgets/HuggingFace/local_models_widget.py \
+  Tests/UI/test_lab_mode_strip.py
+git diff --check
+```
+
+Expected: Models mounts without lifecycle errors, delete confirmation is
+hidden/showable/hideable, and Lab navigation remains green.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
