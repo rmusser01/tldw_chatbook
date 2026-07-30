@@ -168,7 +168,8 @@ def normalize_watchlist_run(
     job_id = payload.get("job_id")
     if source_id is None and source == "local":
         source_id = job_id
-    return {
+    stats = dict(payload.get("stats") or {})
+    normalized = {
         "id": build_watchlist_item_id(source, "watchlist_run", run_id),
         "backend": source,
         "entity_kind": "watchlist_run",
@@ -178,7 +179,7 @@ def normalize_watchlist_run(
         "status": payload.get("status") or "unknown",
         "started_at": payload.get("started_at"),
         "finished_at": payload.get("finished_at"),
-        "stats": dict(payload.get("stats") or {}),
+        "stats": stats,
         "error_msg": payload.get("error_msg"),
         "filter_tallies": payload.get("filter_tallies"),
         "log_text": payload.get("log_text"),
@@ -186,6 +187,18 @@ def normalize_watchlist_run(
         "truncated": bool(payload.get("truncated", False)),
         "filtered_sample": payload.get("filtered_sample"),
     }
+    # TASK-1362 Task 7 (spec §4): lift a url-family run's check dispositions
+    # from the nested `stats` blob onto the run dict's own top level, the
+    # same way the Runs pane reads every other per-run counter (`found_count`
+    # and friends) -- so `RunsPane._stats_text` can render them without also
+    # knowing the `stats` nesting. Only added when present at all: a feed/API
+    # run's `stats` never carries `dispositions` (see `test_feed_runs_record_
+    # no_dispositions`), and a run dict with no key renders identically to
+    # one whose key is an empty dict, so there is no reason to fabricate one.
+    dispositions = stats.get("dispositions")
+    if isinstance(dispositions, Mapping):
+        normalized["dispositions"] = dict(dispositions)
+    return normalized
 
 
 def _coerce_condition_value(value: Any) -> dict[str, Any]:

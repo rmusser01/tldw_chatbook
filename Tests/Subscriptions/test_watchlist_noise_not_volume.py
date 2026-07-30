@@ -310,6 +310,32 @@ def _dispositions(run_result: dict) -> dict[str, int]:
     return dict(run_result["stats"]["dispositions"])
 
 
+def test_disposition_count_keys_are_bound_to_the_real_constants():
+    """TASK-1362 ledgered Minor (Task 3 review): the service's stats-key map
+    must be keyed off `monitoring_engine`'s actual `DISPOSITION_*` constants,
+    not a re-spelled string literal. A drift between the two would silently
+    `KeyError` inside `_disposition_counts` and discard every item a run
+    collected -- this pins the binding directly rather than trusting that the
+    literals were copied correctly.
+    """
+    from tldw_chatbook.Subscriptions import monitoring_engine
+    from tldw_chatbook.Subscriptions.local_watchlists_service import (
+        _disposition_count_keys,
+    )
+
+    mapping = _disposition_count_keys()
+    assert set(mapping) == {
+        monitoring_engine.DISPOSITION_CHANGED,
+        monitoring_engine.DISPOSITION_UNCHANGED,
+        monitoring_engine.DISPOSITION_WITHHELD,
+        monitoring_engine.DISPOSITION_BASELINE_STORED,
+    }
+    assert mapping[monitoring_engine.DISPOSITION_CHANGED] == "changed"
+    assert mapping[monitoring_engine.DISPOSITION_UNCHANGED] == "unchanged"
+    assert mapping[monitoring_engine.DISPOSITION_WITHHELD] == "withheld"
+    assert mapping[monitoring_engine.DISPOSITION_BASELINE_STORED] == "baseline"
+
+
 async def _url_source(monkeypatch, pages: list[str], **payload):
     """A real url-family source with an arbitrary create payload.
 
@@ -807,6 +833,51 @@ async def test_feed_runs_record_no_dispositions(monkeypatch):
     assert result["status"] == "completed"
     assert "dispositions" not in result["stats"]
     assert result["stats"]["items_found"] == 1, "the feed arm still works"
+
+
+@pytest.mark.asyncio
+async def test_run_row_surfaces_dispositions_for_the_runs_pane(monkeypatch):
+    """TASK-1362 Task 7: the run row the SERVICE returns carries top-level
+    `dispositions`, and the Runs pane's detail text renders it from that
+    same row.
+
+    Two layers, pinned separately (mutation 1 for this task). `_dispositions()`
+    above already pins `run["stats"]["dispositions"]` (Task 3/6, nested,
+    exercising `execute_run`'s in-process return value). This test is about
+    the FLATTENED top-level key `service.list_runs()` re-derives from the
+    persisted `stats_json` -- which is what `RunsPane._stats_text` actually
+    reads (`runs_pane.py`'s `run.get("dispositions")`, not
+    `run["stats"]["dispositions"]`). Dropping the normalizer's lift must
+    redden only this test, not the pure-unit `_stats_text` tests in
+    `Tests/Watchlists/test_watchlists_runs_pane.py` -- those pin the render
+    given a hand-built dict and never touch the service at all.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
+
+    db, service, source_id = await _site_source(
+        monkeypatch,
+        [
+            _long_page("The current release is version 4.1."),
+            _long_page("The current release is version 4.5."),
+        ],
+    )
+
+    await _check(service, source_id)  # baseline
+    await _check(service, source_id)  # a real edit -> changed=1
+
+    runs = await service.list_runs(source_id=source_id)
+    latest = runs[0]  # ORDER BY id DESC in list_runs
+    assert latest["dispositions"] == _counts(changed=1), (
+        "list_runs's row must carry the same counts the run recorded, "
+        "re-derived from the persisted stats_json -- not just present on "
+        "execute_run's in-process return value"
+    )
+
+    detail_text = RunsPane._stats_text(latest)
+    assert "1 changed" in detail_text
+    assert "0 unchanged" in detail_text
+    assert "0 withheld" in detail_text
+    assert "0 baseline" in detail_text
 
 
 def test_every_default_threshold_site_agrees_on_zero():

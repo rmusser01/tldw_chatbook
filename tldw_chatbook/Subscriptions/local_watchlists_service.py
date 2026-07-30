@@ -44,15 +44,39 @@ _ALERT_CONDITION_TYPES = frozenset(
     }
 )
 
-#: `check_url`'s disposition `kind` -> the run-stats counter it increments.
-#: `withheld_below_threshold` is shortened for the stats key, which is read by
-#: the Runs pane as a one-line summary.
-_DISPOSITION_COUNT_KEYS = {
-    "changed": "changed",
-    "unchanged": "unchanged",
-    "withheld_below_threshold": "withheld",
-    "baseline_stored": "baseline",
-}
+def _disposition_count_keys() -> dict[str, str]:
+    """`check_url`'s disposition `kind` -> the run-stats counter it increments.
+
+    Keyed off `monitoring_engine`'s real ``DISPOSITION_*`` constants rather
+    than re-spelled string literals, so the two cannot drift apart (TASK-1362
+    ledgered Minor from Task 3's review: a re-spelled literal here would
+    silently `KeyError` inside a run the moment `monitoring_engine` renamed a
+    kind, discarding every item that run collected). `withheld` is shortened
+    from `DISPOSITION_WITHHELD`'s value for the stats key, which is read by
+    the Runs pane as a one-line summary.
+
+    The `monitoring_engine` import is deliberately local, not module-level:
+    this module loads unconditionally from `Subscriptions/__init__.py`
+    (its own import is not wrapped in the `try/except` that guards the
+    package's `monitoring_engine` re-export), but `monitoring_engine` carries
+    a hard `beautifulsoup4`/`defusedxml` import that not every install has
+    (see the `websearch` extras group) -- a module-level import here would
+    make importing this module fail on any install that lacks them, exactly
+    like `_default_run_executor`'s existing local import of `URLMonitor`.
+    """
+    from .monitoring_engine import (
+        DISPOSITION_BASELINE_STORED,
+        DISPOSITION_CHANGED,
+        DISPOSITION_UNCHANGED,
+        DISPOSITION_WITHHELD,
+    )
+
+    return {
+        DISPOSITION_CHANGED: "changed",
+        DISPOSITION_UNCHANGED: "unchanged",
+        DISPOSITION_WITHHELD: "withheld",
+        DISPOSITION_BASELINE_STORED: "baseline",
+    }
 
 
 def _disposition_counts(dispositions: list[dict[str, Any]]) -> dict[str, int]:
@@ -74,9 +98,10 @@ def _disposition_counts(dispositions: list[dict[str, Any]]) -> dict[str, int]:
             deliberately loud, because a silently dropped disposition is
             exactly the ambiguity this record exists to remove.
     """
+    count_keys = _disposition_count_keys()
     counts = {"changed": 0, "unchanged": 0, "withheld": 0, "baseline": 0}
     for disposition in dispositions:
-        counts[_DISPOSITION_COUNT_KEYS[str(disposition.get("kind"))]] += 1
+        counts[count_keys[str(disposition.get("kind"))]] += 1
     return counts
 
 

@@ -124,7 +124,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
     def _stats_text(run: dict[str, Any] | None) -> str:
         if not run:
             return "No run selected."
-        return (
+        base = (
             f"Status: {run.get('status', '-')}\n"
             f"Started: {run.get('started_at', '-')}\n"
             f"Duration: {run.get('duration', '-')}\n"
@@ -133,6 +133,21 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             f"Filtered: {run.get('filtered_count', 0)} | "
             f"Errors: {run.get('error_count', 0)}"
         )
+        # TASK-1362 Task 7 (spec §4): a url-family run's check dispositions,
+        # so a silent run finally says WHY it was silent (unchanged? withheld
+        # under threshold? re-baselined?) instead of just "Found: 0". Absent
+        # entirely for feed/API runs, which have no dispositions at all (see
+        # `normalize_watchlist_run`) -- `dispositions` is only ever `{}` or
+        # missing for those, so no empty "Checks:" line is added.
+        dispositions = run.get("dispositions") or {}
+        if dispositions:
+            base += (
+                f"\nChecks: {dispositions.get('changed', 0)} changed | "
+                f"{dispositions.get('unchanged', 0)} unchanged | "
+                f"{dispositions.get('withheld', 0)} withheld | "
+                f"{dispositions.get('baseline', 0)} baseline"
+            )
+        return base
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()

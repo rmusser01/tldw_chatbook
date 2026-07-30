@@ -204,6 +204,57 @@ async def test_runs_pane_renders_run_detail():
         assert "Scrape started" in str(logs.renderable)
 
 
+# --- TASK-1362 Task 7: check dispositions in the run detail block ----------
+
+
+def test_stats_text_shows_check_dispositions_when_present():
+    """A url-family run's `dispositions` counts render as a `Checks:` line.
+
+    Spec §4: a silent run must say what actually happened. The four counts
+    come straight through from the service's `stats["dispositions"]`
+    aggregate (Task 3), lifted onto the run dict (this task).
+    """
+    run = {
+        "id": "run-1",
+        "status": "completed",
+        "started_at": "2026-07-29 10:00",
+        "duration": "5m",
+        "found_count": 5,
+        "processed_count": 5,
+        "filtered_count": 0,
+        "error_count": 0,
+        "dispositions": {"changed": 1, "unchanged": 3, "withheld": 0, "baseline": 1},
+    }
+    text = RunsPane._stats_text(run)
+    assert "1 changed" in text
+    assert "3 unchanged" in text
+    assert "1 baseline" in text
+    assert "0 withheld" in text
+
+
+def test_stats_text_without_dispositions_key_is_unchanged():
+    """A feed run (no `dispositions` key at all) must render exactly the
+    pre-Task-7 text -- no empty `Checks:` line tacked on.
+    """
+    run = {
+        "id": "run-2",
+        "source_title": "AI News RSS",
+        "status": "completed",
+        "started_at": "2026-07-18 10:00",
+        "duration": "5m",
+        "found_count": 12,
+        "processed_count": 10,
+        "filtered_count": 2,
+        "error_count": 0,
+    }
+    assert RunsPane._stats_text(run) == (
+        "Status: completed\n"
+        "Started: 2026-07-18 10:00\n"
+        "Duration: 5m\n"
+        "Found: 12 | Processed: 10 | Filtered: 2 | Errors: 0"
+    )
+
+
 # --- task-876: selected row is distinguishable from a merely-focused one ---
 # See the identical section in test_watchlists_sources_pane.py for context.
 
