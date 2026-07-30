@@ -1,15 +1,29 @@
-"""Tests for the briefing DB foundation (spec #2 phase 1, task 1).
+"""Tests for the briefing DB foundation and item selection (spec #2 phase 1).
 
-Covers: the `briefings` / `briefing_items` tables and the two new
+Task 1 (DB): the `briefings` / `briefing_items` tables and the two new
 `watchlists` columns exist; the coverage-window watermark ignores `failed`
 briefings (never advances the window on failure); and the global
 `queued_for_briefing` flag survives the write path -> `get_new_items` ->
 `normalize_watchlist_item` round trip.
+
+Task 2 (selection): `select_briefing_items` -- the id-watermark window, the
+three modes, the junction exclusion scoped to one watchlist, and the item
+cap's overflow accounting. Everything is seeded through the real database
+(`WatchlistBundleService.create`, `add_subscription`, `watchlist_sources`,
+`persist_subscription_item`) rather than through fakes, because the rules
+under test are *about* what the SQL sees.
 """
+
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions.briefing_selection import (
+    BriefingSelection,
+    select_briefing_items,
+)
+from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from tldw_chatbook.Subscriptions.watchlist_normalizers import normalize_watchlist_item
 
@@ -165,3 +179,365 @@ def test_list_briefings_returns_newest_first_by_identity():
 def test_get_briefing_returns_none_for_a_missing_id():
     db = SubscriptionsDB(":memory:", "test")
     assert db.get_briefing(999999) is None
+
+
+# --- Task 2: selection ------------------------------------------------------
+#
+# Seeding helpers. Item ids come from the real AUTOINCREMENT sequence, so the
+# ORDER in which `_add_item` is called is the id order -- which is exactly the
+# property the watermark relies on and several tests below deliberately set
+# against `created_at`.
+
+
+def _new_source(db, watchlist_id, name):
+    """Add a subscription and attach it to a watchlist."""
+    source_id = db.add_subscription(
+        name=name, type="rss", source=f"https://{name}.example/feed.xml"
+    )
+    WatchlistBundleService(db).add_source(watchlist_id, source_id)
+    return source_id
+
+
+def _detached_source(db, name):
+    """Add a subscription that is not (yet) in any watchlist."""
+    return db.add_subscription(
+        name=name, type="rss", source=f"https://{name}.example/feed.xml"
+    )
+
+
+def _add_item(db, source_id, title, created_at, *, queued=False):
+    """Insert one item through the real persist path; return its id."""
+    slug = title.lower().replace(" ", "-")
+    with db.transaction() as conn:
+        item_id = persist_subscription_item(
+            conn,
+            source_id,
+            {
+                "url": f"https://items.example/{source_id}/{slug}",
+                "title": title,
+                "content": f"body of {title}",
+                "content_hash": f"hash-{source_id}-{slug}",
+                "content_kind": "article",
+                "content_format": "text",
+            },
+            run_id=None,
+            now=created_at,
+        )
+    if queued:
+        db.set_item_briefing_queued(item_id, True)
+    return item_id
+
+
+def _complete_briefing(db, watchlist_id, covers_through_item_id, *, item_ids=()):
+    """Record a completed briefing (and, optionally, its junction rows).
+
+    The junction write lives in the test rather than in the module under
+    test on purpose: `briefing_selection` is read-only -- the service (task
+    3) owns every write -- so a test that needs coverage to already exist
+    has to create it the way the service will.
+    """
+    briefing_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(
+        briefing_id, status="complete", covers_through_item_id=covers_through_item_id
+    )
+    with db.transaction() as conn:
+        for item_id in item_ids:
+            conn.execute(
+                "INSERT INTO briefing_items (briefing_id, item_id, featured) "
+                "VALUES (?, ?, 0)",
+                (briefing_id, item_id),
+            )
+    return briefing_id
+
+
+def _ids(selection):
+    """Item ids of a selection, in selection order."""
+    return [item["item_id"] for item in selection.items]
+
+
+def test_watermark_window_excludes_a_late_added_sources_backlog():
+    """The id watermark's free flood-fix: a source added after briefing 1 has
+    historical items with ids below the watermark -- auto-excluded.
+
+    The `created_at` values are set deliberately AGAINST the id order: the
+    backlog rows are the newest by timestamp and the oldest by id. A window
+    built on timestamps would drag the whole backlog into briefing 2; the id
+    watermark cannot, which is the entire reason the spec chose ids.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+
+    # The late-added source's backlog exists FIRST (low ids) but carries the
+    # NEWEST timestamps.
+    backlog_source = _detached_source(db, "backlog")
+    backlog = [
+        _add_item(db, backlog_source, f"Backlog {n}", "2026-07-29T23:00:00+00:00")
+        for n in range(3)
+    ]
+
+    # The watchlist's original source has older timestamps and higher ids.
+    original = _new_source(db, watchlist, "original")
+    covered = _add_item(db, original, "Covered item", "2026-07-20T09:00:00+00:00")
+    _complete_briefing(db, watchlist, covered, item_ids=[covered])
+
+    # Now the backlog source joins the watchlist, and one genuinely new item
+    # arrives on the original source.
+    WatchlistBundleService(db).add_source(watchlist, backlog_source)
+    fresh = _add_item(db, original, "Fresh item", "2026-07-21T09:00:00+00:00")
+
+    selection = select_briefing_items(db, watchlist, mode="auto")
+
+    assert _ids(selection) == [fresh]
+    assert not set(backlog) & set(_ids(selection))
+    assert covered not in _ids(selection)
+    assert selection.covers_through_item_id == fresh
+    assert selection.overflow_count == 0
+
+
+def test_failed_briefing_does_not_advance_selection():
+    """Generate window A -> complete at watermark X. Insert items. A failed
+    briefing row with a HIGHER covers_through_item_id must not move the next
+    selection: it still starts at X.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Infra")["id"]
+    source = _new_source(db, watchlist, "infra")
+
+    window_a = [
+        _add_item(db, source, f"A{n}", "2026-07-20T09:00:00+00:00") for n in range(2)
+    ]
+    watermark = max(window_a)
+    _complete_briefing(db, watchlist, watermark, item_ids=window_a)
+
+    after = [
+        _add_item(db, source, f"B{n}", "2026-07-21T09:00:00+00:00") for n in range(3)
+    ]
+
+    # A failed attempt claims a watermark past everything -- and must not be
+    # believed. `latest_completed_watermark` excludes 'failed'; this test
+    # pins that the SELECTION honours that exclusion end to end.
+    failed = db.insert_briefing(watchlist)
+    db.update_briefing(
+        failed, status="failed", covers_through_item_id=max(after), error="boom"
+    )
+
+    selection = select_briefing_items(db, watchlist, mode="auto")
+
+    assert sorted(_ids(selection)) == sorted(after)
+    assert selection.covers_through_item_id == max(after)
+    # The retry re-covers the same window: nothing from window A leaks back
+    # in, and nothing after the watermark was lost by the failure.
+    assert not set(window_a) & set(_ids(selection))
+
+
+def test_queued_items_bypass_the_window_in_both_modes():
+    """A queued item OLDER than the watermark appears in curated AND
+    auto_featured selections, marked featured in the latter; it does not
+    appear in plain auto.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Papers")["id"]
+    source = _new_source(db, watchlist, "papers")
+
+    # Queued three weeks ago, and already below the watermark -- the spec's
+    # exact scenario ("a user who queues a three-week-old item wants it in
+    # the next briefing").
+    old_queued = _add_item(
+        db, source, "Old but queued", "2026-07-08T09:00:00+00:00", queued=True
+    )
+    _complete_briefing(db, watchlist, old_queued)
+    in_window = _add_item(db, source, "In window", "2026-07-29T09:00:00+00:00")
+
+    auto = select_briefing_items(db, watchlist, mode="auto")
+    assert _ids(auto) == [in_window]
+    assert old_queued not in _ids(auto)
+    assert auto.featured_ids == set()
+
+    curated = select_briefing_items(db, watchlist, mode="curated")
+    assert _ids(curated) == [old_queued]
+    assert in_window not in _ids(curated)
+    # Curated is not "featured": every item in the briefing is curated, so
+    # there is nothing to give top billing over.
+    assert curated.featured_ids == set()
+
+    union = select_briefing_items(db, watchlist, mode="auto_featured")
+    assert _ids(union) == [old_queued, in_window]  # featured first
+    assert union.featured_ids == {old_queued}
+    assert union.overflow_count == 0
+
+
+def test_curated_excludes_items_this_watchlist_already_covered():
+    """Junction rows for watchlist W exclude re-selection in W; the same item
+    still selects for watchlist V (the global-queue-never-cleared rule).
+
+    The flag is global and generation never clears it, so the ONLY thing that
+    can stop a queued item from being selected again is a junction row of
+    *this* watchlist's own briefing.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    bundles = WatchlistBundleService(db)
+    w = bundles.create(name="W")["id"]
+    v = bundles.create(name="V")["id"]
+
+    source = _new_source(db, w, "shared")
+    bundles.add_source(v, source)  # the same source sits in both watchlists
+
+    covered = _add_item(
+        db, source, "Already briefed", "2026-07-20T09:00:00+00:00", queued=True
+    )
+    still_open = _add_item(
+        db, source, "Not yet briefed", "2026-07-21T09:00:00+00:00", queued=True
+    )
+
+    # W briefed `covered`; V has never briefed anything.
+    _complete_briefing(db, w, covered, item_ids=[covered])
+
+    w_curated = select_briefing_items(db, w, mode="curated")
+    assert _ids(w_curated) == [still_open]
+    assert covered not in _ids(w_curated)
+
+    v_curated = select_briefing_items(db, v, mode="curated")
+    assert sorted(_ids(v_curated)) == sorted([still_open, covered])
+
+    # The flag itself was never cleared by W's briefing -- V sees it set.
+    assert all(item["queued_for_briefing"] for item in v_curated.items)
+
+
+def test_overflow_counts_dropped_items_and_features_survive_the_cap():
+    """cap=3, five window items + two queued: both queued kept + newest auto
+    item; overflow_count == 4 -- exact identities, not just counts.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Firehose")["id"]
+    source = _new_source(db, watchlist, "firehose")
+
+    # Two queued items below the watermark (window-exempt, hence featured).
+    queued_old = _add_item(db, source, "Queued old", "2026-07-10T09:00:00+00:00", queued=True)
+    queued_new = _add_item(db, source, "Queued new", "2026-07-11T09:00:00+00:00", queued=True)
+    _complete_briefing(db, watchlist, queued_new)
+
+    window = [
+        _add_item(db, source, f"Window {n}", "2026-07-29T09:00:00+00:00")
+        for n in range(5)
+    ]
+
+    selection = select_briefing_items(db, watchlist, mode="auto_featured", item_cap=3)
+
+    # 2 featured + 5 auto = 7 considered; cap 3 keeps both featured (never
+    # dropped) plus the single newest auto item. 7 - 3 = 4 dropped.
+    assert _ids(selection) == [queued_new, queued_old, window[-1]]
+    assert selection.featured_ids == {queued_old, queued_new}
+    assert selection.overflow_count == 4
+    assert len(selection.items) == 3
+    # Every dropped item was an auto item, and all four were seen.
+    assert not set(window[:-1]) & set(_ids(selection))
+    assert selection.covers_through_item_id == window[-1]
+
+
+def test_overflowed_items_still_advance_the_watermark():
+    """The honest-reporting half of the cap rule: items dropped by the cap
+    were CONSIDERED and are reported in `overflow_count`, so the recorded
+    watermark covers them.
+
+    Constructed so the highest-id item is one the cap dropped: three queued
+    items fill a cap of 2, leaving no room for the (newer, higher-id) window
+    items at all. `covers_through_item_id` must be the max id considered --
+    not the max id kept -- or the next briefing would re-select items this
+    one already told the user about, duplicating coverage.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Backlog")["id"]
+    source = _new_source(db, watchlist, "backlog")
+
+    queued = [
+        _add_item(db, source, f"Queued {n}", "2026-07-10T09:00:00+00:00", queued=True)
+        for n in range(3)
+    ]
+    _complete_briefing(db, watchlist, max(queued))
+    window = [
+        _add_item(db, source, f"Window {n}", "2026-07-29T09:00:00+00:00")
+        for n in range(2)
+    ]
+
+    selection = select_briefing_items(db, watchlist, mode="auto_featured", item_cap=2)
+
+    # Featured fill the cap: the two newest queued items, nothing else.
+    assert _ids(selection) == [queued[2], queued[1]]
+    assert selection.featured_ids == {queued[1], queued[2]}
+    # 1 dropped featured + 2 dropped window items.
+    assert selection.overflow_count == 3
+    # Max KEPT id is queued[2]; max CONSIDERED id is the newest window item.
+    assert max(_ids(selection)) == queued[2]
+    assert selection.covers_through_item_id == window[-1]
+    assert selection.covers_through_item_id > max(_ids(selection))
+
+
+def test_first_window_is_the_last_seven_days_by_created_at():
+    """No watermark (the first briefing ever) falls back to a 7-day window
+    measured from the INJECTED `now` -- never `datetime.now()` inline, or
+    this test could only be written against the wall clock.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Fresh")["id"]
+    source = _new_source(db, watchlist, "fresh")
+
+    now = datetime(2026, 7, 30, 12, 0, 0, tzinfo=timezone.utc)
+    too_old = _add_item(db, source, "Eight days old", (now - timedelta(days=8)).isoformat())
+    recent = _add_item(db, source, "Six days old", (now - timedelta(days=6)).isoformat())
+
+    assert db.latest_completed_watermark(watchlist) is None
+    selection = select_briefing_items(db, watchlist, mode="auto", now=now)
+
+    assert _ids(selection) == [recent]
+    assert too_old not in _ids(selection)
+    assert selection.covers_from_ts == (now - timedelta(days=7)).isoformat()
+    assert selection.covers_through_item_id == recent
+
+
+def test_first_window_orders_same_second_ties_by_id():
+    """`created_at` has one-second resolution (the TASK-1361 lesson), so a
+    burst of items written in the same second is a genuine tie. Ordering by
+    id breaks it deterministically: the cap keeps the two newest ROWS, and
+    no item is either duplicated or silently dropped from the count.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Burst")["id"]
+    source = _new_source(db, watchlist, "burst")
+
+    now = datetime(2026, 7, 30, 12, 0, 0, tzinfo=timezone.utc)
+    same_second = (now - timedelta(days=1)).isoformat()
+    burst = [_add_item(db, source, f"Tie {n}", same_second) for n in range(3)]
+
+    selection = select_briefing_items(db, watchlist, mode="auto", item_cap=2, now=now)
+
+    assert _ids(selection) == [burst[2], burst[1]]
+    assert len(_ids(selection)) == len(set(_ids(selection)))  # no duplicates
+    assert selection.overflow_count == 1  # exactly one missed, not zero or two
+    assert selection.covers_through_item_id == burst[2]
+
+
+def test_empty_window_returns_none_watermark_and_does_not_advance():
+    """`None` means "do not advance": a briefing over an empty window must
+    not record a watermark at all, or an `empty` briefing would move the
+    coverage line past items that never existed to be covered.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Quiet")["id"]
+    source = _new_source(db, watchlist, "quiet")
+    only_item = _add_item(db, source, "Only item", "2026-07-20T09:00:00+00:00")
+    _complete_briefing(db, watchlist, only_item, item_ids=[only_item])
+
+    selection = select_briefing_items(db, watchlist, mode="auto_featured")
+
+    assert isinstance(selection, BriefingSelection)
+    assert selection.items == []
+    assert selection.featured_ids == set()
+    assert selection.overflow_count == 0
+    assert selection.covers_through_item_id is None
+
+
+def test_unknown_mode_is_rejected_by_name():
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Modes")["id"]
+    with pytest.raises(ValueError, match="auto_featureed"):
+        select_briefing_items(db, watchlist, mode="auto_featureed")
