@@ -430,7 +430,7 @@ async def test_primary_action_reason_is_visible_without_hovering(evals_app):
         status = screen.query_one("#evals-primary-action-status")
         assert str(status.renderable) == "Run Bench: Blocked"
         reason = screen.query_one("#evals-primary-action-reason")
-        assert "Select a bench in the library rail to run it." in str(
+        assert "Select a bench in the Catalog rail to run it." in str(
             reason.renderable
         )
         # Both sit in the inspector pane, ahead of the button itself --
@@ -945,6 +945,48 @@ async def test_detail_empty_text_stays_generic_when_the_library_has_real_rows(
         text = str(empty.renderable)
         assert "Nothing here yet" not in text
         assert "Select a bench, dataset, or run" in text
+
+
+@pytest.mark.asyncio
+async def test_no_rendered_copy_says_library_rail_or_uses_ascii_double_dash(
+    evals_app, seeded_bench
+):
+    """TASK-1481 (live UAT): the rail's actual painted header is "Catalog"
+    (see ``LabWorkbench``'s ``label="Catalog"``/``title="Catalog"``), never
+    "library rail" -- and the rail's own copy uses real em-dashes, not
+    ASCII ``--``. Sweeps every rendered copy string these branches can
+    produce, not the source file: this module's docstrings legitimately
+    keep both "library rail" (module/class/method docstrings) and " -- "
+    (this file's comment convention throughout) -- only user-facing text
+    changes.
+
+    Both "none"-selection detail-empty branches are exercised: the
+    genuinely-empty-library wording (fresh ``evals_app``, no selection
+    yet) and the real-rows-exist wording (after selecting away from
+    ``seeded_bench`` back to "none"). The disabled primary action's
+    reason string is the third known site.
+    """
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen = evals_app.screen
+
+        empty_library_text = str(
+            screen.query_one("#evals-detail-empty").renderable
+        )
+        assert "library rail" not in empty_library_text
+        assert " -- " not in empty_library_text
+
+        _label, _disabled, reason = screen._primary_action_state()
+        assert "library rail" not in reason
+        assert " -- " not in reason
+
+        screen.select(kind="bench", id=seeded_bench)
+        await pilot.pause()
+        screen.select(kind="none", id=None)
+        await pilot.pause()
+        real_rows_text = str(screen.query_one("#evals-detail-empty").renderable)
+        assert "library rail" not in real_rows_text
+        assert " -- " not in real_rows_text
 
 
 @pytest.mark.asyncio

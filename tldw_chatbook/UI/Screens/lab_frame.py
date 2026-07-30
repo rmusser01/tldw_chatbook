@@ -87,8 +87,10 @@ class LabScreen(BaseAppScreen):
     #: NavigateToScreen -- so cycling builds zero intermediate screens.
     #:
     #: Both are printable keys, so text inputs consume them first and these act
-    #: only from button or list focus. Escape is deliberately unbound:
-    #: EvalsScreen already binds it to its own back action.
+    #: only from button or list focus. Escape is deliberately unbound here:
+    #: the shell (not this class) handles Escape, and EvalsScreen defines no
+    #: Escape binding of its own (see test_escape_and_bare_digits_are_no_
+    #: longer_bound and test_escape_does_not_pop_the_shell_screen).
     BINDINGS = [
         Binding("left_square_bracket", "lab_mode_focus(-1)", "Prev mode", show=False),
         Binding("right_square_bracket", "lab_mode_focus(1)", "Next mode", show=False),

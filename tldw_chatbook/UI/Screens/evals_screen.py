@@ -684,12 +684,12 @@ class EvalsScreen(LabScreen):
         """
         if self._view_model.library_is_empty():
             return (
-                "Nothing here yet. Create a sample bench in the library "
-                "rail to get started -- it builds a dataset and a run for "
+                "Nothing here yet. Create a sample bench in the Catalog "
+                "rail to get started — it builds a dataset and a run for "
                 "you in one step."
             )
         return (
-            "Select a bench, dataset, or run in the library rail to see "
+            "Select a bench, dataset, or run in the Catalog rail to see "
             "its detail here."
         )
 
@@ -828,7 +828,7 @@ class EvalsScreen(LabScreen):
         return (
             "Run Bench",
             True,
-            "Select a bench in the library rail to run it.",
+            "Select a bench in the Catalog rail to run it.",
         )
 
     def save_state(self):

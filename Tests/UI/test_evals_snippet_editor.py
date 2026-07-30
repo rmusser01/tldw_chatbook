@@ -364,6 +364,40 @@ async def test_snippet_editor_mounts_with_summary_and_labelled_char_column(
 
 
 @pytest.mark.asyncio
+async def test_snippet_table_header_names_the_columns_rows_actually_render(
+    evals_app, evals_db
+):
+    """TASK-1481 (live UAT): the header used to advertise five aligned
+    columns ("#  Snippet  Group  Chars  Flags"), but each row only ever
+    composes THREE widgets (``evals-snippet-index``, ``-text-``, ``-meta-``
+    -- see ``_compose_row``): index, snippet text, and a single combined
+    meta blob ("group: X · N chars · flags") in the same "·"-joined shape
+    the header now uses for that one blob, rather than pretending it is
+    three independently aligned columns. Pins the actual meta text's shape
+    against the header's own naming for it -- not just "Chars" appearing
+    somewhere in the header (the mount test above already covers that)."""
+    dataset_id = _make_dataset(evals_db, "header-shape", [_snip("The protestors were")])
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        header_text = str(screen.query_one("#evals-snippet-table-header").renderable)
+        # Exactly three real column slots -- "#", "Snippet", and the
+        # combined meta blob -- never five independently-named ones with
+        # nothing underneath two of them.
+        assert header_text == "#   Snippet   Group · Chars · Flags"
+
+        meta_text = str(screen.query_one("#evals-snippet-meta-0").renderable)
+        assert meta_text.startswith("group:")
+        assert "chars" in meta_text
+        # The header's third slot uses the same "·"-joined shape the row's
+        # own meta blob renders, so a reader can map header to row on sight.
+        assert meta_text.count("·") == header_text.count("·")
+
+
+@pytest.mark.asyncio
 async def test_normal_snippet_renders_no_whitespace_marker(evals_app, evals_db):
     clean = _snip("The protestors were")
     dataset_id = _make_dataset(evals_db, "clean-set", [clean])

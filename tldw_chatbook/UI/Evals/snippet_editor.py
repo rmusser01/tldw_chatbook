@@ -491,7 +491,7 @@ class SnippetEditor(NotifyMixin, Vertical):
         else:
             duplicate_labels = find_exact_duplicate_labels(snippets)
             yield Static(
-                "#   Snippet   Group   Chars   Flags",
+                "#   Snippet   Group · Chars · Flags",
                 id="evals-snippet-table-header",
                 classes="evals-snippet-table-header",
                 markup=False,

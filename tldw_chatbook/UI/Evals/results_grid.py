@@ -1044,9 +1044,20 @@ class ResultsGrid(NotifyMixin, Vertical):
         sort_label = {"none": "dataset order", "desc": "spread ▼", "asc": "spread ▲"}[
             self._sort_mode
         ]
+        # TASK-1481: a single-target run has no second target for the Δ
+        # lens's baseline comparison, so the usual "Baseline: column · <name>"
+        # segment (which would otherwise name the run's one and only target)
+        # is replaced with the reason instead -- see _delta_reading's own
+        # docstring for why the table itself renders blank cells, not the
+        # "baseline" literal, in this same case.
+        targets = snapshot.get("targets") or []
+        if self._lens == "delta" and len(targets) < 2:
+            baseline_state = "needs at least two targets to compare (this run has one)"
+        else:
+            baseline_state = self._baseline_description()
         state = (
             f"Lens: {self._lens_description()}   "
-            f"Baseline: {self._baseline_description()}   "
+            f"Baseline: {baseline_state}   "
             f"Sort: {sort_label}"
         )
         self.query_one("#evals-grid-state", Static).update(state)
@@ -1266,7 +1277,21 @@ class ResultsGrid(NotifyMixin, Vertical):
         just this cell's own). ``_render_cell`` and ``_on_cell_highlighted``
         both call this rather than each computing (and risking disagreeing
         about) the comparison independently.
+
+        TASK-1481: a single-target run has no second target for the lens
+        to compare against -- in column mode every cell is inherently the
+        baseline column (``tid == baseline_id`` always), so the branch
+        below used to render EVERY cell as the literal "baseline" text.
+        The Spread column (``_compute_active_lens_rows``) needs at least
+        two per-row captures across targets to compute anything, so it was
+        already silently empty for the same reason. Blank reads honestly
+        as "nothing to show" here; ``_render_header``'s state line is what
+        actually explains why (see ``needs at least two targets`` there).
         """
+        targets = self._grid["snapshot"].get("targets") or []
+        if len(targets) < 2:
+            return _DeltaReading(text="")
+
         if self._baseline_mode == "column":
             baseline_id = self._baseline_target_id()
             is_baseline_position = tid == baseline_id

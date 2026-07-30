@@ -1428,6 +1428,47 @@ async def test_delta_lens_baseline_column_shows_literal_baseline_text_or_blank_i
 
 
 @pytest.mark.asyncio
+async def test_delta_lens_on_a_single_target_run_explains_itself_instead_of_faking_baseline(
+    evals_app, evals_db
+):
+    """TASK-1481 (live UAT): a single-target run has no second target for
+    the Δ lens to compare against. Before this fix, ``_delta_reading``'s
+    "is_baseline_position" branch fired for EVERY cell (there being only
+    one target, ``tid == baseline_id`` always), so the whole column read
+    as the literal word "baseline" -- alongside an always-empty Spread
+    column, since ``analysis.spread`` needs at least two per-row captures
+    across targets (see ``_compute_active_lens_rows``). The lens itself
+    must stay selectable (this test switches to it the same way any other
+    delta test does); only what it renders for this shape changes."""
+    group_id, target_id, snippets, run_id = _make_single_target_run_group(
+        evals_db, "lonely-target", 2
+    )
+    save_cell(evals_db, run_id, snippets[0], _cap([(" a", 0.9)]))
+    save_cell(evals_db, run_id, snippets[1], _cap([(" b", 0.7)]))
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, group_id)
+        select = grid.query_one("#evals-lens-selector", Select)
+        select.value = "delta"
+        await pilot.pause()
+
+        table = grid.query_one("#evals-grid-table", DataTable)
+        assert str(table.get_cell("s1", target_id)) != "baseline"
+        assert str(table.get_cell("s2", target_id)) != "baseline"
+        assert str(table.get_cell("s1", target_id)) == ""
+        assert str(table.get_cell("s2", target_id)) == ""
+
+        state = str(grid.query_one("#evals-grid-state").renderable)
+        assert "needs at least two targets" in state
+
+        # The Δ lens is still a live, selectable option -- this fixture's
+        # single-target shape only changes what it renders, never removes
+        # it from the Select.
+        assert select.value == "delta"
+
+
+@pytest.mark.asyncio
 async def test_baseline_cell_failing_makes_the_whole_comparison_unavailable_not_zero(
     evals_app, mixed_run_group
 ):
