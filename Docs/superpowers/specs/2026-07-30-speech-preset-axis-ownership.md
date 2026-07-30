@@ -83,10 +83,13 @@ of its own beyond what it was last given.
    and no events emitted, so it is safe to call while
    `_applying_catalog_controls` is True.
 3. **The guard is reused, never duplicated.** Any new model-driven widget write
-   happens inside the existing `_applying_catalog_controls` window. Without it,
-   applying a preset fires `Select.Changed`, which reaches
-   `_end_profile_preset` (`speech_catalog_mixin.py` ~:1024) and the preset
-   detaches itself.
+   happens inside the existing `_applying_catalog_controls` window. Preset
+   detachment is in fact prevented by three mechanisms verified live: no
+   `Select.Changed` path calls `_end_profile_preset` (only the Switch and
+   Input handlers do), `handle_speed_changed` early-returns when the value
+   equals the preset's speed, and Textual does not re-post `Changed` for an
+   unchanged reactive. The guard is still reused for the widget writes
+   themselves; nothing new depends on it suppressing `Changed` delivery.
 4. **Presets never touch defaults.** Applying a preset writes `axis_values`
    only. Override markers therefore light up relative to the persisted
    defaults — correct: a preset **is** a session-scoped selection. The only
