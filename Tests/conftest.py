@@ -267,6 +267,25 @@ def _env_int(name: str, default: int) -> int:
 _GC_EVERY = max(1, _env_int("TLDW_TEST_GC_EVERY", 25))
 _gc_test_counter = 0
 
+# Directories whose tests mount Textual apps (run_test() call-site census from
+# the 2026-07-30 audit). A Textual App is a reference CYCLE that only
+# gc.collect() reclaims, and an uncollected app from the previous test
+# interferes with the next app-mounting test — with periodic-only collection
+# the victim rotates with heap state (task-1468: a 10-test batch failed a
+# DIFFERENT UI test on consecutive runs, and passed 10/10 with
+# TLDW_TEST_GC_EVERY=1). These dirs keep per-test collection; everything else
+# stays periodic, which is where the task-1454 win lives.
+_APP_MOUNTING_DIR_PARTS = (
+    f"{os.sep}Tests{os.sep}UI{os.sep}",
+    f"{os.sep}Tests{os.sep}Widgets{os.sep}",
+    f"{os.sep}Tests{os.sep}Watchlists{os.sep}",
+    f"{os.sep}Tests{os.sep}Skills{os.sep}",
+    f"{os.sep}Tests{os.sep}Library{os.sep}",
+    f"{os.sep}Tests{os.sep}Event_Handlers{os.sep}",
+    f"{os.sep}Tests{os.sep}integration{os.sep}",
+    f"{os.sep}Tests{os.sep}Chat{os.sep}",
+)
+
 
 @pytest.fixture(autouse=True)
 def cleanup_file_descriptors(request: pytest.FixtureRequest) -> Iterator[None]:
@@ -274,10 +293,13 @@ def cleanup_file_descriptors(request: pytest.FixtureRequest) -> Iterator[None]:
 
     Tests that genuinely need a collection pass right after they run (e.g. they
     open many files and assert on fd state) mark themselves
-    ``@pytest.mark.requires_cleanup``.
+    ``@pytest.mark.requires_cleanup``. Tests in app-mounting directories
+    (``_APP_MOUNTING_DIR_PARTS``) always collect, so a torn-down Textual app's
+    reference cycle never lingers into the next app's lifetime.
 
     Args:
-        request: The pytest fixture request, used to read the test's markers.
+        request: The pytest fixture request, used to read the test's markers
+            and path.
 
     Yields:
         None. Collection (if due) happens in teardown, after the test body.
@@ -286,8 +308,10 @@ def cleanup_file_descriptors(request: pytest.FixtureRequest) -> Iterator[None]:
 
     global _gc_test_counter
     _gc_test_counter += 1
+    _node_path = str(getattr(request.node, "path", "") or "")
     if (
         request.node.get_closest_marker("requires_cleanup")
+        or any(part in _node_path for part in _APP_MOUNTING_DIR_PARTS)
         or _gc_test_counter % _GC_EVERY == 0
     ):
         # Suppress ResourceWarnings emitted for unclosed files reclaimed here.
