@@ -2497,6 +2497,74 @@ git diff --check
 Expected: task 672 parses as a completed task with its existing content, every
 task identity remains unique, the harness module passes, and the diff is clean.
 
+### Task 4bh: Migrate focused Study harnesses to typed handoffs
+
+**Files:**
+- Modify: `Tests/UI/test_study_screen.py`
+- Modify: `Tests/UI/test_study_dashboard.py`
+- Modify: `Tests/UI/test_study_quizzes_screen.py`
+- Modify: `Tests/UI/test_study_flashcards_screen.py`
+- Modify: `Tests/UI/test_product_maturity_phase3_knowledge_entry.py`
+- Modify: `Tests/UI/test_product_maturity_phase3_library_study_context.py`
+- Modify: `Tests/UI/test_product_maturity_phase3_source_study_generation.py`
+
+**Existing ADR:** `backlog/decisions/033-application-session-state-ownership.md`
+
+- [ ] **Step 1: Preserve the focused RED inventory**
+
+Run the seven listed modules together. Expected before repair: 82 collected,
+18 pass and 64 fail. All but the independent app-level runtime-backend callback
+fixture fail because the real `StudyScreen` now requires
+`app_instance.pending_handoffs`, or because tests still stage values through
+retired `pending_study_*` fields/methods. Record the callback failure for a
+separate cluster.
+
+- [ ] **Step 2: Supply the current owner in shared test composition**
+
+Add an empty `PendingHandoffStore` to `_build_app_instance()` in the dashboard
+suite. In the focused quizzes and flashcards `StudyTestApp` constructors,
+install an empty store only when the supplied fake lacks one. In the lower-level
+Study screen module, use one small test-local builder for empty or
+scope-populated stores and give every direct mount/resume fixture the current
+owner. Do not translate legacy fields in a harness or change production.
+
+- [ ] **Step 3: Stage real scope and section inputs through typed channels**
+
+Across the seven modules, replace every `pending_study_scope_context` and
+`pending_study_initial_section` setup with explicit `stage()` calls on
+`HandoffChannel.STUDY_SCOPE` or `HandoffChannel.STUDY_INITIAL_SECTION`.
+Update the direct `TldwCli.open_study_screen` unit fixture to own a real store
+and inspect its typed claim. Update the restored-section precedence test to
+call `_apply_pending_section_handoff()` and assert the visible/current section
+plus consumed pending state. Retain all existing behavior assertions.
+
+- [ ] **Step 4: Verify the Study boundary**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_study_screen.py \
+  Tests/UI/test_study_dashboard.py \
+  Tests/UI/test_study_quizzes_screen.py \
+  Tests/UI/test_study_flashcards_screen.py \
+  Tests/UI/test_product_maturity_phase3_knowledge_entry.py \
+  Tests/UI/test_product_maturity_phase3_library_study_context.py \
+  Tests/UI/test_product_maturity_phase3_source_study_generation.py \
+  -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_study_screen.py \
+  Tests/UI/test_study_dashboard.py \
+  Tests/UI/test_study_quizzes_screen.py \
+  Tests/UI/test_study_flashcards_screen.py \
+  Tests/UI/test_product_maturity_phase3_knowledge_entry.py \
+  Tests/UI/test_product_maturity_phase3_library_study_context.py \
+  Tests/UI/test_product_maturity_phase3_source_study_generation.py
+git diff --check
+```
+
+Expected after this cluster: every missing-store/legacy-handoff failure is gone;
+only the separately documented runtime-callback fixture may remain. Static and
+diff checks introduce no new issues.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

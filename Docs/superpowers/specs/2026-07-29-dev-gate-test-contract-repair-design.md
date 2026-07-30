@@ -164,6 +164,11 @@ The failures reproduce on an exact `origin/dev` checkout:
   avoid numeric collisions, ending at filename 672, but its legacy Markdown
   never received YAML frontmatter and its heading still says task 635. The
   repository-wide task identity guard correctly rejects the malformed record.
+- The focused Study suites construct screen-owned test apps without the
+  required `PendingHandoffStore`, and scope/section tests still assign retired
+  `pending_study_*` fields. A seven-module inventory runs 82 tests: 64 fail,
+  with all but one failure rooted in the missing store or obsolete staging
+  seam. The remaining runtime-callback fixture failure is independent.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -616,6 +621,18 @@ Update the tests to describe current behavior:
     renumbered first-run character-chat UAT task. Change only its top heading
     from task 635 to task 672; preserve all completed acceptance criteria,
     implementation plan, implementation notes, and historical explanation.
+64. Give the shared Study dashboard app-instance builder and the focused
+    quizzes/flashcards test apps an empty `PendingHandoffStore`, matching real
+    application construction. In focused scope and section tests, remove every
+    retired `pending_study_scope_context` / `pending_study_initial_section`
+    assignment and stage the same value through `STUDY_SCOPE` or
+    `STUDY_INITIAL_SECTION`; update direct consumption assertions and method
+    calls to the current store/screen seam. In the lower-level Study screen
+    module, use one small test-local store builder to avoid repeating channel
+    staging while keeping each input explicit. Preserve all behavior
+    assertions. Do not teach production or test apps to translate legacy
+    fields, and do not fold the separate runtime-policy callback failure into
+    this migration.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -860,6 +877,12 @@ behavior. No compatibility shims. No broad deletion of live tests.
   filename/frontmatter drift the guard exists to prevent. Renumbering the file
   again would repeat the earlier mistake; completing its existing `TASK-672`
   identity is the minimal source-of-truth repair.
+- Adding `getattr(..., "pending_handoffs", ...)` fallback behavior to
+  `StudyScreen` would weaken ADR-033 ownership for test convenience. Updating
+  every individual ordinary quizzes/flashcards fixture would add dozens of
+  identical store arguments; installing one empty store in each test app
+  constructor matches the real composition root, while tests with staged
+  inputs remain explicit through typed channels.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
