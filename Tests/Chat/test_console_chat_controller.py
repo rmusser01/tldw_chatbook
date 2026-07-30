@@ -1340,10 +1340,12 @@ async def test_regenerate_continuation_message_ends_provider_payload_with_user_i
 
 
 @pytest.mark.asyncio
-async def test_leading_greeting_excluded_from_provider_payload():
+async def test_leading_greeting_folds_into_system_row_not_message_array():
     """A seeded character greeting (persisted ASSISTANT message before any
-    user turn) must never reach the provider payload -- strict providers
-    (Anthropic, Gemini) reject an assistant-first message array (task-427)."""
+    user turn) must reach the provider inside the SYSTEM row, never as an
+    assistant-first message -- strict providers (Anthropic, Gemini) reject an
+    assistant-first message array (task-427), but dropping the greeting
+    entirely made the model contradict the transcript (task-1531)."""
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
@@ -1359,11 +1361,44 @@ async def test_leading_greeting_excluded_from_provider_payload():
 
     assert result.accepted is True
     sent = gateway.messages_seen
-    roles = [m["role"] for m in sent]
-    # No leading assistant: the first role sent is the user's turn.
-    assert roles[0] == "user"
-    # The greeting text is not in the outbound payload at all.
-    assert all("Greetings, traveler." not in (m.get("content") or "") for m in sent)
+    # The greeting arrives via a system row even without a session prompt.
+    assert sent[0]["role"] == "system"
+    assert "Greetings, traveler." in sent[0]["content"]
+    # The message array itself stays user-first with no assistant greeting.
+    rest = sent[1:]
+    assert rest[0]["role"] == "user"
+    assert all(
+        "Greetings, traveler." not in (m.get("content") or "") for m in rest
+    )
+
+
+@pytest.mark.asyncio
+async def test_leading_greeting_appends_to_existing_system_prompt():
+    """The greeting fold appends to a configured system prompt; the prompt
+    itself stays verbatim at the start of the system row."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        system_prompt="Stay in character.",
+    )
+    session = store.create_session(title="Chat with Elara")
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Greetings, traveler.",
+        persist=False,
+    )
+
+    result = await controller.submit_draft("Hi")
+
+    assert result.accepted is True
+    sent = gateway.messages_seen
+    assert sent[0]["role"] == "system"
+    assert sent[0]["content"].startswith("Stay in character.")
+    assert "Greetings, traveler." in sent[0]["content"]
+    assert [m["role"] for m in sent[1:]] == ["user"]
 
 
 @pytest.mark.asyncio

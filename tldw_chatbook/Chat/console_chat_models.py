@@ -490,3 +490,33 @@ class ConsoleContextSnapshot:
 
     current_messages: list[ConsoleChatMessage]
     next_send_payload: dict[str, Any]
+
+
+def fold_greeting_into_system_prompt(system_prompt: str, greeting: str) -> str:
+    """Return the system content carrying a seeded assistant greeting.
+
+    Strict providers (Anthropic, Gemini) reject an assistant-first message
+    array, so a seeded character greeting cannot ride in the message list
+    (task-427) -- but dropping it entirely makes the model contradict the
+    greeting the user already read in the transcript (task-1531). Folding
+    the greeting into the system row delivers it to every provider while
+    keeping the message array user-first. The configured system prompt is
+    kept verbatim at the start; the greeting block is appended after it.
+
+    Args:
+        system_prompt: The session's configured system prompt ("" for none).
+        greeting: The seeded assistant greeting text ("" for none).
+
+    Returns:
+        The combined system content; "" when both inputs are blank.
+    """
+    greeting_text = (greeting or "").strip()
+    if not greeting_text:
+        return system_prompt
+    opener_block = (
+        "You already opened this conversation with the following message, "
+        f"which the user has seen:\n{greeting_text}"
+    )
+    if not (system_prompt or "").strip():
+        return opener_block
+    return f"{system_prompt}\n\n{opener_block}"
