@@ -299,7 +299,7 @@ class SiteConfigSettings(Container):
 
             yield self.form_builder.create_form_field(
                 "Change threshold (0-1)",
-                Input(value="0.1", id="change-threshold", type="number"),
+                Input(value="0.0", id="change-threshold", type="number"),
             )
 
     def _compose_advanced_settings(self) -> ComposeResult:

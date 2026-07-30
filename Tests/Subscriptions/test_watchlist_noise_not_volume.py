@@ -807,3 +807,45 @@ async def test_feed_runs_record_no_dispositions(monkeypatch):
     assert result["status"] == "completed"
     assert "dispositions" not in result["stats"]
     assert result["stats"]["items_found"] == 1, "the feed arm still works"
+
+
+def test_every_default_threshold_site_agrees_on_zero():
+    """The default must not depend on which path created the source.
+
+    Four sites can each impose a default; this pins all of them. The two
+    source-text assertions are drift tripwires, honestly labelled: they pin
+    the literal in the file, not behaviour, because one site is an orphan
+    screen and the other is the DDL.
+
+    Note: the class carrying the ``change_threshold`` default is
+    ``SiteConfig`` (its ``__init__`` does ``config.get("change_threshold",
+    0.0)``), not ``SiteConfigManager`` (which takes a ``db_path``, not a
+    config dict) -- that class name is what the file actually defines at
+    this line, verified by reading it before writing this assertion.
+    """
+    from pathlib import Path
+
+    from tldw_chatbook.Subscriptions.site_config_manager import SiteConfig
+
+    assert SiteConfig("example.com").change_threshold == 0.0
+
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook"
+
+    # Drift tripwire (source text, not behaviour): the DDL default is the
+    # column's fallback whenever a row is inserted without an explicit
+    # change_threshold, so its literal must stay in lockstep with the
+    # in-code defaults pinned above.
+    ddl = (root / "DB" / "Subscriptions_DB.py").read_text()
+    assert "change_threshold FLOAT DEFAULT 0.0" in ddl
+
+    # Drift tripwire (source text, not behaviour): SiteConfigSettings is an
+    # orphan screen -- nothing imports it -- so there is no behavioural path
+    # to assert against; this only pins the literal shown in its Input.
+    orphan = (root / "UI" / "SiteConfigSettings.py").read_text()
+    assert 'Input(value="0.0", id="change-threshold", type="number")' in orphan
+
+    # Drift tripwire (source text, not behaviour): the engine reads
+    # change_threshold with no default at all (see the comment at its call
+    # site), so the old `, 0.1)` fallback must not have crept back in.
+    engine = (root / "Subscriptions" / "monitoring_engine.py").read_text()
+    assert 'subscription.get("change_threshold", 0.1)' not in engine
