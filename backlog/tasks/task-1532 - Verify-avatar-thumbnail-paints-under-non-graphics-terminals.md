@@ -66,3 +66,14 @@ AC #1 (graphics-capable terminal paint) is intentionally left unchecked and
 the task In Progress: it can only be confirmed in a real iTerm2/Kitty session
 outside tmux -- open Roleplay, select a character with an embedded portrait,
 and confirm the Inspector thumbnail shows the image.
+
+### Update 2026-07-30 (browser-served visual confirmation)
+
+Re-verified with real screenshots against the user's local llama.cpp
+instance (127.0.0.1:9099, gemma-4-26B) via `textual serve` + Playwright:
+the Inspector avatar thumbnail visibly renders the card portrait (color
+globe) in pixels mode on the browser surface, and the full roleplay journey
+(import -> Start Chat -> in-character narrator reply respecting the card's
+2-paragraph rule) works end to end. Remaining unknown is narrowed to the
+NATIVE graphics-protocol path only (iTerm2/Kitty TGP outside tmux) -- one
+manual look in a real graphics terminal closes AC #1.
