@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-29 08:11'
-updated_date: '2026-07-29 15:04'
+updated_date: '2026-07-29 17:20'
 labels:
   - testing
   - baseline
@@ -59,6 +59,8 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #31 Console unknown-command composer regressions expect the complete current registered-command hint, including image generation and rewind, while retaining first-Enter interception, second-Enter literal send, edit-disarm, and message-count coverage.
 - [ ] #32 Console composer send regressions assert the dispatch-time session id, and Console/Library prompt-insert regressions use the live typed pending-handoff channel instead of the retired app-root prompt field, while retaining lifecycle, retry, blocked, append, collapse, navigation, dirty-editor, and empty-prompt coverage.
 - [ ] #33 Console live-work helper, rendering, action, inspector, staged-context, and Home-isolation regressions stage and inspect the live typed pending-handoff channel instead of assigning or asserting the retired app-root launch field, while retaining normalized payload, consumption, navigation, action routing, and destination-isolation coverage.
+- [ ] #34 Library prompt editor initialization and post-save recomposition ignore mount-time field-change echoes when the rendered fields still match canonical editor state, while genuine edits remain dirty; successful save/conflict recovery clears dirty state and the clean, empty, and dirty Console-insert paths retain their exact behavior.
+- [ ] #35 The nested Library UI harness executes app-owned prompt-import workers through the active harness worker manager, retaining all exact import status and database assertions without changing production worker ownership; the real-app durable-owner and survive-unmount coverage remains green.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -98,6 +100,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 26. Align the Console unknown-command expected hint with the complete live command registry.
 27. Retarget Console send and Library-to-Console prompt-insert regressions to dispatch-time session and typed pending-handoff ownership.
 28. Retarget Console live-work and Home-isolation regressions to the typed pending-handoff launch channel.
-29. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-30. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+29. Ignore prompt-editor mount echoes that match canonical rendered state, and bridge the nested Library test harness to the active worker manager without changing production import ownership.
+30. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+31. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

@@ -288,11 +288,32 @@ Update the tests to describe current behavior:
     `_pending_console_launch_context` remain valid where the screen's accepted
     context itself is under test. Do not restore the app-root launch field or
     change production.
+32. In the Library prompt editor, treat a queued `Input.Changed` or
+    `TextArea.Changed` event as a mount/recompose echo when the live fields
+    still equal the canonical editor state rendered from the current prompt
+    detail, or from the active conflict snapshot while conflict controls are
+    shown. Follow the existing Skills editor equality-guard pattern rather
+    than relying only on `call_after_refresh` ordering. Genuine field changes
+    must still set and retain dirty state; successful save and create-conflict
+    overwrite must clear dirty state and the Unsaved marker. Retain exact
+    clean, empty, and dirty Library-to-Console behavior. Do not clear dirty
+    state from tests or add arbitrary pauses that would mask the user-visible
+    navigation veto.
+33. In the nested Library UI prompt-import harness, route the unrun
+    `app_instance` worker manager through the active `LibraryHarness` worker
+    manager before pressing Import. Keep the existing bounded status wait,
+    button wiring, exact outcome copy, and database assertions; retain the
+    real-app tests' app-node/group ownership and survive-unmount assertions.
+    Production continues to own import work on the real application so durable
+    saves can finish after the initiating screen unmounts. Do not move the
+    production worker back to the screen or merely increase the timeout.
 
-The only planned production behavior change outside an ADR-029 diagnostic
-correction is the three-name synchronization of the existing Library collision
-boundary. The RAG capture edit is documentation-only and records already-live
-fail-closed behavior. No compatibility shims. No broad deletion of live tests.
+The only planned production behavior changes outside an ADR-029 diagnostic
+correction are the three-name synchronization of the existing Library
+collision boundary and the canonical-state guard that prevents untouched
+prompt fields from becoming dirty during mount/recompose. The RAG capture edit
+is documentation-only and records already-live fail-closed behavior. No
+compatibility shims. No broad deletion of live tests.
 
 ## Alternatives
 
@@ -389,6 +410,14 @@ fail-closed behavior. No compatibility shims. No broad deletion of live tests.
   would skip the cross-destination ownership boundary. Staging the typed
   launch channel exercises the real claim path and keeps Home from becoming a
   competing consumer.
+- Clearing the Library prompt dirty flag in test helpers or adding more pauses
+  would hide a real mount-event ordering defect that can veto user navigation.
+  Comparing live fields with the canonical rendered state ignores only
+  unchanged mount echoes and preserves genuine edits.
+- Running prompt imports on the Library screen in production would break the
+  accepted durable app-owned worker contract. The failing status assertions
+  come from an inactive nested test app's screen stack, so sharing the active
+  harness worker manager fixes the fixture without changing runtime ownership.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

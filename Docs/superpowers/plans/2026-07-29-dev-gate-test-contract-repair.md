@@ -1287,6 +1287,57 @@ git add \
 git commit -m "test(console): follow live work handoff ownership"
 ```
 
+### Task 4ac: Settle Library prompt editor and import-harness ownership
+
+**Files:**
+- Modify: `tldw_chatbook/UI/Screens/library_screen.py`
+- Modify: `Tests/UI/test_library_prompts_canvas.py`
+
+- [ ] **Step 1: Preserve the two distinct red failure groups**
+
+Run the Library prompt/canvas module. Expected: prompt initialization or
+post-save recomposition can mark untouched canonical fields dirty, which
+rotates among save/conflict/Unsaved/Console-insert assertions; all seven import
+status cases remain empty because the nested unrun `TldwCli` owns the worker
+while the active `LibraryHarness` owns the screen stack. Confirm the real-app
+prompt-import owner and survive-unmount regressions remain green.
+
+- [ ] **Step 2: Ignore only canonical mount echoes**
+
+Add a prompt-field equality guard modeled on the existing Skills editor guard.
+Compare the live prompt fields with the canonical state rendered from the
+current prompt detail, or the active conflict snapshot when present, before
+marking dirty. Matching mount/recompose events are ignored; genuine edits
+still mark dirty. Preserve successful save/conflict recovery, Unsaved copy,
+and clean/empty/dirty Console-insert behavior.
+
+- [ ] **Step 3: Run nested imports through the active harness manager**
+
+In the shared import test helper, bridge `screen.app_instance` to the active
+`LibraryHarness` worker manager before pressing Import. Retain the existing
+bounded wait and every exact status/database assertion. Do not change
+production worker ownership or replace the button-level UI flow with a direct
+private-method call.
+
+- [ ] **Step 4: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_library_prompts_canvas.py \
+  Tests/ProductionApp/test_personas_library_root_state.py -q
+../../.venv/bin/python -m ruff check \
+  tldw_chatbook/UI/Screens/library_screen.py \
+  Tests/UI/test_library_prompts_canvas.py
+../../.venv/bin/python -m ruff format --check \
+  tldw_chatbook/UI/Screens/library_screen.py \
+  Tests/UI/test_library_prompts_canvas.py
+git diff --check
+git add \
+  tldw_chatbook/UI/Screens/library_screen.py \
+  Tests/UI/test_library_prompts_canvas.py
+git commit -m "fix(library): ignore prompt mount echoes"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -1359,6 +1410,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/Performance/test_rag_citation_provenance_benchmark.py \
   Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/ProductionApp/test_media_state_ownership.py \
+  Tests/ProductionApp/test_personas_library_root_state.py \
   Tests/ProductionApp/test_provider_selection_ownership.py \
   Tests/UI/test_product_maturity_phase6_packaging_data_safety.py \
   Tests/RAG/test_rag_ui_integration.py \
@@ -1400,6 +1452,7 @@ Expected: all affected tests pass.
   Tests/Local_Ingestion/test_quick_ingest_db_path.py \
   Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/ProductionApp/test_media_state_ownership.py \
+  Tests/ProductionApp/test_personas_library_root_state.py \
   Tests/ProductionApp/test_provider_selection_ownership.py \
   Tests/UI/test_product_maturity_phase6_packaging_data_safety.py \
   Tests/RAG/test_rag_ui_integration.py \
@@ -1424,7 +1477,8 @@ Expected: all affected tests pass.
   Tests/Audio/test_recording_service.py \
   Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
   tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py \
-  tldw_chatbook/Library/library_skills_state.py
+  tldw_chatbook/Library/library_skills_state.py \
+  tldw_chatbook/UI/Screens/library_screen.py
 ../../.venv/bin/python -m ruff format --check \
   Tests/Event_Handlers/test_worker_events_contract.py \
   Tests/Event_Handlers/test_eval_db_operations_path.py \
@@ -1460,7 +1514,8 @@ Expected: all affected tests pass.
   Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
   tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py \
   tldw_chatbook/Library/library_skills_state.py \
-  tldw_chatbook/Local_Ingestion/transcription_service.py
+  tldw_chatbook/Local_Ingestion/transcription_service.py \
+  tldw_chatbook/UI/Screens/library_screen.py
 ../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
 git diff --check origin/dev...HEAD
 git diff --check
