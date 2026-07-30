@@ -32,10 +32,36 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
+class ReportLoadError(Exception):
+    """A junit report could not be read or parsed (exit code 2, not a regression)."""
+
+
 def load_outcomes(path: Path) -> dict[str, str]:
-    """Map ``classname::name`` -> outcome (pass | fail | error | skip)."""
+    """Load per-test outcomes from a pytest junit XML report.
+
+    Args:
+        path: Path to a ``pytest --junitxml`` report file.
+
+    Returns:
+        Mapping of ``classname::name`` test id to outcome
+        (``pass`` | ``fail`` | ``error`` | ``skip``). For duplicated ids
+        (reruns), the worst outcome wins so a flaky pass cannot mask a failure.
+
+    Raises:
+        ReportLoadError: If the file is missing, unreadable, or not valid XML —
+            reported distinctly so "diff tool failed" is never confused with
+            "regressions found" (a truncated report is common when pytest is
+            killed mid-run).
+    """
     outcomes: dict[str, str] = {}
-    root = ET.parse(path).getroot()
+    try:
+        root = ET.parse(path).getroot()
+    except OSError as exc:
+        raise ReportLoadError(f"cannot read junit report {path}: {exc}") from exc
+    except ET.ParseError as exc:
+        raise ReportLoadError(
+            f"malformed junit XML in {path} (truncated run?): {exc}"
+        ) from exc
     for case in root.iter("testcase"):
         key = f"{case.get('classname', '')}::{case.get('name', '')}"
         if case.find("error") is not None:
@@ -54,6 +80,16 @@ def load_outcomes(path: Path) -> dict[str, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Compare two junit reports and print/gate on per-test outcome deltas.
+
+    Args:
+        argv: CLI arguments (defaults to ``sys.argv[1:]``); see module docstring.
+
+    Returns:
+        Process exit code: ``0`` when no regressions, ``1`` when there are
+        REGRESSED / NOW-SKIPPED / unexplained VANISHED entries, ``2`` when a
+        report file could not be loaded.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("baseline", type=Path)
     parser.add_argument("candidate", type=Path)
@@ -69,8 +105,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    base = load_outcomes(args.baseline)
-    cand = load_outcomes(args.candidate)
+    try:
+        base = load_outcomes(args.baseline)
+        cand = load_outcomes(args.candidate)
+    except ReportLoadError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
 
     regressed = sorted(
         k for k, v in cand.items() if v in ("fail", "error") and base.get(k) == "pass"
