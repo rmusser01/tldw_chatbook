@@ -59,7 +59,6 @@ def test_streaming_assistant_message_shows_completed_actions_disabled_with_reaso
 
     assert [action.label for action in actions] == [
         "Copy",
-        "🔊",
         "Edit",
         "Save as...",
         "♻",
@@ -548,25 +547,51 @@ def test_continue_action_targets_selected_variant_content():
 # --- TASK-1: speak (TTS) action ------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "role", [ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT]
-)
-def test_speak_action_present_for_completed_text_message_any_role(
-    role: ConsoleMessageRole,
-):
-    """Spec §1a: speak is available for any COMPLETED message with
-    non-empty text -- both roles, not just assistant responses."""
+def test_speak_action_present_for_completed_assistant_text():
     service = ConsoleMessageActionService()
-    message = ConsoleChatMessage(role=role, content="hello there")
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="hello there",
+    )
 
     action_ids = [action.action_id for action in service.available_actions(message)]
 
     assert "speak" in action_ids
 
 
+@pytest.mark.parametrize(
+    "role",
+    [
+        ConsoleMessageRole.USER,
+        ConsoleMessageRole.SYSTEM,
+        ConsoleMessageRole.TOOL,
+    ],
+)
+def test_speak_action_absent_for_non_assistant_text(role: ConsoleMessageRole):
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=role, content="hello there")
+
+    action_ids = [action.action_id for action in service.available_actions(message)]
+
+    assert "speak" not in action_ids
+
+
+@pytest.mark.parametrize("status", ["pending", "streaming", "stopped", "failed"])
+def test_speak_action_absent_for_incomplete_assistant_status(status):
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial answer",
+        status=status,
+    )
+
+    action_ids = [action.action_id for action in service.available_actions(message)]
+
+    assert "speak" not in action_ids
+
+
 def test_speak_action_present_for_generation_card_marker_text():
-    """Spec §1a: a generation-card message's ``[image] ...`` marker text is
-    harmless input to TTS -- speak is offered for it like any other text."""
+    """A completed assistant generation card remains trusted assistant text."""
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT, content="[image] a red dragon"

@@ -15673,15 +15673,23 @@ class ChatScreen(BaseAppScreen):
             if callable(copy_to_clipboard):
                 copy_to_clipboard(result.clipboard_text)
         if action_id == "speak" and result.status == "completed":
-            # No new TTS machinery -- hand off to the app's existing
-            # pipeline (validation, synthesis, playback, failure toast) the
-            # same way legacy chat does (spec §1a).
+            from tldw_chatbook.Chat.console_speech import (
+                ConsoleSpeechSnapshotRejected,
+            )
             from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
-                TTSRequestEvent,
+                TTSMessageSpeechRequestEvent,
             )
 
+            try:
+                speech_snapshot = store.issue_tts_message_speech_snapshot(message.id)
+            except ConsoleSpeechSnapshotRejected as error:
+                self.app_instance.notify(str(error), severity="warning")
+                return True
             self.app_instance.post_message(
-                TTSRequestEvent(text=message.content, message_id=message.id)
+                TTSMessageSpeechRequestEvent(
+                    speech_snapshot,
+                    store.validate_tts_message_speech_snapshot,
+                )
             )
             # task-559 unit 2: track this message as "speaking" so the
             # action row swaps 🔊 -> ⏹ (a fresh speak always supersedes

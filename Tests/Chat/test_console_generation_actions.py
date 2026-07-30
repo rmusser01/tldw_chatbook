@@ -38,9 +38,10 @@ from tldw_chatbook.Chat.console_generate_image import (
 )
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_speech import ConsoleSpeechSnapshotRejected
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+    TTSMessageSpeechRequestEvent,
     TTSPlaybackEvent,
-    TTSRequestEvent,
 )
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -529,10 +530,8 @@ async def test_handle_console_message_action_routes_regenerate_for_generation_me
 
 
 @pytest.mark.asyncio
-async def test_handle_console_message_action_routes_speak_to_tts_request_event():
-    """Speak posts the app's existing ``TTSRequestEvent`` -- no new TTS
-    machinery, no worker (spec §1a). Captured via a monkeypatched
-    ``post_message`` on the bare screen's stub ``app_instance``."""
+async def test_handle_console_message_action_posts_store_issued_speech_snapshot():
+    """Speak posts a store-issued snapshot and its bound validator."""
     store = ConsoleChatStore()
     session = store.ensure_session(title="Chat 1")
     message = store.append_message(
@@ -551,9 +550,15 @@ async def test_handle_console_message_action_routes_speak_to_tts_request_event()
     assert handled is True
     assert len(posted) == 1
     event = posted[0]
-    assert isinstance(event, TTSRequestEvent)
-    assert event.text == "The sky is blue today."
+    assert isinstance(event, TTSMessageSpeechRequestEvent)
+    assert event.snapshot.raw_content == "The sky is blue today."
     assert event.message_id == message.id
+    assert not hasattr(event, "text")
+    assert event.validator(event.snapshot) == "The sky is blue today."
+
+    store.update_message_content(message.id, "Changed after click.")
+    with pytest.raises(ConsoleSpeechSnapshotRejected):
+        event.validator(event.snapshot)
 
 
 @pytest.mark.asyncio
@@ -571,8 +576,40 @@ async def test_handle_console_message_action_routes_speak_for_generation_message
 
     assert handled is True
     assert len(posted) == 1
-    assert posted[0].text == "[image] a red dragon"
+    assert isinstance(posted[0], TTSMessageSpeechRequestEvent)
+    assert posted[0].snapshot.raw_content == "[image] a red dragon"
     assert posted[0].message_id == message.id
+
+
+@pytest.mark.asyncio
+async def test_handle_console_message_action_does_not_forge_user_speech_snapshot():
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="User-authored text.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    posted: list = []
+    notified: list[tuple[tuple, dict]] = []
+    screen.app_instance.post_message = posted.append
+    screen.app_instance.notify = lambda *args, **kwargs: notified.append((args, kwargs))
+    button = Button("speak", id=f"console-message-action-speak-{message.id}")
+
+    handled = await screen.handle_console_message_action(Button.Pressed(button))
+
+    assert handled is True
+    assert posted == []
+    assert getattr(screen, "_console_speaking_message_id", None) is None
+    screen._sync_native_console_chat_ui.assert_not_awaited()
+    assert notified == [
+        (
+            ("Message changed before speech started; select Speak again.",),
+            {"severity": "warning"},
+        )
+    ]
 
 
 # --- task-559 unit 2: Console TTS stop toggle dispatch ------------------------
