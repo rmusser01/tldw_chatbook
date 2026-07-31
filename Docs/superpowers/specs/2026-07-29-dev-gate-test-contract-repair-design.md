@@ -1016,6 +1016,10 @@ Update the tests to describe current behavior:
      scrolling to put the Trust review control inside the canvas viewport.
      Preserve the real `VerticalScroll`, keyboard page-down, reset, focus, and
      positive-scroll assertions; do not change production scrolling.
+108. In the responsiveness artifact writer success test, publish its `tmp_path`
+     as the allowed temporary root before writing. Preserve the production
+     allowlist and the separate traversal-rejection coverage; do not add
+     `/private/tmp` or pytest-specific behavior to production.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1423,6 +1427,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   a host-dependent number of scroll-animation turns. Boundedly waiting for the
   unchanged viewport-containment geometry directly observes the behavior the
   regression exists to prove.
+- Broadening the production artifact allowlist to every pytest base directory
+  would weaken a security boundary for a test-runner override. Publishing the
+  success fixture's private temporary directory through the existing temp-root
+  seam keeps the test hermetic and leaves traversal rejection unchanged.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

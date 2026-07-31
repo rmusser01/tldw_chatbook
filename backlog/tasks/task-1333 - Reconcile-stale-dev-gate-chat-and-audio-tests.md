@@ -137,6 +137,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #107 A File Notes poll that completes while the workspace subtree is being detached exits without raising `NoMatches`, while normal polling still reconciles entries and retains the editor.
 - [ ] #108 Settings provider-navigation preselection coverage waits boundedly for the recomposed Select and Input to expose the routed provider/model values, while preserving category selection, recovery copy, and zero-draft assertions.
 - [ ] #109 Skill editor scroll coverage waits boundedly for focus-driven scrolling to place the Trust review control inside the canvas viewport, while preserving structural, keyboard-scroll, and positive-scroll assertions.
+- [ ] #110 Responsiveness artifact writer coverage supplies an explicit allowed temporary root, so a pytest `--basetemp` override outside the OS temp root does not invalidate the fixture while traversal rejection remains covered.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -251,6 +252,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 101. Stop a completed File Notes poll before it projects results into a partially detached workspace subtree.
 102. Wait for routed Settings provider/model values instead of assuming one post-recompose pause is sufficient.
 103. Wait for the Skill editor's focus-driven scroll to satisfy its exact viewport geometry.
-104. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-105. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+104. Give the responsiveness artifact writer test an explicit allowed temporary root instead of coupling it to pytest's configurable base directory.
+105. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+106. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

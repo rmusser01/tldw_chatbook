@@ -4296,6 +4296,43 @@ outside the changed block; the new loop introduces no finding. Independent
 review approved the unchanged geometry contract, one-site bounded wait, and
 retained structural/keyboard/focus assertions with no findings.
 
+### Task 4cz: Isolate responsiveness artifact success output
+
+**Files:**
+- Modify: `Tests/UI/test_ui_responsiveness_artifacts.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This keeps one success fixture independent of pytest's configurable
+base directory while preserving the existing production path allowlist and
+traversal-rejection contract.
+
+- [x] **Step 1: Reproduce the base-directory mismatch**
+
+The tail of full-gate attempt 44 reaches the next module and fails because
+`--basetemp=/private/tmp/...` places `tmp_path` outside both production-allowed
+roots: the repository and macOS's `tempfile.gettempdir()` location. The writer
+correctly rejects that test-runner-selected path.
+
+- [x] **Step 2: Publish the fixture's allowed temp root**
+
+In the success test only, point the artifact module's existing
+`tempfile.gettempdir` seam at `tmp_path` before writing. Do not change the
+production allowlist or the separate traversal-rejection test.
+
+- [x] **Step 3: Verify writer and path rejection**
+
+Run the complete artifact module repeatedly with the mandatory `/private/tmp`
+base override, then Ruff/format and `git diff --check`.
+
+The complete artifact module passed three independent repetitions (6/6) with
+the `/private/tmp` base override. Ruff lint, Ruff format, and
+`git diff --check` pass.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
