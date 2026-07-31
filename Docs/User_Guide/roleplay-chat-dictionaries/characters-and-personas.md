@@ -8,7 +8,7 @@ smaller cousin — an assistant profile (name, description, system prompt) you
 can stage into a chat without inventing a whole cast member. Both live behind
 mode chips on the Roleplay & Chat Dictionaries screen, and both can be handed
 to Console with one button. Come here to write, import, illustrate, or hand
-off a character.
+off a character; come here for a persona when a full character is overkill.
 
 ## Getting there
 
@@ -44,65 +44,59 @@ Rows render as "Label: value" and appear only when filled in: **Name**
 **System prompt**, **Post-history instructions** (text pushed in after the
 conversation so far), **Creator**, and **Version** (defaulting to "1.0").
 Three rows always show: **"Tags: none"** (or a comma-separated list),
-**"Alternate greetings: N"**, and **"Avatar: none"** / **"Avatar: embedded"**.
-The first alternate greeting, if any, is previewed underneath. **Edit** opens
-the editor; it stays disabled until a saved character is loaded.
+**"Alternate greetings: N"**, and **"Avatar: none"** / **"Avatar: embedded"**;
+the first alternate greeting, if any, is previewed underneath. **Edit** opens
+the editor, and stays disabled until a saved character is loaded.
 
 ### Editor — the generation toolbar
-
-Everything here drafts text with the model Console is set to use.
 
 | Control | What it does |
 |---|---|
 | "Context: whole character" ⟷ "Context: field + description" | Click to flip. Tooltip: "How much of the character the model sees when generating a single field" |
 | "Generate whole character…" | Opens the concept row. Tooltip: "Draft every empty field from a short concept" |
 | Concept row | An input reading "One-line concept, e.g. a drowned-library archivist", plus **Draft** and **Cancel** |
-| Per-field **Generate** | Drafts that field alone; the button reads "Generating…" while it works |
+| Per-field **Generate** | Drafts that field alone; reads "Generating…" while it works |
 
-Two behaviours worth keeping apart. A **per-field Generate** never writes into
-the field: the text arrives in a preview panel titled "Generated {field} -
-review before applying" (filling in as it streams) with **Accept**,
-**Regenerate** and **Discard** — nothing touches your form until **Accept**.
+Everything here drafts with the model Console is set to use, and there are two
+behaviours worth keeping apart. A **per-field Generate** never writes into the
+field: the text arrives in a preview panel titled "Generated {field} - review
+before applying" (filling in as it streams) with **Accept**, **Regenerate**
+and **Discard** — nothing touches your form until **Accept**.
 **Draft** (whole character) writes straight into the form, but only into
 fields that are *empty*, so filling a blank card never overwrites text you
 already wrote; it reports "Filled N empty field(s)." or "Nothing was filled:
-every generated field already has content." An empty concept is refused with
-"Describe the character first, in a line or two."; failures read "Could not
+every generated field already has content." Failures read "Could not
 generate: …".
 
 ### Editor — fields
 
 Primary fields, in form order: **Name** (placeholder "Character name"),
-**First message**, **Description**, **Personality**, **System prompt**. Each
-long one carries its own **Generate**.
+**First message**, **Description**, **Personality**, **System prompt** — each
+long one carrying its own **Generate**. **"Advanced ▸"** expands (to
+"Advanced ▾") — collapsed every time you open the editor — and holds
+**Scenario**, **Post-history instructions** and **Creator notes** (each with
+**Generate**); **Creator**, **Version** (defaulting to "1.0") and **"Tags
+(comma-separated)"**; and **Alternate greetings**, a real list rather than a
+text box — type into the box, press **Add**, then select a row to **Update**,
+**Delete**, **Move up** or **Move down**.
 
-**"Advanced ▸"** expands (to "Advanced ▾") — collapsed every time you open the
-editor — and holds **Scenario**, **Post-history instructions** and **Creator
-notes** (each with **Generate**); **Creator** (placeholder "Creator name"),
-**Version** (defaulting to "1.0") and **"Tags (comma-separated)"**
-(placeholder "tag, another tag"); and **Alternate greetings**, a real list
-(column "Greeting") rather than a text box — type into the box, press **Add**,
-then select a row to **Update**, **Delete**, **Move up** or **Move down**.
+### Editor — avatar and expressions
 
-### Editor — avatar
+The avatar row reads "Avatar: none" or "Avatar: embedded" ("Avatar:
+generating…" while an image is being made), followed by **Upload**,
+**✨ Generate** and **Remove**. **Upload** opens "Upload Character Avatar"
+(filters for Image Files, PNG Files, JPEG Files, WEBP Files and GIF Files);
+files must be **5 MB or smaller** and one of "PNG, JPG, JPEG, WEBP, or GIF",
+or you get "Avatar image must be 5 MB or smaller." or "Unsupported avatar
+image type…". On success: **"Avatar staged. Save the character to persist
+it."** — nothing is stored until you press **Save**. **✨ Generate** needs a
+Description first ("Add a description first.") and an image-generation backend
+set up in Settings; without one, the toast names the setting to fix.
 
-The row reads "Avatar: none" or "Avatar: embedded" ("Avatar: generating…"
-while an image is being made), followed by **Upload**, **✨ Generate** and
-**Remove**. **Upload** opens "Upload Character Avatar" with filters for Image
-Files, PNG Files, JPEG Files, WEBP Files and GIF Files; files must be **5 MB
-or smaller** and one of "PNG, JPG, JPEG, WEBP, or GIF", or you get "Avatar
-image must be 5 MB or smaller.", "Unsupported avatar image type…" or "Avatar
-image file is empty." On success: **"Avatar staged. Save the character to
-persist it."** — the picture is not stored until you press **Save**.
-**✨ Generate** needs a Description first ("Add a description first.") and
-needs image generation configured; when it isn't, the toast names the setting.
-
-### Editor — expressions
-
-A block headed **Expressions** with a "Style: …" readout and four buttons —
-**Style…** (pick the image style), **✨ Generate all**, **Import set…**,
-**Export set…** — over one row per expression state (*thinking*, *speaking*,
-*error*), each with **Upload**, **✨ Generate** and **Clear**. Those per-state
+Below that sits a block headed **Expressions** with a "Style: …" readout and
+four buttons — **Style…** (pick the image style), **✨ Generate all**, **Import
+set…**, **Export set…** — over one row per expression state (*thinking*,
+*speaking*, *error*), each with **Upload**, **✨ Generate** and **Clear**. Those
 buttons stay disabled until the character has been saved once ("Save the
 character to add expressions."), and exporting a set before saving is refused
 too. **✨ Generate all** asks first — "This will overwrite the existing avatar
@@ -113,8 +107,8 @@ reports "{k}/{N} generated.".
 
 The footer lists problems under **"Validation errors:"** — **"name:
 required"** and **"image exceeds 5 MB"** both block **Save** (the offending
-row is outlined in red), while **"greeting N is blank"** is only a *warning*:
-listed, but it never blocks the save and never marks the row.
+row is outlined in red), while **"greeting N is blank"** is only a *warning*
+and never blocks the save.
 
 **Save** persists and toasts **"Character saved."** (failures read "Save
 failed: …"); the editor stays open on the saved character so you can keep
@@ -122,16 +116,14 @@ working. **Cancel** leaves it. Either way, unsaved edits raise the
 **"Unsaved Changes"** dialog — 'The tab "{name}" has unsaved changes. Are you
 sure you want to close it?' with **Close Without Saving** / **Keep Open**.
 
-### Create, duplicate, delete
+**Creating, duplicating, deleting.** **New** in the Library rail (or
+**Ctrl+N**) opens a blank editor with the cursor in Name. **Duplicate** copies
+the selection — description, personality, scenario, greetings, tags, avatar
+and all — as **"{name} (copy)"**, then "(copy 2)", "(copy 3)"…, with **no
+confirmation**. **Delete** (Inspector) confirms with **"Delete {name}? This
+cannot be undone here."** (**Delete** / **Cancel**) and reports "Deleted."
 
-**New** in the Library rail (or **Ctrl+N**) opens a blank editor with the
-cursor in Name. **Duplicate** copies the selection — description, personality,
-scenario, greetings, tags, avatar and all — as **"{name} (copy)"**, then
-"(copy 2)", "(copy 3)"…, with **no confirmation**. **Delete** (Inspector)
-confirms with **"Delete {name}? This cannot be undone here."** (**Delete** /
-**Cancel**) and reports "Deleted."
-
-### Importing a character card
+### Importing and exporting a card
 
 **Import** in the Library rail opens **"Import Character Card"** with filter
 groups "Character Cards", "JSON Files", "Card Images (PNG/WebP)", "Markdown
@@ -139,27 +131,24 @@ Files" and "All Files". What actually reads: **PNG cards** carrying the
 standard embedded card data (older and v3 flavours), **WebP cards** carrying
 it in their EXIF comment, and **text cards** — `.json`, `.yaml`, `.md` — as
 raw JSON, as front matter, or as a fenced JSON block; common exports from
-other apps are recognised and converted on the way in. Other image types are
-refused ("Use PNG or WebP cards."). Anything else that goes wrong gives one
+other apps are converted on the way in, and other image types are refused
+("Use PNG or WebP cards."). Anything else that goes wrong gives one
 deliberately plain message: **"Character import failed; verify the file and
-retry."** — details go to the log, not the toast.
+retry."**
 
 On success: **"Character imported."**, and the list jumps to the new row; if
 the card carried a lorebook the toast gains **" Lorebook '{name}' attached
 (N entries)."** If that name already existed you get **"Character already
 existed; selected it. Re-importing does not update an existing character."**
-— to take a newer version of a card, delete the old character first or import
-under a different name.
+— delete the old character first, or import under a different name.
 
-### Exporting
-
-The Inspector offers **Export JSON** (characters and personas) and **Export
-PNG** (characters only), opening "Export as JSON" / "Export as PNG" with the
-name pre-filled; the JSON export carries the avatar with it. Results read
-"Exported to {path}" or "Export failed: …". Refusals: "Select a saved item
-before exporting." and "PNG export is only available for characters."; while a
-selection has unsaved edits both buttons are disabled with the tooltip "Save
-before using this action; the selection has unsaved edits."
+**Exporting.** The Inspector offers **Export JSON** (characters and personas)
+and **Export PNG** (characters only), opening "Export as JSON" / "Export as
+PNG" with the name pre-filled; the JSON export carries the avatar. Results
+read "Exported to {path}" or "Export failed: …". Refusals: "Select a saved
+item before exporting." and "PNG export is only available for characters.";
+with unsaved edits both buttons are disabled, tooltipped "Save before using
+this action; the selection has unsaved edits."
 
 ### Handing a character to Console
 
@@ -176,7 +165,7 @@ Scenario and System prompt. **Attach** only stages context for you to send
 later, so it stays available even when the model isn't ready; **Start Chat**
 opens a chat, so it waits for a ready model. The Inspector's readiness line
 says which — "Console ready", "Console blocked: select an item", or the
-reason — and neither button works on an unsaved selection.
+reason. Neither works on an unsaved selection.
 
 ### Dictionaries and World Books copied into a character
 
@@ -185,12 +174,10 @@ dictionaries travelling with this character (columns "dictionary" and
 "entries"), with **Attach dictionary…** and **Detach**, and reads "No
 dictionaries attached to this character yet." when empty. Each attached
 dictionary is a **snapshot** — editing the original later does *not* update
-the copy inside the character; re-attach to refresh. See
-[Chat dictionaries](chat-dictionaries.md).
+the copy; re-attach to refresh. See [Chat dictionaries](chat-dictionaries.md).
 
-The **"World Books (copied into this character)"** panel works identically for
-lore (columns "world book" and "entries", buttons **Attach world book…** and
-**Detach**, empty state "No world books attached to this character yet.") and
+The **"World Books (copied into this character)"** panel is identical for lore
+(columns "world book" and "entries", **Attach world book…** / **Detach**) and
 carries the same snapshot warning. See [Lore books](lore-books.md).
 
 ### Personas
@@ -200,21 +187,19 @@ headed **"Persona Profile"** and shows **Name**, **Description** and **System
 prompt** with an **Edit** button. The **"Persona Editor"** holds **Name**
 (placeholder "Persona name"), **Description**, **System prompt**,
 **Personality traits**, **Mode** — two choices, "session_scoped" and
-"persistent_scoped", shown exactly like that
-(its two values are saved with the persona, but nothing in the local app
-reads them today — the field belongs to the server-side persona schema) — and an
-**Enabled** switch that starts on, over **Save** / **Cancel**. Save toasts
-"Persona saved."; the unsaved-changes dialog behaves as it does for
-characters. What is *missing* compared to characters: **no Import** and **no
-Duplicate** (both hidden in this mode) and **no Export PNG** — only Export
-JSON. Attach to Console and Start Chat work the same way, staging the
-persona's Description and System prompt.
+"persistent_scoped", shown exactly like that; the value is stored with the
+persona, but nothing in the app reads it today — and an **Enabled** switch
+that starts on, over **Save** / **Cancel**. Save toasts "Persona saved.", and
+the unsaved-changes dialog behaves as it does for characters. What is
+*missing* compared to characters: **no Import**, **no Duplicate** (both hidden
+in this mode) and **no Export PNG** — only Export JSON. Attach to Console and
+Start Chat stage the persona's Description and System prompt the same way.
 
 ### Placeholders in your text
 
 Character text traditionally uses placeholders, and this app resolves them —
-but **nothing in the app tells you so**: no tooltip, hint or help line
-anywhere on this screen mentions them, so this guide is where you learn them.
+but **nothing in the app tells you so**: no tooltip or hint on this screen
+mentions them, so this guide is where you learn them.
 
 - `{{char}}`, `{{character}}`, `{{persona}}` and `<CHAR>` all become the
   **character's** name.
@@ -229,23 +214,19 @@ previews on this screen, `{{user}}` comes out as the literal word "User".
    **Ctrl+N**) → **"Generate whole character…"** → type the concept, e.g. a
    drowned-library archivist → **Draft**. Read what landed in each field, fix
    what you dislike, **Save**.
-2. **Redraft one field.** **Edit**, press **Generate** on the field, read the
-   "Generated … - review before applying" panel, then **Accept**,
-   **Regenerate** or **Discard**.
-3. **Add an alternate greeting.** **Edit** → **Advanced ▸** → type it into the
+2. **Add an alternate greeting.** **Edit** → **Advanced ▸** → type it into the
    box under "Alternate greetings" → **Add** → order it with **Move up** /
    **Move down** → **Save**.
-4. **Give the character a picture.** **Edit** → **Upload** on the avatar row →
+3. **Give the character a picture.** **Edit** → **Upload** on the avatar row →
    pick a PNG/JPG/WEBP/GIF under 5 MB → **Save** (nothing is stored until you
    do). Or **✨ Generate**, once the Description is written.
-5. **Import a character card.** Characters mode → **Import** → choose a PNG,
+4. **Import a character card.** Characters mode → **Import** → choose a PNG,
    WebP or JSON card. The new character is selected for you; if a lorebook
    came with it, the toast says so.
-6. **Start a chat as the character.** Select it, then Inspector →
+5. **Start a chat as the character.** Select it, then Inspector →
    **Start Chat** ("Chat staged in Console."). If it is blocked, read the
-   readiness line and fix the model — or use **Attach to Console**, which
-   needs no ready model.
-7. **Make a persona.** **Personas** chip (**Ctrl+2**) → **New** → fill in
+   readiness line and fix the model — or use **Attach to Console** instead.
+6. **Make a persona.** **Personas** chip (**Ctrl+2**) → **New** → fill in
    Name, Description and System prompt → **Save**.
 
 ## Keyboard & commands
@@ -260,7 +241,7 @@ previews on this screen, `{{user}}` comes out as the literal word "User".
 | Ctrl+1 / Ctrl+2 | Switch to the Characters / Personas mode |
 
 **Ctrl+1 – Ctrl+4 do not change screens here** — they switch modes. To leave,
-click a nav label, use **Ctrl+P**, or use Ctrl+5 … Ctrl+0.
+click a nav label, press **Ctrl+P**, or use Ctrl+5 … Ctrl+0.
 
 ## Related settings & docs
 
@@ -268,44 +249,33 @@ click a nav label, use **Ctrl+P**, or use Ctrl+5 … Ctrl+0.
   parent screen: the Modes strip, the Library rail, the Inspector, and the
   unsaved-changes guard.
 - [Chat dictionaries](chat-dictionaries.md) and [Lore books](lore-books.md) —
-  the two things you can copy into a character.
-- [Chat basics](../console/chat-basics.md) — where an attached or started
-  character actually gets used.
-- [World & lore books](../../Features/World-Lore-Books-Documented.md) — deep
-  dive on the lore format (its walkthrough describes a retired screen; read
-  it for concepts only).
+  the two things you can copy into a character;
+  [Chat basics](../console/chat-basics.md) — where an attached or started
+  character gets used;
+  [World & lore books](../../Features/World-Lore-Books-Documented.md) — the
+  lore format (its walkthrough describes a retired screen; concepts only).
 - **There is no feature deep-dive for character cards.** Nothing else in the
   documentation covers the card format, the editor, or the import paths —
   this page is it.
-- Avatar and expression generation needs an image-generation backend
-  configured in Settings; the refusal toast names the setting. Guide index:
-  [index](../index.md).
+- Guide index: [index](../index.md).
 
 ## Quirks & troubleshooting
 
-- **Duplicate has no confirmation.** One click makes "{name} (copy)";
-  delete the copy if it was a mistake.
+- **Duplicate has no confirmation** — one click makes "{name} (copy)".
 - **Re-importing does not update an existing character** — the import is
   skipped with "Character already existed; selected it." Delete the old one
   first, or rename before importing.
-- **Import failures are deliberately vague.** "Character import failed; verify
-  the file and retry." covers every cause; check the file really is a
-  PNG/WebP card with embedded data, or valid JSON/YAML.
+- **Import failures are deliberately vague** — check the file is a PNG/WebP
+  card with embedded data, or valid JSON/YAML.
 - **Expression buttons need a saved character** ("Save the character to add
   expressions."); the avatar buttons do not.
 - **Blank greetings warn but don't block** — the save goes through, and an
   empty greeting simply does nothing in a chat.
 - **Connected to a server, the character actions go quiet.** New, Import,
-  Duplicate, Edit, Export and Delete all disable themselves with no
-  explanation on screen. Nothing is broken — those actions are local-only.
-- **Validation lines look technical while you type.** The as-you-type list
-  prefixes each line with the form field's internal name; the list you get
-  when Save is blocked is the readable one.
-- **Nothing explains the placeholders.** `{{char}}` / `{{user}}` and their
-  aliases work, but no tooltip or hint in the app mentions them — see
-  [Placeholders in your text](#placeholders-in-your-text).
-- **Alternate greetings are a list, not a text box.** Several greetings typed
-  into the scratch box become *one* greeting; press **Add** once per greeting.
+  Duplicate, Edit, Export and Delete disable themselves with no explanation
+  on screen. Nothing is broken — those actions are local-only.
+- **Alternate greetings are a list, not a text box** — several typed in at
+  once become *one* greeting; press **Add** for each.
 
 —
 *Verified against dev @ 207053253 — 2026-07-31*
