@@ -1257,6 +1257,7 @@ async def test_cancel_requested_cancels_worker():
     app.unified_mcp_service.connect_gate = asyncio.Event()  # never set -> hangs
     async with app.run_test() as pilot:
         await pilot.pause()
+        await app.workers.wait_for_complete()
         workbench = app.query_one(MCPWorkbench)
         workbench._selected_server_key = "local:docs"
         workbench._start_lifecycle("local:docs", "docs", "connect")

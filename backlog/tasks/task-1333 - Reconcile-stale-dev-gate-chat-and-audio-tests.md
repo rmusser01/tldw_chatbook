@@ -126,6 +126,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #96 File Notes Git commit-integration synchronization uses one shared, bounded timeout for controlled signals and cycle settlement, so repository load does not turn one- or two-second literals into accidental performance gates.
 - [ ] #97 Hidden-action File Notes Git reopen coverage accepts focus on either visible Git navigation owner—the refreshed rows or the intentional Back-control fallback—while still rejecting focus left on the hidden entry.
 - [ ] #98 Native Console chat-flow synchronization uses one shared, bounded timeout for controlled fake-gateway and handoff signals, so repository load does not turn one- or two-second literals into accidental performance gates.
+- [ ] #99 The MCP lifecycle-cancellation regression waits for the workbench's initial workers to settle before invoking its private lifecycle seam, while preserving the deliberately blocked operation, cancel request, and in-flight cleanup assertion.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -229,6 +230,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 90. Apply one shared contention-tolerant timeout to the File Notes Git commit-integration module's controlled asynchronous guards.
 91. Align hidden-action File Notes Git reopen focus coverage with the visible Back-or-rows fallback contract.
 92. Apply one shared contention-tolerant timeout to the native Console chat-flow module's controlled fake-gateway and handoff signals.
-93. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-94. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+93. Let the MCP workbench's initial workers settle before directly starting the lifecycle operation exercised by the cancellation regression.
+94. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+95. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

@@ -3834,6 +3834,47 @@ Console chat-flow module passed 273/273 under repository contention. Ruff lint
 and `git diff --check` pass. Ruff format reports inherited whole-file drift
 only; none of the changed timeout lines appears in the formatter diff.
 
+### Task 4co: Settle MCP workbench startup before lifecycle cancellation
+
+**Files:**
+- Modify: `Tests/UI/test_mcp_workbench.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This aligns a test-only private-seam call with the mounted
+workbench lifecycle; it does not change MCP runtime behavior or interfaces.
+
+- [x] **Step 1: Identify the pre-mount private call**
+
+Full-gate attempt 31 fails in
+`test_cancel_requested_cancels_worker` because the test directly starts a
+lifecycle sync while `MCPToolsMode` exists in the composed tree but its
+`#mcp-tools-table` child has not mounted. The exact test passes in isolation,
+and the real lifecycle action is unavailable to users until the workbench
+controls mount.
+
+- [x] **Step 2: Settle initial workers before the controlled lifecycle**
+
+Use the same `app.workers.wait_for_complete()` boundary already used by sibling
+lifecycle tests before invoking `_start_lifecycle()`. Keep the fake connect gate
+unreleased after that point, issue the same cancel request, and retain the exact
+in-flight cleanup assertion.
+
+- [x] **Step 3: Verify MCP workbench coverage**
+
+Run the exact cancellation test repeatedly under current contention, the
+complete MCP workbench module, Ruff/format, and `git diff --check`.
+
+The exact cancellation test passed three concurrent repetitions, and the
+complete MCP workbench module passed 196/196. `git diff --check` passes. Ruff
+lint reports four inherited errors elsewhere in the module, and Ruff format
+reports inherited whole-file drift; the added worker-settlement line is absent
+from both findings.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

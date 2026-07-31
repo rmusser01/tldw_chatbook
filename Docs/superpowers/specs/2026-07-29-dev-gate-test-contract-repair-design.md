@@ -960,6 +960,11 @@ Update the tests to describe current behavior:
      waits coordinate controlled fake-gateway and handoff signals; none is a
      product performance contract. Keep every wait bounded and leave production
      Console behavior unchanged.
+97. Make the MCP lifecycle-cancellation regression wait for the workbench's
+     initial workers before directly calling its private lifecycle starter.
+     Keep the never-released fake service gate, explicit cancel request, and
+     exact in-flight cleanup assertion unchanged; do not add a production
+     pre-mount compatibility path for a user action that is not yet available.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
