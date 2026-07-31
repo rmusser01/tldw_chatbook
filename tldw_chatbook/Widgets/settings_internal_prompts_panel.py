@@ -27,6 +27,37 @@ def _row_id(prompt_id: str) -> str:
     return "prompt-row-" + prompt_id.replace(".", "__")
 
 
+#: task-1585: subsystem ids are raw snake_case config keys; headers render
+#: a display title instead (acronyms uppercased, compounds spaced).
+_SUBSYSTEM_ACRONYMS = frozenset({"rag", "acp", "mcp", "api", "llm", "tts", "stt"})
+_SUBSYSTEM_SPECIAL_TITLES = {"websearch": "Web search"}
+
+
+def subsystem_display_title(subsystem: str) -> str:
+    """Turn a raw subsystem id into a user-facing group title.
+
+    Args:
+        subsystem: The registry's snake_case subsystem id (e.g.
+            "rag_reranker").
+
+    Returns:
+        A display title such as "RAG reranker" or "Web search".
+    """
+    special = _SUBSYSTEM_SPECIAL_TITLES.get(subsystem)
+    if special:
+        return special
+    words = subsystem.split("_")
+    parts: list[str] = []
+    for index, word in enumerate(words):
+        if word in _SUBSYSTEM_ACRONYMS:
+            parts.append(word.upper())
+        elif index == 0:
+            parts.append(word.capitalize())
+        else:
+            parts.append(word)
+    return " ".join(parts)
+
+
 class InternalPromptsPanel(Vertical):
     """Browse + edit internal prompts. Title is rendered by the screen."""
 
@@ -40,7 +71,7 @@ class InternalPromptsPanel(Vertical):
         with VerticalScroll(id="internal-prompts-list"):
             for subsystem, specs in authoring.iter_specs_by_subsystem():
                 yield Static(
-                    f"{subsystem}  ({len(specs)})",
+                    f"{subsystem_display_title(subsystem)}  ({len(specs)})",
                     classes="internal-prompts-group-header",
                     id="group-header-" + subsystem,
                 )

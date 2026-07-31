@@ -110,3 +110,42 @@ async def test_settings_theme_editor_user_edit_still_marks_modified():
         target.value = "#123456"
         await pilot.pause()
         assert editor.is_modified is True
+
+
+@pytest.mark.asyncio
+async def test_theme_tree_has_empty_state_guidance():
+    """The collapsed Themes tree left a large blank region (rescore P3);
+    a hint under it explains what the tree is for and how to start."""
+    app = _build_test_app()
+    editor = SettingsThemeEditor()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.app.mount(editor)
+        await pilot.pause()
+        from textual.widgets import Static
+
+        hint = editor.query_one("#settings-theme-tree-hint", Static)
+        text = str(hint.renderable)
+        assert "New" in text and "theme" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_dark_mode_switch_has_text_state():
+    """The Dark theme switch was an empty rectangle with no text state --
+    the only control-without-text-state in the critique evidence. A state
+    word beside it mirrors the Splash Screen switch pattern."""
+    from textual.widgets import Static, Switch
+
+    app = _build_test_app()
+    editor = SettingsThemeEditor()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.app.mount(editor)
+        for _ in range(6):
+            await pilot.pause()
+        switch = editor.query_one("#settings-theme-dark-mode", Switch)
+        state = editor.query_one("#settings-theme-dark-mode-state", Static)
+        assert str(state.renderable) == ("On" if switch.value else "Off")
+
+        switch.value = not switch.value
+        await pilot.pause()
+        state = editor.query_one("#settings-theme-dark-mode-state", Static)
+        assert str(state.renderable) == ("On" if switch.value else "Off")

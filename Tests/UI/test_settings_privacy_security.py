@@ -38,7 +38,9 @@ def test_privacy_posture_counts_secret_sources_without_exposing_values():
     assert posture.provider_env_missing == 1
     assert posture.provider_env_configured == 2
     assert "Config encryption: enabled" in text
-    assert "Provider env vars: 1 present / 1 missing / 2 configured" in text
+    assert (
+        "Provider env vars: 1 of 2 referenced env vars are set (1 unset)" in text
+    )
     assert "Provider config secrets: 1 present" in text
     assert DUMMY_ENV_SECRET not in text
     assert DUMMY_CONFIG_SECRET not in text

@@ -18,6 +18,8 @@ from textual.reactive import reactive
 from textual.theme import Theme
 from textual.widgets import Button, Input, Static, Switch, Tree
 
+from .settings_splash_screen_viewer import switch_state_label
+
 from ..css.Themes.themes import ALL_THEMES, create_theme_from_dict
 from ..Utils.path_validation import validate_filename
 
@@ -102,12 +104,27 @@ class SettingsThemeEditor(Vertical):
         with Horizontal(classes="settings-input-row"):
             yield Static("Dark theme", classes="settings-input-label")
             yield Switch(value=True, id="settings-theme-dark-mode")
+            # task-1582: the bare Switch was an empty rectangle with no
+            # text state -- mirror the Splash Screen switch-word pattern.
+            yield Static(
+                switch_state_label(True),
+                id="settings-theme-dark-mode-state",
+                classes="settings-input-label",
+            )
         with Horizontal(classes="settings-action-row"):
             yield Button("New", id="settings-theme-new", variant="primary")
             yield Button("Clone", id="settings-theme-clone")
             yield Button("Delete", id="settings-theme-delete", variant="error")
             yield Button("Export", id="settings-theme-export")
         yield Tree("Themes", id="settings-theme-tree")
+        # task-1585: the collapsed tree left a large blank region with no
+        # explanation of what fills it.
+        yield Static(
+            "Expand Themes to browse built-in and saved themes; "
+            "New starts a theme from the current palette.",
+            id="settings-theme-tree-hint",
+            classes="settings-detail-row",
+        )
 
     def _compose_palette_section(self) -> ComposeResult:
         yield Static("Color Palette", classes="destination-section")
@@ -367,9 +384,23 @@ class SettingsThemeEditor(Vertical):
                 self._update_color_swatch(color_name, color_value)
 
     def _update_dark_mode_switch(self) -> None:
-        """Update the dark mode switch."""
+        """Update the dark mode switch and its text-state word."""
         switch = self.query_one("#settings-theme-dark-mode", Switch)
         switch.value = self.is_dark_theme
+        self._update_dark_mode_state_word(self.is_dark_theme)
+
+    def _update_dark_mode_state_word(self, value: bool) -> None:
+        """Sync the On/Off word beside the dark-mode switch.
+
+        Args:
+            value: The switch state the word should describe.
+        """
+        try:
+            self.query_one("#settings-theme-dark-mode-state", Static).update(
+                switch_state_label(value)
+            )
+        except QueryError:
+            pass
 
     def _update_color_swatch(self, color_name: str, color_value: str) -> None:
         """Update a color swatch preview."""
@@ -450,6 +481,7 @@ class SettingsThemeEditor(Vertical):
                 matches the loaded theme's dark flag is a programmatic sync
                 and does not mark the editor modified.
         """
+        self._update_dark_mode_state_word(event.value)
         if event.value == self.is_dark_theme:
             # _update_dark_mode_switch syncing the widget to the loaded
             # theme -- not a user edit.
