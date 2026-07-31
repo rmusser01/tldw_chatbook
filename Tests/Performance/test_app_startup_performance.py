@@ -676,7 +676,7 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
 ) -> None:
     """Optional audio/DB/cleanup startup work should not gate initial UI readiness."""
 
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.Utils.db_status_manager import DBStatusManager
     from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSEventHandler
     from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import STTSEventHandler
@@ -745,7 +745,7 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
 async def test_tts_handler_initializes_on_first_use(monkeypatch) -> None:
     """TTS event paths can initialize the handler lazily after startup."""
 
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSEventHandler
 
     initialized = asyncio.Event()
@@ -768,7 +768,7 @@ async def test_tts_handler_initializes_on_first_use(monkeypatch) -> None:
 async def test_stts_handler_initializes_on_first_use(monkeypatch) -> None:
     """S/TT/S command paths can initialize the handler lazily after startup."""
 
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import STTSEventHandler
 
     initialized = asyncio.Event()

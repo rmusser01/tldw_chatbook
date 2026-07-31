@@ -14,7 +14,7 @@ async def test_mounting_the_app_records_app_started(monkeypatch):
     Asserted by capturing the call rather than scanning source: this repo has
     been burned by name-matching guards that pass against unwired code.
     """
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
 
     recorded: list[tuple[str, str]] = []
     monkeypatch.setattr(

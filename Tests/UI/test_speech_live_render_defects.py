@@ -13,7 +13,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import ProgressBar, Select
 
 from tldw_chatbook.UI.Speech.speech_playground_model import AXIS_CONTROLS
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_speech_playground_pane import _PaneScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 

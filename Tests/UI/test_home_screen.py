@@ -26,7 +26,7 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.Screens import home_screen as home_screen_module
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 HOME_TEST_SIZE = (160, 40)

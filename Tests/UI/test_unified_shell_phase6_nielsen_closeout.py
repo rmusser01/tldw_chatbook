@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_unified_shell_phase6_first_time_replay import (
     EXPECTED_NAV,
     _screen_text,

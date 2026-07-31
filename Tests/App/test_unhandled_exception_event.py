@@ -27,7 +27,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_unhandled_exception_is_recorded(monkeypatch):
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
 
     recorded: list[dict] = []
     monkeypatch.setattr(
@@ -69,7 +69,7 @@ def test_worker_failed_wrapper_is_unwrapped(monkeypatch):
     """
     from textual.worker import WorkerFailed
 
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
 
     class DistinctiveWorkerError(RuntimeError):
         pass
@@ -102,7 +102,7 @@ def test_worker_failed_wrapper_is_unwrapped(monkeypatch):
 
 def test_the_override_still_delegates_to_textual(monkeypatch):
     """Must not swallow: textual sets the return code from this call."""
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
 
     # Patched for symmetry with the siblings above. Unpatched, this test ran
     # the real `persist_event` against whatever sinks the session happened to

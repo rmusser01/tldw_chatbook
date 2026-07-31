@@ -48,7 +48,7 @@ from Tests.UI.test_product_maturity_phase1_first_run import (
     _prepare_clean_environment,
     _test_cli_setting,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     FirstRunSetupWizard,

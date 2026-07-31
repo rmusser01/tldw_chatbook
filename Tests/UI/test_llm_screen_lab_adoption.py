@@ -9,7 +9,7 @@ from textual.widgets import Button, Static
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 @pytest.fixture(autouse=True)

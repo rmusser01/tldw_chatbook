@@ -18,7 +18,7 @@ Built via the same unmounted-``ChatScreen(app)`` pattern as
 mount is required.
 """
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen

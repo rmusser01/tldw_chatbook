@@ -63,7 +63,7 @@ from Tests.UI.test_library_shell import (
     _active_library_screen,
     _wait_for_library_shell,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

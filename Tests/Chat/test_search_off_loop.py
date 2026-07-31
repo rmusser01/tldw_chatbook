@@ -25,7 +25,7 @@ from tldw_chatbook.Chat.chat_conversation_scope_service import (
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 MAIN_THREAD_IDENT = threading.get_ident

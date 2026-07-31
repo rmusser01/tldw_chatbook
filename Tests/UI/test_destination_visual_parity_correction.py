@@ -34,7 +34,7 @@ from Tests.UI.test_library_shell import (
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar

@@ -27,7 +27,7 @@ from Tests.UI.test_destination_shells import (
     _wait_for_skills_snapshot,
     _wait_for_wc_snapshot,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Views.RAGSearch import search_rag_window as search_rag_module
 from tldw_chatbook.Utils import optional_deps as optional_deps_module

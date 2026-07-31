@@ -1143,7 +1143,7 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
     ``_sync_console_chat_core_state`` refreshed provider selection on every
     access but never the gate, so toggling the kill-switch had no effect
     until the whole screen was torn down and rebuilt."""
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     app = _build_test_app()

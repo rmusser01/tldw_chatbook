@@ -77,7 +77,7 @@ from Tests.UI.test_destination_shells import (
     _link_library_items_to_active_workspace,
 )
 from Tests.UI.test_library_content_hub import StaticLibraryCollectionsService
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 LIBRARY_TEST_SIZE = (170, 48)
 

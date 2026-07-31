@@ -16,7 +16,7 @@ from tldw_chatbook.UI.Lab_Modules.lab_rail_layout import (
 from tldw_chatbook.UI.Screens import lab_frame
 from tldw_chatbook.UI.Screens.lab_frame import LabScreen, LabStatusChip
 from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 def _disable_splash_race(monkeypatch) -> None:

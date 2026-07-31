@@ -6,7 +6,7 @@ from textual.widgets import Button, Static
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.UI.stts_profile_library import STTSProfileLibrary
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 # The capability line moved out of STTSWindow's sidebar and into the Lab
 # frame's rail when Speech adopted the frame, so these mount the SCREEN now.

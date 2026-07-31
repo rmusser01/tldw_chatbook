@@ -57,7 +57,7 @@ from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.RAG_Search.pipeline_functions_simple import SCOPE_DIAGNOSTICS_KEY
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 _SCOPED_CONTENT = "The quarterly roadmap review covered migration timelines."
 

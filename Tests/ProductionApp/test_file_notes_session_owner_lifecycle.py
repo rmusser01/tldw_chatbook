@@ -32,7 +32,7 @@ from Tests.Notes.test_file_notes_git_commit_integration import (
     _prepare_owned_review,
     _prepare_uncertain_commit_recovery,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 @dataclass

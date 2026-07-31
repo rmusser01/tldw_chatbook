@@ -256,7 +256,7 @@ async def test_active_destination_primary_route_still_noops():
 
 @pytest.mark.asyncio
 async def test_every_visible_master_shell_nav_destination_resolves():
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
     app = _build_test_app()

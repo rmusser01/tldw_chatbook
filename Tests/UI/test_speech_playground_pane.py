@@ -8,7 +8,7 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Input, Select, Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_stts_playground_audio_cpp import (
     FakeTTSService,
     _profile_preset,

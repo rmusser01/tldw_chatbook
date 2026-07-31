@@ -9,7 +9,7 @@ from rich.text import Text
 from textual.widgets import Button, Input, Static, TextArea
 
 from Tests.UI.test_destination_shells import DestinationHarness, _static_text
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (

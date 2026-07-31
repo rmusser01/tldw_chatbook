@@ -23,7 +23,7 @@ from textual.widgets import Button
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.lab_mode_strip import LAB_MODE_CHIPS, LabModeStrip
 from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 # (route, owning screen class name, module path, active chip id)

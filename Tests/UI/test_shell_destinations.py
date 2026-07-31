@@ -3,7 +3,7 @@ from tldw_chatbook.UI.Navigation.shell_destinations import (
     get_shell_destination,
     resolve_shell_route,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 def test_master_shell_destination_order_matches_spec():

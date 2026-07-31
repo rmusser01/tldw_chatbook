@@ -24,7 +24,7 @@ from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_settings_configuration_hub import _open_settings_category
 from tldw_chatbook.Internal_Prompts import authoring
 from tldw_chatbook.Widgets.settings_internal_prompts_panel import InternalPromptsPanel
