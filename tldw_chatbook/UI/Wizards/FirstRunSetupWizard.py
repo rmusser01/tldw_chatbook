@@ -1058,10 +1058,12 @@ class AppearanceStep(SetupStep):
             yield Static("Appearance", classes="setup-title")
             yield Label("Theme", classes="setup-field-label")
             with RadioSet(id="setup-theme-choice", classes="setup-choice-list"):
-                for theme_name in self._theme_names():
-                    yield SetupRadioButton(
-                        theme_name, value=(theme_name == prefill.default_theme)
-                    )
+                yield from self._theme_buttons(self._theme_shortlist())
+            yield Button(
+                "Show all themes…",
+                id="setup-theme-show-all",
+                classes="setup-tertiary-button",
+            )
             yield Label("Splash screen card", classes="setup-field-label")
             with RadioSet(id="setup-splash-choice", classes="setup-choice-list"):
                 yield SetupRadioButton("Surprise me (random)", value=True)
@@ -1069,11 +1071,59 @@ class AppearanceStep(SetupStep):
                     yield SetupRadioButton(card_name)
             yield Static("", classes="setup-step-error")
 
+    def _theme_buttons(self, names: list[str]):
+        """Radio rows for theme names, marking the persisted one "(current)".
+
+        TASK-1500: like the model rows, the label may carry decoration; the
+        clean theme name rides on the button as ``_theme_name`` so previews
+        and commits never see display text.
+        """
+        for theme_name in names:
+            label = (
+                f"{theme_name}   (current)"
+                if theme_name == self.selected_theme and theme_name
+                else theme_name
+            )
+            button = SetupRadioButton(label, value=(theme_name == self.selected_theme))
+            button._theme_name = theme_name
+            yield button
+
+    # TASK-1500: flagship candidates for the shortlist, in preference order.
+    # Filtered against what this Textual build actually registers; the two
+    # stock themes are always present.
+    _FLAGSHIP_THEMES = ("nord", "gruvbox", "tokyo-night", "catppuccin-mocha")
+
     def _theme_names(self) -> list[str]:
         try:
             return sorted(self.app.available_themes)
         except Exception:
             return ["textual-dark", "textual-light"]
+
+    def _theme_shortlist(self) -> list[str]:
+        """Curated first screen: current + stock defaults + a few flagships.
+
+        The full alphabetical wall (novelty themes first) buried the sane
+        choices; "Show all themes…" swaps in the complete list on demand.
+        """
+        available = self._theme_names()
+        shortlist: list[str] = []
+        for name in (
+            self.selected_theme,
+            "textual-dark",
+            "textual-light",
+            *self._FLAGSHIP_THEMES,
+        ):
+            if name and name in available and name not in shortlist:
+                shortlist.append(name)
+        return shortlist or available[:6]
+
+    @on(Button.Pressed, "#setup-theme-show-all")
+    async def _on_show_all_themes(self, event: Button.Pressed) -> None:
+        event.stop()
+        radio_set = self.query_one("#setup-theme-choice", RadioSet)
+        await radio_set.remove_children()
+        await radio_set.mount_all(self._theme_buttons(self._theme_names()))
+        self.query_one("#setup-theme-show-all", Button).display = False
 
     @staticmethod
     def _card_names() -> list[str]:
@@ -1086,9 +1136,44 @@ class AppearanceStep(SetupStep):
         except Exception:
             return []
 
+    #: Theme active before the first preview; None = nothing to revert.
+    _preview_original: Optional[str] = None
+
     @on(RadioSet.Changed, "#setup-theme-choice")
     def _on_theme(self, event: RadioSet.Changed) -> None:
-        self.selected_theme = str(event.pressed.label)
+        if event.pressed is None:
+            return
+        # Clean value, never the "(current)"-decorated label.
+        self.selected_theme = str(
+            getattr(event.pressed, "_theme_name", event.pressed.label)
+        )
+        self._preview_theme(self.selected_theme)
+
+    def _preview_theme(self, theme_name: str) -> None:
+        """TASK-1500: selecting a theme applies it immediately as a preview.
+
+        The pre-preview theme is remembered once so `revert_preview` can
+        restore it if the user backs out (finish-later) without committing.
+        A successful commit clears the revert obligation — the new theme is
+        then the persisted one.
+        """
+        if not theme_name:
+            return
+        try:
+            if self._preview_original is None:
+                self._preview_original = str(self.app.theme)
+            self.app.theme = theme_name
+        except Exception:
+            logger.debug("Theme preview failed for %s", theme_name, exc_info=True)
+
+    def revert_preview(self) -> None:
+        """Restore the pre-preview theme (no-op when nothing was previewed)."""
+        if self._preview_original is not None:
+            try:
+                self.app.theme = self._preview_original
+            except Exception:
+                logger.debug("Theme preview revert failed", exc_info=True)
+            self._preview_original = None
 
     @on(RadioSet.Changed, "#setup-splash-choice")
     def _on_card(self, event: RadioSet.Changed) -> None:
@@ -1142,6 +1227,9 @@ class AppearanceStep(SetupStep):
                 self.app.theme = self.selected_theme
             except Exception:
                 logger.debug("Live theme apply failed; persisted value still wins")
+            # TASK-1500: the commit made the previewed theme real — nothing
+            # to revert on cancel any more.
+            self._preview_original = None
         return (True, "") if ok else (False, "Saving appearance settings failed.")
 
     def get_step_data(self) -> Dict[str, Any]:
@@ -1166,8 +1254,13 @@ class WelcomeStep(SetupStep):
                     id="setup-track-quick",
                 )
                 yield SetupRadioButton("Full setup — configure everything", id="setup-track-full")
+            # TASK-1507: tertiary treatment — quiet, link-like, clearly a
+            # control but visually subordinate to the track choice above.
             yield Button(
-                "Skip — explore on my own", id="setup-skip-entirely", variant="default"
+                "Skip — explore on my own",
+                id="setup-skip-entirely",
+                variant="default",
+                classes="setup-tertiary-button",
             )
             yield Static("", classes="setup-step-error")
 
@@ -1885,4 +1978,10 @@ class FirstRunSetupWizard(WizardScreen):
 
     def _handle_cancel_confirm(self, confirmed: bool | None) -> None:
         if confirmed:
+            # TASK-1500: an uncommitted theme preview must not outlive the
+            # wizard — finish-later restores whatever the user had before.
+            try:
+                self.query_one(AppearanceStep).revert_preview()
+            except Exception:
+                pass
             self.dismiss(None)

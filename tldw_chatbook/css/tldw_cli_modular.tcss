@@ -14316,6 +14316,28 @@ SmartContentTree Tree > .selected-node {
     color: $text-muted;
 }
 
+/* TASK-1500/1507: tertiary controls (Show all themes…, Skip — explore on my
+ * own) — link-like: quiet until focused/hovered, clearly subordinate to the
+ * primary choices they sit under. */
+.setup-tertiary-button {
+    background: transparent;
+    border: none;
+    color: $text-muted;
+    text-style: underline;
+    height: 1;
+    min-width: 0;
+    padding: 0 1;
+    margin-top: 1;
+}
+.setup-tertiary-button:hover {
+    color: $text;
+    background: transparent;
+}
+.setup-tertiary-button:focus {
+    color: $text;
+    text-style: bold underline;
+}
+
 /* ===== MODULE: features/_chatbooks.tcss ===== */
 /* _chatbooks.tcss */
 /* Styles for the Chatbooks window */

@@ -1868,7 +1868,10 @@ async def test_appearance_step_rerun_preselects_configured_theme():
         radio_set = step.query_one("#setup-theme-choice", RadioSet)
         pressed = radio_set.pressed_button
         assert pressed is not None
-        assert str(pressed.label) == "nord"
+        # TASK-1500: the label carries "(current)" decoration; the clean
+        # theme name rides on the button as _theme_name.
+        assert getattr(pressed, "_theme_name", str(pressed.label)) == "nord"
+        assert "(current)" in str(pressed.label)
 
 
 @pytest.mark.asyncio
@@ -2323,3 +2326,77 @@ async def test_progress_defaults_to_quick_track_and_titles_fit():
         for step in container.steps:
             title = step.config.title
             assert len(title) <= 8, f"step title too long for progress row: {title!r}"
+
+
+class TestThemePickerShortlist:
+    """TASK-1500: curated shortlist, current marker, preview + revert."""
+
+    def _appearance_step(self, app_config=None):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import AppearanceStep
+        from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+
+        wizard = SimpleNamespace(
+            app_instance=MagicMock(app_config=app_config or {}),
+            commit_config=AsyncMock(return_value=True), rerun=False,
+        )
+        return AppearanceStep(
+            wizard=wizard,
+            config=WizardStepConfig(id="appearance", title="Style", step_number=7),
+        )
+
+    @pytest.mark.asyncio
+    async def test_shortlist_then_show_all_expands(self):
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupRadioButton
+
+        step = self._appearance_step()
+        app = _StepHost(step)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            radio_set = step.query_one("#setup-theme-choice", RadioSet)
+            short = list(radio_set.query(SetupRadioButton))
+            assert len(short) <= 6, "shortlist must be curated, not the full wall"
+            names = [getattr(b, "_theme_name", str(b.label)) for b in short]
+            assert "textual-dark" in names and "textual-light" in names
+            await pilot.pause()
+            step.query_one("#setup-theme-show-all", Button).press()
+            await pilot.pause(0.2)
+            full = list(radio_set.query(SetupRadioButton))
+            assert len(full) >= len(step._theme_names())
+            assert not step.query_one("#setup-theme-show-all", Button).display
+
+    @pytest.mark.asyncio
+    async def test_current_theme_marked_and_clean_value_selected(self):
+        step = self._appearance_step(
+            app_config={"general": {"default_theme": "textual-light"}}
+        )
+        app = _StepHost(step)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            radio_set = step.query_one("#setup-theme-choice", RadioSet)
+            current = [
+                b for b in radio_set.query(RadioButton)
+                if "(current)" in str(b.label)
+            ]
+            assert len(current) == 1
+            assert getattr(current[0], "_theme_name") == "textual-light"
+            assert step.selected_theme == "textual-light"
+
+    @pytest.mark.asyncio
+    async def test_selection_previews_and_revert_restores(self):
+        step = self._appearance_step()
+        app = _StepHost(step)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            original = str(app.theme)
+            target = next(
+                b for b in step.query_one("#setup-theme-choice", RadioSet).query(RadioButton)
+                if getattr(b, "_theme_name", "") not in ("", original)
+            )
+            target.value = True
+            await pilot.pause()
+            assert str(app.theme) == getattr(target, "_theme_name")
+            step.revert_preview()
+            assert str(app.theme) == original
