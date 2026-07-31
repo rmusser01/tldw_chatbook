@@ -16,6 +16,12 @@ from tldw_chatbook.TTS.adapter_types import (
     VoiceDiscoveryState,
 )
 from tldw_chatbook.TTS.audio_schemas import NormalizationOptions, OpenAISpeechRequest
+from tldw_chatbook.TTS.character_request_resolver import (
+    CharacterTTSRequestResolution,
+    CharacterTTSRequestResolver,
+    CharacterTTSResolutionError,
+    CharacterTTSResolutionSource,
+)
 from tldw_chatbook.TTS.playground_types import (
     STTSGeneratedAudio,
     STTSPlaygroundRequest,
@@ -63,6 +69,10 @@ __all__ = [
     "AssignedTTSProfileSnapshot",
     "CapabilitySnapshotState",
     "CharacterRef",
+    "CharacterTTSRequestResolution",
+    "CharacterTTSRequestResolver",
+    "CharacterTTSResolutionError",
+    "CharacterTTSResolutionSource",
     "CharacterTTSAssignment",
     "LoadedCharacterTTSAssignment",
     "LoadedTTSProfile",
