@@ -463,10 +463,19 @@ exclude = [
 # "tldw_chatbook.assets" = ["*"]
 
 [tool.pytest.ini_options]
+# THE single pytest config (task-1457). Tests/UI/pytest.ini used to shadow this
+# whenever pytest was invoked as `pytest Tests/UI` (different rootdir, its own
+# asyncio mode, NO timeout, root conftest not loaded); every invocation now
+# resolves here.
 testpaths = ["Tests"]
 # Exclude server tests that don't belong in the TUI.
 # --durations: always report the slowest tests (>=1s) so wall-clock regressions are visible in every run.
-addopts = "--ignore=STests --import-mode=importlib --durations=25 --durations-min=1.0"
+# --strict-markers: an unregistered marker is a collection error, not a silent no-op.
+addopts = "--ignore=STests --import-mode=importlib --durations=25 --durations-min=1.0 --strict-markers -ra"
+# Auto mode suite-wide: async tests execute without per-function marks. Under
+# the old split config, unmarked async tests silently DID NOT RUN in full runs
+# from the repo root (pytest-asyncio strict mode skips unmarked coroutines).
+asyncio_mode = "auto"
 # Default timeout for all tests (in seconds)
 timeout = 300
 # Timeout method: thread (default) or signal
@@ -477,10 +486,16 @@ markers = [
     "ui: marks tests as UI/Textual tests",
     "asyncio: marks tests as async",
     "timeout: marks tests with custom timeout values",
-    "optional: marks tests that require optional dependencies",
+    "optional: marks tests that require optional dependencies (skipped unless --run-optional)",
     "performance: marks tests as performance tests",
     "property: marks tests as property-based tests",
-    "slow: marks tests that take a long time to run",
+    "slow: marks tests that take a long time to run (skipped unless --run-slow)",
+    "smoke: fast sanity checks of core imports and wiring",
+    "benchmark: performance-measurement tests (labeling only; pytest-benchmark is not installed)",
+    "snapshot: visual regression tests using snapshots",
+    "notes: Notes feature tests",
+    "requires_display: tests that require a display (may fail in CI)",
+    "requires_cleanup: tests that need a gc pass immediately after running",
 ]
 
 [tool.mypy]

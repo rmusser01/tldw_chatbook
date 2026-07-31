@@ -501,9 +501,6 @@ def pytest_configure(config):
         "markers", "requires_cleanup: Tests that need special cleanup"
     )
     config.addinivalue_line("markers", "asyncio: Async tests using asyncio")
-    config.addinivalue_line(
-        "markers", "optional_deps: Tests requiring optional dependencies"
-    )
 
 
 @pytest.hookimpl(trylast=True)
@@ -842,7 +839,10 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(skip_slow)
 
     if not config.getoption("--run-optional"):
+        # The marker actually used by the suite is `optional` (registered in
+        # pyproject); the old gate keyed on `optional_deps`, which no test has
+        # ever carried, so it selected nothing (task-1457).
         skip_optional = pytest.mark.skip(reason="Need --run-optional option to run")
         for item in items:
-            if "optional_deps" in item.keywords:
+            if "optional" in item.keywords:
                 item.add_marker(skip_optional)

@@ -96,9 +96,8 @@ pytest -m integration
 pytest -m ui
 
 # Run only tests that require optional dependencies
-# (marker is `optional`; the `--run-optional` conftest gate is being reworked
-# in task-1457 — see backlog/docs/test-suite-audit-2026-07-30.md)
-pytest -m optional
+# (marker is `optional`; without --run-optional they are auto-skipped)
+pytest --run-optional -m optional
 
 # Combine markers
 pytest -m "unit and not optional"

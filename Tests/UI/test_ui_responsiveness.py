@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 
 
@@ -236,6 +238,14 @@ def test_console_transcript_sync_timer_updates_responsiveness_monitor():
     assert stopped == [True]
 
 
+@pytest.mark.xfail(
+    strict=False,
+    reason="task-1469: dormant while pytest-asyncio strict mode skipped its "
+    "unmarked coroutine from the repo root (task-1457 activated it); the "
+    "hand-built ChatScreen skeleton stubs 12 delegation stages but "
+    "_sync_native_console_chat_ui now has ~25 — needs a rewrite at the "
+    "worker-recording seam, not more stubs",
+)
 async def test_console_sync_records_worker_lifecycle():
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
