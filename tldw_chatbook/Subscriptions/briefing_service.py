@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
@@ -221,6 +222,48 @@ def build_briefing_prompt(
         )
 
     return _SYSTEM_PROMPT, "\n\n".join(sections)
+
+
+#: The exact citation convention `_SYSTEM_PROMPT` asks the model to use --
+#: `[item 42]`, digits only, "never invent an id". `extract_citation_ids` is
+#: this convention's own parser (spec #2 phase 2a, Task 6): turning the same
+#: bracketed ids the prompt asked the model to write back into ids a reader
+#: can navigate to.
+_CITATION_ID_PATTERN = re.compile(r"\[item (\d+)\]")
+
+
+def extract_citation_ids(body_markdown: str) -> list[int]:
+    """Every `[item N]` id a briefing body cites, in first-seen order.
+
+    Pure: no I/O, and no opinion on whether any of these ids still resolve
+    to a live `subscription_items` row -- that is entirely the caller's
+    question (Task 6's `WatchlistsCollectionsScreen._load_briefings`, via
+    `SubscriptionsDB.get_subscription_items_by_ids`), since only the caller
+    has a database to ask. This function only reads the text the model
+    wrote.
+
+    `[item x]`/`[item]` (no digits) are not a citation under this prompt's
+    own convention and are silently ignored: the model was never asked to
+    write anything but a digit (see `_SYSTEM_PROMPT`), so treating a
+    non-numeric bracket as a malformed citation would be inventing a case
+    the prompt never produces.
+
+    Args:
+        body_markdown: A briefing's `body_markdown`, or any text. Read as
+            plain text -- markdown syntax and Rich markup in it are never
+            interpreted, only the literal `[item N]` substring is matched.
+
+    Returns:
+        Deduplicated ids, in the order they first appear in the text.
+    """
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for match in _CITATION_ID_PATTERN.finditer(body_markdown or ""):
+        item_id = int(match.group(1))
+        if item_id not in seen:
+            seen.add(item_id)
+            ordered.append(item_id)
+    return ordered
 
 
 def _append_overflow(body: str, overflow_count: int) -> str:

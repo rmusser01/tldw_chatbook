@@ -38,6 +38,7 @@ from tldw_chatbook.Subscriptions.briefing_selection import (
 from tldw_chatbook.Subscriptions.briefing_service import (
     EXCERPT_CHAR_CAP,
     build_briefing_prompt,
+    extract_citation_ids,
     fail_interrupted_briefings,
     generate_briefing,
 )
@@ -440,6 +441,41 @@ def test_long_article_excerpt_is_capped_in_the_prompt():
     assert len(contribution) <= EXCERPT_CHAR_CAP + len(marker)
     # No overflow -> no overflow note.
     assert "not covered" not in user
+
+
+
+# --- extract_citation_ids (spec #2 phase 2a, Task 6) --------------------
+#
+# The reader-side counterpart to `build_briefing_prompt`'s own citation
+# convention (`_SYSTEM_PROMPT`: "using its bracketed id exactly as given,
+# e.g. [item 42]"). Pure and synchronous -- no fixtures, no DB.
+
+
+def test_extract_citation_ids_is_ordered_and_deduplicated():
+    """First-seen order, not sorted or DB order -- and a repeated citation
+    contributes only once."""
+    body = (
+        "Acme shipped a thing [item 3]. Also see [item 1] for background. "
+        "As [item 3] mentioned again, this matters. Finally [item 2]."
+    )
+    assert extract_citation_ids(body) == [3, 1, 2]
+
+
+def test_extract_citation_ids_ignores_non_numeric_brackets():
+    """`[item x]` and `[item]` are not this prompt's citation convention
+    (the model was only ever asked for digits) and must not be treated as
+    one -- but a real citation elsewhere in the same body still comes
+    through."""
+    body = "See [item x] and [item] for context, but really it's [item 42]."
+    assert extract_citation_ids(body) == [42]
+
+
+def test_extract_citation_ids_on_a_body_with_no_citations_is_empty():
+    assert extract_citation_ids("## This week\n\nNothing to report.\n") == []
+
+
+def test_extract_citation_ids_on_empty_input_is_empty():
+    assert extract_citation_ids("") == []
 
 
 def test_interrupted_recovery_only_touches_generating_rows(tmp_path):

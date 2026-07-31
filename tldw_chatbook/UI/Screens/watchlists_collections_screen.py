@@ -39,10 +39,12 @@ from ...Subscriptions.briefing_cast import (
 from ...Subscriptions.briefing_selection import MODE_AUTO_FEATURED, VALID_MODES
 from ...Subscriptions.briefing_service import (
     STATUS_GENERATING,
+    extract_citation_ids,
     fail_interrupted_briefings,
     generate_briefing,
 )
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
+from ...Subscriptions.watchlist_normalizers import normalize_watchlist_item
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -69,6 +71,7 @@ from ..Watchlists_Modules.artifacts_pane import (
     BriefingModeChanged,
     BriefingSelected,
     CastScriptRequested,
+    CitationActivated,
     GenerateBriefingRequested,
     ManagePresetsRequested,
     RefreshBriefingsRequested,
@@ -390,6 +393,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_briefing_in_flight_watchlist_id` sibling, so a refusal can name
         # the briefing actually being cast.
         self._cast_in_flight_briefing_id: int | None = None
+        # Task 6: the SELECTED briefing's citations -- the rebuild-survival
+        # mirror of `pane.citations`, resolved alongside `_selected_briefing`
+        # inside `_load_briefings` (see that method). `_citation_item_lookup`
+        # is the OTHER half of that same resolution: normalized item dicts
+        # (shaped exactly like `ItemsPane.items`' own entries -- see
+        # `normalize_watchlist_item`) for every citation that still resolves
+        # to a live row, keyed by the raw id `[item N]` names. A citation
+        # NOT in this dict is the pruned signal `handle_citation_activated`
+        # acts on -- there is no separate "available" flag to fall out of
+        # sync with it.
+        self._loaded_citations: list[dict[str, Any]] = []
+        self._citation_item_lookup: dict[int, dict[str, Any]] = {}
         # The item currently open in the CONTENT reader (Task 4). Held here
         # for the identical reason as `_loaded_items` above: `_build_content_pane`
         # is a factory the workbench calls on every region rebuild, and a
@@ -1326,6 +1341,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             artifacts_pane.default_preset_id = self._briefing_default_preset_id
             artifacts_pane.scripts = self._loaded_scripts
             artifacts_pane.selected_script = self._selected_script
+            artifacts_pane.citations = self._loaded_citations
             children.append(artifacts_pane)
         return Vertical(
             *children,
@@ -3154,6 +3170,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._briefing_default_preset_id = None
             self._loaded_scripts = []
             self._selected_script = None
+            self._loaded_citations = []
+            self._citation_item_lookup = {}
         else:
             try:
                 # Zombie recovery, before the list query, so a row this
@@ -3270,6 +3288,72 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     ),
                     None,
                 )
+            # Task 6: which items the SELECTED briefing's body actually
+            # cites. `extract_citation_ids` is pure and cheap (a regex over
+            # a body already held in memory), so it runs inline; only the
+            # DB lookup goes through `asyncio.to_thread`, ONE call per
+            # selection, inside this SAME worker/hop -- never a second
+            # worker group, per the brief. A missing key in the returned
+            # dict IS the pruned signal (`SubscriptionsDB.
+            # get_subscription_items_by_ids`'s own contract): there is no
+            # separate "does this still exist" query.
+            citation_ids = extract_citation_ids(
+                (self._selected_briefing or {}).get("body_markdown") or ""
+            )
+            if not citation_ids:
+                self._loaded_citations = []
+                self._citation_item_lookup = {}
+            else:
+                try:
+                    rows_by_id = await asyncio.to_thread(
+                        db.get_subscription_items_by_ids, citation_ids
+                    )
+                except Exception as exc:  # noqa: BLE001 - reported, not raised
+                    logger.warning(
+                        "Failed to resolve citations for briefing "
+                        f"{selected_briefing_id}: {type(exc).__name__}"
+                    )
+                    rows_by_id = {}
+                citations: list[dict[str, Any]] = []
+                lookup: dict[int, dict[str, Any]] = {}
+                for item_id in citation_ids:
+                    row = rows_by_id.get(item_id)
+                    if row is None:
+                        # The named invariant: an id that does not resolve
+                        # degrades honestly rather than quietly passing as
+                        # available. `available=False` and a label that
+                        # already says so are BOTH set here -- there is no
+                        # follow-up query for `handle_citation_activated`
+                        # to get wrong later; the pruned state is decided
+                        # once, at resolution time.
+                        citations.append(
+                            {
+                                "item_id": item_id,
+                                "label": Text(
+                                    f"item {item_id} — no longer available"
+                                ),
+                                "available": False,
+                            }
+                        )
+                        continue
+                    normalized = normalize_watchlist_item("local", row)
+                    lookup[item_id] = normalized
+                    title = str(normalized.get("title") or "Untitled item")
+                    citations.append(
+                        {
+                            "item_id": item_id,
+                            # A remote-authored title, appended into a
+                            # `Text` rather than an f-string handed to a
+                            # markup-parsing sink -- `Text(...)` never
+                            # re-parses its argument, so this is safe for
+                            # the identical reason `_script_turns_
+                            # renderable` states for a script's own turns.
+                            "label": Text(f"[item {item_id}] {title}"),
+                            "available": True,
+                        }
+                    )
+                self._loaded_citations = citations
+                self._citation_item_lookup = lookup
             # Task 4: the toolbar's pickers. One combined `to_thread` hop
             # for both the watchlist's stored settings (the SAME columns
             # `briefing_service._selection_mode` reads) and the full preset
@@ -3315,6 +3399,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.default_preset_id = self._briefing_default_preset_id
         pane.scripts = self._loaded_scripts
         pane.selected_script = self._selected_script
+        pane.citations = self._loaded_citations
 
     @staticmethod
     def _read_watchlist_briefing_settings(db: Any, watchlist_id: int) -> dict[str, Any]:
@@ -3389,6 +3474,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # click and that reload's completion.
         self._selected_script = None
         self._loaded_scripts = []
+        # Task 6: a different briefing also means different citations --
+        # the identical stale-window hazard fix round 1 fixed for scripts
+        # above, for the identical reason. Without clearing
+        # `_citation_item_lookup` too, `handle_citation_activated` could
+        # briefly resolve an id against the PREVIOUS briefing's citations
+        # in the one frame before `_load_briefings`'s reload lands.
+        self._loaded_citations = []
+        self._citation_item_lookup = {}
         try:
             pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         except NoMatches:
@@ -3396,6 +3489,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if pane is not None:
             pane.scripts = []
             pane.selected_script = None
+            pane.citations = []
         self.run_worker(
             self._load_briefings(), exclusive=True, group="wl-briefings-load"
         )
@@ -3407,6 +3501,69 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         event.stop()
         self._selected_script = event.script
+
+    @on(CitationActivated)
+    def handle_citation_activated(self, event: CitationActivated) -> None:
+        """A citation click is an OPEN (spec #2 phase 2a, Task 6 design
+        ruling -- do not relitigate): resolved exactly like clicking the
+        item's own row in the Items table, mark-read side effect included,
+        so a future "why did my item get marked read" question has THIS
+        path, not just a mouse click on the Items table, to find.
+
+        `event.item_id` was already resolved against the database when this
+        briefing was selected (`_load_briefings`, via `get_subscription_
+        items_by_ids`) -- `_citation_item_lookup` holds the result, keyed by
+        the same id. A missing key IS the pruned signal (the plan's named
+        invariant): the item existed when the briefing was written but does
+        not resolve now, and this refuses to switch sections over it --
+        there would be nothing in the reader to show, and moving the user
+        off whatever section they are on to reveal that would be worse than
+        staying put. `markup=False`: nothing here is app-authored prose the
+        toast needs escaping protection FROM, but the id came from a body an
+        LLM wrote, so the same caution `_load_briefings`'s own failure
+        toasts already take applies.
+
+        For a resolving id, switches to the Items ("Read") section --
+        `ContentPane` is only ever mounted there (`_visible_region_layout`)
+        -- and, once that section's `ItemsPane` exists, hands it the
+        resolved item via `ItemsPane.select_and_reveal` (NOT `handle_item_
+        selected` directly: that method's own docstring warns the pane's
+        `selected_item` reactive would go stale against the table's actual
+        cursor/scroll position). This reuses the exact `selected_item` ->
+        `watch_selected_item` -> `ItemSelected` -> `handle_item_selected`
+        path a real click already uses, so the reader update and the
+        mark-read side effect both come along for free. A cited item hidden
+        by the active items filter still opens (design ruling): `select_
+        and_reveal` sets the reactive regardless, and the cursor simply
+        stays put rather than pointing at a row that is not on screen.
+
+        The section switch is not visible to a query until the NEXT
+        recompose (`watch_active_section`'s own `refresh(recompose=True)`
+        is asynchronous, not immediate), so opening the item is deferred by
+        one short timer -- the identical idiom `handle_edit_rule_requested`
+        already uses to act on a freshly-switched section's pane.
+        """
+        event.stop()
+        item = self._citation_item_lookup.get(event.item_id)
+        if item is None:
+            self._notify_watchlists(
+                f"Item {event.item_id} is no longer available.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        self.active_section = "items"
+
+        def _open_citation() -> None:
+            if not self.is_mounted:
+                return
+            try:
+                items_pane = self.query_one("#watchlists-items-pane", ItemsPane)
+            except NoMatches:
+                return
+            items_pane.select_and_reveal(item)
+
+        self.set_timer(0.05, _open_citation)
 
     @on(RefreshBriefingsRequested)
     def handle_refresh_briefings_requested(

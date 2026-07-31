@@ -164,6 +164,26 @@ class ScriptSelected(Message):
         super().__init__()
 
 
+class CitationActivated(Message):
+    """Posted when the user activates a citation under the briefing body.
+
+    Spec #2 phase 2a, Task 6: retires the phase-1 "citations" deferral. A
+    briefing body's `[item N]` markers (`briefing_service.build_briefing_
+    prompt`'s own convention) are parsed once, when this briefing is
+    selected (`WatchlistsCollectionsScreen._load_briefings`, via
+    `briefing_service.extract_citation_ids`), and each resolved against
+    `SubscriptionsDB.get_subscription_items_by_ids` -- so by the time this
+    message posts, the screen already knows whether `item_id` is still a
+    live row. Carries only the id, not the row itself: the screen already
+    holds the resolution (`_citation_item_lookup`), and this message would
+    just be handing back a payload the screen would look up again.
+    """
+
+    def __init__(self, item_id: int) -> None:
+        self.item_id = item_id
+        super().__init__()
+
+
 #: The selection-mode picker's options, in the order defined by
 #: `briefing_selection.VALID_MODES` (the DB's own three-string pact,
 #: verbatim -- see `Subscriptions_DB.set_watchlist_briefing_settings`).
@@ -315,6 +335,19 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: The script whose detail is rendered below the scripts table, or
     #: `None` when nothing is selected.
     selected_script = reactive[dict[str, Any] | None](None, recompose=True)
+    #: Task 6: every `[item N]` id the SELECTED briefing's body cites,
+    #: resolved once per selection by the screen (`_load_briefings`, via
+    #: `get_subscription_items_by_ids`) -- `{"item_id": int, "label": Text,
+    #: "available": bool}` per citation, in the body's own first-cited
+    #: order. `available=False` is the honest-degradation case (the plan's
+    #: named invariant): the id no longer resolves to a live row -- pruned
+    #: or deleted since the briefing was written -- and `label` already
+    #: says so ("item N -- no longer available") rather than the pane
+    #: having to re-derive that from an absent dict. `label` is always a
+    #: `rich.text.Text`, never a bare `str`: an item title is remote text
+    #: (the same reasoning `_script_turns_renderable` states for a turn),
+    #: so it must never reach a markup parser.
+    citations = reactive[list[dict[str, Any]]]([], recompose=True)
 
     def _preset_select_options(self) -> list[tuple[str, int | None]]:
         """Options for the default-preset picker: "App default" then every
@@ -460,6 +493,36 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
 
         yield Static("Briefing detail", classes="pane-title")
         yield Static(self._detail_renderable(), id="artifacts-detail")
+
+        if self.citations:
+            # Task 6: a small citations table under the body -- one row per
+            # `[item N]` the body actually cites, activatable (a click, or
+            # arrow-navigating to it -- the same idiom every table on this
+            # pane already uses) to jump straight to that item in the
+            # reader, or, for an item pruned since this briefing was
+            # written, a toast saying so
+            # (`WatchlistsCollectionsScreen.handle_citation_activated`).
+            # Never a link inside the Markdown body itself -- see
+            # `_MARKDOWN_HYPERLINKS` above; this is a separate widget
+            # affordance instead, exactly as the plan requires.
+            #
+            # Rendered only when there is at least one citation to show:
+            # every EXISTING test in this file uses a canned body with none
+            # (`CANNED_BODY` carries no `[item N]` marker), and an
+            # always-present-but-empty table would spend this pane's
+            # already-tight row budget (see the `_watchlists.tcss` comment
+            # on `#artifacts-table`'s `min-height`) on a case with nothing
+            # to offer.
+            citations_table = DataTable(id="artifacts-citations-table")
+            citations_table.add_columns("Citation", "Status")
+            for citation in self.citations:
+                available = bool(citation.get("available"))
+                citations_table.add_row(
+                    citation.get("label") or Text(""),
+                    Text("Available" if available else "Not available"),
+                    key=str(citation.get("item_id")),
+                )
+            yield citations_table
 
         if self.selected_briefing is not None:
             # Task 5: casting a script is an action on THE SELECTED
@@ -635,6 +698,25 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             None,
         )
 
+    def activate_citation_by_id(self, citation_id: str) -> None:
+        """Post `CitationActivated` for the citation whose row key is
+        `citation_id`.
+
+        Unlike `select_briefing_by_id`/`select_script_by_id` above, there is
+        no reactive to set here: a citation carries no persistent "selected"
+        state of its own to render differently once it is current --
+        activating one either switches sections or toasts, and either way
+        this pane's own state does not change. This is the same directness
+        those two methods give a test (a caller does not have to fabricate
+        a `DataTable` row-selection event), used identically by the real
+        `DataTable` routing below.
+        """
+        try:
+            item_id = int(citation_id)
+        except (TypeError, ValueError):
+            return
+        self.post_message(CitationActivated(item_id))
+
     def watch_selected_briefing(self, briefing: dict[str, Any] | None) -> None:
         if self.is_mounted:
             self.post_message(BriefingSelected(briefing))
@@ -647,7 +729,9 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         event.stop()
         if event.row_key is None or event.row_key.value is None:
             return
-        if event.data_table.id == "artifacts-scripts-table":
+        if event.data_table.id == "artifacts-citations-table":
+            self.activate_citation_by_id(str(event.row_key.value))
+        elif event.data_table.id == "artifacts-scripts-table":
             self.select_script_by_id(str(event.row_key.value))
         else:
             self.select_briefing_by_id(str(event.row_key.value))
@@ -656,17 +740,19 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         """Select on cursor movement, which is what a single click produces.
 
         Gated on `highlight_is_user_driven` -- see this module's docstring.
-        Routes by which of this pane's TWO tables (briefings, scripts)
-        posted the event -- both are `recompose=True`-backed, so both
-        announce a row-0 highlight on every rebuild, and both need the
-        same gate for the same reason.
+        Routes by which of this pane's THREE tables (briefings, scripts,
+        citations) posted the event -- all three are `recompose=True`-
+        backed, so all three announce a row-0 highlight on every rebuild,
+        and all three need the same gate for the same reason.
         """
         event.stop()
         if not highlight_is_user_driven(event):
             return
         if event.row_key is None or event.row_key.value is None:
             return
-        if event.data_table.id == "artifacts-scripts-table":
+        if event.data_table.id == "artifacts-citations-table":
+            self.activate_citation_by_id(str(event.row_key.value))
+        elif event.data_table.id == "artifacts-scripts-table":
             self.select_script_by_id(str(event.row_key.value))
         else:
             self.select_briefing_by_id(str(event.row_key.value))
@@ -679,7 +765,9 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         row_key = getattr(event.cell_key, "row_key", None)
         if row_key is None or row_key.value is None:
             return
-        if event.data_table.id == "artifacts-scripts-table":
+        if event.data_table.id == "artifacts-citations-table":
+            self.activate_citation_by_id(str(row_key.value))
+        elif event.data_table.id == "artifacts-scripts-table":
             self.select_script_by_id(str(row_key.value))
         else:
             self.select_briefing_by_id(str(row_key.value))

@@ -38,6 +38,7 @@ from unittest.mock import Mock
 
 import pytest
 from rich.console import Console
+from rich.text import Text
 from textual.coordinate import Coordinate
 from textual.widgets import Button, DataTable, Select, Static
 
@@ -57,8 +58,10 @@ from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import (
     ArtifactsPane,
     BriefingSelected,
     CastScriptRequested,
+    CitationActivated,
     GenerateBriefingRequested,
 )
+from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_tab_strip import SECTIONS
 
@@ -198,6 +201,17 @@ async def _press_generate(screen, pilot, app, watchlist_id, *, timeout: float = 
 
 def _briefing_rows(app, watchlist_id) -> list[dict]:
     return app.watchlist_bundle_service.db.list_briefings(watchlist_id)
+
+
+def _seeded_item_rows(app) -> list[sqlite3.Row]:
+    """The real `subscription_items` rows `_seed_watchlist` just wrote, id
+    ASC -- so a citation test can cite an id the database actually has,
+    rather than a number invented in the test itself.
+    """
+    db = app.watchlist_bundle_service.db
+    return list(
+        db.conn.execute("SELECT id, title FROM subscription_items ORDER BY id")
+    )
 
 
 # --- Task 5: casting a script ------------------------------------------
@@ -1906,3 +1920,264 @@ async def test_switching_the_selected_briefing_clears_stale_scripts_before_the_r
         await pilot.pause()
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         assert pane.scripts == []
+
+
+# --- Task 6: citations into the reader + pruned degradation --------------
+#
+# Retires the phase-1 "citations" deferral: a briefing body's `[item N]`
+# markers (`briefing_service.build_briefing_prompt`'s own convention) become
+# navigable. `extract_citation_ids`'s own ordering/dedup/ignore-non-numeric
+# behaviour is pure and tested directly in `Tests/Subscriptions/
+# test_briefing_service.py`; these tests are about the RESOLUTION (the
+# screen's `_load_briefings`, via `get_subscription_items_by_ids`) and
+# ACTIVATION (`handle_citation_activated`) built on top of it.
+#
+# `pane.activate_citation_by_id` is called directly rather than fabricating
+# a `DataTable` row-selection event -- the same directness this file's
+# existing tests already give `select_briefing_by_id`/`select_script_by_id`
+# -- but it is still a REAL call on the REAL mounted pane, so it posts a
+# REAL `CitationActivated` through the REAL message pump into the REAL
+# screen handler; nothing about the screen-side wiring is faked.
+
+
+@pytest.mark.asyncio
+async def test_a_complete_briefings_citations_table_lists_each_cited_id_with_its_title(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app, items=2)
+    cited = _seeded_item_rows(app)[0]
+    _use_fake_chat(
+        monkeypatch,
+        _FakeChat(reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"),
+    )
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+        # `_press_generate` only waits for the briefings TABLE's row count to
+        # agree with the database -- but setting `pane.selected_briefing`
+        # (inside the generation worker's own `_load_briefings` call) fires
+        # `ArtifactsPane.watch_selected_briefing`, which posts
+        # `BriefingSelected`, which `handle_briefing_selected` answers by
+        # clearing `pane.citations` and dispatching a SECOND, separate
+        # `_load_briefings()` -- the identical cascade `_prepare_cast` below
+        # already settles with this same extra direct call before reading
+        # pane state. Measured directly (a debug harness printing every
+        # `_load_briefings` call's own citations): without this, `pane.
+        # citations` is observed empty here more often than not, mid-cascade.
+        await screen._load_briefings()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.citations == [
+            {
+                "item_id": cited["id"],
+                "label": pane.citations[0]["label"],
+                "available": True,
+            }
+        ], "exactly one citation, for the one id the body actually cites"
+        label = pane.citations[0]["label"]
+        assert isinstance(label, Text), "a title is remote text -- never a bare str"
+        assert cited["title"] in label.plain
+        assert str(cited["id"]) in label.plain
+
+        table = pane.query_one("#artifacts-citations-table", DataTable)
+        assert table.row_count == 1
+        painted = _painted(screen, table.region)
+        assert cited["title"] in painted
+        assert "Available" in painted
+
+
+@pytest.mark.asyncio
+async def test_a_citation_to_a_pruned_item_degrades(monkeypatch):
+    """The plan's second named invariant: **citation-to-pruned-item-
+    degrades**. A `[item N]` id that does not resolve to a live
+    `subscription_items` row (deleted, or simply never existed) must
+    degrade honestly -- both in what the citations table shows, and in what
+    activating it does. It must never be silently treated as available.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app, items=1)
+    pruned_id = max(row["id"] for row in _seeded_item_rows(app)) + 1000
+    _use_fake_chat(
+        monkeypatch,
+        _FakeChat(reply=f"## This week\n\nSomething happened [item {pruned_id}].\n"),
+    )
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+        # Settle the `BriefingSelected` reload cascade -- see the comment on
+        # the identical call in `test_a_complete_briefings_citations_table_
+        # lists_each_cited_id_with_its_title` above.
+        await screen._load_briefings()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert len(pane.citations) == 1
+        citation = pane.citations[0]
+        assert citation["item_id"] == pruned_id
+        assert citation["available"] is False
+        assert isinstance(citation["label"], Text)
+        assert citation["label"].plain == f"item {pruned_id} — no longer available"
+
+        table = pane.query_one("#artifacts-citations-table", DataTable)
+        assert table.row_count == 1
+        painted = _painted(screen, table.region)
+        assert "no longer available" in painted
+        assert "Not available" in painted
+
+        # Activating it: a toast, markup=False, and -- the invariant's other
+        # half -- NO section switch. Section-switching is the mechanism a
+        # future edit could most plausibly get backwards (treat "pruned" as
+        # "switch anyway, then discover there's nothing to show"), so both
+        # halves are pinned in the same test.
+        notes_before = app.notify.call_count
+        section_before = screen.active_section
+        pane.activate_citation_by_id(str(pruned_id))
+        await pilot.pause(0.2)
+
+        assert screen.active_section == section_before, (
+            "a pruned citation must not switch sections"
+        )
+        assert not screen.query("#wl-region-content"), (
+            "a pruned citation must not mount the reader either"
+        )
+        assert app.notify.call_count > notes_before, "a pruned citation must toast"
+        toast_call = app.notify.call_args
+        assert toast_call.kwargs.get("markup") is False
+        assert str(pruned_id) in str(toast_call.args[0])
+
+
+@pytest.mark.asyncio
+async def test_activating_an_available_citation_opens_it_in_the_reader_and_marks_it_read(
+    monkeypatch,
+):
+    """Activating a resolving citation is an OPEN (design ruling -- do not
+    relitigate): it switches to the Items ("Read") section, the reader
+    shows that exact item, and -- the same side effect a real click on the
+    Items table already has -- the item's status flips from `new` to
+    `reviewed`. Pinned here so a future "why did my item get marked read"
+    question has this path, not just a mouse click, to find.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app, items=2)
+    db = app.watchlist_bundle_service.db
+    # `_build_test_app`'s `patch("tldw_chatbook.app.get_subscriptions_db_path",
+    # ...)` is only active while `TldwCli()` itself is constructing (see its
+    # nested `with` blocks) -- long enough for the EAGERLY-built
+    # `watchlist_bundle_service.db` to see it, but `LocalWatchlistsService`'s
+    # own `db_factory` is a lambda that re-resolves `get_subscriptions_db_
+    # path()` LAZILY, on its first real call, which happens well after that
+    # patch has already been undone -- so, in this harness only,
+    # `app.local_watchlists_service._db()` falls through to the real,
+    # unpatched path instead of this test's isolated one (confirmed directly:
+    # a debug probe printed the two `db_path`s and they differ). That is the
+    # SAME database `_mark_item_read_on_open`'s write actually reaches
+    # (`_controller` -> `WatchlistScopeService` -> `LocalWatchlistsService.
+    # update_item` -> `self._db()`), so without this redirect the write
+    # would target a database this test's seeded item was never in. This is
+    # a test-harness-only artifact (in the real app both resolve to the same
+    # configured path), not something Task 6 introduces, so it is patched
+    # here rather than in the shared `_build_test_app`/`_seed_watchlist`
+    # helpers, which every other test in this file already relies on as-is.
+    monkeypatch.setattr(app.local_watchlists_service, "db_factory", lambda: db)
+    cited = _seeded_item_rows(app)[0]
+    assert db.get_item_status(cited["id"]) == "new", "fixture precondition"
+    _use_fake_chat(
+        monkeypatch,
+        _FakeChat(reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"),
+    )
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+        # Settle the `BriefingSelected` reload cascade -- see the comment on
+        # the identical call in `test_a_complete_briefings_citations_table_
+        # lists_each_cited_id_with_its_title` above.
+        await screen._load_briefings()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        citation = next(c for c in pane.citations if c["item_id"] == cited["id"])
+        assert citation["available"] is True
+
+        assert screen.active_section == "artifacts"
+        pane.activate_citation_by_id(str(cited["id"]))
+        # Real wall-clock delay: `handle_citation_activated` defers opening
+        # the item by a `set_timer(0.05, ...)` (the section switch it makes
+        # first is not visible to a query until the NEXT recompose), and a
+        # bare `pilot.pause()` waits for CPU idle, not wall-clock time, so
+        # it would not reliably let that timer fire.
+        await pilot.pause(0.3)
+
+        assert screen.active_section == "items", (
+            "an available citation must switch to the Read tab"
+        )
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        for _ in range(60):
+            await pilot.pause()
+            if content_pane.item is not None:
+                break
+        assert content_pane.item is not None
+        # `content_pane.item["id"]` is `normalize_watchlist_item`'s own
+        # NAMESPACED id (`"local:watchlist_item:<n>"`), not the bare
+        # `[item N]` id the body cited -- `item_id` is that same
+        # normalization's bare-id field, and asserting on it (plus the
+        # title) is the unambiguous way to confirm this is really the cited
+        # item, not merely "the reader now shows *an* item".
+        assert content_pane.item["item_id"] == cited["id"]
+        assert content_pane.item["title"] == cited["title"]
+
+        for _ in range(60):
+            await pilot.pause()
+            if db.get_item_status(cited["id"]) == "reviewed":
+                break
+        assert db.get_item_status(cited["id"]) == "reviewed", (
+            "opening a cited item through the citations table must mark it "
+            "read, exactly like opening it via a click in the Items table"
+        )
+
+
+@pytest.mark.asyncio
+async def test_citations_do_not_shrink_the_briefings_table_below_its_pinned_minimum(
+    monkeypatch,
+):
+    """Task 5's `test_the_briefings_table_keeps_at_least_three_usable_rows`
+    already pins `#artifacts-table`'s floor with a script section present;
+    this is the same pin with a citations table ALSO present -- the
+    scenario the brief specifically warns about ("the citations table must
+    not steal below the pinned minimums"). Every OTHER new test in this
+    file uses `_seed_watchlist`'s default single-item body with no
+    `[item N]` marker, so this is the only one that puts all three sections
+    (briefing list, scripts, citations) on screen at once.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    cited = _seeded_item_rows(app)[0]
+    _use_fake_chat(
+        monkeypatch,
+        _FakeChat(reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"),
+    )
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        _host,
+    ):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        _use_fake_cast_chat(
+            monkeypatch, _FakeChat(reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}]))
+        )
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.citations, "the fixture must actually produce a citation"
+        table = pane.query_one("#artifacts-table", DataTable)
+        assert table.region.height >= 4, (
+            f"adding the citations table shrank the briefings table to "
+            f"{table.region.height} row(s) -- the pinned floor from Task 5 "
+            "must survive a citations table sharing the same budget"
+        )
