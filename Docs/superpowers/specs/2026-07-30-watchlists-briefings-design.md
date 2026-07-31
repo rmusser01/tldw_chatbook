@@ -3,8 +3,8 @@
 **Date:** 2026-07-30
 **Status:** phase 1 implemented (2026-07-30); phases 2-4 pending
 
-**Phase 1 delivery notes (2026-07-30):** two deferrals from the phase 1 plan, both pending the
-project owner's confirmation:
+**Phase 1 delivery notes (2026-07-30):** two deferrals from the phase 1 plan, both confirmed by
+the project owner (2026-07-30):
 
 - **Selection-mode picker.** `watchlists.briefing_selection_mode` ships with its default
   (`auto_featured`) and no writer anywhere in the UI -- `auto` and `curated` are unreachable until
