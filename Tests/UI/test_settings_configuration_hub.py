@@ -7557,7 +7557,6 @@ def test_footer_entries_drop_test_hint_where_no_test_action_exists():
     entries = screen._footer_shortcut_entries()
 
     keys = [key for key, _ in entries]
-    assert "s" in keys and "r" in keys
     assert "t" not in keys
 
 
@@ -7585,3 +7584,110 @@ def test_filter_matches_owned_config_keys():
         summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR
         for summary in matches
     )
+
+
+# ---- rescore P1 batch: Theme recompose storm + footer save/revert honesty ----
+
+
+@pytest.mark.asyncio
+async def test_theme_category_settles_without_recompose_storm():
+    """Opening Theme must converge: the mounted editor instance survives.
+
+    Regression (rescore P1): each freshly-mounted editor posted
+    ThemeModifiedStatus(False) at init then (True) after its programmatic
+    load, so theme_editor_modified (recompose=True) flipped forever; every
+    flip replaced the editor and the whole screen -- a busy loop that
+    starved the event loop and froze the app for keyboard AND mouse input.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        for _ in range(6):
+            await pilot.pause()
+        first = screen.query_one("#settings-theme-editor")
+        for _ in range(12):
+            await pilot.pause()
+        second = screen.query_one("#settings-theme-editor")
+        assert first is second, "Theme editor was replaced: recompose storm"
+        assert screen.theme_editor_modified is False
+
+
+def test_footer_entries_drop_save_revert_where_no_draft_model_exists():
+    """Categories outside the guided draft model must not advertise
+    "s save category | r revert category": both keys answer with an
+    informational toast there (read-only Artifacts, autosave Splash,
+    immediate-apply Workspaces, editor-owned Theme). Mirrors the task-1564
+    gating that already keeps the ``t`` hint honest."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    for category in (
+        SettingsCategoryId.ARTIFACTS,
+        SettingsCategoryId.SPLASH_SCREEN,
+        SettingsCategoryId.WORKSPACES,
+        SettingsCategoryId.THEME,
+    ):
+        screen.active_category = category.value
+        keys = [key for key, _ in screen._footer_shortcut_entries()]
+        assert "s" not in keys, category
+        assert "r" not in keys, category
+
+
+def test_footer_entries_advertise_save_revert_where_draft_model_acts():
+    """Every guided-mutation category keeps the s/r hints."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    for category in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES:
+        screen.active_category = category.value
+        entries = screen._footer_shortcut_entries()
+        assert ("s", "save category") in entries, category
+        assert ("r", "revert category") in entries, category
+
+
+def test_footer_entries_testable_view_category_keeps_t_without_save_revert():
+    """Privacy & Security has a real test action but no draft: t only."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.PRIVACY_SECURITY.value
+
+    entries = screen._footer_shortcut_entries()
+
+    keys = [key for key, _ in entries]
+    assert "t" in keys
+    assert "s" not in keys
+    assert "r" not in keys
+
+
+@pytest.mark.asyncio
+async def test_theme_user_edit_does_not_remount_editor():
+    """A real color edit must keep the SAME editor instance mounted.
+
+    Qodo review of PR #1125: with theme_editor_modified as a recompose=True
+    reactive, the FIRST user edit posted ThemeModifiedStatus(True), the
+    screen recomposed, and the freshly-mounted editor discarded the
+    in-progress input -- then, storm-fix in place, the dirty flag stuck at
+    True with a clean editor. The dirty state must surface through targeted
+    refreshes instead (the InternalPromptsPanel.Modified idiom).
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        for _ in range(6):
+            await pilot.pause()
+        editor = screen.query_one("#settings-theme-editor")
+        target = editor.query_one("#settings-theme-color-primary", Input)
+        target.value = "#123456"
+        for _ in range(6):
+            await pilot.pause()
+        assert screen.query_one("#settings-theme-editor") is editor, (
+            "user edit recomposed the screen and replaced the editor"
+        )
+        assert target.value == "#123456"
+        assert screen.theme_editor_modified is True
+        note = screen.query_one("#settings-theme-unsaved-note", Static)
+        assert "Yes" in str(note.renderable)
