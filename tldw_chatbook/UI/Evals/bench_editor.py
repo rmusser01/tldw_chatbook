@@ -277,6 +277,11 @@ class BenchEditor(Vertical):
         dirty (the user typed SOMETHING different from the loaded int),
         matching Save's own treatment of that value as a real, if invalid,
         edit -- see ``_on_save_pressed``'s identical `int(...)` parse.
+
+        Returns:
+            bool: True when any form field or the staged target list
+            differs from the loaded bench state; False for a pristine
+            form or when no form composed at all.
         """
         loaded = self._loaded_config
         if loaded is None:
