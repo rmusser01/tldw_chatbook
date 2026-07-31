@@ -115,6 +115,20 @@ theme colors rendered (not monochrome), no truncated right edge.
    it locally (macOS: `qlmanage -t -s 2458 -o /tmp/out file.svg`) and eyeball
    it against the fidelity bar above.
 
+5. Strip the remote font sources (Textual/rich exports embed `@font-face`
+   rules that fetch Fira Code from cdnjs.cloudflare.com — docs images must
+   be self-contained; keep the `local(...)` source and the `monospace`
+   fallback):
+   ```bash
+   python3 - <<'EOF'
+   import pathlib, re
+   pat = re.compile(r',\s*\n\s*url\("https://cdnjs\.cloudflare\.com/[^"]+"\) format\("woff2?"\)')
+   for svg in pathlib.Path("Docs/User_Guide/images/<screen>").glob("*.svg"):
+       svg.write_text(pat.sub("", svg.read_text()))
+   EOF
+   grep -rl "cdnjs" Docs/User_Guide/images/ && echo "STILL DIRTY" || echo clean
+   ```
+
 **Standard size: 200×50 cells.** The live nav survey (Task 1) drove the app
 at 235×52; this recipe deliberately uses a smaller, fixed 200×50 so every
 page's captures are the same size. Verified during the Step 1 experiment
