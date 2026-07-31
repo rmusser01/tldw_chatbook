@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import traceback
 from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
 from dataclasses import FrozenInstanceError, fields
@@ -2700,6 +2701,28 @@ async def test_delete_rejects_stale_loaded_generation_before_repository_work() -
     assert repository.calls == []
     assert tts_service.capability_calls == []
     assert tts_service.revision_decisions == []
+
+
+@pytest.mark.parametrize(
+    ("method_name", "required_sections"),
+    (
+        ("set_assignment", ("Args:", "Returns:", "Raises:")),
+        ("detach_assignment", ("Args:", "Raises:")),
+    ),
+)
+def test_assignment_mutation_methods_document_their_public_contract(
+    method_name: str,
+    required_sections: tuple[str, ...],
+) -> None:
+    method = getattr(TTSProfileService, method_name)
+    docstring = inspect.getdoc(method)
+
+    assert docstring is not None
+    for parameter_name in inspect.signature(method).parameters:
+        if parameter_name != "self":
+            assert f"{parameter_name}:" in docstring
+    for section in required_sections:
+        assert section in docstring
 
 
 @pytest.mark.asyncio

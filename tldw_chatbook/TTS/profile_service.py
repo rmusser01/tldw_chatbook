@@ -1023,7 +1023,28 @@ class TTSProfileService:
         loaded: LoadedTTSProfile,
         expected_current: CharacterTTSAssignment | None,
     ) -> CharacterTTSAssignment:
-        """Set one exact character assignment from caller-held profile state."""
+        """Set one exact character assignment from caller-held profile state.
+
+        Args:
+            character_ref: Exact source, authority, and character identity to
+                assign.
+            loaded: Exact profile and repository generation selected by the
+                caller.
+            expected_current: Exact assignment observed by the caller, or
+                ``None`` when the character was observed as unassigned.
+
+        Returns:
+            The exact persisted character assignment.
+
+        Raises:
+            ProfileValidationError: If caller-held values are invalid,
+                noncanonical, or refer to different characters.
+            ProfileRepositoryError: If repository state is stale or rejects
+                the compare-and-set mutation.
+            ProfileServiceError: If capability authority is unavailable or
+                unverified, configuration changes, or a collaborator returns
+                an invalid result.
+        """
 
         canonical_ref = _canonicalize_exact_character_ref(character_ref)
         profile = self._validate_loaded(loaded)
@@ -1089,7 +1110,21 @@ class TTSProfileService:
         assignment: CharacterTTSAssignment,
         repository_generation: int,
     ) -> None:
-        """Detach one exact caller-held assignment without capability work."""
+        """Detach one exact caller-held assignment without capability work.
+
+        Args:
+            assignment: Exact character and profile assignment observed by the
+                caller.
+            repository_generation: Exact repository lifecycle generation
+                observed with the assignment.
+
+        Raises:
+            ProfileValidationError: If caller-held values are invalid or
+                noncanonical.
+            ProfileRepositoryError: If repository state is stale or the
+                observed assignment has been replaced.
+            ProfileServiceError: If the repository returns an invalid result.
+        """
 
         canonical_assignment = _canonicalize_exact_assignment(assignment)
         expected_generation = _validate_nonnegative_integer(
