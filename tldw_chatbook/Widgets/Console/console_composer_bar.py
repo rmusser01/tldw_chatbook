@@ -3087,10 +3087,16 @@ class ConsoleComposerBar(Horizontal):
             message: Status or failure text for non-listening states.
             segment_transcribing: True while a per-segment transcription is
                 in flight (see `set_voice_segment_transcribing`). Only
-                meaningful for `state == "listening"`; overrides `partial`
-                there, since the two are never simultaneously true under the
-                segment-at-silence architecture (a partial only ever lands
-                once a segment's transcription has completed).
+                meaningful for `state == "listening"`; takes precedence over
+                `partial` there when both happen to be set -- which is a real
+                case, not a hypothetical one: an inline command's ack (`¶`,
+                e.g.) is left sitting in `_voice_partial` by
+                `set_voice_partial`, and an inline command does NOT end the
+                capture, so the very next segment's `done=False` can set this
+                flag while that ack text is still stored. The chip correctly
+                shows the transcribing indication over the stale ack in that
+                case; it just means the two are not mutually exclusive the
+                way an earlier version of this docstring claimed.
         """
         try:
             chip = self.query_one("#console-voice-status", Static)
@@ -3114,7 +3120,22 @@ class ConsoleComposerBar(Horizontal):
             head = f"● {elapsed_seconds // 60}:{elapsed_seconds % 60:02d}"
             room = width - len(head) - 3
             if segment_transcribing and room > 8:
-                tail = self.VOICE_CHIP_TRANSCRIBING_LABEL[-room:]
+                # A right-truncating `[-room:]` slice (as used for `partial`
+                # just below, correctly -- the newest recognizer words are
+                # what matters there) is wrong for a fixed constant: it keeps
+                # the TAIL of the label, so at composer widths that land
+                # `room` in 9..14 the chip painted "scribing…" -- the label's
+                # own trailing ellipsis surviving while its meaningful prefix
+                # was cut, reading as garbage rather than a truncated status
+                # word (review finding L3). Keep the START instead, and
+                # replace the cut-off end with an explicit ellipsis of our
+                # own when the label doesn't fit whole -- the label's own
+                # trailing "…" only ever survives when nothing was cut.
+                label = self.VOICE_CHIP_TRANSCRIBING_LABEL
+                if len(label) <= room:
+                    tail = label
+                else:
+                    tail = f"{label[: max(room - 1, 0)]}…"
                 body = f"{head}  {tail}"
             elif partial and room > 8:
                 tail = partial[-room:]

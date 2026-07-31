@@ -149,6 +149,35 @@ async def test_narrow_terminal_drops_the_partial_not_the_draft():
 
 
 @pytest.mark.asyncio
+async def test_the_transcribing_label_truncates_from_the_right_not_the_left():
+    """Review L3: at a composer width that gives the label a room of 9..14
+    cells, a right-truncating `[-room:]` slice (correct for `partial`, wrong
+    for a fixed constant) painted "scribing…" -- the label's own trailing
+    ellipsis surviving while its meaningful prefix was cut. The fix keeps
+    the START of the label and puts the ellipsis at the cut, so "Transcr"
+    (the readable, identifying part) must survive, never "scribing".
+
+    Terminal width 44 was probed to land the composer's own `room` at 11
+    cells -- squarely inside the buggy 9..14 window (composer widths
+    ~42-47 columns per the review).
+    """
+    app = ComposerApp()
+    async with app.run_test(size=(44, 12)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        composer.set_voice_status(
+            STATE_LISTENING, elapsed_seconds=7, segment_transcribing=True
+        )
+        await pilot.pause()
+        chip = composer.query_one("#console-voice-status", Static)
+        painted = _painted(chip)
+        assert "●" in painted
+        assert "Transcr" in painted, f"expected the label's start to survive, got {painted!r}"
+        assert "scribing" not in painted, (
+            f"the label was still truncated from the left, got {painted!r}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_preparing_and_error_states_render_their_message():
     app = ComposerApp()
     async with app.run_test() as pilot:
