@@ -128,12 +128,24 @@ class LazyLiveDictationService:
     #: `dictation.vad_aggressiveness`.
     VAD_AGGRESSIVENESS = 3
 
+    #: How many milliseconds of recently-*rejected* audio the recorder
+    #: replays the instant its VAD accepts a frame after a silence run, to
+    #: recover a clipped speech onset. Incident: live dictation on real
+    #: hardware with parakeet-mlx transcribed "stop" as "dot"/"top"-like
+    #: forms and "send" as "and" -- at `vad_aggressiveness=3`, low-energy
+    #: onsets (word-initial fricatives especially) were classified as
+    #: non-speech and dropped before transcription ever saw them. See
+    #: `AudioRecordingService.VAD_PREROLL_MS` for the 240ms/12-frame
+    #: rationale this mirrors. Configurable as `dictation.vad_preroll_ms`.
+    VAD_PREROLL_MS = 240
+
     #: Instance defaults, declared on the class so a service built with
     #: `__new__` (teardown-path tests do exactly that) still stops cleanly
     #: instead of raising AttributeError while releasing the microphone.
     stop_join_timeout_seconds = STOP_JOIN_TIMEOUT_SECONDS
     silence_threshold_seconds = SILENCE_THRESHOLD_SECONDS
     vad_aggressiveness = VAD_AGGRESSIVENESS
+    vad_preroll_ms = VAD_PREROLL_MS
     captured_bytes = 0
     max_buffer_bytes: Optional[int] = None
     on_buffer_limit: Optional[Callable[[], None]] = None
@@ -245,6 +257,7 @@ class LazyLiveDictationService:
         self.stop_join_timeout_seconds = self._resolve_stop_join_timeout()
         self.silence_threshold_seconds = self._resolve_silence_threshold()
         self.vad_aggressiveness = self._resolve_vad_aggressiveness()
+        self.vad_preroll_ms = self._resolve_vad_preroll_ms()
 
         # Bytes the recorder has handed us this session. The one fact that
         # separates "the microphone produced nothing" from "the transcriber
@@ -362,6 +375,40 @@ class LazyLiveDictationService:
             return cls.VAD_AGGRESSIVENESS
         return aggressiveness
 
+    @classmethod
+    def _resolve_vad_preroll_ms(cls) -> int:
+        """Read `dictation.vad_preroll_ms`, falling back to the default.
+
+        Returns:
+            A non-negative number of milliseconds of recently-rejected audio
+            the recorder replays the instant its VAD accepts a frame after a
+            silence run. See `VAD_PREROLL_MS` above for why this exists.
+        """
+        raw = get_cli_setting("dictation.vad_preroll_ms", cls.VAD_PREROLL_MS)
+        try:
+            preroll_ms = int(raw)
+        except (TypeError, ValueError, OverflowError):
+            # Same trap as the resolvers above: `nan`/`inf` are valid TOML
+            # floats. `int(float("nan"))` raises `ValueError` and
+            # `int(float("inf"))` raises `OverflowError` (not `ValueError`),
+            # so both must be caught here or a typo'd config value crashes
+            # dictation start instead of falling back.
+            logger.warning(
+                "Invalid dictation.vad_preroll_ms {!r}; using {}",
+                raw,
+                cls.VAD_PREROLL_MS,
+            )
+            return cls.VAD_PREROLL_MS
+        if preroll_ms < 0:
+            logger.warning(
+                "dictation.vad_preroll_ms must be a non-negative integer "
+                "(got {!r}); using {}",
+                raw,
+                cls.VAD_PREROLL_MS,
+            )
+            return cls.VAD_PREROLL_MS
+        return preroll_ms
+
     def _load_privacy_settings(self):
         """Load privacy settings from configuration."""
         self.privacy_settings = {
@@ -391,6 +438,7 @@ class LazyLiveDictationService:
                     backend=self.audio_backend_preference,
                     use_vad=True,
                     vad_aggressiveness=self.vad_aggressiveness,
+                    vad_preroll_ms=self.vad_preroll_ms,
                     chunk_size=int(
                         self.buffer_duration_ms * 16
                     ),  # 16 samples/ms at 16kHz

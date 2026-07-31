@@ -572,3 +572,92 @@ def test_resolved_aggressiveness_reaches_the_recorder(monkeypatch):
 
     assert recorder is built[0]
     assert built[0].kwargs["vad_aggressiveness"] == 1
+
+
+# --------------------------------------------------------------------------
+# `vad_preroll_ms` config
+#
+# The recorder's onset pre-roll (`AudioRecordingService.VAD_PREROLL_MS`)
+# fixes a live-diagnosed defect: at `vad_aggressiveness=3`, low-energy
+# speech onsets -- word-initial fricatives especially -- were classified as
+# non-speech and dropped before transcription ever saw them ("stop"
+# transcribed as "dot"/"top"-like forms, "send" as "and"). A bad
+# `vad_preroll_ms` is just as silent a failure as a bad
+# `vad_aggressiveness`, so this mirrors that resolver's coverage exactly.
+# --------------------------------------------------------------------------
+
+
+def _stub_preroll_setting(monkeypatch, value) -> None:
+    """Make `get_cli_setting` report `value` for the preroll key only."""
+    from tldw_chatbook.Audio import dictation_service_lazy
+
+    def _get(section: str, key: Any = None, default: Any = None) -> Any:
+        if key is not None and not isinstance(key, str):
+            key, default = None, key
+        path = section if key is None else f"{section}.{key}"
+        if path == "dictation.vad_preroll_ms":
+            return value
+        return default
+
+    monkeypatch.setattr(dictation_service_lazy, "get_cli_setting", _get)
+
+
+def test_a_configured_preroll_is_honored(monkeypatch):
+    from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+    _stub_preroll_setting(monkeypatch, 480)
+    assert LazyLiveDictationService._resolve_vad_preroll_ms() == 480
+
+
+def test_zero_preroll_is_honored(monkeypatch):
+    """0 disables pre-roll outright and must not be treated as "unset"."""
+    from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+    _stub_preroll_setting(monkeypatch, 0)
+    assert LazyLiveDictationService._resolve_vad_preroll_ms() == 0
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        float("nan"),
+        float("inf"),
+        "nan",
+        "inf",
+        -1,
+        "not a number",
+        None,
+        [],
+    ],
+)
+def test_an_unusable_preroll_falls_back_to_the_default(monkeypatch, bad):
+    """A typo must not silently disable onset recovery (or crash)."""
+    from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+    _stub_preroll_setting(monkeypatch, bad)
+    assert (
+        LazyLiveDictationService._resolve_vad_preroll_ms()
+        == LazyLiveDictationService.VAD_PREROLL_MS
+    )
+
+
+def test_resolved_preroll_reaches_the_recorder(monkeypatch):
+    """The whole point: the resolved value must actually reach the recorder."""
+    from tldw_chatbook.Audio import recording_service
+    from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+    built = []
+
+    def factory(**kwargs):
+        recorder = type("RecorderSpy", (), {"kwargs": kwargs})()
+        built.append(recorder)
+        return recorder
+
+    monkeypatch.setattr(recording_service, "AudioRecordingService", factory)
+    _stub_preroll_setting(monkeypatch, 480)
+
+    service = LazyLiveDictationService()
+    recorder = service.audio_service
+
+    assert recorder is built[0]
+    assert recorder.kwargs["vad_preroll_ms"] == 480
