@@ -282,6 +282,8 @@ class _WindowsJobObjectController:
             (_WindowsAsyncChildProcess, _WindowsFailedAdmissionProcess),
         ):
             tree.process.close()
+        self._api.close_handle(identity.thread_handle)
+        identity.thread_handle = 0
         self._api.close_handle(identity.job_handle)
         tree.closed = True
 
@@ -298,6 +300,7 @@ class _WindowsJobIdentity:
     job_handle: int
     pid: int
     assigned: bool = False
+    thread_handle: int = 0
 
 
 class _WindowsPipeReader:
@@ -497,24 +500,44 @@ class _WindowsFailedAdmissionProcess:
     def __init__(
         self,
         kernel: _WindowsKernel,
+        *,
+        stdin: bool,
+    ) -> None:
+        self._kernel = kernel
+        self._process_handle = 0
+        self._stdin_handle = 0
+        self._stdout_handle = 0
+        self._stderr_handle = 0
+        self.pid = 0
+        self.returncode: int | None = None
+        self.stdin = _ClosingWindowsPipeWriter(self) if stdin else None
+        self.stdout = _ClosedWindowsPipeReader()
+        self.stderr = _ClosedWindowsPipeReader()
+
+    def adopt(
+        self,
         process_handle: int,
         pid: int,
-        stdin_handle: int | None,
+    ) -> None:
+        """Adopt one newly created suspended process without allocating."""
+        self._process_handle = process_handle
+        self.pid = pid
+
+    def adopt_pipes(
+        self,
+        stdin_handle: int,
         stdout_handle: int,
         stderr_handle: int,
     ) -> None:
-        self._kernel = kernel
-        self._process_handle = process_handle
-        self._stdin_handle = stdin_handle or 0
+        """Adopt parent pipe handles after native process ownership."""
+        self._stdin_handle = stdin_handle
         self._stdout_handle = stdout_handle
         self._stderr_handle = stderr_handle
-        self.pid = pid
-        self.returncode: int | None = None
-        self.stdin = (
-            _ClosingWindowsPipeWriter(self) if stdin_handle is not None else None
-        )
-        self.stdout = _ClosedWindowsPipeReader()
-        self.stderr = _ClosedWindowsPipeReader()
+
+    def clear_process(self) -> None:
+        """Forget raw process state after failed adoption cleanup."""
+        self._process_handle = 0
+        self.pid = 0
 
     def wrapper_handles(self) -> tuple[int, int | None, int, int]:
         """Return raw handles while this fallback remains their owner."""
@@ -743,19 +766,32 @@ class _WindowsKernel:
         job_handle = self._create_job()
         parent_stdin = parent_stdout = parent_stderr = 0
         child_stdin = child_stdout = child_stderr = 0
-        process_handle = thread_handle = 0
         process: _WindowsAsyncChildProcess | None = None
+        fallback: _WindowsFailedAdmissionProcess | None = None
+        identity: _WindowsJobIdentity | None = None
         tree: OwnedProcessTree | None = None
         try:
+            fallback = _WindowsFailedAdmissionProcess(self, stdin=stdin)
+            identity = _WindowsJobIdentity(job_handle, 0)
+            tree = OwnedProcessTree(fallback, identity)
+            job_handle = 0
             parent_stdin, child_stdin = self._pipe(parent_reads=False)
             parent_stdout, child_stdout = self._pipe(parent_reads=True)
             parent_stderr, child_stderr = self._pipe(parent_reads=True)
-            process_handle, thread_handle, pid = self._create_process(
+            self._create_process(
                 argv,
                 cwd=cwd,
                 environment=environment,
                 child_handles=(child_stdin, child_stdout, child_stderr),
+                fallback=fallback,
+                identity=identity,
             )
+            fallback.adopt_pipes(
+                parent_stdin,
+                parent_stdout,
+                parent_stderr,
+            )
+            parent_stdin = parent_stdout = parent_stderr = 0
             self.close_handle(child_stdin)
             child_stdin = 0
             self.close_handle(child_stdout)
@@ -763,21 +799,7 @@ class _WindowsKernel:
             self.close_handle(child_stderr)
             child_stderr = 0
             if not stdin:
-                self.close_handle(parent_stdin)
-                parent_stdin = 0
-            fallback = _WindowsFailedAdmissionProcess(
-                self,
-                process_handle,
-                pid,
-                parent_stdin or None,
-                parent_stdout,
-                parent_stderr,
-            )
-            identity = _WindowsJobIdentity(job_handle, pid)
-            tree = OwnedProcessTree(fallback, identity)
-            job_handle = 0
-            process_handle = 0
-            parent_stdin = parent_stdout = parent_stderr = 0
+                fallback.close_stdin()
             (
                 wrapper_process_handle,
                 wrapper_stdin_handle,
@@ -793,7 +815,7 @@ class _WindowsKernel:
             process = _WindowsAsyncChildProcess(
                 self,
                 wrapper_process_handle,
-                pid,
+                identity.pid,
                 wrapper_stdin_handle,
                 wrapper_stdout_handle,
                 wrapper_stderr_handle,
@@ -801,9 +823,9 @@ class _WindowsKernel:
             fallback.transfer_to_wrapper()
             tree.process = process
             process.start_io()
-            resumed = self.kernel32.ResumeThread(thread_handle)
-            self.close_handle(thread_handle)
-            thread_handle = 0
+            resumed = self.kernel32.ResumeThread(identity.thread_handle)
+            self.close_handle(identity.thread_handle)
+            identity.thread_handle = 0
             if resumed != 1:
                 raise ProcessTreeAdmissionError(
                     "ResumeThread did not release exactly one suspension",
@@ -813,17 +835,18 @@ class _WindowsKernel:
         except ProcessTreeAdmissionError:
             raise
         except BaseException as error:
-            if tree is not None:
+            if tree is not None and identity is not None and identity.pid > 0:
                 raise ProcessTreeAdmissionError(
                     "Windows process-tree admission failed",
                     tree,
                 ) from error
+            if tree is not None and identity is not None:
+                self.close_handle(identity.job_handle)
+                tree.closed = True
             raise
         finally:
             for handle in (
                 job_handle,
-                thread_handle,
-                process_handle,
                 child_stdin,
                 child_stdout,
                 child_stderr,
@@ -974,7 +997,9 @@ class _WindowsKernel:
         cwd: str,
         environment: Mapping[str, str],
         child_handles: tuple[int, int, int],
-    ) -> tuple[int, int, int]:
+        fallback: _WindowsFailedAdmissionProcess,
+        identity: _WindowsJobIdentity,
+    ) -> None:
         attribute_size = self.ctypes.c_size_t()
         self.kernel32.InitializeProcThreadAttributeList(
             None,
@@ -1041,11 +1066,28 @@ class _WindowsKernel:
                 self.ctypes.byref(process_info),
             ):
                 raise self._last_error("CreateProcessW")
-            return (
-                self._handle_value(process_info.hProcess),
-                self._handle_value(process_info.hThread),
-                int(process_info.dwProcessId),
-            )
+            process_handle = process_info.hProcess
+            thread_handle = process_info.hThread
+            pid = process_info.dwProcessId
+            try:
+                fallback.adopt(process_handle, pid)
+                identity.thread_handle = thread_handle
+                identity.pid = pid
+            except BaseException:
+                try:
+                    self.terminate_process(process_handle, 127)
+                except BaseException:
+                    fallback._process_handle = process_handle
+                    fallback.pid = pid
+                    identity.thread_handle = thread_handle
+                    identity.pid = pid
+                    raise
+                fallback.clear_process()
+                identity.thread_handle = 0
+                identity.pid = 0
+                self.close_handle(thread_handle)
+                self.close_handle(process_handle)
+                raise
         finally:
             self.kernel32.DeleteProcThreadAttributeList(attribute_list)
 
