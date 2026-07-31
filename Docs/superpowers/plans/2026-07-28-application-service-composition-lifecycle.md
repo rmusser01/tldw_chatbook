@@ -856,7 +856,7 @@ git commit -m "docs: close TASK-1538 service composition lifecycle"
 - No planned source changes; any review-driven change must remain within
   TASK-1538 acceptance criteria or update the task before implementation.
 
-- [ ] **Step 1: Rebase onto the latest remote development branch**
+- [x] **Step 1: Rebase onto the latest remote development branch**
 
 ```bash
 git fetch origin
@@ -867,7 +867,7 @@ Resolve conflicts semantically. Re-run the Task 4 focused and aggregate checks
 after any conflict resolution. Do not preserve stale line placement merely to
 make a mechanical rebase succeed.
 
-- [ ] **Step 2: Verify the rebased head**
+- [x] **Step 2: Verify the rebased head**
 
 Repeat:
 
@@ -932,7 +932,7 @@ Implementation and current-`dev` reconciliation are recorded through
 `3d7a34f76`.
 
 - Focused provider/Sync/Chat/Media/citation matrix: `10 passed`.
-- Production application and packaging suites: `65 passed`.
+- Final production application and packaging suites: `67 passed`.
 - Installed-wheel production probe: passed outside the checkout and copied
   build source while preserving every installed target hash.
 - Full suite:

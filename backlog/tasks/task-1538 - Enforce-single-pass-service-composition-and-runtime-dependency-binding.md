@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-28 14:27'
-updated_date: '2026-07-31 08:48'
+updated_date: '2026-07-31 08:53'
 labels:
   - architecture
   - lifecycle
@@ -65,4 +65,6 @@ Implemented the ADR-036 single-pass composition repair: TldwCli now constructs W
 Verification: focused provider/Sync/Chat/Media/citation matrix 10 passed; Tests/ProductionApp plus Tests/Packaging 65 passed; full suite 24334 passed and 170 skipped; affected-module xdist stress 392 passed; installed-wheel probe and sdist/wheel migration-removal checks passed; compileall, Ruff lint/format, diff hygiene, and diagnostic inventory passed. Independent bounded review found no Critical defect. The remaining executable Server*Service.from_config inventory is 32 calls with no ServerWritingService entry; provider-wide migration and private provider-wiring reentrancy remain follow-up work.
 
 ADR required: yes. ADRs: backlog/decisions/036-application-service-composition-lifecycle.md and backlog/decisions/032-immutable-installed-distribution-assets.md.
+
+Final latest-dev rebase was a no-op at origin/dev 3d7a34f76. Post-rebase verification: Tests/ProductionApp plus Tests/Packaging 67 passed (including the added sdist negative checks), focused provider/Sync/citation matrix 10 passed, and scoped Ruff lint/format plus diff hygiene passed.
 <!-- SECTION:NOTES:END -->

@@ -346,7 +346,8 @@ initial Chat/Media Sync injection, and Writing's exact
 Verification on `origin/dev` at `3d7a34f76` produced:
 
 - `10 passed` for the focused provider, Sync, Chat, Media, and citation matrix;
-- `65 passed` for `Tests/ProductionApp Tests/Packaging`, including the
+- `67 passed` for the final `Tests/ProductionApp Tests/Packaging` run,
+  including the
   installed production application outside the checkout;
 - `24334 passed, 170 skipped` for the full repository suite under
   `pytest -q -n 8 --dist loadscope --timeout=300`;
