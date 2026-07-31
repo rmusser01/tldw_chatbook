@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import ipaddress
 import json
@@ -1681,19 +1682,26 @@ class ModelArtifactService:
         self,
         descriptor: ArtifactDescriptor,
         source_directory: Path,
+        *,
+        consume_source: bool = False,
     ) -> ArtifactRef:
         """Verify and promote one local source directory immutably.
 
         Args:
             descriptor: Strict descriptor for the artifact being installed.
             source_directory: Existing local directory containing its payload.
+            consume_source: Move files instead of copying when source lies inside
+                the service root. Requires source inside the root; raises
+                ArtifactPathError otherwise. On EXDEV (cross-device link), falls
+                back to copy+delete. Defaults to False (today's copy semantics).
 
         Returns:
             The installed artifact's immutable reference.
 
         Raises:
             TypeError: An argument has the wrong public API type.
-            ArtifactPathError: The source or managed destination is unsafe.
+            ArtifactPathError: The source or managed destination is unsafe, or
+                consume_source with a source outside the service root.
             ArtifactIntegrityError: A declared file fails size or digest checks.
             ArtifactConflictError: The immutable destination conflicts.
             ArtifactStateError: Artifact storage or lease operations fail.
@@ -1726,15 +1734,23 @@ class ModelArtifactService:
                 )
             )
             self._assert_managed_path(staging)
-            self._copy_payload(descriptor, source_directory, staging)
-            if (
-                self._validate_payload_tree(
-                    source_directory,
-                    descriptor.files,
-                )
-                != source_snapshot
-            ):
-                raise ArtifactPathError("source tree changed during artifact copy")
+            # Only pass consume_source if True to maintain backward compatibility
+            # with tests that monkeypatch _copy_payload
+            if consume_source:
+                self._copy_payload(descriptor, source_directory, staging, consume_source=True)
+            else:
+                self._copy_payload(descriptor, source_directory, staging)
+            # When consume_source=True, files are intentionally moved from source.
+            # Skip the unchanged-tree check in that case; it's expected to change.
+            if not consume_source:
+                if (
+                    self._validate_payload_tree(
+                        source_directory,
+                        descriptor.files,
+                    )
+                    != source_snapshot
+                ):
+                    raise ArtifactPathError("source tree changed during artifact copy")
             destination = self.artifact_path(descriptor.reference)
             self._assert_managed_path(self._locks_path)
 
@@ -2259,11 +2275,46 @@ class ModelArtifactService:
         descriptor: ArtifactDescriptor,
         source: Path,
         staging: Path,
+        *,
+        consume_source: bool = False,
     ) -> None:
+        """Copy or move declared payload into install staging.
+
+        Args:
+            descriptor: Artifact descriptor with file metadata.
+            source: Source directory containing payload files.
+            staging: Destination staging directory.
+            consume_source: Move files with os.replace when the source lies
+                inside this service's root (both stagings share it). EXDEV
+                (bind-mount inside the root) degrades to copy+delete for that
+                file — correctness over the disk optimization.
+
+        Raises:
+            ArtifactPathError: consume_source with a source outside the root.
+        """
+        if consume_source:
+            resolved = source.resolve(strict=True)
+            try:
+                resolved.relative_to(self._root)
+            except ValueError as error:
+                raise ArtifactPathError(
+                    "consume_source requires a source inside the service root"
+                ) from error
+
         for item in descriptor.files:
-            destination = staging / item.path
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source / item.path, destination, follow_symlinks=False)
+            src = source / item.path
+            dst = staging / item.path
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if consume_source:
+                try:
+                    os.replace(src, dst)
+                    continue
+                except OSError as exc:
+                    if exc.errno != errno.EXDEV:
+                        raise
+            shutil.copyfile(src, dst, follow_symlinks=False)
+            if consume_source:
+                src.unlink()
 
     def _verify_payload(
         self,
