@@ -31,12 +31,20 @@ from ...Constants import (
     WATCHLISTS_SECTION_RUNS,
 )
 from ...runtime_policy.types import PolicyDeniedError
+from ...Subscriptions.briefing_cast import (
+    ScriptCastError,
+    fail_interrupted_scripts,
+    generate_script,
+)
+from ...Subscriptions.briefing_selection import MODE_AUTO_FEATURED, VALID_MODES
 from ...Subscriptions.briefing_service import (
     STATUS_GENERATING,
+    extract_citation_ids,
     fail_interrupted_briefings,
     generate_briefing,
 )
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
+from ...Subscriptions.watchlist_normalizers import normalize_watchlist_item
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -59,10 +67,17 @@ from ..Watchlists_Modules.inspector_pane import (
 )
 from ..Watchlists_Modules.artifacts_pane import (
     ArtifactsPane,
+    BriefingDefaultPresetChanged,
+    BriefingModeChanged,
     BriefingSelected,
+    CastScriptRequested,
+    CitationActivated,
     GenerateBriefingRequested,
+    ManagePresetsRequested,
     RefreshBriefingsRequested,
+    ScriptSelected,
 )
+from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
 from ..Watchlists_Modules.content_pane import ContentPane, UnreadToggleRequested
 from ..Watchlists_Modules.items_pane import (
     ItemSelected,
@@ -328,6 +343,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # detail area renders.
         self._loaded_briefings: list[dict[str, Any]] = []
         self._selected_briefing: dict[str, Any] | None = None
+        # Task 4: the current watchlist's stored briefing selection mode and
+        # default preset id, mirrored here for the same rebuild-survival
+        # reason as `_loaded_briefings` above -- `_build_detail_pane` seeds
+        # a freshly built `ArtifactsPane` from this state on every region
+        # rebuild. Defaults match `_selection_mode`'s own NULL/no-scope
+        # fallback (`briefing_service.py`) so a pane that has not yet heard
+        # from `_load_briefings` shows the same mode generation would
+        # actually use.
+        self._briefing_selection_mode: str = MODE_AUTO_FEATURED
+        self._briefing_default_preset_id: int | None = None
         # True only while THIS screen's `wl-briefing` worker is running.
         # `fail_interrupted_briefings` cannot tell a crashed worker's row
         # from a live one -- both read `generating` -- so the live case is
@@ -343,6 +368,43 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # the watchlist actually generating instead of falsely claiming
         # "this watchlist" (whole-branch review fix 4).
         self._briefing_in_flight_watchlist_id: int | None = None
+        # Briefing presets (spec #2 phase 2a, Task 3): reloaded whenever
+        # `BriefingPresetModal` dismisses `True` (see
+        # `_open_briefing_preset_manager`). Task 4 wires this list into the
+        # Artifacts toolbar's default-preset picker; held here now so that
+        # contract -- "the modal dismisses True, the screen reloads its
+        # preset list" -- is real before that picker exists to consume it.
+        self._loaded_briefing_presets: list[dict[str, Any]] = []
+        # Task 5: this same rebuild-survival mirroring, for the SELECTED
+        # briefing's cast scripts. Scoped to one briefing (not the whole
+        # watchlist) because a script belongs to exactly one briefing and
+        # this pane only ever shows one briefing's detail at a time --
+        # loaded and re-resolved alongside `_selected_briefing` inside
+        # `_load_briefings` (see that method).
+        self._loaded_scripts: list[dict[str, Any]] = []
+        self._selected_script: dict[str, Any] | None = None
+        # True only while THIS screen's `wl-cast` worker is running -- the
+        # exact sibling of `_briefing_in_flight` above, for the same reason:
+        # `fail_interrupted_scripts` cannot tell a crashed worker's row from
+        # a live one, so the live case is answered from memory here. See
+        # `handle_cast_script_requested`.
+        self._cast_in_flight = False
+        # Which briefing `_cast_in_flight` refers to, or `None` -- the
+        # `_briefing_in_flight_watchlist_id` sibling, so a refusal can name
+        # the briefing actually being cast.
+        self._cast_in_flight_briefing_id: int | None = None
+        # Task 6: the SELECTED briefing's citations -- the rebuild-survival
+        # mirror of `pane.citations`, resolved alongside `_selected_briefing`
+        # inside `_load_briefings` (see that method). `_citation_item_lookup`
+        # is the OTHER half of that same resolution: normalized item dicts
+        # (shaped exactly like `ItemsPane.items`' own entries -- see
+        # `normalize_watchlist_item`) for every citation that still resolves
+        # to a live row, keyed by the raw id `[item N]` names. A citation
+        # NOT in this dict is the pruned signal `handle_citation_activated`
+        # acts on -- there is no separate "available" flag to fall out of
+        # sync with it.
+        self._loaded_citations: list[dict[str, Any]] = []
+        self._citation_item_lookup: dict[int, dict[str, Any]] = {}
         # The item currently open in the CONTENT reader (Task 4). Held here
         # for the identical reason as `_loaded_items` above: `_build_content_pane`
         # is a factory the workbench calls on every region rebuild, and a
@@ -1274,6 +1336,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             artifacts_pane.selected_briefing = self._selected_briefing
             artifacts_pane.scope_label = self._briefing_scope_label()
             artifacts_pane.can_generate = self._can_generate_briefing()
+            artifacts_pane.selection_mode = self._briefing_selection_mode
+            artifacts_pane.presets = self._loaded_briefing_presets
+            artifacts_pane.default_preset_id = self._briefing_default_preset_id
+            artifacts_pane.scripts = self._loaded_scripts
+            artifacts_pane.selected_script = self._selected_script
+            artifacts_pane.citations = self._loaded_citations
             children.append(artifacts_pane)
         return Vertical(
             *children,
@@ -3098,6 +3166,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if db is None or watchlist_id is None:
             self._loaded_briefings = []
             self._selected_briefing = None
+            self._briefing_selection_mode = MODE_AUTO_FEATURED
+            self._briefing_default_preset_id = None
+            self._loaded_scripts = []
+            self._selected_script = None
+            self._loaded_citations = []
+            self._citation_item_lookup = {}
         else:
             try:
                 # Zombie recovery, before the list query, so a row this
@@ -3151,6 +3225,165 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 ),
                 None,
             )
+            # Task 5: the selected briefing's cast scripts. Scoped to ONE
+            # briefing (the resolved selection above) rather than every
+            # briefing in `self._loaded_briefings` -- a script belongs to
+            # exactly one briefing and this pane only ever renders one
+            # briefing's detail, so there is nothing to gain from fetching
+            # scripts for briefings that are not on screen. This runs
+            # inside the SAME `wl-briefings-load` worker as everything else
+            # in this method (see `handle_briefing_selected`, which
+            # re-dispatches this whole method -- rather than a
+            # scripts-only reload -- exactly so a row click's scripts
+            # arrive through this one worker/to_thread pattern).
+            selected_briefing_id = (self._selected_briefing or {}).get("id")
+            if selected_briefing_id is None:
+                self._loaded_scripts = []
+                self._selected_script = None
+            else:
+                try:
+                    # Zombie recovery for scripts, mirroring the briefing
+                    # sweep above: a cast worker that crashed mid-cast
+                    # leaves a `generating` row that would otherwise wedge
+                    # a one-cast-at-a-time guard shut forever. Gated on
+                    # `_cast_sweep_is_safe` for the identical reason
+                    # `_fail_interrupted_briefings_if_safe` is gated on
+                    # `_zombie_sweep_is_safe`: a load racing a cast THIS
+                    # screen started must not fail that cast's own row out
+                    # from under it.
+                    await self._fail_interrupted_scripts_if_safe(
+                        db, selected_briefing_id
+                    )
+                except Exception as exc:  # noqa: BLE001 - best-effort, not fatal
+                    logger.warning(
+                        "Zombie-script sweep failed for briefing "
+                        f"{selected_briefing_id}: {type(exc).__name__}"
+                    )
+                try:
+                    rows = await asyncio.to_thread(
+                        db.list_briefing_scripts, selected_briefing_id
+                    )
+                    self._loaded_scripts = [dict(row) for row in rows]
+                except Exception as exc:  # noqa: BLE001 - reported, not raised
+                    logger.warning(
+                        "Failed to list scripts for briefing "
+                        f"{selected_briefing_id}: {type(exc).__name__}"
+                    )
+                    self._notify_watchlists(
+                        "Failed to read this briefing's scripts.",
+                        severity="error",
+                        markup=False,
+                    )
+                    self._loaded_scripts = []
+                wanted_script = (
+                    (self._selected_script or {}).get("id")
+                    if self._selected_script
+                    else None
+                )
+                self._selected_script = next(
+                    (
+                        row
+                        for row in self._loaded_scripts
+                        if wanted_script is not None and row.get("id") == wanted_script
+                    ),
+                    None,
+                )
+            # Task 6: which items the SELECTED briefing's body actually
+            # cites. `extract_citation_ids` is pure and cheap (a regex over
+            # a body already held in memory), so it runs inline; only the
+            # DB lookup goes through `asyncio.to_thread`, ONE call per
+            # selection, inside this SAME worker/hop -- never a second
+            # worker group, per the brief. A missing key in the returned
+            # dict IS the pruned signal (`SubscriptionsDB.
+            # get_subscription_items_by_ids`'s own contract): there is no
+            # separate "does this still exist" query.
+            citation_ids = extract_citation_ids(
+                (self._selected_briefing or {}).get("body_markdown") or ""
+            )
+            if not citation_ids:
+                self._loaded_citations = []
+                self._citation_item_lookup = {}
+            else:
+                try:
+                    rows_by_id = await asyncio.to_thread(
+                        db.get_subscription_items_by_ids, citation_ids
+                    )
+                except Exception as exc:  # noqa: BLE001 - reported, not raised
+                    logger.warning(
+                        "Failed to resolve citations for briefing "
+                        f"{selected_briefing_id}: {type(exc).__name__}"
+                    )
+                    rows_by_id = {}
+                citations: list[dict[str, Any]] = []
+                lookup: dict[int, dict[str, Any]] = {}
+                for item_id in citation_ids:
+                    row = rows_by_id.get(item_id)
+                    if row is None:
+                        # The named invariant: an id that does not resolve
+                        # degrades honestly rather than quietly passing as
+                        # available. `available=False` and a label that
+                        # already says so are BOTH set here -- there is no
+                        # follow-up query for `handle_citation_activated`
+                        # to get wrong later; the pruned state is decided
+                        # once, at resolution time.
+                        citations.append(
+                            {
+                                "item_id": item_id,
+                                "label": Text(
+                                    f"item {item_id} — no longer available"
+                                ),
+                                "available": False,
+                            }
+                        )
+                        continue
+                    normalized = normalize_watchlist_item("local", row)
+                    lookup[item_id] = normalized
+                    title = str(normalized.get("title") or "Untitled item")
+                    citations.append(
+                        {
+                            "item_id": item_id,
+                            # A remote-authored title, appended into a
+                            # `Text` rather than an f-string handed to a
+                            # markup-parsing sink -- `Text(...)` never
+                            # re-parses its argument, so this is safe for
+                            # the identical reason `_script_turns_
+                            # renderable` states for a script's own turns.
+                            "label": Text(f"[item {item_id}] {title}"),
+                            "available": True,
+                        }
+                    )
+                self._loaded_citations = citations
+                self._citation_item_lookup = lookup
+            # Task 4: the toolbar's pickers. One combined `to_thread` hop
+            # for both the watchlist's stored settings (the SAME columns
+            # `briefing_service._selection_mode` reads) and the full preset
+            # list, rather than two sequential hops -- `_load_briefings`
+            # already pays for a zombie sweep and a `list_briefings` read
+            # above, and every extra round trip through the thread pool is
+            # latency this section's own toolbar adds on top of that,
+            # measured to matter under a busy full-suite run. A read
+            # failure degrades to the fallback mode, no default preset, and
+            # whatever presets were already loaded, rather than aborting
+            # the whole load -- the briefing list above is real data this
+            # failure must not hide.
+            try:
+                settings_row, preset_rows = await asyncio.to_thread(
+                    self._read_watchlist_briefing_state, db, watchlist_id
+                )
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                logger.warning(
+                    "Failed to read briefing settings/presets for watchlist "
+                    f"{watchlist_id}: {type(exc).__name__}"
+                )
+                settings_row, preset_rows = {}, self._loaded_briefing_presets
+            mode = settings_row.get("briefing_selection_mode")
+            self._briefing_selection_mode = (
+                str(mode) if mode in VALID_MODES else MODE_AUTO_FEATURED
+            )
+            self._briefing_default_preset_id = settings_row.get(
+                "default_briefing_preset_id"
+            )
+            self._loaded_briefing_presets = preset_rows
         if not self.is_mounted:
             return
         try:
@@ -3161,6 +3394,53 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.selected_briefing = self._selected_briefing
         pane.scope_label = self._briefing_scope_label()
         pane.can_generate = self._can_generate_briefing()
+        pane.selection_mode = self._briefing_selection_mode
+        pane.presets = self._loaded_briefing_presets
+        pane.default_preset_id = self._briefing_default_preset_id
+        pane.scripts = self._loaded_scripts
+        pane.selected_script = self._selected_script
+        pane.citations = self._loaded_citations
+
+    @staticmethod
+    def _read_watchlist_briefing_settings(db: Any, watchlist_id: int) -> dict[str, Any]:
+        """The watchlist's stored `briefing_selection_mode`/
+        `default_briefing_preset_id`, as a plain dict.
+
+        Raw SQL against `db.conn`, matching `briefing_service._selection_
+        mode`'s own read of the same column -- `WatchlistBundleService.
+        list_watchlists`/`_get` deliberately select a narrower column list
+        that predates these two (Task 1), so there is no existing
+        service-layer getter for them to reuse. Always called through
+        `asyncio.to_thread`; never call this directly from the UI thread.
+        """
+        row = db.conn.execute(
+            "SELECT briefing_selection_mode, default_briefing_preset_id "
+            "FROM watchlists WHERE id = ?",
+            (watchlist_id,),
+        ).fetchone()
+        return dict(row) if row is not None else {}
+
+    @staticmethod
+    def _read_watchlist_briefing_state(
+        db: Any, watchlist_id: int
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """`_read_watchlist_briefing_settings` plus `list_briefing_presets`,
+        as one synchronous unit for `_load_briefings` to dispatch through a
+        SINGLE `asyncio.to_thread` call.
+
+        Both are cheap reads on the same thread-local connection; bundling
+        them here is purely about round trips through the thread pool, not
+        about the SQL itself -- `_load_briefing_presets` still does its own
+        separate `list_briefing_presets` call for its OTHER caller
+        (`_open_briefing_preset_manager`), which has no settings row to
+        read alongside it. Always called through `asyncio.to_thread`; never
+        call this directly from the UI thread.
+        """
+        settings_row = WatchlistsCollectionsScreen._read_watchlist_briefing_settings(
+            db, watchlist_id
+        )
+        preset_rows = [dict(row) for row in db.list_briefing_presets()]
+        return settings_row, preset_rows
 
     @on(BriefingSelected)
     def handle_briefing_selected(self, event: BriefingSelected) -> None:
@@ -3175,6 +3455,115 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         event.stop()
         self._selected_briefing = event.briefing
+        # Task 5: a different briefing means different scripts. Clear the
+        # stale selection immediately (synchronously, so nothing renders a
+        # PREVIOUS briefing's script against the NEW one even for the one
+        # frame before the reload below lands), then reload through
+        # `_load_briefings` -- the SAME worker/to_thread batch that method
+        # already uses, rather than standing up a second worker group just
+        # to fetch one briefing's scripts.
+        #
+        # Fix round 1, Minor: clearing `self._selected_script` alone (the
+        # SCREEN's own rebuild-survival mirror) was not enough -- the
+        # mounted pane's OWN `scripts`/`selected_script` reactives are what
+        # actually render the scripts table/detail, and those keep
+        # whatever the PREVIOUS briefing left in them until `_load_
+        # briefings`'s asynchronous reload lands. Without patching the pane
+        # directly here too, the old briefing's scripts stay on screen,
+        # under the NEW briefing's own detail, for every frame between this
+        # click and that reload's completion.
+        self._selected_script = None
+        self._loaded_scripts = []
+        # Task 6: a different briefing also means different citations --
+        # the identical stale-window hazard fix round 1 fixed for scripts
+        # above, for the identical reason. Without clearing
+        # `_citation_item_lookup` too, `handle_citation_activated` could
+        # briefly resolve an id against the PREVIOUS briefing's citations
+        # in the one frame before `_load_briefings`'s reload lands.
+        self._loaded_citations = []
+        self._citation_item_lookup = {}
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            pane = None
+        if pane is not None:
+            pane.scripts = []
+            pane.selected_script = None
+            pane.citations = []
+        self.run_worker(
+            self._load_briefings(), exclusive=True, group="wl-briefings-load"
+        )
+
+    @on(ScriptSelected)
+    def handle_script_selected(self, event: ScriptSelected) -> None:
+        """Mirror the pane's script selection, for rebuild survival --
+        the `_selected_briefing`/`handle_briefing_selected` sibling.
+        """
+        event.stop()
+        self._selected_script = event.script
+
+    @on(CitationActivated)
+    def handle_citation_activated(self, event: CitationActivated) -> None:
+        """A citation click is an OPEN (spec #2 phase 2a, Task 6 design
+        ruling -- do not relitigate): resolved exactly like clicking the
+        item's own row in the Items table, mark-read side effect included,
+        so a future "why did my item get marked read" question has THIS
+        path, not just a mouse click on the Items table, to find.
+
+        `event.item_id` was already resolved against the database when this
+        briefing was selected (`_load_briefings`, via `get_subscription_
+        items_by_ids`) -- `_citation_item_lookup` holds the result, keyed by
+        the same id. A missing key IS the pruned signal (the plan's named
+        invariant): the item existed when the briefing was written but does
+        not resolve now, and this refuses to switch sections over it --
+        there would be nothing in the reader to show, and moving the user
+        off whatever section they are on to reveal that would be worse than
+        staying put. `markup=False`: nothing here is app-authored prose the
+        toast needs escaping protection FROM, but the id came from a body an
+        LLM wrote, so the same caution `_load_briefings`'s own failure
+        toasts already take applies.
+
+        For a resolving id, switches to the Items ("Read") section --
+        `ContentPane` is only ever mounted there (`_visible_region_layout`)
+        -- and, once that section's `ItemsPane` exists, hands it the
+        resolved item via `ItemsPane.select_and_reveal` (NOT `handle_item_
+        selected` directly: that method's own docstring warns the pane's
+        `selected_item` reactive would go stale against the table's actual
+        cursor/scroll position). This reuses the exact `selected_item` ->
+        `watch_selected_item` -> `ItemSelected` -> `handle_item_selected`
+        path a real click already uses, so the reader update and the
+        mark-read side effect both come along for free. A cited item hidden
+        by the active items filter still opens (design ruling): `select_
+        and_reveal` sets the reactive regardless, and the cursor simply
+        stays put rather than pointing at a row that is not on screen.
+
+        The section switch is not visible to a query until the NEXT
+        recompose (`watch_active_section`'s own `refresh(recompose=True)`
+        is asynchronous, not immediate), so opening the item is deferred by
+        one short timer -- the identical idiom `handle_edit_rule_requested`
+        already uses to act on a freshly-switched section's pane.
+        """
+        event.stop()
+        item = self._citation_item_lookup.get(event.item_id)
+        if item is None:
+            self._notify_watchlists(
+                f"Item {event.item_id} is no longer available.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        self.active_section = "items"
+
+        def _open_citation() -> None:
+            if not self.is_mounted:
+                return
+            try:
+                items_pane = self.query_one("#watchlists-items-pane", ItemsPane)
+            except NoMatches:
+                return
+            items_pane.select_and_reveal(item)
+
+        self.set_timer(0.05, _open_citation)
 
     @on(RefreshBriefingsRequested)
     def handle_refresh_briefings_requested(
@@ -3183,6 +3572,271 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         event.stop()
         self.run_worker(
             self._load_briefings(), exclusive=True, group="wl-briefings-load"
+        )
+
+    # --- Briefing selection-mode and default-preset pickers (Task 4) -------
+    #
+    # Same write-first-patch-after shape as `handle_toggle_briefing_queue_
+    # requested` -> `_toggle_briefing_queue`: the handler answers the
+    # no-database case from memory and dispatches a worker; the worker does
+    # the write off the UI thread (`asyncio.to_thread`), then on success
+    # patches `_briefing_selection_mode`/`_briefing_default_preset_id` and
+    # the mounted pane's matching reactive DIRECTLY -- never `_load_
+    # briefings()`, which would re-query the database for a value this
+    # write already knows. No `exclusive=True`: each picker's own writes
+    # target a single row with `UPDATE ... WHERE id = ?`, so two overlapping
+    # presses are safe to interleave (last write wins), and cancelling one
+    # mid-write would leave `_briefing_selection_mode`/`_briefing_default_
+    # preset_id` disagreeing with what actually landed in the database.
+
+    @on(BriefingModeChanged)
+    def handle_briefing_mode_changed(self, event: BriefingModeChanged) -> None:
+        event.stop()
+        db = self._briefings_db()
+        watchlist_id = self._briefing_watchlist_id()
+        if db is None or watchlist_id is None:
+            self._notify_watchlists(
+                "Could not reach the local database, so nothing was saved.",
+                severity="error",
+            )
+            return
+        self.run_worker(
+            self._write_briefing_selection_mode(db, watchlist_id, event.mode),
+            group="wl-briefing-settings-write",
+        )
+
+    async def _write_briefing_selection_mode(
+        self, db: Any, watchlist_id: int, mode: str
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                db.set_watchlist_briefing_settings,
+                watchlist_id,
+                selection_mode=mode,
+            )
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.warning(
+                f"Failed to save the selection mode for watchlist "
+                f"{watchlist_id}: {type(exc).__name__}"
+            )
+            if self.is_attached:
+                self._notify_watchlists(
+                    "Could not save the selection mode. Nothing changed.",
+                    severity="error",
+                )
+            return
+        # Whole-branch review fix wave, Important #3: the write above is
+        # correctly keyed to `watchlist_id` captured at dispatch and needs
+        # no change, but this in-memory patch runs on the SCREEN, which is
+        # global, singular state -- if the user switched Artifacts to a
+        # DIFFERENT watchlist while this write was still in flight, `self.
+        # _briefing_selection_mode`/the pane's reactive must not be
+        # clobbered with the watchlist THIS write was about. Only patch
+        # when the screen is still scoped to the same watchlist; the
+        # scope-change path (`watch_tree_scope`) already re-dispatched its
+        # own `_load_briefings()` reload the moment the scope moved, so the
+        # new watchlist's own settings are not lost -- just not overwritten
+        # by this stale completion. This guard has no mutation test of its
+        # own: the claim is carried by
+        # `test_switching_watchlists_mid_write_does_not_let_the_stale_write_clobber_the_new_one`,
+        # which pins the identical guard on the preset writer below.
+        if self._briefing_watchlist_id() != watchlist_id:
+            return
+        self._briefing_selection_mode = mode
+        if not self.is_attached:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.selection_mode = mode
+
+    @on(BriefingDefaultPresetChanged)
+    def handle_briefing_default_preset_changed(
+        self, event: BriefingDefaultPresetChanged
+    ) -> None:
+        event.stop()
+        db = self._briefings_db()
+        watchlist_id = self._briefing_watchlist_id()
+        if db is None or watchlist_id is None:
+            self._notify_watchlists(
+                "Could not reach the local database, so nothing was saved.",
+                severity="error",
+            )
+            return
+        self.run_worker(
+            self._write_briefing_default_preset(db, watchlist_id, event.preset_id),
+            group="wl-briefing-settings-write",
+        )
+
+    async def _write_briefing_default_preset(
+        self, db: Any, watchlist_id: int, preset_id: int | None
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                db.set_watchlist_briefing_settings,
+                watchlist_id,
+                default_preset_id=preset_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.warning(
+                f"Failed to save the default preset for watchlist "
+                f"{watchlist_id}: {type(exc).__name__}"
+            )
+            if self.is_attached:
+                self._notify_watchlists(
+                    "Could not save the default preset. Nothing changed.",
+                    severity="error",
+                )
+            return
+        # Whole-branch review fix wave, Important #3: see the identical
+        # note in `_write_briefing_selection_mode` -- the DB write above is
+        # correctly keyed to `watchlist_id` and needs no change, but this
+        # patch must not land if Artifacts has since moved to a different
+        # watchlist. `handle_generate_briefing_requested:3880` reads `self.
+        # _briefing_default_preset_id` at ITS OWN dispatch time, so an
+        # unguarded patch here is not merely cosmetic: a Generate press for
+        # a DIFFERENT, newly-scoped watchlist could otherwise pick up a
+        # preset id that belongs to the watchlist this write was about.
+        if self._briefing_watchlist_id() != watchlist_id:
+            return
+        self._briefing_default_preset_id = preset_id
+        if not self.is_attached:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.default_preset_id = preset_id
+
+    # --- Briefing presets (spec #2 phase 2a, Task 3): manager modal --------
+    #
+    # `BriefingPresetModal` owns its own reads and writes; this screen's job
+    # is only what the brief calls "mount/dismiss wiring" -- build the two
+    # option lists the modal is not entitled to query for itself, push it,
+    # and reload the preset list iff the modal reports a real change. The
+    # toolbar's "Presets..." button (Task 4) calls `_open_briefing_preset_
+    # manager` unchanged, through `handle_manage_presets_requested` below.
+
+    async def _load_character_options(self) -> list[tuple[str, int]]:
+        """Character cards for the preset modal's per-speaker Select.
+
+        Built here rather than inside the modal (brief: "the modal never
+        queries other DBs itself"). Degrades to `[]` -- disabling the field,
+        never the modal -- when `chachanotes_db` is unbound or the lookup
+        fails.
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return []
+        try:
+            cards = await asyncio.to_thread(db.list_character_cards)
+        except Exception as exc:  # noqa: BLE001 - degrade the field, not the modal
+            logger.warning(
+                "Failed to load character cards for briefing presets: "
+                f"{type(exc).__name__}"
+            )
+            return []
+        return [
+            (str(card.get("name") or ""), int(card["id"]))
+            for card in cards
+            if card.get("id") is not None
+        ]
+
+    async def _load_voice_options(self) -> list[tuple[str, str]]:
+        """Voice profiles for the preset modal's per-speaker Select.
+
+        Same degrade-the-field rule as `_load_character_options`.
+        `TTSProfileService.list_profiles` is already async and already
+        offloads its own repository I/O (see `STTSProfileLibrary`'s
+        identical direct-`await` usage) -- no `asyncio.to_thread` wrapper
+        needed around it here.
+        """
+        service = getattr(self.app_instance, "_tts_profile_service", None)
+        if service is None:
+            return []
+        try:
+            page = await service.list_profiles()
+        except Exception as exc:  # noqa: BLE001 - degrade the field, not the modal
+            logger.warning(
+                "Failed to load voice profiles for briefing presets: "
+                f"{type(exc).__name__}"
+            )
+            return []
+        return [
+            (profile.display_name, str(profile.profile_id))
+            for profile in page.profiles
+        ]
+
+    async def _load_briefing_presets(self) -> None:
+        """Re-read every stored `briefing_presets` row, name ASC, and patch
+        the Artifacts toolbar's default-preset picker in place.
+
+        Two callers: `_load_briefings` (an Artifacts-section/scope load,
+        which patches the pane's OTHER reactives itself right after this
+        returns -- setting `pane.presets` here too is a harmless repeat of
+        the same value) and `_open_briefing_preset_manager` (a preset
+        modal's `True` dismiss, which has no other reason to touch the
+        pane). Patched here rather than left to each caller so both stay
+        honest without duplicating the query-and-patch shape.
+        """
+        db = self._briefings_db()
+        if db is None:
+            self._loaded_briefing_presets = []
+        else:
+            try:
+                rows = await asyncio.to_thread(db.list_briefing_presets)
+                self._loaded_briefing_presets = [dict(row) for row in rows]
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                logger.warning(
+                    f"Failed to list briefing presets: {type(exc).__name__}"
+                )
+                self._loaded_briefing_presets = []
+        if not self.is_mounted:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.presets = self._loaded_briefing_presets
+
+    async def _open_briefing_preset_manager(self) -> None:
+        """Open `BriefingPresetModal`, then reload presets iff it changed.
+
+        A `False`/cancelled dismiss leaves `_loaded_briefing_presets`
+        untouched, matching every other reload-on-change flow already on
+        this screen (`_create_watchlist_flow`, `_rename_watchlist_flow`,
+        `_delete_watchlist_flow`).
+        """
+        db = self._briefings_db()
+        if db is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        character_options = await self._load_character_options()
+        voice_options = await self._load_voice_options()
+        changed = await self.app.push_screen_wait(
+            BriefingPresetModal(
+                db,
+                character_options=character_options,
+                voice_options=voice_options,
+            )
+        )
+        if changed:
+            await self._load_briefing_presets()
+
+    @on(ManagePresetsRequested)
+    def handle_manage_presets_requested(self, event: ManagePresetsRequested) -> None:
+        """Wire the toolbar's "Presets…" button to Task 3's opener.
+
+        No `exclusive=True`: `_open_briefing_preset_manager` owns a modal
+        via `push_screen_wait`, and `_start_tree_write`'s own docstring
+        names exactly why an exclusive worker is the wrong tool for that --
+        cancelling one mid-prompt would leave its dialog on the screen
+        stack with nothing left to dismiss it.
+        """
+        event.stop()
+        self.run_worker(
+            self._open_briefing_preset_manager(), group="wl-briefing-presets"
         )
 
     @on(GenerateBriefingRequested)
@@ -3243,8 +3897,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         self._briefing_in_flight = True
         self._briefing_in_flight_watchlist_id = watchlist_id
+        # Task 4: cast the die now, on the UI thread, alongside the rest of
+        # this synchronous snapshot -- not read again later inside the
+        # worker, where a concurrent picker write (a different worker
+        # group, so not excluded by `exclusive=True` above) could otherwise
+        # change `_briefing_default_preset_id` out from under a generation
+        # already in flight for THIS watchlist.
+        preset_id = self._briefing_default_preset_id
         self.run_worker(
-            self._generate_briefing(db, watchlist_id),
+            self._generate_briefing(db, watchlist_id, preset_id),
             exclusive=True,
             group="wl-briefing",
         )
@@ -3322,12 +3983,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ]
         return stuck, blocking
 
-    async def _generate_briefing(self, db: Any, watchlist_id: int) -> None:
+    async def _generate_briefing(
+        self, db: Any, watchlist_id: int, preset_id: int | None
+    ) -> None:
         """Worker body: recover, guard, generate, repaint.
 
         The whole sequence is one worker so the guard cannot come apart from
         the generation it guards, and every database call inside it is
         awaited off the UI thread (`asyncio.to_thread`) -- see the handler.
+
+        `preset_id` (Task 4) is the watchlist's stored default preset,
+        snapshotted by the handler at dispatch time -- see its own comment.
+        `None` means "no default preset stored", and `generate_briefing`
+        treats that identically to "no preset given": the app default
+        provider/model, no style notes.
 
         `generate_briefing` is wrapped in a bare `except` on purpose. It
         turns *provider* failures into `failed` rows rather than exceptions,
@@ -3387,7 +4056,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 )
                 return
             try:
-                row = await generate_briefing(db, watchlist_id)
+                row = await generate_briefing(db, watchlist_id, preset_id=preset_id)
                 generated_id = (row or {}).get("id")
             except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
                 logger.warning(
@@ -3407,6 +4076,244 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # status, and the failure path may leave a `generating` row this
             # attempt inserted before it broke.
             await self._load_briefings(select_briefing_id=generated_id)
+
+    # --- Cast a script from the selected briefing (spec #2 phase 2a, ------
+    # Task 5). Sibling of the Generate chain immediately above: own
+    # in-flight flag (`_cast_in_flight`), own worker group (`wl-cast`,
+    # `exclusive=True`), claimed at DISPATCH time for the identical reason
+    # `handle_generate_briefing_requested`'s docstring gives -- a check made
+    # inside the worker body leaves a window where two presses both pass.
+    #
+    # One real difference from Generate: `briefing_scripts` has no
+    # one-generating-row-per-briefing invariant the way `briefings` has one
+    # per watchlist (a briefing can be cast many times, with different
+    # rosters, and `briefing_cast.py`'s own module docstring says so
+    # explicitly). So there is no `_sweep_and_guard`-style `blocking` check
+    # here -- recovering a zombie script does not itself refuse THIS cast
+    # attempt the way recovering a zombie briefing refuses THIS generation
+    # attempt. The zombie sweep still runs, in TWO separate seams, pinned
+    # separately by this task's own tests: `_load_briefings` sweeps whenever
+    # Artifacts loads (gated on `_cast_sweep_is_safe`, the `_zombie_sweep_
+    # is_safe` sibling), and `_cast_script` below sweeps again at the front
+    # of every cast, exactly where `_sweep_and_guard` runs for Generate.
+
+    def _cast_sweep_is_safe(self) -> bool:
+        """Whether `fail_interrupted_scripts` may run right now.
+
+        Sibling of `_zombie_sweep_is_safe`: a load racing a cast THIS
+        screen started must not fail that cast's own `generating` row out
+        from under it, so the load path only sweeps when nothing this
+        screen started is still in flight.
+        """
+        return not self._cast_in_flight
+
+    async def _fail_interrupted_scripts_if_safe(
+        self, db: Any, briefing_id: int
+    ) -> int:
+        """Zombie recovery for the Artifacts-load path's scripts, off the
+        UI thread. Sibling of `_fail_interrupted_briefings_if_safe`, scoped
+        to one briefing's scripts rather than one watchlist's briefings.
+        """
+        if not self._cast_sweep_is_safe():
+            return 0
+        return await asyncio.to_thread(fail_interrupted_scripts, db, briefing_id)
+
+    def _cast_load_character(self, character_id: int) -> dict[str, Any] | None:
+        """`generate_script`'s `load_character` seam: a plain, idempotent
+        character-card lookup, with no caching layer and no session state.
+
+        Task 2 review's carried finding: `_snapshot_roster` tolerates a
+        transient failure here by degrading to `character_name: None`, and
+        `_resolve_character_texts` calls `load_character` AGAIN, later, to
+        resolve the same card strictly. If this held a cache -- or any
+        other state that could answer the two calls differently -- the
+        snapshot and the strict resolution could disagree about the SAME
+        card within one cast. A bare `get_character_card_by_id` call never
+        can: it is one SELECT by id, nothing memoized, so both calls always
+        see the same, current answer.
+
+        Only ever called from `_cast_script`, which already checked
+        `chachanotes_db` is bound before passing this method as
+        `load_character` -- see that worker.
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return None
+        return db.get_character_card_by_id(character_id)
+
+    def _briefing_default_preset_is_dangling(self) -> bool:
+        """Whether the stored default preset id no longer resolves.
+
+        Whole-branch review fix wave, Important #1: `BriefingPresetModal`
+        hard-deletes a preset (Task 3; no FK enforces the pointer), and
+        `_load_briefings`'s combined read (`_read_watchlist_briefing_
+        state`) reloads the preset LIST but re-reads the watchlist's own
+        `default_briefing_preset_id` column verbatim -- so a preset deleted
+        while it was a watchlist's default leaves `_briefing_default_
+        preset_id` pointing at a row that no longer exists among `_loaded_
+        briefing_presets`. `ArtifactsPane._preset_select_options` already
+        assumes exactly this shape (its own synthetic "Preset N (deleted)"
+        option) -- this is that same check, on the screen side, so Cast can
+        refuse before ever reaching `generate_script`'s own raw
+        `ScriptCastError` text for it.
+        """
+        preset_id = self._briefing_default_preset_id
+        if preset_id is None:
+            return False
+        return not any(
+            preset.get("id") == preset_id for preset in self._loaded_briefing_presets
+        )
+
+    @on(CastScriptRequested)
+    def handle_cast_script_requested(self, event: CastScriptRequested) -> None:
+        """Claim the one-cast-at-a-time guard, then dispatch.
+
+        Answers from memory and dispatches, exactly like
+        `handle_generate_briefing_requested`: `_cast_in_flight` is claimed
+        HERE, before `run_worker`, and not inside the worker body, for the
+        identical reason that handler's own docstring gives.
+        """
+        event.stop()
+        db = self._briefings_db()
+        briefing = self._selected_briefing
+        if db is None or briefing is None:
+            self._notify_watchlists(
+                "Select a briefing to cast.", severity="warning", markup=False,
+            )
+            return
+        if self._briefing_default_preset_is_dangling():
+            # Whole-branch review fix wave, Important #1: the stored
+            # default resolved to a real preset once, but that preset was
+            # since hard-deleted (from the toolbar's own picker, which is
+            # already showing "(deleted)" for this same id). Refuse HERE,
+            # before dispatch, with copy that tells the user what to do --
+            # not `generate_script`'s own raw `ScriptCastError` text for
+            # this case ("briefing preset 1 does not exist"), which names
+            # an id but no action.
+            self._notify_watchlists(
+                "The stored default preset no longer exists. Pick another "
+                "in the toolbar, or create one via Presets…, before "
+                "casting.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._briefing_default_preset_id is None and self._loaded_briefing_presets:
+            # Task 5 review round 1, ruling 2: the Cast BUTTON stays enabled
+            # here on purpose (`ArtifactsPane.compose`'s own disabled
+            # condition is "no default AND no presets exist at all" --
+            # presets exist here, just none chosen as the default), so a
+            # press in this state must still be refused, but with copy that
+            # tells the user what to do about it -- not the raw
+            # `ScriptCastError` `generate_script` would otherwise produce
+            # (`"briefing preset None does not exist"`, honest but useless
+            # as an instruction).
+            self._notify_watchlists(
+                "Choose a default preset in the toolbar, or create one via "
+                "Presets…, before casting.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._cast_in_flight:
+            running_id = self._cast_in_flight_briefing_id
+            message = (
+                f"A script is already being cast for briefing {running_id}. "
+                "Nothing else was started."
+                if running_id is not None
+                else "A script is already being cast. Nothing else was started."
+            )
+            self._notify_watchlists(message, severity="warning", markup=False)
+            return
+        briefing_id = briefing.get("id")
+        self._cast_in_flight = True
+        self._cast_in_flight_briefing_id = briefing_id
+        # Cast the die on the UI thread, alongside the rest of this
+        # synchronous snapshot -- the `_briefing_default_preset_id` read
+        # `handle_generate_briefing_requested` already does the same way,
+        # for the same reason: not read again later inside the worker,
+        # where a concurrent picker write could otherwise change it out
+        # from under a cast already in flight for THIS briefing.
+        preset_id = self._briefing_default_preset_id
+        self.run_worker(
+            self._cast_script(db, briefing_id, preset_id),
+            exclusive=True,
+            group="wl-cast",
+        )
+
+    async def _cast_script(
+        self, db: Any, briefing_id: int, preset_id: int | None
+    ) -> None:
+        """Worker body: sweep, cast, repaint. Sibling of `_generate_briefing`.
+
+        `generate_script`'s own DB calls (`_start_script`, `_finish_script_
+        success`/`_finish_script_failure`) already run through `asyncio.
+        to_thread` internally -- see that function's own docstring -- but a
+        DATABASE error inside any of them still propagates OUT of
+        `generate_script` uncaught: it only wraps the chat-call/parse block
+        in its own try/except, not the whole function. An exception
+        escaping a Textual worker with the default `exit_on_error=True`
+        takes the whole application down, so -- exactly like
+        `_generate_briefing` -- the call is wrapped in a bare `except` that
+        turns any surviving exception into a toast instead of a crash.
+
+        `ScriptCastError` is caught FIRST and separately: it is `generate_
+        script`'s own honest, pre-flight refusal (the briefing is not
+        `complete`, or the preset does not exist) -- a message safe to show
+        verbatim (see that exception's own docstring), not a database
+        failure to hide behind a generic toast.
+        """
+        chachanotes_db = getattr(self.app_instance, "chachanotes_db", None)
+        load_character = (
+            self._cast_load_character if chachanotes_db is not None else None
+        )
+        try:
+            try:
+                await asyncio.to_thread(fail_interrupted_scripts, db, briefing_id)
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                logger.warning(
+                    f"Script guard failed for briefing {briefing_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Failed to check this briefing's scripts. Nothing was "
+                    "started.",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            try:
+                row = await generate_script(
+                    db,
+                    briefing_id,
+                    preset_id=preset_id,
+                    load_character=load_character,
+                )
+                # The freshly cast script (whatever its outcome) is the one
+                # on screen, exactly like `_generate_briefing`'s own
+                # `select_briefing_id=generated_id` -- re-resolved against
+                # the reload below.
+                self._selected_script = row
+            except ScriptCastError as exc:
+                self._notify_watchlists(str(exc), severity="warning", markup=False)
+            except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+                logger.warning(
+                    f"Script cast failed for briefing {briefing_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Could not cast a script: the watchlist database could "
+                    "not be reached. Nothing was recorded.",
+                    severity="error",
+                    markup=False,
+                )
+        finally:
+            self._cast_in_flight = False
+            self._cast_in_flight_briefing_id = None
+            # Repaint on every path: a refusal may have just failed a
+            # zombie row, and a completed cast has a new script to show.
+            if self.is_attached:
+                await self._load_briefings()
 
     async def _load_items(self) -> None:
         notify = getattr(self.app_instance, "notify", None)

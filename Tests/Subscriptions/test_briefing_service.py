@@ -38,6 +38,7 @@ from tldw_chatbook.Subscriptions.briefing_selection import (
 from tldw_chatbook.Subscriptions.briefing_service import (
     EXCERPT_CHAR_CAP,
     build_briefing_prompt,
+    extract_citation_ids,
     fail_interrupted_briefings,
     generate_briefing,
 )
@@ -442,6 +443,53 @@ def test_long_article_excerpt_is_capped_in_the_prompt():
     assert "not covered" not in user
 
 
+
+# --- extract_citation_ids (spec #2 phase 2a, Task 6) --------------------
+#
+# The reader-side counterpart to `build_briefing_prompt`'s own citation
+# convention (`_SYSTEM_PROMPT`: "using its bracketed id exactly as given,
+# e.g. [item 42]"). Pure and synchronous -- no fixtures, no DB.
+
+
+def test_extract_citation_ids_is_ordered_and_deduplicated():
+    """First-seen order, not sorted or DB order -- and a repeated citation
+    contributes only once."""
+    body = (
+        "Acme shipped a thing [item 3]. Also see [item 1] for background. "
+        "As [item 3] mentioned again, this matters. Finally [item 2]."
+    )
+    assert extract_citation_ids(body) == [3, 1, 2]
+
+
+def test_extract_citation_ids_ignores_non_numeric_brackets():
+    """`[item x]` and `[item]` are not this prompt's citation convention
+    (the model was only ever asked for digits) and must not be treated as
+    one -- but a real citation elsewhere in the same body still comes
+    through."""
+    body = "See [item x] and [item] for context, but really it's [item 42]."
+    assert extract_citation_ids(body) == [42]
+
+
+def test_extract_citation_ids_is_case_insensitive_and_dedupes_across_case():
+    """Model drift to `[Item 12]`/`[ITEM 7]` (rather than the prompt's exact
+    lowercase `[item N]`) must not silently yield zero citations -- and a
+    later, differently-cased repeat of an id already seen (`[item 12]`
+    after `[Item 12]`) must not produce a second entry."""
+    body = (
+        "First [Item 12], then [ITEM 7], then [item 3]. "
+        "Circling back to [item 12] again."
+    )
+    assert extract_citation_ids(body) == [12, 7, 3]
+
+
+def test_extract_citation_ids_on_a_body_with_no_citations_is_empty():
+    assert extract_citation_ids("## This week\n\nNothing to report.\n") == []
+
+
+def test_extract_citation_ids_on_empty_input_is_empty():
+    assert extract_citation_ids("") == []
+
+
 def test_interrupted_recovery_only_touches_generating_rows(tmp_path):
     """Zombie recovery (TASK-1090's shape) fails only what is actually stuck.
 
@@ -577,6 +625,93 @@ async def test_explicit_provider_and_model_override_the_default(monkeypatch, tmp
     assert chat.calls[0]["api_endpoint"] == "anthropic"
     assert chat.calls[0]["model"] == "claude-x"
     assert row["model_used"] == "anthropic/claude-x"
+
+
+# --- Preset plumbing (spec #2 phase 2a, Task 2) ------------------------------
+#
+# `generate_briefing` gained a `preset_id` parameter: a preset resolves
+# provider/model defaults and appends style notes, but explicit `provider`/
+# `model` arguments still win, and a preset id that no longer resolves (a
+# deleted preset) must not brick generation -- it is recorded as `None` and
+# generation proceeds on ordinary defaults. These cases are additive; every
+# test above this point is unmodified from phase 1.
+
+
+@pytest.mark.asyncio
+async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(monkeypatch, tmp_path):
+    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+    preset_id = db.insert_briefing_preset(
+        "Anthropic Duo", roster_json="[]", provider="anthropic", model="claude-x"
+    )
+
+    chat = _FakeChat()
+    row = await generate_briefing(db, watchlist, chat=chat, preset_id=preset_id)
+
+    assert chat.calls[0]["api_endpoint"] == "anthropic"
+    assert chat.calls[0]["model"] == "claude-x"
+    assert row["model_used"] == "anthropic/claude-x"
+    assert row["preset_id"] == preset_id
+
+
+@pytest.mark.asyncio
+async def test_explicit_args_still_win_over_the_presets_provider_and_model(tmp_path):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+    preset_id = db.insert_briefing_preset(
+        "Anthropic Duo", roster_json="[]", provider="anthropic", model="claude-x"
+    )
+
+    chat = _FakeChat()
+    row = await generate_briefing(
+        db, watchlist, chat=chat, preset_id=preset_id, provider="openai", model="gpt-x"
+    )
+
+    assert chat.calls[0]["api_endpoint"] == "openai"
+    assert chat.calls[0]["model"] == "gpt-x"
+    assert row["model_used"] == "openai/gpt-x"
+    assert row["preset_id"] == preset_id
+
+
+@pytest.mark.asyncio
+async def test_a_presets_style_notes_are_appended_to_the_system_prompt(tmp_path):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+    preset_id = db.insert_briefing_preset(
+        "Brisk", roster_json="[]", style_notes="Keep it under 200 words."
+    )
+
+    chat = _FakeChat()
+    await generate_briefing(db, watchlist, chat=chat, preset_id=preset_id)
+
+    assert "Keep it under 200 words." in chat.calls[0]["system_message"]
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_preset_id_is_recorded_as_none_and_generation_proceeds(monkeypatch, tmp_path):
+    """A preset id that no longer resolves must not brick generation."""
+    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+    preset_id = db.insert_briefing_preset("Gone", roster_json="[]", provider="anthropic")
+    assert db.delete_briefing_preset(preset_id) is True
+
+    chat = _FakeChat()
+    row = await generate_briefing(db, watchlist, chat=chat, preset_id=preset_id)
+
+    assert row["status"] == "complete"
+    assert row["preset_id"] is None
+    # Defaults, not the deleted preset's provider.
+    assert chat.calls[0]["api_endpoint"] == "local-llama"
 
 
 @pytest.mark.asyncio

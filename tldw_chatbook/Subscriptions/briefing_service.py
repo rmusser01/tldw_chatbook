@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
@@ -223,6 +224,56 @@ def build_briefing_prompt(
     return _SYSTEM_PROMPT, "\n\n".join(sections)
 
 
+#: The exact citation convention `_SYSTEM_PROMPT` asks the model to use --
+#: `[item 42]`, digits only, "never invent an id". `extract_citation_ids` is
+#: this convention's own parser (spec #2 phase 2a, Task 6): turning the same
+#: bracketed ids the prompt asked the model to write back into ids a reader
+#: can navigate to. Case-insensitive (Qodo review): the prompt asks for
+#: lowercase `item`, but models drift to `[Item 12]`/`[ITEM 7]` in practice,
+#: and matching only the exact case would silently yield zero citations for
+#: an otherwise well-formed reply.
+_CITATION_ID_PATTERN = re.compile(r"\[item (\d+)\]", re.IGNORECASE)
+
+
+def extract_citation_ids(body_markdown: str) -> list[int]:
+    """Every `[item N]` id a briefing body cites, in first-seen order.
+
+    Pure: no I/O, and no opinion on whether any of these ids still resolve
+    to a live `subscription_items` row -- that is entirely the caller's
+    question (Task 6's `WatchlistsCollectionsScreen._load_briefings`, via
+    `SubscriptionsDB.get_subscription_items_by_ids`), since only the caller
+    has a database to ask. This function only reads the text the model
+    wrote.
+
+    Matching is case-insensitive on the `item` keyword (`[Item 12]`,
+    `[ITEM 7]`, and `[item 3]` all match the same convention) -- dedup is
+    by the parsed integer id, so two differently-cased citations of the
+    same id contribute only one entry, at the position of the first.
+
+    `[item x]`/`[item]` (no digits) are not a citation under this prompt's
+    own convention and are silently ignored: the model was never asked to
+    write anything but a digit (see `_SYSTEM_PROMPT`), so treating a
+    non-numeric bracket as a malformed citation would be inventing a case
+    the prompt never produces.
+
+    Args:
+        body_markdown: A briefing's `body_markdown`, or any text. Read as
+            plain text -- markdown syntax and Rich markup in it are never
+            interpreted, only the literal `[item N]` substring is matched.
+
+    Returns:
+        Deduplicated ids, in the order they first appear in the text.
+    """
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for match in _CITATION_ID_PATTERN.finditer(body_markdown or ""):
+        item_id = int(match.group(1))
+        if item_id not in seen:
+            seen.add(item_id)
+            ordered.append(item_id)
+    return ordered
+
+
 def _append_overflow(body: str, overflow_count: int) -> str:
     """Append the overflow sentence to the model's body.
 
@@ -267,6 +318,12 @@ def _default_provider() -> str:
     the rest of the app treats as "the default provider", and read at call
     time so a config reload is picked up. No provider name is hardcoded
     here; config.py owns the fallback.
+
+    Shared with `briefing_cast.generate_script` (spec #2 phase 2a): a cast's
+    provider resolution falls back through the same chain -- explicit args,
+    then the preset's own provider, then this app default -- so both
+    generation paths agree on what "the default" means without duplicating
+    the config read.
     """
     from .. import config as app_config
 
@@ -361,23 +418,34 @@ def _write_junction(
 
 
 def _start_generation(
-    db: "SubscriptionsDB", watchlist_id: int, now: datetime | None
-) -> tuple[int, str, int | None, BriefingSelection]:
+    db: "SubscriptionsDB", watchlist_id: int, preset_id: int | None, now: datetime | None
+) -> tuple[int, str, int | None, BriefingSelection, dict[str, Any] | None]:
     """Everything before the chat call: insert the row, resolve the mode,
-    read the prior watermark, and select. Returns
-    `(briefing_id, mode, prior_watermark, selection)`.
+    read the prior watermark, select, and resolve the preset (if any).
+    Returns `(briefing_id, mode, prior_watermark, selection, preset)`.
+
+    The preset lookup is grouped into this same `to_thread` hop (spec #2
+    phase 2a) rather than given its own -- one more plain SQLite read costs
+    nothing extra added to a hop that already exists, and a second hop would
+    only be pure overhead. `preset` is `None` both when `preset_id` is
+    `None` (no preset requested) and when it no longer resolves (a deleted
+    preset) -- `generate_briefing` cannot tell those two apart from this
+    return value alone, but it doesn't need to: both mean "proceed on
+    defaults."
     """
     briefing_id = db.insert_briefing(watchlist_id, status=STATUS_GENERATING)
     mode = _selection_mode(db, watchlist_id)
     prior_watermark = db.latest_completed_watermark(watchlist_id)
     selection = select_briefing_items(db, watchlist_id, mode=mode, now=now)
-    return briefing_id, mode, prior_watermark, selection
+    preset = db.get_briefing_preset(preset_id) if preset_id is not None else None
+    return briefing_id, mode, prior_watermark, selection, preset
 
 
 def _finish_empty(
     db: "SubscriptionsDB",
     briefing_id: int,
     mode: str,
+    preset_id: int | None,
     covers_through: int | None,
     selection: BriefingSelection,
 ) -> dict[str, Any]:
@@ -391,6 +459,7 @@ def _finish_empty(
         covers_through_item_id=covers_through,
         covers_from_ts=selection.covers_from_ts,
         selection_mode=mode,
+        preset_id=preset_id,
     )
     return db.get_briefing(briefing_id)
 
@@ -399,6 +468,7 @@ def _finish_success(
     db: "SubscriptionsDB",
     briefing_id: int,
     mode: str,
+    preset_id: int | None,
     model_used: str,
     covers_through: int | None,
     selection: BriefingSelection,
@@ -420,6 +490,7 @@ def _finish_success(
         covers_through_item_id=covers_through,
         covers_from_ts=selection.covers_from_ts,
         selection_mode=mode,
+        preset_id=preset_id,
         model_used=model_used,
     )
     return db.get_briefing(briefing_id)
@@ -429,6 +500,7 @@ def _finish_failure(
     db: "SubscriptionsDB",
     briefing_id: int,
     mode: str,
+    preset_id: int | None,
     model_used: str,
     message: str,
 ) -> dict[str, Any]:
@@ -443,6 +515,7 @@ def _finish_failure(
         status=STATUS_FAILED,
         error=message,
         selection_mode=mode,
+        preset_id=preset_id,
         model_used=model_used,
     )
     return db.get_briefing(briefing_id)
@@ -455,6 +528,7 @@ async def generate_briefing(
     chat: Callable[..., Any] = chat_api_call,
     provider: str | None = None,
     model: str | None = None,
+    preset_id: int | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Generate one briefing for a watchlist and return the stored row.
@@ -472,10 +546,20 @@ async def generate_briefing(
         watchlist_id: The watchlist to brief.
         chat: The chat seam. Defaults to `Chat_Functions.chat_api_call`;
             may be sync or async. The only seam faked in tests.
-        provider: Chat endpoint to use. Defaults to the app's configured
-            default endpoint.
-        model: Model name to pass through. `None` lets the provider handler
-            choose its own default.
+        provider: Chat endpoint to use. Wins over the preset's own provider
+            when given. Defaults to the preset's provider, then the app's
+            configured default endpoint.
+        model: Model name to pass through. Wins over the preset's own model
+            when given. Defaults to the preset's model, then `None` (letting
+            the provider handler choose its own default).
+        preset_id: A `briefing_presets.id` (spec #2 phase 2a) to resolve
+            provider/model defaults and style guidance from. A preset that
+            no longer resolves (deleted between being chosen and this call)
+            is treated exactly like no preset at all -- generation proceeds
+            on `provider`/`model`/the app default, and the row records
+            `preset_id=None` rather than the stale, dangling id: a deleted
+            preset must not brick generation. `None` (the default) skips
+            preset resolution entirely.
         now: Injected clock, forwarded to selection (the first briefing's
             7-day floor). Defaults to the current UTC time.
 
@@ -493,9 +577,16 @@ async def generate_briefing(
     the `to_thread` calls still propagates to the caller uncaught, exactly
     as it did when these were plain statements.
     """
-    briefing_id, mode, prior_watermark, selection = await asyncio.to_thread(
-        _start_generation, db, watchlist_id, now
+    briefing_id, mode, prior_watermark, selection, preset = await asyncio.to_thread(
+        _start_generation, db, watchlist_id, preset_id, now
     )
+    # The id actually recorded on the row: `None` for both "no preset was
+    # requested" and "the requested preset no longer resolves" -- a stale
+    # back-reference to a deleted preset is worse than no reference at all.
+    recorded_preset_id = preset_id if preset is not None else None
+    preset_provider = preset.get("provider") if preset else None
+    preset_model = preset.get("model") if preset else None
+    style_notes = preset.get("style_notes") if preset else None
 
     # `None` means "selection found no line to record" -- curated mode with
     # no prior briefing, or a genuinely empty window. Writing the prior
@@ -508,7 +599,7 @@ async def generate_briefing(
 
     if not selection.items:
         row = await asyncio.to_thread(
-            _finish_empty, db, briefing_id, mode, covers_through, selection
+            _finish_empty, db, briefing_id, mode, recorded_preset_id, covers_through, selection
         )
         logger.info(f"briefing {briefing_id}: empty window for watchlist {watchlist_id}")
         return row
@@ -516,12 +607,19 @@ async def generate_briefing(
     system, user = build_briefing_prompt(
         selection.items, selection.featured_ids, selection.overflow_count
     )
-    endpoint = provider or _default_provider()
-    model_used = f"{endpoint}/{model}" if model else endpoint
+    if style_notes:
+        # Appended rather than folded into `build_briefing_prompt` (whose
+        # contract phase 1 owns and phase 2a does not touch): the preset's
+        # guidance is a property of THIS call's cast, not of prompt assembly
+        # itself.
+        system = f"{system}\n\n## Style notes\n\n{style_notes}"
+    endpoint = provider or preset_provider or _default_provider()
+    resolved_model = model or preset_model
+    model_used = f"{endpoint}/{resolved_model}" if resolved_model else endpoint
 
     try:
         raw = await _invoke_chat(
-            chat, endpoint=endpoint, model=model, system=system, user=user
+            chat, endpoint=endpoint, model=resolved_model, system=system, user=user
         )
     except Exception as exc:  # noqa: BLE001 - every provider failure is a row
         # No traceback: the log file sink runs with diagnose=True, which would
@@ -535,7 +633,7 @@ async def generate_briefing(
             f"{type(exc).__name__}"
         )
         return await asyncio.to_thread(
-            _finish_failure, db, briefing_id, mode, model_used, _error_text(exc)
+            _finish_failure, db, briefing_id, mode, recorded_preset_id, model_used, _error_text(exc)
         )
 
     body = extract_response_content(raw).strip()
@@ -549,12 +647,21 @@ async def generate_briefing(
             db,
             briefing_id,
             mode,
+            recorded_preset_id,
             model_used,
             f"{endpoint} returned an empty response",
         )
 
     row = await asyncio.to_thread(
-        _finish_success, db, briefing_id, mode, model_used, covers_through, selection, body
+        _finish_success,
+        db,
+        briefing_id,
+        mode,
+        recorded_preset_id,
+        model_used,
+        covers_through,
+        selection,
+        body,
     )
     logger.info(
         f"briefing {briefing_id}: complete -- {len(selection.items)} items, "

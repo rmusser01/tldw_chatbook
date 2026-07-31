@@ -27,6 +27,7 @@ could plausibly have shipped:
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import time
@@ -37,15 +38,17 @@ from unittest.mock import Mock
 
 import pytest
 from rich.console import Console
+from rich.text import Text
 from textual.coordinate import Coordinate
-from textual.widgets import Button, DataTable, Static
+from textual.widgets import Button, DataTable, Select, Static
 
 from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from Tests.UI.test_destination_visual_parity_correction import (
     _visual_destination_harness,
 )
 from Tests.UI.app_factory import _build_test_app
-from tldw_chatbook.Subscriptions import briefing_service
+from tldw_chatbook.Subscriptions import briefing_cast, briefing_service
+from tldw_chatbook.Subscriptions.briefing_cast import dump_roster
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.UI.Screens import watchlists_collections_screen as screen_module
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
@@ -53,8 +56,12 @@ from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
 )
 from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import (
     ArtifactsPane,
+    BriefingSelected,
+    CastScriptRequested,
+    CitationActivated,
     GenerateBriefingRequested,
 )
+from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_tab_strip import SECTIONS
 
@@ -194,6 +201,90 @@ async def _press_generate(screen, pilot, app, watchlist_id, *, timeout: float = 
 
 def _briefing_rows(app, watchlist_id) -> list[dict]:
     return app.watchlist_bundle_service.db.list_briefings(watchlist_id)
+
+
+def _seeded_item_rows(app) -> list[sqlite3.Row]:
+    """The real `subscription_items` rows `_seed_watchlist` just wrote, id
+    ASC -- so a citation test can cite an id the database actually has,
+    rather than a number invented in the test itself.
+    """
+    db = app.watchlist_bundle_service.db
+    return list(
+        db.conn.execute("SELECT id, title FROM subscription_items ORDER BY id")
+    )
+
+
+# --- Task 5: casting a script ------------------------------------------
+#
+# Same seam discipline as `_use_fake_chat` above: `generate_script` binds
+# its `chat` default at definition time too, so the fake is wrapped around
+# the SCREEN's own `generate_script` reference (`screen_module.
+# generate_script`), keeping the real service -- roster validation, prompt
+# building, strict turn parsing, the snapshot -- running underneath, with
+# only the provider call replaced.
+
+
+def _use_fake_cast_chat(monkeypatch, chat) -> None:
+    async def _generate(db, briefing_id, **kwargs):
+        return await briefing_cast.generate_script(db, briefing_id, chat=chat, **kwargs)
+
+    monkeypatch.setattr(screen_module, "generate_script", _generate)
+
+
+ONE_SPEAKER_ROSTER = [{"name": "Narrator", "role_prompt": "Calm narration."}]
+
+
+async def _prepare_cast(screen, pilot, app, watchlist_id, *, roster=None) -> int:
+    """Generate a `complete` briefing, then create+select a default preset
+    so the Cast button is enabled. Returns the briefing's id.
+
+    Real Generate (not a raw `db.insert_briefing`) so the briefing selected
+    afterwards is the one the whole screen already agrees on -- exactly
+    what `_generate_briefing`'s own `select_briefing_id=generated_id`
+    leaves behind.
+    """
+    db = app.watchlist_bundle_service.db
+    await _press_generate(screen, pilot, app, watchlist_id)
+    briefing_id = _briefing_rows(app, watchlist_id)[0]["id"]
+    preset_id = db.insert_briefing_preset(
+        "Solo", roster_json=dump_roster(roster or ONE_SPEAKER_ROSTER)
+    )
+    db.set_watchlist_briefing_settings(watchlist_id, default_preset_id=preset_id)
+    await screen._load_briefings()
+    await pilot.pause()
+    return briefing_id
+
+
+async def _press_cast(screen, pilot, app, briefing_id, *, timeout: float = 20.0):
+    """Press the real Cast button and wait until the press is answered.
+
+    Mirrors `_press_generate` exactly, scoped to one briefing's scripts
+    rather than a whole watchlist's briefings.
+    """
+    db = app.watchlist_bundle_service.db
+    scripts_before = len(db.list_briefing_scripts(briefing_id))
+    notes_before = getattr(app.notify, "call_count", 0)
+
+    pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+    pane.query_one("#artifacts-cast-button", Button).press()
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        if (
+            screen._cast_in_flight
+            or getattr(app.notify, "call_count", 0) > notes_before
+            or len(db.list_briefing_scripts(briefing_id)) != scripts_before
+        ):
+            break
+    while time.monotonic() < deadline and screen._cast_in_flight:
+        await pilot.pause(0.02)
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        table = pane.query_one("#artifacts-scripts-table", DataTable)
+        if table.row_count == len(db.list_briefing_scripts(briefing_id)):
+            return
 
 
 def _render_to_console(renderable, *, width: int = 100) -> tuple[str, str]:
@@ -922,4 +1013,1463 @@ async def test_the_list_the_button_and_the_body_are_all_on_screen(size, monkeypa
         assert artifacts_width == sources_width > size[0] // 2, (
             f"Artifacts is {artifacts_width} columns wide where Sources gets "
             f"{sources_width} on the same {size[0]}x{size[1]} terminal"
+        )
+
+
+# --- 6. Toolbar pickers: selection mode, default preset, Presets… (Task 4) -
+#
+# Tasks 1-3 built the writer (`set_watchlist_briefing_settings`), the
+# preset table/CRUD (`list_briefing_presets`), and the manager modal
+# (`BriefingPresetModal`); none of it had a way in from this screen.
+# `briefing_selection_mode` had a READER since phase 1
+# (`briefing_service._selection_mode`) but no writer anywhere in the UI, so
+# `auto` and `curated` were unreachable -- this section is what retires
+# that deferral.
+
+
+def _capture_generate_calls(monkeypatch) -> list[dict]:
+    """Fake `generate_briefing` that records its call kwargs and returns a
+    minimal row.
+
+    Unlike `_use_fake_chat` (which keeps the real service running, with
+    only the provider call replaced), this section's tests are about what
+    the SCREEN passes to `generate_briefing` -- specifically `preset_id` --
+    not what the service does with it (Task 2's own suite already covers
+    that). Bypassing the real service keeps these tests fast and focused on
+    the one call-site argument in question.
+    """
+    calls: list[dict] = []
+
+    async def _fake(db, watchlist_id, **kwargs):
+        calls.append(kwargs)
+        return {"id": 999}
+
+    monkeypatch.setattr(screen_module, "generate_briefing", _fake)
+    return calls
+
+
+async def _press_generate_button_and_wait_for_a_call(
+    screen, pilot, host, calls: list
+) -> None:
+    """Press Generate and wait for the whole `wl-briefing` worker to finish
+    (real completion via `host.workers.wait_for_complete()`, not a
+    wall-clock poll -- see this section's own note on why).
+    """
+    pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+    pane.query_one("#artifacts-generate-button", Button).press()
+    await pilot.pause()
+    await host.workers.wait_for_complete()
+    await pilot.pause()
+
+
+# Every wait in this section uses `host.workers.wait_for_complete()`
+# (already established by `test_destination_shells.py`'s
+# `test_mcp_destination_add_server_binding_opens_real_form_end_to_end`)
+# rather than a wall-clock poll loop. `_load_briefings` now runs one more
+# `to_thread` hop for the picker state on top of its existing zombie-sweep
+# + list-read hops, and a `pilot.pause()`/deadline poll races real wall-clock
+# time against however long the thread pool takes to be scheduled -- which
+# a sufficiently busy machine (this repo's own test suite plus whatever
+# else is running on the same host) can push past any fixed bound, MEASURED
+# during this task's own verification (a 20s poll still missed, consistently,
+# under heavy concurrent load). `wait_for_complete()` has no such bound: it
+# awaits the dispatched worker(s) to actual completion, however long that
+# takes, so it cannot flake on host speed the way a deadline can.
+
+
+@pytest.mark.asyncio
+async def test_toolbar_pickers_render_only_when_a_watchlist_is_in_scope():
+    """The mode/preset `Select`s and the `Presets…` `Button` have nothing to
+    act on without a single watchlist in scope, so -- unlike Generate/
+    Refresh, which stay visible to explain themselves -- they do not render
+    at all when `can_generate` is False.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.can_generate is True
+        assert pane.query_one("#artifacts-mode-select", Select)
+        assert pane.query_one("#artifacts-preset-select", Select)
+        assert pane.query_one("#artifacts-presets-button", Button)
+
+        screen.tree_scope = TreeScope(kind="all")
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.can_generate is False
+        assert not pane.query("#artifacts-mode-select")
+        assert not pane.query("#artifacts-preset-select")
+        assert not pane.query("#artifacts-presets-button")
+        # Generate/Refresh, unlike the pickers, still explain themselves.
+        assert pane.query_one("#artifacts-generate-button", Button)
+
+
+@pytest.mark.asyncio
+async def test_mode_select_shows_the_watchlists_stored_mode_on_load():
+    """The read-path pin: Task 1's writer sets `curated` before Artifacts
+    ever opens, and the mode Select must reflect it on the very first
+    render -- not merely hold it in some screen-private field.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    db.set_watchlist_briefing_settings(watchlist_id, selection_mode="curated")
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        select = pane.query_one("#artifacts-mode-select", Select)
+        assert select.value == "curated"
+
+
+@pytest.mark.asyncio
+async def test_changing_mode_writes_off_loop_and_does_not_rebuild_the_screen():
+    """Thread-identity pin (the established `asyncio.to_thread` pattern) plus
+    the instance-survival assertion: a picker change must patch the pane in
+    place, never rebuild it via `self.refresh(recompose=True)`.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+
+    loop_thread_id = threading.get_ident()
+    write_thread_ids: list[int] = []
+    real_set = db.set_watchlist_briefing_settings
+
+    def _spy(watchlist_id_arg, **kwargs):
+        write_thread_ids.append(threading.get_ident())
+        return real_set(watchlist_id_arg, **kwargs)
+
+    db.set_watchlist_briefing_settings = _spy
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        pane_before = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        select = pane_before.query_one("#artifacts-mode-select", Select)
+        # The fresh-watchlist default, confirmed by the read path above --
+        # this is a genuine change, not a same-value mount-time no-op.
+        assert select.value == "auto_featured"
+
+        select.value = "curated"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert write_thread_ids, "set_watchlist_briefing_settings must have run"
+        assert all(tid != loop_thread_id for tid in write_thread_ids), (
+            "the write must run off the event-loop thread (asyncio.to_thread)"
+        )
+
+        row = db.conn.execute(
+            "SELECT briefing_selection_mode FROM watchlists WHERE id = ?",
+            (watchlist_id,),
+        ).fetchone()
+        assert row["briefing_selection_mode"] == "curated"
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane is pane_before, (
+            "a picker change must repaint the pane, not rebuild the screen"
+        )
+        assert screen._briefing_selection_mode == "curated"
+
+
+@pytest.mark.asyncio
+async def test_preset_select_lists_presets_and_persists_a_choice():
+    """The default-preset picker offers "App default" (`None`) plus every
+    loaded preset, and choosing one persists `default_briefing_preset_id`.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    preset_id = db.insert_briefing_preset("Evening Digest", roster_json="[]")
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen._loaded_briefing_presets, "the presets read must have run"
+
+        pane_before = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        preset_select = pane_before.query_one("#artifacts-preset-select", Select)
+
+        # Nothing stored yet: "App default" is the active choice.
+        assert preset_select.value is None
+
+        # An id NOT among the loaded presets (nor `None`) is illegal --
+        # proving the legal values are exactly what was loaded, not any
+        # integer (same technique `BriefingPresetModal`'s own character/
+        # voice Select tests use, Task 3).
+        with pytest.raises(Exception):
+            preset_select.value = preset_id + 999_999
+
+        preset_select.value = preset_id
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        row = db.conn.execute(
+            "SELECT default_briefing_preset_id FROM watchlists WHERE id = ?",
+            (watchlist_id,),
+        ).fetchone()
+        assert row["default_briefing_preset_id"] == preset_id
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane is pane_before, (
+            "a picker change must repaint the pane, not rebuild the screen"
+        )
+        assert screen._briefing_default_preset_id == preset_id
+
+
+@pytest.mark.asyncio
+async def test_generate_casts_the_die_with_the_stored_default_preset(monkeypatch):
+    """With a default preset stored, Generate invokes `generate_briefing`
+    with `preset_id=<that id>`.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    preset_id = db.insert_briefing_preset("Evening Digest", roster_json="[]")
+    db.set_watchlist_briefing_settings(watchlist_id, default_preset_id=preset_id)
+    calls = _capture_generate_calls(monkeypatch)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen._briefing_default_preset_id == preset_id
+
+        await _press_generate_button_and_wait_for_a_call(screen, pilot, host, calls)
+
+    assert calls, "generate_briefing must have been invoked"
+    assert calls[-1].get("preset_id") == preset_id
+
+
+@pytest.mark.asyncio
+async def test_generate_casts_the_die_with_no_default_preset(monkeypatch):
+    """With no default preset stored, Generate invokes `generate_briefing`
+    with `preset_id=None` -- the other half of the die-cast contract.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    calls = _capture_generate_calls(monkeypatch)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        assert screen._briefing_default_preset_id is None
+
+        await _press_generate_button_and_wait_for_a_call(screen, pilot, host, calls)
+
+    assert calls, "generate_briefing must have been invoked"
+    assert calls[-1].get("preset_id") is None
+
+
+@pytest.mark.asyncio
+async def test_setting_curated_via_the_picker_then_generating_records_it_on_the_row(
+    monkeypatch,
+):
+    """The phase-1 deferral's dead branch, made reachable end to end.
+
+    `briefing_selection_mode` has had a READER since phase 1
+    (`briefing_service._selection_mode`) but no writer anywhere in the UI
+    until this task. Setting `curated` through the picker and then pressing
+    Generate is the first time the two actually meet -- this is the test
+    that retires the deferral.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    chat = _FakeChat()
+    _use_fake_chat(monkeypatch, chat)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        select = pane.query_one("#artifacts-mode-select", Select)
+        assert select.value == "auto_featured"
+
+        select.value = "curated"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen._briefing_selection_mode == "curated"
+
+        await _press_generate(screen, pilot, app, watchlist_id)
+
+    rows = _briefing_rows(app, watchlist_id)
+    assert rows, "Generate must have written a briefing row"
+    assert rows[0]["selection_mode"] == "curated"
+
+
+@pytest.mark.asyncio
+async def test_presets_button_opens_the_preset_manager(monkeypatch):
+    """The toolbar's "Presets…" button calls Task 3's existing opener,
+    `_open_briefing_preset_manager`, unchanged.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+
+    calls: list[None] = []
+
+    async def _recording_open(self):
+        calls.append(None)
+
+    monkeypatch.setattr(
+        screen_module.WatchlistsCollectionsScreen,
+        "_open_briefing_preset_manager",
+        _recording_open,
+    )
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.query_one("#artifacts-presets-button", Button).press()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert calls, "the Presets… button must open the preset manager"
+
+
+# --- Whole-branch review fix wave, Important #3 -----------------------------
+#
+# `_write_briefing_selection_mode`/`_write_briefing_default_preset` patch
+# screen memory (and the mounted pane's matching reactive) after their own
+# `await`, without checking the screen is still scoped to the SAME
+# watchlist the write was dispatched for. `handle_generate_briefing_
+# requested` reads `_briefing_default_preset_id` at its own dispatch time,
+# so a stale write's completion landing after a scope change could hand a
+# Generate press for a DIFFERENT watchlist the wrong preset.
+
+
+@pytest.mark.asyncio
+async def test_switching_watchlists_mid_write_does_not_let_the_stale_write_clobber_the_new_one():
+    """Deterministic control over exactly when `set_watchlist_briefing_
+    settings` resolves comes from a `threading.Event` the fake write blocks
+    on (Task 3's own controllable-seam pattern, not a sleep/poll race):
+    pick a default preset for watchlist A (the write blocks), switch
+    Artifacts to watchlist B while it is still in flight (B's own settings
+    load for real -- a different, unblocked read path), release A's write,
+    and confirm the screen -- now scoped to B -- keeps B's own default
+    preset rather than being clobbered by A's write landing late. The
+    write itself is unaffected: A's own row really does end up holding
+    A's chosen preset, even though the screen never reflects it.
+    """
+    app = _build_test_app()
+    watchlist_a = _seed_watchlist(app)
+    watchlist_b = app.watchlist_bundle_service.create("Security Watch")["id"]
+    db = app.watchlist_bundle_service.db
+    preset_a = db.insert_briefing_preset("For A", roster_json="[]")
+    preset_b = db.insert_briefing_preset("For B", roster_json="[]")
+    db.set_watchlist_briefing_settings(watchlist_b, default_preset_id=preset_b)
+
+    async with _open_artifacts(app, watchlist_a) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        release_write = threading.Event()
+        call_started = threading.Event()
+        real_set = db.set_watchlist_briefing_settings
+
+        def _blocking_set(watchlist_id_arg, **kwargs):
+            call_started.set()
+            assert release_write.wait(timeout=5), "test setup: write never released"
+            return real_set(watchlist_id_arg, **kwargs)
+
+        db.set_watchlist_briefing_settings = _blocking_set
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        preset_select = pane.query_one("#artifacts-preset-select", Select)
+        assert preset_select.value is None, "watchlist A has no default yet"
+
+        # Pick a default preset for A -- this write blocks.
+        preset_select.value = preset_a
+        await pilot.pause()
+
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not call_started.is_set():
+            await pilot.pause(0.02)
+        assert call_started.is_set(), "the write must have started"
+
+        # While A's write is still blocked, switch Artifacts to B.
+        screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=watchlist_b)
+        await pilot.pause()
+
+        deadline = time.monotonic() + 5.0
+        while (
+            time.monotonic() < deadline
+            and screen._briefing_default_preset_id != preset_b
+        ):
+            await pilot.pause(0.02)
+        assert screen._briefing_default_preset_id == preset_b, (
+            "switching scope must load B's own settings"
+        )
+
+        # NOW release A's write and let it finish.
+        release_write.set()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Still scoped to B: A's stale completion must not have clobbered
+        # B's own in-memory state.
+        assert screen._briefing_default_preset_id == preset_b
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.default_preset_id == preset_b
+
+    # The DB write itself is correctly keyed and needed no change: A's own
+    # row really did get preset_a, even though the screen never reflected it.
+    row = db.conn.execute(
+        "SELECT default_briefing_preset_id FROM watchlists WHERE id = ?",
+        (watchlist_a,),
+    ).fetchone()
+    assert row["default_briefing_preset_id"] == preset_a
+
+
+# --- 7. Casting a script (spec #2 phase 2a, Task 5) -------------------------
+#
+# Tasks 1-4 built the `briefing_scripts` table, the cast service
+# (`generate_script`/`fail_interrupted_scripts`), and the picker toolbar this
+# section's Cast button reads its default preset from; none of it had a way
+# in from the screen. Same seam discipline as the Generate suite above: the
+# only faked call is the chat provider, wrapped around the screen's own
+# `generate_script` reference -- everything else (roster validation, prompt
+# building, strict turn parsing, the snapshot, `fail_interrupted_scripts`)
+# is the real service and a real `SubscriptionsDB`.
+
+
+@pytest.mark.asyncio
+async def test_casting_a_complete_briefing_writes_a_script_row_and_the_table_shows_it(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        _host,
+    ):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+
+        cast_chat = _FakeChat(
+            reply=json.dumps([{"speaker": "Narrator", "text": "Welcome."}])
+        )
+        _use_fake_cast_chat(monkeypatch, cast_chat)
+
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        assert len(cast_chat.calls) == 1, "exactly one provider call per cast"
+        rows = app.watchlist_bundle_service.db.list_briefing_scripts(briefing_id)
+        assert [row["status"] for row in rows] == ["complete"]
+        assert rows[0]["preset_name"] == "Solo"
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        table = pane.query_one("#artifacts-scripts-table", DataTable)
+        assert table.row_count == 1
+        painted = _painted(screen, table.region)
+        assert "Solo" in painted
+        assert "complete" in painted
+
+
+@pytest.mark.asyncio
+async def test_script_turns_render_as_speaker_labelled_text_never_markup(monkeypatch):
+    """The mandatory literal-paint test: a turn containing `[bold red]x[/]`
+    must paint as those literal characters -- never interpreted as Rich
+    markup, and never escaped into visible backslashes either. Model/turn
+    text goes through `rich.text.Text` exactly like a briefing body's
+    `error`/status fields already do (`_detail_renderable`), never a markup
+    parser.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+
+        hostile_turns = [{"speaker": "Narrator", "text": "[bold red]x[/]"}]
+        _use_fake_cast_chat(monkeypatch, _FakeChat(reply=json.dumps(hostile_turns)))
+
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.selected_script is not None, "the fixture must select a script"
+        detail = pane.query_one("#artifacts-script-detail", Static)
+        plain, ansi = _render_to_console(detail.renderable, width=100)
+
+        assert "[bold red]x[/]" in plain, "the turn must paint exactly as written"
+        assert "\\[" not in plain, "and must not grow escaping backslashes"
+        assert "\x1b[1;31m" not in ansi, "and `[bold red]` must not be applied"
+        # And the speaker label is really there, distinguishing this from a
+        # render that merely dumped the whole JSON blob as text.
+        assert "Narrator" in plain
+
+
+@pytest.mark.asyncio
+async def test_more_than_200_turns_are_capped_with_an_honest_count(monkeypatch):
+    """Spec ethos: never a silent truncation. A script with more than 200
+    turns shows the first 200 plus a stated "…N more turns" line.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+
+        many_turns = [
+            {"speaker": "Narrator", "text": f"Line {index}."} for index in range(210)
+        ]
+        _use_fake_cast_chat(monkeypatch, _FakeChat(reply=json.dumps(many_turns)))
+
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        detail = pane.query_one("#artifacts-script-detail", Static)
+        plain, _ansi = _render_to_console(detail.renderable, width=100)
+
+        assert "Line 199." in plain, "the 200th turn (index 199) must be shown"
+        assert "Line 200." not in plain, "the 201st turn must NOT be shown"
+        assert "10 more turns" in plain, "the overflow must be stated, not silent"
+
+
+@pytest.mark.asyncio
+async def test_casting_a_non_complete_briefing_refuses_naming_the_status():
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    briefing_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(briefing_id, status="failed", error="boom")
+    preset_id = db.insert_briefing_preset(
+        "Solo", roster_json=dump_roster(ONE_SPEAKER_ROSTER)
+    )
+    db.set_watchlist_briefing_settings(watchlist_id, default_preset_id=preset_id)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_briefing_by_id(str(briefing_id))
+        await pilot.pause()
+
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        assert app.notify.called, "a refusal must be visible, not silent"
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert "failed" in message, "the toast must name the briefing's actual status"
+        assert kwargs.get("markup") is False
+        assert db.list_briefing_scripts(briefing_id) == [], (
+            "a pre-flight refusal must never write a row"
+        )
+
+
+@pytest.mark.asyncio
+async def test_casting_with_presets_but_no_default_refuses_with_actionable_copy(
+    monkeypatch,
+):
+    """Fix round 1, ruling 2: Cast stays ENABLED when presets exist but none
+    is chosen as the watchlist's default (`ArtifactsPane`'s disabled
+    condition is "no default AND no presets at all" -- presets exist here,
+    just none picked). Pressing it in this state must still be refused, but
+    with copy that tells the user what to do -- not `generate_script`'s own
+    raw `ScriptCastError` text for `preset_id=None`
+    ("briefing preset None does not exist"), which names nothing the user
+    can act on.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+        briefing_id = _briefing_rows(app, watchlist_id)[0]["id"]
+        db = app.watchlist_bundle_service.db
+        db.insert_briefing_preset("Solo", roster_json=dump_roster(ONE_SPEAKER_ROSTER))
+        # Deliberately NOT set as the watchlist's default preset.
+        await screen._load_briefings()
+        await pilot.pause()
+        assert screen._briefing_default_preset_id is None
+        assert screen._loaded_briefing_presets, "the fixture needs a real preset"
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        cast_button = pane.query_one("#artifacts-cast-button", Button)
+        assert cast_button.disabled is False, "a preset exists, so Cast stays enabled"
+
+        cast_button.press()
+        await pilot.pause()
+
+        assert app.notify.called, "a refusal must be visible, not silent"
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert "default preset" in message.lower(), (
+            "the toast must tell the user to choose or create a default preset"
+        )
+        assert "does not exist" not in message, (
+            "must not be generate_script's raw, unactionable ScriptCastError text"
+        )
+        assert kwargs.get("markup") is False
+        assert db.list_briefing_scripts(briefing_id) == [], (
+            "this refusal must never reach the service at all"
+        )
+
+
+@pytest.mark.asyncio
+async def test_casting_refuses_before_dispatch_when_the_default_preset_is_dangling(
+    monkeypatch,
+):
+    """Whole-branch review fix wave, Important #1.
+
+    A default preset can be hard-deleted (`BriefingPresetModal`, Task 3 --
+    no FK enforces the pointer) while it is still a watchlist's stored
+    default: `_load_briefings`'s combined read re-reads the watchlist's own
+    `default_briefing_preset_id` column verbatim, but reloads the preset
+    LIST fresh, so the dangling id survives a reload even though it no
+    longer names a real row. Before this fix, pressing Cast in that state
+    fell through to `generate_script`'s own raw `ScriptCastError` text
+    ("briefing preset <id> does not exist") -- honest, but naming nothing
+    the user can act on -- while the toolbar's own preset picker was
+    already showing "Preset <id> (deleted)" for the exact same id. This
+    test also pins that Select surface, closing the Task 4 report's own
+    parked test gap (concern 4).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+        briefing_id = _briefing_rows(app, watchlist_id)[0]["id"]
+        db = app.watchlist_bundle_service.db
+        preset_id = db.insert_briefing_preset(
+            "Solo", roster_json=dump_roster(ONE_SPEAKER_ROSTER)
+        )
+        db.set_watchlist_briefing_settings(watchlist_id, default_preset_id=preset_id)
+        await screen._load_briefings()
+        await pilot.pause()
+        assert screen._briefing_default_preset_id == preset_id
+
+        # Hard-delete the preset (the modal's own path; no FK stops this),
+        # then reload exactly as a plain Artifacts refresh would.
+        assert db.delete_briefing_preset(preset_id) is True
+        await screen._load_briefings()
+        await pilot.pause()
+
+        # The dangling id survives the reload; only the loaded preset LIST
+        # drops the row.
+        assert screen._briefing_default_preset_id == preset_id
+        assert all(
+            preset.get("id") != preset_id
+            for preset in screen._loaded_briefing_presets
+        )
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        preset_select = pane.query_one("#artifacts-preset-select", Select)
+        option_labels = {value: str(label) for label, value in preset_select._options}
+        assert option_labels[preset_id] == f"Preset {preset_id} (deleted)"
+        assert preset_select.value == preset_id
+
+        cast_button = pane.query_one("#artifacts-cast-button", Button)
+        assert cast_button.disabled is False, "presets is non-empty; Cast stays enabled"
+
+        cast_button.press()
+        await pilot.pause()
+
+        assert app.notify.called, "a refusal must be visible, not silent"
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert "no longer exists" in message.lower()
+        assert "does not exist" not in message, (
+            "must not be generate_script's raw, unactionable ScriptCastError text"
+        )
+        assert kwargs.get("markup") is False
+        assert db.list_briefing_scripts(briefing_id) == [], (
+            "this refusal must never reach the service at all"
+        )
+
+
+@pytest.mark.asyncio
+async def test_second_cast_while_in_flight_refuses_naming_the_running_one():
+    """Sibling of `test_the_refusal_toast_names_the_watchlist_actually_
+    generating`: `_cast_in_flight` is screen-global, so the refusal must
+    name which briefing is actually being cast rather than assume it is
+    whichever one is on screen right now.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    briefing_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(briefing_id, status="complete", body_markdown="Body")
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_briefing_by_id(str(briefing_id))
+        await pilot.pause()
+
+        screen._cast_in_flight = True
+        screen._cast_in_flight_briefing_id = briefing_id
+        try:
+            screen.handle_cast_script_requested(CastScriptRequested())
+        finally:
+            screen._cast_in_flight = False
+            screen._cast_in_flight_briefing_id = None
+
+        assert app.notify.called
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert str(briefing_id) in message
+        assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_the_cast_guard_is_claimed_before_the_worker_runs(monkeypatch):
+    """Mechanism half, the deterministic sibling of `test_the_guard_is_
+    claimed_before_the_worker_runs`: the handler is synchronous with no
+    `await`, so when it returns, no worker code can yet have run. If the
+    guard is claimed there, `_cast_in_flight` is already True at that
+    instant; if it is claimed inside the worker body instead, it is still
+    False -- this is Step 5 mutation (a)'s target.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        cast_chat = _FakeChat(
+            reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}])
+        )
+        _use_fake_cast_chat(monkeypatch, cast_chat)
+
+        screen.handle_cast_script_requested(CastScriptRequested())
+
+        assert screen._cast_in_flight is True, (
+            "the guard must be claimed by the handler, before `run_worker` "
+            "has scheduled anything"
+        )
+        assert cast_chat.calls == [], "and no worker code can have run yet"
+
+        app.notify.reset_mock()
+        screen.handle_cast_script_requested(CastScriptRequested())
+        assert app.notify.call_count == 1
+        _args, kwargs = app.notify.call_args
+        assert kwargs.get("markup") is False
+
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline and screen._cast_in_flight:
+            await pilot.pause(0.02)
+        assert len(cast_chat.calls) == 1, "exactly one cast must have run"
+
+
+@pytest.mark.asyncio
+async def test_a_zombie_generating_script_is_recovered_on_a_plain_artifacts_load(
+    monkeypatch,
+):
+    """Load-path seam: `_load_briefings` sweeps a crashed cast worker's
+    `generating` script row, exactly like `test_a_zombie_generating_row_
+    is_recovered_on_a_plain_artifacts_load` does for briefings. The
+    recorder proves this is the LOAD path's own sweep (`_cast_in_flight`
+    clear at call time), not the Cast worker's -- the flag-at-call-time
+    lesson carried from the phase-1 zombie test.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        db = app.watchlist_bundle_service.db
+        preset_id = db.list_briefing_presets()[0]["id"]
+        zombie_id = db.insert_briefing_script(
+            briefing_id,
+            preset_id=preset_id,
+            preset_name="Solo",
+            roster_snapshot_json=dump_roster(ONE_SPEAKER_ROSTER),
+        )
+
+        in_flight_at_call: list[bool] = []
+        real_sweep = screen_module.fail_interrupted_scripts
+
+        def _recording_sweep(db_arg, briefing_id_arg=None):
+            in_flight_at_call.append(bool(screen._cast_in_flight))
+            return real_sweep(db_arg, briefing_id_arg)
+
+        monkeypatch.setattr(screen_module, "fail_interrupted_scripts", _recording_sweep)
+
+        await screen._load_briefings()
+
+        assert in_flight_at_call, "the load path's own sweep must have run at all"
+        assert all(not flag for flag in in_flight_at_call), (
+            "the load path's sweep must run with `_cast_in_flight` CLEAR -- a "
+            "call recorded True could only be the Cast worker's own sweep"
+        )
+        rows = db.list_briefing_scripts(briefing_id)
+        by_id = {row["id"]: row for row in rows}
+        assert by_id[zombie_id]["status"] == "failed"
+        assert by_id[zombie_id]["error"] == "interrupted"
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_script_by_id(str(zombie_id))
+        await pilot.pause()
+        plain, _ansi = _render_to_console(
+            pane.query_one("#artifacts-script-detail", Static).renderable
+        )
+        assert "interrupted" in plain
+        assert "This script is being written now." not in plain
+
+
+@pytest.mark.asyncio
+async def test_casting_recovers_a_zombie_script_via_its_own_sweep(monkeypatch):
+    """Cast-path seam, pinned SEPARATELY from the load-path test above: the
+    Cast worker sweeps `fail_interrupted_scripts` at its own front, exactly
+    where `_sweep_and_guard` runs for Generate. The recorder proves THIS
+    call carries `_cast_in_flight` claimed (True) -- only the Cast worker's
+    own sweep call can, since the load path's sweep is gated on the flag
+    being clear. Unlike briefings, recovering the zombie does not itself
+    refuse this attempt: `briefing_scripts` has no one-generating-row-
+    per-briefing invariant (a briefing may be cast many times), so the SAME
+    press both recovers the zombie AND casts a real script.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        db = app.watchlist_bundle_service.db
+        preset_id = db.list_briefing_presets()[0]["id"]
+        zombie_id = db.insert_briefing_script(
+            briefing_id,
+            preset_id=preset_id,
+            preset_name="Solo",
+            roster_snapshot_json=dump_roster(ONE_SPEAKER_ROSTER),
+        )
+
+        in_flight_at_call: list[bool] = []
+        real_sweep = screen_module.fail_interrupted_scripts
+
+        def _recording_sweep(db_arg, briefing_id_arg=None):
+            in_flight_at_call.append(bool(screen._cast_in_flight))
+            return real_sweep(db_arg, briefing_id_arg)
+
+        monkeypatch.setattr(screen_module, "fail_interrupted_scripts", _recording_sweep)
+
+        cast_chat = _FakeChat(
+            reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}])
+        )
+        _use_fake_cast_chat(monkeypatch, cast_chat)
+
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        assert True in in_flight_at_call, (
+            "the zombie must be recovered by the Cast worker's OWN sweep "
+            "(a call with `_cast_in_flight` claimed), not merely by the "
+            "load-path recovery that runs after the flag clears"
+        )
+        rows = db.list_briefing_scripts(briefing_id)
+        by_id = {row["id"]: row for row in rows}
+        assert by_id[zombie_id]["status"] == "failed"
+        assert by_id[zombie_id]["error"] == "interrupted"
+        assert any(
+            row["status"] == "complete" for row in rows if row["id"] != zombie_id
+        ), "the same press must also have cast a real script"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_script_renders_its_error_string(monkeypatch):
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        _use_fake_cast_chat(monkeypatch, _FakeChat(reply="not json at all"))
+
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        rows = app.watchlist_bundle_service.db.list_briefing_scripts(briefing_id)
+        assert rows[0]["status"] == "failed"
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.selected_script is not None, "the fresh cast must be selected"
+        assert pane.selected_script["id"] == rows[0]["id"]
+        plain, _ansi = _render_to_console(
+            pane.query_one("#artifacts-script-detail", Static).renderable
+        )
+        assert rows[0]["error"] in plain
+
+
+@pytest.mark.asyncio
+async def test_a_failed_cast_leaves_the_briefing_detail_unchanged(monkeypatch):
+    """Spec §Error-handling ethos: a script's outcome never touches the
+    briefing it was cast from -- asserted byte-for-byte, and by what is
+    still painted in the briefing's own detail area.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        _host,
+    ):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        db = app.watchlist_bundle_service.db
+        before = dict(db.get_briefing(briefing_id))
+
+        _use_fake_cast_chat(monkeypatch, _FakeChat(reply="not json at all"))
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        rows = db.list_briefing_scripts(briefing_id)
+        assert rows and rows[0]["status"] == "failed"
+
+        after = dict(db.get_briefing(briefing_id))
+        assert before == after, "casting a script must never touch the briefing row"
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        detail = pane.query_one("#artifacts-detail", Static)
+        plain, _ansi = _render_to_console(detail.renderable, width=detail.region.width)
+        assert "Acme shipped a thing" in plain
+
+
+@pytest.mark.asyncio
+async def test_cast_is_disabled_until_a_preset_exists():
+    """`Cast` starts disabled with a tooltip when there is no default
+    preset AND no preset exists at all to pick one from; it enables the
+    moment any preset exists.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    briefing_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(briefing_id, status="complete", body_markdown="Body")
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_briefing_by_id(str(briefing_id))
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        cast_button = pane.query_one("#artifacts-cast-button", Button)
+        assert cast_button.disabled is True
+        assert cast_button.tooltip
+
+        db.insert_briefing_preset("Solo", roster_json=dump_roster(ONE_SPEAKER_ROSTER))
+        await screen._load_briefings()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        cast_button = pane.query_one("#artifacts-cast-button", Button)
+        assert cast_button.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_the_briefings_table_keeps_at_least_three_usable_rows(monkeypatch):
+    """Fix round 1, ruling 1: no existing test pinned the briefings table's
+    USABLE height -- `test_the_list_the_button_and_the_body_are_all_on_
+    screen` only asserts `region.height > 0`. Re-weighting the pane's `fr`
+    split to 2:6:1:1 (this task's own CSS fix -- see `_watchlists.tcss`)
+    trades the briefings list's share down in favour of its own body and
+    the new scripts section; pinned here with BOTH a briefing and a script
+    actually present, since the scripts section's own fixed rows are part
+    of what squeezes the briefings table down toward its floor. `height >=
+    4` is a header row plus at least 3 data rows -- not merely "some rows".
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        _host,
+    ):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        _use_fake_cast_chat(
+            monkeypatch, _FakeChat(reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}]))
+        )
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        table = pane.query_one("#artifacts-table", DataTable)
+        assert table.region.height >= 4, (
+            f"the briefings table has only {table.region.height} row(s) of "
+            "height -- not enough for a header plus 3 usable data rows"
+        )
+
+
+@pytest.mark.asyncio
+async def test_switching_the_selected_briefing_clears_stale_scripts_before_the_reload_lands(
+    monkeypatch,
+):
+    """Fix round 1, minor: a briefing row click must not show the PREVIOUS
+    briefing's scripts under the NEW selection even for one frame.
+    `handle_briefing_selected` re-dispatches `_load_briefings()` to fetch
+    the newly selected briefing's own scripts, but that reload is
+    asynchronous -- without clearing the pane's `scripts`/`selected_script`
+    reactives SYNCHRONOUSLY at click time, the old scripts would still be
+    on screen (attached to the wrong briefing) until the worker lands.
+
+    `handle_briefing_selected` is called DIRECTLY here, exactly like
+    `test_the_cast_guard_is_claimed_before_the_worker_runs` calls
+    `handle_cast_script_requested` directly: the handler has no `await` in
+    it, so checking pane state immediately after it returns -- with NO
+    `pilot.pause()` at all -- pins the clearing as truly synchronous, not
+    merely "fast enough to usually win a race". A version of this test
+    that went through the real click path plus one `pilot.pause()` was
+    measured to be VACUOUS: `_load_briefings`'s own `asyncio.to_thread`
+    hops finished within that single pause often enough that the assertion
+    passed for the wrong reason (the reload had already landed) even with
+    the clearing code deleted entirely.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        # First briefing, with a real cast script attached to it.
+        first_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        _use_fake_cast_chat(
+            monkeypatch, _FakeChat(reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}]))
+        )
+        await _press_cast(screen, pilot, app, first_id)
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.scripts, "the fixture needs the first briefing to have a script"
+        assert pane.selected_script is not None
+
+        # A second, scriptless briefing for the same watchlist.
+        db = app.watchlist_bundle_service.db
+        second_id = db.insert_briefing(watchlist_id)
+        db.update_briefing(second_id, status="complete", body_markdown="Second body")
+        await screen._load_briefings()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        second_row = next(
+            row for row in _briefing_rows(app, watchlist_id) if row["id"] == second_id
+        )
+
+        # The handler is synchronous (no `await`), so state checked
+        # IMMEDIATELY after it returns -- before `run_worker` has let the
+        # reload do anything at all -- proves the clearing itself, not
+        # merely that it finishes "soon".
+        screen.handle_briefing_selected(BriefingSelected(second_row))
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.selected_script is None, (
+            "the stale script selection must clear synchronously, before "
+            "the reload worker is even dispatched"
+        )
+        assert pane.scripts == [], (
+            "the stale scripts list must clear synchronously, before the "
+            "reload worker is even dispatched"
+        )
+
+        # And once the reload actually lands, the SECOND briefing's (empty)
+        # scripts are what's shown -- not a stale carry-over.
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.scripts == []
+
+
+# --- Task 6: citations into the reader + pruned degradation --------------
+#
+# Retires the phase-1 "citations" deferral: a briefing body's `[item N]`
+# markers (`briefing_service.build_briefing_prompt`'s own convention) become
+# navigable. `extract_citation_ids`'s own ordering/dedup/ignore-non-numeric
+# behaviour is pure and tested directly in `Tests/Subscriptions/
+# test_briefing_service.py`; these tests are about the RESOLUTION (the
+# screen's `_load_briefings`, via `get_subscription_items_by_ids`) and
+# ACTIVATION (`handle_citation_activated`) built on top of it.
+#
+# `pane.activate_citation_by_id` is called directly rather than fabricating
+# a `DataTable` row-selection event -- the same directness this file's
+# existing tests already give `select_briefing_by_id`/`select_script_by_id`
+# -- but it is still a REAL call on the REAL mounted pane, so it posts a
+# REAL `CitationActivated` through the REAL message pump into the REAL
+# screen handler; nothing about the screen-side wiring is faked.
+
+
+@pytest.mark.asyncio
+async def test_a_complete_briefings_citations_table_lists_each_cited_id_with_its_title(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app, items=2)
+    cited = _seeded_item_rows(app)[0]
+    _use_fake_chat(
+        monkeypatch,
+        _FakeChat(reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"),
+    )
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+        # `_press_generate` only waits for the briefings TABLE's row count to
+        # agree with the database -- but setting `pane.selected_briefing`
+        # (inside the generation worker's own `_load_briefings` call) fires
+        # `ArtifactsPane.watch_selected_briefing`, which posts
+        # `BriefingSelected`, which `handle_briefing_selected` answers by
+        # clearing `pane.citations` and dispatching a SECOND, separate
+        # `_load_briefings()` -- the identical cascade `_prepare_cast` below
+        # already settles with this same extra direct call before reading
+        # pane state. Measured directly (a debug harness printing every
+        # `_load_briefings` call's own citations): without this, `pane.
+        # citations` is observed empty here more often than not, mid-cascade.
+        await screen._load_briefings()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.citations == [
+            {
+                "item_id": cited["id"],
+                "label": pane.citations[0]["label"],
+                "available": True,
+            }
+        ], "exactly one citation, for the one id the body actually cites"
+        label = pane.citations[0]["label"]
+        assert isinstance(label, Text), "a title is remote text -- never a bare str"
+        assert cited["title"] in label.plain
+        assert str(cited["id"]) in label.plain
+
+        table = pane.query_one("#artifacts-citations-table", DataTable)
+        assert table.row_count == 1
+        painted = _painted(screen, table.region)
+        assert cited["title"] in painted
+        assert "Available" in painted
+
+
+@pytest.mark.asyncio
+async def test_a_citation_to_a_pruned_item_degrades(monkeypatch):
+    """The plan's second named invariant: **citation-to-pruned-item-
+    degrades**. A `[item N]` id that does not resolve to a live
+    `subscription_items` row (deleted, or simply never existed) must
+    degrade honestly -- both in what the citations table shows, and in what
+    activating it does. It must never be silently treated as available.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app, items=1)
+    pruned_id = max(row["id"] for row in _seeded_item_rows(app)) + 1000
+    _use_fake_chat(
+        monkeypatch,
+        _FakeChat(reply=f"## This week\n\nSomething happened [item {pruned_id}].\n"),
+    )
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+        # Settle the `BriefingSelected` reload cascade -- see the comment on
+        # the identical call in `test_a_complete_briefings_citations_table_
+        # lists_each_cited_id_with_its_title` above.
+        await screen._load_briefings()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert len(pane.citations) == 1
+        citation = pane.citations[0]
+        assert citation["item_id"] == pruned_id
+        assert citation["available"] is False
+        assert isinstance(citation["label"], Text)
+        assert citation["label"].plain == f"item {pruned_id} — no longer available"
+
+        table = pane.query_one("#artifacts-citations-table", DataTable)
+        assert table.row_count == 1
+        painted = _painted(screen, table.region)
+        assert "no longer available" in painted
+        assert "Not available" in painted
+
+        # Activating it: a toast, markup=False, and -- the invariant's other
+        # half -- NO section switch. Section-switching is the mechanism a
+        # future edit could most plausibly get backwards (treat "pruned" as
+        # "switch anyway, then discover there's nothing to show"), so both
+        # halves are pinned in the same test.
+        notes_before = app.notify.call_count
+        section_before = screen.active_section
+        pane.activate_citation_by_id(str(pruned_id))
+        await pilot.pause(0.2)
+
+        assert screen.active_section == section_before, (
+            "a pruned citation must not switch sections"
+        )
+        assert not screen.query("#wl-region-content"), (
+            "a pruned citation must not mount the reader either"
+        )
+        assert app.notify.call_count > notes_before, "a pruned citation must toast"
+        toast_call = app.notify.call_args
+        assert toast_call.kwargs.get("markup") is False
+        assert str(pruned_id) in str(toast_call.args[0])
+
+
+@pytest.mark.asyncio
+async def test_activating_an_available_citation_opens_it_in_the_reader_and_marks_it_read(
+    monkeypatch,
+):
+    """Activating a resolving citation is an OPEN (design ruling -- do not
+    relitigate): it switches to the Items ("Read") section, the reader
+    shows that exact item, and -- the same side effect a real click on the
+    Items table already has -- the item's status flips from `new` to
+    `reviewed`. Pinned here so a future "why did my item get marked read"
+    question has this path, not just a mouse click, to find.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app, items=2)
+    db = app.watchlist_bundle_service.db
+    # `_build_test_app`'s `patch("tldw_chatbook.app.get_subscriptions_db_path",
+    # ...)` is only active while `TldwCli()` itself is constructing (see its
+    # nested `with` blocks) -- long enough for the EAGERLY-built
+    # `watchlist_bundle_service.db` to see it, but `LocalWatchlistsService`'s
+    # own `db_factory` is a lambda that re-resolves `get_subscriptions_db_
+    # path()` LAZILY, on its first real call, which happens well after that
+    # patch has already been undone -- so, in this harness only,
+    # `app.local_watchlists_service._db()` falls through to the real,
+    # unpatched path instead of this test's isolated one (confirmed directly:
+    # a debug probe printed the two `db_path`s and they differ). That is the
+    # SAME database `_mark_item_read_on_open`'s write actually reaches
+    # (`_controller` -> `WatchlistScopeService` -> `LocalWatchlistsService.
+    # update_item` -> `self._db()`), so without this redirect the write
+    # would target a database this test's seeded item was never in. This is
+    # a test-harness-only artifact (in the real app both resolve to the same
+    # configured path), not something Task 6 introduces, so it is patched
+    # here rather than in the shared `_build_test_app`/`_seed_watchlist`
+    # helpers, which every other test in this file already relies on as-is.
+    monkeypatch.setattr(app.local_watchlists_service, "db_factory", lambda: db)
+    cited = _seeded_item_rows(app)[0]
+    assert db.get_item_status(cited["id"]) == "new", "fixture precondition"
+    _use_fake_chat(
+        monkeypatch,
+        _FakeChat(reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"),
+    )
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+        # Settle the `BriefingSelected` reload cascade -- see the comment on
+        # the identical call in `test_a_complete_briefings_citations_table_
+        # lists_each_cited_id_with_its_title` above.
+        await screen._load_briefings()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        citation = next(c for c in pane.citations if c["item_id"] == cited["id"])
+        assert citation["available"] is True
+
+        assert screen.active_section == "artifacts"
+        pane.activate_citation_by_id(str(cited["id"]))
+        # Real wall-clock delay: `handle_citation_activated` defers opening
+        # the item by a `set_timer(0.05, ...)` (the section switch it makes
+        # first is not visible to a query until the NEXT recompose), and a
+        # bare `pilot.pause()` waits for CPU idle, not wall-clock time, so
+        # it would not reliably let that timer fire.
+        await pilot.pause(0.3)
+
+        assert screen.active_section == "items", (
+            "an available citation must switch to the Read tab"
+        )
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        for _ in range(60):
+            await pilot.pause()
+            if content_pane.item is not None:
+                break
+        assert content_pane.item is not None
+        # `content_pane.item["id"]` is `normalize_watchlist_item`'s own
+        # NAMESPACED id (`"local:watchlist_item:<n>"`), not the bare
+        # `[item N]` id the body cited -- `item_id` is that same
+        # normalization's bare-id field, and asserting on it (plus the
+        # title) is the unambiguous way to confirm this is really the cited
+        # item, not merely "the reader now shows *an* item".
+        assert content_pane.item["item_id"] == cited["id"]
+        assert content_pane.item["title"] == cited["title"]
+
+        for _ in range(60):
+            await pilot.pause()
+            if db.get_item_status(cited["id"]) == "reviewed":
+                break
+        assert db.get_item_status(cited["id"]) == "reviewed", (
+            "opening a cited item through the citations table must mark it "
+            "read, exactly like opening it via a click in the Items table"
+        )
+
+
+@pytest.mark.asyncio
+async def test_keyboard_browsing_the_citations_table_does_not_activate_a_row(monkeypatch):
+    """Review fix round 1 (Important), confirmed live by the reviewer:
+    focusing the citations table and pressing an arrow key must not
+    activate anything. `highlight_is_user_driven` (`table_selection.py`)
+    filters rebuild-echo noise from a real event -- it does NOT distinguish
+    a click from keyboard cursor movement, so if the citations table were
+    routed through `RowHighlighted` the same way briefings/scripts still
+    are, a single `down` press would switch sections and mark an item read
+    on every step of merely BROWSING the list, with no confirmation at all.
+    This drives the REAL `DataTable` (focus + `pilot.press("down")`), not
+    `pane.activate_citation_by_id`, so it is `on_data_table_row_
+    highlighted`'s own citations-table no-op that is under test.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app, items=2)
+    rows = _seeded_item_rows(app)
+    body = (
+        "## This week\n\n"
+        f"{rows[0]['title']} happened [item {rows[0]['id']}]. "
+        f"{rows[1]['title']} happened [item {rows[1]['id']}].\n"
+    )
+    _use_fake_chat(monkeypatch, _FakeChat(reply=body))
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+        # Settle the `BriefingSelected` reload cascade -- see the comment on
+        # the identical call in `test_a_complete_briefings_citations_table_
+        # lists_each_cited_id_with_its_title` above.
+        await screen._load_briefings()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert len(pane.citations) == 2, (
+            "the fixture needs two citations to browse between"
+        )
+
+        table = pane.query_one("#artifacts-citations-table", DataTable)
+        table.focus()
+        await pilot.pause(0.2)
+        assert table.cursor_row == 0
+
+        notes_before = app.notify.call_count
+        await pilot.press("down")
+        for _ in range(30):
+            await pilot.pause()
+
+        assert table.cursor_row == 1, (
+            "the cursor must still move -- browsing itself is not blocked"
+        )
+        assert screen.active_section == "artifacts", (
+            "arrow-key browsing of the citations table must not switch sections"
+        )
+        assert app.notify.call_count == notes_before, (
+            "arrow-key browsing must not toast either (no pruned-citation refusal)"
+        )
+        db = app.watchlist_bundle_service.db
+        assert db.get_item_status(rows[0]["id"]) == "new"
+        assert db.get_item_status(rows[1]["id"]) == "new"
+
+
+@pytest.mark.asyncio
+async def test_pressing_enter_on_a_citation_activates_it_through_the_real_table(
+    monkeypatch,
+):
+    """Review fix round 1: closes the gap where every citation test up to
+    this point called `pane.activate_citation_by_id` directly, so nothing
+    exercised a real `DataTable` input event. Drives the table for real --
+    focus, cursor already on the (only) row, `Enter` -- so `on_data_table_
+    row_selected`'s own citations-table branch is what is under test.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app, items=2)
+    db = app.watchlist_bundle_service.db
+    # See the identical redirect + comment in
+    # `test_activating_an_available_citation_opens_it_in_the_reader_and_
+    # marks_it_read` above: `local_watchlists_service`'s lazy `db_factory`
+    # resolves the real, unpatched db path in this harness, which is a
+    # different database than the one this test seeds and asserts against.
+    monkeypatch.setattr(app.local_watchlists_service, "db_factory", lambda: db)
+    cited = _seeded_item_rows(app)[0]
+    _use_fake_chat(
+        monkeypatch,
+        _FakeChat(reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"),
+    )
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+        await screen._load_briefings()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        table = pane.query_one("#artifacts-citations-table", DataTable)
+        table.focus()
+        await pilot.pause(0.2)
+        assert table.cursor_row == 0
+
+        await pilot.press("enter")
+        # Real wall-clock delay for `handle_citation_activated`'s own
+        # `set_timer(0.05, ...)` -- see the identical comment above.
+        await pilot.pause(0.3)
+
+        assert screen.active_section == "items", (
+            "Enter on a citation row must activate it -- switching to the "
+            "Read tab, exactly like a direct call to activate_citation_by_id"
+        )
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        for _ in range(60):
+            await pilot.pause()
+            if content_pane.item is not None:
+                break
+        assert content_pane.item is not None
+        assert content_pane.item["item_id"] == cited["id"]
+
+        for _ in range(60):
+            await pilot.pause()
+            if db.get_item_status(cited["id"]) == "reviewed":
+                break
+        assert db.get_item_status(cited["id"]) == "reviewed"
+
+
+@pytest.mark.asyncio
+async def test_citations_do_not_shrink_the_briefings_table_below_its_pinned_minimum(
+    monkeypatch,
+):
+    """Task 5's `test_the_briefings_table_keeps_at_least_three_usable_rows`
+    already pins `#artifacts-table`'s floor with a script section present;
+    this is the same pin with a citations table ALSO present -- the
+    scenario the brief specifically warns about ("the citations table must
+    not steal below the pinned minimums"). Every OTHER new test in this
+    file uses `_seed_watchlist`'s default single-item body with no
+    `[item N]` marker, so this is the only one that puts all three sections
+    (briefing list, scripts, citations) on screen at once.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    cited = _seeded_item_rows(app)[0]
+    _use_fake_chat(
+        monkeypatch,
+        _FakeChat(reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"),
+    )
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        _host,
+    ):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        _use_fake_cast_chat(
+            monkeypatch, _FakeChat(reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}]))
+        )
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.citations, "the fixture must actually produce a citation"
+        table = pane.query_one("#artifacts-table", DataTable)
+        assert table.region.height >= 4, (
+            f"adding the citations table shrank the briefings table to "
+            f"{table.region.height} row(s) -- the pinned floor from Task 5 "
+            "must survive a citations table sharing the same budget"
         )
