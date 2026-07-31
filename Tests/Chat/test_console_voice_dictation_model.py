@@ -224,3 +224,30 @@ def test_dictation_model_override_reader_direct_unit_coverage(monkeypatch):
 
     _stub_settings(monkeypatch, {"dictation.model": "   "})
     assert cvi._dictation_model_override() is None
+
+
+def test_a_configured_model_that_coincides_with_the_fast_default_is_not_displaced(
+    monkeypatch,
+):
+    """`transcription.default_model` already IS the fast default -> no advisory.
+
+    Pins the `configured_model != DICTATION_FAST_MODEL_DEFAULT` half of the
+    displacement guard: mutating it to `bool(configured_model)` survived every
+    other test in the suite (re-review finding N1), so this is the only thing
+    keeping a user who deliberately configured the fast model from getting a
+    "your model was displaced" notice about a displacement that never happened.
+    """
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(
+        monkeypatch,
+        {
+            "transcription.default_provider": "faster-whisper",
+            "transcription.default_model": cvi.DICTATION_FAST_MODEL_DEFAULT,
+        },
+    )
+
+    effective = cvi.resolve()
+
+    assert effective is not None
+    assert effective.model == cvi.DICTATION_FAST_MODEL_DEFAULT
+    assert effective.fast_default_displaced_configured_model is False
