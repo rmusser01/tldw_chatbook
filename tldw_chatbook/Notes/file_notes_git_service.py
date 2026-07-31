@@ -953,6 +953,18 @@ class GitRunCancelled(asyncio.CancelledError):
         self.result = result
 
 
+class GitRunCancellationRejected(GitRunCancelled):
+    """Caller cancellation rejected because child admission is active."""
+
+    cancellation_rejected = True
+
+    def __init__(self, retained_child: RetainedGitChildToken) -> None:
+        super().__init__(retained_child=retained_child)
+        self.args = (
+            "Git command cancellation rejected; admitted child remains active",
+        )
+
+
 class GitProcessRunner(Protocol):
     """Injectable direct-argv child-process boundary."""
 
@@ -1067,6 +1079,7 @@ class _RetainedChildRecord:
 
     token: RetainedGitChildToken
     ready: asyncio.Event
+    admission_outcome: asyncio.Future[bool]
     process: AsyncChildProcess | None = None
     process_tree: OwnedProcessTree | None = None
     owned_process_tree: bool = False
@@ -1079,7 +1092,12 @@ class _RetainedChildRecord:
     claimed: bool = False
     released: bool = False
     output_overflow: bool = False
-    cancel_requested: bool = False
+    admission_state: Literal[
+        "queued",
+        "admitting",
+        "started",
+        "not_started",
+    ] = "queued"
     terminate_sent: bool = False
     kill_sent: bool = False
     stop_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -1639,6 +1657,7 @@ class AsyncGitProcessRunner:
         record = _RetainedChildRecord(
             token,
             asyncio.Event(),
+            loop.create_future(),
             owned_process_tree=owned_process_tree,
         )
         self._retained_children[token] = record
@@ -1668,29 +1687,36 @@ class AsyncGitProcessRunner:
                 record.exposed = True
             return result
         except asyncio.CancelledError:
-            if cancel_before_spawn and record.process is None:
-                if record.owned_process_tree:
-                    record.cancel_requested = True
-                    try:
-                        result = await asyncio.shield(run_task)
-                    except asyncio.CancelledError:
-                        record.exposed = True
-                        raise GitRunCancelled(retained_child=token) from None
-                    except BaseException:
-                        if record.process is None:
-                            self._discard_record(record)
-                            raise GitRunCancelled(
-                                result=GitCommandResult(1, b"", b"")
-                            ) from None
-                    else:
-                        if result.retained_child is None:
-                            self._release_unexposed_record(record)
-                            raise GitRunCancelled(result=result) from None
-                        record.exposed = True
-                        raise GitRunCancelled(
-                            retained_child=result.retained_child
-                        ) from None
+            if cancel_before_spawn and record.owned_process_tree:
+                if record.admission_state == "queued":
+                    run_task.cancel()
+                    await self._await_cancelled_run_task(run_task)
+                    self._discard_record(record)
+                    raise GitRunCancelled(
+                        result=GitCommandResult(1, b"", b"")
+                    ) from None
+                started = await self._await_admission_outcome(record)
+                if started and not run_task.done():
+                    record.exposed = True
+                    raise GitRunCancellationRejected(token) from None
+                try:
+                    result = await self._await_cancelled_run_task(run_task)
+                except BaseException:
+                    result = GitCommandResult(1, b"", b"")
+                if result is None:
+                    result = GitCommandResult(1, b"", b"")
+                if started and result.retained_child is not None:
+                    record.exposed = True
+                    raise GitRunCancellationRejected(
+                        result.retained_child
+                    ) from None
+                if result.retained_child is None:
+                    self._release_unexposed_record(record)
                 else:
+                    record.exposed = True
+                raise GitRunCancelled(result=result) from None
+            if cancel_before_spawn and record.process is None:
+                if not record.owned_process_tree:
                     run_task.cancel()
                     await asyncio.gather(run_task, return_exceptions=True)
                     if record.process is None:
@@ -1737,7 +1763,10 @@ class AsyncGitProcessRunner:
     ) -> GitCommandResult:
         """Run one child in a runner-owned task immune to caller cancellation."""
         assert self._shutdown_event is not None
+        if record.owned_process_tree:
+            record.admission_state = "admitting"
         shutdown_waiter: asyncio.Task[bool] | None = None
+        callback_error: BaseException | None = None
         try:
             admission_failed = False
             if record.owned_process_tree:
@@ -1753,6 +1782,24 @@ class AsyncGitProcessRunner:
                     admission_failed = True
                 record.process_tree = process_tree
                 process = process_tree.process
+                record.process = process
+                if admission_failed:
+                    record.admission_state = "not_started"
+                    self._publish_admission_outcome(
+                        record,
+                        started=False,
+                    )
+                else:
+                    if on_spawn is not None:
+                        try:
+                            on_spawn()
+                        except BaseException as error:
+                            callback_error = error
+                    record.admission_state = "started"
+                    self._publish_admission_outcome(
+                        record,
+                        started=True,
+                    )
             else:
                 process = await asyncio.create_subprocess_exec(
                     *argv,
@@ -1770,7 +1817,7 @@ class AsyncGitProcessRunner:
             record.process = process
             if stdout_limit is None and stderr_limit is None:
                 communication = asyncio.create_task(
-                    process.communicate(stdin)
+                    self._communicate_unbounded(process, stdin)
                 )
             else:
                 communication = asyncio.create_task(
@@ -1807,34 +1854,12 @@ class AsyncGitProcessRunner:
                         b"Git process containment admission failed"
                     ),
                 )
-            if on_spawn is not None:
+            if not record.owned_process_tree and on_spawn is not None:
                 try:
                     on_spawn()
                 except BaseException as error:
-                    terminated = await self._stop_record(record)
-                    if terminated and not communication.done():
-                        try:
-                            await asyncio.wait_for(
-                                asyncio.shield(communication),
-                                timeout=self._kill_timeout,
-                            )
-                        except TimeoutError:
-                            terminated = False
-                    settlement = self._read_record(record)
-                    if (
-                        terminated
-                        and settlement.state not in {"alive", "uncertain"}
-                    ):
-                        raise
-                    record.exposed = True
-                    return self._uncertain_result(
-                        record,
-                        fallback_stderr=str(error).encode(
-                            "utf-8",
-                            "backslashreplace",
-                        ),
-                    )
-            if record.cancel_requested:
+                    callback_error = error
+            if callback_error is not None:
                 terminated = await self._stop_record(record)
                 if terminated and not communication.done():
                     try:
@@ -1846,17 +1871,17 @@ class AsyncGitProcessRunner:
                         terminated = False
                 settlement = self._read_record(record)
                 if terminated and settlement.state not in {"alive", "uncertain"}:
-                    return self._result_from_settlement(
-                        settlement,
-                        stop_requested=record.stop_requested,
-                        force_stopped=record.force_stopped,
-                    )
+                    raise callback_error
+                record.exposed = True
                 return self._uncertain_result(
                     record,
-                    fallback_stderr=(
-                        b"Git command cancelled during containment admission"
+                    fallback_stderr=str(callback_error).encode(
+                        "utf-8",
+                        "backslashreplace",
                     ),
                 )
+            if not record.owned_process_tree:
+                self._publish_admission_outcome(record, started=True)
             shutdown_waiter = asyncio.create_task(
                 self._shutdown_event.wait()
             )
@@ -1933,12 +1958,69 @@ class AsyncGitProcessRunner:
         finally:
             if record.process is None:
                 record.ready.set()
+            if (
+                record.owned_process_tree
+                and record.admission_state != "started"
+            ):
+                record.admission_state = "not_started"
+            self._publish_admission_outcome(
+                record,
+                started=(
+                    record.process is not None
+                    if not record.owned_process_tree
+                    else record.admission_state == "started"
+                ),
+            )
             if shutdown_waiter is not None and not shutdown_waiter.done():
                 shutdown_waiter.cancel()
                 await asyncio.gather(
                     shutdown_waiter,
                     return_exceptions=True,
                 )
+
+    @staticmethod
+    async def _await_admission_outcome(
+        record: _RetainedChildRecord,
+    ) -> bool:
+        """Wait through repeated caller cancellation for admission publication."""
+        while not record.admission_outcome.done():
+            try:
+                await asyncio.shield(record.admission_outcome)
+            except asyncio.CancelledError:
+                continue
+        return record.admission_outcome.result()
+
+    @staticmethod
+    async def _await_cancelled_run_task(
+        task: asyncio.Task[GitCommandResult],
+    ) -> GitCommandResult | None:
+        """Retrieve terminal no-child settlement despite repeated cancellation."""
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+        try:
+            return task.result()
+        except asyncio.CancelledError:
+            return None
+
+    @staticmethod
+    def _publish_admission_outcome(
+        record: _RetainedChildRecord,
+        *,
+        started: bool,
+    ) -> None:
+        if not record.admission_outcome.done():
+            record.admission_outcome.set_result(started)
+
+    @staticmethod
+    async def _communicate_unbounded(
+        process: AsyncChildProcess,
+        stdin: bytes | None,
+    ) -> tuple[bytes, bytes]:
+        """Start child I/O only after the synchronous spawn callback boundary."""
+        return await process.communicate(stdin)
 
     async def _communicate_bounded(
         self,

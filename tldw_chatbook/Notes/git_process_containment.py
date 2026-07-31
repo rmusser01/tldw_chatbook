@@ -8,7 +8,6 @@ import os
 import signal
 import subprocess
 import threading
-import time
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -38,11 +37,10 @@ class AsyncChildProcess(Protocol):
 
 @dataclass(slots=True)
 class OwnedProcessTree:
-    """One admitted child plus its retained native containment identity."""
+    """One created child plus its retained native containment identity."""
 
     process: AsyncChildProcess
     native_identity: object
-    platform: str
     closed: bool = False
 
 
@@ -144,7 +142,7 @@ class _PosixProcessGroupController:
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
         )
-        return OwnedProcessTree(process, process.pid, "posix")
+        return OwnedProcessTree(process, process.pid)
 
     def terminate(self, tree: OwnedProcessTree) -> None:
         self._signal_group(tree, signal.SIGTERM)
@@ -238,11 +236,17 @@ class _WindowsJobObjectController:
 
     def terminate(self, tree: OwnedProcessTree) -> None:
         identity = self._identity(tree)
-        self._api.generate_ctrl_break(identity.pid)
+        if identity.assigned:
+            self._api.generate_ctrl_break(identity.pid)
+        else:
+            tree.process.terminate()
 
     def kill(self, tree: OwnedProcessTree) -> None:
         identity = self._identity(tree)
-        self._api.terminate_job(identity.job_handle, 1)
+        if identity.assigned:
+            self._api.terminate_job(identity.job_handle, 1)
+        else:
+            tree.process.kill()
 
     async def wait(self, tree: OwnedProcessTree, *, timeout: float) -> bool:
         identity = self._identity(tree)
@@ -254,13 +258,15 @@ class _WindowsJobObjectController:
             if callable(poll):
                 poll()
             direct_terminal = process.returncode is not None
-            try:
-                active_processes = self._api.active_processes(
-                    identity.job_handle
-                )
-            except OSError:
-                return False
-            if direct_terminal and active_processes == 0:
+            job_empty = not identity.assigned
+            if identity.assigned:
+                try:
+                    job_empty = (
+                        self._api.active_processes(identity.job_handle) == 0
+                    )
+                except OSError:
+                    return False
+            if direct_terminal and job_empty:
                 return True
             remaining = deadline - loop.time()
             if remaining <= 0:
@@ -287,10 +293,11 @@ class _WindowsJobObjectController:
         return identity
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class _WindowsJobIdentity:
     job_handle: int
     pid: int
+    assigned: bool = False
 
 
 class _WindowsPipeReader:
@@ -491,7 +498,6 @@ class _WindowsFailedAdmissionProcess:
         self,
         kernel: _WindowsKernel,
         process_handle: int,
-        job_handle: int,
         pid: int,
         stdin_handle: int | None,
         stdout_handle: int,
@@ -499,7 +505,6 @@ class _WindowsFailedAdmissionProcess:
     ) -> None:
         self._kernel = kernel
         self._process_handle = process_handle
-        self._job_handle = job_handle
         self._stdin_handle = stdin_handle or 0
         self._stdout_handle = stdout_handle
         self._stderr_handle = stderr_handle
@@ -573,21 +578,6 @@ class _WindowsFailedAdmissionProcess:
         self._process_handle = 0
         if handle:
             self._kernel.close_handle(handle)
-
-    def settle_failed_launch(self, timeout: float) -> tuple[bool, int]:
-        """Try to prove direct exit while retaining any unproved handle."""
-        self._close_pipe_handles()
-        handle = self._process_handle
-        if not handle:
-            return self.returncode is not None, 0
-        proved, process_closed = self._kernel._settle_failed_suspended_process(
-            handle,
-            self._job_handle,
-        )
-        if process_closed:
-            self._process_handle = 0
-            self.returncode = 127
-        return proved, 0 if process_closed else handle
 
     def _close_pipe_handles(self) -> None:
         self.close_stdin()
@@ -704,27 +694,6 @@ class _WindowsAsyncChildProcess:
         if handle:
             self._kernel.close_handle(handle)
 
-    def settle_failed_launch(self, timeout: float) -> tuple[bool, int]:
-        """Synchronously settle a never-admitted direct child."""
-        self.stdout.close()
-        self.stderr.close()
-        if self.stdin is not None:
-            self.stdin.close()
-        with self._handle_lock:
-            handle = self._process_handle
-        if not handle:
-            return self.returncode is not None, 0
-        try:
-            self._kernel.wait_process(handle, timeout)
-            self.returncode = self._kernel.exit_code(handle)
-        except (OSError, TimeoutError):
-            return False, handle
-        with self._handle_lock:
-            if self._process_handle == handle:
-                self._process_handle = 0
-        self._kernel.close_handle(handle)
-        return True, 0
-
     def _terminate_direct(self, exit_code: int) -> None:
         with self._handle_lock:
             handle = self._process_handle
@@ -748,7 +717,6 @@ class _WindowsKernel:
     _RESUME_THREAD_FAILED = 0xFFFFFFFF
     _WAIT_OBJECT_0 = 0
     _WAIT_TIMEOUT = 258
-    _INFINITE = 0xFFFFFFFF
     _ERROR_BROKEN_PIPE = 109
     _ERROR_OPERATION_ABORTED = 995
 
@@ -776,7 +744,6 @@ class _WindowsKernel:
         parent_stdin = parent_stdout = parent_stderr = 0
         child_stdin = child_stdout = child_stderr = 0
         process_handle = thread_handle = 0
-        assigned = False
         process: _WindowsAsyncChildProcess | None = None
         tree: OwnedProcessTree | None = None
         try:
@@ -795,29 +762,20 @@ class _WindowsKernel:
             child_stdout = 0
             self.close_handle(child_stderr)
             child_stderr = 0
-            if not self.kernel32.AssignProcessToJobObject(
-                job_handle,
-                process_handle,
-            ):
-                raise self._last_error("AssignProcessToJobObject")
-            assigned = True
             if not stdin:
                 self.close_handle(parent_stdin)
                 parent_stdin = 0
             fallback = _WindowsFailedAdmissionProcess(
                 self,
                 process_handle,
-                job_handle,
                 pid,
                 parent_stdin or None,
                 parent_stdout,
                 parent_stderr,
             )
-            tree = OwnedProcessTree(
-                fallback,
-                _WindowsJobIdentity(job_handle, pid),
-                "windows",
-            )
+            identity = _WindowsJobIdentity(job_handle, pid)
+            tree = OwnedProcessTree(fallback, identity)
+            job_handle = 0
             process_handle = 0
             parent_stdin = parent_stdout = parent_stderr = 0
             (
@@ -826,6 +784,12 @@ class _WindowsKernel:
                 wrapper_stdout_handle,
                 wrapper_stderr_handle,
             ) = fallback.wrapper_handles()
+            if not self.kernel32.AssignProcessToJobObject(
+                identity.job_handle,
+                wrapper_process_handle,
+            ):
+                raise self._last_error("AssignProcessToJobObject")
+            identity.assigned = True
             process = _WindowsAsyncChildProcess(
                 self,
                 wrapper_process_handle,
@@ -841,8 +805,6 @@ class _WindowsKernel:
             self.close_handle(thread_handle)
             thread_handle = 0
             if resumed != 1:
-                self._terminate_job_quietly(job_handle)
-                job_handle = 0
                 raise ProcessTreeAdmissionError(
                     "ResumeThread did not release exactly one suspension",
                     tree,
@@ -852,52 +814,14 @@ class _WindowsKernel:
             raise
         except BaseException as error:
             if tree is not None:
-                self._terminate_job_quietly(job_handle)
-                retained_process = tree.process
-                direct_proved, retained_process_handle = (
-                    retained_process.settle_failed_launch(5.0)
-                )
-                cleanup_proved = direct_proved and self._wait_job_empty(
-                    job_handle,
-                    timeout=5.0,
-                )
-                if not cleanup_proved:
-                    del retained_process_handle
-                    job_handle = 0
-                    raise ProcessTreeAdmissionError(
-                        "Windows wrapper admission cleanup is unproved",
-                        tree,
-                    ) from error
-                self.close_handle(job_handle)
-                job_handle = 0
-            elif process_handle:
-                if assigned:
-                    self._terminate_job_quietly(job_handle)
-                else:
-                    self._terminate_process_quietly(process_handle)
-                cleanup_proved, process_closed = (
-                    self._settle_failed_suspended_process(
-                        process_handle,
-                        job_handle if assigned else None,
-                    )
-                )
-                if process_closed:
-                    process_handle = 0
-                if cleanup_proved:
-                    process_handle = 0
-                else:
-                    self._quarantine_failed_launch(
-                        process_handle,
-                        job_handle,
-                        assigned=assigned,
-                    )
-                    process_handle = 0
-                    job_handle = 0
-            self.close_handle(job_handle)
-            job_handle = 0
+                raise ProcessTreeAdmissionError(
+                    "Windows process-tree admission failed",
+                    tree,
+                ) from error
             raise
         finally:
             for handle in (
+                job_handle,
                 thread_handle,
                 process_handle,
                 child_stdin,
@@ -942,19 +866,6 @@ class _WindowsKernel:
             return True
         if result == self._WAIT_TIMEOUT:
             return False
-        raise self._last_error("WaitForSingleObject")
-
-    def wait_process(self, process_handle: int, timeout: float | None) -> None:
-        milliseconds = (
-            self._INFINITE
-            if timeout is None
-            else max(0, min(self._INFINITE - 1, int(timeout * 1000)))
-        )
-        result = self.kernel32.WaitForSingleObject(process_handle, milliseconds)
-        if result == self._WAIT_OBJECT_0:
-            return
-        if result == self._WAIT_TIMEOUT:
-            raise TimeoutError("Windows child did not settle before deadline")
         raise self._last_error("WaitForSingleObject")
 
     def exit_code(self, process_handle: int) -> int:
@@ -1157,82 +1068,6 @@ class _WindowsKernel:
             seen_keys.add(folded)
             entries.append(f"{key}={value}")
         return self.ctypes.create_unicode_buffer("\0".join(entries) + "\0")
-
-    def _settle_failed_suspended_process(
-        self,
-        process_handle: int,
-        job_handle: int | None,
-    ) -> tuple[bool, bool]:
-        try:
-            self.wait_process(process_handle, 5.0)
-        except (OSError, TimeoutError):
-            return False, False
-        self.close_handle(process_handle)
-        if job_handle is None:
-            return True, True
-        return self._wait_job_empty(job_handle, timeout=5.0), True
-
-    def _wait_job_empty(self, job_handle: int, *, timeout: float) -> bool:
-        deadline = time.monotonic() + max(0.0, timeout)
-        while True:
-            try:
-                if self.active_processes(job_handle) == 0:
-                    return True
-            except OSError:
-                return False
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(_POLL_INTERVAL_SECONDS)
-
-    def _quarantine_failed_launch(
-        self,
-        process_handle: int,
-        job_handle: int,
-        *,
-        assigned: bool,
-    ) -> None:
-        """Retain failed-launch handles until a daemon proves settlement."""
-
-        def settle() -> None:
-            if process_handle:
-                while True:
-                    if assigned:
-                        self._terminate_job_quietly(job_handle)
-                    else:
-                        self._terminate_process_quietly(process_handle)
-                    try:
-                        self.wait_process(process_handle, 0.1)
-                    except (OSError, TimeoutError):
-                        continue
-                    self.close_handle(process_handle)
-                    break
-            if assigned:
-                while True:
-                    try:
-                        if self.active_processes(job_handle) == 0:
-                            break
-                    except OSError:
-                        return
-                    time.sleep(_POLL_INTERVAL_SECONDS)
-            self.close_handle(job_handle)
-
-        threading.Thread(
-            target=settle,
-            name="git-process-tree-failed-launch-settler",
-            daemon=True,
-        ).start()
-
-    def _terminate_job_quietly(self, job_handle: int) -> None:
-        try:
-            self.terminate_job(job_handle, 127)
-        except OSError:
-            pass
-
-    def _terminate_process_quietly(self, process_handle: int) -> None:
-        try:
-            self.terminate_process(process_handle, 127)
-        except OSError:
-            pass
 
     def _last_error(self, operation: str) -> OSError:
         error = self.ctypes.get_last_error()

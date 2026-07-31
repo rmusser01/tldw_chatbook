@@ -4,7 +4,6 @@ import os
 import shutil
 import stat
 import subprocess
-import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -45,28 +44,6 @@ def _fact(
     origin: str = "a" * 64,
 ):
     return push_contracts._GitConfigFact(scope, origin, key, value)
-
-
-def test_process_tree_runner_is_opt_in_for_existing_local_push_proof() -> None:
-    parameter = inspect.signature(AsyncGitProcessRunner.run).parameters[
-        "owned_process_tree"
-    ]
-
-    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
-    assert parameter.default is False
-
-
-def test_unproved_descendant_result_is_not_containment_terminal() -> None:
-    result = GitCommandResult(
-        returncode=0,
-        stdout=b"",
-        stderr=b"",
-        owned_process_tree=True,
-        containment_proved=False,
-    )
-
-    assert result.owned_process_tree
-    assert not result.containment_proved
 
 
 def _base_facts(*, push_url: bool = True):

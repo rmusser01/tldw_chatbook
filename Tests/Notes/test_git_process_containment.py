@@ -17,6 +17,7 @@ import tldw_chatbook.Notes.git_process_containment as containment
 from tldw_chatbook.Notes.file_notes_git_service import (
     AsyncGitProcessRunner,
     GitRunCancelled,
+    GitRunCancellationRejected,
 )
 
 
@@ -141,8 +142,8 @@ def _fake_windows_kernel(
     resume_result: int = 1,
     wrapper_start_fails: bool = False,
     wrapper_construction_fails: bool = False,
-    wrapper_cleanup_proved: bool = True,
     job_kill_proves: bool = True,
+    job_query_fails: bool = False,
     job_creation_fails: bool = False,
     pipe_failure_at: int | None = None,
     create_process_fails: bool = False,
@@ -156,6 +157,8 @@ def _fake_windows_kernel(
     kernel.closed_handles = []
     kernel.spawned_process = None
     kernel.process_exited = False
+    kernel.job_query_fails = job_query_fails
+    kernel.wrapper_failed = asyncio.Event()
     pipe_pairs = iter(((200, 201), (300, 301), (400, 401)))
     pipe_calls = 0
 
@@ -202,14 +205,15 @@ def _fake_windows_kernel(
     kernel._create_process = create_process
     kernel.close_handle = close_handle
     kernel._last_error = lambda operation: OSError(f"{operation} failed")
-    kernel._terminate_job_quietly = lambda handle: trace.append(
-        "terminate_job"
-    )
-    kernel._terminate_process_quietly = lambda handle: trace.append(
-        "terminate_suspended_process"
-    )
-    kernel._wait_job_empty = lambda handle, timeout: True
     kernel.generate_ctrl_break = lambda pid: trace.append("ctrl_break")
+
+    def terminate_process(handle: int, exit_code: int) -> None:
+        del exit_code
+        assert handle == 500
+        trace.append("runner_terminate_process")
+        kernel.process_exited = True
+
+    kernel.terminate_process = terminate_process
 
     def terminate_job(handle: int, exit_code: int) -> None:
         del exit_code
@@ -221,34 +225,22 @@ def _fake_windows_kernel(
             kernel.process_exited = True
 
     kernel.terminate_job = terminate_job
-    kernel.active_processes = lambda handle: (
-        0
-        if kernel.process_exited
-        else 1
-    )
+    def active_processes(handle: int) -> int:
+        assert handle == 100
+        trace.append("query_job")
+        if kernel.job_query_fails:
+            raise OSError("job query failed")
+        return 0 if kernel.process_exited else 1
+
+    kernel.active_processes = active_processes
     kernel.process_signaled = lambda handle: kernel.process_exited
     kernel.exit_code = lambda handle: 127
-
-    def settle_failed(process_handle: int, job_handle: int | None):
-        assert process_handle == 500
-        trace.append(
-            "settle_assigned_suspended_child"
-            if job_handle == 100
-            else "settle_unassigned_suspended_child"
-        )
-        if wrapper_cleanup_proved:
-            kernel.process_exited = True
-        return wrapper_cleanup_proved, wrapper_cleanup_proved
-
-    kernel._settle_failed_suspended_process = settle_failed
-    kernel._quarantine_failed_launch = lambda *args, **kwargs: trace.append(
-        "quarantine_failed_launch"
-    )
 
     class FakeWindowsProcess(_ControlledProcess):
         def __init__(self, *_args, **_kwargs) -> None:
             if wrapper_construction_fails:
                 trace.append("wrapper_construction_failed")
+                kernel.wrapper_failed.set()
                 raise RuntimeError("wrapper construction failed")
             super().__init__()
             kernel.spawned_process = self
@@ -257,14 +249,6 @@ def _fake_windows_kernel(
             trace.append("wrapper_started_while_suspended")
             if wrapper_start_fails:
                 raise RuntimeError("wrapper start failed")
-
-        def settle_failed_launch(self, timeout: float) -> tuple[bool, int]:
-            assert timeout == 5.0
-            trace.append("settle_wrapper_failure")
-            if wrapper_cleanup_proved:
-                self.settle(127)
-                return True, 0
-            return False, 500
 
         def close(self) -> None:
             trace.append("close_wrapper")
@@ -320,7 +304,7 @@ async def test_windows_containment_assigns_suspended_child_before_resume(
 
 
 @pytest.mark.asyncio
-async def test_windows_containment_assignment_failure_settles_before_callback(
+async def test_windows_assignment_failure_is_settled_by_async_controller(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     trace: list[str] = []
@@ -337,23 +321,21 @@ async def test_windows_containment_assignment_failure_settles_before_callback(
         callback_called = True
 
     runner = AsyncGitProcessRunner(process_tree_controller=controller)
-    with pytest.raises(OSError, match="failed"):
-        await runner.run(
-            ("C:/Git/bin/git.exe", "push"),
-            cwd="C:/repo",
-            environment={"PATH": "C:/Git/bin"},
-            owned_process_tree=True,
-            on_spawn=mark_spawned,
-        )
+    result = await runner.run(
+        ("C:/Git/bin/git.exe", "push"),
+        cwd="C:/repo",
+        environment={"PATH": "C:/Git/bin"},
+        owned_process_tree=True,
+        on_spawn=mark_spawned,
+    )
 
     assert not callback_called
     assert "resume" not in trace
-    assert trace.index("terminate_suspended_process") < trace.index(
-        "settle_unassigned_suspended_child"
-    )
-    assert trace.index("settle_unassigned_suspended_child") < trace.index(
-        "close_job"
-    )
+    assert result.termination_uncertain
+    assert result.containment_proved
+    assert trace.index("assign") < trace.index("runner_terminate_process")
+    assert trace.index("runner_terminate_process") < trace.index("close_job")
+    assert collections.Counter(controller._kernel.closed_handles)[100] == 1
 
 
 @pytest.mark.asyncio
@@ -399,13 +381,13 @@ async def test_windows_containment_invalid_resume_is_retained_without_callback(
     assert trace.index("wrapper_started_while_suspended") < trace.index(
         "resume"
     )
-    assert trace.index("resume") < trace.index("terminate_job")
+    assert trace.index("resume") < trace.index("runner_terminate_job")
     assert "runner_terminate_job" in trace
     assert max(collections.Counter(controller._kernel.closed_handles).values()) == 1
 
 
 @pytest.mark.asyncio
-async def test_windows_containment_wrapper_start_failure_settles_before_raise(
+async def test_windows_wrapper_start_failure_is_settled_asynchronously(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     trace: list[str] = []
@@ -417,23 +399,25 @@ async def test_windows_containment_wrapper_start_failure_settles_before_raise(
     )
     runner = AsyncGitProcessRunner(process_tree_controller=controller)
 
-    with pytest.raises(RuntimeError, match="wrapper start failed"):
-        await runner.run(
-            ("C:/Git/bin/git.exe", "push"),
-            cwd="C:/repo",
-            environment={"PATH": "C:/Git/bin"},
-            owned_process_tree=True,
-        )
+    result = await runner.run(
+        ("C:/Git/bin/git.exe", "push"),
+        cwd="C:/repo",
+        environment={"PATH": "C:/Git/bin"},
+        owned_process_tree=True,
+    )
 
     assert "resume" not in trace
-    assert trace.index("terminate_job") < trace.index(
-        "settle_wrapper_failure"
+    assert result.termination_uncertain
+    assert result.containment_proved
+    assert trace.index("wrapper_started_while_suspended") < trace.index(
+        "runner_terminate_job"
     )
-    assert trace.index("settle_wrapper_failure") < trace.index("close_job")
+    assert trace.index("runner_terminate_job") < trace.index("close_job")
+    assert collections.Counter(controller._kernel.closed_handles)[100] == 1
 
 
 @pytest.mark.asyncio
-async def test_windows_containment_wrapper_construction_failure_stays_suspended(
+async def test_windows_wrapper_construction_failure_yields_to_async_settlement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     trace: list[str] = []
@@ -442,24 +426,36 @@ async def test_windows_containment_wrapper_construction_failure_stays_suspended(
         monkeypatch,
         trace,
         wrapper_construction_fails=True,
+        job_kill_proves=False,
     )
-    runner = AsyncGitProcessRunner(process_tree_controller=controller)
+    runner = AsyncGitProcessRunner(
+        process_tree_controller=controller,
+        terminate_timeout=0.05,
+        kill_timeout=0.05,
+    )
 
-    with pytest.raises(RuntimeError, match="wrapper construction failed"):
-        await runner.run(
-            ("C:/Git/bin/git.exe", "push"),
-            cwd="C:/repo",
-            environment={"PATH": "C:/Git/bin"},
-            owned_process_tree=True,
-        )
+    async def prove_exit_after_scheduler_turn() -> None:
+        await controller._kernel.wrapper_failed.wait()
+        await asyncio.sleep(0)
+        trace.append("event_loop_progress")
+        controller._kernel.process_exited = True
+
+    progress = asyncio.create_task(prove_exit_after_scheduler_turn())
+    result = await runner.run(
+        ("C:/Git/bin/git.exe", "push"),
+        cwd="C:/repo",
+        environment={"PATH": "C:/Git/bin"},
+        owned_process_tree=True,
+    )
+    await progress
 
     assert "resume" not in trace
+    assert result.containment_proved
+    assert result.retained_child is None
     assert trace.index("wrapper_construction_failed") < trace.index(
-        "terminate_job"
+        "event_loop_progress"
     )
-    assert trace.index("terminate_job") < trace.index(
-        "settle_assigned_suspended_child"
-    )
+    assert trace.index("event_loop_progress") < trace.index("close_job")
     assert max(collections.Counter(controller._kernel.closed_handles).values()) == 1
 
 
@@ -473,7 +469,6 @@ async def test_windows_unproved_wrapper_construction_failure_is_retained(
         monkeypatch,
         trace,
         wrapper_construction_fails=True,
-        wrapper_cleanup_proved=False,
         job_kill_proves=False,
     )
     runner = AsyncGitProcessRunner(
@@ -493,7 +488,6 @@ async def test_windows_unproved_wrapper_construction_failure_is_retained(
     assert result.retained_child is not None
     assert not result.containment_proved
     assert "resume" not in trace
-    assert "quarantine_failed_launch" not in trace
     assert not await runner.shutdown()
 
     controller._kernel.process_exited = True
@@ -503,6 +497,7 @@ async def test_windows_unproved_wrapper_construction_failure_is_retained(
     )
     assert settlement.containment_proved
     assert runner.release_retained_child(result.retained_child)
+    assert collections.Counter(controller._kernel.closed_handles)[100] == 1
 
 
 @pytest.mark.asyncio
@@ -577,7 +572,6 @@ async def test_windows_containment_unproved_wrapper_failure_retains_runner_gate(
         monkeypatch,
         trace,
         wrapper_start_fails=True,
-        wrapper_cleanup_proved=False,
         job_kill_proves=False,
     )
     runner = AsyncGitProcessRunner(
@@ -597,7 +591,57 @@ async def test_windows_containment_unproved_wrapper_failure_retains_runner_gate(
     assert not result.containment_proved
     assert result.retained_child is not None
     assert not await runner.shutdown()
-    assert "quarantine_failed_launch" not in trace
+
+    assert controller._kernel.spawned_process is not None
+    controller._kernel.spawned_process.settle(127)
+    controller._kernel.process_exited = True
+    settlement = await runner.settle_retained_child(
+        result.retained_child,
+        timeout=0.01,
+    )
+    assert settlement.containment_proved
+    assert runner.release_retained_child(result.retained_child)
+    assert collections.Counter(controller._kernel.closed_handles)[100] == 1
+
+
+@pytest.mark.asyncio
+async def test_windows_failed_admission_job_query_error_closes_once_after_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace: list[str] = []
+    controller = containment._WindowsJobObjectController()
+    controller._kernel = _fake_windows_kernel(
+        monkeypatch,
+        trace,
+        wrapper_start_fails=True,
+        job_query_fails=True,
+    )
+    runner = AsyncGitProcessRunner(
+        process_tree_controller=controller,
+        terminate_timeout=0.001,
+        kill_timeout=0.001,
+    )
+
+    result = await runner.run(
+        ("C:/Git/bin/git.exe", "push"),
+        cwd="C:/repo",
+        environment={"PATH": "C:/Git/bin"},
+        owned_process_tree=True,
+    )
+
+    assert result.retained_child is not None
+    assert not result.containment_proved
+    assert runner.claim_retained_child(result.retained_child)
+    controller._kernel.job_query_fails = False
+    settlement = await runner.settle_retained_child(
+        result.retained_child,
+        timeout=0.01,
+    )
+    assert settlement.containment_proved
+    assert runner.release_retained_child(result.retained_child)
+    close_counts = collections.Counter(controller._kernel.closed_handles)
+    assert close_counts[100] == 1
+    assert max(close_counts.values()) == 1
 
 
 class _FakeCreateProcessCalls:
@@ -960,8 +1004,82 @@ class _AdmissionBarrierController(_FakeProcessTreeController):
         return _FakeTree(self.process)
 
 
+class _PreAdmissionBarrierRunner(AsyncGitProcessRunner):
+    """Park the owned task before the runner commits to admission."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.inner_parked = asyncio.Event()
+        self.release_inner = asyncio.Event()
+
+    async def _run_owned_command(self, *args, **kwargs):
+        self.inner_parked.set()
+        await self.release_inner.wait()
+        return await super()._run_owned_command(*args, **kwargs)
+
+
+class _CancellationWaitBarrierRunner(AsyncGitProcessRunner):
+    """Publish when the cancelled waiter starts shielding admission."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.cancellation_waiting = asyncio.Event()
+
+    async def _await_admission_outcome(self, record) -> bool:
+        self.cancellation_waiting.set()
+        return await super()._await_admission_outcome(record)
+
+
+class _FailedAdmissionBarrierController(_AdmissionBarrierController):
+    """Create a child but fail containment admission after a barrier."""
+
+    async def spawn(self, *argv, **kwargs) -> _FakeTree:
+        del argv, kwargs
+        self.trace.append("child_created")
+        self.child_created.set()
+        await self.release_admission.wait()
+        raise containment.ProcessTreeAdmissionError(
+            "admission failed",
+            _FakeTree(self.process),
+        )
+
+
 @pytest.mark.asyncio
-async def test_process_tree_cancellation_retains_inflight_admission_then_stops_tree(
+async def test_process_tree_pre_admission_cancellation_never_starts_child(
+) -> None:
+    child = _ControlledProcess()
+    controller = _FakeProcessTreeController(child, settle_on="kill")
+    runner = _PreAdmissionBarrierRunner(
+        process_tree_controller=controller,
+        terminate_timeout=0.001,
+        kill_timeout=0.01,
+    )
+    callback_trace: list[str] = []
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "push"),
+            cwd="/repo",
+            environment={},
+            owned_process_tree=True,
+            cancel_before_spawn=True,
+            on_spawn=lambda: callback_trace.append("started"),
+        )
+    )
+    await runner.inner_parked.wait()
+
+    command.cancel()
+    runner.release_inner.set()
+    with pytest.raises(GitRunCancelled) as cancellation:
+        await command
+    assert cancellation.value.result is not None
+    assert cancellation.value.retained_child is None
+    assert controller.trace == []
+    assert callback_trace == []
+    assert await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_process_tree_pending_admission_rejects_cancellation_and_continues(
 ) -> None:
     child = _ControlledProcess()
     controller = _AdmissionBarrierController(child)
@@ -991,20 +1109,80 @@ async def test_process_tree_cancellation_retains_inflight_admission_then_stops_t
 
     with pytest.raises(GitRunCancelled) as cancellation:
         await command
-    assert cancellation.value.result is not None
-    assert cancellation.value.retained_child is None
+    assert isinstance(cancellation.value, GitRunCancellationRejected)
+    assert cancellation.value.cancellation_rejected
+    assert cancellation.value.retained_child is not None
+    assert cancellation.value.result is None
     assert callback_trace == ["started"]
-    assert controller.trace.count("terminate") == 1
-    assert controller.trace.count("kill") == 1
-    assert controller.closed
+    assert "terminate" not in controller.trace
+    assert "kill" not in controller.trace
+    token = cancellation.value.retained_child
+    assert runner.claim_retained_child(token)
+
     assert await runner.shutdown()
+    settlement = await runner.settle_retained_child(token, timeout=0.1)
+    assert settlement.containment_proved
+    assert runner.release_retained_child(token)
+    assert controller.closed
 
 
 @pytest.mark.asyncio
-async def test_process_tree_repeated_cancellation_keeps_admission_token_owned(
+async def test_process_tree_repeated_cancellation_cannot_cancel_pending_admission(
 ) -> None:
     child = _ControlledProcess()
     controller = _AdmissionBarrierController(child)
+    runner = _CancellationWaitBarrierRunner(
+        process_tree_controller=controller,
+        terminate_timeout=0.001,
+        kill_timeout=0.01,
+    )
+    callback_trace: list[str] = []
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "push"),
+            cwd="/repo",
+            environment={},
+            owned_process_tree=True,
+            cancel_before_spawn=True,
+            on_spawn=lambda: callback_trace.append("started"),
+        )
+    )
+    await controller.child_created.wait()
+
+    command.cancel()
+    await runner.cancellation_waiting.wait()
+    command.cancel()
+    await asyncio.sleep(0)
+    assert not command.done()
+    assert not controller.spawn_cancelled
+    controller.release_admission.set()
+
+    with pytest.raises(GitRunCancelled) as cancellation:
+        await command
+    assert isinstance(cancellation.value, GitRunCancellationRejected)
+    assert cancellation.value.cancellation_rejected
+    assert cancellation.value.retained_child is not None
+    assert cancellation.value.result is None
+    assert callback_trace == ["started"]
+    assert "terminate" not in controller.trace
+    assert "kill" not in controller.trace
+
+    token = cancellation.value.retained_child
+    assert runner.claim_retained_child(token)
+    assert await runner.shutdown()
+    settlement = await runner.settle_retained_child(
+        token,
+        timeout=0.1,
+    )
+    assert settlement.containment_proved
+    assert runner.release_retained_child(token)
+
+
+@pytest.mark.asyncio
+async def test_process_tree_failed_admission_is_not_active_cancellation(
+) -> None:
+    child = _ControlledProcess()
+    controller = _FailedAdmissionBarrierController(child)
     runner = AsyncGitProcessRunner(
         process_tree_controller=controller,
         terminate_timeout=0.001,
@@ -1024,22 +1202,15 @@ async def test_process_tree_repeated_cancellation_keeps_admission_token_owned(
     await controller.child_created.wait()
 
     command.cancel()
-    await asyncio.sleep(0)
-    command.cancel()
+    controller.release_admission.set()
+
     with pytest.raises(GitRunCancelled) as cancellation:
         await command
-    assert cancellation.value.retained_child is not None
-    assert cancellation.value.result is None
-    assert not controller.spawn_cancelled
-
-    controller.release_admission.set()
-    settlement = await runner.settle_retained_child(
-        cancellation.value.retained_child,
-        timeout=0.1,
-    )
-    assert settlement.containment_proved
-    assert callback_trace == ["started"]
-    assert runner.release_retained_child(cancellation.value.retained_child)
+    assert type(cancellation.value) is GitRunCancelled
+    assert cancellation.value.result is not None
+    assert cancellation.value.retained_child is None
+    assert cancellation.value.result.containment_proved
+    assert callback_trace == []
     assert await runner.shutdown()
 
 
@@ -1345,6 +1516,53 @@ def _cleanup_captured_posix_group(readiness: dict[str, int] | None) -> None:
         pass
 
 
+def _cleanup_captured_windows_processes(
+    readiness: dict[str, int] | None,
+) -> None:
+    if os.name != "nt" or readiness is None:
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    process_terminate = 0x0001
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.DWORD,
+    ]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.TerminateProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    for key in ("grandchild_pid", "parent_pid"):
+        pid = readiness.get(key)
+        if pid is None or pid <= 0:
+            continue
+        handle = kernel32.OpenProcess(process_terminate, False, pid)
+        if not handle:
+            continue
+        try:
+            kernel32.TerminateProcess(handle, 127)
+        finally:
+            kernel32.CloseHandle(handle)
+
+
+async def _finish_native_command_bounded(
+    command: asyncio.Task[object],
+    *,
+    timeout: float = 1.0,
+) -> None:
+    if not command.done():
+        done, _ = await asyncio.wait({command}, timeout=timeout)
+        if not done:
+            command.cancel()
+            await asyncio.wait({command}, timeout=0.25)
+    if command.done():
+        await asyncio.gather(command, return_exceptions=True)
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process-group proof")
 async def test_process_tree_posix_session_kills_and_drains_stubborn_descendant(
@@ -1391,8 +1609,7 @@ async def test_process_tree_posix_session_kills_and_drains_stubborn_descendant(
                 or not result.containment_proved
             ):
                 _cleanup_captured_posix_group(readiness)
-            if not command.done():
-                await asyncio.gather(command, return_exceptions=True)
+            await _finish_native_command_bounded(command)
     assert result is not None
     records = _records(result.stdout)
     parent = next(record for record in records if record["event"] == "parent_spawned")
@@ -1471,8 +1688,7 @@ async def test_process_tree_posix_stops_descendant_after_parent_exit(
                 or not result.containment_proved
             ):
                 _cleanup_captured_posix_group(readiness)
-            if not command.done():
-                await asyncio.gather(command, return_exceptions=True)
+            await _finish_native_command_bounded(command)
     assert result is not None
     records = _records(result.stdout)
     parent = next(record for record in records if record["event"] == "parent_spawned")
@@ -1513,17 +1729,29 @@ async def test_process_tree_windows_job_contains_immediate_descendant_spawn(
         )
     )
     shutdown = None
+    readiness = None
+    result = None
+    shutdown_proved = False
     try:
-        await _wait_for_ready_file(ready_file)
+        readiness = await _wait_for_ready_file(ready_file)
         shutdown = runner.shutdown()
         result = await asyncio.wait_for(asyncio.shield(command), timeout=3.0)
-        assert await shutdown
+        shutdown_proved = await shutdown
+        assert shutdown_proved
     finally:
         if shutdown is None:
             shutdown = runner.shutdown()
-        await shutdown
-        if not command.done():
-            await asyncio.gather(command, return_exceptions=True)
+        try:
+            shutdown_proved = await shutdown
+        finally:
+            if (
+                not shutdown_proved
+                or result is None
+                or not result.containment_proved
+            ):
+                _cleanup_captured_windows_processes(readiness)
+            await _finish_native_command_bounded(command)
+    assert result is not None
     records = _records(result.stdout)
     parent = next(record for record in records if record["event"] == "parent_spawned")
     grandchild = next(
