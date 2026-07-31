@@ -19,9 +19,16 @@ from tldw_chatbook.Evals.word_bench.models import (
     CellCapture,
     CellError,
     PreflightResult,
+    Snippet,
+    Target,
     TokenProb,
 )
-from tldw_chatbook.Evals.word_bench.storage import load_grid, save_bench
+from tldw_chatbook.Evals.word_bench.storage import (
+    create_run_group,
+    load_grid,
+    save_bench,
+    save_cell,
+)
 from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook.UI.Evals.sample_bench import RunBenchResult, run_existing_bench
 from tldw_chatbook.UI.Evals.snippet_editor import import_snippets_into_dataset
@@ -257,17 +264,20 @@ def test_run_groups_status_running_outranks_cancelled_in_the_same_group(
     assert group["status"] == "running"
 
 
-def test_run_groups_status_folds_a_failed_run_into_completed(
+def test_run_groups_status_folds_a_run_level_failed_status_into_cancelled(
     db, view_model, task_id, target_id
 ):
-    """"failed" has no dedicated rail glyph (TASK-1480's brief only ever
-    names three: running/cancelled/completed) -- a group with a failed
-    run but nothing still running or cancelled rolls up to "completed"."""
+    """TASK-1480 amendment (user-directed, replacing this test's original
+    "folds into completed" assertion): ``eval_runs.status``'s CHECK
+    constraint allows ``"failed"`` even though ``WordBenchRunner`` never
+    writes it -- handled defensively anyway, folded into the same
+    "cancelled" bucket (rendered as the ``✗`` glyph) a cancelled run
+    gets, not into "completed"."""
     group_id = uuid.uuid4().hex
     _run_with_status(db, task_id, target_id, group_id, "failed")
 
     group = view_model.run_group_by_id(group_id)
-    assert group["status"] == "completed"
+    assert group["status"] == "cancelled"
 
 
 def test_run_groups_status_folds_a_pending_run_into_completed(
@@ -278,3 +288,120 @@ def test_run_groups_status_folds_a_pending_run_into_completed(
 
     group = view_model.run_group_by_id(group_id)
     assert group["status"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# TASK-1480 amendment -- ``run_groups()``'s "all_cells_failed" field.
+#
+# Reverses this method's original "a completed group always renders the
+# done glyph" ruling (documented, at the time, as a deliberate trade-off
+# surfaced for product review in task-1480's own Implementation Notes):
+# a completed group where every captured cell errored now carries
+# ``all_cells_failed=True``, computed from
+# ``EvalsDB.run_group_cell_failure_counts()``'s aggregate. Built via the
+# real ``word_bench.storage`` pipeline (``create_run_group``/``save_cell``,
+# the same calls ``WordBenchRunner`` itself makes) rather than raw DB
+# writes, so these pin the aggregate against the actual cell payload shape
+# a run produces.
+# ---------------------------------------------------------------------------
+
+
+def _group_with_cells(
+    db: EvalsDB, task_id: str, dataset_id: str, target_id: str, cell_outcomes: list[bool]
+) -> str:
+    """Creates a one-target run group with one cell per entry in
+    ``cell_outcomes`` (``True`` -> failed, ``False`` -> succeeded)."""
+    snippets = [
+        Snippet(id=f"s{i}", text=f"snippet {i}", group=None)
+        for i in range(len(cell_outcomes))
+    ]
+    config = BenchConfig(
+        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
+        dataset_id=dataset_id, target_ids=(target_id,),
+    )
+    targets = [Target(id=target_id, name="base", provider="llama_cpp", model_id="m")]
+    group_id, run_ids = create_run_group(db, task_id, config, targets, snippets)
+    for snippet, failed in zip(snippets, cell_outcomes):
+        result = (
+            CellError(reason="unreachable", detail="connection refused")
+            if failed
+            else CellCapture(
+                prompt_mode="raw", k_requested=5, k_returned=1, content_offset=0,
+                top_k=(TokenProb(token=" a", logprob=-0.1, token_id=1),),
+                canary="unchecked", captured_at="2026-07-30T00:00:00Z",
+            )
+        )
+        save_cell(db, run_ids[target_id], snippet, result)
+    return group_id
+
+
+def test_run_groups_all_cells_failed_true_when_every_captured_cell_errored(
+    db, view_model, task_id, dataset_id, target_id
+):
+    group_id = _group_with_cells(db, task_id, dataset_id, target_id, [True, True])
+
+    group = view_model.run_group_by_id(group_id)
+    assert group["status"] == "completed"
+    assert group["all_cells_failed"] is True
+
+
+def test_run_groups_all_cells_failed_false_when_at_least_one_cell_succeeded(
+    db, view_model, task_id, dataset_id, target_id
+):
+    """A partial failure still reads as a usable run on the rail -- the
+    results grid's own callout is what explains the failed cells, not
+    this glyph."""
+    group_id = _group_with_cells(db, task_id, dataset_id, target_id, [True, False])
+
+    group = view_model.run_group_by_id(group_id)
+    assert group["status"] == "completed"
+    assert group["all_cells_failed"] is False
+
+
+def test_run_groups_all_cells_failed_false_when_every_cell_succeeded(
+    db, view_model, task_id, dataset_id, target_id
+):
+    group_id = _group_with_cells(db, task_id, dataset_id, target_id, [False, False])
+
+    group = view_model.run_group_by_id(group_id)
+    assert group["all_cells_failed"] is False
+
+
+def test_run_groups_all_cells_failed_false_for_a_completed_group_with_zero_cells(
+    db, view_model, task_id, dataset_id, target_id
+):
+    """Pins the edge the user's ruling calls out explicitly: a completed
+    group that captured NOTHING is "vacuously" not all-failed -- it must
+    never render the all-failed glyph just because it has no data."""
+    group_id = _group_with_cells(db, task_id, dataset_id, target_id, [])
+
+    group = view_model.run_group_by_id(group_id)
+    assert group["status"] == "completed"
+    assert group["all_cells_failed"] is False
+
+
+def test_run_groups_running_status_outranks_the_all_cells_failed_computation(
+    db, view_model, task_id, dataset_id, target_id
+):
+    """Precedence: any running -> "running", even if every cell captured
+    SO FAR errored -- a group still in flight must never render the
+    all-failed completed glyph."""
+    group_id = _group_with_cells(db, task_id, dataset_id, target_id, [True])
+    run = db.list_runs(run_group_id=group_id)[0]
+    db.update_run_status(run["id"], "running")
+
+    group = view_model.run_group_by_id(group_id)
+    assert group["status"] == "running"
+    assert group["all_cells_failed"] is False
+
+
+def test_run_groups_cancelled_status_outranks_the_all_cells_failed_computation(
+    db, view_model, task_id, dataset_id, target_id
+):
+    group_id = _group_with_cells(db, task_id, dataset_id, target_id, [True])
+    run = db.list_runs(run_group_id=group_id)[0]
+    db.update_run_status(run["id"], "cancelled")
+
+    group = view_model.run_group_by_id(group_id)
+    assert group["status"] == "cancelled"
+    assert group["all_cells_failed"] is False

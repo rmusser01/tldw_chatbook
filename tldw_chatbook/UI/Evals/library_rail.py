@@ -134,15 +134,42 @@ def _dataset_row_label(row: dict[str, Any]) -> str:
 #: render double-width in this app's terminal (a repeated past defect).
 #: Status must never be conveyed by colour alone; the glyph itself is the
 #: signal. Keyed by ``EvalsViewModel.run_groups()``'s rolled-up
-#: ``"status"`` (TASK-1480) -- an unrecognised/missing status (there
-#: should never be one; kept only so a stale or malformed row degrades to
-#: a glyph rather than a ``KeyError`` crashing the rail) falls back to the
-#: "done" glyph.
+#: ``"status"`` (TASK-1480) for the two states that don't depend on cell
+#: data -- "completed" is deliberately absent here, since its glyph also
+#: depends on ``"all_cells_failed"`` (see ``_run_group_row_glyph`` below).
 _RUN_STATUS_GLYPHS: dict[str, str] = {
     "running": "●",  # ● BLACK CIRCLE
-    "cancelled": "✗",  # ✗ BALLOT X
-    "completed": "✓",  # ✓ CHECK MARK
+    "cancelled": "✗",  # ✗ BALLOT X -- also covers eval_runs' run-level
+    # "failed" status, folded into "cancelled" by run_groups()'s roll-up.
 }
+
+#: A completed group where every captured cell errored -- TWO single-width
+#: glyphs (CHECK MARK + BALLOT X), never one double-width character: the
+#: run genuinely finished (``✓``), but produced nothing but failures
+#: (``✗``). Ordering is deliberate -- "finished, then: all failures" reads
+#: left-to-right the way the run itself happened.
+_COMPLETED_ALL_FAILED_GLYPH = "✓✗"
+#: A completed group with at least one successful cell (including a
+#: completed group with zero captured cells at all -- vacuously "nothing
+#: failed", per TASK-1480's amendment). Partial failures still render this
+#: glyph; the results grid's own callout is what explains a partial
+#: failure, not the rail row.
+_COMPLETED_GLYPH = "✓"  # ✓ CHECK MARK
+
+
+def _run_group_row_glyph(row: dict[str, Any]) -> str:
+    """The leading status glyph for a run row (TASK-1480 + its amendment).
+
+    An unrecognised or missing ``"status"`` (there should never be one --
+    ``EvalsViewModel.run_groups()`` always sets exactly one of "running" /
+    "cancelled" / "completed") falls through to the "completed" branch
+    rather than raising, so a stale or malformed row degrades to a glyph
+    instead of crashing the rail.
+    """
+    status = row.get("status")
+    if status in _RUN_STATUS_GLYPHS:
+        return _RUN_STATUS_GLYPHS[status]
+    return _COMPLETED_ALL_FAILED_GLYPH if row.get("all_cells_failed") else _COMPLETED_GLYPH
 
 
 def _run_group_row_time(created_at: Any) -> str:
@@ -167,13 +194,20 @@ def _run_group_row_label(row: dict[str, Any]) -> str:
     """``● 14:31 · <task_name>`` / ``✓ 14:02 · <task_name>`` / ``✗ 13:55 ·
     <task_name>`` -- the design spec's own rail mock
     (``Docs/superpowers/specs/2026-07-25-evals-console-rebuild-design.md``).
+    A completed group where every captured cell errored instead renders
+    ``✓✗ 14:02 · <task_name>`` (TASK-1480 amendment, user-directed): the
+    run genuinely finished, but produced nothing but failures, which is a
+    materially different outcome from a normal or partially-failed
+    completion (the results grid's own callout explains a partial
+    failure; the plain ``✓`` in that case is unchanged).
 
     TASK-1480: before this, every run row rendered the exact same shape a
     bench row did (``"<name> (N targets)"``), so a live UAT pass could not
     tell a bench apart from one of its own past runs at a glance, and had
     no way to see a run currently in flight. See ``run_groups()``'s own
-    docstring for how the leading glyph's status is rolled up from the
-    group's per-target runs.
+    docstring for how the leading glyph's status (and, for a completed
+    group, ``all_cells_failed``) is rolled up from the group's per-target
+    runs and captured cells.
 
     ``task_name`` reaches this function as a free-text bench name;
     ``Button(label=...)`` parses its argument as Textual markup by
@@ -187,7 +221,7 @@ def _run_group_row_label(row: dict[str, Any]) -> str:
     ``Tests/UI/test_evals_screen.py``). Escaping here closes it.
     """
     name = str(row.get("task_name") or "Untitled run")
-    glyph = _RUN_STATUS_GLYPHS.get(row.get("status"), _RUN_STATUS_GLYPHS["completed"])
+    glyph = _run_group_row_glyph(row)
     # escape_markup: `_run_group_row_time`'s parse-failure fallback returns
     # the RAW `created_at` string verbatim (a free-text DB column with no
     # format enforcement -- see that function's own docstring), so it

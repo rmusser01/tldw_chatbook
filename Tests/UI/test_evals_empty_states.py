@@ -1203,16 +1203,33 @@ def test_run_group_row_label_running_uses_dot_glyph():
 def test_run_group_row_label_glyphs_are_single_cell_width():
     """Per the brief/module docstring: never emoji -- double-width in this
     app's terminal, a repeated past defect. Verify with Rich's own cell
-    width, not just "looks like one character to the eye"."""
+    width, not just "looks like one character to the eye".
+
+    The all-cells-failed state (TASK-1480 amendment) renders as TWO
+    single-width glyphs (`✓✗`), never one double-width character -- so
+    that state is checked as a 2-cell-wide pair, each character checked
+    individually, rather than asserting the combined string is 1-wide.
+    """
     from rich.cells import cell_len
 
-    for status, glyph in (
-        ("running", "●"), ("cancelled", "✗"), ("completed", "✓"),
+    for row, glyph in (
+        ({"status": "running"}, "●"),
+        ({"status": "cancelled"}, "✗"),
+        ({"status": "completed", "all_cells_failed": False}, "✓"),
     ):
-        row = {"task_name": "x", "created_at": "2026-07-30 14:02:00", "status": status}
+        row = {"task_name": "x", "created_at": "2026-07-30 14:02:00", **row}
         label = _run_group_row_label(row)
         assert label.startswith(glyph), label
-        assert cell_len(glyph) == 1, f"{status} glyph {glyph!r} is not single-width"
+        assert cell_len(glyph) == 1, f"{row['status']} glyph {glyph!r} is not single-width"
+
+    all_failed_row = {
+        "task_name": "x", "created_at": "2026-07-30 14:02:00",
+        "status": "completed", "all_cells_failed": True,
+    }
+    all_failed_label = _run_group_row_label(all_failed_row)
+    assert all_failed_label.startswith("✓✗ "), all_failed_label
+    assert cell_len("✓") == 1 and cell_len("✗") == 1
+    assert cell_len("✓✗") == 2, "the combined glyph must be two single-width cells, not one double-width one"
 
 
 def test_run_group_row_time_falls_back_to_the_raw_string_on_parse_failure():
@@ -1235,15 +1252,84 @@ def test_run_group_row_label_does_not_crash_over_an_unparseable_timestamp():
     assert _run_group_row_label(row) == "✓ not-a-timestamp · loaded-nouns v1"
 
 
-def test_run_group_row_label_folds_a_failed_run_into_the_completed_glyph():
-    """`run_groups()`'s roll-up (evals_state.py) only ever hands this
-    function "running"/"cancelled"/"completed" -- a "failed" (or
-    "pending") run rolls up to "completed" there. Pinned here too since
-    TASK-1480's own AC calls out "failed" runs by name."""
+def test_run_group_row_label_a_run_level_failed_status_uses_the_cross_glyph():
+    """TASK-1480 amendment (user-directed, replacing this test's original
+    "folds into the completed/check glyph" assertion): `run_groups()`'s
+    roll-up (evals_state.py) now folds a run-level "failed" status (the
+    `eval_runs` CHECK constraint allows it even though `WordBenchRunner`
+    never writes it) into the same "cancelled" bucket a cancelled run
+    gets -- both render the `✗` glyph. This function only ever receives
+    "running"/"cancelled"/"completed" from that roll-up; "cancelled" here
+    stands in for either source."""
     row = {
         "task_name": "loaded-nouns v1",
         "created_at": "2026-07-30 14:02:00",
-        "status": "failed",
+        "status": "cancelled",
+    }
+    assert _run_group_row_label(row) == "✗ 14:02 · loaded-nouns v1"
+
+
+def test_run_group_row_label_all_cells_failed_uses_check_and_cross_glyph():
+    """TASK-1480 amendment: a completed group where every captured cell
+    errored renders `✓✗` (finished, but nothing but failures) instead of
+    the plain `✓` a normal or partially-failed completion gets."""
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "completed",
+        "all_cells_failed": True,
+    }
+    assert _run_group_row_label(row) == "✓✗ 14:02 · loaded-nouns v1"
+
+
+def test_run_group_row_label_partial_failure_still_uses_the_plain_check_glyph():
+    """A completed group with SOME (but not all) failed cells still
+    renders the plain `✓` -- the results grid's own callout is what
+    explains a partial failure, not the rail row."""
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "completed",
+        "all_cells_failed": False,
+    }
+    assert _run_group_row_label(row) == "✓ 14:02 · loaded-nouns v1"
+
+
+def test_run_group_row_label_zero_cell_completed_group_uses_the_plain_check_glyph():
+    """Pins the edge the user's ruling calls out explicitly: a completed
+    group with nothing captured yet is vacuously "not all failed" -- the
+    view-model computes `all_cells_failed=False` for that case (see
+    `test_run_groups_all_cells_failed_false_for_a_completed_group_with_
+    zero_cells` in `test_run_existing_bench.py`), and this function must
+    render that the same as any other non-all-failed completed group."""
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "completed",
+        "all_cells_failed": False,
+    }
+    assert _run_group_row_label(row) == "✓ 14:02 · loaded-nouns v1"
+
+
+def test_run_group_row_label_missing_all_cells_failed_key_degrades_to_the_check_glyph():
+    """A row shape from before this amendment (or any caller that never
+    sets the key) must not crash -- `row.get("all_cells_failed")` degrades
+    to falsy/`None`, rendering the plain `✓` rather than raising."""
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "completed",
+    }
+    assert _run_group_row_label(row) == "✓ 14:02 · loaded-nouns v1"
+
+
+def test_run_group_row_label_unrecognised_status_degrades_to_the_completed_branch():
+    """`_run_group_row_glyph`'s own docstring: a missing/garbage `status`
+    (there should never be one) must degrade to a glyph, never raise."""
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "some-future-status-this-function-has-never-heard-of",
     }
     assert _run_group_row_label(row) == "✓ 14:02 · loaded-nouns v1"
 

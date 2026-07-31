@@ -109,11 +109,28 @@ class EvalsViewModel:
         another has already finished. Precedence, computed in this same
         pivot pass so it never re-reads ``list_runs()``: any run
         "running" makes the whole group "running"; else any run
-        "cancelled" makes it "cancelled"; else "completed" -- this also
-        folds "pending" and "failed" runs into "completed", since the
-        rail has no separate glyph for those and a group with no run
-        still running or explicitly cancelled reads as done from the
-        library rail's point of view.
+        "cancelled" **or run-level "failed"** (the ``eval_runs.status``
+        CHECK constraint allows ``"failed"`` even though
+        ``WordBenchRunner`` never writes it -- handled defensively anyway)
+        makes it "cancelled"; else "completed". A "pending" run with
+        nothing running/cancelled/failed alongside it also falls through
+        to "completed" -- there is no rail glyph for "queued but never
+        started".
+
+        TASK-1480 amendment (user-directed, reversing this method's
+        original "completed always renders the done glyph" ruling): a
+        "completed" group additionally carries ``"all_cells_failed"`` --
+        ``True`` iff the group has captured at least one cell AND every
+        captured cell errored, so the rail can distinguish a run that
+        finished with real results from one that finished with nothing
+        but failures (a genuinely different outcome the old single
+        "completed" bucket couldn't represent). A group with zero
+        captured cells is ``False`` here (vacuously -- nothing failed),
+        never treated as "all failed". This reads
+        ``EvalsDB.run_group_cell_failure_counts()`` -- ONE extra query for
+        the whole call, not one per group (see that method's own
+        docstring for why a per-cell JSON payload check can't be done any
+        cheaper without it).
         """
         if self._db is None:
             return []
@@ -132,7 +149,7 @@ class EvalsViewModel:
                     "created_at": run.get("created_at"),
                     "run_count": 0,
                     "_has_running": False,
-                    "_has_cancelled": False,
+                    "_has_blocked": False,
                 }
                 groups[group_id] = group
                 order.append(group_id)
@@ -140,19 +157,28 @@ class EvalsViewModel:
             run_status = run.get("status")
             if run_status == "running":
                 group["_has_running"] = True
-            elif run_status == "cancelled":
-                group["_has_cancelled"] = True
+            elif run_status in ("cancelled", "failed"):
+                group["_has_blocked"] = True
+
+        # One aggregate query for every group in this call, never a
+        # per-group query loop (see the DB method's own docstring).
+        failure_counts = self._db.run_group_cell_failure_counts()
+
         results: list[dict[str, Any]] = []
         for group_id in order:
             group = groups[group_id]
             has_running = group.pop("_has_running")
-            has_cancelled = group.pop("_has_cancelled")
+            has_blocked = group.pop("_has_blocked")
             if has_running:
                 group["status"] = "running"
-            elif has_cancelled:
+                group["all_cells_failed"] = False
+            elif has_blocked:
                 group["status"] = "cancelled"
+                group["all_cells_failed"] = False
             else:
                 group["status"] = "completed"
+                total_cells, errored_cells = failure_counts.get(group_id, (0, 0))
+                group["all_cells_failed"] = total_cells > 0 and errored_cells == total_cells
             results.append(group)
         return results
 
