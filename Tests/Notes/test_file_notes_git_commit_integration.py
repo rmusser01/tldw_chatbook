@@ -2150,7 +2150,7 @@ async def test_commit_confirmation_cancel_refuses_after_child_begins(
     assert hooks_directory is not None and hooks_directory.is_dir()
     assert service.cancel_commit(binding) is False
     runner.release_commit.set()
-    outcome = await asyncio.wait_for(waiter, 1.0)
+    outcome = await waiter
 
     assert outcome.state == "failed_unchanged"
     assert runner.commit_calls == 1

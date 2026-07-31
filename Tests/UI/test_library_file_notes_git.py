@@ -54,6 +54,10 @@ from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
     SessionGitStageAction,
     SessionGitStatus,
 )
+from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
+    LIBRARY_ROW_BROWSE_NOTES,
+)
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen  # noqa: E402
 from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (  # noqa: E402
     LibraryFileNotesGitPanel,
     SessionGitTrustDialog,
@@ -65,6 +69,7 @@ from tldw_chatbook.Widgets.Library import (  # noqa: E402
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (  # noqa: E402
     LibraryFileNotesWorkspace,
 )
+from Tests.UI.app_factory import _build_test_app  # noqa: E402
 
 
 class _PanelHarness(App[None]):
@@ -4581,12 +4586,53 @@ async def test_40x20_prepare_scrolls_actions_below_a_long_linked_root(
         nested
     )
     workspace.styles.height = 14
+    app = _build_test_app(configured_default="library")
 
-    async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
-        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+    async with app.run_test(size=(40, 20)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: isinstance(app.screen, LibraryScreen),
+            "production app did not mount Library",
+        )
+        screen = app.screen
+        assert isinstance(screen, LibraryScreen)
+        screen._library_file_notes_workspace_factory = lambda: workspace
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen._library_loaded
+                and bool(screen.query("#library-rail"))
+            ),
+            "Library shell did not load",
+        )
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Library Notes source selector did not mount",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.initialized
+                and workspace.is_mounted
+                and screen._library_file_notes_workspace is workspace
+            ),
+            "production Library did not mount File Notes",
+        )
         root_row = workspace.query_one("#file-notes-root-row")
         root_status = workspace.query_one("#file-notes-root-status", Static)
         full_status = f"Linked — {root.resolve()}"
+        await _wait_until(
+            pilot,
+            lambda: (
+                _text(root_status) != full_status
+                and "..." in _text(root_status)
+                and str(root_status.tooltip) == full_status
+            ),
+            "linked-root summary did not settle to compact rendered text",
+        )
         assert root_row.region.height == 1
         assert root_status.region.height == 1
         assert _text(root_status) != full_status
