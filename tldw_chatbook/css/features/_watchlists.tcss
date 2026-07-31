@@ -1079,6 +1079,34 @@ WatchlistSourcePickerDialog {
     color: $ds-text-muted;
 }
 
+/* Selection-mode and default-preset pickers (spec #2 phase 2a, Task 4).
+ * `#artifacts-picker-toolbar` is a second `.destination-filter-strip` row,
+ * rendered only when a watchlist is in scope (`ArtifactsPane.compose`) --
+ * `.destination-filter-strip` already pins `height: 1; min-height: 1;`
+ * (layout/_panes.tcss), same as `#artifacts-toolbar` above it.
+ *
+ * Both `Select`s need the exact TASK-995 override `#sources-toolbar Select`
+ * carries: the bare global `Select { width: 100%; margin-bottom: 1; }`
+ * (features/_conversations.tcss) always wins over `DEFAULT_CSS` regardless
+ * of specificity, so without `margin: 0` here a one-row picker strip grows
+ * a blank row underneath it, and without an explicit `width` each Select
+ * claims the whole strip -- the same two-part defect TASK-995 fixed for
+ * Sources, on a different toolbar.
+ */
+#artifacts-picker-toolbar Select {
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+#artifacts-mode-select {
+    width: 26;
+}
+
+#artifacts-preset-select {
+    width: 24;
+}
+
 /* Briefing preset manager modal (spec #2 phase 2a, Task 3).
  *
  * Centred and explicitly sized, exactly like `WatchlistNameDialog`/

@@ -31,6 +31,7 @@ from ...Constants import (
     WATCHLISTS_SECTION_RUNS,
 )
 from ...runtime_policy.types import PolicyDeniedError
+from ...Subscriptions.briefing_selection import MODE_AUTO_FEATURED, VALID_MODES
 from ...Subscriptions.briefing_service import (
     STATUS_GENERATING,
     fail_interrupted_briefings,
@@ -59,8 +60,11 @@ from ..Watchlists_Modules.inspector_pane import (
 )
 from ..Watchlists_Modules.artifacts_pane import (
     ArtifactsPane,
+    BriefingDefaultPresetChanged,
+    BriefingModeChanged,
     BriefingSelected,
     GenerateBriefingRequested,
+    ManagePresetsRequested,
     RefreshBriefingsRequested,
 )
 from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
@@ -329,6 +333,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # detail area renders.
         self._loaded_briefings: list[dict[str, Any]] = []
         self._selected_briefing: dict[str, Any] | None = None
+        # Task 4: the current watchlist's stored briefing selection mode and
+        # default preset id, mirrored here for the same rebuild-survival
+        # reason as `_loaded_briefings` above -- `_build_detail_pane` seeds
+        # a freshly built `ArtifactsPane` from this state on every region
+        # rebuild. Defaults match `_selection_mode`'s own NULL/no-scope
+        # fallback (`briefing_service.py`) so a pane that has not yet heard
+        # from `_load_briefings` shows the same mode generation would
+        # actually use.
+        self._briefing_selection_mode: str = MODE_AUTO_FEATURED
+        self._briefing_default_preset_id: int | None = None
         # True only while THIS screen's `wl-briefing` worker is running.
         # `fail_interrupted_briefings` cannot tell a crashed worker's row
         # from a live one -- both read `generating` -- so the live case is
@@ -1282,6 +1296,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             artifacts_pane.selected_briefing = self._selected_briefing
             artifacts_pane.scope_label = self._briefing_scope_label()
             artifacts_pane.can_generate = self._can_generate_briefing()
+            artifacts_pane.selection_mode = self._briefing_selection_mode
+            artifacts_pane.presets = self._loaded_briefing_presets
+            artifacts_pane.default_preset_id = self._briefing_default_preset_id
             children.append(artifacts_pane)
         return Vertical(
             *children,
@@ -3106,6 +3123,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if db is None or watchlist_id is None:
             self._loaded_briefings = []
             self._selected_briefing = None
+            self._briefing_selection_mode = MODE_AUTO_FEATURED
+            self._briefing_default_preset_id = None
         else:
             try:
                 # Zombie recovery, before the list query, so a row this
@@ -3159,6 +3178,36 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 ),
                 None,
             )
+            # Task 4: the toolbar's pickers. One combined `to_thread` hop
+            # for both the watchlist's stored settings (the SAME columns
+            # `briefing_service._selection_mode` reads) and the full preset
+            # list, rather than two sequential hops -- `_load_briefings`
+            # already pays for a zombie sweep and a `list_briefings` read
+            # above, and every extra round trip through the thread pool is
+            # latency this section's own toolbar adds on top of that,
+            # measured to matter under a busy full-suite run. A read
+            # failure degrades to the fallback mode, no default preset, and
+            # whatever presets were already loaded, rather than aborting
+            # the whole load -- the briefing list above is real data this
+            # failure must not hide.
+            try:
+                settings_row, preset_rows = await asyncio.to_thread(
+                    self._read_watchlist_briefing_state, db, watchlist_id
+                )
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                logger.warning(
+                    "Failed to read briefing settings/presets for watchlist "
+                    f"{watchlist_id}: {type(exc).__name__}"
+                )
+                settings_row, preset_rows = {}, self._loaded_briefing_presets
+            mode = settings_row.get("briefing_selection_mode")
+            self._briefing_selection_mode = (
+                str(mode) if mode in VALID_MODES else MODE_AUTO_FEATURED
+            )
+            self._briefing_default_preset_id = settings_row.get(
+                "default_briefing_preset_id"
+            )
+            self._loaded_briefing_presets = preset_rows
         if not self.is_mounted:
             return
         try:
@@ -3169,6 +3218,50 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.selected_briefing = self._selected_briefing
         pane.scope_label = self._briefing_scope_label()
         pane.can_generate = self._can_generate_briefing()
+        pane.selection_mode = self._briefing_selection_mode
+        pane.presets = self._loaded_briefing_presets
+        pane.default_preset_id = self._briefing_default_preset_id
+
+    @staticmethod
+    def _read_watchlist_briefing_settings(db: Any, watchlist_id: int) -> dict[str, Any]:
+        """The watchlist's stored `briefing_selection_mode`/
+        `default_briefing_preset_id`, as a plain dict.
+
+        Raw SQL against `db.conn`, matching `briefing_service._selection_
+        mode`'s own read of the same column -- `WatchlistBundleService.
+        list_watchlists`/`_get` deliberately select a narrower column list
+        that predates these two (Task 1), so there is no existing
+        service-layer getter for them to reuse. Always called through
+        `asyncio.to_thread`; never call this directly from the UI thread.
+        """
+        row = db.conn.execute(
+            "SELECT briefing_selection_mode, default_briefing_preset_id "
+            "FROM watchlists WHERE id = ?",
+            (watchlist_id,),
+        ).fetchone()
+        return dict(row) if row is not None else {}
+
+    @staticmethod
+    def _read_watchlist_briefing_state(
+        db: Any, watchlist_id: int
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """`_read_watchlist_briefing_settings` plus `list_briefing_presets`,
+        as one synchronous unit for `_load_briefings` to dispatch through a
+        SINGLE `asyncio.to_thread` call.
+
+        Both are cheap reads on the same thread-local connection; bundling
+        them here is purely about round trips through the thread pool, not
+        about the SQL itself -- `_load_briefing_presets` still does its own
+        separate `list_briefing_presets` call for its OTHER caller
+        (`_open_briefing_preset_manager`), which has no settings row to
+        read alongside it. Always called through `asyncio.to_thread`; never
+        call this directly from the UI thread.
+        """
+        settings_row = WatchlistsCollectionsScreen._read_watchlist_briefing_settings(
+            db, watchlist_id
+        )
+        preset_rows = [dict(row) for row in db.list_briefing_presets()]
+        return settings_row, preset_rows
 
     @on(BriefingSelected)
     def handle_briefing_selected(self, event: BriefingSelected) -> None:
@@ -3193,15 +3286,121 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._load_briefings(), exclusive=True, group="wl-briefings-load"
         )
 
+    # --- Briefing selection-mode and default-preset pickers (Task 4) -------
+    #
+    # Same write-first-patch-after shape as `handle_toggle_briefing_queue_
+    # requested` -> `_toggle_briefing_queue`: the handler answers the
+    # no-database case from memory and dispatches a worker; the worker does
+    # the write off the UI thread (`asyncio.to_thread`), then on success
+    # patches `_briefing_selection_mode`/`_briefing_default_preset_id` and
+    # the mounted pane's matching reactive DIRECTLY -- never `_load_
+    # briefings()`, which would re-query the database for a value this
+    # write already knows. No `exclusive=True`: each picker's own writes
+    # target a single row with `UPDATE ... WHERE id = ?`, so two overlapping
+    # presses are safe to interleave (last write wins), and cancelling one
+    # mid-write would leave `_briefing_selection_mode`/`_briefing_default_
+    # preset_id` disagreeing with what actually landed in the database.
+
+    @on(BriefingModeChanged)
+    def handle_briefing_mode_changed(self, event: BriefingModeChanged) -> None:
+        event.stop()
+        db = self._briefings_db()
+        watchlist_id = self._briefing_watchlist_id()
+        if db is None or watchlist_id is None:
+            self._notify_watchlists(
+                "Could not reach the local database, so nothing was saved.",
+                severity="error",
+            )
+            return
+        self.run_worker(
+            self._write_briefing_selection_mode(db, watchlist_id, event.mode),
+            group="wl-briefing-settings-write",
+        )
+
+    async def _write_briefing_selection_mode(
+        self, db: Any, watchlist_id: int, mode: str
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                db.set_watchlist_briefing_settings,
+                watchlist_id,
+                selection_mode=mode,
+            )
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.warning(
+                f"Failed to save the selection mode for watchlist "
+                f"{watchlist_id}: {type(exc).__name__}"
+            )
+            if self.is_attached:
+                self._notify_watchlists(
+                    "Could not save the selection mode. Nothing changed.",
+                    severity="error",
+                )
+            return
+        self._briefing_selection_mode = mode
+        if not self.is_attached:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.selection_mode = mode
+
+    @on(BriefingDefaultPresetChanged)
+    def handle_briefing_default_preset_changed(
+        self, event: BriefingDefaultPresetChanged
+    ) -> None:
+        event.stop()
+        db = self._briefings_db()
+        watchlist_id = self._briefing_watchlist_id()
+        if db is None or watchlist_id is None:
+            self._notify_watchlists(
+                "Could not reach the local database, so nothing was saved.",
+                severity="error",
+            )
+            return
+        self.run_worker(
+            self._write_briefing_default_preset(db, watchlist_id, event.preset_id),
+            group="wl-briefing-settings-write",
+        )
+
+    async def _write_briefing_default_preset(
+        self, db: Any, watchlist_id: int, preset_id: int | None
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                db.set_watchlist_briefing_settings,
+                watchlist_id,
+                default_preset_id=preset_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.warning(
+                f"Failed to save the default preset for watchlist "
+                f"{watchlist_id}: {type(exc).__name__}"
+            )
+            if self.is_attached:
+                self._notify_watchlists(
+                    "Could not save the default preset. Nothing changed.",
+                    severity="error",
+                )
+            return
+        self._briefing_default_preset_id = preset_id
+        if not self.is_attached:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.default_preset_id = preset_id
+
     # --- Briefing presets (spec #2 phase 2a, Task 3): manager modal --------
     #
     # `BriefingPresetModal` owns its own reads and writes; this screen's job
     # is only what the brief calls "mount/dismiss wiring" -- build the two
     # option lists the modal is not entitled to query for itself, push it,
-    # and reload the preset list iff the modal reports a real change. Task 4
-    # adds the toolbar's "Presets..." button/message that calls
-    # `_open_briefing_preset_manager`; nothing here depends on that button
-    # existing yet.
+    # and reload the preset list iff the modal reports a real change. The
+    # toolbar's "Presets..." button (Task 4) calls `_open_briefing_preset_
+    # manager` unchanged, through `handle_manage_presets_requested` below.
 
     async def _load_character_options(self) -> list[tuple[str, int]]:
         """Character cards for the preset modal's per-speaker Select.
@@ -3254,24 +3453,36 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ]
 
     async def _load_briefing_presets(self) -> None:
-        """Re-read every stored `briefing_presets` row, name ASC.
+        """Re-read every stored `briefing_presets` row, name ASC, and patch
+        the Artifacts toolbar's default-preset picker in place.
 
-        Task 4 wires `_loaded_briefing_presets` into the Artifacts
-        toolbar's default-preset picker; nothing renders it yet. Held and
-        reloaded here regardless, so "the modal dismisses `True`, the
-        screen reloads its preset list" is a real, testable contract before
-        that picker exists to consume the result.
+        Two callers: `_load_briefings` (an Artifacts-section/scope load,
+        which patches the pane's OTHER reactives itself right after this
+        returns -- setting `pane.presets` here too is a harmless repeat of
+        the same value) and `_open_briefing_preset_manager` (a preset
+        modal's `True` dismiss, which has no other reason to touch the
+        pane). Patched here rather than left to each caller so both stay
+        honest without duplicating the query-and-patch shape.
         """
         db = self._briefings_db()
         if db is None:
             self._loaded_briefing_presets = []
+        else:
+            try:
+                rows = await asyncio.to_thread(db.list_briefing_presets)
+                self._loaded_briefing_presets = [dict(row) for row in rows]
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                logger.warning(
+                    f"Failed to list briefing presets: {type(exc).__name__}"
+                )
+                self._loaded_briefing_presets = []
+        if not self.is_mounted:
             return
         try:
-            rows = await asyncio.to_thread(db.list_briefing_presets)
-            self._loaded_briefing_presets = [dict(row) for row in rows]
-        except Exception as exc:  # noqa: BLE001 - reported, not raised
-            logger.warning(f"Failed to list briefing presets: {type(exc).__name__}")
-            self._loaded_briefing_presets = []
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.presets = self._loaded_briefing_presets
 
     async def _open_briefing_preset_manager(self) -> None:
         """Open `BriefingPresetModal`, then reload presets iff it changed.
@@ -3296,6 +3507,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
         if changed:
             await self._load_briefing_presets()
+
+    @on(ManagePresetsRequested)
+    def handle_manage_presets_requested(self, event: ManagePresetsRequested) -> None:
+        """Wire the toolbar's "Presets…" button to Task 3's opener.
+
+        No `exclusive=True`: `_open_briefing_preset_manager` owns a modal
+        via `push_screen_wait`, and `_start_tree_write`'s own docstring
+        names exactly why an exclusive worker is the wrong tool for that --
+        cancelling one mid-prompt would leave its dialog on the screen
+        stack with nothing left to dismiss it.
+        """
+        event.stop()
+        self.run_worker(
+            self._open_briefing_preset_manager(), group="wl-briefing-presets"
+        )
 
     @on(GenerateBriefingRequested)
     def handle_generate_briefing_requested(
@@ -3355,8 +3581,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         self._briefing_in_flight = True
         self._briefing_in_flight_watchlist_id = watchlist_id
+        # Task 4: cast the die now, on the UI thread, alongside the rest of
+        # this synchronous snapshot -- not read again later inside the
+        # worker, where a concurrent picker write (a different worker
+        # group, so not excluded by `exclusive=True` above) could otherwise
+        # change `_briefing_default_preset_id` out from under a generation
+        # already in flight for THIS watchlist.
+        preset_id = self._briefing_default_preset_id
         self.run_worker(
-            self._generate_briefing(db, watchlist_id),
+            self._generate_briefing(db, watchlist_id, preset_id),
             exclusive=True,
             group="wl-briefing",
         )
@@ -3434,12 +3667,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ]
         return stuck, blocking
 
-    async def _generate_briefing(self, db: Any, watchlist_id: int) -> None:
+    async def _generate_briefing(
+        self, db: Any, watchlist_id: int, preset_id: int | None
+    ) -> None:
         """Worker body: recover, guard, generate, repaint.
 
         The whole sequence is one worker so the guard cannot come apart from
         the generation it guards, and every database call inside it is
         awaited off the UI thread (`asyncio.to_thread`) -- see the handler.
+
+        `preset_id` (Task 4) is the watchlist's stored default preset,
+        snapshotted by the handler at dispatch time -- see its own comment.
+        `None` means "no default preset stored", and `generate_briefing`
+        treats that identically to "no preset given": the app default
+        provider/model, no style notes.
 
         `generate_briefing` is wrapped in a bare `except` on purpose. It
         turns *provider* failures into `failed` rows rather than exceptions,
@@ -3499,7 +3740,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 )
                 return
             try:
-                row = await generate_briefing(db, watchlist_id)
+                row = await generate_briefing(db, watchlist_id, preset_id=preset_id)
                 generated_id = (row or {}).get("id")
             except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
                 logger.warning(

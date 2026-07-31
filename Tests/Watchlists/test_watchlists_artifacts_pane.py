@@ -38,7 +38,7 @@ from unittest.mock import Mock
 import pytest
 from rich.console import Console
 from textual.coordinate import Coordinate
-from textual.widgets import Button, DataTable, Static
+from textual.widgets import Button, DataTable, Select, Static
 
 from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from Tests.UI.test_destination_visual_parity_correction import (
@@ -923,3 +923,319 @@ async def test_the_list_the_button_and_the_body_are_all_on_screen(size, monkeypa
             f"Artifacts is {artifacts_width} columns wide where Sources gets "
             f"{sources_width} on the same {size[0]}x{size[1]} terminal"
         )
+
+
+# --- 6. Toolbar pickers: selection mode, default preset, Presets… (Task 4) -
+#
+# Tasks 1-3 built the writer (`set_watchlist_briefing_settings`), the
+# preset table/CRUD (`list_briefing_presets`), and the manager modal
+# (`BriefingPresetModal`); none of it had a way in from this screen.
+# `briefing_selection_mode` had a READER since phase 1
+# (`briefing_service._selection_mode`) but no writer anywhere in the UI, so
+# `auto` and `curated` were unreachable -- this section is what retires
+# that deferral.
+
+
+def _capture_generate_calls(monkeypatch) -> list[dict]:
+    """Fake `generate_briefing` that records its call kwargs and returns a
+    minimal row.
+
+    Unlike `_use_fake_chat` (which keeps the real service running, with
+    only the provider call replaced), this section's tests are about what
+    the SCREEN passes to `generate_briefing` -- specifically `preset_id` --
+    not what the service does with it (Task 2's own suite already covers
+    that). Bypassing the real service keeps these tests fast and focused on
+    the one call-site argument in question.
+    """
+    calls: list[dict] = []
+
+    async def _fake(db, watchlist_id, **kwargs):
+        calls.append(kwargs)
+        return {"id": 999}
+
+    monkeypatch.setattr(screen_module, "generate_briefing", _fake)
+    return calls
+
+
+async def _press_generate_button_and_wait_for_a_call(
+    screen, pilot, host, calls: list
+) -> None:
+    """Press Generate and wait for the whole `wl-briefing` worker to finish
+    (real completion via `host.workers.wait_for_complete()`, not a
+    wall-clock poll -- see this section's own note on why).
+    """
+    pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+    pane.query_one("#artifacts-generate-button", Button).press()
+    await pilot.pause()
+    await host.workers.wait_for_complete()
+    await pilot.pause()
+
+
+# Every wait in this section uses `host.workers.wait_for_complete()`
+# (already established by `test_destination_shells.py`'s
+# `test_mcp_destination_add_server_binding_opens_real_form_end_to_end`)
+# rather than a wall-clock poll loop. `_load_briefings` now runs one more
+# `to_thread` hop for the picker state on top of its existing zombie-sweep
+# + list-read hops, and a `pilot.pause()`/deadline poll races real wall-clock
+# time against however long the thread pool takes to be scheduled -- which
+# a sufficiently busy machine (this repo's own test suite plus whatever
+# else is running on the same host) can push past any fixed bound, MEASURED
+# during this task's own verification (a 20s poll still missed, consistently,
+# under heavy concurrent load). `wait_for_complete()` has no such bound: it
+# awaits the dispatched worker(s) to actual completion, however long that
+# takes, so it cannot flake on host speed the way a deadline can.
+
+
+@pytest.mark.asyncio
+async def test_toolbar_pickers_render_only_when_a_watchlist_is_in_scope():
+    """The mode/preset `Select`s and the `Presets…` `Button` have nothing to
+    act on without a single watchlist in scope, so -- unlike Generate/
+    Refresh, which stay visible to explain themselves -- they do not render
+    at all when `can_generate` is False.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.can_generate is True
+        assert pane.query_one("#artifacts-mode-select", Select)
+        assert pane.query_one("#artifacts-preset-select", Select)
+        assert pane.query_one("#artifacts-presets-button", Button)
+
+        screen.tree_scope = TreeScope(kind="all")
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.can_generate is False
+        assert not pane.query("#artifacts-mode-select")
+        assert not pane.query("#artifacts-preset-select")
+        assert not pane.query("#artifacts-presets-button")
+        # Generate/Refresh, unlike the pickers, still explain themselves.
+        assert pane.query_one("#artifacts-generate-button", Button)
+
+
+@pytest.mark.asyncio
+async def test_mode_select_shows_the_watchlists_stored_mode_on_load():
+    """The read-path pin: Task 1's writer sets `curated` before Artifacts
+    ever opens, and the mode Select must reflect it on the very first
+    render -- not merely hold it in some screen-private field.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    db.set_watchlist_briefing_settings(watchlist_id, selection_mode="curated")
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        select = pane.query_one("#artifacts-mode-select", Select)
+        assert select.value == "curated"
+
+
+@pytest.mark.asyncio
+async def test_changing_mode_writes_off_loop_and_does_not_rebuild_the_screen():
+    """Thread-identity pin (the established `asyncio.to_thread` pattern) plus
+    the instance-survival assertion: a picker change must patch the pane in
+    place, never rebuild it via `self.refresh(recompose=True)`.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+
+    loop_thread_id = threading.get_ident()
+    write_thread_ids: list[int] = []
+    real_set = db.set_watchlist_briefing_settings
+
+    def _spy(watchlist_id_arg, **kwargs):
+        write_thread_ids.append(threading.get_ident())
+        return real_set(watchlist_id_arg, **kwargs)
+
+    db.set_watchlist_briefing_settings = _spy
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        pane_before = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        select = pane_before.query_one("#artifacts-mode-select", Select)
+        # The fresh-watchlist default, confirmed by the read path above --
+        # this is a genuine change, not a same-value mount-time no-op.
+        assert select.value == "auto_featured"
+
+        select.value = "curated"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert write_thread_ids, "set_watchlist_briefing_settings must have run"
+        assert all(tid != loop_thread_id for tid in write_thread_ids), (
+            "the write must run off the event-loop thread (asyncio.to_thread)"
+        )
+
+        row = db.conn.execute(
+            "SELECT briefing_selection_mode FROM watchlists WHERE id = ?",
+            (watchlist_id,),
+        ).fetchone()
+        assert row["briefing_selection_mode"] == "curated"
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane is pane_before, (
+            "a picker change must repaint the pane, not rebuild the screen"
+        )
+        assert screen._briefing_selection_mode == "curated"
+
+
+@pytest.mark.asyncio
+async def test_preset_select_lists_presets_and_persists_a_choice():
+    """The default-preset picker offers "App default" (`None`) plus every
+    loaded preset, and choosing one persists `default_briefing_preset_id`.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    preset_id = db.insert_briefing_preset("Evening Digest", roster_json="[]")
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen._loaded_briefing_presets, "the presets read must have run"
+
+        pane_before = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        preset_select = pane_before.query_one("#artifacts-preset-select", Select)
+
+        # Nothing stored yet: "App default" is the active choice.
+        assert preset_select.value is None
+
+        # An id NOT among the loaded presets (nor `None`) is illegal --
+        # proving the legal values are exactly what was loaded, not any
+        # integer (same technique `BriefingPresetModal`'s own character/
+        # voice Select tests use, Task 3).
+        with pytest.raises(Exception):
+            preset_select.value = preset_id + 999_999
+
+        preset_select.value = preset_id
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        row = db.conn.execute(
+            "SELECT default_briefing_preset_id FROM watchlists WHERE id = ?",
+            (watchlist_id,),
+        ).fetchone()
+        assert row["default_briefing_preset_id"] == preset_id
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane is pane_before, (
+            "a picker change must repaint the pane, not rebuild the screen"
+        )
+        assert screen._briefing_default_preset_id == preset_id
+
+
+@pytest.mark.asyncio
+async def test_generate_casts_the_die_with_the_stored_default_preset(monkeypatch):
+    """With a default preset stored, Generate invokes `generate_briefing`
+    with `preset_id=<that id>`.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    preset_id = db.insert_briefing_preset("Evening Digest", roster_json="[]")
+    db.set_watchlist_briefing_settings(watchlist_id, default_preset_id=preset_id)
+    calls = _capture_generate_calls(monkeypatch)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen._briefing_default_preset_id == preset_id
+
+        await _press_generate_button_and_wait_for_a_call(screen, pilot, host, calls)
+
+    assert calls, "generate_briefing must have been invoked"
+    assert calls[-1].get("preset_id") == preset_id
+
+
+@pytest.mark.asyncio
+async def test_generate_casts_the_die_with_no_default_preset(monkeypatch):
+    """With no default preset stored, Generate invokes `generate_briefing`
+    with `preset_id=None` -- the other half of the die-cast contract.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    calls = _capture_generate_calls(monkeypatch)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        assert screen._briefing_default_preset_id is None
+
+        await _press_generate_button_and_wait_for_a_call(screen, pilot, host, calls)
+
+    assert calls, "generate_briefing must have been invoked"
+    assert calls[-1].get("preset_id") is None
+
+
+@pytest.mark.asyncio
+async def test_setting_curated_via_the_picker_then_generating_records_it_on_the_row(
+    monkeypatch,
+):
+    """The phase-1 deferral's dead branch, made reachable end to end.
+
+    `briefing_selection_mode` has had a READER since phase 1
+    (`briefing_service._selection_mode`) but no writer anywhere in the UI
+    until this task. Setting `curated` through the picker and then pressing
+    Generate is the first time the two actually meet -- this is the test
+    that retires the deferral.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    chat = _FakeChat()
+    _use_fake_chat(monkeypatch, chat)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        select = pane.query_one("#artifacts-mode-select", Select)
+        assert select.value == "auto_featured"
+
+        select.value = "curated"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen._briefing_selection_mode == "curated"
+
+        await _press_generate(screen, pilot, app, watchlist_id)
+
+    rows = _briefing_rows(app, watchlist_id)
+    assert rows, "Generate must have written a briefing row"
+    assert rows[0]["selection_mode"] == "curated"
+
+
+@pytest.mark.asyncio
+async def test_presets_button_opens_the_preset_manager(monkeypatch):
+    """The toolbar's "Presets…" button calls Task 3's existing opener,
+    `_open_briefing_preset_manager`, unchanged.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+
+    calls: list[None] = []
+
+    async def _recording_open(self):
+        calls.append(None)
+
+    monkeypatch.setattr(
+        screen_module.WatchlistsCollectionsScreen,
+        "_open_briefing_preset_manager",
+        _recording_open,
+    )
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.query_one("#artifacts-presets-button", Button).press()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert calls, "the Presets… button must open the preset manager"

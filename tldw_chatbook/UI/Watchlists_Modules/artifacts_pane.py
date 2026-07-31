@@ -34,8 +34,13 @@ from textual.containers import Horizontal, Vertical
 from textual.coordinate import Coordinate
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Button, DataTable, Static
+from textual.widgets import Button, DataTable, Select, Static
 
+from ...Subscriptions.briefing_selection import (
+    MODE_AUTO,
+    MODE_AUTO_FEATURED,
+    MODE_CURATED,
+)
 from ...Subscriptions.briefing_service import (
     STATUS_COMPLETE,
     STATUS_EMPTY,
@@ -102,6 +107,58 @@ class RefreshBriefingsRequested(Message):
     """Posted when the user asks to re-read the briefing list."""
 
 
+class BriefingModeChanged(Message):
+    """Posted when the user picks a different selection mode.
+
+    Spec #2 phase 2a, Task 4: retires the phase-1 deferral -- until this
+    task, `briefing_selection_mode` had a reader (`briefing_service.
+    _selection_mode`) but no writer anywhere in the UI, so `auto` and
+    `curated` were unreachable. The screen owns the write (`asyncio.
+    to_thread(db.set_watchlist_briefing_settings, ...)`); this pane only
+    reports the user's pick.
+    """
+
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+        super().__init__()
+
+
+class BriefingDefaultPresetChanged(Message):
+    """Posted when the user picks a different default preset (or "App
+    default", carried as `None`).
+    """
+
+    def __init__(self, preset_id: int | None) -> None:
+        self.preset_id = preset_id
+        super().__init__()
+
+
+class ManagePresetsRequested(Message):
+    """Posted when the user asks to open the preset manager (Task 3's
+    `BriefingPresetModal`, via the screen's own `_open_briefing_preset_
+    manager`).
+    """
+
+
+#: The selection-mode picker's options, in the order defined by
+#: `briefing_selection.VALID_MODES` (the DB's own three-string pact,
+#: verbatim -- see `Subscriptions_DB.set_watchlist_briefing_settings`).
+_MODE_OPTIONS: list[tuple[str, str]] = [
+    ("Auto (window)", MODE_AUTO),
+    ("Curated (queue only)", MODE_CURATED),
+    ("Auto + featured", MODE_AUTO_FEATURED),
+]
+
+#: Label for the "no override" preset choice. Carries the value `None`,
+#: which is a REAL option value here (not `Select.NULL`): with
+#: `allow_blank=False` and `None` present among the option values passed to
+#: `Select`, `None` is a legal, distinct selection, never confused with the
+#: widget's own "nothing chosen" sentinel (`Select.NULL`/`NoSelection`),
+#: which this picker never uses -- there is always something selected, even
+#: when that something means "use the app default".
+_APP_DEFAULT_PRESET_LABEL = "App default"
+
+
 def _status_text(row: dict[str, Any]) -> str:
     """One briefing's status, as a bare lowercase string."""
     return str(row.get("status") or "").strip().lower()
@@ -143,6 +200,46 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: False when no single watchlist is in scope -- briefings are per
     #: watchlist by schema, so there is nothing for Generate to act on.
     can_generate = reactive(False, recompose=True)
+    #: The watchlist's stored `briefing_selection_mode` (spec #2 phase 2a,
+    #: Task 4). Defaults to the same fallback `briefing_service.
+    #: _selection_mode` uses for a NULL/unrecognized column, so a pane that
+    #: has not yet heard from the screen shows the same mode generation
+    #: would actually use.
+    selection_mode = reactive[str](MODE_AUTO_FEATURED, recompose=True)
+    #: Every stored `briefing_presets` row, name-ASC (screen-supplied,
+    #: watchlist-independent).
+    presets = reactive[list[dict[str, Any]]]([], recompose=True)
+    #: The watchlist's stored `default_briefing_preset_id`, or `None` for
+    #: "use the app default" -- the value `_generate_briefing` passes to
+    #: `generate_briefing(..., preset_id=...)`.
+    default_preset_id = reactive[int | None](None, recompose=True)
+
+    def _preset_select_options(self) -> list[tuple[str, int | None]]:
+        """Options for the default-preset picker: "App default" then every
+        loaded preset, name-ASC (already the order `presets` arrives in).
+
+        A `default_preset_id` that names a preset NOT in `presets` (a
+        preset deleted after being set as the default, before this pane's
+        next reload) gets a synthetic trailing option instead of being
+        silently dropped -- the same defensive shape `BriefingPresetModal.
+        _select_options_for` uses for a stale `character_card_id`/
+        `voice_profile_id` (Task 3). Without it, constructing `Select` with
+        `value=self.default_preset_id` would raise `InvalidSelectValueError`
+        the moment a stale id was not among the legal option values.
+        """
+        options: list[tuple[str, int | None]] = [
+            (_APP_DEFAULT_PRESET_LABEL, None)
+        ]
+        known_ids: set[int] = set()
+        for preset in self.presets:
+            preset_id = preset.get("id")
+            if preset_id is None:
+                continue
+            known_ids.add(preset_id)
+            options.append((str(preset.get("name") or f"Preset {preset_id}"), preset_id))
+        if self.default_preset_id is not None and self.default_preset_id not in known_ids:
+            options.append((f"Preset {self.default_preset_id} (deleted)", self.default_preset_id))
+        return options
 
     def compose(self):
         # `Text`, not a bare `str`: `Static` parses Rich markup by default
@@ -190,6 +287,43 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 compact=True,
                 tooltip="Re-read this watchlist's briefings.",
             )
+
+        if self.can_generate:
+            # Task 4: the selection-mode and default-preset pickers, plus
+            # the entry into Task 3's preset manager. Rendered only when a
+            # single watchlist is in scope -- like Generate itself, there is
+            # nothing for either picker to act on without one, and unlike
+            # Generate (which stays visible-but-disabled to explain itself)
+            # a picker with nothing to pick from has no useful disabled
+            # state to show.
+            with Horizontal(
+                id="artifacts-picker-toolbar", classes="destination-filter-strip"
+            ):
+                yield Select(
+                    _MODE_OPTIONS,
+                    value=self.selection_mode,
+                    id="artifacts-mode-select",
+                    allow_blank=False,
+                    compact=True,
+                    tooltip="Which items go into this watchlist's next briefing.",
+                )
+                yield Select(
+                    self._preset_select_options(),
+                    value=self.default_preset_id,
+                    id="artifacts-preset-select",
+                    allow_blank=False,
+                    compact=True,
+                    tooltip=(
+                        "The preset Generate uses for this watchlist "
+                        "(LLM, model, and style notes)."
+                    ),
+                )
+                yield Button(
+                    "Presets…",
+                    id="artifacts-presets-button",
+                    compact=True,
+                    tooltip="Create, edit, or delete briefing presets.",
+                )
 
         selected_key = (
             str(self.selected_briefing.get("id")) if self.selected_briefing else None
@@ -322,4 +456,52 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             self.post_message(GenerateBriefingRequested())
         elif button_id == "artifacts-refresh-button":
             self.post_message(RefreshBriefingsRequested())
+        elif button_id == "artifacts-presets-button":
+            self.post_message(ManagePresetsRequested())
         event.stop()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Report a picker change, guarded against Textual's own mount-time
+        noise.
+
+        `Select._on_mount` always assigns its `value` reactive from the
+        value it was constructed with, and that assignment always posts a
+        `Changed` -- including on a completely ordinary, user-uninitiated
+        mount (the Library lesson this pane's sibling modal names too, see
+        `briefing_preset_modal.py`'s module docstring).
+
+        Comparing the event's value against THIS pane's *current* state is
+        not enough to tell the two apart, and shipped as a real bug before
+        this fix: the FIRST render of Artifacts builds this Select from
+        whatever `selection_mode`/`default_preset_id` happen to be at that
+        instant -- the screen's `__init__` defaults, since `_load_briefings`
+        has not loaded the real value yet -- and that Select's own
+        mount-time `Changed` (carrying the stale default) is posted but not
+        necessarily PROCESSED before `_load_briefings` finishes and pushes
+        the real value, recomposing this pane with a fresh Select. By the
+        time the stale message is finally processed, `self.selection_mode`
+        already equals the NEW (correct) value, not the stale one the
+        message carries -- so a same-value guard sees `stale != current`
+        and wrongly treats mount noise as a real pick, writing the stale
+        default back over the value that was just loaded.
+
+        The fix is to key off the WIDGET INSTANCE instead of a value
+        comparison: a freshly composed `Select` posts EXACTLY one `Changed`
+        from its own mount (see `Select._on_mount` -> `_init_selected_
+        option` -> the `value` assignment), so the first one this pane
+        sees from a given `Select` object is always that noise, absorbed
+        here unconditionally; every one after it is a real user pick,
+        since nothing else in this pane ever re-assigns a mounted `Select`'s
+        `value` programmatically. A recompose always builds a brand-new
+        `Select` object, so this naturally resets per recompose with no
+        bookkeeping to clear.
+        """
+        event.stop()
+        select = event.select
+        if not getattr(select, "_briefing_picker_mount_absorbed", False):
+            select._briefing_picker_mount_absorbed = True
+            return
+        if select.id == "artifacts-mode-select":
+            self.post_message(BriefingModeChanged(str(event.value)))
+        elif select.id == "artifacts-preset-select":
+            self.post_message(BriefingDefaultPresetChanged(event.value))
