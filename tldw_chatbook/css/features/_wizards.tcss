@@ -1120,3 +1120,9 @@ SmartContentTree Tree > .selected-node {
 .setup-summary-actions Button {
     margin-right: 2;
 }
+
+/* TASK-1497: second structural cue for the selected radio row (the first is
+ * the ●/○ glyph swap in SetupRadioButton) — bold survives monochrome. */
+.setup-choice-list SetupRadioButton.-on {
+    text-style: bold;
+}

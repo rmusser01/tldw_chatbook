@@ -1,9 +1,10 @@
 ---
 id: TASK-1496
 title: Wizard keyboard input can land on off-screen widgets silently
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-31 00:22'
+updated_date: '2026-07-31 01:04'
 labels: []
 dependencies: []
 priority: high
@@ -21,3 +22,9 @@ UX UAT: with a local server discovered, Tab from the Provider RadioSet focused t
 - [ ] #2 Tab order on the Provider step reaches the key input before any discovery affordance or matches visual order
 - [ ] #3 Typing a key after radio selection + Tab is captured (Pilot regression test)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Provider compose reordered: key input+actions precede detected-server banner/button in DOM and visually, so Tab order matches sight order; step region scrolling makes focused widgets scroll into view. Live-verified: typed key renders as dots, Protect-keys activates.
+<!-- SECTION:NOTES:END -->

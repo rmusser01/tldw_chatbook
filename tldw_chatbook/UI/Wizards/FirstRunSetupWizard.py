@@ -16,6 +16,25 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, RadioButton, RadioSet, Static, Switch
+from textual.widgets._toggle_button import ToggleButton
+
+
+class SetupRadioButton(RadioButton):
+    """RadioButton whose selected state is structural, not color-only.
+
+    TASK-1497: stock ToggleButton renders one constant BUTTON_INNER glyph and
+    conveys on/off purely through the glyph's color, which is invisible in a
+    monochrome capture and fails WCAG 1.4.1 (use of color). The inner glyph
+    itself switches here — ● selected, ○ unselected — so state survives any
+    palette; a bold text-style on the selected row (see _wizards.tcss) is the
+    second cue. BUTTON_INNER is set as an instance attribute right before the
+    parent property renders, shadowing the class attribute per-state.
+    """
+
+    @property
+    def _button(self):
+        self.BUTTON_INNER = "●" if self.value else "○"
+        return ToggleButton._button.fget(self)
 
 from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardContainer,
@@ -107,7 +126,7 @@ class ProviderStep(SetupStep):
             )
             with RadioSet(id="setup-provider-choice", classes="setup-choice-list"):
                 for entry in self._grouped(entries):
-                    yield RadioButton(
+                    yield SetupRadioButton(
                         entry.display_name, id=f"setup-provider-{entry.readiness_key}"
                     )
             # TASK-1496: key Input, its status line, and the Keep/Replace/
@@ -512,7 +531,7 @@ class ModelStep(SetupStep):
                 # and commit the literal placeholder text as the model id
                 # (see _on_model_chosen). Same reasoning applies to the two
                 # other placeholders this step ever mounts, below.
-                yield RadioButton(
+                yield SetupRadioButton(
                     "(loading models…)", id="setup-model-loading", disabled=True
                 )
             yield Label("Or enter a model name", classes="setup-field-label")
@@ -631,12 +650,12 @@ class ModelStep(SetupStep):
         await radio_set.remove_children()
         if models:
             await radio_set.mount_all(
-                RadioButton(model_id, id=f"setup-model-option-{index}")
+                SetupRadioButton(model_id, id=f"setup-model-option-{index}")
                 for index, model_id in enumerate(models)
             )
         elif no_provider:
             await radio_set.mount(
-                RadioButton(
+                SetupRadioButton(
                     "Pick a provider first — or type a model name below",
                     id="setup-model-no-provider",
                     disabled=True,
@@ -644,7 +663,7 @@ class ModelStep(SetupStep):
             )
         else:
             await radio_set.mount(
-                RadioButton("(no models found — enter one below)", disabled=True)
+                SetupRadioButton("(no models found — enter one below)", disabled=True)
             )
 
     @on(RadioSet.Changed, "#setup-model-choice")
@@ -759,7 +778,7 @@ class RagStep(SetupStep):
             yield Static("", id="setup-rag-status", classes="setup-subtitle")
             with RadioSet(id="setup-rag-model-choice", classes="setup-choice-list"):
                 for model_id in self._embedding_model_ids():
-                    yield RadioButton(model_id)
+                    yield SetupRadioButton(model_id)
             yield Static("", classes="setup-step-error")
 
     def _embedding_model_ids(self) -> list[str]:
@@ -979,14 +998,14 @@ class AppearanceStep(SetupStep):
             yield Label("Theme", classes="setup-field-label")
             with RadioSet(id="setup-theme-choice", classes="setup-choice-list"):
                 for theme_name in self._theme_names():
-                    yield RadioButton(
+                    yield SetupRadioButton(
                         theme_name, value=(theme_name == prefill.default_theme)
                     )
             yield Label("Splash screen card", classes="setup-field-label")
             with RadioSet(id="setup-splash-choice", classes="setup-choice-list"):
-                yield RadioButton("Surprise me (random)", value=True)
+                yield SetupRadioButton("Surprise me (random)", value=True)
                 for card_name in self._card_names()[:10]:
-                    yield RadioButton(card_name)
+                    yield SetupRadioButton(card_name)
             yield Static("", classes="setup-step-error")
 
     def _theme_names(self) -> list[str]:
@@ -1080,12 +1099,12 @@ class WelcomeStep(SetupStep):
                 classes="setup-subtitle",
             )
             with RadioSet(id="setup-track-choice", classes="setup-choice-list"):
-                yield RadioButton(
+                yield SetupRadioButton(
                     "Quick setup — provider & model (recommended)",
                     value=True,
                     id="setup-track-quick",
                 )
-                yield RadioButton("Full setup — configure everything", id="setup-track-full")
+                yield SetupRadioButton("Full setup — configure everything", id="setup-track-full")
             yield Button(
                 "Skip — explore on my own", id="setup-skip-entirely", variant="default"
             )

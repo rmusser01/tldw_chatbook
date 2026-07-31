@@ -2148,3 +2148,49 @@ class TestCommandPaletteReentry:
         provider.handle_setup_wizard_action("something_else")
 
         screen.app.push_screen.assert_not_called()
+
+
+class TestSetupRadioButtonStructuralState:
+    """TASK-1497: selection must be distinguishable without color."""
+
+    @pytest.mark.asyncio
+    async def test_selected_and_unselected_glyphs_differ_structurally(self):
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupRadioButton
+
+        class _Host(App):
+            def compose(self) -> ComposeResult:
+                yield SetupRadioButton("On option", value=True, id="on-btn")
+                yield SetupRadioButton("Off option", id="off-btn")
+
+        app = _Host()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            on_btn = app.query_one("#on-btn", SetupRadioButton)
+            off_btn = app.query_one("#off-btn", SetupRadioButton)
+            on_glyph = str(on_btn._button)
+            off_glyph = str(off_btn._button)
+            assert on_glyph != off_glyph, (
+                "selected and unselected radios render identical button text "
+                f"({on_glyph!r}) — state is color-only"
+            )
+            assert "●" in on_glyph and "○" in off_glyph
+
+    @pytest.mark.asyncio
+    async def test_wizard_choice_lists_use_structural_radio(self):
+        """Every wizard RadioSet renders SetupRadioButton, incl. dynamic lists."""
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            SetupRadioButton,
+            SetupWizardContainer,
+        )
+
+        wizard = _make_wizard()
+        app = _HostApp(wizard)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            plain = [
+                rb
+                for rb in container.query(RadioButton)
+                if not isinstance(rb, SetupRadioButton)
+            ]
+            assert not plain, f"plain RadioButtons in wizard: {[rb.id or str(rb.label) for rb in plain]}"
