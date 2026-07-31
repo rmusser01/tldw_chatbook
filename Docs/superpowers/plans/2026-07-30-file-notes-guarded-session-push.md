@@ -854,8 +854,14 @@ git commit -m "feat(notes): rehydrate guarded push workflow [TASK-1566]"
 
 **Files:**
 
+- Modify: `tldw_chatbook/Notes/file_notes_git_push.py`
+- Modify: `tldw_chatbook/Notes/file_notes_session_owner.py`
+- Modify: `tldw_chatbook/Notes/file_notes_git_service.py`
 - Modify: `tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py`
 - Modify: `tldw_chatbook/Widgets/Library/library_file_notes_workspace.py`
+- Modify: `Tests/Notes/test_file_notes_git_push.py`
+- Modify: `Tests/Notes/test_file_notes_git_push_service.py`
+- Modify: `Tests/Notes/test_file_notes_session_owner.py`
 - Modify: `Tests/UI/test_library_file_notes_git_push.py`
 
 - [ ] Write failing mounted panel tests for independent `PushPanelPhase`,

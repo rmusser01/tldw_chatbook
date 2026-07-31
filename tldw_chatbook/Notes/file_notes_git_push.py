@@ -368,11 +368,14 @@ class PushReviewProjection:
 
     candidate: PushCandidateProjection
     destination: PushDestinationProjection
+    configured_remote_label: str
 
     def __post_init__(self) -> None:
         if (
             type(self.candidate) is not PushCandidateProjection
             or type(self.destination) is not PushDestinationProjection
+            or not _is_safe_display_text(self.configured_remote_label)
+            or not self.configured_remote_label.strip()
         ):
             raise PushContractError("unsafe_text")
 
@@ -723,6 +726,7 @@ def _resolve_push_configuration(
         len(tracking) != 1
         or len(merges) != 1
         or tracking[0] == "."
+        or not tracking[0].strip()
     ):
         raise PushContractError("invalid_configuration")
     tracking_remote = tracking[0]

@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import FrozenInstanceError, replace
 from functools import lru_cache
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -32,6 +33,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     FileNotesSessionOwner,
     FileSystemIdentity,
     HeadIdentity,
+    GitMutationAdmissionReason as OwnerGitMutationAdmissionReason,
     IndexBaseline,
     IndexEntry,
     PushIncludedNote,
@@ -44,6 +46,15 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
 
 
 BRANCH_REF = "refs/heads/main"
+
+
+def test_git_mutation_admission_reasons_cover_push_recovery_contract() -> None:
+    required_reasons = {"authorization_required", "recovery_not_ready"}
+
+    assert required_reasons <= set(
+        get_args(git_service.GitMutationAdmissionReason)
+    )
+    assert required_reasons <= set(get_args(OwnerGitMutationAdmissionReason))
 
 
 def _fact(
@@ -95,6 +106,25 @@ def test_destination_configuration_selects_one_push_url_or_one_fetch_fallback() 
     assert explicit.merge_ref == BRANCH_REF
     assert explicit.tracking_remote == "origin"
     assert explicit.configuration_fingerprint != fallback.configuration_fingerprint
+
+
+@pytest.mark.parametrize("remote_label", ["", "   "])
+def test_destination_configuration_rejects_empty_tracking_remote_label(
+    remote_label: str,
+) -> None:
+    facts = (
+        _fact("branch.main.remote", remote_label),
+        _fact("branch.main.merge", BRANCH_REF),
+        _fact(
+            f"remote.{remote_label}.url",
+            "https://fetch.example.test/team/notes.git",
+        ),
+    )
+
+    with pytest.raises(PushContractError) as error:
+        _resolve(facts)
+
+    assert error.value.code == "invalid_configuration"
 
 
 @pytest.mark.parametrize(
@@ -3655,6 +3685,18 @@ async def test_push_preflight_parent_issues_one_review_and_back_preserves_candid
     assert result.review is not None
     assert result.review.candidate.candidate_oid == "d" * 40
     assert result.review.destination.destination_ref == BRANCH_REF
+    config_path = Path(repository.git_dir) / "config"
+    config_path.write_text(
+        (
+            "[branch \"main\"]\n"
+            "\tremote = replacement\n"
+            f"\tmerge = {BRANCH_REF}\n"
+            "[remote \"replacement\"]\n"
+            "\tpushurl = https://replacement.example.test/other.git\n"
+        ),
+        encoding="utf-8",
+    )
+    assert result.review.configured_remote_label == "origin"
     assert len(runner.network_calls) == 1
     argv, call = runner.network_calls[0]
     command = tuple(os.fsdecode(argument) for argument in argv)

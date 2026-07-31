@@ -292,16 +292,34 @@ def test_authorization_and_review_project_fixed_policy_disclosures() -> None:
     candidate = _candidate()
     destination = _destination()
     authorization = PushAuthorizationProjection(destination)
-    review = PushReviewProjection(candidate, destination)
+    review = PushReviewProjection(candidate, destination, "origin")
 
     assert authorization.action_label == "Authorize and check"
     assert authorization.terminal_prompts_disabled is True
     assert authorization.helper_contact_possible is True
     assert authorization.trusts_remote_content is False
+    assert review.configured_remote_label == "origin"
     assert review.exact_lease == f"{_DESTINATION_REF}:{_PARENT_OID}"
     assert review.exact_refspec == f"{_CANDIDATE_OID}:{_DESTINATION_REF}"
     assert review.hooks_bypassed is True
     assert review.later_note_edits_remain_local is True
+
+
+@pytest.mark.parametrize(
+    "configured_remote_label",
+    ["", "   ", "origin\nbackup", "origin\x1b[2J", "origin\u202ebackup", None],
+)
+def test_push_review_rejects_empty_or_unsafe_configured_remote_labels(
+    configured_remote_label: object,
+) -> None:
+    with pytest.raises(PushContractError) as error:
+        PushReviewProjection(
+            _candidate(),
+            _destination(),
+            configured_remote_label,  # type: ignore[arg-type]
+        )
+
+    assert error.value.code == "unsafe_text"
 
 
 @pytest.mark.parametrize(
@@ -313,10 +331,12 @@ def test_authorization_and_review_project_fixed_policy_disclosures() -> None:
         lambda: PushReviewProjection(  # type: ignore[arg-type]
             {"token": "secret"},
             _destination(),
+            "origin",
         ),
         lambda: PushReviewProjection(  # type: ignore[arg-type]
             _candidate(),
             {"effective_endpoint": "ext::hostile"},
+            "origin",
         ),
         lambda: PushOutcomeProjection(  # type: ignore[arg-type]
             "uncertain",
@@ -422,7 +442,7 @@ def test_recovery_projection_rejects_inconsistent_canonical_flags() -> None:
         _candidate(),
         _destination(),
         PushAuthorizationProjection(_destination()),
-        PushReviewProjection(_candidate(), _destination()),
+        PushReviewProjection(_candidate(), _destination(), "origin"),
         push_outcome_copy("uncertain"),
         push_recovery_copy(
             _destination(),

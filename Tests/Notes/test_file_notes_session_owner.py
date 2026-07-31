@@ -467,6 +467,7 @@ def _capture_destination_policy(
     capture = owner._capture_destination_policy_after_fresh_proof(
         candidate_capture,
         configuration_fingerprint=fingerprint,
+        configured_remote_label="origin",
         configured_destination_identity="2" * 64,
         destination=parse_push_endpoint(
             "https://example.test/team/notes.git",
@@ -531,6 +532,7 @@ def test_destination_policy_requires_exact_candidate_and_policy_captures(
         owner._capture_destination_policy_after_fresh_proof(
             replace(candidate),
             configuration_fingerprint="1" * 64,
+            configured_remote_label="origin",
             configured_destination_identity="2" * 64,
             destination=policy.destination,
             candidate_tree_oid="e" * 40,
@@ -558,6 +560,7 @@ def test_destination_configuration_value_aba_never_revives_authorization(
     changed = owner._capture_destination_policy_after_fresh_proof(
         candidate,
         configuration_fingerprint="4" * 64,
+        configured_remote_label="backup",
         configured_destination_identity="5" * 64,
         destination=parse_push_endpoint(
             "https://changed.example.test/team/notes.git",
@@ -570,6 +573,7 @@ def test_destination_configuration_value_aba_never_revives_authorization(
     restored = owner._capture_destination_policy_after_fresh_proof(
         candidate,
         configuration_fingerprint="1" * 64,
+        configured_remote_label="origin",
         configured_destination_identity="2" * 64,
         destination=first.destination,
         candidate_tree_oid="e" * 40,
@@ -664,6 +668,7 @@ def test_push_review_is_exact_single_use_and_survives_ordinary_edits(
     handle, projection = issued
     assert projection.candidate.candidate_oid == "d" * 40
     assert projection.destination == policy.destination
+    assert projection.configured_remote_label == "origin"
 
     assert owner.record_change(
         binding,
@@ -703,6 +708,7 @@ def test_push_review_is_exact_single_use_and_survives_ordinary_edits(
         == capture.policy_capture.repository_trust_generation
     )
     assert capture.policy_capture.configuration_fingerprint == "1" * 64
+    assert capture.policy_capture.configured_remote_label == "origin"
     assert capture.authorization is authorization
     assert capture.command_policy_fingerprint == "4" * 64
     assert capture.parent_oid == "b" * 40
@@ -806,6 +812,7 @@ def test_push_review_bound_drift_and_aba_require_fresh_authorization(
         changed = owner._capture_destination_policy_after_fresh_proof(
             candidate,
             configuration_fingerprint="6" * 64,
+            configured_remote_label="backup",
             configured_destination_identity="7" * 64,
             destination=parse_push_endpoint(
                 "https://changed.example.test/team/notes.git",
@@ -818,6 +825,7 @@ def test_push_review_bound_drift_and_aba_require_fresh_authorization(
         replacement_policy = owner._capture_destination_policy_after_fresh_proof(
             candidate,
             configuration_fingerprint="1" * 64,
+            configured_remote_label="origin",
             configured_destination_identity="2" * 64,
             destination=policy.destination,
             candidate_tree_oid="e" * 40,

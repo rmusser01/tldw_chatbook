@@ -1050,9 +1050,11 @@ GitStatusAdmissionReason = Literal[
     "status_active",
 ]
 GitMutationAdmissionReason = Literal[
+    "authorization_required",
     "invalid_capability",
     "untrusted",
     "mutation_active",
+    "recovery_not_ready",
     "recovery_required",
     "transition_active",
     "stale_binding",
@@ -4982,6 +4984,7 @@ class FileNotesGitService:
                     configuration_fingerprint=(
                         configuration.configuration_fingerprint
                     ),
+                    configured_remote_label=configuration.tracking_remote,
                     configured_destination_identity=(
                         configuration.transport.configured_identity
                     ),

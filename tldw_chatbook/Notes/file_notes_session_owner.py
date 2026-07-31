@@ -70,7 +70,9 @@ GitStatusAdmissionReason = Literal[
     "shutdown",
 ]
 GitMutationAdmissionReason = Literal[
+    "authorization_required",
     "mutation_active",
+    "recovery_not_ready",
     "recovery_required",
     "transition_active",
     "stale_binding",
@@ -781,6 +783,7 @@ class _DestinationPolicyCapture:
 
     candidate_capture: _PushCandidateCapture = field(repr=False)
     configuration_fingerprint: str = field(repr=False)
+    configured_remote_label: str = field(repr=False)
     configured_destination_identity: str = field(repr=False)
     destination: PushDestinationProjection
     candidate_tree_oid: str = field(repr=False)
@@ -1582,6 +1585,7 @@ class FileNotesSessionOwner:
         candidate_capture: _PushCandidateCapture,
         *,
         configuration_fingerprint: str,
+        configured_remote_label: str,
         configured_destination_identity: str,
         destination: PushDestinationProjection,
         candidate_tree_oid: str,
@@ -1624,6 +1628,7 @@ class FileNotesSessionOwner:
             observed = (
                 candidate_capture.candidate_generation,
                 configuration_fingerprint,
+                configured_remote_label,
                 configured_destination_identity,
                 candidate_tree_oid,
                 included_paths_fingerprint,
@@ -1641,6 +1646,7 @@ class FileNotesSessionOwner:
             capture = _DestinationPolicyCapture(
                 candidate_capture=candidate_capture,
                 configuration_fingerprint=configuration_fingerprint,
+                configured_remote_label=configured_remote_label,
                 configured_destination_identity=configured_destination_identity,
                 destination=destination,
                 candidate_tree_oid=candidate_tree_oid,
@@ -1767,6 +1773,7 @@ class FileNotesSessionOwner:
             projection = PushReviewProjection(
                 candidate_capture.candidate,
                 policy.destination,
+                policy.configured_remote_label,
             )
             capture = _PushReviewCapture(
                 candidate_capture=candidate_capture,

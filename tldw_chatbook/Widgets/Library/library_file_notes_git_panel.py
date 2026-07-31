@@ -12,12 +12,14 @@ from rich.cells import cell_len, split_graphemes
 from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
+from textual.await_complete import AwaitComplete
 from textual.binding import Binding
-from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, Grid, Horizontal, Vertical, VerticalScroll
 from textual.events import Resize
 from textual.message import Message
+from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, Input, ListItem, ListView, Static, TextArea
+from textual.widgets import Button, Input, Label, ListItem, ListView, Static, TextArea
 
 from tldw_chatbook.Notes.file_notes_git_commit import (
     CommitIncludedNote,
@@ -26,8 +28,15 @@ from tldw_chatbook.Notes.file_notes_git_commit import (
     CommitReviewChangeType,
     CommitReviewProjection,
 )
+from tldw_chatbook.Notes.file_notes_git_push import (
+    PushAuthorizationProjection,
+    PushCandidateProjection,
+    PushDestinationProjection,
+    PushReviewProjection,
+)
 from tldw_chatbook.Notes.file_notes_session_owner import (
     HeadIdentity,
+    PushCandidateAvailability,
     SessionGitRow,
     SessionGitStatus,
 )
@@ -50,6 +59,64 @@ CommitPanelPhase = Literal[
     "executing",
     "result",
 ]
+
+PushPanelPhase = Literal[
+    "list",
+    "checking_candidate",
+    "checking_remote",
+    "review",
+    "pushing",
+    "checking_uncertain",
+    "result",
+]
+PushProgressPhase = Literal[
+    "checking_candidate",
+    "checking_remote",
+    "checking_uncertain",
+    "pushing",
+]
+PushResultAction = Literal[
+    "back_to_session",
+    "review_again",
+    "check_remote_again",
+]
+PushOperationAction = Literal[
+    "endpoint_details",
+    "back_from_review",
+    "push_reviewed_commit",
+    "cancel_check",
+    "back_to_files",
+    "back_to_session",
+    "review_again",
+    "check_remote_again",
+]
+_PUSH_RESULT_ACTION_BUTTON: dict[PushResultAction, str] = {
+    "back_to_session": "file-notes-git-push-back-session",
+    "review_again": "file-notes-git-push-review-again",
+    "check_remote_again": "file-notes-git-push-check-remote",
+}
+_PUSH_PROGRESS: dict[PushProgressPhase, tuple[str, str, str]] = {
+    "checking_candidate": (
+        "Checking push candidate…",
+        "",
+        "#file-notes-git-push-cancel",
+    ),
+    "checking_remote": (
+        "Checking remote before push…",
+        "",
+        "#file-notes-git-push-cancel",
+    ),
+    "checking_uncertain": (
+        "Checking uncertain outcome…",
+        "This check does not push.",
+        "#file-notes-git-push-body",
+    ),
+    "pushing": (
+        "Pushing 1 reviewed commit…",
+        "Cancellation is unavailable after the network push starts.",
+        "#file-notes-git-push-back-to-files",
+    ),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +207,44 @@ class CommitResultProjection:
 
     outcome: CommitOutcome
     recovery: CommitRecoveryProjection | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PushPanelReviewProjection:
+    """Immutable review paired with the exact owner provenance projection."""
+
+    review: PushReviewProjection
+    availability: PushCandidateAvailability
+
+    def __post_init__(self) -> None:
+        if (
+            self.review.candidate != self.availability.candidate
+            or len(self.review.candidate.included_notes)
+            != len(self.availability.change_types)
+        ):
+            raise ValueError(
+                "push review provenance must exactly match its candidate"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class PushPanelResultProjection:
+    """Complete selectable outcome copy plus one explicit safe next action."""
+
+    title: str
+    message: str
+    action: PushResultAction
+    action_enabled: bool = True
+    disabled_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            not self.title
+            or not self.message
+            or (self.action_enabled and self.disabled_reason is not None)
+            or (not self.action_enabled and not self.disabled_reason)
+        ):
+            raise ValueError("push result action state is incomplete")
 
 
 def _repository_path_for_display(path: str, *, markup: bool = False) -> str:
@@ -282,6 +387,24 @@ def _group_path_for_display(row: SessionGitRow) -> str:
     if destination is None:
         return source
     return f"{source} -> {_repository_path_for_display(destination)}"
+
+
+def _push_destination_summary(destination: PushDestinationProjection) -> str:
+    """Format only the sanitized projection without reconstructing a URL."""
+    host = (
+        f"[{destination.host}]"
+        if ":" in destination.host
+        else destination.host
+    )
+    principal = (
+        host
+        if destination.ssh_user is None
+        else f"{destination.ssh_user}@{host}"
+    )
+    return (
+        f"{destination.scheme} · {principal}:{destination.port} · "
+        f"{destination.repository_path}"
+    )
 
 
 def _row_primary_copy(row: SessionGitRow) -> str:
@@ -471,7 +594,7 @@ class _CommitIncludedNoteListItem(ListItem):
             copy.update(self._copy(width))
 
 
-class _CommitWorkflowScroll(VerticalScroll):
+class _WorkflowScroll(VerticalScroll):
     """Keyboard-scrollable focus target for constrained workflow states."""
 
     can_focus = True
@@ -498,7 +621,8 @@ class LibraryFileNotesGitPanel(Vertical):
     #file-notes-git-header,
     #file-notes-git-selected-actions,
     #file-notes-git-bulk-actions,
-    #file-notes-git-commit-actions {
+    #file-notes-git-commit-actions,
+    #file-notes-git-push-actions {
         height: auto;
         min-height: 1;
     }
@@ -596,7 +720,8 @@ class LibraryFileNotesGitPanel(Vertical):
     LibraryFileNotesGitPanel.-stack-actions #file-notes-git-header,
     LibraryFileNotesGitPanel.-stack-actions #file-notes-git-selected-actions,
     LibraryFileNotesGitPanel.-stack-actions #file-notes-git-bulk-actions,
-    LibraryFileNotesGitPanel.-stack-actions #file-notes-git-commit-actions {
+    LibraryFileNotesGitPanel.-stack-actions #file-notes-git-commit-actions,
+    LibraryFileNotesGitPanel.-stack-actions #file-notes-git-push-actions {
         layout: vertical;
     }
 
@@ -605,14 +730,93 @@ class LibraryFileNotesGitPanel(Vertical):
     }
 
     #file-notes-git-list-surface,
-    #file-notes-git-commit-workflow {
+    #file-notes-git-commit-workflow,
+    #file-notes-git-push-workflow {
         height: 1fr;
         min-height: 1;
         min-width: 0;
     }
 
-    #file-notes-git-commit-workflow {
+    #file-notes-git-commit-workflow,
+    #file-notes-git-push-workflow {
         display: none;
+    }
+
+    #file-notes-git-push-body {
+        height: 1fr;
+        min-height: 1;
+        min-width: 0;
+        scrollbar-size: 1 1;
+    }
+
+    #file-notes-git-push-body:focus {
+        outline: heavy $ds-focus-bg;
+    }
+
+    .file-notes-git-push-phase {
+        display: none;
+        height: auto;
+        min-height: 1;
+        min-width: 0;
+    }
+
+    .file-notes-git-push-copy {
+        height: auto;
+        min-height: 1;
+        text-wrap: wrap;
+    }
+
+    #file-notes-git-push-review-lead {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #file-notes-git-push-review-notes {
+        height: 4;
+        min-height: 2;
+        border: round $surface-lighten-1;
+        background: $surface-darken-1;
+    }
+
+    #file-notes-git-push-review-details {
+        width: auto;
+        margin: 1 0;
+    }
+
+    #file-notes-git-push-result-title {
+        text-style: bold;
+    }
+
+    #file-notes-git-push-result-copy {
+        height: 8;
+        min-height: 3;
+        border: round $surface-lighten-1;
+        background: $surface-darken-1;
+    }
+
+    #file-notes-git-push-result-reason {
+        display: none;
+        color: $text-muted;
+    }
+
+    #file-notes-git-push-footer {
+        layout: grid;
+        grid-size: 2 1;
+        grid-columns: 1fr 1fr;
+        grid-rows: 1;
+        height: 1;
+        min-height: 1;
+        min-width: 0;
+    }
+
+    #file-notes-git-push-footer Button {
+        display: none;
+        width: 1fr;
+    }
+
+    #file-notes-git-push-cancel,
+    #file-notes-git-push-back-to-files {
+        column-span: 2;
     }
 
     #file-notes-git-commit-zero {
@@ -623,6 +827,10 @@ class LibraryFileNotesGitPanel(Vertical):
     }
 
     #file-notes-git-commit-staged {
+        display: none;
+    }
+
+    #file-notes-git-push-review {
         display: none;
     }
 
@@ -847,6 +1055,25 @@ class LibraryFileNotesGitPanel(Vertical):
     class CheckCommitAgainRequested(Message):
         """Request safe inspection of one retained uncertain attempt."""
 
+    class ReviewPushRequested(Message):
+        """Request local-only proof for one owner-projected candidate."""
+
+        def __init__(self, availability: PushCandidateAvailability) -> None:
+            self.availability = availability
+            super().__init__()
+
+    class PushOperationRequested(Message):
+        """Request one typed action for an exact push operation generation."""
+
+        def __init__(
+            self,
+            action: PushOperationAction,
+            operation_id: int,
+        ) -> None:
+            self.action = action
+            self.operation_id = operation_id
+            super().__init__()
+
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("id", "file-notes-git-panel")
         super().__init__(**kwargs)
@@ -874,6 +1101,10 @@ class LibraryFileNotesGitPanel(Vertical):
         self._commit_list_preferred_group_id: int | None = None
         self._commit_list_focus_selector: str | None = None
         self._commit_entry_focus: tuple[object, str] | None = None
+        self._push_availability: PushCandidateAvailability | None = None
+        self._push_phase: PushPanelPhase = "list"
+        self._push_operation_id: int | None = None
+        self._push_result: PushPanelResultProjection | None = None
 
     @property
     def selected_group_id(self) -> int | None:
@@ -889,6 +1120,11 @@ class LibraryFileNotesGitPanel(Vertical):
     def commit_phase(self) -> CommitPanelPhase:
         """Return the currently presented commit workflow phase."""
         return self._commit_phase
+
+    @property
+    def push_phase(self) -> PushPanelPhase:
+        """Return the separate guarded-push presentation phase."""
+        return self._push_phase
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="file-notes-git-list-surface"):
@@ -978,6 +1214,13 @@ class LibraryFileNotesGitPanel(Vertical):
                     compact=True,
                     disabled=True,
                 )
+            with Horizontal(id="file-notes-git-push-actions"):
+                yield Button(
+                    "Review push (1 commit)…",
+                    id="file-notes-git-push-review",
+                    compact=True,
+                    disabled=True,
+                )
             yield Static(
                 "Stage at least one session note to commit",
                 id="file-notes-git-commit-zero",
@@ -985,7 +1228,7 @@ class LibraryFileNotesGitPanel(Vertical):
             )
 
         with Vertical(id="file-notes-git-commit-workflow"):
-            with _CommitWorkflowScroll(id="file-notes-git-commit-body"):
+            with _WorkflowScroll(id="file-notes-git-commit-body"):
                 with Vertical(
                     id="file-notes-git-commit-form",
                     classes="file-notes-git-commit-phase",
@@ -1197,6 +1440,133 @@ class LibraryFileNotesGitPanel(Vertical):
                     compact=True,
                 )
 
+        with Vertical(id="file-notes-git-push-workflow"):
+            with _WorkflowScroll(id="file-notes-git-push-body"):
+                with Vertical(
+                    id="file-notes-git-push-progress",
+                    classes="file-notes-git-push-phase",
+                ):
+                    yield Static(
+                        "",
+                        id="file-notes-git-push-progress-copy",
+                        classes="file-notes-git-push-copy",
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-push-progress-detail",
+                        classes="file-notes-git-push-copy",
+                        markup=False,
+                    )
+                with Vertical(
+                    id="file-notes-git-push-review-surface",
+                    classes="file-notes-git-push-phase",
+                ):
+                    for widget_id in (
+                        "lead",
+                        "subject",
+                        "candidate",
+                        "transition",
+                        "local-branch",
+                        "remote",
+                        "ref",
+                        "endpoint",
+                        "counts",
+                    ):
+                        yield Static(
+                            "",
+                            id=f"file-notes-git-push-review-{widget_id}",
+                            classes="file-notes-git-push-copy",
+                            markup=False,
+                        )
+                    yield Button(
+                        "Endpoint Details",
+                        id="file-notes-git-push-review-details",
+                        compact=True,
+                    )
+                    yield TextArea(
+                        "",
+                        id="file-notes-git-push-review-notes",
+                        read_only=True,
+                        soft_wrap=True,
+                        tab_behavior="focus",
+                    )
+                    for widget_id in (
+                        "lease",
+                        "transport",
+                        "local-hooks",
+                        "remote-effects",
+                        "later-edits",
+                        "objects",
+                    ):
+                        yield Static(
+                            "",
+                            id=f"file-notes-git-push-review-{widget_id}",
+                            classes="file-notes-git-push-copy",
+                            markup=False,
+                        )
+
+                with Vertical(
+                    id="file-notes-git-push-result",
+                    classes="file-notes-git-push-phase",
+                ):
+                    yield Static(
+                        "",
+                        id="file-notes-git-push-result-title",
+                        classes="file-notes-git-push-copy",
+                        markup=False,
+                    )
+                    yield TextArea(
+                        "",
+                        id="file-notes-git-push-result-copy",
+                        read_only=True,
+                        soft_wrap=True,
+                        tab_behavior="focus",
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-push-result-reason",
+                        classes="file-notes-git-push-copy",
+                        markup=False,
+                    )
+
+            with Grid(id="file-notes-git-push-footer"):
+                yield Button(
+                    "Back",
+                    id="file-notes-git-push-back",
+                    compact=True,
+                )
+                yield Button(
+                    "Cancel check",
+                    id="file-notes-git-push-cancel",
+                    compact=True,
+                )
+                yield Button(
+                    "Back to Files — push continues",
+                    id="file-notes-git-push-back-to-files",
+                    compact=True,
+                )
+                yield Button(
+                    "Back to session",
+                    id="file-notes-git-push-back-session",
+                    compact=True,
+                )
+                yield Button(
+                    "Review again",
+                    id="file-notes-git-push-review-again",
+                    compact=True,
+                )
+                yield Button(
+                    "Check remote again — no push",
+                    id="file-notes-git-push-check-remote",
+                    compact=True,
+                )
+                yield Button(
+                    "Push 1 commit",
+                    id="file-notes-git-push-confirm",
+                    compact=True,
+                )
+
     def on_mount(self) -> None:
         self._sync_commit_footer_layout(self.size.width)
         self.call_after_refresh(self._finish_mount)
@@ -1208,6 +1578,7 @@ class LibraryFileNotesGitPanel(Vertical):
         self._sync_action_layout(self.size.width)
         self._show_commit_phase(self._commit_phase)
         self._sync_commit_availability()
+        self._sync_push_availability()
         self._update_actions()
         self._fit_fixed_regions()
 
@@ -1226,6 +1597,7 @@ class LibraryFileNotesGitPanel(Vertical):
             "#file-notes-git-selected-actions",
             "#file-notes-git-bulk-actions",
             "#file-notes-git-commit-actions",
+            "#file-notes-git-push-actions",
         )
         if any(not list(self.query(selector)) for selector in selectors):
             return
@@ -1307,6 +1679,288 @@ class LibraryFileNotesGitPanel(Vertical):
         button.display = available
         zero.display = available and count == 0
         self._sync_action_layout(self.content_region.width)
+
+    def render_push_availability(
+        self,
+        projection: PushCandidateAvailability,
+    ) -> None:
+        """Show the owner-projected guarded-push action independently."""
+        self._push_availability = projection
+        self._sync_push_availability()
+
+    def clear_push_availability(self) -> None:
+        """Hide only the guarded-push list action."""
+        self._push_availability = None
+        self._sync_push_availability()
+
+    def _sync_push_availability(self) -> None:
+        if not self.is_attached:
+            return
+        button = self.query_one("#file-notes-git-push-review", Button)
+        available = self._push_availability is not None
+        button.display = available
+        button.disabled = not available or self._mutating
+        self._sync_action_layout(self.content_region.width)
+
+    def return_to_push_list(self) -> None:
+        """Clear workflow-only projections and restore the Session Git list."""
+        self._push_result = None
+        self._show_push_phase("list", None)
+        target = (
+            "#file-notes-git-push-review"
+            if self._push_availability is not None
+            else "#file-notes-git-back"
+        )
+        self.call_after_refresh(self._focus_push_list_control, target)
+
+    def _focus_push_list_control(self, selector: str) -> None:
+        """Ignore list-focus repair after teardown or a newer phase."""
+        if not self.is_attached or self._push_phase != "list":
+            return
+        control = self.query_one(selector, Widget)
+        if any(
+            isinstance(node, Widget) and not node.display
+            for node in control.ancestors_with_self
+        ):
+            return
+        control.focus()
+
+    def restore_push_focus(
+        self,
+        phase: PushPanelPhase,
+        operation_id: int,
+        selector: str,
+    ) -> None:
+        """Restore modal-return focus only for the exact visible operation."""
+        self.call_after_refresh(
+            partial(
+                self._focus_push_control_if_current,
+                phase,
+                operation_id,
+                selector,
+            )
+        )
+
+    def render_push_review(
+        self,
+        projection: PushPanelReviewProjection,
+        *,
+        operation_id: int,
+    ) -> None:
+        """Render one immutable projection without consulting live rows."""
+        review = projection.review
+        candidate = review.candidate
+        destination = review.destination
+        branch = destination.destination_ref.removeprefix("refs/heads/")
+        values = {
+            "lead": (
+                "Push 1 commit created from "
+                f"{candidate.included_note_count} session notes to "
+                f"{review.configured_remote_label}/{branch}."
+            ),
+            "subject": f"Subject: {candidate.subject}",
+            "candidate": f"Candidate OID: {candidate.candidate_oid}",
+            "transition": f"Parent transition: {candidate.transition}",
+            "local-branch": f"Local branch: {candidate.local_branch_ref}",
+            "remote": (
+                f"Configured remote: {review.configured_remote_label}"
+            ),
+            "ref": f"Full destination ref: {destination.destination_ref}",
+            "endpoint": (
+                f"Sanitized endpoint: {_push_destination_summary(destination)}"
+            ),
+            "counts": "Included changes: "
+            + " · ".join(
+                f"{change_type} {count}"
+                for change_type, count in projection.availability.change_counts
+            ),
+            "lease": f"Expected-parent lease: {review.exact_lease}",
+            "transport": (
+                "Secure transport: HTTPS with certificate verification; "
+                "existing noninteractive authentication only; terminal "
+                "prompts disabled"
+                if destination.certificate_verification_required
+                else (
+                    "Secure transport: SSH with host-key verification; "
+                    "existing noninteractive authentication only; terminal "
+                    "prompts disabled"
+                )
+            ),
+            "local-hooks": "Local pre-push hooks will not run",
+            "remote-effects": (
+                "Remote hooks, branch policy, CI, or mirrors may run"
+            ),
+            "later-edits": (
+                "Later note edits remain local and are not added to this commit"
+            ),
+            "objects": (
+                "Git publishes the reviewed commit and required Git objects; "
+                "this list is provenance, not a separate note-transfer selection"
+            ),
+        }
+        for widget_id, copy in values.items():
+            self.query_one(
+                f"#file-notes-git-push-review-{widget_id}",
+                Static,
+            ).update(copy)
+        notes = "\n".join(
+            f"{change_type}: {note.display_text}"
+            for note, change_type in zip(
+                candidate.included_notes,
+                projection.availability.change_types,
+                strict=True,
+            )
+        )
+        note_surface = self.query_one(
+            "#file-notes-git-push-review-notes",
+            TextArea,
+        )
+        note_surface.load_text(notes)
+        note_surface.styles.height = max(2, min(8, len(candidate.included_notes)))
+        self._show_push_phase("review", operation_id)
+        self._focus_push_control("#file-notes-git-push-back")
+
+    def render_push_progress(
+        self,
+        phase: PushProgressPhase,
+        *,
+        operation_id: int,
+    ) -> None:
+        """Render one typed guarded-push progress phase."""
+        copy, detail, focus = _PUSH_PROGRESS[phase]
+        self.query_one(
+            "#file-notes-git-push-progress-copy",
+            Static,
+        ).update(copy)
+        self.query_one(
+            "#file-notes-git-push-progress-detail",
+            Static,
+        ).update(detail)
+        self._show_push_phase(phase, operation_id)
+        self._focus_push_control(focus)
+
+    def render_push_result(
+        self,
+        projection: PushPanelResultProjection,
+        *,
+        operation_id: int,
+    ) -> None:
+        """Render complete selectable outcome copy and one typed next action."""
+        self._push_result = projection
+        self.query_one(
+            "#file-notes-git-push-result-title",
+            Static,
+        ).update(projection.title)
+        result_copy = self.query_one(
+            "#file-notes-git-push-result-copy",
+            TextArea,
+        )
+        result_copy.load_text(projection.message)
+        reason = self.query_one(
+            "#file-notes-git-push-result-reason",
+            Static,
+        )
+        reason.update(projection.disabled_reason or "")
+        reason.display = projection.disabled_reason is not None
+        self._show_push_phase("result", operation_id)
+        self._focus_push_control("#file-notes-git-push-back-session")
+
+    def _show_push_phase(
+        self,
+        phase: PushPanelPhase,
+        operation_id: int | None,
+    ) -> None:
+        """Switch only the independent guarded-push workflow presentation."""
+        self._push_phase = phase
+        self._push_operation_id = operation_id
+        self._sync_workflow_surfaces()
+        surface_id = (
+            "file-notes-git-push-review-surface"
+            if phase == "review"
+            else (
+                "file-notes-git-push-result"
+                if phase == "result"
+                else (
+                    "file-notes-git-push-progress"
+                    if phase != "list"
+                    else None
+                )
+            )
+        )
+        for widget in self.query(".file-notes-git-push-phase"):
+            widget.display = widget.id == surface_id
+        if phase == "review":
+            visible = {
+                "file-notes-git-push-back",
+                "file-notes-git-push-confirm",
+            }
+        elif phase in {"checking_candidate", "checking_remote"}:
+            visible = {"file-notes-git-push-cancel"}
+        elif phase == "pushing":
+            visible = {"file-notes-git-push-back-to-files"}
+        elif phase == "result" and self._push_result is not None:
+            action_id = _PUSH_RESULT_ACTION_BUTTON[self._push_result.action]
+            visible = {"file-notes-git-push-back-session", action_id}
+        else:
+            visible = set()
+        for button in self.query_one(
+            "#file-notes-git-push-footer"
+        ).query(Button):
+            button.display = button.id in visible
+            button.disabled = False
+        if phase == "result" and self._push_result is not None:
+            action_id = _PUSH_RESULT_ACTION_BUTTON[self._push_result.action]
+            self.query_one(f"#{action_id}", Button).disabled = (
+                not self._push_result.action_enabled
+            )
+
+    def _sync_workflow_surfaces(self) -> None:
+        """Resolve list/commit/push visibility from two independent phases."""
+        if not self.is_mounted:
+            return
+        push_active = self._push_phase != "list"
+        commit_active = self._commit_phase != "list"
+        self.query_one("#file-notes-git-list-surface").display = (
+            not push_active and not commit_active
+        )
+        self.query_one("#file-notes-git-commit-workflow").display = (
+            not push_active and commit_active
+        )
+        self.query_one("#file-notes-git-push-workflow").display = push_active
+
+    def _focus_push_control(self, selector: str) -> None:
+        operation_id = self._push_operation_id
+        if operation_id is None:
+            return
+        self.call_after_refresh(
+            partial(
+                self._focus_push_control_if_current,
+                self._push_phase,
+                operation_id,
+                selector,
+            )
+        )
+
+    def _focus_push_control_if_current(
+        self,
+        phase: PushPanelPhase,
+        operation_id: int,
+        selector: str,
+    ) -> None:
+        """Reject stale focus repair across either phase or operation ID."""
+        if (
+            not self.is_attached
+            or self._push_phase != phase
+            or self._push_operation_id != operation_id
+        ):
+            return
+        control = self.query_one(selector, Widget)
+        if any(
+            isinstance(node, Widget) and not node.display
+            for node in control.ancestors_with_self
+        ):
+            return
+        control.focus()
 
     def render_commit_form(self, projection: CommitDraftProjection) -> None:
         """Render the literal binding-scoped draft and its inline errors."""
@@ -1600,10 +2254,7 @@ class LibraryFileNotesGitPanel(Vertical):
     def _show_commit_phase(self, phase: CommitPanelPhase) -> None:
         """Switch between retained list and workflow surfaces without remount."""
         self._commit_phase = phase
-        list_surface = self.query_one("#file-notes-git-list-surface")
-        workflow = self.query_one("#file-notes-git-commit-workflow")
-        list_surface.display = phase == "list"
-        workflow.display = phase != "list"
+        self._sync_workflow_surfaces()
 
         phase_selectors = {
             "form": "#file-notes-git-commit-form",
@@ -1904,6 +2555,7 @@ class LibraryFileNotesGitPanel(Vertical):
         elif detail:
             self.set_current_status(detail)
         self._sync_commit_availability()
+        self._sync_push_availability()
         self._update_actions()
 
     def set_current_status(self, detail: str) -> None:
@@ -2348,6 +3000,104 @@ class LibraryFileNotesGitPanel(Vertical):
             )
         )
 
+    @on(Button.Pressed, "#file-notes-git-push-review")
+    def _review_push_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        availability = self._push_availability
+        if availability is not None:
+            self.post_message(self.ReviewPushRequested(availability))
+
+    @on(Button.Pressed, "#file-notes-git-push-review-details")
+    def _push_endpoint_details_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        operation_id = self._push_operation_id
+        if self._push_phase == "review" and operation_id is not None:
+            self.post_message(
+                self.PushOperationRequested("endpoint_details", operation_id)
+            )
+
+    @on(Button.Pressed, "#file-notes-git-push-back")
+    def _back_from_push_review_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        operation_id = self._push_operation_id
+        if self._push_phase == "review" and operation_id is not None:
+            self.post_message(
+                self.PushOperationRequested("back_from_review", operation_id)
+            )
+
+    @on(Button.Pressed, "#file-notes-git-push-confirm")
+    def _push_reviewed_commit_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        operation_id = self._push_operation_id
+        if self._push_phase == "review" and operation_id is not None:
+            self.post_message(
+                self.PushOperationRequested(
+                    "push_reviewed_commit",
+                    operation_id,
+                )
+            )
+
+    @on(Button.Pressed, "#file-notes-git-push-cancel")
+    def _cancel_push_check_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        operation_id = self._push_operation_id
+        if (
+            self._push_phase
+            in {"checking_candidate", "checking_remote"}
+            and operation_id is not None
+        ):
+            self.post_message(
+                self.PushOperationRequested("cancel_check", operation_id)
+            )
+
+    @on(Button.Pressed, "#file-notes-git-push-back-to-files")
+    def _back_to_files_push_continues_pressed(
+        self,
+        event: Button.Pressed,
+    ) -> None:
+        event.stop()
+        operation_id = self._push_operation_id
+        if self._push_phase == "pushing" and operation_id is not None:
+            self.post_message(
+                self.PushOperationRequested("back_to_files", operation_id)
+            )
+
+    def _post_push_result_intent(
+        self,
+        action: PushResultAction,
+    ) -> None:
+        operation_id = self._push_operation_id
+        projection = self._push_result
+        if (
+            self._push_phase != "result"
+            or operation_id is None
+            or projection is None
+            or (
+                action != "back_to_session"
+                and (
+                    projection.action != action
+                    or not projection.action_enabled
+                )
+            )
+        ):
+            return
+        self.post_message(self.PushOperationRequested(action, operation_id))
+
+    @on(Button.Pressed, "#file-notes-git-push-back-session")
+    def _back_to_push_session_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._post_push_result_intent("back_to_session")
+
+    @on(Button.Pressed, "#file-notes-git-push-review-again")
+    def _review_push_again_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._post_push_result_intent("review_again")
+
+    @on(Button.Pressed, "#file-notes-git-push-check-remote")
+    def _check_remote_again_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._post_push_result_intent("check_remote_again")
+
     @on(Button.Pressed, "#file-notes-git-commit-review")
     def _review_commit_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -2474,6 +3224,31 @@ class LibraryFileNotesGitPanel(Vertical):
 
     def action_back_to_files(self) -> None:
         """Apply the phase-specific safe Escape behavior."""
+        operation_id = self._push_operation_id
+        if self._push_phase != "list":
+            if operation_id is None:
+                return
+            if self._push_phase == "review":
+                self.post_message(
+                    self.PushOperationRequested(
+                        "back_from_review",
+                        operation_id,
+                    )
+                )
+            elif self._push_phase in {
+                "checking_candidate",
+                "checking_remote",
+            }:
+                self.post_message(
+                    self.PushOperationRequested("cancel_check", operation_id)
+                )
+            elif self._push_phase == "pushing":
+                self.post_message(
+                    self.PushOperationRequested("back_to_files", operation_id)
+                )
+            elif self._push_phase == "result":
+                self._post_push_result_intent("back_to_session")
+            return
         if self._commit_phase == "list":
             self.post_message(self.BackRequested())
         elif self._commit_phase in {"form", "checking", "confirming"}:
@@ -2513,3 +3288,216 @@ class SessionGitTrustDialog(ConfirmationDialog):
     def on_mount(self) -> None:
         """Put the safe non-executing choice first in the focus order."""
         self.query_one("#cancel-button", Button).focus()
+
+
+class PushEndpointDetailsDialog(ModalScreen[None]):
+    """Show every sanitized endpoint field in a selectable read-only surface."""
+
+    BINDINGS = [Binding("escape", "close", "Close", show=False)]
+
+    DEFAULT_CSS = """
+    PushEndpointDetailsDialog {
+        align: center middle;
+    }
+
+    #file-notes-push-endpoint-details-dialog {
+        width: 76;
+        max-width: 95%;
+        height: 16;
+        max-height: 90%;
+        border: round $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #file-notes-push-endpoint-details-title {
+        height: 1;
+        text-style: bold;
+    }
+
+    #file-notes-push-endpoint-details-text {
+        height: 1fr;
+        min-height: 4;
+        border: round $surface-lighten-1;
+        background: $surface-darken-1;
+    }
+
+    #file-notes-push-endpoint-details-close {
+        width: auto;
+        height: 1;
+        min-height: 1;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, destination: PushDestinationProjection) -> None:
+        super().__init__(id="file-notes-push-endpoint-details-screen")
+        self.selectable_details = destination.selectable_details
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="file-notes-push-endpoint-details-dialog"):
+            yield Static(
+                "Endpoint Details",
+                id="file-notes-push-endpoint-details-title",
+                markup=False,
+            )
+            yield TextArea(
+                "\n".join(
+                    f"{label}: {value}"
+                    for label, value in self.selectable_details
+                ),
+                id="file-notes-push-endpoint-details-text",
+                read_only=True,
+                soft_wrap=True,
+                tab_behavior="focus",
+            )
+            yield Button(
+                "Close",
+                id="file-notes-push-endpoint-details-close",
+                compact=True,
+            )
+
+    def on_mount(self) -> None:
+        self.query_one(
+            "#file-notes-push-endpoint-details-text",
+            TextArea,
+        ).focus()
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#file-notes-push-endpoint-details-close")
+    def _close_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_close()
+
+
+class PushDestinationAuthorizationDialog(ModalScreen[bool]):
+    """Authorize first contact with one configured sanitized destination."""
+
+    BINDINGS = [Binding("escape", "decline", "Cancel", show=False)]
+
+    DEFAULT_CSS = """
+    PushDestinationAuthorizationDialog {
+        align: center middle;
+    }
+
+    #file-notes-push-auth-dialog {
+        width: 78;
+        max-width: 95%;
+        height: auto;
+        max-height: 92%;
+        border: round $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #file-notes-push-auth-title {
+        height: 1;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #file-notes-push-auth-copy {
+        height: auto;
+        min-height: 8;
+        text-wrap: wrap;
+    }
+
+    #file-notes-push-auth-actions {
+        height: auto;
+        min-height: 1;
+        margin-top: 1;
+    }
+
+    #file-notes-push-auth-actions Button {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+    }
+    """
+
+    def __init__(
+        self,
+        candidate: PushCandidateProjection,
+        authorization: PushAuthorizationProjection,
+    ) -> None:
+        super().__init__(id="file-notes-push-auth-screen")
+        self._candidate = candidate
+        self._authorization = authorization
+
+    def compose(self) -> ComposeResult:
+        destination = self._authorization.destination
+        transport = "HTTPS" if destination.scheme == "https" else "SSH"
+        with Container(id="file-notes-push-auth-dialog"):
+            yield Static(
+                "Authorize configured destination",
+                id="file-notes-push-auth-title",
+                markup=False,
+            )
+            yield Label(
+                (
+                    f"Endpoint: {_push_destination_summary(destination)}\n"
+                    f"Local branch: {self._candidate.local_branch_ref}\n"
+                    f"Full destination ref: {destination.destination_ref}\n"
+                    f"Transport: {transport}\n\n"
+                    "Scope: authorization lasts only for this application "
+                    "process and this exact configured destination.\n"
+                    "Existing configured SSH or credential helpers may run "
+                    "after authorization. Terminal prompts are disabled.\n"
+                    "This authorization checks the destination and does not push."
+                ),
+                id="file-notes-push-auth-copy",
+                markup=False,
+            )
+            with Horizontal(id="file-notes-push-auth-actions"):
+                yield Button(
+                    "Cancel",
+                    id="file-notes-push-auth-cancel",
+                    compact=True,
+                )
+                yield Button(
+                    "Endpoint Details",
+                    id="file-notes-push-auth-details",
+                    compact=True,
+                )
+                yield Button(
+                    self._authorization.action_label,
+                    id="file-notes-push-auth-confirm",
+                    compact=True,
+                )
+
+    def on_mount(self) -> None:
+        self.query_one("#file-notes-push-auth-cancel", Button).focus()
+
+    def dismiss(self, result: bool | None = None) -> AwaitComplete:
+        """Treat any close path without an affirmative result as decline."""
+        return super().dismiss(False if result is None else result)
+
+    def action_decline(self) -> None:
+        self.dismiss(False)
+
+    @on(Button.Pressed, "#file-notes-push-auth-cancel")
+    def _cancel_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_decline()
+
+    @on(Button.Pressed, "#file-notes-push-auth-confirm")
+    def _confirm_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(True)
+
+    @on(Button.Pressed, "#file-notes-push-auth-details")
+    def _details_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.app.push_screen(
+            PushEndpointDetailsDialog(self._authorization.destination),
+            callback=self._restore_details_focus,
+        )
+
+    def _restore_details_focus(self, _result: None) -> None:
+        if self.is_mounted:
+            self.query_one("#file-notes-push-auth-details", Button).focus()
