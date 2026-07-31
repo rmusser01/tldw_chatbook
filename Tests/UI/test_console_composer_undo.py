@@ -1005,6 +1005,93 @@ def test_composer_undo_snaps_cursor_out_of_a_collapsed_restored_token():
     assert composer.draft_text() == base + "Q"
 
 
+# ---------------------------------------------------------------------------
+# TASK-1500: Ctrl+Y as a Kitty-protocol-independent redo alias. Ctrl+Shift+Z
+# collapses to plain Ctrl+Z at the wire on terminals without the Kitty
+# keyboard protocol (Terminal.app, stock iTerm2), making redo unreachable
+# there. Ctrl+Y is the C0 control EM (0x19) -- textual's `_ansi_sequences`
+# maps it to `Keys.ControlY` == "ctrl+y" everywhere, Kitty or not.
+# ---------------------------------------------------------------------------
+
+
+def test_ctrl_y_is_not_registered_as_a_binding():
+    """Routed through `on_key`'s whitelist, never `BINDINGS`, matching how
+    Ctrl+Z/Ctrl+Shift+Z are wired (TASK-1281)."""
+    keys = {binding.key for binding in chat_screen_module.ChatScreen.BINDINGS}
+    assert "ctrl+y" not in keys
+
+
+@pytest.mark.asyncio
+async def test_console_ctrl_z_then_ctrl_y_restores_the_undone_edit():
+    """AC1/AC2: Ctrl+Y redoes exactly like Ctrl+Shift+Z does, and both keys
+    keep working side by side -- Ctrl+Y is an addition, not a replacement."""
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+
+        for character in "hi":
+            composer.insert_text(character)
+        assert composer.draft_text() == "hi"
+
+        await pilot.press("ctrl+z")
+        await pilot.pause()
+        assert composer.draft_text() == ""
+
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert composer.draft_text() == "hi"
+
+        # AC2: Ctrl+Shift+Z must still work too.
+        await pilot.press("ctrl+z")
+        await pilot.pause()
+        assert composer.draft_text() == ""
+
+        await pilot.press("ctrl+shift+z")
+        await pilot.pause()
+        assert composer.draft_text() == "hi"
+
+
+@pytest.mark.asyncio
+async def test_console_ctrl_y_on_empty_redo_stack_matches_ctrl_shift_z_behavior():
+    """Consistency matters more than the choice itself: whatever
+    Ctrl+Shift+Z does on an empty redo stack (silent no-op composer-side,
+    no store write -- see `test_console_undo_redo_empty_stack_is_silent_
+    noop_via_screen`), Ctrl+Y must do identically."""
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        composer.load_draft("untouched")
+        composer.focus()
+        await pilot.pause()
+        draft_before = store.session_draft(session_id)
+
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert composer.draft_text() == "untouched"
+        assert store.session_draft(session_id) == draft_before
+
+
+def test_composer_help_documents_ctrl_y_alongside_ctrl_shift_z_for_redo():
+    """AC3: wherever undo/redo is documented, both redo keys must be listed."""
+    groups = dict(chat_screen_module.CONSOLE_WORKBENCH_SHORTCUT_GROUPS)
+    assert "Composer" in groups
+    composer = groups["Composer"]
+    flat = " ".join(f"{key} {label}" for key, label in composer).lower()
+
+    assert "undo" in flat
+    assert "redo" in flat
+    assert "ctrl+y" in flat
+    assert "ctrl+shift+z" in flat
+
+
 @pytest.mark.asyncio
 async def test_console_undo_recollapses_regardless_of_collapse_large_pastes_setting():
     """W-2 (LOW): the re-collapse used to also gate on
