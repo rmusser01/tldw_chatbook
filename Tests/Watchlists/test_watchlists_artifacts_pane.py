@@ -2141,6 +2141,129 @@ async def test_activating_an_available_citation_opens_it_in_the_reader_and_marks
 
 
 @pytest.mark.asyncio
+async def test_keyboard_browsing_the_citations_table_does_not_activate_a_row(monkeypatch):
+    """Review fix round 1 (Important), confirmed live by the reviewer:
+    focusing the citations table and pressing an arrow key must not
+    activate anything. `highlight_is_user_driven` (`table_selection.py`)
+    filters rebuild-echo noise from a real event -- it does NOT distinguish
+    a click from keyboard cursor movement, so if the citations table were
+    routed through `RowHighlighted` the same way briefings/scripts still
+    are, a single `down` press would switch sections and mark an item read
+    on every step of merely BROWSING the list, with no confirmation at all.
+    This drives the REAL `DataTable` (focus + `pilot.press("down")`), not
+    `pane.activate_citation_by_id`, so it is `on_data_table_row_
+    highlighted`'s own citations-table no-op that is under test.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app, items=2)
+    rows = _seeded_item_rows(app)
+    body = (
+        "## This week\n\n"
+        f"{rows[0]['title']} happened [item {rows[0]['id']}]. "
+        f"{rows[1]['title']} happened [item {rows[1]['id']}].\n"
+    )
+    _use_fake_chat(monkeypatch, _FakeChat(reply=body))
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+        # Settle the `BriefingSelected` reload cascade -- see the comment on
+        # the identical call in `test_a_complete_briefings_citations_table_
+        # lists_each_cited_id_with_its_title` above.
+        await screen._load_briefings()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert len(pane.citations) == 2, (
+            "the fixture needs two citations to browse between"
+        )
+
+        table = pane.query_one("#artifacts-citations-table", DataTable)
+        table.focus()
+        await pilot.pause(0.2)
+        assert table.cursor_row == 0
+
+        notes_before = app.notify.call_count
+        await pilot.press("down")
+        for _ in range(30):
+            await pilot.pause()
+
+        assert table.cursor_row == 1, (
+            "the cursor must still move -- browsing itself is not blocked"
+        )
+        assert screen.active_section == "artifacts", (
+            "arrow-key browsing of the citations table must not switch sections"
+        )
+        assert app.notify.call_count == notes_before, (
+            "arrow-key browsing must not toast either (no pruned-citation refusal)"
+        )
+        db = app.watchlist_bundle_service.db
+        assert db.get_item_status(rows[0]["id"]) == "new"
+        assert db.get_item_status(rows[1]["id"]) == "new"
+
+
+@pytest.mark.asyncio
+async def test_pressing_enter_on_a_citation_activates_it_through_the_real_table(
+    monkeypatch,
+):
+    """Review fix round 1: closes the gap where every citation test up to
+    this point called `pane.activate_citation_by_id` directly, so nothing
+    exercised a real `DataTable` input event. Drives the table for real --
+    focus, cursor already on the (only) row, `Enter` -- so `on_data_table_
+    row_selected`'s own citations-table branch is what is under test.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app, items=2)
+    db = app.watchlist_bundle_service.db
+    # See the identical redirect + comment in
+    # `test_activating_an_available_citation_opens_it_in_the_reader_and_
+    # marks_it_read` above: `local_watchlists_service`'s lazy `db_factory`
+    # resolves the real, unpatched db path in this harness, which is a
+    # different database than the one this test seeds and asserts against.
+    monkeypatch.setattr(app.local_watchlists_service, "db_factory", lambda: db)
+    cited = _seeded_item_rows(app)[0]
+    _use_fake_chat(
+        monkeypatch,
+        _FakeChat(reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"),
+    )
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+        await screen._load_briefings()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        table = pane.query_one("#artifacts-citations-table", DataTable)
+        table.focus()
+        await pilot.pause(0.2)
+        assert table.cursor_row == 0
+
+        await pilot.press("enter")
+        # Real wall-clock delay for `handle_citation_activated`'s own
+        # `set_timer(0.05, ...)` -- see the identical comment above.
+        await pilot.pause(0.3)
+
+        assert screen.active_section == "items", (
+            "Enter on a citation row must activate it -- switching to the "
+            "Read tab, exactly like a direct call to activate_citation_by_id"
+        )
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        for _ in range(60):
+            await pilot.pause()
+            if content_pane.item is not None:
+                break
+        assert content_pane.item is not None
+        assert content_pane.item["item_id"] == cited["id"]
+
+        for _ in range(60):
+            await pilot.pause()
+            if db.get_item_status(cited["id"]) == "reviewed":
+                break
+        assert db.get_item_status(cited["id"]) == "reviewed"
+
+
+@pytest.mark.asyncio
 async def test_citations_do_not_shrink_the_briefings_table_below_its_pinned_minimum(
     monkeypatch,
 ):

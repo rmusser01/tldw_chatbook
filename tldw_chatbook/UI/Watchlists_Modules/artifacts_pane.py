@@ -496,12 +496,18 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
 
         if self.citations:
             # Task 6: a small citations table under the body -- one row per
-            # `[item N]` the body actually cites, activatable (a click, or
-            # arrow-navigating to it -- the same idiom every table on this
-            # pane already uses) to jump straight to that item in the
-            # reader, or, for an item pruned since this briefing was
-            # written, a toast saying so
+            # `[item N]` the body actually cites, activatable via `Enter`
+            # (or a second click on an already-current row) to jump
+            # straight to that item in the reader, or, for an item pruned
+            # since this briefing was written, a toast saying so
             # (`WatchlistsCollectionsScreen.handle_citation_activated`).
+            # Deliberately NOT on mere highlight/cursor-arrival, unlike the
+            # briefings/scripts tables below -- see `on_data_table_cell_
+            # highlighted`'s docstring (review fix round 1): activating a
+            # citation switches sections and marks an item read, so arrow-
+            # key BROWSING of this list must not perform that action on
+            # every single step the way it harmlessly does for the other
+            # two, in-place, tables.
             # Never a link inside the Markdown body itself -- see
             # `_MARKDOWN_HYPERLINKS` above; this is a separate widget
             # affordance instead, exactly as the plan requires.
@@ -726,6 +732,24 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             self.post_message(ScriptSelected(script))
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Fires on activation (`Enter`, or a second click on an
+        already-current row) -- but only while a table's `cursor_type` is
+        `"row"`. None of this pane's tables set that (all three default to
+        `"cell"`, unset here same as everywhere else on this pane), so in
+        practice `on_data_table_cell_selected` below is the event a real
+        `Enter`/re-click activation actually reaches for the citations
+        table today; this handler is kept (and still routes the same way)
+        in case a future change ever does set `cursor_type = "row"`.
+
+        See `on_data_table_cell_highlighted`'s docstring for why the
+        citations table is only ever activated here/`on_data_table_cell_
+        selected`, never on mere highlight (review fix round 1): the other
+        two tables reach their selection through a highlight (a single
+        click) instead, but a citation's activation switches sections and
+        marks an item read, so it requires the same deliberate
+        confirmation `Enter`/re-click already is for the OTHER kind of
+        action a table row can trigger.
+        """
         event.stop()
         if event.row_key is None or event.row_key.value is None:
             return
@@ -736,38 +760,79 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         else:
             self.select_briefing_by_id(str(event.row_key.value))
 
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        """Select on cursor movement, which is what a single click produces.
-
-        Gated on `highlight_is_user_driven` -- see this module's docstring.
-        Routes by which of this pane's THREE tables (briefings, scripts,
-        citations) posted the event -- all three are `recompose=True`-
-        backed, so all three announce a row-0 highlight on every rebuild,
-        and all three need the same gate for the same reason.
+    def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
+        """The activation event a real `Enter`/re-click actually produces
+        here (review fix round 1): every table's `cursor_type` on this pane
+        defaults to `"cell"`, so `DataTable._post_selected_message` posts
+        `CellSelected`, never `RowSelected` -- see `on_data_table_row_
+        selected`'s own docstring. Handled for the CITATIONS table only:
+        briefings/scripts already select on `RowHighlighted` (a single
+        click reaching the pane's `selected_briefing`/`selected_script`
+        reactive), and adding a second, redundant activation path for
+        those two is out of this fix's scope -- their `CellSelected` is
+        deliberately left unhandled, unchanged from before this review
+        round.
         """
         event.stop()
+        if event.data_table.id != "artifacts-citations-table":
+            return
+        row_key = getattr(event.cell_key, "row_key", None)
+        if row_key is None or row_key.value is None:
+            return
+        self.activate_citation_by_id(str(row_key.value))
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Select on cursor movement, which is what a single click produces
+        -- while a table's `cursor_type` is `"row"`. None of this pane's
+        tables set that (see `on_data_table_cell_highlighted`'s docstring:
+        the default is `"cell"`, so THAT handler, not this one, is what a
+        real click/arrow key actually reaches today); this stays wired, and
+        routes the same way, in case a future change ever does set
+        `cursor_type = "row"` for one of them.
+
+        Review fix round 1 (Important): the citations table is deliberately
+        LEFT OUT of this routing, unlike briefings/scripts -- see
+        `on_data_table_cell_highlighted`'s docstring for the full reasoning
+        (this method's own citations branch would suffer the identical
+        defect, were `cursor_type` ever changed to `"row"`, so it is left
+        out here too, for consistency, even though it is not the path the
+        reviewer's live repro actually went through).
+        """
+        event.stop()
+        if event.data_table.id == "artifacts-citations-table":
+            return
         if not highlight_is_user_driven(event):
             return
         if event.row_key is None or event.row_key.value is None:
             return
-        if event.data_table.id == "artifacts-citations-table":
-            self.activate_citation_by_id(str(event.row_key.value))
-        elif event.data_table.id == "artifacts-scripts-table":
+        if event.data_table.id == "artifacts-scripts-table":
             self.select_script_by_id(str(event.row_key.value))
         else:
             self.select_briefing_by_id(str(event.row_key.value))
 
     def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
-        """Same, for a table whose cursor is cell-shaped rather than row-shaped."""
+        """Same, for a table whose cursor is cell-shaped rather than row-shaped
+        -- which, since none of this pane's tables set `cursor_type`, is all
+        of them (`DataTable`'s own default is `"cell"`; `DataTable.
+        watch_cursor_coordinate` only posts `RowHighlighted` when `cursor_
+        type == "row"`). This is therefore the event a real click or arrow
+        key actually produces here, unlike `on_data_table_row_highlighted`
+        above.
+
+        Review fix round 1: the citations table is inert here too, for the
+        identical reason `on_data_table_row_highlighted`'s docstring gives
+        -- confirmed live by the reviewer with a real `down` press, which
+        reaches THIS handler, not that one.
+        """
         event.stop()
+        if event.data_table.id == "artifacts-citations-table":
+            return
         if not highlight_is_user_driven(event):
             return
         row_key = getattr(event.cell_key, "row_key", None)
         if row_key is None or row_key.value is None:
             return
-        if event.data_table.id == "artifacts-citations-table":
-            self.activate_citation_by_id(str(row_key.value))
-        elif event.data_table.id == "artifacts-scripts-table":
+        if event.data_table.id == "artifacts-scripts-table":
             self.select_script_by_id(str(row_key.value))
         else:
             self.select_briefing_by_id(str(row_key.value))
