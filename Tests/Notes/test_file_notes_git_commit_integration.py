@@ -947,6 +947,76 @@ async def test_commit_review_attached_repository_returns_sanitized_projection(
 
 
 @pytest.mark.asyncio
+async def test_candidate_publication_review_snapshot_retains_provenance_seed(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+
+    service, _binding, result = await _prepare_owned_review(repository)
+
+    assert result.handle is not None
+    snapshot = service._commit_review_snapshots[result.handle._token]
+    seed = snapshot.candidate_seed
+    assert not hasattr(seed, "guarded_commit_capture")
+    assert (
+        seed._guarded_commit_identity
+        is snapshot.capture._guarded_commit_identity
+    )
+    assert seed.subject == "Review subject"
+    assert tuple(note.display_text for note in seed.included_notes) == ("note.md",)
+    assert seed.change_types == ("Modified",)
+    assert "staged\n" not in repr(seed)
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_candidate_publication_immediate_success_uses_owner_locked_seam(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _init_repository(tmp_path)
+    service, binding, review = await _prepare_owned_review(repository)
+    assert review.handle is not None
+    review_snapshot = service._commit_review_snapshots[review.handle._token]
+    seed = review_snapshot.candidate_seed
+    original_publish = FileNotesSessionOwner.publish_commit_outcome
+    observed: list[tuple[object, object]] = []
+
+    def observe_publication(self, lease, capture, publication):
+        result = original_publish(self, lease, capture, publication)
+        if result.published and publication.state == "succeeded":
+            observed.append(
+                (
+                    publication.candidate_seed,
+                    self.snapshot(capture.binding).push_candidate,
+                )
+            )
+        return result
+
+    monkeypatch.setattr(
+        FileNotesSessionOwner,
+        "publish_commit_outcome",
+        observe_publication,
+    )
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "succeeded"
+    assert len(observed) == 1
+    assert observed[0][0] is seed
+    assert observed[0][1] == service._owner.snapshot(binding).push_candidate
+    availability = service._owner.snapshot(binding).push_candidate
+    assert availability is not None
+    assert availability.candidate.parent_oid == review_snapshot.capture.head.object_id
+    assert availability.candidate.candidate_oid == outcome.commit_object_id
+    assert availability.candidate.subject == "Review subject"
+    assert tuple(
+        note.display_text for note in availability.candidate.included_notes
+    ) == ("note.md",)
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_commit_review_allows_linked_worktree_without_worktree_config(
     tmp_path: Path,
 ) -> None:
@@ -2679,6 +2749,11 @@ async def test_guarded_commit_retains_newer_post_commit_worktree_edit(
     assert tuple(
         (row.group_id, row.state) for row in snapshot.git_status.rows
     ) == ((1, "unstaged"),)
+    assert snapshot.push_candidate is not None
+    assert snapshot.push_candidate.candidate.candidate_oid == outcome.commit_object_id
+    assert snapshot.push_candidate.candidate.included_notes[0].display_text == (
+        "note.md"
+    )
     await service.shutdown()
 
 
@@ -2842,11 +2917,36 @@ async def test_commit_check_again_waits_for_lock_or_special_state(
 @pytest.mark.asyncio
 async def test_commit_check_again_converges_to_exact_delayed_success(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repository = _init_repository(tmp_path)
     service, binding, review, runner = await _prepare_uncertain_commit_recovery(
         repository,
         mode="uncertain",
+    )
+    evidence = service._uncertain_commit
+    assert evidence is not None
+    seed = evidence.proof.candidate_seed
+    assert seed.subject == "Review subject"
+    assert tuple(note.display_text for note in seed.included_notes) == ("note.md",)
+    original_publish = FileNotesSessionOwner.publish_commit_outcome
+    observed: list[tuple[object, object]] = []
+
+    def observe_publication(self, lease, capture, publication):
+        result = original_publish(self, lease, capture, publication)
+        if result.published and publication.state == "succeeded":
+            observed.append(
+                (
+                    publication.candidate_seed,
+                    self.snapshot(capture.binding).push_candidate,
+                )
+            )
+        return result
+
+    monkeypatch.setattr(
+        FileNotesSessionOwner,
+        "publish_commit_outcome",
+        observe_publication,
     )
     new_head = _commit_reviewed_index(repository, review)
     runner.terminal = True
@@ -2862,6 +2962,18 @@ async def test_commit_check_again_converges_to_exact_delayed_success(
     assert snapshot.changes == ()
     assert dict(snapshot.staging_ownership) == {}
     assert service._uncertain_commit is None
+    assert len(observed) == 1
+    assert observed[0][0] is seed
+    assert observed[0][1] == snapshot.push_candidate
+    assert snapshot.push_candidate is not None
+    assert review.projection is not None
+    assert snapshot.push_candidate.candidate.candidate_oid == new_head
+    assert (
+        snapshot.push_candidate.candidate.parent_oid
+        == review.projection.old_commit
+    )
+    assert snapshot.push_candidate.candidate.subject == "Review subject"
+    assert snapshot.push_candidate.change_types == ("Modified",)
     await service.shutdown()
 
 

@@ -16,7 +16,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Generic, Literal, Protocol, TypeVar
 
@@ -37,6 +37,7 @@ from tldw_chatbook.Notes.file_notes_git_commit import (
     parse_raw_commit_object,
     parse_raw_staged_delta,
 )
+from tldw_chatbook.Notes.file_notes_git_push import PushIncludedNote
 from tldw_chatbook.Notes.file_notes_session_owner import (
     CommitAuthorityCapture,
     CommitPublication,
@@ -56,6 +57,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     SessionGitStatus,
     SessionGitRow,
     StagingOwnership,
+    PushCandidateSeed,
     coalesce_session_changes,
 )
 
@@ -266,6 +268,7 @@ class _CommitReviewSnapshot:
     message: bytes
     author: GitIdentity
     committer: GitIdentity
+    candidate_seed: PushCandidateSeed = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,6 +302,7 @@ class _CommitRecoveryProof:
     message: bytes
     author: GitIdentity
     committer: GitIdentity
+    candidate_seed: PushCandidateSeed = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2905,6 +2909,7 @@ class FileNotesGitService:
             repository=repository,
             head=reviewed.head,
             group_sequence_ids=reviewed.group_sequence_ids,
+            _guarded_commit_identity=reviewed._guarded_commit_identity,
         )
         if capture is None:
             return None
@@ -3147,6 +3152,11 @@ class FileNotesGitService:
                 if row.group_id not in retired_groups
             ),
         )
+        if recovery_evidence is not None:
+            candidate_seed = recovery_evidence.proof.candidate_seed
+        else:
+            assert snapshot is not None
+            candidate_seed = snapshot.candidate_seed
         publication = self._owner.publish_commit_outcome(
             lease,
             capture,
@@ -3156,6 +3166,7 @@ class FileNotesGitService:
                 retired_sequence_ids=tuple(retired),
                 divergent_sequence_ids=tuple(divergent),
                 refreshed_status=refreshed_status,
+                candidate_seed=candidate_seed,
             ),
         )
         if not publication.published:
@@ -3277,6 +3288,7 @@ class FileNotesGitService:
                 message=snapshot.message,
                 author=snapshot.author,
                 committer=snapshot.committer,
+                candidate_seed=snapshot.candidate_seed,
             ),
             recovery_capability=recovery_capability,
             retained_child=retained_child,
@@ -3628,12 +3640,22 @@ class FileNotesGitService:
             author=author,
             committer=committer,
         )
+        candidate_seed = PushCandidateSeed.from_commit_capture(
+            capture,
+            subject=message.partition(b"\n")[0].decode("utf-8"),
+            included_notes=tuple(
+                PushIncludedNote(note.group_id, note.display_text)
+                for note in included_notes
+            ),
+            change_types=tuple(note.change_type for note in included_notes),
+        )
         self._commit_review_snapshots[token] = _CommitReviewSnapshot(
             capture=capture,
             proof=proof,
             message=message,
             author=author,
             committer=committer,
+            candidate_seed=candidate_seed,
         )
         return CommitReviewResult(
             "ready",

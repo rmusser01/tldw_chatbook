@@ -8,7 +8,9 @@ from time import monotonic
 
 import pytest
 
+import tldw_chatbook.Notes.file_notes_session_owner as session_owner
 from tldw_chatbook.Notes.file_notes_git_commit import CommitRecoveryProjection
+from tldw_chatbook.Notes.file_notes_git_push import PushIncludedNote
 from tldw_chatbook.Notes.file_notes_session_owner import (
     CommitAuthorityCapture,
     CommitPublication,
@@ -135,10 +137,11 @@ def _ownership_for(
     *,
     path: str,
     object_id: str,
+    head_object_id: str = "b" * 40,
 ) -> StagingOwnership:
     return StagingOwnership(
         repository=repository,
-        head=HeadIdentity.attached("refs/heads/main", "b" * 40),
+        head=HeadIdentity.attached("refs/heads/main", head_object_id),
         approved_endpoint_topology=(path,),
         approved_move_edges=(),
         approved_current_path=path,
@@ -159,6 +162,7 @@ def _ready_status(
     repository: RepositoryIdentity,
     *,
     state: str = "ready",
+    head_object_id: str = "b" * 40,
 ) -> SessionGitStatus:
     generation = owner.next_status_generation(binding)
     assert generation is not None
@@ -167,7 +171,7 @@ def _ready_status(
         status_generation=generation,
         state=state,  # type: ignore[arg-type]
         repository=repository,
-        head=HeadIdentity.attached("refs/heads/main", "b" * 40),
+        head=HeadIdentity.attached("refs/heads/main", head_object_id),
     )
 
 
@@ -234,6 +238,117 @@ def _capture_commit_authority(
     return lease, capture
 
 
+def _push_candidate_seed(
+    capture: CommitAuthorityCapture,
+    *,
+    subject: str = "Guarded notes",
+    included_notes: tuple[PushIncludedNote, ...] | None = None,
+    change_types: tuple[str, ...] = ("Modified", "New"),
+):
+    return session_owner.PushCandidateSeed.from_commit_capture(
+        capture,
+        subject=subject,
+        included_notes=(
+            included_notes
+            if included_notes is not None
+            else (
+                PushIncludedNote(1, "[bold]note.md[/bold]"),
+                PushIncludedNote(2, "second.md"),
+            )
+        ),
+        change_types=change_types,
+    )
+
+
+def _publish_push_candidate(
+    owner: FileNotesSessionOwner,
+    binding: SessionBinding,
+):
+    repository, _ownership, sequence_ids, _status = _prepare_commit_authority(
+        owner,
+        binding,
+    )
+    lease, capture = _capture_commit_authority(
+        owner,
+        binding,
+        repository,
+        sequence_ids,
+    )
+    seed = _push_candidate_seed(capture)
+    publication = owner.publish_commit_outcome(
+        lease,
+        capture,
+        CommitPublication(
+            state="succeeded",
+            new_head=HeadIdentity.attached("refs/heads/main", "d" * 40),
+            retired_sequence_ids=(1, 2),
+            candidate_seed=seed,
+        ),
+    )
+    assert publication.published
+    lease.release()
+    return repository, capture, seed
+
+
+def _publish_followup_push_candidate(
+    owner: FileNotesSessionOwner,
+    binding: SessionBinding,
+    repository: RepositoryIdentity,
+):
+    assert owner.record_change(
+        binding,
+        SessionChange("created", "third.md"),
+    )
+    ownership = _ownership_for(
+        repository,
+        path="third.md",
+        object_id="e" * 40,
+        head_object_id="d" * 40,
+    )
+    status = _ready_status(
+        owner,
+        binding,
+        repository,
+        head_object_id="d" * 40,
+    )
+    assert owner.publish_status(binding, status)
+    assert owner.publish_ownership(
+        binding,
+        {3: ownership},
+        group_sequence_ids={3: (3,)},
+    )
+    lease = owner.try_acquire_mutation(binding)
+    assert lease is not None
+    capture = owner.capture_commit_authority(
+        lease,
+        binding=binding,
+        authority_generation=owner.snapshot(binding).git_authority_generation,
+        repository=repository,
+        head=HeadIdentity.attached("refs/heads/main", "d" * 40),
+        group_sequence_ids={3: (3,)},
+    )
+    assert isinstance(capture, CommitAuthorityCapture)
+    seed = _push_candidate_seed(
+        capture,
+        subject="Follow-up notes",
+        included_notes=(PushIncludedNote(3, "third.md"),),
+        change_types=("New",),
+    )
+    publication = owner.publish_commit_outcome(
+        lease,
+        capture,
+        CommitPublication(
+            state="succeeded",
+            new_head=HeadIdentity.attached("refs/heads/main", "f" * 40),
+            retired_sequence_ids=(3,),
+            candidate_seed=seed,
+        ),
+    )
+    assert publication.published
+    lease.release()
+    return capture, seed
+
+
 def _publish_uncertain_commit(
     owner: FileNotesSessionOwner,
     binding: SessionBinding,
@@ -271,6 +386,358 @@ def _publish_uncertain_commit(
     )
     lease.release()
     return repository, ownership, publication.recovery_capability
+
+
+def test_candidate_publication_is_atomic_with_success_and_copies_provenance(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+
+    repository, guarded_capture, seed = _publish_push_candidate(
+        owner,
+        binding,
+    )
+
+    snapshot = owner.snapshot(binding)
+    availability = snapshot.push_candidate
+    assert availability is not None
+    assert availability.generation == snapshot.push_candidate_generation == 1
+    assert availability.candidate.local_branch_ref == "refs/heads/main"
+    assert availability.candidate.parent_oid == "b" * 40
+    assert availability.candidate.candidate_oid == "d" * 40
+    assert availability.candidate.subject == "Guarded notes"
+    assert availability.candidate.included_note_count == 2
+    assert tuple(
+        note.display_text for note in availability.candidate.included_notes
+    ) == ("[bold]note.md[/bold]", "second.md")
+    assert availability.change_types == ("Modified", "New")
+    assert availability.change_counts == (("New", 1), ("Modified", 1))
+    assert snapshot.changes == ()
+
+    authority = owner.capture_push_candidate(
+        binding,
+        candidate_generation=availability.generation,
+        repository=repository,
+        head=HeadIdentity.attached("refs/heads/main", "d" * 40),
+        sole_parent_oid="b" * 40,
+    )
+    assert authority is not None
+    assert authority.binding == binding
+    assert authority.selected_root_generation == binding.generation
+    assert authority.repository == repository
+    assert authority.repository_trust_generation > 0
+    assert authority.candidate_generation == availability.generation
+    assert authority.candidate == availability.candidate
+    assert authority.sole_parent_oid == "b" * 40
+    assert not hasattr(authority, "guarded_commit_capture")
+    assert not hasattr(seed, "guarded_commit_capture")
+    assert (
+        authority._guarded_commit_identity
+        is guarded_capture._guarded_commit_identity
+    )
+    assert authority._guarded_commit_identity is seed._guarded_commit_identity
+    assert "a" * 40 not in repr(authority)
+    assert "c" * 40 not in repr(authority)
+    assert "_token" not in repr(authority)
+    assert "object at" not in repr(snapshot)
+
+
+@pytest.mark.parametrize("state", ["failed_unchanged", "uncertain"])
+def test_push_candidate_is_not_created_for_unproven_commit_outcome(
+    tmp_path: Path,
+    state: str,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    repository, _ownership, sequence_ids, _status = _prepare_commit_authority(
+        owner,
+        binding,
+    )
+    lease, capture = _capture_commit_authority(
+        owner,
+        binding,
+        repository,
+        sequence_ids,
+    )
+    publication = CommitPublication(
+        state=state,  # type: ignore[arg-type]
+        recovery_projection=(
+            CommitRecoveryProjection("Check exact local state.", True)
+            if state == "uncertain"
+            else None
+        ),
+    )
+
+    result = owner.publish_commit_outcome(lease, capture, publication)
+
+    assert result.published
+    snapshot = owner.snapshot(binding)
+    assert snapshot.push_candidate is None
+    assert snapshot.push_candidate_generation == 0
+    lease.release()
+
+
+def test_push_candidate_generation_is_independent_from_later_note_edits(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    _repository, _guarded_capture, _seed = _publish_push_candidate(
+        owner,
+        binding,
+    )
+    before = owner.snapshot(binding)
+
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "later.md"),
+    )
+
+    after = owner.snapshot(binding)
+    assert after.git_authority_generation > before.git_authority_generation
+    assert after.push_candidate_generation == before.push_candidate_generation
+    assert after.push_candidate == before.push_candidate
+
+
+def test_push_candidate_survives_status_stage_and_unstage_authority_churn(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    repository, _guarded_capture, _seed = _publish_push_candidate(
+        owner,
+        binding,
+    )
+    baseline = owner.snapshot(binding)
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "later.md"),
+    )
+    status = _ready_status(
+        owner,
+        binding,
+        repository,
+        head_object_id="d" * 40,
+    )
+    assert owner.publish_status(binding, status)
+    ownership = _ownership_for(
+        repository,
+        path="later.md",
+        object_id="e" * 40,
+        head_object_id="d" * 40,
+    )
+    assert owner.publish_stage_result(
+        binding,
+        repository,
+        {3: ownership},
+        group_sequence_ids={3: (3,)},
+    )
+    assert owner.publish_unstage_result(
+        binding,
+        repository,
+        {3: ownership},
+        (3,),
+    )
+
+    after = owner.snapshot(binding)
+    assert after.git_authority_generation > baseline.git_authority_generation
+    assert after.push_candidate_generation == baseline.push_candidate_generation
+    assert after.push_candidate == baseline.push_candidate
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ["root", "repository", "trust", "branch", "lineage", "shutdown"],
+)
+def test_push_candidate_authority_is_revoked_by_owner_or_lineage_drift(
+    tmp_path: Path,
+    drift: str,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    repository, _guarded_capture, _seed = _publish_push_candidate(
+        owner,
+        binding,
+    )
+    before = owner.snapshot(binding)
+    availability = before.push_candidate
+    assert availability is not None
+
+    if drift == "root":
+        current_binding = owner.select_root(tmp_path / "other")
+    elif drift == "repository":
+        changed = RepositoryIdentity(
+            worktree_root=repository.worktree_root,
+            git_dir=repository.git_dir,
+            git_common_dir=repository.git_common_dir,
+            worktree_identity=FileSystemIdentity(device=9, inode=9),
+            git_dir_identity=repository.git_dir_identity,
+            git_common_dir_identity=repository.git_common_dir_identity,
+        )
+        assert owner.publish_trust(binding, changed)
+        current_binding = binding
+    elif drift == "trust":
+        assert owner.clear_trust(binding)
+        current_binding = binding
+    elif drift == "branch":
+        assert (
+            owner.capture_push_candidate(
+                binding,
+                candidate_generation=availability.generation,
+                repository=repository,
+                head=HeadIdentity.attached("refs/heads/other", "d" * 40),
+                sole_parent_oid="b" * 40,
+            )
+            is None
+        )
+        current_binding = binding
+    elif drift == "lineage":
+        assert (
+            owner.capture_push_candidate(
+                binding,
+                candidate_generation=availability.generation,
+                repository=repository,
+                head=HeadIdentity.attached("refs/heads/main", "d" * 40),
+                sole_parent_oid="c" * 40,
+            )
+            is None
+        )
+        current_binding = binding
+    else:
+        owner.shutdown()
+        current_binding = binding
+
+    after = owner.snapshot(current_binding)
+    assert after.push_candidate is None
+    assert after.push_candidate_generation > before.push_candidate_generation
+
+
+def test_push_candidate_is_process_only_and_does_not_revive_after_trust_aba(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    repository, _guarded_capture, _seed = _publish_push_candidate(
+        owner,
+        binding,
+    )
+    availability = owner.snapshot(binding).push_candidate
+    assert availability is not None
+    captured = owner.capture_push_candidate(
+        binding,
+        candidate_generation=availability.generation,
+        repository=repository,
+        head=HeadIdentity.attached("refs/heads/main", "d" * 40),
+        sole_parent_oid="b" * 40,
+    )
+    assert captured is not None
+
+    assert owner.clear_trust(binding)
+    assert owner.publish_trust(binding, repository)
+
+    rebound = owner.snapshot(binding)
+    assert rebound.push_candidate is None
+    assert not owner.clear_push_candidate(captured)
+    restarted = FileNotesSessionOwner()
+    restarted_binding = restarted.select_root(root)
+    assert restarted.publish_trust(restarted_binding, repository)
+    restarted_snapshot = restarted.snapshot(restarted_binding)
+    assert restarted_snapshot.push_candidate is None
+    assert restarted_snapshot.push_candidate_generation == 0
+
+
+def test_newer_guarded_commit_replaces_push_candidate_and_stale_cannot_clear(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    repository, _guarded_capture, _seed = _publish_push_candidate(
+        owner,
+        binding,
+    )
+    first = owner.snapshot(binding).push_candidate
+    assert first is not None
+    stale_capture = owner.capture_push_candidate(
+        binding,
+        candidate_generation=first.generation,
+        repository=repository,
+        head=HeadIdentity.attached("refs/heads/main", "d" * 40),
+        sole_parent_oid="b" * 40,
+    )
+    assert stale_capture is not None
+
+    guarded_capture, seed = _publish_followup_push_candidate(
+        owner,
+        binding,
+        repository,
+    )
+
+    replacement = owner.snapshot(binding).push_candidate
+    assert replacement is not None
+    assert replacement.generation > first.generation
+    assert replacement.candidate.parent_oid == "d" * 40
+    assert replacement.candidate.candidate_oid == "f" * 40
+    assert replacement.candidate.included_notes == (
+        PushIncludedNote(3, "third.md"),
+    )
+    assert not owner.clear_push_candidate(stale_capture)
+    assert owner.snapshot(binding).push_candidate == replacement
+    assert (
+        owner.capture_push_candidate(
+            binding,
+            candidate_generation=first.generation,
+            repository=repository,
+            head=HeadIdentity.attached("refs/heads/main", "d" * 40),
+            sole_parent_oid="b" * 40,
+        )
+        is None
+    )
+    assert owner.snapshot(binding).push_candidate == replacement
+    fresh_capture = owner.capture_push_candidate(
+        binding,
+        candidate_generation=replacement.generation,
+        repository=repository,
+        head=HeadIdentity.attached("refs/heads/main", "f" * 40),
+        sole_parent_oid="d" * 40,
+    )
+    assert fresh_capture is not None
+    assert (
+        fresh_capture._guarded_commit_identity
+        is guarded_capture._guarded_commit_identity
+    )
+    assert fresh_capture._guarded_commit_identity is seed._guarded_commit_identity
+    assert fresh_capture._token is not stale_capture._token
+
+
+@pytest.mark.parametrize("completion", ["already_published", "succeeded"])
+def test_push_candidate_completion_clears_only_the_exact_private_token(
+    tmp_path: Path,
+    completion: str,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / completion)
+    repository, _guarded_capture, _seed = _publish_push_candidate(
+        owner,
+        binding,
+    )
+    availability = owner.snapshot(binding).push_candidate
+    assert availability is not None
+    capture = owner.capture_push_candidate(
+        binding,
+        candidate_generation=availability.generation,
+        repository=repository,
+        head=HeadIdentity.attached("refs/heads/main", "d" * 40),
+        sole_parent_oid="b" * 40,
+    )
+    assert capture is not None
+
+    assert owner.clear_push_candidate(capture)
+    cleared = owner.snapshot(binding)
+    assert cleared.push_candidate is None
+    assert cleared.push_candidate_generation > availability.generation
+    assert not owner.clear_push_candidate(capture)
 
 
 def test_commit_authority_generation_changes_only_for_material_owner_facts(
@@ -804,6 +1271,7 @@ def test_commit_publication_success_retires_only_proven_whole_groups(
         repository,
         sequence_ids,
     )
+    seed = _push_candidate_seed(capture)
     before_publication = owner.snapshot(binding).git_authority_generation
 
     publication = owner.publish_commit_outcome(
@@ -817,6 +1285,7 @@ def test_commit_publication_success_retires_only_proven_whole_groups(
             ),
             retired_sequence_ids=(1,),
             divergent_sequence_ids=(2,),
+            candidate_seed=seed,
         ),
     )
 
@@ -855,6 +1324,7 @@ def test_commit_publication_rejects_partial_group_retirement(
         repository,
         sequence_ids,
     )
+    seed = _push_candidate_seed(capture)
 
     publication = owner.publish_commit_outcome(
         lease,
@@ -867,6 +1337,7 @@ def test_commit_publication_rejects_partial_group_retirement(
             ),
             retired_sequence_ids=(1,),
             divergent_sequence_ids=(2, 3),
+            candidate_seed=seed,
         ),
     )
 
@@ -993,6 +1464,7 @@ def test_commit_publication_uncertainty_fallback_does_not_relax_terminal_states(
         binding,
         SessionChange("modified", "later.md"),
     )
+    seed = _push_candidate_seed(capture)
 
     success = owner.publish_commit_outcome(
         lease,
@@ -1001,6 +1473,7 @@ def test_commit_publication_uncertainty_fallback_does_not_relax_terminal_states(
             state="succeeded",
             new_head=HeadIdentity.attached("refs/heads/main", "d" * 40),
             retired_sequence_ids=(1, 2),
+            candidate_seed=seed,
         ),
     )
     failed = owner.publish_commit_outcome(
