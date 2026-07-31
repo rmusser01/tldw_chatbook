@@ -21,8 +21,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from rich.markup import escape as escape_markup
 from textual.app import App
-from textual.widgets import Input, Select, TextArea
+from textual.widgets import Button, Input, Select, TextArea
 
 import tldw_chatbook
 from tldw_chatbook.DB.Evals_DB import EvalsDB
@@ -51,9 +52,14 @@ class _FakeOrchestrator:
 
 
 class _FakeAppInstance:
-    def __init__(self, db: EvalsDB) -> None:
+    def __init__(self, db: EvalsDB, app_config: dict | None = None) -> None:
         self.evaluation_orchestrator = _FakeOrchestrator(db)
         self.notifications: list[tuple[str, str]] = []
+        #: Read by EvalsScreen._current_app_config for the Task 6
+        #: zero-models "Create target" flow (sample_bench.
+        #: resolve_sample_target's own configured-endpoint gate) --
+        #: mirrors test_evals_screen.py's own _FakeAppInstance.
+        self.app_config: dict = app_config or {}
 
     def notify(self, message: str, *, severity: str = "information", **kwargs) -> None:
         self.notifications.append((message, severity))
@@ -78,6 +84,17 @@ def evals_db() -> EvalsDB:
 @pytest.fixture
 def evals_app(evals_db: EvalsDB) -> EvalsHarness:
     return EvalsHarness(_FakeAppInstance(evals_db))
+
+
+@pytest.fixture
+def evals_app_configured(evals_db: EvalsDB) -> EvalsHarness:
+    """Mirrors ``test_evals_screen.py``'s own ``sample_bench_app``: a
+    configured llama.cpp endpoint, used by the Task 6 zero-models
+    "Create target" flow, which needs a real configured endpoint for
+    ``sample_bench.resolve_sample_target(..., create=True)`` to mint a row
+    from."""
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
+    return EvalsHarness(_FakeAppInstance(evals_db, app_config=app_config))
 
 
 def _make_model(db: EvalsDB, name: str, *, provider: str = "llama_cpp", model_id: str = "m") -> str:
@@ -1255,3 +1272,235 @@ async def test_revert_discards_unsaved_edits_and_reloads_from_storage(
         # Scoped to the form's own error Static -- see the identical note
         # in test_save_persists_every_field_and_reselects_the_bench.
         assert not screen.query_one("#evals-bench-form-error").display
+
+
+# ---------------------------------------------------------------------------
+# Task 6 (task-1482): targets become editable -- Add/Remove + create-target
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def bench_with_available_add_target(evals_db: EvalsDB) -> tuple[str, str, str]:
+    """One bench with one target already wired, plus a SECOND `llama_cpp`
+    `eval_models` row not yet on the bench -- exactly what the Add picker
+    needs to offer a genuine, addable option.
+
+    Returns:
+        ``(task_id, existing_target_id, addable_target_id)``.
+    """
+    existing_id = _make_model(evals_db, "existing-target")
+    addable_id = _make_model(evals_db, "extra-target", model_id="m2")
+    dataset_id = evals_db.create_dataset(
+        name="add-target-set",
+        format="custom",
+        source_path="inline:add-target-set",
+        metadata={"sample_count": 4},
+    )
+    config = BenchConfig(
+        name="add-target bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(existing_id,),
+    )
+    task_id = save_bench(evals_db, config)
+    return task_id, existing_id, addable_id
+
+
+@pytest.fixture
+def bench_with_zero_llama_models(evals_db: EvalsDB) -> str:
+    """A draft bench (no targets) with NO `llama_cpp` `eval_models` row
+    anywhere in the db -- the zero-models "Create target" affordance's own
+    gate."""
+    dataset_id = evals_db.create_dataset(
+        name="zero-models-set",
+        format="custom",
+        source_path="inline:zero-models-set",
+        metadata={"sample_count": 4},
+    )
+    config = BenchConfig(
+        name="zero-models bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(),
+    )
+    return save_bench(evals_db, config)
+
+
+@pytest.fixture
+def bench_with_markup_hazard_llama_model(evals_db: EvalsDB) -> tuple[str, str]:
+    """A draft bench (no targets) plus one already-registered `llama_cpp`
+    model whose name carries a bare `[/]` -- the Add picker's own option
+    labels ("name (model_id)") must escape it, matching every other
+    user-authored string this widget renders (see the module docstring's
+    markup-hazard sweep)."""
+    hazard_id = _make_model(evals_db, "loud[/]target", model_id="m")
+    dataset_id = evals_db.create_dataset(
+        name="hazard-picker-set",
+        format="custom",
+        source_path="inline:hazard-picker-set",
+        metadata={"sample_count": 4},
+    )
+    config = BenchConfig(
+        name="hazard-picker bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(),
+    )
+    task_id = save_bench(evals_db, config)
+    return task_id, hazard_id
+
+
+@pytest.mark.asyncio
+async def test_add_from_picker_stages_a_row_and_save_persists_it(
+    evals_app, evals_db, bench_with_available_add_target
+):
+    task_id, existing_id, addable_id = bench_with_available_add_target
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        assert screen.query_one("#evals-bench-target-0")
+        assert not screen.query("#evals-bench-target-1")
+
+        select = screen.query_one("#evals-bench-add-target", Select)
+        select.value = addable_id
+        await pilot.click("#evals-bench-add-target-button")
+        await pilot.pause()
+
+        # The staged row renders immediately, before Save, with the
+        # "never checked" status -- it was never part of the bench's last
+        # run snapshot.
+        new_row = screen.query_one("#evals-bench-target-1")
+        row_text = str(new_row.renderable)
+        assert "extra-target" in row_text
+        assert "Not yet checked" in row_text
+        assert new_row.region.width > 0
+        assert new_row.region.height > 0
+
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        assert not screen.query_one("#evals-bench-form-error").display
+        saved = load_bench(evals_db, task_id)
+        assert set(saved.target_ids) == {existing_id, addable_id}
+
+
+@pytest.mark.asyncio
+async def test_remove_target_row_and_save_persists_the_removal(
+    evals_app, evals_db, bench_with_mixed_readiness
+):
+    task_id, target_ids = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        # Remove the "ready" target (index 0, per _TARGET_INDEX).
+        await pilot.click("#evals-bench-target-remove-0")
+        await pilot.pause()
+
+        # Rows re-index: the remaining two targets now sit at 0/1, and
+        # there is no longer a row at 2.
+        assert screen.query_one("#evals-bench-target-0")
+        assert screen.query_one("#evals-bench-target-1")
+        assert not screen.query("#evals-bench-target-2")
+
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        assert not screen.query_one("#evals-bench-form-error").display
+        saved = load_bench(evals_db, task_id)
+        assert set(saved.target_ids) == {target_ids["warned"], target_ids["blocked"]}
+
+
+@pytest.mark.asyncio
+async def test_duplicate_add_is_rejected_inline_with_the_pinned_text(
+    evals_app, evals_db, bench_with_available_add_target
+):
+    task_id, existing_id, _addable_id = bench_with_available_add_target
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        select = screen.query_one("#evals-bench-add-target", Select)
+        select.value = existing_id
+        await pilot.click("#evals-bench-add-target-button")
+        await pilot.pause()
+
+        callout = screen.query_one("#evals-bench-form-error")
+        assert callout.display
+        assert str(callout.renderable) == "Target already on this bench."
+
+        # No second row was staged -- the rejected add left the bench's
+        # target list untouched.
+        assert not screen.query("#evals-bench-target-1")
+
+        # And a save persists exactly what was there before the rejected
+        # add, not a duplicate.
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+        saved = load_bench(evals_db, task_id)
+        assert saved.target_ids == (existing_id,)
+
+
+@pytest.mark.asyncio
+async def test_zero_models_state_offers_create_target_and_stages_it(
+    evals_app_configured, evals_db, bench_with_zero_llama_models
+):
+    task_id = bench_with_zero_llama_models
+    assert evals_db.list_models(provider="llama_cpp") == []
+
+    async with evals_app_configured.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app_configured.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app_configured.screen
+
+        assert not screen.query("#evals-bench-add-target")
+        create_button = screen.query_one("#evals-bench-create-target", Button)
+        assert create_button.region.width > 0
+        assert create_button.region.height > 0
+
+        await pilot.click("#evals-bench-create-target")
+        await pilot.pause()
+
+        models = evals_db.list_models(provider="llama_cpp")
+        assert len(models) == 1, "pressing Create target should create exactly one row"
+
+        row = screen.query_one("#evals-bench-target-0")
+        row_text = str(row.renderable)
+        assert models[0]["name"] in row_text
+        assert "Not yet checked" in row_text
+
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        assert not screen.query_one("#evals-bench-form-error").display
+        saved = load_bench(evals_db, task_id)
+        assert saved.target_ids == (models[0]["id"],)
+
+
+@pytest.mark.asyncio
+async def test_add_target_picker_option_labels_escape_markup_hazard_names(
+    evals_app, bench_with_markup_hazard_llama_model
+):
+    task_id, hazard_id = bench_with_markup_hazard_llama_model
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        assert pilot.app.is_running, "an unescaped picker label crashed the app"
+        screen = evals_app.screen
+
+        select = screen.query_one("#evals-bench-add-target", Select)
+        option_texts = [str(label) for label, _value in select._options]
+        expected = escape_markup("loud[/]target (m)")
+        assert any(text == expected for text in option_texts), option_texts

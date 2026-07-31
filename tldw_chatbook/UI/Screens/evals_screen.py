@@ -271,6 +271,58 @@ class EvalsScreen(LabScreen):
         event.stop()
         self.select(kind="bench", id=event.bench_id)
 
+    @on(BenchEditor.CreateTargetRequested)
+    async def _on_bench_create_target_requested(
+        self, event: BenchEditor.CreateTargetRequested
+    ) -> None:
+        """Creates a real `eval_models` row for the zero-`llama_cpp`-
+        models "Create target" button, and stages it on the mounted
+        `BenchEditor` -- see that message class's own docstring for why
+        `bench_editor.py` cannot make this call itself (the source-scan
+        pin against `capture_client`/`WordBenchRunner` imports).
+
+        Reuses `sample_bench.resolve_sample_target(..., create=True)`
+        (the SAME function `create_and_run_sample_bench` uses) rather than
+        duplicating its configured-endpoint/model-id resolution logic --
+        `name=BENCH_EDITOR_TARGET_NAME` only changes the base name a freshly
+        CREATED row gets; an already-registered `llama_cpp` row (there
+        should be none, since this button only renders when `llama_
+        targets()` is empty, but a race is not worth guarding against
+        specially) is still reused as-is.
+
+        A plain DB read/write, not a network call (`resolve_sample_target`
+        never touches `capture_client`) -- run inline, no worker, mirroring
+        `BenchEditor._on_save_pressed`'s own synchronous `save_bench` call
+        just one pane over.
+        """
+        event.stop()
+        db = self._view_model.db
+        if db is None:
+            return
+        model_row = sample_bench.resolve_sample_target(
+            self._view_model,
+            self._current_app_config(),
+            create=True,
+            name=sample_bench.BENCH_EDITOR_TARGET_NAME,
+        )
+        if model_row is None:
+            self.app_instance.notify(
+                "No llama.cpp server is configured; set one in Settings "
+                "first.",
+                severity="error",
+                markup=False,
+            )
+            return
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            editor = self.query_one(BenchEditor)
+        except QueryError:
+            # Defensive only: this handler only ever runs from a press on
+            # a button the mounted BenchEditor itself composed.
+            return
+        await editor.stage_target(model_row)
+
     @on(LibraryRail.SampleBenchRequested)
     def _on_sample_bench_requested(
         self, event: LibraryRail.SampleBenchRequested

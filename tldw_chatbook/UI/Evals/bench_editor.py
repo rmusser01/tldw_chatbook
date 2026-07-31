@@ -20,35 +20,59 @@ a provider at all, not just that today's ``compose()`` happens not to
 call one.
 
 Task 5 (task-1482): ``BenchEditor`` becomes an editable form for name,
-description, prompt mode, top-K, and probes. Dataset and targets stay
-read-only this task (targets are Task 6's own scope; the dataset is
-create-time-only, permanently -- ``save_bench`` has no ``dataset_id``
-parameter, see its own docstring). Editing is display-only until Save:
-no field posts or reacts to a live ``Changed`` message, so there is no
-watcher to accidentally trip on the Select-posts-Changed-on-mount trap
-this codebase has hit before. Save reads every widget fresh, builds a
-``BenchConfig`` with the CURRENT stored ``target_ids`` (untouched by this
-task), and persists via ``save_bench``. On failure (``ValueError`` --
-either this module's own top-K parse, ``BenchConfig`` validation, or
-``Evals_DB.InputError`` from a blank/control-char name; or
-``Evals_DB.ConflictError`` from a name collision) the error renders
-in-place in ``#evals-bench-form-error`` and NOTHING recomposes -- every
-other field keeps exactly what the user typed. On success this widget
-posts ``Saved``; ``evals_screen.py`` handles that by calling its own
-``select(kind="bench", ...)``, which recomposes from the freshly
-persisted row (picking up anything ``save_bench``'s own cleaning -- e.g.
-``_clean_task_name``'s control-character strip -- changed from what was
-typed).
+description, prompt mode, top-K, and probes. The dataset stays read-only
+permanently -- ``save_bench`` has no ``dataset_id`` parameter, see its own
+docstring. Editing is display-only until Save: no field posts or reacts
+to a live ``Changed`` message, so there is no watcher to accidentally trip
+on the Select-posts-Changed-on-mount trap this codebase has hit before.
+Save reads every widget fresh, builds a ``BenchConfig``, and persists via
+``save_bench``. On failure (``ValueError`` -- either this module's own
+top-K parse, ``BenchConfig`` validation, or ``Evals_DB.InputError`` from a
+blank/control-char name; or ``Evals_DB.ConflictError`` from a name
+collision) the error renders in-place in ``#evals-bench-form-error`` and
+NOTHING recomposes -- every other field keeps exactly what the user
+typed. On success this widget posts ``Saved``; ``evals_screen.py`` handles
+that by calling its own ``select(kind="bench", ...)``, which recomposes
+from the freshly persisted row (picking up anything ``save_bench``'s own
+cleaning -- e.g. ``_clean_task_name``'s control-character strip -- changed
+from what was typed).
+
+Task 6 (task-1482): targets become editable too, but through a SEPARATE
+mechanism from every field above -- a staged ``self._staged_target_ids``
+list, mutated in place by per-row ``Remove`` buttons and an Add picker
+over ``EvalsViewModel.llama_targets()`` (``db.list_models(provider=
+"llama_cpp")``), and read back verbatim by ``_on_save_pressed`` in place
+of the "CURRENT stored ``target_ids``" this docstring used to describe
+before this task. Add/Remove mutate ONLY ``#evals-bench-targets-section``
+(``remove_children()`` + ``mount_all()``, built by
+``_build_targets_section``) rather than a whole-widget recompose -- a
+recompose would discard whatever the user has typed into Name/
+Description/Top-K/Probes above, exactly the state loss the "display-only
+until Save" paragraph above exists to avoid. A duplicate add (the target
+id is already staged) is rejected inline with the exact text ``"Target
+already on this bench."``, through the same ``#evals-bench-form-error``
+callout Top-K/name failures use. When NO ``llama_cpp`` ``eval_models`` row
+exists anywhere in the db, the picker is replaced by
+``#evals-bench-create-target``, which posts ``CreateTargetRequested`` for
+``evals_screen.py`` to handle -- this module must never import
+``sample_bench.resolve_sample_target`` (the function that actually
+creates the row) itself: ``sample_bench.py`` imports the capture client
+and the runner, both of which the source-scan test mentioned above
+(``Tests/UI/test_evals_bench_editor.py``) pins this module can never
+reach, even transitively. ``stage_target()`` is the targeted
+(non-recompose) call the screen makes once it has created the row.
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
+from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Button, Input, Select, Static, TextArea
 
 from ...DB.Evals_DB import ConflictError, EvalsDB
@@ -121,10 +145,10 @@ def _resolve_bench_targets(db: EvalsDB, target_ids: Sequence[str]) -> list[Targe
 
 
 class BenchEditor(Vertical):
-    """Word bench editor: name, description, prompt mode, top-K, and
-    probes are editable (Save/Revert); dataset and the target table
-    (name/provider + readiness, resolved at render time from
-    ``eval_models``) stay read-only this task."""
+    """Word bench editor: name, description, prompt mode, top-K, probes,
+    and targets (Task 6: Add/Remove via a staged list) are all editable
+    (Save/Revert); the dataset (name/sample count, resolved at render time)
+    stays read-only permanently -- see the module docstring."""
 
     class Saved(Message, namespace="bench_editor"):
         """Posted after ``save_bench`` succeeds. Carries the bench's own
@@ -141,6 +165,19 @@ class BenchEditor(Vertical):
         def __init__(self, bench_id: str) -> None:
             super().__init__()
             self.bench_id = bench_id
+
+    class CreateTargetRequested(Message, namespace="bench_editor"):
+        """Posted when the zero-``llama_cpp``-models ``#evals-bench-
+        create-target`` button is pressed. Handled by ``evals_screen.py``,
+        never here -- see the module docstring's source-scan pin:
+        resolving/creating the row reuses ``sample_bench.
+        resolve_sample_target``, which (transitively, via ``capture_
+        client``/``runner``) this module must never import, even just to
+        call it directly. Carries no payload -- the handler already has
+        the view model and app config, and reaches the mounted editor via
+        ``self.query_one(BenchEditor)`` (only one is ever mounted at a
+        time, for the current selection) to call ``stage_target()`` on it.
+        """
 
     def __init__(
         self,
@@ -165,12 +202,28 @@ class BenchEditor(Vertical):
         self._bench_id = bench_id
         self._preflight = preflight
         #: The config `compose()` most recently loaded -- read back by the
-        #: Save handler for the fields Task 5 does not edit (`dataset_id`,
-        #: `target_ids`, `concurrency`), which must round-trip verbatim.
+        #: Save handler for the fields this widget does not stage directly
+        #: (`dataset_id`, `concurrency`), which must round-trip verbatim.
         #: `None` only when `compose()` bailed out before reaching the form
         #: (no db, or an unreadable row) -- in which case no Save/Revert
         #: button exists for a press to ever reach this attribute through.
         self._loaded_config: Optional[BenchConfig] = None
+        #: Task 6: the staged target id list -- FORM STATE like every
+        #: other field on this widget (see the module docstring), mutated
+        #: in place by the Add/Remove/`stage_target` handlers below and
+        #: read back verbatim by `_on_save_pressed`. Reset to whatever
+        #: `compose()` loads whenever the whole widget is rebuilt (a fresh
+        #: selection, or Revert's re-select). Populated in `compose()`,
+        #: not here, so a widget that never composes (no db, unreadable
+        #: row) never has one of these that could go stale against nothing.
+        self._staged_target_ids: list[str] = []
+        #: The preflight map resolved by `compose()` (either the one
+        #: passed in, or a freshly resolved one) -- cached so `_build_
+        #: targets_section`'s later, targeted re-renders (Add/Remove/
+        #: `stage_target`) never need to re-resolve it themselves; per-
+        #: target readiness only ever changes on a fresh bench selection,
+        #: never mid-edit.
+        self._preflight_map: dict[str, PreflightResult] = {}
 
     def compose(self) -> ComposeResult:
         db = self._view_model.db
@@ -189,6 +242,7 @@ class BenchEditor(Vertical):
             )
             return
         self._loaded_config = config
+        self._staged_target_ids = list(config.target_ids)
 
         yield Static("Name", classes="evals-bench-field-label")
         yield Input(value=config.name, id="evals-bench-name")
@@ -281,38 +335,192 @@ class BenchEditor(Vertical):
             if self._preflight is not None
             else self._view_model.preflight_for_bench(self._bench_id)
         )
-        yield Static(
-            f"Targets ({len(config.target_ids)})",
-            classes="destination-section evals-pane-title",
-        )
-        if not config.target_ids:
-            yield Static("No targets configured yet.", id="evals-bench-targets-empty")
-            return
-        with Vertical(id="evals-bench-target-table"):
+        self._preflight_map = preflight
+        yield Vertical(*self._build_targets_section(), id="evals-bench-targets-section")
+
+    def _build_targets_section(self) -> list[Widget]:
+        """Builds the whole "Targets (N)" slice -- heading, row table (or
+        the empty state), and the Add picker / zero-models create-target
+        affordance -- as concrete widget INSTANCES rather than a
+        `with Container(): yield child`-composed generator.
+
+        That `with`-block pattern (used by every OTHER section of
+        `compose()` above) only works while Textual's own compose
+        machinery has an active `app._compose_stacks` frame open -- true
+        during a real `compose()` call, NOT true when this same building
+        logic needs to run again later from an event handler
+        (`_on_add_target_pressed`, `_on_remove_target_pressed`,
+        `stage_target`). Building plain widget instances instead (passed
+        as `*children` to each container's own constructor -- a fully
+        supported `Widget.__init__` form, not a workaround) works
+        identically in both places: `compose()` just yields the returned
+        list's container, and `_refresh_targets_section` mounts the same
+        builder's output directly into the already-live `#evals-bench-
+        targets-section` container.
+        """
+        db = self._view_model.db
+        preflight = self._preflight_map
+        widgets: list[Widget] = [
+            Static(
+                f"Targets ({len(self._staged_target_ids)})",
+                id="evals-bench-targets-heading",
+                classes="destination-section evals-pane-title",
+            )
+        ]
+        if not self._staged_target_ids:
+            widgets.append(
+                Static("No targets configured yet.", id="evals-bench-targets-empty")
+            )
+        else:
             # Index-derived widget ids, not target_id-derived: `target_ids`
             # is user-editable data (see `BenchConfig`) with no uniqueness
-            # or identifier-safety constraint enforced anywhere on write, so
-            # a duplicate target id would otherwise collide and fail to
+            # or identifier-safety constraint enforced anywhere on write,
+            # so a duplicate target id would otherwise collide and fail to
             # compose the whole pane. `target_id` itself is still used
             # below, just never as (or as part of) a widget id -- see
             # `snippet_editor.py`'s identical `_compose_row` fix for the
             # same principle applied to snippets.
-            for index, target_id in enumerate(config.target_ids):
-                model = db.get_model(target_id)
-                status_text = _target_status_text(preflight, target_id)
-                if model is None:
-                    # config_data.target_ids carries no foreign key (see the
-                    # design spec's "Run provenance" section) -- a deleted
-                    # eval_models row leaves a dangling reference here.
-                    label = f"(deleted target {target_id}) — unresolvable"
-                else:
-                    label = f"{model['name']} ({model['provider']}) — {status_text}"
-                yield Static(
-                    label,
-                    id=f"evals-bench-target-{index}",
-                    classes="evals-bench-target-row",
-                    markup=False,
-                )
+            rows = [
+                self._build_target_row(db, preflight, index, target_id)
+                for index, target_id in enumerate(self._staged_target_ids)
+            ]
+            widgets.append(Vertical(*rows, id="evals-bench-target-table"))
+        widgets.append(self._build_target_add_control())
+        return widgets
+
+    @staticmethod
+    def _build_target_row(
+        db: Optional[EvalsDB],
+        preflight: dict[str, Any],
+        index: int,
+        target_id: str,
+    ) -> Widget:
+        """One target row: its readiness ``Static`` (unchanged id/class
+        from before Task 6, ``#evals-bench-target-{index}`` /
+        ``evals-bench-target-row``) plus a per-row ``Remove`` button
+        (``#evals-bench-target-remove-{index}``, following the row's own
+        numbering)."""
+        model = db.get_model(target_id) if db is not None else None
+        status_text = _target_status_text(preflight, target_id)
+        if model is None:
+            # config_data.target_ids carries no foreign key (see the
+            # design spec's "Run provenance" section) -- a deleted
+            # eval_models row leaves a dangling reference here. Still
+            # removable via the button below, just never resolvable to a
+            # real name.
+            label = f"(deleted target {target_id}) — unresolvable"
+        else:
+            label = f"{model['name']} ({model['provider']}) — {status_text}"
+        return Horizontal(
+            Static(
+                label,
+                id=f"evals-bench-target-{index}",
+                classes="evals-bench-target-row",
+                markup=False,
+            ),
+            Button(
+                "Remove",
+                id=f"evals-bench-target-remove-{index}",
+                classes="evals-bench-target-remove console-action-secondary",
+            ),
+            classes="evals-bench-target-row-wrap",
+        )
+
+    def _build_target_add_control(self) -> Widget:
+        """The Add picker (a ``Select`` over ``EvalsViewModel.
+        llama_targets()`` plus an ``Add`` button), or -- when no
+        ``llama_cpp`` ``eval_models`` row exists anywhere in the db yet --
+        the ``#evals-bench-create-target`` button instead.
+
+        ``Select`` raises ``EmptySelectError`` when constructed with zero
+        options and ``allow_blank=False`` (see its own docstring) --
+        ``llama_targets()`` being empty is exactly this method's own
+        create-target branch condition, so the two can never disagree and
+        this never risks that error.
+        """
+        llama_targets = self._view_model.llama_targets()
+        if not llama_targets:
+            return Button(
+                "Create target from configured llama.cpp server",
+                id="evals-bench-create-target",
+                classes="console-action-secondary",
+            )
+        # escape_markup: `Select` options parse their label as markup on
+        # render (the same `Content.from_markup` hazard this widget's
+        # other user-authored strings already guard against, see the
+        # module docstring's markup-hazard sweep) -- a model name is free
+        # text a user typed, or imported, elsewhere in this app.
+        options = [
+            (escape_markup(f"{row['name']} ({row['model_id']})"), row["id"])
+            for row in llama_targets
+        ]
+        return Horizontal(
+            # compact=True: a bordered Select is 3 rows tall by default
+            # (see Textual's own DEFAULT_CSS) against every other row in
+            # this section's 1-row convention -- the same fix `sources_
+            # pane.py`'s TASK-995 comment applies to a Select inside a
+            # height-constrained strip, for the identical reason: without
+            # it, this row alone could push the section's own fixed Add
+            # control past `#evals-detail-pane`'s clip rectangle at a
+            # realistic viewport (confirmed live via `test_every_pane_
+            # descendant_stays_within_its_pane`).
+            Select(options, allow_blank=False, compact=True, id="evals-bench-add-target"),
+            Button(
+                "Add",
+                id="evals-bench-add-target-button",
+                classes="console-action-secondary",
+            ),
+            id="evals-bench-add-target-row",
+        )
+
+    async def _refresh_targets_section(self) -> None:
+        """Re-renders just ``#evals-bench-targets-section`` after a staged
+        Add/Remove/``stage_target`` mutation -- see ``_build_targets_
+        section``'s own docstring for why this is ``remove_children()`` +
+        ``mount_all()``, never ``self.refresh(recompose=True)`` on the
+        whole editor: a full recompose here would discard whatever the
+        user has typed into Name/Description/Top-K/Probes, exactly the
+        state loss the module docstring's Task 5 paragraph exists to
+        avoid. Also clears any stale ``#evals-bench-form-error`` (e.g. a
+        duplicate-add rejection) -- the state it complained about just
+        changed.
+
+        ``async`` (and its own callers below too) -- ``remove_children()``
+        returns an awaitable that completes once Textual has actually torn
+        the old rows down; without awaiting it, ``mount_all()`` runs
+        against a DOM that STILL holds the old, same-id widgets (removal
+        is scheduled, not immediate), and mounting id-colliding replacements
+        into it raises ``DuplicateIds`` -- confirmed the hard way, not
+        merely reasoned about, when this was first written as a bare
+        `self.refresh`-free but still-synchronous method.
+        """
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            section = self.query_one("#evals-bench-targets-section", Vertical)
+        except QueryError:
+            return
+        await section.remove_children()
+        await section.mount_all(self._build_targets_section())
+        self._clear_form_error()
+
+    async def stage_target(self, model_row: Mapping[str, Any]) -> None:
+        """Stages a freshly created ``eval_models`` row as a bench target
+        -- called by ``evals_screen.py``'s ``CreateTargetRequested``
+        handler after IT creates the row via ``sample_bench.
+        resolve_sample_target(..., create=True)`` (see that message's own
+        docstring for why this module cannot make that call itself). A
+        TARGETED call against the already-mounted editor instance, never a
+        recompose -- see ``_build_targets_section``'s own docstring.
+        """
+        target_id = model_row.get("id") if isinstance(model_row, Mapping) else None
+        if not target_id or target_id in self._staged_target_ids:
+            # Defensive only: a freshly `_unique_name`d row cannot already
+            # be staged, but this mirrors the Add-picker's own duplicate
+            # guard rather than assuming the caller never will pass one.
+            return
+        self._staged_target_ids.append(target_id)
+        await self._refresh_targets_section()
 
     def _show_form_error(self, message: str) -> None:
         """Renders ``message`` in ``#evals-bench-form-error`` IN PLACE --
@@ -327,6 +535,82 @@ class BenchEditor(Vertical):
         error_widget.update(message)
         error_widget.add_class("ds-recovery-callout")
         error_widget.display = True
+
+    def _clear_form_error(self) -> None:
+        """Hides the shared inline error callout (``#evals-bench-form-
+        error``) -- called by a target mutation's success path so a stale
+        duplicate-target (or an earlier Top-K/name) error does not linger
+        once the state it complained about has changed. Mirrors
+        ``_show_form_error``'s own in-place-update contract: never a
+        recompose."""
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            error_widget = self.query_one("#evals-bench-form-error", Static)
+        except QueryError:
+            return
+        error_widget.update("")
+        error_widget.remove_class("ds-recovery-callout")
+        error_widget.display = False
+
+    @on(Button.Pressed, "#evals-bench-add-target-button")
+    async def _on_add_target_pressed(self, event: Button.Pressed) -> None:
+        """Stages the picker's currently selected target -- form state
+        only (see the module docstring); the actual `eval_tasks.
+        config_data.target_ids` write happens at Save, same as every other
+        field this widget edits."""
+        event.stop()
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            picker = self.query_one("#evals-bench-add-target", Select)
+        except QueryError:
+            # Defensive only: this button is never composed without the
+            # picker beside it (see `_build_target_add_control`) -- the
+            # zero-models state renders `#evals-bench-create-target`
+            # instead, with no `Add` button at all.
+            return
+        target_id = picker.value
+        if target_id is Select.BLANK or not isinstance(target_id, str):
+            # Defensive only: `allow_blank=False` plus at least one option
+            # (see `_build_target_add_control`'s own `EmptySelectError`
+            # note) means Select auto-selects a real value the instant it
+            # mounts.
+            return
+        if target_id in self._staged_target_ids:
+            self._show_form_error("Target already on this bench.")
+            return
+        self._staged_target_ids.append(target_id)
+        await self._refresh_targets_section()
+
+    @on(Button.Pressed, ".evals-bench-target-remove")
+    async def _on_remove_target_pressed(self, event: Button.Pressed) -> None:
+        """Un-stages one target row by INDEX -- see `_build_target_row`'s
+        own comment for why widget ids here are index-, not target_id-,
+        derived. Removing the last target is allowed (a draft state --
+        the zero-target Run gate and readiness copy both read SAVED state,
+        never this widget's staged form state, see the module docstring)."""
+        event.stop()
+        button_id = event.button.id or ""
+        prefix = "evals-bench-target-remove-"
+        if not button_id.startswith(prefix):
+            return
+        try:
+            index = int(button_id[len(prefix):])
+        except ValueError:
+            return
+        if not 0 <= index < len(self._staged_target_ids):
+            return
+        del self._staged_target_ids[index]
+        await self._refresh_targets_section()
+
+    @on(Button.Pressed, "#evals-bench-create-target")
+    def _on_create_target_pressed(self, event: Button.Pressed) -> None:
+        """Posts `CreateTargetRequested` for `evals_screen.py` to handle --
+        see that message class's own docstring for why this module cannot
+        create the row itself."""
+        event.stop()
+        self.post_message(self.CreateTargetRequested())
 
     @on(Button.Pressed, "#evals-bench-save")
     def _on_save_pressed(self, event: Button.Pressed) -> None:
@@ -377,7 +661,14 @@ class BenchEditor(Vertical):
                 prompt_mode=prompt_mode,
                 top_k=top_k,
                 dataset_id=loaded.dataset_id,
-                target_ids=loaded.target_ids,
+                # Task 6: the staged list (Add/Remove'd via this same
+                # form, never yet persisted) replaces what used to be
+                # `loaded.target_ids`'s verbatim carry-through -- see the
+                # module docstring's Task 6 paragraph. `BenchConfig`'s own
+                # `strict=True` default still rejects a duplicate here,
+                # which the Add picker's own inline rejection (`_on_add_
+                # target_pressed`) should already have made unreachable.
+                target_ids=tuple(self._staged_target_ids),
                 probes=probes,
                 concurrency=loaded.concurrency,
             )
@@ -405,9 +696,10 @@ class BenchEditor(Vertical):
             save_bench(db, config, self._bench_id)
         except (ValueError, ConflictError) as exc:
             # ValueError: BenchConfig re-validation inside save_bench (a
-            # duplicate target_id -- unreachable here since `loaded.
-            # target_ids` round-trips verbatim and was itself already
-            # valid), or `Evals_DB.InputError` (a ValueError subclass) from
+            # duplicate target_id -- unreachable here since the Add
+            # picker's own inline rejection, `_on_add_target_pressed`,
+            # already keeps `self._staged_target_ids` duplicate-free), or
+            # `Evals_DB.InputError` (a ValueError subclass) from
             # `_clean_task_name` rejecting a blank/control-char-only name.
             # ConflictError: `eval_tasks.name` collided with another task's
             # name, live OR soft-deleted (see `save_bench`'s docstring).

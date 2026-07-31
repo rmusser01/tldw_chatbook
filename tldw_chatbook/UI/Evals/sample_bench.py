@@ -81,6 +81,13 @@ SAMPLE_BENCH_NAME = "loaded-nouns (sample)"
 SAMPLE_DATASET_NAME = "loaded-nouns (sample)"
 SAMPLE_TARGET_NAME = "Sample target (llama.cpp)"
 
+#: task-1482 Task 6: the base name for a row created via bench_editor.py's
+#: "Create target" button (an authored bench's own target, never part of
+#: the one-click sample flow above) -- passed as `resolve_sample_target`'s
+#: `name` override so that flow's row does not read as though it came from
+#: SAMPLE_TARGET_NAME's unrelated demo.
+BENCH_EDITOR_TARGET_NAME = "llama.cpp target"
+
 #: The word bench's own preflight canary already answers "is this endpoint
 #: reachable and sane" honestly, post-creation -- this K is a modest default
 #: for a 4-row demo grid, not a claim about the target's capability.
@@ -212,6 +219,7 @@ def resolve_sample_target(
     app_config: Optional[Mapping[str, Any]],
     *,
     create: bool = False,
+    name: str = SAMPLE_TARGET_NAME,
 ) -> Optional[dict[str, Any]]:
     """The ``eval_models`` row the sample bench will target, or ``None``.
 
@@ -235,6 +243,16 @@ def resolve_sample_target(
             genuinely needs a row to point a run at -- passes ``True``.
             Ask ``provider_is_configured`` whether a row WOULD be
             resolvable; it answers without writing.
+        name: The base name for a newly CREATED row (irrelevant when an
+            existing row is reused instead -- see above). Defaults to
+            ``SAMPLE_TARGET_NAME``, the one-click sample bench's own
+            wording; ``bench_editor.py``'s Task 6 "Create target" button
+            (via ``evals_screen.py``, this module's other caller of the
+            ``create=True`` path) passes ``BENCH_EDITOR_TARGET_NAME``
+            instead, so a target created from an authored bench does not
+            read as though it came from the unrelated one-click flow.
+            Always passed through ``storage._unique_name`` before the
+            write, exactly like the default.
 
     Returns:
         The resolved ``eval_models`` row (a real, DB-backed dict), or
@@ -261,7 +279,7 @@ def resolve_sample_target(
     # model that exists.
     model_id = _configured_llama_cpp_model_id(app_config) or "default"
     new_id = db.create_model(
-        name=_unique_name(SAMPLE_TARGET_NAME), provider="llama_cpp", model_id=model_id
+        name=_unique_name(name), provider="llama_cpp", model_id=model_id
     )
     return db.get_model(new_id)
 
