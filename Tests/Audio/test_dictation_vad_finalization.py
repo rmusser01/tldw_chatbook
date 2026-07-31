@@ -29,6 +29,7 @@ import random
 import struct
 import threading
 import time
+from collections import deque
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -202,6 +203,10 @@ def _recorder(use_vad: bool, vad: Any = None, sample_rate: int = 16000):
     recorder.use_vad = use_vad
     recorder.vad = vad
     recorder.max_buffer_bytes = None
+    # Production default (`VAD_PREROLL_MS=240` / 12 frames at 20ms), not the
+    # class-level `maxlen=0` __new__-safety fallback -- these tests exercise
+    # the real recorder frame loop and should see the real pre-roll buffer.
+    recorder._preroll_frames = deque(maxlen=12)
     recorder.audio_buffer = []
     recorder._audio_buffer_bytes = 0
     recorder._buffer_limit_reached = False
