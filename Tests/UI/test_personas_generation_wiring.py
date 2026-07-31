@@ -6,12 +6,16 @@ wiring (which field, which context mode, where the result lands, what happens
 on failure) is exercised without a provider.
 """
 
+# ``scaled_db`` is imported as a pytest fixture and then injected by name.
+# Ruff otherwise treats each fixture parameter as an ordinary redefinition.
+# ruff: noqa: F811
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
 import pytest
-from textual.widgets import Input
+from textual.widgets import Button, Input
 
 import tldw_chatbook.config as config_module
 from tldw_chatbook.Character_Chat.character_generation import (
@@ -25,6 +29,11 @@ from Tests.UI.test_personas_dictionaries import PersonasTestApp
 from Tests.UI.test_personas_library_scale import scaled_db  # noqa: F401  (fixture)
 
 pytestmark = pytest.mark.asyncio
+
+
+def _press(screen, selector: str) -> None:
+    """Post a button press without relying on an off-screen cached region."""
+    screen.query_one(selector, Button).press()
 
 
 class _FakeController:
@@ -109,10 +118,10 @@ async def test_generate_uses_the_editors_selected_context_mode(
         await pilot.click("#personas-char-editor-generate-context")
         await pilot.pause()
         # Scenario lives in the Advanced section; open it the way a user would.
-        await pilot.click("#personas-char-editor-advanced-toggle")
+        _press(screen, "#personas-char-editor-advanced-toggle")
         await pilot.pause()
 
-        await pilot.click("#personas-char-editor-generate-scenario")
+        _press(screen, "#personas-char-editor-generate-scenario")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -181,14 +190,14 @@ async def test_regenerate_reruns_the_pending_field(
         screen,
         editor,
     ):
-        await pilot.click("#personas-char-editor-advanced-toggle")
+        _press(screen, "#personas-char-editor-advanced-toggle")
         await pilot.pause()
-        await pilot.click("#personas-char-editor-generate-scenario")
+        _press(screen, "#personas-char-editor-generate-scenario")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
         controller.result = "take two"
-        await pilot.click("#personas-char-editor-generate-regenerate")
+        _press(screen, "#personas-char-editor-generate-regenerate")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-26 04:41'
-updated_date: '2026-07-26 05:43'
+updated_date: '2026-07-31 11:20'
 labels:
   - tts
   - audio-cpp
@@ -211,6 +211,34 @@ skipped, and 2 errors. Its external rerun reduced to 37 failures; an untouched
 latest `origin/dev` control produced the identical exact 37 failures. The
 feature-only regression delta is zero, but the project-wide suite is not green.
 TASK-710 therefore remains **In Progress** and is not marked Done.
+
+### Latest-dev closeout audit (2026-07-31)
+
+- Rebased the clean closeout branch onto `origin/dev`
+  `70f08e5bad26571c7401435d508364607c05f967`.
+- A fresh repository-wide run on the immediately preceding TTS head completed
+  with 24,406 passed, 171 skipped, four failures, and two setup errors. The two
+  intervening `dev` commits only changed Settings styles/tests and did not
+  touch TASK-710 or any red node.
+- Both setup errors were sandbox-only loopback-bind denials. Each exact Console
+  provider gateway node passed alone outside the sandbox (0.80 and 0.83
+  seconds).
+- Closed two TTS-caused verification gaps: refreshed the reviewed production
+  diagnostic inventory for seven added TASK-494 diagnostic calls and one TTS
+  owner file (no persistent-sink topology change), and made Personas generation
+  wiring tests post button events directly when the TTS editor panel pushes
+  Advanced controls below the viewport.
+- Fresh relevant verification passed: 2,100 broad TTS/STTS tests with 14 skips,
+  all nine Personas generation-wiring tests, all three diagnostic-inventory
+  tests, Ruff check, Ruff format, and `git diff --check`.
+- The remaining observed full-suite failure is unrelated wizard test-state leakage:
+  `test_full_track_skip_everything_leaves_app_usable` passes alone but fails
+  after the two preceding wizard tests because the resulting `HomeScreen` lacks
+  the expected shell-nav button. It is intentionally not fixed in this TTS
+  closeout.
+- No process is listening on `127.0.0.1:8080`, so a fresh live external
+  audio.cpp rerun remains unavailable. Chatbook did not launch or supervise a
+  server. TASK-710 remains **In Progress**.
 
 ## Implementation Notes
 
