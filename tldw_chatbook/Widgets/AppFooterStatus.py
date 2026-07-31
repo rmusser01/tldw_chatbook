@@ -92,12 +92,9 @@ class AppFooterStatus(Widget):
             "Tokens: --", id="footer-token-count"
         )
         self._db_status_display: Static = Static("", id="internal-db-size-indicator")
-        # The stats read as cryptic single letters (P: / C/N: / M:); a hover
-        # legend spells them out so a first-run user can decode them.
-        self._db_status_display.tooltip = (
-            "Local database file sizes\n"
-            "P: Prompts   C/N: Conversations & Notes   M: Media"
-        )
+        # task-1640: labels are spelled in the readout itself now; the
+        # tooltip only adds the "local database file sizes" context.
+        self._db_status_display.tooltip = "Local database file sizes"
         #: TASK-451: last known footer width, so a content change (new shortcut
         #: context / DB stats) can re-run the priority reflow without a resize.
         self._last_footer_width = 0

@@ -239,6 +239,16 @@ one-row field. The convention for those fields (task-1586):
   ("▼ more — scroll…") shown only while content overflows, so a
   mid-sentence clip is never the only signal that more exists
   (task-1623).
+- **Pinned contract row:** the State bar (badge + scope) is pinned
+  between the pane title and the scrollable body, never inside it — the
+  save contract must not scroll away while the user is acting on the
+  category (task-1642).
+- **Field-level search:** "/" indexes field labels as well as category
+  names and owned config keys; a field hit echoes "Category › Field" and
+  Enter lands focus ON the field, which also fires its guidance
+  (task-1641).
+- **Inert destructive actions** carry their reason in the label
+  ("Delete — built-in") and are disabled, never merely red (task-1643).
 - **Voice carriers (task-1625):** the three pane titles are the one
   Focus Phosphor accent on the screen; the State bar sits on the focus
   steel at low alpha; toasts carry a full severity-tinted round border,

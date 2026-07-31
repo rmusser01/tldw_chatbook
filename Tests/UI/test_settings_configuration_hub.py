@@ -359,7 +359,7 @@ async def _wait_for_settings_input_value(
 
 async def _click_scrolled_settings_button(screen, pilot, selector: str) -> Button:
     button = screen.query_one(selector, Button)
-    detail_pane = screen.query_one("#settings-detail-pane", VerticalScroll)
+    detail_pane = screen.query_one("#settings-detail-pane-body", VerticalScroll)
     detail_pane.scroll_to_widget(
         button,
         animate=False,
@@ -2221,10 +2221,7 @@ async def test_settings_inspector_has_no_write_blocked_contradiction():
         assert "Writes allowed: Yes" in text
         assert "Writes remain blocked" not in text
         assert "Mutation replay" not in text
-        assert (
-            "Saves apply to your local config file. Nothing is sent to a server "
-            "unless you run Manual sync yourself." in text
-        )
+        assert "Local-only: saves write your config file." in text
 
 
 @pytest.mark.asyncio
@@ -2843,25 +2840,28 @@ async def test_settings_long_detail_and_inspector_panes_are_scrollable_container
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
 
-        assert isinstance(screen.query_one("#settings-detail-pane"), VerticalScroll)
-        # task-1560/1562: the pane is now a fixed header above a scrollable body
+        # task-1642: BOTH panes are now fixed-header-over-scroll-body;
+        # the scrollable container is the -body child in each.
+        assert isinstance(
+            screen.query_one("#settings-detail-pane-body"), VerticalScroll
+        )
         assert isinstance(
             screen.query_one("#settings-impact-pane-body"), VerticalScroll
         )
 
         await _open_settings_category(pilot, "#settings-category-providers-models")
-        detail_pane = screen.query_one("#settings-detail-pane", VerticalScroll)
+        detail_body = screen.query_one("#settings-detail-pane-body", VerticalScroll)
         test_provider = screen.query_one("#settings-test-provider", Button)
 
-        assert detail_pane.max_scroll_y > 0
-        detail_pane.scroll_to_widget(
+        assert detail_body.max_scroll_y > 0
+        detail_body.scroll_to_widget(
             test_provider,
             animate=False,
             immediate=True,
             top=True,
             force=True,
         )
-        assert detail_pane.scroll_y > 0
+        assert detail_body.scroll_y > 0
 
 
 def _assert_field_guide_row_painted(host, widget) -> None:
@@ -6165,7 +6165,10 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
         text = _visible_text(screen)
         assert "Focused setting: Endpoint" in text
         assert "Controls the provider endpoint used by Console generation." in text
-        assert "Saved as: api_settings.ollama.api_url" in text
+        # task-1642: the in-place refresh folds dotted keys at separators,
+        # so the key spans two lines in visible text.
+        assert "Saved as: api_settings.ollama." in text
+        assert "api_url" in text
         assert "Validation: must start with http:// or https:// when set" in text
 
 
@@ -7150,7 +7153,7 @@ def test_settings_overview_config_path_label_hides_local_directory(
 
     value = screen._config_path_overview_value()
 
-    assert "Override config: config.toml" in value
+    assert "config.toml — override config, writable" in value
     assert str(config_path) not in value
     assert str(tmp_path) not in value
 
@@ -7584,7 +7587,7 @@ def test_footer_entries_advertise_test_where_it_acts():
 
     entries = screen._footer_shortcut_entries()
 
-    assert ("t", "test category") in entries
+    assert ("t", "test provider") in entries
 
 
 def test_filter_matches_owned_config_keys():
@@ -8021,7 +8024,7 @@ def test_state_banner_leads_with_persistence_badge():
         SettingsCategoryId.INTERNAL_PROMPTS: "Per-item Save/Reset",
         SettingsCategoryId.ADVANCED_CONFIG: "Validate, then Save",
         SettingsCategoryId.ARTIFACTS: "Read-only here",
-        SettingsCategoryId.IMAGE_GENERATION: "Draft — Save/Revert below",
+        SettingsCategoryId.IMAGE_GENERATION: "Draft — save/revert below",
     }
     for category, badge in expected.items():
         text = screen._category_state_banner_text(category)
@@ -8038,7 +8041,8 @@ def test_state_banner_dirty_branch_keeps_priority():
     screen._settings_drafts[SettingsCategoryId.CONSOLE_BEHAVIOR] = draft
     text = screen._category_state_banner_text(SettingsCategoryId.CONSOLE_BEHAVIOR)
     assert text == (
-        "State: Unsaved changes | Save or Revert before leaving this category."
+        "State: Unsaved changes | Save (s) or Revert (r) — switching "
+        "categories keeps this draft."
     )
 
 
@@ -8142,3 +8146,104 @@ async def test_every_category_renders_the_state_banner():
             await pilot.pause()
             banner = screen.query_one("#settings-category-state-banner", Static)
             assert str(banner.renderable).startswith("State: "), summary.category
+
+
+# ---- critique round-4 batch: tasks 1640-1646 ----
+
+
+def test_field_search_surfaces_category_and_names_the_field():
+    """task-1641: typing a setting's visible name ("threshold") surfaces
+    its category, and the echo line promises the field-level landing."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    matches = screen._filtered_category_summaries("threshold")
+
+    assert any(
+        s.category is SettingsCategoryId.CONSOLE_BEHAVIOR for s in matches
+    )
+    status = screen._category_search_status_text("threshold")
+    assert "Console Behavior › Threshold (chars)" in status
+
+
+@pytest.mark.asyncio
+async def test_field_search_enter_focuses_the_field():
+    """task-1641: Enter on a field match opens the category AND focuses the
+    matched field (which also fires its inspector guidance)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("threshold")
+        for _ in range(8):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.CONSOLE_BEHAVIOR.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-console-paste-collapse-threshold"
+        ), f"focused={focused!r}"
+
+
+@pytest.mark.asyncio
+async def test_state_banner_is_pinned_outside_detail_scroll():
+    """task-1642: the persistence badge is the save-contract carrier; it
+    must not scroll away with the category content (RAG showed no State
+    line at all in the round-4 evidence)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        banner = screen.query_one("#settings-category-state-banner", Static)
+        body = screen.query_one("#settings-detail-pane-body")
+        assert body not in banner.ancestors, "State banner is inside the scroll body"
+
+
+def test_t_hint_uses_each_categorys_real_verb():
+    """task-1640: 't test category' named an abstraction while the buttons
+    say Check/Validate/Test -- the hint now uses the real verb."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    expected = {
+        SettingsCategoryId.PROVIDERS_MODELS: "test provider",
+        SettingsCategoryId.STORAGE: "check storage",
+        SettingsCategoryId.PRIVACY_SECURITY: "check privacy",
+        SettingsCategoryId.DIAGNOSTICS: "validate config",
+    }
+    for category, verb in expected.items():
+        screen.active_category = category.value
+        entries = screen._footer_shortcut_entries()
+        assert ("t", verb) in entries, (category, entries)
+
+
+def test_toast_severity_variants_pin_the_left_edge():
+    """task-1644: Textual's stock severity styling is a border-left OUTER
+    stripe; every variant now pins its own round left edge so the stripe
+    can never resurface (DESIGN.md Don'ts)."""
+    src = (
+        _CONVENTION_CSS_ROOT.parent / "css" / "core" / "_base.tcss"
+    ).read_text() if False else (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook" / "css" / "core" / "_base.tcss"
+    ).read_text()
+    for sev in ("-information", "-warning", "-error", "-success"):
+        block = src.split(f"Toast.{sev} {{", 1)[1].split("}", 1)[0]
+        assert "border-left: round" in block, sev
+
+
+@pytest.mark.asyncio
+async def test_reassurance_short_line_off_overview():
+    """task-1640: the full local-first paragraph reads once on Overview;
+    elsewhere one line keeps the promise without eating pinned rows."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        assert "Manual sync yourself" in _visible_text(screen)
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+        assert "Local-only: saves write your config file." in text
+        assert "Manual sync yourself" not in text

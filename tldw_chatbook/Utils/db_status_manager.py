@@ -64,7 +64,9 @@ class DBStatusManager:
             }
 
             # Format status string
-            status_string = f"P: {db_sizes['prompts']} | C/N: {db_sizes['chachanotes']} | M: {db_sizes['media']}"
+            # task-1640: spell the labels -- single letters decoded only by a
+            # hover tooltip fail keyboard-first/low-vision users (critique r4).
+            status_string = f"Prompts: {db_sizes['prompts']} | Chats/Notes: {db_sizes['chachanotes']} | Media: {db_sizes['media']}"
             logger.debug(
                 f"DB size status string to display in AppFooterStatus: '{status_string}'"
             )

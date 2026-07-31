@@ -754,6 +754,66 @@ _RAG_FIELD_GROUP_BY_ID: dict[str, str] = {
     "settings-library-rag-index-backfill": "index",
 }
 
+
+def _rag_field_search_label(field_id: str) -> str:
+    """Human label for a RAG field id (task-1641 field-level search).
+
+    Args:
+        field_id: A ``settings-library-rag-*`` widget id.
+
+    Returns:
+        The id suffix as a spaced title, e.g. "hybrid alpha".
+    """
+    return field_id.removeprefix("settings-library-rag-").replace("-", " ")
+
+
+#: task-1641: field-level search index -- "/" previously matched only
+#: category names/descriptions/owned keys, so "threshold" found nothing
+#: on a 22-category screen (critique r4 P1). Labels mirror the visible
+#: row labels; Enter focuses the matched field.
+FIELD_SEARCH_INDEX: dict["SettingsCategoryId", tuple[tuple[str, str], ...]] = {}
+
+
+def _build_field_search_index() -> None:
+    from .settings_storage_defaults import STORAGE_FIELD_LABELS as _labels
+
+    FIELD_SEARCH_INDEX.update(
+        {
+            SettingsCategoryId.CONSOLE_BEHAVIOR: (
+                ("settings-console-paste-collapse-threshold", "Threshold (chars)"),
+                ("settings-console-max-parallel-runs", "Max parallel agent runs"),
+                ("settings-console-tool-result-display-chars", "Display cap (chars)"),
+            ),
+            SettingsCategoryId.APPEARANCE: (
+                ("settings-appearance-theme", "Theme"),
+                ("settings-appearance-palette-theme-limit", "Palette limit (themes)"),
+                ("settings-appearance-font-size", "Web font size (px)"),
+                ("settings-appearance-density", "Density"),
+                ("settings-appearance-animations-enabled", "Animations"),
+                ("settings-appearance-smooth-scrolling", "Smooth scrolling"),
+            ),
+            SettingsCategoryId.PROVIDERS_MODELS: (
+                ("settings-provider-value", "Provider"),
+                ("settings-model-value", "Model"),
+                ("settings-provider-endpoint-value", "Endpoint"),
+                ("settings-provider-api-key", "API key"),
+                ("settings-provider-credential-env-var", "Credential env var"),
+            ),
+            SettingsCategoryId.STORAGE: tuple(
+                (f"settings-storage-{name.replace('_', '-')}", label)
+                for name, label in _labels.items()
+            ),
+            SettingsCategoryId.LIBRARY_RAG: tuple(
+                (field_id, _rag_field_search_label(field_id))
+                for field_id in _RAG_FIELD_GROUP_BY_ID
+            ),
+        }
+    )
+
+
+_build_field_search_index()
+
+
 # Task 4 (541 v2 UX AC1): the Library/RAG editor field keys whose disabled
 # state is driven PURELY by a read-only lock (builtin/active read_only, or a
 # profile-picker PREVIEW) -- reranker_model/reranker_top_k are deliberately
@@ -1560,6 +1620,18 @@ class SettingsScreen(BaseAppScreen):
         }
     )
 
+    #: task-1640: the footer's generic "t test category" named an
+    #: abstraction while the on-page buttons say Check/Validate/Test --
+    #: the hint now uses each category's real verb.
+    TEST_ACTION_LABELS = {
+        SettingsCategoryId.PROVIDERS_MODELS: "test provider",
+        SettingsCategoryId.DIAGNOSTICS: "validate config",
+        SettingsCategoryId.STORAGE: "check storage",
+        SettingsCategoryId.PRIVACY_SECURITY: "check privacy",
+        SettingsCategoryId.APPEARANCE: "preview appearance",
+        SettingsCategoryId.LIBRARY_RAG: "check index",
+    }
+
     #: Task 6 (541 AC6): RAG-only accelerator hints, appended to
     #: SETTINGS_SHORTCUTS whenever LIBRARY_RAG is the active category -- the
     #: a/c/b bindings above are no-ops everywhere else, so they're only
@@ -1934,6 +2006,12 @@ class SettingsScreen(BaseAppScreen):
         if active not in self.TESTABLE_SETTINGS_CATEGORIES:
             shortcuts = tuple(
                 entry for entry in shortcuts if entry[0] != "t"
+            )
+        else:
+            test_label = self.TEST_ACTION_LABELS.get(active, "test category")
+            shortcuts = tuple(
+                (key, test_label if key == "t" else description)
+                for key, description in shortcuts
             )
         if self._text_entry_focused():
             # task-1560: s/r/t are real bindings and therefore inert while an
@@ -3974,6 +4052,11 @@ class SettingsScreen(BaseAppScreen):
         ).lower()
         if query in secondary_haystack:
             return 2
+        # task-1641: field labels -- typing a setting's visible name
+        # ("threshold") surfaces its category with an Enter-focuses-field
+        # promise (see _top_field_match / _submit_category_search).
+        if self._top_field_match(query, summary.category) is not None:
+            return 3
         # task-1564: last tier -- the category's owned config keys. The Scope
         # Inspector already publishes them; indexing them lets "/" find the
         # category that OWNS a setting instead of forcing a 22-item scan.
@@ -3984,7 +4067,28 @@ class SettingsScreen(BaseAppScreen):
         except Exception:
             owned = ""
         if owned and query in owned:
-            return 3
+            return 4
+        return None
+
+    @staticmethod
+    def _top_field_match(
+        query_text: str, category: SettingsCategoryId
+    ) -> tuple[str, str] | None:
+        """First indexed field of ``category`` whose label matches the query.
+
+        Args:
+            query_text: The lowercased-or-raw filter text.
+            category: The category whose field index to search.
+
+        Returns:
+            ``(field_id, label)`` for the first matching field, or None.
+        """
+        query = query_text.strip().lower()
+        if not query:
+            return None
+        for field_id, label in FIELD_SEARCH_INDEX.get(category, ()):
+            if query in label.lower():
+                return (field_id, label)
         return None
 
     def _category_matches_search(
@@ -4018,7 +4122,13 @@ class SettingsScreen(BaseAppScreen):
         matches = self._filtered_category_summaries(query)
         match_label = "match" if len(matches) == 1 else "matches"
         if matches:
-            return f"Filter: {query} | {len(matches)} {match_label} | Enter opens {matches[0].title}"
+            target = matches[0].title
+            # task-1641: when the top hit is (or contains) a matching
+            # field, promise the field-level landing in the echo line.
+            field = self._top_field_match(query, matches[0].category)
+            if field is not None:
+                target = f"{target} › {field[1]}"
+            return f"Filter: {query} | {len(matches)} {match_label} | Enter opens {target}"
         return f"Filter: {query} | 0 matches | Esc clears"
 
     @staticmethod
@@ -4085,6 +4195,20 @@ class SettingsScreen(BaseAppScreen):
         category_values = self._filtered_category_values(query_text)
         if category_values:
             self._select_category(category_values[0], restore_focus=True)
+            # task-1641: if the query named a field, land ON the field --
+            # focusing it also fires its inspector guidance.
+            opened = SettingsCategoryId(category_values[0])
+            field = self._top_field_match(query_text, opened)
+            if field is not None:
+                field_id = field[0]
+
+                def _focus_matched_field() -> None:
+                    try:
+                        self.query_one(f"#{field_id}").focus()
+                    except QueryError:
+                        pass
+
+                self.call_after_refresh(_focus_matched_field)
             # task-1621: the filter has done its job -- clear it so the
             # rail returns to the full category map. Residue used to prune
             # the rail to the last search's matches for the rest of the
@@ -4120,7 +4244,7 @@ class SettingsScreen(BaseAppScreen):
                 return f"State: Needs correction | {validation.message}"
         if self._category_has_unsaved_changes(category):
             return (
-                "State: Unsaved changes | Save or Revert before leaving this category."
+                "State: Unsaved changes | Save (s) or Revert (r) — switching categories keeps this draft."
             )
         # task-1620: lead with the persistence badge -- the footer hints
         # already honestly come and go with each category's save model,
@@ -4142,7 +4266,7 @@ class SettingsScreen(BaseAppScreen):
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             return "Draft — save with s"
         if category is SettingsCategoryId.IMAGE_GENERATION:
-            return "Draft — Save/Revert below"
+            return "Draft — save/revert below"
         if category is SettingsCategoryId.SPLASH_SCREEN:
             return "Auto-saved"
         if category is SettingsCategoryId.WORKSPACES:
@@ -4158,10 +4282,7 @@ class SettingsScreen(BaseAppScreen):
     def _category_state_scope_text(self, category: SettingsCategoryId) -> str:
         """The category-scope half of the State banner (after the badge)."""
         if category is SettingsCategoryId.ADVANCED_CONFIG:
-            return (
-                "Save blocked until the current text validates; backup "
-                "created before overwrite."
-            )
+            return "Save blocked until the text validates; backup before overwrite."
         if category is SettingsCategoryId.PROVIDERS_MODELS:
             return "Shared with Console"
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
@@ -4181,10 +4302,7 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.SPLASH_SCREEN:
             return "Splash changes take effect as you make them."
         if category is SettingsCategoryId.WORKSPACES:
-            return (
-                "Each action is reversible: unarchive restores, rename "
-                "again, or set another workspace active."
-            )
+            return "Each action reversible: unarchive, rename again, or set active."
         if category is SettingsCategoryId.THEME:
             return "Use the editor's Apply/Save/Reset buttons below."
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
@@ -4481,8 +4599,8 @@ class SettingsScreen(BaseAppScreen):
                 ("Saved as", "console.paste_collapse_threshold"),
                 (
                     "Applies",
-                    "Applies to the next paste immediately on save; already "
-                    "rendered pastes keep their current display.",
+                    "Next paste immediately on save; already rendered pastes "
+                    "keep their current display.",
                 ),
             )
         if self._active_settings_field_id == "settings-console-max-parallel-runs":
@@ -4503,8 +4621,8 @@ class SettingsScreen(BaseAppScreen):
                 ("Saved as", "console.max_parallel_runs"),
                 (
                     "Applies",
-                    "Applies to new sends on save; running agents are never "
-                    "stopped by lowering it.",
+                    "New sends on save; running agents are never stopped by "
+                    "lowering it.",
                 ),
             )
         if self._active_settings_field_id == "settings-console-tool-result-display-chars":
@@ -4529,7 +4647,7 @@ class SettingsScreen(BaseAppScreen):
                 ("Saved as", "console.tool_result_display_chars"),
                 (
                     "Applies",
-                    "Applies to newly rendered steps immediately on save -- no "
+                    "Newly rendered steps immediately on save -- no "
                     "restart needed. Steps already on screen keep their rendered "
                     "text until the transcript next redraws them.",
                 ),
@@ -4549,7 +4667,9 @@ class SettingsScreen(BaseAppScreen):
         ):
             self._set_static_text(
                 f"#settings-console-behavior-field-guide-{index}",
-                f"{label}: {value}",
+                # task-1642: compose-time rows fold via _detail_row; this
+                # in-place path must fold too or dotted keys break mid-word.
+                f"{label}: {_fold_long_tokens(value)}",
             )
 
     @staticmethod
@@ -5497,6 +5617,11 @@ class SettingsScreen(BaseAppScreen):
             self.call_after_refresh(self._restore_focus_after_sync_rows, focused_id)
 
     def _restore_focus_after_sync_rows(self, widget_id: str | None) -> None:
+        # task-1642 (critique r4): the sync-rows recompose mints a fresh,
+        # hidden fold indicator AFTER on_mount's evaluation ran -- Overview
+        # (the only category whose pane recomposes on these rows) showed a
+        # mid-sentence inspector cut with no indicator.
+        self.call_after_refresh(self._update_inspector_overflow_hint)
         pending = self._pending_navigation_focus_selector
         self._pending_navigation_focus_selector = None
         if self.app.focused is not None:
@@ -5617,7 +5742,7 @@ class SettingsScreen(BaseAppScreen):
             "Override config" if os.environ.get("TLDW_CONFIG_PATH") else "User config"
         )
         filename = config_path.name or "config.toml"
-        return f"{source}: {filename} ({self._config_writable_status()})"
+        return f"{filename} — {source.lower()}, {self._config_writable_status()}"
 
     def _raw_config_text(self) -> str:
         try:
@@ -8307,7 +8432,7 @@ class SettingsScreen(BaseAppScreen):
         for index, (label, value) in enumerate(self._provider_field_guidance_rows()):
             self._set_static_text(
                 f"#settings-provider-field-guide-{index}",
-                f"{label}: {value}",
+                f"{label}: {_fold_long_tokens(value)}",
             )
 
     def _appearance_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
@@ -8379,7 +8504,7 @@ class SettingsScreen(BaseAppScreen):
         for index, (label, value) in enumerate(self._appearance_field_guidance_rows()):
             self._set_static_text(
                 f"#settings-appearance-field-guide-{index}",
-                f"{label}: {value}",
+                f"{label}: {_fold_long_tokens(value)}",
             )
 
     def _storage_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
@@ -8429,7 +8554,7 @@ class SettingsScreen(BaseAppScreen):
         for index, (label, value) in enumerate(self._storage_field_guidance_rows()):
             self._set_static_text(
                 f"#settings-storage-field-guide-{index}",
-                f"{label}: {value}",
+                f"{label}: {_fold_long_tokens(value)}",
             )
 
     def _rag_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
@@ -8453,7 +8578,7 @@ class SettingsScreen(BaseAppScreen):
         for index, (label, value) in enumerate(self._rag_field_guidance_rows()):
             self._set_static_text(
                 f"#settings-library-rag-field-guide-{index}",
-                f"{label}: {value}",
+                f"{label}: {_fold_long_tokens(value)}",
             )
 
     def _split_detail_row(self, text: str) -> Static:
@@ -8589,10 +8714,9 @@ class SettingsScreen(BaseAppScreen):
         # sync and the ownership summary sit at the bottom of the card.
         yield Static("Overview", classes="destination-section settings-column-title")
         with Vertical(id="settings-overview-card", classes="settings-focus-card"):
-            yield self._render_category_state_banner(SettingsCategoryId.OVERVIEW)
             yield Static("Provider readiness", classes="destination-section")
             yield self._detail_row(
-                "Provider readiness",
+                "Active",
                 self._provider_readiness_label().removeprefix("Provider readiness: "),
                 identifier="settings-overview-provider-readiness",
             )
@@ -8660,9 +8784,6 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(
             id="settings-providers-models-card", classes="settings-focus-card"
         ):
-            yield self._render_category_state_banner(
-                SettingsCategoryId.PROVIDERS_MODELS
-            )
             # task-189: the Connect block (provider, model, endpoint,
             # credentials, readiness/test) leads; sampling and tuning live in
             # the collapsed "Generation defaults" disclosure below it.
@@ -9188,8 +9309,10 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(
             id="settings-console-behavior-card", classes="settings-secondary-card"
         ):
-            title = "Console paste collapse" if compact else "Console Behavior"
-            yield Static(title, classes="destination-section")
+            if compact:
+                yield Static(
+                    "Console paste collapse", classes="destination-section"
+                )
             yield Static("Composer paste handling", classes="destination-section")
             yield Static(
                 "Collapse large pasted chunks only when they exceed the threshold.",
@@ -9990,12 +10113,17 @@ class SettingsScreen(BaseAppScreen):
             # .settings-library-rag-profile-delete-button) and given the
             # repo's standard destructive-button variant (see e.g.
             # settings_theme_editor.py's own "Delete" button).
-            yield Button(
-                "Delete",
+            # task-1643 (critique r4): a full-red, live-looking Delete sat
+            # directly under the "Built-in profile — read-only" banner --
+            # inert destructive actions carry their reason in text.
+            delete_button = Button(
+                "Delete — built-in" if info["read_only"] else "Delete",
                 id="settings-library-rag-profile-delete",
                 variant="error",
                 classes="settings-library-rag-profile-delete-button",
             )
+            delete_button.disabled = bool(info["read_only"])
+            yield delete_button
         readonly_banner = Static(
             "Built-in profile — read-only. Clone it, then press Set active to edit the clone.",
             id="settings-library-rag-profile-readonly-banner",
@@ -10263,7 +10391,6 @@ class SettingsScreen(BaseAppScreen):
             "RAG", classes="destination-section settings-column-title"
         )
         with Vertical(id="settings-library-rag-card", classes="settings-focus-card"):
-            yield self._render_category_state_banner(SettingsCategoryId.LIBRARY_RAG)
             # Task 4 (541 v2 UX AC1): manage-vs-edit split -- the picker
             # (browse/Set active/Clone/Rename/Delete) and the editor
             # (Search/Embedding/Chunking/Vector store/Reranking fields) each
@@ -10697,7 +10824,6 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(
             id=f"settings-{category.value}-card", classes="settings-focus-card"
         ):
-            yield self._render_category_state_banner(category)
             yield Static("How this page works", classes="destination-section")
             yield self._detail_row("Owner destination", contract.owner_destination)
             yield self._detail_row(
@@ -10718,7 +10844,6 @@ class SettingsScreen(BaseAppScreen):
     def _render_workspaces_detail(self) -> ComposeResult:
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         yield Static("Workspace management", classes="destination-section")
-        yield self._render_category_state_banner(SettingsCategoryId.WORKSPACES)
         if registry is None:
             yield Static(
                 "Workspace service is not ready. Restart Chatbook and retry.",
@@ -10930,9 +11055,6 @@ class SettingsScreen(BaseAppScreen):
             with Vertical(
                 id="settings-console-behavior-detail", classes="settings-focus-card"
             ):
-                yield self._render_category_state_banner(
-                    SettingsCategoryId.CONSOLE_BEHAVIOR
-                )
                 yield from self._render_console_behavior_card(compact=False)
                 yield Static("Composer behavior", classes="destination-section")
                 yield self._detail_row(
@@ -10978,7 +11100,6 @@ class SettingsScreen(BaseAppScreen):
                 "Appearance", classes="destination-section settings-column-title"
             )
             with Vertical(id="settings-appearance-card", classes="settings-focus-card"):
-                yield self._render_category_state_banner(SettingsCategoryId.APPEARANCE)
                 yield Static("Global visual defaults", classes="destination-section")
                 yield Static(
                     "Settings owns launch visual defaults. "
@@ -11071,19 +11192,15 @@ class SettingsScreen(BaseAppScreen):
                 )
         elif category is SettingsCategoryId.THEME:
             yield Static("Theme", classes="destination-section settings-column-title")
-            yield self._render_category_state_banner(SettingsCategoryId.THEME)
             yield SettingsThemeEditor(id="settings-theme-editor")
         elif category is SettingsCategoryId.SPLASH_SCREEN:
             yield Static("Splash Screen", classes="destination-section settings-column-title")
-            yield self._render_category_state_banner(SettingsCategoryId.SPLASH_SCREEN)
             yield SettingsSplashScreenViewer(id="settings-splash-screen-viewer")
         elif category is SettingsCategoryId.INTERNAL_PROMPTS:
             yield Static("Internal Prompts", classes="destination-section settings-column-title")
-            yield self._render_category_state_banner(SettingsCategoryId.INTERNAL_PROMPTS)
             yield InternalPromptsPanel(id="settings-internal-prompts-panel")
         elif category is SettingsCategoryId.IMAGE_GENERATION:
             yield Static("Image Gen", classes="destination-section settings-column-title")
-            yield self._render_category_state_banner(SettingsCategoryId.IMAGE_GENERATION)
             image_gen_overlay = self._image_gen_overlay_values()
             self._queue_image_gen_select_suppression(image_gen_overlay)
             yield ImageGenSettingsPanel(
@@ -11098,7 +11215,6 @@ class SettingsScreen(BaseAppScreen):
                 config_path = f"invalid - {redact_secret_text(str(exc))}"
             yield Static("Storage", classes="destination-section settings-column-title")
             with Vertical(id="settings-storage-card", classes="settings-focus-card"):
-                yield self._render_category_state_banner(SettingsCategoryId.STORAGE)
                 yield Static("Storage defaults", classes="destination-section")
                 yield self._detail_row(
                     "Scope", "persisted local database path defaults"
@@ -11187,9 +11303,6 @@ class SettingsScreen(BaseAppScreen):
             with Vertical(
                 id="settings-privacy-security-card", classes="settings-focus-card"
             ):
-                yield self._render_category_state_banner(
-                    SettingsCategoryId.PRIVACY_SECURITY
-                )
                 yield Static("Privacy posture", classes="destination-section")
                 yield self._detail_row(
                     "Config encryption",
@@ -11279,7 +11392,6 @@ class SettingsScreen(BaseAppScreen):
             with Vertical(
                 id="settings-diagnostics-card", classes="settings-focus-card"
             ):
-                yield self._render_category_state_banner(SettingsCategoryId.DIAGNOSTICS)
                 yield Static("Validate config", classes="destination-section")
                 yield self._detail_row("Config path", self._config_path())
                 yield self._detail_row(
@@ -11332,9 +11444,6 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-advanced-config-card", classes="settings-focus-card"
             ):
                 raw_config_text = self._raw_config_text()
-                yield self._render_category_state_banner(
-                    SettingsCategoryId.ADVANCED_CONFIG
-                )
                 yield Static("Raw TOML", classes="destination-section")
                 yield self._detail_row(
                     "Risk level", "expert-only raw configuration editing"
@@ -11471,18 +11580,26 @@ class SettingsScreen(BaseAppScreen):
             revert_button.disabled = not self._guided_actions_enabled(summary.category)
             yield revert_button
         elif summary.category is SettingsCategoryId.OVERVIEW:
+            # task-1640 (critique r4 P1): this was a bare "Theme" noun-chip
+            # whose verb lived in a mouse-only tooltip; the label now names
+            # the action. It stays in the pinned header because the 32-row
+            # compact contract requires a painted recovery action
+            # (test_compact_overview_keeps_a_painted_recovery_action).
             yield Button(
-                "Theme",
+                "Open Theme editor",
                 id="settings-open-appearance",
                 tooltip="Open the dedicated Theme editor.",
             )
-        # task-181 copy, task-1583 placement: this reassurance line used to
-        # close the SCROLLABLE body, where 8 of 20 critique captures cut it
-        # mid-sentence ("Nothing is sent to" reads ominous truncated).
-        # Pinned here it is always fully visible.
+        # task-181 copy, task-1583 placement, task-1640 length: the full
+        # reassurance paragraph reads once on Overview; everywhere else a
+        # single line keeps the promise without eating three pinned rows
+        # on all 22 categories (critique r4: "the cozy reassurance decays
+        # into noise by the third category").
         yield Static(
-            "Saves apply to your local config file. Nothing is sent to a server "
-            "unless you run Manual sync yourself.",
+            "Saves apply to your local config file. Nothing is sent to a "
+            "server unless you run Manual sync yourself."
+            if summary.category is SettingsCategoryId.OVERVIEW
+            else "Local-only: saves write your config file.",
             id="settings-local-scope-note",
         )
 
@@ -11623,7 +11740,7 @@ class SettingsScreen(BaseAppScreen):
                 "full theme editing, custom colors, and deeper preview",
             )
             yield Button(
-                "Open Theme",
+                "Open Theme editor",
                 id="settings-open-appearance",
                 tooltip="Open the dedicated Theme editor.",
             )
@@ -11752,14 +11869,32 @@ class SettingsScreen(BaseAppScreen):
                     if active_summary.category is SettingsCategoryId.ADVANCED_CONFIG
                     else VerticalScroll
                 )
-                with detail_pane_container(
+                detail_pane = Vertical(
                     id="settings-detail-pane", classes="destination-workbench-pane"
-                ):
+                )
+                # Inline height: same bundle-collapse guard as the impact
+                # pane below.
+                detail_pane.styles.height = "100%"
+                with detail_pane:
                     yield Static(
                         "Preference Detail",
                         classes="destination-section settings-column-title",
                     )
-                    yield from self._render_detail_pane()
+                    # task-1642 (critique r4): ONE pinned State banner --
+                    # previously each category composed its own inside the
+                    # scrollable content, so the persistence badge (the
+                    # save-contract carrier) scrolled away mid-task (RAG
+                    # showed no State line at all in evidence).
+                    yield self._render_category_state_banner(
+                        active_summary.category
+                    )
+                    detail_body = detail_pane_container(
+                        id="settings-detail-pane-body"
+                    )
+                    detail_body.styles.height = "1fr"
+                    detail_body.styles.scrollbar_size_vertical = 1
+                    with detail_body:
+                        yield from self._render_detail_pane()
                 yield self._column_divider("settings-detail-impact-divider")
                 impact_pane = Vertical(
                     id="settings-impact-pane",

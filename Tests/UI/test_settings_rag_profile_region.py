@@ -1233,7 +1233,7 @@ def test_backfill_button_click_while_in_flight_does_not_start_a_second_worker(
     assert fake_app.notifications[-1] == ("Backfill is already running.", "warning")
 
 
-# --- UX review item 8 (P2, wire 't' for RAG): 't test category' used to
+# --- UX review item 8 (P2, wire 't' for RAG): 't check index' used to
 # fall all the way through to the generic "No test action is available..."
 # toast for RAG. Now it refetches index status (same off-thread pattern as
 # the other triggers) and reports it alongside the current preview
@@ -3520,7 +3520,7 @@ async def test_rag_category_footer_advertises_the_new_accelerators(
             assert token not in overview_footer.shortcut_text
         # Overview is read-only and untestable: the category-gated footer
         # (rescore P1) advertises no settings keys there at all.
-        for token in ("s save category", "r revert category", "t test category"):
+        for token in ("s save category", "r revert category", "t check index"):
             assert token not in overview_footer.shortcut_text
 
         await _open_settings_category(pilot, "#settings-category-library-rag")
@@ -3532,7 +3532,7 @@ async def test_rag_category_footer_advertises_the_new_accelerators(
             "b backfill",
             "s save category",
             "r revert category",
-            "t test category",
+            "t check index",
         ):
             assert token in rag_footer.shortcut_text
 
@@ -3873,3 +3873,18 @@ async def test_post_recompose_sweep_releases_a_capture_dispatched_during_the_tea
             "anywhere in the app are silently swallowed again (task-627 "
             "review finding)"
         )
+
+
+@pytest.mark.asyncio
+async def test_builtin_profile_delete_is_annotated_and_disabled():
+    """task-1643 (critique r4): a full-red live-looking Delete sat directly
+    under the "Built-in profile — read-only" banner; inert destructive
+    actions carry their reason in text."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        delete = screen.query_one("#settings-library-rag-profile-delete", Button)
+        assert delete.disabled is True
+        assert "built-in" in str(delete.label)
