@@ -3877,9 +3877,12 @@ async def test_post_recompose_sweep_releases_a_capture_dispatched_during_the_tea
 
 @pytest.mark.asyncio
 async def test_builtin_profile_delete_is_annotated_and_disabled():
-    """task-1643 (critique r4): a full-red live-looking Delete sat directly
-    under the "Built-in profile — read-only" banner; inert destructive
-    actions carry their reason in text."""
+    """A built-in profile's Delete is annotated and disabled.
+
+    task-1643: a full-red live-looking Delete sat directly under the
+    "Built-in profile — read-only" banner; inert destructive actions
+    carry their reason in text.
+    """
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(190, 55)) as pilot:

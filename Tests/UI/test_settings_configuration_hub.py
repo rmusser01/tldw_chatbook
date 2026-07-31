@@ -8152,8 +8152,11 @@ async def test_every_category_renders_the_state_banner():
 
 
 def test_field_search_surfaces_category_and_names_the_field():
-    """task-1641: typing a setting's visible name ("threshold") surfaces
-    its category, and the echo line promises the field-level landing."""
+    """Field search surfaces the owning category and names the field.
+
+    task-1641: typing a setting's visible name ("threshold") must surface
+    its category, with the echo line promising the field-level landing.
+    """
     app = _build_test_app()
     screen = SettingsScreen(app)
 
@@ -8168,8 +8171,11 @@ def test_field_search_surfaces_category_and_names_the_field():
 
 @pytest.mark.asyncio
 async def test_field_search_enter_focuses_the_field():
-    """task-1641: Enter on a field match opens the category AND focuses the
-    matched field (which also fires its inspector guidance)."""
+    """Enter on a field match focuses that field.
+
+    task-1641: opening the category is not enough -- landing focus on the
+    matched field is what fires its inspector guidance.
+    """
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(190, 55)) as pilot:
@@ -8187,9 +8193,12 @@ async def test_field_search_enter_focuses_the_field():
 
 @pytest.mark.asyncio
 async def test_state_banner_is_pinned_outside_detail_scroll():
-    """task-1642: the persistence badge is the save-contract carrier; it
+    """The State banner is pinned outside the detail scroll body.
+
+    task-1642: the persistence badge is the save-contract carrier, so it
     must not scroll away with the category content (RAG showed no State
-    line at all in the round-4 evidence)."""
+    line at all in the round-4 evidence).
+    """
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(190, 55)) as pilot:
@@ -8201,8 +8210,11 @@ async def test_state_banner_is_pinned_outside_detail_scroll():
 
 
 def test_t_hint_uses_each_categorys_real_verb():
-    """task-1640: 't test category' named an abstraction while the buttons
-    say Check/Validate/Test -- the hint now uses the real verb."""
+    """The t hint names each category's real verb.
+
+    task-1640: "t test category" named an abstraction while the on-page
+    buttons say Check/Validate/Test.
+    """
     app = _build_test_app()
     screen = SettingsScreen(app)
     expected = {
@@ -8218,9 +8230,12 @@ def test_t_hint_uses_each_categorys_real_verb():
 
 
 def test_toast_severity_variants_pin_the_left_edge():
-    """task-1644: Textual's stock severity styling is a border-left OUTER
-    stripe; every variant now pins its own round left edge so the stripe
-    can never resurface (DESIGN.md Don'ts)."""
+    """Every toast severity variant pins its own left edge.
+
+    task-1644: Textual's stock severity styling is a border-left OUTER
+    stripe, so each variant must pin a round left edge or the stripe
+    resurfaces (DESIGN.md Don'ts).
+    """
     src = (
         _CONVENTION_CSS_ROOT.parent / "css" / "core" / "_base.tcss"
     ).read_text() if False else (
@@ -8234,8 +8249,11 @@ def test_toast_severity_variants_pin_the_left_edge():
 
 @pytest.mark.asyncio
 async def test_reassurance_short_line_off_overview():
-    """task-1640: the full local-first paragraph reads once on Overview;
-    elsewhere one line keeps the promise without eating pinned rows."""
+    """The long reassurance paragraph is Overview-only.
+
+    task-1640: elsewhere a single line keeps the local-first promise
+    without eating pinned inspector rows on all 22 categories.
+    """
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(190, 55)) as pilot:
