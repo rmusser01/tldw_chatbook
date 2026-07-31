@@ -178,6 +178,36 @@ async def test_unresolvable_target_raises_runtime_error(view_model, db, dataset_
 
 
 @pytest.mark.asyncio
+async def test_empty_target_ids_raises_runtime_error_and_creates_no_runs(
+    view_model, db, dataset_id
+):
+    """task-1482 fix round 1: a draft bench created via the rail's
+    "+ New bench" starts with ``target_ids=()`` (targets are wired on
+    later, in the bench editor). Without this guard, ``run_existing_
+    bench`` reached ``runner.run``/``create_run_group`` with zero
+    targets, which loops over ``targets`` and so silently produced a run
+    group sharing a ``run_group_id`` with ZERO ``eval_runs`` rows -- a
+    run group that then reads back as "could not be found" the instant
+    anything selects it. ``_primary_action_state`` (evals_screen.py)
+    already blocks the button for this exact case; this is the engine
+    seam itself -- belt-and-suspenders for any other caller."""
+    config = BenchConfig(
+        name="target-less bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(),
+    )
+    task_id = save_bench(db, config)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await run_existing_bench(view_model, {}, task_id)
+
+    assert str(exc_info.value) == "Bench 'target-less bench' has no targets to run."
+    assert db.list_runs(task_id=task_id) == []
+
+
+@pytest.mark.asyncio
 async def test_missing_bench_raises_runtime_error(view_model):
     with pytest.raises(RuntimeError):
         await run_existing_bench(view_model, {}, str(uuid.uuid4()))

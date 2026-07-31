@@ -72,6 +72,26 @@ class ConflictError(EvalsDBError):
         self.entity_id = entity_id
 
 
+def _clean_task_name(name: str) -> str:
+    """Strip control characters and surrounding whitespace from a task name.
+
+    Shared by ``create_task`` and ``update_task`` so the two paths can never
+    drift apart again: before this helper, ``update_task`` only ``.strip()``
+    ed its ``name`` argument -- silently admitting control characters
+    ``create_task`` filters out, and applying no blank-name rejection at all
+    (task-1482 hygiene parity; ``eval_tasks.name`` is ``NOT NULL UNIQUE`` and
+    a bare-whitespace value would previously round-trip through ``update_task``
+    only to break every other caller expecting a real name).
+
+    Raises:
+        InputError: If the cleaned name is empty.
+    """
+    cleaned = "".join(c for c in name if c.isprintable() and ord(c) != 0).strip()
+    if not cleaned:
+        raise InputError("Task name cannot be empty")
+    return cleaned
+
+
 class EvalsDB:
     """Database manager for LLM evaluation data and results."""
 
@@ -550,14 +570,11 @@ class EvalsDB:
         start_time = time.time()
 
         # Clean control characters from name and description
-        name = "".join(c for c in name if c.isprintable() and ord(c) != 0)
+        name = _clean_task_name(name)
         if description:
             description = "".join(
                 c for c in description if c.isprintable() and ord(c) != 0
             )
-
-        if not name or not name.strip():
-            raise InputError("Task name cannot be empty")
 
         if task_type not in [
             "question_answer",
@@ -590,7 +607,7 @@ class EvalsDB:
                 """,
                     (
                         task_id,
-                        name.strip(),
+                        name,
                         description,
                         task_type,
                         config_format,
@@ -656,13 +673,26 @@ class EvalsDB:
         description: str = None,
         config_data: Dict[str, Any] = None,
     ) -> bool:
-        """Update an existing task."""
+        """Update an existing task.
+
+        ``name`` is cleaned through the same ``_clean_task_name`` helper
+        ``create_task`` uses (control-char filter + strip + blank rejection)
+        so the two paths cannot drift again -- this used to only ``.strip()``
+        and never rejected a blank name (task-1482 hygiene parity).
+
+        Raises:
+            InputError: If ``name`` is given and, once cleaned, is empty.
+            ConflictError: If the cleaned ``name`` collides with another
+                task's name -- ``eval_tasks.name`` is ``UNIQUE`` with no
+                ``deleted_at`` exemption, so this includes a soft-deleted
+                task's name, not only a live one.
+        """
         updates = []
         params = []
 
         if name is not None:
             updates.append("name = ?")
-            params.append(name.strip())
+            params.append(_clean_task_name(name))
 
         if description is not None:
             updates.append("description = ?")

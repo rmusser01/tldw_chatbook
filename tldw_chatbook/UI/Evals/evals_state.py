@@ -89,6 +89,34 @@ class EvalsViewModel:
             return []
         return self._db.list_datasets(limit=_LIST_LIMIT)
 
+    def llama_targets(self) -> list[dict[str, Any]]:
+        """Configured ``llama_cpp`` ``eval_models`` rows -- what the bench
+        editor's Add-target picker offers (task-1482 Task 6).
+
+        Narrowed to ``llama_cpp`` for the same reason ``sample_bench.py``'s
+        own module docstring gives for its target resolution:
+        ``WordBenchCaptureClient`` needs an OpenAI-compatible completions
+        endpoint at a bare root, and ``llama_cpp`` is the only provider
+        whose config convention matches that shape and is fixture-verified
+        -- offering a target this workbench cannot actually run against
+        would be worse than not offering it at all. A pre-existing
+        ``eval_models`` row of any OTHER provider is still usable as a
+        bench target (nothing here removes one already wired on), it is
+        simply never something this picker lets a user ADD.
+
+        Empty-safe like every other read on this class, so a caller needs
+        no ``db is None`` branch of its own.
+
+        Returns:
+            ``eval_models`` rows (``id``/``name``/``provider``/``model_id``
+            among their keys) whose ``provider`` is ``"llama_cpp"``, newest
+            first (``EvalsDB.list_models``'s own ordering) -- or ``[]`` if
+            no evaluation database is wired, or none are configured.
+        """
+        if self._db is None:
+            return []
+        return self._db.list_models(provider="llama_cpp")
+
     def run_groups(self) -> list[dict[str, Any]]:
         """One row per distinct ``run_group_id``, newest run first.
 
