@@ -16,6 +16,7 @@ class _Route:
     support_range: bool
     disconnect_after: int | None
     require_token: str | None
+    last_modified: str | None = None
 
 
 class FixtureArtifactServer:
@@ -64,13 +65,27 @@ class FixtureArtifactServer:
                 start = 0
                 status = 200
                 range_header = self.headers.get("Range")
-                if range_header and route.support_range:
+                if_range = self.headers.get("If-Range")
+                honor_range = bool(range_header) and route.support_range
+                if honor_range and if_range is not None:
+                    # Real servers refuse a stale If-Range by falling back to
+                    # a full 200 -- the behavior fetch.py's resume-mismatch
+                    # detection depends on. Match against whichever validator
+                    # this route currently has (an ETag comparison and a
+                    # Last-Modified comparison are mutually exclusive in
+                    # practice since the client sends only one).
+                    current_validator = route.etag or route.last_modified
+                    if if_range != current_validator:
+                        honor_range = False
+                if honor_range:
                     start = int(range_header.split("=")[1].split("-")[0])
                     body = body[start:]
                     status = 206
                 self.send_response(status)
                 if route.etag:
                     self.send_header("ETag", route.etag)
+                if route.last_modified:
+                    self.send_header("Last-Modified", route.last_modified)
                 if route.support_range:
                     self.send_header("Accept-Ranges", "bytes")
                 self.send_header("Content-Length", str(len(body)))
@@ -95,6 +110,7 @@ class FixtureArtifactServer:
         *,
         etag: str | None = '"v1"',
         weak_etag: bool = False,
+        last_modified: str | None = None,
         support_range: bool = True,
         disconnect_after: int | None = None,
         require_token: str | None = None,
@@ -106,6 +122,9 @@ class FixtureArtifactServer:
             body: Full response body for a non-Range request.
             etag: ETag value to send (``None`` to omit the header).
             weak_etag: Wrap ``etag`` as a weak validator (``W/"..."``).
+            last_modified: ``Last-Modified`` header value to send (``None``
+                to omit). Also doubles as the conditional-range validator
+                when ``etag`` is ``None``, mirroring real servers.
             support_range: Whether ``Range`` requests are honored (206) or
                 ignored (always 200 with the full body).
             disconnect_after: If set, write only this many bytes then close
@@ -114,7 +133,14 @@ class FixtureArtifactServer:
         """
         if etag and weak_etag:
             etag = f"W/{etag}"
-        self._routes[path] = _Route(body, etag, support_range, disconnect_after, require_token)
+        self._routes[path] = _Route(
+            body=body,
+            etag=etag,
+            support_range=support_range,
+            disconnect_after=disconnect_after,
+            require_token=require_token,
+            last_modified=last_modified,
+        )
 
     def url(self, path: str) -> str:
         """Absolute ``http://127.0.0.1:<port><path>`` URL for this server."""

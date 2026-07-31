@@ -118,8 +118,18 @@ async def stream_fetch(
     request_headers: dict[str, str] = dict(headers or {})
     if resume_from:
         request_headers["Range"] = f"bytes={resume_from}-"
+        # If-Range must carry WHICHEVER validator makes resuming safe: a
+        # strong ETag if we have one, else the Last-Modified date (RFC 9110
+        # 13.1.5 -- If-Range also accepts an HTTP-date). Sending only the
+        # etag branch would silently drop the Last-Modified-only case that
+        # FetchValidators.strong explicitly allows (etag=None, last_modified
+        # set): the server would then see a bare Range with no If-Range,
+        # honor it unconditionally, and a changed resource's bytes would be
+        # appended to stale on-disk data with no mismatch ever detected.
         if validators and validators.etag:
             request_headers["If-Range"] = validators.etag
+        elif validators and validators.last_modified:
+            request_headers["If-Range"] = validators.last_modified
 
     written = 0
     for _hop in range(MAX_REDIRECT_HOPS + 1):

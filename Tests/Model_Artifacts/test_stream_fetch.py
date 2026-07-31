@@ -117,6 +117,55 @@ async def test_no_range_support_raises_restart(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_last_modified_only_resume_succeeds(tmp_path):
+    """FetchValidators.strong allows etag=None + last_modified set; resume
+    must actually use THAT validator in If-Range, not silently skip it."""
+    lm = 'Wed, 21 Oct 2015 07:28:00 GMT'
+    with FixtureArtifactServer() as srv:
+        srv.serve("/f.bin", BODY, etag=None, last_modified=lm)
+        dest = tmp_path / "f.bin"
+        dest.write_bytes(BODY[:4000])
+        async with httpx.AsyncClient() as client:
+            result = await stream_fetch(
+                srv.url("/f.bin"), dest, client=client, max_bytes=len(BODY),
+                resume_from=4000,
+                validators=FetchValidators(etag=None, last_modified=lm),
+                trusted_origins=_trusted(srv),
+            )
+    assert dest.read_bytes() == BODY
+    assert result.resumed is True
+    assert result.bytes_written == len(BODY) - 4000
+    assert any("If-Range" in r for r in srv.requests["/f.bin"])
+
+
+@pytest.mark.asyncio
+async def test_changed_last_modified_raises_restart_without_append(tmp_path):
+    """Upstream changed (new Last-Modified) while resuming Last-Modified-only:
+    a spec-compliant server answers the mismatched If-Range with a full 200,
+    which must raise FetchRestartRequired -- and the destination must NOT
+    have had any (mismatched) bytes appended."""
+    with FixtureArtifactServer() as srv:
+        srv.serve(
+            "/f.bin", BODY, etag=None,
+            last_modified="Thu, 22 Oct 2015 07:28:00 GMT",
+        )
+        dest = tmp_path / "f.bin"
+        seed = BODY[:100]
+        dest.write_bytes(seed)
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(FetchRestartRequired):
+                await stream_fetch(
+                    srv.url("/f.bin"), dest, client=client, max_bytes=len(BODY),
+                    resume_from=100,
+                    validators=FetchValidators(
+                        etag=None, last_modified="Wed, 21 Oct 2015 07:28:00 GMT"
+                    ),
+                    trusted_origins=_trusted(srv),
+                )
+    assert dest.read_bytes() == seed
+
+
+@pytest.mark.asyncio
 async def test_max_bytes_bounds_final_size(tmp_path):
     with FixtureArtifactServer() as srv:
         srv.serve("/f.bin", BODY)
