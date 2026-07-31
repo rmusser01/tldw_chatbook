@@ -2612,7 +2612,6 @@ async def test_console_selected_message_copy_action_works_from_keyboard():
         transcript.focus()
         await _wait_for_focus(console.app, pilot, transcript)
         await pilot.press("down")
-        await pilot.press("enter")
         await _wait_for_selector(
             console, pilot, f"#console-message-action-copy-{message.id}"
         )
