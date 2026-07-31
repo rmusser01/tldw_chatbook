@@ -624,6 +624,7 @@ class _ResolvedPushConfiguration:
 
     tracking_remote: str = field(repr=False)
     merge_ref: str
+    endpoint_source: Literal["pushurl", "url"]
     configuration_fingerprint: str
     transport: _AdmittedPushTransport
 
@@ -756,8 +757,15 @@ def _resolve_push_configuration(
     )
     if len(push_urls) > 1 or (not push_urls and len(fetch_urls) != 1):
         raise PushContractError("invalid_configuration")
+    endpoint_source: Literal["pushurl", "url"] = (
+        "pushurl" if push_urls else "url"
+    )
     configured_endpoint = push_urls[0] if push_urls else fetch_urls[0]
-    effective_endpoint = _rewrite_push_endpoint(configured_endpoint, facts)
+    effective_endpoint = _rewrite_push_endpoint(
+        configured_endpoint,
+        facts,
+        use_push_rewrites=endpoint_source == "url",
+    )
     try:
         transport = _admit_push_transport(
             admission,
@@ -769,9 +777,11 @@ def _resolve_push_configuration(
     return _ResolvedPushConfiguration(
         tracking_remote=tracking_remote,
         merge_ref=merge_ref,
+        endpoint_source=endpoint_source,
         configuration_fingerprint=_configuration_fingerprint(
             facts,
             local_branch_ref,
+            endpoint_source,
         ),
         transport=transport,
     )
@@ -871,8 +881,14 @@ def _validate_push_security_facts(
 def _rewrite_push_endpoint(
     endpoint: str,
     facts: tuple[_GitConfigFact, ...],
+    *,
+    use_push_rewrites: bool,
 ) -> str:
-    push_rules = _rewrite_rules(facts, "pushinsteadof", endpoint)
+    push_rules = (
+        _rewrite_rules(facts, "pushinsteadof", endpoint)
+        if use_push_rewrites
+        else ()
+    )
     rules = push_rules or _rewrite_rules(facts, "insteadof", endpoint)
     if not rules:
         return endpoint
@@ -907,11 +923,13 @@ def _rewrite_rules(
 def _configuration_fingerprint(
     facts: tuple[_GitConfigFact, ...],
     local_branch_ref: str,
+    endpoint_source: Literal["pushurl", "url"],
 ) -> str:
     digest = hashlib.sha256()
     for value in (
         "file-notes-push-config-v1",
         local_branch_ref,
+        endpoint_source,
         *(
             component
             for fact in facts

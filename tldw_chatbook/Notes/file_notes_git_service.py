@@ -2199,14 +2199,24 @@ class FileNotesGitService:
             if included_paths is None or not included_paths:
                 return None, "blocked"
 
-            index_environment = build_local_push_proof_environment(
-                self._environment,
-                index_file=str(index_file),
+            attribute_context = self._prepare_candidate_attribute_proof(
+                repository,
+                proof_directory,
+                hooks_directory,
+                index_file,
             )
+            if attribute_context is None:
+                return None, "blocked"
+            (
+                attribute_prefix,
+                index_environment,
+                source_objects,
+                source_objects_identity,
+            ) = attribute_context
             tree_result = await self._run_local_push_proof_command(
                 repository,
                 (
-                    *prefix,
+                    *attribute_prefix,
                     "read-tree",
                     raw_commit.tree_object_id,
                 ),
@@ -2217,7 +2227,7 @@ class FileNotesGitService:
             attribute_result = await self._run_local_push_proof_command(
                 repository,
                 (
-                    *prefix,
+                    *attribute_prefix,
                     "check-attr",
                     "--cached",
                     "-z",
@@ -2237,6 +2247,16 @@ class FileNotesGitService:
             )
             if attribute_fingerprint is None:
                 return None, "blocked"
+            try:
+                objects_unchanged = (
+                    source_objects.resolve(strict=True) == source_objects
+                    and _filesystem_identity(source_objects)
+                    == source_objects_identity
+                )
+            except (OSError, RuntimeError):
+                objects_unchanged = False
+            if not objects_unchanged:
+                return None, "stale"
             if not self._repository_identity_matches(binding, repository):
                 return None, "stale"
 
@@ -2296,6 +2316,89 @@ class FileNotesGitService:
             "gc.auto=0",
         )
 
+    def _prepare_candidate_attribute_proof(
+        self,
+        repository: RepositoryIdentity,
+        proof_directory: Path,
+        hooks_directory: Path,
+        index_file: Path,
+    ) -> tuple[
+        tuple[str, ...],
+        dict[str, str],
+        Path,
+        FileSystemIdentity,
+    ] | None:
+        """Create an isolated exact-tree attribute reader with object-only access."""
+        source_objects = Path(repository.git_common_dir) / "objects"
+        try:
+            canonical_objects = source_objects.resolve(strict=True)
+            if canonical_objects != source_objects or not source_objects.is_dir():
+                return None
+            source_objects_identity = _filesystem_identity(source_objects)
+
+            git_dir = proof_directory / "attribute.git"
+            object_directory = git_dir / "objects"
+            refs_directory = git_dir / "refs"
+            worktree = proof_directory / "attribute-worktree"
+            home = proof_directory / "attribute-home"
+            config_home = home / ".config"
+            for directory in (
+                git_dir,
+                object_directory,
+                refs_directory,
+                worktree,
+                home,
+                config_home,
+            ):
+                directory.mkdir(mode=0o700)
+
+            head_file = git_dir / "HEAD"
+            system_config = proof_directory / "system.gitconfig"
+            global_config = proof_directory / "global.gitconfig"
+            attributes_file = proof_directory / "global.attributes"
+            for path, payload in (
+                (head_file, b"ref: refs/heads/isolated\n"),
+                (system_config, b""),
+                (global_config, b""),
+                (attributes_file, b""),
+            ):
+                path.write_bytes(payload)
+                path.chmod(0o600)
+        except (OSError, RuntimeError):
+            return None
+
+        environment = build_local_push_proof_environment(
+            self._environment,
+            index_file=str(index_file),
+        )
+        environment.update(
+            {
+                "GIT_DIR": str(git_dir),
+                "GIT_WORK_TREE": str(worktree),
+                "GIT_OBJECT_DIRECTORY": str(object_directory),
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(source_objects),
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_SYSTEM": str(system_config),
+                "GIT_CONFIG_GLOBAL": str(global_config),
+                "GIT_ATTR_NOSYSTEM": "1",
+                "HOME": str(home),
+                "XDG_CONFIG_HOME": str(config_home),
+            }
+        )
+        prefix = (
+            *self._local_push_proof_prefix(hooks_directory),
+            "-c",
+            f"core.attributesFile={attributes_file}",
+            f"--git-dir={git_dir}",
+            f"--work-tree={worktree}",
+        )
+        return (
+            prefix,
+            environment,
+            source_objects,
+            source_objects_identity,
+        )
+
     async def _read_push_configuration(
         self,
         repository: RepositoryIdentity,
@@ -2317,7 +2420,8 @@ class FileNotesGitService:
             return None
         first_facts = _parse_push_config_facts(
             first.stdout,
-            repository.worktree_root,
+            repository,
+            self._environment,
         )
         if first_facts is None:
             return None
@@ -2326,7 +2430,8 @@ class FileNotesGitService:
             return None
         second_facts = _parse_push_config_facts(
             second.stdout,
-            repository.worktree_root,
+            repository,
+            self._environment,
         )
         if second_facts is None or second_facts != first_facts:
             return None
@@ -6827,7 +6932,8 @@ def _candidate_attribute_fingerprint(
 
 def _parse_push_config_facts(
     payload: bytes,
-    worktree_root: str,
+    repository: RepositoryIdentity,
+    environment: Mapping[str, str],
 ) -> tuple[_GitConfigFact, ...] | None:
     """Parse relevant scoped config and fingerprint each canonical source."""
     if not payload or not payload.endswith(b"\0"):
@@ -6847,14 +6953,21 @@ def _parse_push_config_facts(
             value = value_bytes.decode("utf-8")
         except UnicodeDecodeError:
             return None
-        if scope == "unknown":
-            scope = "system"
-        origin_identity = _config_source_identity(
+        source = _config_source_identity(
             origin_bytes[5:],
-            worktree_root,
+            repository.worktree_root,
         )
-        if origin_identity is None:
+        if source is None:
             return None
+        origin_identity, canonical_origin = source
+        if scope == "unknown":
+            scope = _classify_unknown_config_scope(
+                canonical_origin,
+                repository,
+                environment,
+            )
+            if scope is None:
+                return None
         try:
             facts.append(
                 _GitConfigFact(
@@ -6872,7 +6985,7 @@ def _parse_push_config_facts(
 def _config_source_identity(
     raw_path: bytes,
     worktree_root: str,
-) -> str | None:
+) -> tuple[str, Path] | None:
     """Hash canonical config source identity and change metadata, never values."""
     if not raw_path or b"\0" in raw_path:
         return None
@@ -6901,7 +7014,103 @@ def _config_source_identity(
     ):
         digest.update(len(value).to_bytes(8, "big"))
         digest.update(value)
-    return digest.hexdigest()
+    return digest.hexdigest(), canonical
+
+
+def _classify_unknown_config_scope(
+    canonical_origin: Path,
+    repository: RepositoryIdentity,
+    environment: Mapping[str, str],
+) -> Literal["system", "global", "local", "worktree"] | None:
+    """Classify old-Git unknown scope only for exact trusted repo config."""
+    candidates = (
+        ("local", Path(repository.git_common_dir) / "config"),
+        ("local", Path(repository.git_dir) / "config"),
+        ("worktree", Path(repository.git_dir) / "config.worktree"),
+    )
+    for scope, candidate in candidates:
+        try:
+            canonical_candidate = candidate.resolve(strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if (
+            canonical_candidate == candidate
+            and canonical_origin == canonical_candidate
+        ):
+            return scope
+    for candidate in _known_global_config_paths(environment):
+        try:
+            canonical_candidate = candidate.resolve(strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if (
+            canonical_candidate == candidate
+            and canonical_origin == canonical_candidate
+        ):
+            return "global"
+    if (
+        canonical_origin in _known_system_config_paths()
+        and _is_root_protected_system_config(canonical_origin)
+    ):
+        return "system"
+    return None
+
+
+def _known_global_config_paths(
+    environment: Mapping[str, str],
+) -> tuple[Path, ...]:
+    """Return only global config paths selected by the sanitized environment."""
+    candidates: list[Path] = []
+    home_text = environment.get("HOME")
+    if home_text:
+        home = Path(home_text)
+        candidates.extend(
+            (
+                home / ".gitconfig",
+                home / ".config" / "git" / "config",
+            )
+        )
+    config_home_text = environment.get("XDG_CONFIG_HOME")
+    if config_home_text:
+        candidates.append(Path(config_home_text) / "git" / "config")
+    return tuple(candidates)
+
+
+def _known_system_config_paths() -> frozenset[Path]:
+    """Return exact conventional system Git config paths accepted fail-closed."""
+    return frozenset(
+        {
+            Path("/etc/gitconfig"),
+            Path("/usr/local/etc/gitconfig"),
+            Path("/opt/homebrew/etc/gitconfig"),
+            Path("/usr/share/git-core/gitconfig"),
+            Path("/usr/lib/git-core/gitconfig"),
+            Path(
+                "/Library/Developer/CommandLineTools/usr/share/"
+                "git-core/gitconfig"
+            ),
+            Path(
+                "/Applications/Xcode.app/Contents/Developer/usr/share/"
+                "git-core/gitconfig"
+            ),
+        }
+    )
+
+
+def _is_root_protected_system_config(path: Path) -> bool:
+    """Prove a known POSIX system config and every parent are root-protected."""
+    if os.name != "posix":
+        return False
+    try:
+        for component in (path, *path.parents):
+            metadata = component.stat(follow_symlinks=False)
+            if metadata.st_uid != 0 or metadata.st_mode & (
+                stat.S_IWGRP | stat.S_IWOTH
+            ):
+                return False
+    except OSError:
+        return False
+    return True
 
 
 def build_file_notes_session_owner() -> FileNotesSessionOwner:

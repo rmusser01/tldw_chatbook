@@ -195,13 +195,36 @@ def test_branch_push_remote_precedence_allows_same_tracking_remote() -> None:
     assert resolved.transport.destination.host == "push.example.test"
 
 
-def test_url_rewrite_uses_one_longest_push_rule_and_blocks_ties() -> None:
+def test_explicit_push_url_ignores_push_rewrite_and_uses_ordinary_rewrite() -> None:
     facts = (
         *_base_facts(),
-        _fact("url.https://short.example/.pushInsteadOf", "https://push."),
+        _fact(
+            "url.ssh://git@ignored.example:22/team/.pushInsteadOf",
+            "https://push.example.test/team/",
+        ),
+        _fact(
+            "url.https://ordinary.example/team/.insteadOf",
+            "https://push.example.test/team/",
+        ),
+    )
+
+    resolved = _resolve(facts)
+
+    assert resolved.transport.destination.scheme == "https"
+    assert resolved.transport.destination.host == "ordinary.example"
+
+
+def test_fetch_url_fallback_uses_longest_push_rewrite_and_blocks_ties() -> None:
+    facts = (
+        *_base_facts(push_url=False),
+        _fact("url.https://short.example/.pushInsteadOf", "https://fetch."),
         _fact(
             "url.ssh://git@literal.example:22/team/.pushInsteadOf",
-            "https://push.example.test/team/",
+            "https://fetch.example.test/team/",
+        ),
+        _fact(
+            "url.https://ordinary.example/team/.insteadOf",
+            "https://fetch.example.test/team/",
         ),
     )
 
@@ -215,6 +238,23 @@ def test_url_rewrite_uses_one_longest_push_rule_and_blocks_ties() -> None:
                 *facts,
                 _fact(
                     "url.https://tie.example/team/.pushInsteadOf",
+                    "https://fetch.example.test/team/",
+                ),
+            )
+        )
+
+
+def test_explicit_push_url_blocks_ambiguous_ordinary_rewrite() -> None:
+    with pytest.raises(PushContractError):
+        _resolve(
+            (
+                *_base_facts(),
+                _fact(
+                    "url.https://first.example/team/.insteadOf",
+                    "https://push.example.test/team/",
+                ),
+                _fact(
+                    "url.https://second.example/team/.insteadOf",
                     "https://push.example.test/team/",
                 ),
             )
@@ -335,6 +375,7 @@ def _candidate_owner(
     root = tmp_path / "notes"
     git_dir = root / ".git"
     git_dir.mkdir(parents=True)
+    (git_dir / "objects").mkdir()
     (git_dir / "config").write_text("[core]\n\tbare = false\n", encoding="utf-8")
     (root / "note.md").write_text("candidate\n", encoding="utf-8")
     return _owner_for_candidate(root, "b" * 40, "d" * 40)
@@ -713,6 +754,58 @@ async def test_destination_configuration_source_change_during_proof_blocks(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("origin_kind", "key", "value"),
+    [
+        ("relative_local", "credential.helper", "!touch SHOULD_NOT_RUN"),
+        ("absolute_local", "core.sshcommand", "touch SHOULD_NOT_RUN"),
+        ("absolute_worktree", "credential.helper", "!touch SHOULD_NOT_RUN"),
+        ("external", "core.sshcommand", "touch SHOULD_NOT_RUN"),
+    ],
+)
+async def test_unknown_configuration_scope_cannot_bypass_local_helper_policy(
+    tmp_path: Path,
+    origin_kind: str,
+    key: str,
+    value: str,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    runner = _ControlledLocalProofRunner(repository)
+    if origin_kind == "relative_local":
+        origin = b".git/config"
+    elif origin_kind == "absolute_local":
+        origin = os.fsencode(Path(repository.git_common_dir) / "config")
+    elif origin_kind == "absolute_worktree":
+        worktree_config = Path(repository.git_dir) / "config.worktree"
+        worktree_config.write_text("[core]\n", encoding="utf-8")
+        origin = os.fsencode(worktree_config)
+    else:
+        external_config = tmp_path / "external.gitconfig"
+        external_config.write_text("[core]\n", encoding="utf-8")
+        origin = os.fsencode(external_config)
+    runner.config_payload += (
+        b"unknown\0file:"
+        + origin
+        + b"\0"
+        + key.encode()
+        + b"\n"
+        + value.encode()
+        + b"\0"
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+
+    review = await service.review_push_destination(binding)
+
+    assert review.state == "blocked"
+    assert service.authorize_push_destination(binding) is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("path_count", [1, 1000])
 async def test_candidate_tree_lfs_proof_batches_paths_with_bounded_commands(
     tmp_path: Path,
@@ -846,6 +939,68 @@ async def test_real_candidate_tree_destination_and_lfs_proof_is_local_only(
     )
     assert review.state == expected, diagnostic
     assert _git(root, "status", "--porcelain").stdout == b""
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attribute_source", ["info", "global"])
+@pytest.mark.parametrize(
+    ("candidate_lfs", "external_rule", "expected"),
+    [
+        (True, "*.md -filter\n", "blocked"),
+        (False, "*.md filter=lfs\n", "ready"),
+    ],
+)
+async def test_exact_candidate_tree_lfs_ignores_external_attribute_sources(
+    tmp_path: Path,
+    attribute_source: str,
+    candidate_lfs: bool,
+    external_rule: str,
+    expected: str,
+) -> None:
+    root, parent_oid, candidate_oid = _real_candidate_repository(
+        tmp_path,
+        lfs=candidate_lfs,
+    )
+    environment: dict[str, str] = {}
+    if attribute_source == "info":
+        info_attributes = root / ".git" / "info" / "attributes"
+        info_attributes.write_text(external_rule, encoding="utf-8")
+    else:
+        config_home = tmp_path / "config-home"
+        git_config_home = config_home / "git"
+        git_config_home.mkdir(parents=True)
+        (git_config_home / "attributes").write_text(
+            external_rule,
+            encoding="utf-8",
+        )
+        environment = {
+            "HOME": str(tmp_path / "home"),
+            "XDG_CONFIG_HOME": str(config_home),
+        }
+    owner, binding, _repository = _owner_for_candidate(
+        root,
+        parent_oid,
+        candidate_oid,
+    )
+    executable = shutil.which("git")
+    assert executable is not None
+    runner = _RecordingAsyncGitRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable=executable,
+        environment=environment,
+    )
+
+    review = await service.review_push_destination(binding)
+
+    diagnostic = "\n".join(
+        f"{index}: rc={result.returncode} argv={command!r} "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        for index, (command, result) in enumerate(runner.calls)
+    )
+    assert review.state == expected, diagnostic
     await service.shutdown()
 
 
