@@ -256,6 +256,47 @@ async def test_inline_error_paints_a_markup_shaped_speaker_name_literally(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_an_overlong_preset_name_is_refused_inline_and_nothing_is_written(
+    tmp_path,
+):
+    """Qodo review: `name`/`style_notes`/`provider`/`model` are persisted
+    (and `style_notes`/`provider`/`model` later flow into LLM prompts)
+    after only a local `.strip()` -- CLAUDE.md requires validation through
+    `Utils.input_validation.validate_text_input`. An over-long name must be
+    refused through the SAME inline-error surface as a roster error
+    (`_show_error`/`#bpm-error`), never persisted, and the modal stays
+    open."""
+    db = _db(tmp_path)
+    modal = BriefingPresetModal(db, character_options=[], voice_options=[])
+    overlong_name = "x" * 5000
+
+    app = _ModalHost()
+    async with app.run_test(size=(160, 42)) as pilot:
+        app.push_screen(modal)
+        assert await _wait_until(pilot, lambda: modal.is_mounted)
+
+        modal.query_one("#bpm-name-input", Input).value = overlong_name
+        modal.query_one("#bpm-speaker-name-0", Input).value = "Host"
+
+        await pilot.click("#bpm-save")
+        assert await _wait_until(
+            pilot,
+            lambda: bool(
+                str(modal.query_one("#bpm-error", Static).renderable).strip()
+            ),
+        )
+
+        error_content = modal.query_one("#bpm-error", Static).renderable
+        assert isinstance(error_content, Text)
+        assert "name" in str(error_content).lower()
+        # The modal is still open/usable -- not dismissed by the refusal.
+        assert modal.is_mounted
+
+    # The gate: row count is unchanged, nothing persisted.
+    assert db.list_briefing_presets() == []
+
+
+@pytest.mark.asyncio
 async def test_delete_asks_confirmation_and_hard_deletes(tmp_path):
     db = _db(tmp_path)
     preset_id = db.insert_briefing_preset(

@@ -228,8 +228,11 @@ def build_briefing_prompt(
 #: `[item 42]`, digits only, "never invent an id". `extract_citation_ids` is
 #: this convention's own parser (spec #2 phase 2a, Task 6): turning the same
 #: bracketed ids the prompt asked the model to write back into ids a reader
-#: can navigate to.
-_CITATION_ID_PATTERN = re.compile(r"\[item (\d+)\]")
+#: can navigate to. Case-insensitive (Qodo review): the prompt asks for
+#: lowercase `item`, but models drift to `[Item 12]`/`[ITEM 7]` in practice,
+#: and matching only the exact case would silently yield zero citations for
+#: an otherwise well-formed reply.
+_CITATION_ID_PATTERN = re.compile(r"\[item (\d+)\]", re.IGNORECASE)
 
 
 def extract_citation_ids(body_markdown: str) -> list[int]:
@@ -241,6 +244,11 @@ def extract_citation_ids(body_markdown: str) -> list[int]:
     `SubscriptionsDB.get_subscription_items_by_ids`), since only the caller
     has a database to ask. This function only reads the text the model
     wrote.
+
+    Matching is case-insensitive on the `item` keyword (`[Item 12]`,
+    `[ITEM 7]`, and `[item 3]` all match the same convention) -- dedup is
+    by the parsed integer id, so two differently-cased citations of the
+    same id contribute only one entry, at the position of the first.
 
     `[item x]`/`[item]` (no digits) are not a citation under this prompt's
     own convention and are silently ignored: the model was never asked to

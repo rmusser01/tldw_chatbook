@@ -1919,17 +1919,29 @@ class SubscriptionsDB(BaseDB):
             ).fetchone()
         return dict(row) if row is not None else None
 
-    def list_briefing_presets(self) -> List[Dict[str, Any]]:
-        """List every `briefing_presets` row, alphabetically by name.
+    def list_briefing_presets(
+        self, *, limit: int = 200, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """List `briefing_presets` rows, alphabetically by name, paginated.
+
+        Args:
+            limit: Maximum number of rows to return (CLAUDE.md Performance
+                Rules: paginate DB results). Defaults to 200, well above
+                any real preset count today, so existing callers keep
+                working unchanged.
+            offset: Number of rows to skip before the page starts.
 
         Returns:
-            All `briefing_presets` rows ordered by `name` ascending
-            (case-sensitive SQLite default collation), then `id` as the
-            tiebreaker for two presets sharing a name.
+            Up to `limit` `briefing_presets` rows, starting at `offset`,
+            ordered by `name` ascending (case-sensitive SQLite default
+            collation), then `id` as the tiebreaker for two presets
+            sharing a name.
         """
         with self.transaction() as conn:
             cursor = conn.execute(
-                "SELECT * FROM briefing_presets ORDER BY name ASC, id ASC"
+                "SELECT * FROM briefing_presets ORDER BY name ASC, id ASC "
+                "LIMIT ? OFFSET ?",
+                (limit, offset),
             )
             return [dict(row) for row in cursor.fetchall()]
 
@@ -2062,22 +2074,31 @@ class SubscriptionsDB(BaseDB):
             ).fetchone()
         return dict(row) if row is not None else None
 
-    def list_briefing_scripts(self, briefing_id: int) -> List[Dict[str, Any]]:
-        """List a briefing's cast scripts, newest first.
+    def list_briefing_scripts(
+        self, briefing_id: int, *, limit: int = 200, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """List a briefing's cast scripts, newest first, paginated.
 
         Args:
             briefing_id: The briefing to list scripts for.
+            limit: Maximum number of rows to return (CLAUDE.md Performance
+                Rules: paginate DB results). Defaults to 200, well above
+                any real per-briefing script count today, so existing
+                callers keep working unchanged.
+            offset: Number of rows to skip before the page starts.
 
         Returns:
-            Every `briefing_scripts` row for `briefing_id`, newest first by
-            `created_at` then `id` (the tiebreaker for rows created within
-            the same timestamp resolution).
+            Up to `limit` `briefing_scripts` rows for `briefing_id`,
+            starting at `offset`, newest first by `created_at` then `id`
+            (the tiebreaker for rows created within the same timestamp
+            resolution).
         """
         with self.transaction() as conn:
             cursor = conn.execute(
                 "SELECT * FROM briefing_scripts WHERE briefing_id = ? "
-                "ORDER BY created_at DESC, id DESC",
-                (briefing_id,),
+                "ORDER BY created_at DESC, id DESC "
+                "LIMIT ? OFFSET ?",
+                (briefing_id, limit, offset),
             )
             return [dict(row) for row in cursor.fetchall()]
 

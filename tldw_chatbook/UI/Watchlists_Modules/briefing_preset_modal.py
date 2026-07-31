@@ -69,6 +69,7 @@ from ...Subscriptions.briefing_cast import (
     load_roster,
     validate_roster,
 )
+from ...Utils.input_validation import validate_text_input
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 
 #: Shown as a speaker Select's tooltip when the screen could not supply any
@@ -92,6 +93,21 @@ _VOICE_INERT_COPY = (
 #: selected preset is refused because a write is in flight -- see
 #: `_refuse_if_write_in_flight`'s docstring for the race this closes.
 _WRITE_IN_PROGRESS_COPY = "A save or delete is in progress. Try again once it finishes."
+
+#: Max lengths for this modal's free-text preset fields (Qodo review):
+#: `name`/`style_notes`/`provider`/`model` are persisted -- and
+#: `style_notes`/`provider`/`model` later flow into the cast LLM prompt
+#: (`briefing_cast.build_cast_prompt`) -- so a local `.strip()` alone is not
+#: enough; each is run through `Utils.input_validation.validate_text_input`
+#: before it reaches the DB. `name`/`provider`/`model` are short,
+#: identifier-shaped fields -- matches this repo's own convention for
+#: "name" inputs elsewhere (`sources_pane.py`, `opml_dialogs.py`: 255).
+#: `style_notes` is free-text prose guidance, so it gets a much longer
+#: bound.
+_PRESET_NAME_MAX_LENGTH = 255
+_PRESET_STYLE_NOTES_MAX_LENGTH = 5000
+_PRESET_PROVIDER_MAX_LENGTH = 255
+_PRESET_MODEL_MAX_LENGTH = 255
 
 
 def _blank_speaker() -> dict[str, Any]:
@@ -490,6 +506,28 @@ class BriefingPresetModal(ModalScreen[bool]):
         if not name:
             self._show_error("Enter a preset name.")
             return
+        style_notes = self._draft_style_notes.strip() or None
+        provider = self._draft_provider.strip() or None
+        model = self._draft_model.strip() or None
+        # Each persisted free-text field goes through the shared validator,
+        # not just `.strip()` -- `style_notes`/`provider`/`model` later flow
+        # into the cast LLM prompt (`briefing_cast.build_cast_prompt`), so
+        # this is the same boundary-validation CLAUDE.md requires elsewhere.
+        # Refused through the SAME inline-error surface a roster error uses
+        # (`_show_error`/`#bpm-error`): markup-safe, no persistence, modal
+        # stays open.
+        for label, value, max_length in (
+            ("Preset name", name, _PRESET_NAME_MAX_LENGTH),
+            ("Style notes", style_notes, _PRESET_STYLE_NOTES_MAX_LENGTH),
+            ("Provider", provider, _PRESET_PROVIDER_MAX_LENGTH),
+            ("Model", model, _PRESET_MODEL_MAX_LENGTH),
+        ):
+            if not validate_text_input(value, max_length=max_length):
+                self._show_error(
+                    f"{label} must be {max_length} characters or fewer, with "
+                    "no HTML/script content."
+                )
+                return
         try:
             roster = validate_roster(self._speakers)
         except ScriptCastError as exc:
@@ -500,9 +538,6 @@ class BriefingPresetModal(ModalScreen[bool]):
             return
 
         roster_json = dump_roster(roster)
-        style_notes = self._draft_style_notes.strip() or None
-        provider = self._draft_provider.strip() or None
-        model = self._draft_model.strip() or None
         # Snapshot WHICH preset this write targets, before the one `await`
         # below -- `None` means "insert a new row". `_refuse_if_write_in_flight`
         # already stops `_select_preset_for_edit`/`_start_new_preset` from

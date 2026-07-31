@@ -195,6 +195,24 @@ def test_an_unknown_speaker_fails_the_script_by_name():
         parse_script_turns(json.dumps(turns), {"Host", "Analyst"})
 
 
+def test_a_speakers_incidental_whitespace_is_stripped_before_the_roster_check():
+    """`validate_roster` stores canonical (stripped) speaker names, but the
+    model's raw JSON reply is never guaranteed to match that exactly -- a
+    turn naming `"Alice "` must not fail the WHOLE cast as an unknown
+    speaker just because of padding. The stored turn also carries the
+    canonical name, not the raw padded one, so downstream rendering matches
+    the roster."""
+    turns = [
+        {"speaker": "Alice ", "text": "Hi there."},
+        {"speaker": " Bob", "text": "Hey."},
+    ]
+    parsed = parse_script_turns(json.dumps(turns), {"Alice", "Bob"})
+    assert parsed == [
+        {"speaker": "Alice", "text": "Hi there."},
+        {"speaker": "Bob", "text": "Hey."},
+    ]
+
+
 def test_parse_script_turns_non_string_text_fails_naming_the_turn_index():
     turns = [
         {"speaker": "Host", "text": "fine"},

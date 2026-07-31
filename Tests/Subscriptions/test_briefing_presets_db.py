@@ -106,6 +106,40 @@ def test_list_briefing_presets_orders_by_name_asc():
     assert [row["name"] for row in listed] == ["Apple", "Mango", "Zebra"]
 
 
+def test_list_briefing_presets_limit_returns_exactly_limit_rows():
+    """CLAUDE.md Performance Rules: DB listing results must be paginated.
+    Seeding `limit + 5` rows and asking for `limit` must return exactly
+    `limit` rows, not the whole table."""
+    db = SubscriptionsDB(":memory:", "test")
+    limit = 3
+    for i in range(limit + 5):
+        db.insert_briefing_preset(f"Preset {i:02d}", roster_json="[]")
+
+    assert len(db.list_briefing_presets(limit=limit)) == limit
+
+
+def test_list_briefing_presets_offset_pages_through_every_row_without_gaps_or_repeats():
+    """Paging with `limit`/`offset` must walk the same `name ASC` ordering
+    `test_list_briefing_presets_orders_by_name_asc` pins, covering every row
+    exactly once."""
+    db = SubscriptionsDB(":memory:", "test")
+    names = [f"Preset {i:02d}" for i in range(7)]
+    for name in names:
+        db.insert_briefing_preset(name, roster_json="[]")
+
+    limit = 3
+    seen: list[str] = []
+    offset = 0
+    while True:
+        page = db.list_briefing_presets(limit=limit, offset=offset)
+        if not page:
+            break
+        seen.extend(row["name"] for row in page)
+        offset += limit
+
+    assert seen == names
+
+
 def test_delete_briefing_preset_returns_false_for_missing_id():
     db = SubscriptionsDB(":memory:", "test")
     assert db.delete_briefing_preset(999999) is False
@@ -238,6 +272,50 @@ def test_list_briefing_scripts_is_scoped_to_its_own_briefing():
 
     listed = db.list_briefing_scripts(briefing_a)
     assert [row["id"] for row in listed] == [script_a]
+
+
+def test_list_briefing_scripts_limit_returns_exactly_limit_rows():
+    """CLAUDE.md Performance Rules: DB listing results must be paginated.
+    Seeding `limit + 5` rows and asking for `limit` must return exactly
+    `limit` rows, not the whole set."""
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist_id = WatchlistBundleService(db).create(name="w")["id"]
+    briefing_id = db.insert_briefing(watchlist_id)
+    limit = 3
+    for _ in range(limit + 5):
+        db.insert_briefing_script(
+            briefing_id, preset_id=None, preset_name="p", roster_snapshot_json="[]"
+        )
+
+    assert len(db.list_briefing_scripts(briefing_id, limit=limit)) == limit
+
+
+def test_list_briefing_scripts_offset_pages_through_every_row_without_gaps_or_repeats():
+    """Paging with `limit`/`offset` must walk the same newest-first ordering
+    `test_list_briefing_scripts_returns_newest_first_by_identity` pins,
+    covering every row exactly once."""
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist_id = WatchlistBundleService(db).create(name="w")["id"]
+    briefing_id = db.insert_briefing(watchlist_id)
+    ids = [
+        db.insert_briefing_script(
+            briefing_id, preset_id=None, preset_name="p", roster_snapshot_json="[]"
+        )
+        for _ in range(7)
+    ]
+    expected_newest_first = list(reversed(ids))
+
+    limit = 3
+    seen: list[int] = []
+    offset = 0
+    while True:
+        page = db.list_briefing_scripts(briefing_id, limit=limit, offset=offset)
+        if not page:
+            break
+        seen.extend(row["id"] for row in page)
+        offset += limit
+
+    assert seen == expected_newest_first
 
 
 def test_update_briefing_script_rejects_unknown_field_but_accepts_a_valid_one():

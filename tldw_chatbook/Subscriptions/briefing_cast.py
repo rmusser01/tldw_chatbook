@@ -369,16 +369,20 @@ def parse_script_turns(text: str, roster_names: set[str]) -> list[dict]:
     Tolerates the markdown fence local models routinely add and a
     prose-wrapped array (recovers the first `[`...`]` slice), then applies
     the strict output contract: anything short of a clean array of
-    `{"speaker": str, "text": str}` objects, each speaker a name in
-    `roster_names`, fails naming the specific defect.
+    `{"speaker": str, "text": str}` objects, each speaker (after stripping
+    incidental whitespace) a name in `roster_names`, fails naming the
+    specific defect.
 
     Args:
         text: Raw provider reply.
         roster_names: Valid speaker names -- `validate_roster`'s `name`
-            fields for this cast's roster.
+            fields for this cast's roster (already stripped/canonical).
 
     Returns:
-        `[{"speaker": str, "text": str}, ...]`, in reply order.
+        `[{"speaker": str, "text": str}, ...]`, in reply order. Each
+        `speaker` is the CANONICAL (stripped) name, not necessarily the raw
+        string the model wrote -- matching `roster_names`, which is also
+        canonical, so downstream rendering never sees a mismatch.
 
     Raises:
         ScriptCastError: Naming the defect -- unparsable JSON, JSON that is
@@ -417,10 +421,17 @@ def parse_script_turns(text: str, roster_names: set[str]) -> list[dict]:
             raise ScriptCastError(f"turn {index} has a missing or non-string speaker")
         if not isinstance(turn_text, str):
             raise ScriptCastError(f"turn {index} has non-string text")
-        if speaker not in roster_names:
+        # `roster_names` is `validate_roster`'s output -- already stripped --
+        # but the model's raw reply carries no such guarantee. Canonicalize
+        # the same way before the membership check, or a merely-padded name
+        # (e.g. "Alice ") would fail the WHOLE cast as an unknown speaker.
+        # The stored turn keeps the canonical name too, so downstream
+        # rendering matches the roster exactly.
+        canonical_speaker = speaker.strip()
+        if canonical_speaker not in roster_names:
             raise ScriptCastError(f"unknown speaker {speaker!r} in turn {index}")
 
-        turns.append({"speaker": speaker, "text": turn_text})
+        turns.append({"speaker": canonical_speaker, "text": turn_text})
 
     if not turns:
         raise ScriptCastError("the model returned no turns")

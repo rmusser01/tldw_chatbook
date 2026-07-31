@@ -470,6 +470,18 @@ def test_extract_citation_ids_ignores_non_numeric_brackets():
     assert extract_citation_ids(body) == [42]
 
 
+def test_extract_citation_ids_is_case_insensitive_and_dedupes_across_case():
+    """Model drift to `[Item 12]`/`[ITEM 7]` (rather than the prompt's exact
+    lowercase `[item N]`) must not silently yield zero citations -- and a
+    later, differently-cased repeat of an id already seen (`[item 12]`
+    after `[Item 12]`) must not produce a second entry."""
+    body = (
+        "First [Item 12], then [ITEM 7], then [item 3]. "
+        "Circling back to [item 12] again."
+    )
+    assert extract_citation_ids(body) == [12, 7, 3]
+
+
 def test_extract_citation_ids_on_a_body_with_no_citations_is_empty():
     assert extract_citation_ids("## This week\n\nNothing to report.\n") == []
 
