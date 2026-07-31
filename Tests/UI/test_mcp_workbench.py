@@ -1565,7 +1565,17 @@ async def test_cancelled_hides_form_without_saving():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         await pilot.click("#mcp-add-server")
-        await pilot.pause()
+        for _ in range(200):
+            cancel_buttons = list(app.query("#mcp-form-cancel"))
+            if (
+                cancel_buttons
+                and cancel_buttons[0].region.width > 0
+                and cancel_buttons[0].region.height > 0
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("MCP profile-form Cancel did not render")
         await pilot.click("#mcp-form-cancel")
         await pilot.pause()
         assert not app.query_one("#mcp-servers-form").display

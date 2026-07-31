@@ -133,6 +133,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #103 Library export starts its worker after the running-state recompose has refreshed, so an immediate completion updates the current canvas and leaves Export enabled for retry while preserving typed-field identity on completion.
 - [ ] #104 Focused Study scope-load regressions await the current deferred initial-load seam instead of the now-synchronous `on_mount`, while preserving scope precedence, validation, controller reset, initialization ordering, and runtime-backend recomputation coverage.
 - [ ] #105 File Notes repository-trust retries wait for each exact Cancel or Confirm control to mount before pressing it, while preserving decline/retry, identity-revalidation, fresh-status, and disabled-mutation coverage.
+- [ ] #106 The MCP profile-form cancellation regression waits boundedly for the newly recomposed Cancel control to render before clicking it, while preserving form dismissal, overview restoration, and zero-save coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -243,6 +244,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 97. Defer Library export worker dispatch until the running-state recompose has refreshed so fast completion targets the current canvas.
 98. Retarget direct Study scope-load tests from the intentionally synchronous mount hook to its deferred initial-load seam.
 99. Require the exact Session Git trust-dialog action control before each direct test press.
-100. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-101. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+100. Wait for the MCP profile-form Cancel control to render before its coordinate click.
+101. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+102. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

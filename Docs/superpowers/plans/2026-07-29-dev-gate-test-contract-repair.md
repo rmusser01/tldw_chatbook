@@ -4119,6 +4119,48 @@ recorded the complete File Notes Git module passing 138/138. Scoped Ruff lint
 and `git diff --check` passed there; Ruff format reported inherited whole-file
 drift outside the corrected predicates.
 
+### Task 4cv: Wait for the MCP profile-form Cancel control
+
+**Files:**
+- Modify: `Tests/UI/test_mcp_workbench.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This aligns one coordinate-click test with the rendered control it
+targets after asynchronous Textual recomposition; it does not change MCP
+profile-form or cancellation behavior.
+
+- [x] **Step 1: Identify the single-pause form-mount race**
+
+Full-gate attempt 39 fails after 18,693 passes because the Add server click has
+requested the profile-form recompose but `#mcp-form-cancel` is not yet in the
+screen DOM after one `Pilot` pause. The surrounding add-form field tests reach
+their targets; this journey uniquely performs an immediate coordinate click on
+the newly composed Cancel control.
+
+- [x] **Step 2: Wait boundedly for rendered Cancel**
+
+Replace only the post-Add single-pause assumption in the cancellation journey
+with a bounded local loop that requires the exact Cancel button and a nonzero
+rendered region. Preserve all outcome assertions without adding a shared helper,
+fixed sleep, or production change.
+
+- [x] **Step 3: Verify MCP profile-form and workbench coverage**
+
+Run the exact cancellation journey repeatedly under current contention, its
+nearby profile-form group, the complete MCP workbench module, Ruff/format, and
+`git diff --check`.
+
+The exact cancellation journey passed three concurrent repetitions (3/3), its
+11-test profile-form neighborhood passed 11/11, and the complete MCP workbench
+module passed 196/196. `git diff --check` passes. Ruff reports the same four
+inherited lint errors and whole-file format drift; the bounded Cancel wait is
+absent from the format diff and introduces no lint finding.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

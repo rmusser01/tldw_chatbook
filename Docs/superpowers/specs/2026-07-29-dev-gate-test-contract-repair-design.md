@@ -997,6 +997,11 @@ Update the tests to describe current behavior:
      the exact Cancel or Confirm control before the press. Keep decline/retry,
      identity revalidation, fresh status, and disabled-mutation assertions
      unchanged; do not add a production mount hook, sleep, or shared helper.
+104. In the MCP profile-form cancellation regression, replace its single-pause
+     assumption with a bounded local wait for `#mcp-form-cancel` to exist and
+     have a nonzero rendered region before the coordinate click. Keep form
+     dismissal, overview restoration, and zero-save assertions unchanged; do
+     not change production recomposition or add a shared test abstraction.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1385,6 +1390,12 @@ behavior. No compatibility shims. No broad deletion of live tests.
   would change or slow unrelated behavior. Extending each existing local wait
   with the exact control it immediately presses is the smallest truthful
   boundary and covers the two identical latent sites found in the same module.
+- Adding another unconditional pause after MCP Add server would still assume a
+  host-dependent number of event-loop turns, while changing production form
+  recomposition would alter live behavior for one test race. A bounded local
+  wait for the exact control and rendered geometry required by `Pilot.click`
+  states the cancellation test's real readiness boundary without introducing a
+  module-wide helper for one failing journey.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
