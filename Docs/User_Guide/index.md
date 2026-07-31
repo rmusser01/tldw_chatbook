@@ -18,7 +18,7 @@ can sync with a tldw server you configure).
 2. Open **Settings** (not yet written) — click **Settings** in the nav bar
    (or **Ctrl+P** → "Switch to Settings") — and set a provider + model (or
    point at a local server).
-3. Open **Console** (not yet written) — press **Ctrl+2**, click "Console"
+3. Open **[Console](console.md)** — press **Ctrl+2**, click "Console"
    in the nav bar, or use **Ctrl+P** → "Switch to Console"; then send your
    first message.
 4. Press **F1** anywhere to open the current screen's keyboard-shortcuts
@@ -29,7 +29,7 @@ can sync with a tldw server you configure).
 | Hotkey | Screen | What it's for |
 |-----|--------|----------------|
 | Ctrl+1 | Home (not yet written) | Dashboard, notifications, status, and next actions. |
-| Ctrl+2 | Console (not yet written) | Live agent conversations, approvals, tools, RAG, and runs. |
+| Ctrl+2 | [Console](console.md) | Live agent conversations, approvals, tools, RAG, and runs. |
 | Ctrl+3 | Library (not yet written) | Workspaces, source material, imports, notes, media, conversations, Study, flashcards, quizzes, and Search/RAG. |
 | Ctrl+4 | [Artifacts](artifacts.md) 🚧 | Generated outputs, bundles, reports, datasets, and Chatbooks. |
 | Ctrl+5 | Roleplay & Chat Dictionaries (not yet written) | Characters, user profiles, dictionaries, and behavior profiles. |
@@ -88,6 +88,9 @@ before. Two guards make this visible instead of silent:
 Nothing is ever auto-approved: an approval that gets caught by this
 teardown is always denied, never resolved on your behalf.
 
+Full detail on runs, approvals, and tools:
+[Console ▸ Agent runs & tools](console/agent-runs-and-tools.md).
+
 ## Where did … go? (legacy names)
 
 | Old name | Now lives in |
@@ -96,7 +99,7 @@ teardown is always denied, never resolved on your behalf.
 | Prompts | Library ▸ Prompts (not yet written) |
 | Skills | Library ▸ Skills (not yet written) |
 | Subscriptions | [Watchlists](watchlists.md) 🚧 |
-| Coding | Console (not yet written) |
+| Coding | [Console](console.md) |
 | Conversations / CCP | Roleplay & Chat Dictionaries (not yet written) |
 | LLM management | [Lab](lab.md) 🚧 |
 | Research | Library (not yet written) |
