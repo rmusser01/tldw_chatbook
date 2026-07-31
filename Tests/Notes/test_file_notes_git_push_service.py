@@ -805,6 +805,130 @@ async def test_unknown_configuration_scope_cannot_bypass_local_helper_policy(
     assert service.authorize_push_destination(binding) is None
 
 
+def _unknown_scope_config_record(
+    origin: Path,
+    key: str,
+    value: str,
+) -> bytes:
+    return (
+        b"unknown\0file:"
+        + os.fsencode(origin)
+        + b"\0"
+        + key.encode()
+        + b"\n"
+        + value.encode()
+        + b"\0"
+    )
+
+
+@pytest.mark.asyncio
+async def test_unknown_scope_home_fallback_helper_blocks_when_xdg_is_set(
+    tmp_path: Path,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    home = tmp_path / "home"
+    home_fallback = home / ".config" / "git" / "config"
+    home_fallback.parent.mkdir(parents=True)
+    home_fallback.write_text("[credential]\n", encoding="utf-8")
+    xdg_config = tmp_path / "xdg" / "git" / "config"
+    xdg_config.parent.mkdir(parents=True)
+    xdg_config.write_text("[credential]\n", encoding="utf-8")
+    runner = _ControlledLocalProofRunner(repository)
+    runner.config_payload += _unknown_scope_config_record(
+        home_fallback,
+        "credential.helper",
+        "!touch SHOULD_NOT_RUN",
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(xdg_config.parent.parent),
+        },
+    )
+
+    review = await service.review_push_destination(binding)
+
+    assert review.state == "blocked"
+    assert service.authorize_push_destination(binding) is None
+
+
+@pytest.mark.asyncio
+async def test_unknown_scope_xdg_global_config_is_admitted_and_fingerprinted(
+    tmp_path: Path,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    home = tmp_path / "home"
+    xdg_config = tmp_path / "xdg" / "git" / "config"
+    xdg_config.parent.mkdir(parents=True)
+    xdg_config.write_text("[credential]\n", encoding="utf-8")
+    runner = _ControlledLocalProofRunner(repository)
+    base_payload = runner.config_payload
+    runner.config_payload = base_payload + _unknown_scope_config_record(
+        xdg_config,
+        "credential.helper",
+        "store-one",
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(xdg_config.parent.parent),
+        },
+    )
+
+    first = await service.review_push_destination(binding)
+    first_policy = service._push_destination_policy
+    runner.config_payload = base_payload + _unknown_scope_config_record(
+        xdg_config,
+        "credential.helper",
+        "store-two",
+    )
+    second = await service.review_push_destination(binding)
+    second_policy = service._push_destination_policy
+
+    assert first.state == "ready"
+    assert second.state == "ready"
+    assert first_policy is not None
+    assert second_policy is not None
+    assert (
+        first_policy.configuration.configuration_fingerprint
+        != second_policy.configuration.configuration_fingerprint
+    )
+
+
+@pytest.mark.asyncio
+async def test_unknown_scope_home_fallback_is_global_when_xdg_is_unset(
+    tmp_path: Path,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    home = tmp_path / "home"
+    home_fallback = home / ".config" / "git" / "config"
+    home_fallback.parent.mkdir(parents=True)
+    home_fallback.write_text("[credential]\n", encoding="utf-8")
+    runner = _ControlledLocalProofRunner(repository)
+    runner.config_payload += _unknown_scope_config_record(
+        home_fallback,
+        "credential.helper",
+        "store",
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={"HOME": str(home)},
+    )
+
+    review = await service.review_push_destination(binding)
+
+    assert review.state == "ready"
+    assert review.authorization is not None
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path_count", [1, 1000])
 async def test_candidate_tree_lfs_proof_batches_paths_with_bounded_commands(

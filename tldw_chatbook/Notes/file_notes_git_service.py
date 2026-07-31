@@ -7064,15 +7064,12 @@ def _known_global_config_paths(
     home_text = environment.get("HOME")
     if home_text:
         home = Path(home_text)
-        candidates.extend(
-            (
-                home / ".gitconfig",
-                home / ".config" / "git" / "config",
-            )
-        )
+        candidates.append(home / ".gitconfig")
     config_home_text = environment.get("XDG_CONFIG_HOME")
     if config_home_text:
         candidates.append(Path(config_home_text) / "git" / "config")
+    elif home_text:
+        candidates.append(Path(home_text) / ".config" / "git" / "config")
     return tuple(candidates)
 
 
