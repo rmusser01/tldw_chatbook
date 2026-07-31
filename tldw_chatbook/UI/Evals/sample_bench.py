@@ -54,7 +54,7 @@ from ...DB.Evals_DB import EvalsDB
 from ...Evals.word_bench.capture_client import WordBenchCaptureClient
 from ...Evals.word_bench.models import BenchConfig, Snippet, Target
 from ...Evals.word_bench.runner import CancelToken, CaptureClientLike, ProgressFn, WordBenchRunner
-from ...Evals.word_bench.storage import _unique_name, load_bench, save_bench
+from ...Evals.word_bench.storage import _unique_name, load_bench, model_steering, save_bench
 from .evals_state import EvalsViewModel
 from .snippet_editor import dataset_snippets, import_snippets_into_dataset
 
@@ -446,11 +446,14 @@ async def create_and_run_sample_bench(
     ]
     import_snippets_into_dataset(db, dataset_id, snippet_dicts)
 
+    prefix, system_prompt = model_steering(target_row)
     target = Target(
         id=target_row["id"],
         name=target_row["name"],
         provider=target_row["provider"],
         model_id=target_row["model_id"],
+        prefix=prefix,
+        system_prompt=system_prompt,
     )
     config = BenchConfig(
         name=_unique_name(SAMPLE_BENCH_NAME),
@@ -501,9 +504,16 @@ def _resolve_targets(db: EvalsDB, config: BenchConfig) -> list[Target]:
     proceed with a target it cannot resolve to real provider/model_id
     values.
 
+    Each row's steering (``prefix``/``system_prompt``) is read via
+    ``storage.model_steering`` -- see that function's docstring for the
+    ``eval_models.config`` convention this relies on.
+
     Raises:
         RuntimeError: Naming the first ``target_id`` that no longer
             resolves to a live, non-deleted ``eval_models`` row.
+        ValueError: Via ``storage.model_steering``, if a resolved row's
+            stored ``config`` has both ``prefix`` and ``system_prompt``
+            set -- a corrupt row this function does not attempt to repair.
     """
     targets: list[Target] = []
     for target_id in config.target_ids:
@@ -513,12 +523,15 @@ def _resolve_targets(db: EvalsDB, config: BenchConfig) -> list[Target]:
                 f"Target {target_id!r} could not be resolved — its "
                 "eval_models row is missing or was deleted."
             )
+        prefix, system_prompt = model_steering(model)
         targets.append(
             Target(
                 id=model["id"],
                 name=model["name"],
                 provider=model["provider"],
                 model_id=model["model_id"],
+                prefix=prefix,
+                system_prompt=system_prompt,
             )
         )
     return targets
@@ -618,7 +631,16 @@ async def run_existing_bench(
             targets configured (task-1482: a draft bench created via the
             rail's "+ New bench" starts with ``target_ids=()``), any of
             its targets no longer resolve to a live ``eval_models`` row,
-            or its dataset is missing or has no snippets.
+            its dataset is missing or has no snippets, a resolved target's
+            stored steering is corrupt (task-1611: ``eval_models.config``
+            sets both ``prefix`` and ``system_prompt`` -- see
+            ``storage.model_steering``), or ``WordBenchRunner.run`` rejects
+            the run because a target's steering does not match the bench's
+            ``prompt_mode``. The latter two are plain ``ValueError``s at
+            their source, re-raised here as a ``RuntimeError`` carrying the
+            original message verbatim (naming the offending target/model
+            id) so every failure this function can produce is the same
+            exception type.
         asyncio.CancelledError: If this coroutine itself is hard-cancelled
             (e.g. by Textual's ``exclusive=True`` worker mechanism) while
             ``runner.run`` is in flight. Re-raised after marking any
@@ -657,12 +679,18 @@ async def run_existing_bench(
         # that does not go through the UI gate.
         raise RuntimeError(f"Bench {config.name!r} has no targets to run.")
 
-    targets = _resolve_targets(db, config)
-    snippets = _load_snippets(db, config.dataset_id)
-
-    factory = client_factory or _default_client_factory(app_config)
-    runner = WordBenchRunner(db, factory)
     try:
+        # _resolve_targets can itself raise a bare ValueError (via
+        # storage.model_steering, when a resolved target's stored config
+        # sets both prefix and system_prompt), so it is inside this same
+        # try/except ValueError alongside runner.run below -- both sources
+        # get the identical RuntimeError treatment rather than one being
+        # wrapped and the other leaking through unwrapped.
+        targets = _resolve_targets(db, config)
+        snippets = _load_snippets(db, config.dataset_id)
+
+        factory = client_factory or _default_client_factory(app_config)
+        runner = WordBenchRunner(db, factory)
         outcome = await runner.run(
             config, targets, snippets, task_id,
             progress=progress, cancel_token=cancel_token,
@@ -670,5 +698,18 @@ async def run_existing_bench(
     except asyncio.CancelledError:
         _mark_orphaned_runs_cancelled(db, task_id)
         raise
+    except ValueError as exc:
+        # WordBenchRunner.run raises a plain ValueError (naming the target
+        # and the mode -- see its own docstring) when a resolved target's
+        # steering does not match config.prompt_mode, and (via
+        # storage.create_run_group) a second, different ValueError if
+        # `targets` somehow carries a duplicate id. Every OTHER failure
+        # this function can produce is already a RuntimeError (see the
+        # docstring's own Raises section); re-raising this one as a
+        # RuntimeError too, rather than letting the bare ValueError through,
+        # means every caller of this function -- and the bench-run worker's
+        # own `except Exception` toast in evals_screen.py -- only ever has
+        # to reason about one exception shape from this seam.
+        raise RuntimeError(str(exc)) from exc
 
     return RunBenchResult(task_id=task_id, run_group_id=outcome.group_id)

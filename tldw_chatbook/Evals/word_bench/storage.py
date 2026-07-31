@@ -32,6 +32,65 @@ from .models import (
 BENCH_TYPE = "word_bench"
 
 
+def model_steering(model_row: Mapping[str, Any]) -> tuple[Optional[str], Optional[str]]:
+    """Read a target's steering out of its ``eval_models`` row.
+
+    ``eval_models.config`` (a free-form JSON column -- see
+    ``Evals_DB.create_model``/``get_model``, both of which already parse it
+    into a ``dict`` before this function ever sees it) is this app's ONE
+    home for a target's steering: ``config["prefix"]`` for a raw-mode
+    target, ``config["system_prompt"]`` for a chat-mode one -- the same
+    split ``models.Target``/``capture_client._build_request`` already
+    enforce (see ``Target``'s own docstring: raw mode prepends a literal
+    prefix, chat mode has no prefix slot and instead sends a system
+    message). Steering is immutable per row: ``Evals_DB`` has no
+    ``update_model``, so a differently-steered variant of a target (e.g.
+    the same underlying model with a different prefix) is always a NEW
+    ``eval_models`` row, never an edit of an existing one.
+
+    Args:
+        model_row: An ``eval_models`` row as returned by
+            ``EvalsDB.get_model``/``list_models`` -- ``config`` already
+            parsed into a mapping by those methods. A row with no
+            ``config`` key at all (every ``eval_models`` row written before
+            this convention existed) is treated the same as an explicit
+            ``{}``.
+
+    Returns:
+        ``(prefix, system_prompt)``. An unset key, a missing ``config``, or
+        an empty-string value all read as ``None`` for that field alike --
+        a form field left blank must never be distinguished from one that
+        was cleared back to ``""``. At most one of the pair is ever
+        non-``None`` on a successful return; see Raises for the case where
+        the stored row itself violates that.
+
+    Raises:
+        ValueError: If ``config`` has BOTH ``prefix`` and ``system_prompt``
+            set to a non-empty value. ``models.Target.__post_init__``
+            already rejects constructing a ``Target`` with both set, but a
+            row that reached this state some other way (e.g. hand-edited
+            JSON) must be surfaced as the corrupt row it is -- naming the
+            model id -- rather than have this function silently pick one
+            field over the other and hide the inconsistency.
+    """
+    config = model_row.get("config") or {}
+    if isinstance(config, str):
+        # Defensive only: get_model/list_models always hand back an
+        # already-parsed dict. A caller passing a raw sqlite row (config
+        # still a JSON string) is accommodated rather than made to fail
+        # with an opaque AttributeError on the .get() calls below.
+        config = json.loads(config)
+    prefix = config.get("prefix") or None
+    system_prompt = config.get("system_prompt") or None
+    if prefix and system_prompt:
+        raise ValueError(
+            f"eval_models row {model_row.get('id')!r} has both prefix and "
+            "system_prompt set in its config; a target belongs to exactly "
+            "one prompt mode."
+        )
+    return prefix, system_prompt
+
+
 def _unique_name(base: str) -> str:
     """Append a short random suffix so a generated name never collides with
     an existing one on ``eval_tasks.name``'s ``UNIQUE`` constraint -- which

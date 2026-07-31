@@ -19,6 +19,7 @@ from tldw_chatbook.Evals.word_bench.storage import (
     load_bench,
     load_grid,
     load_run_preflight,
+    model_steering,
     save_bench,
     save_cell,
 )
@@ -470,3 +471,61 @@ def test_load_run_preflight_defaults_for_run_groups_written_before_this_change(
 def test_load_run_preflight_raises_for_an_unknown_run_group(db):
     with pytest.raises(ValueError):
         load_run_preflight(db, "does-not-exist")
+
+
+# ---------------------------------------------------------------------------
+# task-1611 -- model_steering: eval_models.config is the storage home for a
+# target's steering (prefix/system_prompt).
+# ---------------------------------------------------------------------------
+
+
+def test_model_steering_reads_prefix_from_config(db):
+    model_id = db.create_model(
+        name="steered", provider="llama_cpp", model_id="m",
+        config={"prefix": "Be careful. "},
+    )
+    assert model_steering(db.get_model(model_id)) == ("Be careful. ", None)
+
+
+def test_model_steering_reads_system_prompt_from_config(db):
+    model_id = db.create_model(
+        name="steered-chat", provider="llama_cpp", model_id="m",
+        config={"system_prompt": "You are terse."},
+    )
+    assert model_steering(db.get_model(model_id)) == (None, "You are terse.")
+
+
+def test_model_steering_defaults_to_none_none_for_an_unsteered_row(db):
+    """Regression: every eval_models row written before this convention
+    existed has no prefix/system_prompt key at all in its config."""
+    model_id = db.create_model(name="base", provider="llama_cpp", model_id="m")
+    assert model_steering(db.get_model(model_id)) == (None, None)
+
+
+def test_model_steering_normalizes_an_empty_prefix_to_none(db):
+    model_id = db.create_model(
+        name="cleared", provider="llama_cpp", model_id="m",
+        config={"prefix": ""},
+    )
+    assert model_steering(db.get_model(model_id)) == (None, None)
+
+
+def test_model_steering_normalizes_an_empty_system_prompt_to_none(db):
+    model_id = db.create_model(
+        name="cleared-chat", provider="llama_cpp", model_id="m",
+        config={"system_prompt": ""},
+    )
+    assert model_steering(db.get_model(model_id)) == (None, None)
+
+
+def test_model_steering_raises_naming_the_model_id_when_both_are_set(db):
+    """A Target itself rejects both fields set (models.Target.__post_init__),
+    but a stored eval_models row can reach this state some other way (e.g.
+    hand-edited JSON); model_steering must surface it, not silently pick
+    one field over the other."""
+    model_id = db.create_model(
+        name="corrupt", provider="llama_cpp", model_id="m",
+        config={"prefix": "a", "system_prompt": "b"},
+    )
+    with pytest.raises(ValueError, match=model_id):
+        model_steering(db.get_model(model_id))
