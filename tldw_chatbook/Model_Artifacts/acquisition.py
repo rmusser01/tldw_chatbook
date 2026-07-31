@@ -348,8 +348,16 @@ class ArtifactAcquisitionService:
             )
             entries.append(entry)
             if not already_installed:
-                staged = self._staged_bytes_for(ref)
+                # Clamp per entry: a stale/corrupt sidecar claiming more
+                # bytes than this artifact's own declared total must not
+                # inflate the credit shown on the consent screen.
+                staged = min(self._staged_bytes_for(ref), entry.total_bytes)
                 already_staged_bytes += staged
+                # Floored PER ENTRY (max(total-staged,0) here, not summed
+                # totals minus summed staged then floored once at the end)
+                # -- an aggregate subtraction would let one entry's
+                # over-claimed credit silently offset another entry's real
+                # download cost instead of just clamping its own.
                 download_bytes += max(entry.total_bytes - staged, 0)
                 gating_targets.setdefault(entry.repository, entry)
 
