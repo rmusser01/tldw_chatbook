@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-31 14:02'
-updated_date: '2026-07-31 14:11'
+updated_date: '2026-07-31 14:27'
 labels:
   - architecture
   - sync
@@ -18,6 +18,8 @@ references:
   - backlog/decisions/033-application-session-state-ownership.md
   - >-
     Docs/superpowers/specs/2026-07-31-application-sync-runtime-provider-design.md
+  - >-
+    Docs/superpowers/plans/2026-07-31-application-sync-runtime-provider-ownership.md
 priority: high
 ---
 
@@ -37,6 +39,23 @@ Make the app-composed Sync graph follow the application-owned runtime server sel
 - [ ] #6 ADR-036 and the provider-migration audit use a numeric-safe semantic and AST inventory and record the verified residual app-level compatibility-provider count, expected to be 31 on the reviewed baseline and re-derived after rebases.
 - [ ] #7 Focused Sync, runtime-policy, ProductionApp, Packaging, full-suite, static, formatting, and diff-hygiene verification passes.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/036-application-service-composition-lifecycle.md
+Reason: TASK-1601 changes application runtime-provider ownership, a public Sync factory contract, shared in-memory key ownership, and shutdown ownership under the existing ADR-036 composition policy.
+
+1. Rebase onto current dev, re-derive the provider inventory, verify the focused baseline, and amend ADR-036 before implementation.
+2. Add a RED numeric-service audit regression, correct the semantic matcher, and reconcile the shared provider audit as this tranche's single audit owner.
+3. Add RED direct tests, forward sync_state_repository through the provider-aware factory, and close compatibility-test clients in finally.
+4. Add a RED late-key-mutation test and retain the exact initially empty application dataset-key cache.
+5. Add narrow source, real TldwCli lifecycle, and offline installed-wheel sentinels; switch only app-composed Sync to server_context_provider; reconcile the residual audit inventory.
+6. Run focused, RuntimePolicy, ProductionApp, Packaging, installed-wheel, static, full-suite, rebase, and post-rebase gates; self-review and close the Backlog task only with exact evidence.
+
+Detailed executable plan: Docs/superpowers/plans/2026-07-31-application-sync-runtime-provider-ownership.md
+<!-- SECTION:PLAN:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
