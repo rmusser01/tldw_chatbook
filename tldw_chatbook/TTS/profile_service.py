@@ -29,6 +29,8 @@ from tldw_chatbook.TTS.profile_errors import (
 from tldw_chatbook.TTS.profile_types import (
     AUDIO_CPP_PROFILE_RESPONSE_FORMAT,
     AUDIO_CPP_PROFILE_SPEED,
+    CharacterRef,
+    CharacterTTSAssignment,
     ProfileStoreResult,
     TTSGenerationProfile,
     TTSProfileDraft,
@@ -44,6 +46,8 @@ ProfileRecoveryAction: TypeAlias = Literal["none", "refresh", "edit"]
 
 _PROFILE_PROVIDER_ID = "audio_cpp"
 _PROFILE_PAGE_LIMIT = 50
+_CHARACTER_REF_TYPE: type[CharacterRef] = CharacterRef
+_CHARACTER_TTS_ASSIGNMENT_TYPE: type[CharacterTTSAssignment] = CharacterTTSAssignment
 _TTS_GENERATION_PROFILE_TYPE: type[TTSGenerationProfile] = TTSGenerationProfile
 _TTS_NATIVE_CAPABILITY_SNAPSHOT_TYPE: type[TTSNativeCapabilitySnapshot] = (
     TTSNativeCapabilitySnapshot
@@ -101,6 +105,24 @@ class _ProfileRepositoryProtocol(Protocol):
         self,
         profile_id: UUID,
     ) -> ProfileStoreResult[int]: ...
+
+    async def set_assignment(
+        self,
+        character_ref: CharacterRef,
+        profile_id: UUID,
+        *,
+        expected_generation: int,
+        expected_profile_revision: int,
+        expected_current_profile_id: UUID | None,
+    ) -> ProfileStoreResult[CharacterTTSAssignment]: ...
+
+    async def remove_assignment(
+        self,
+        character_ref: CharacterRef,
+        *,
+        expected_generation: int,
+        expected_profile_id: UUID,
+    ) -> ProfileStoreResult[None]: ...
 
 
 @runtime_checkable
@@ -219,6 +241,69 @@ def _matches_exact_canonical_value(value: object, canonical: object) -> bool:
             for actual, expected in zip(value_sequence, canonical, strict=True)
         )
     return value == canonical
+
+
+def _canonicalize_exact_character_ref(value: object) -> CharacterRef:
+    """Return a fresh exact character reference or fail closed."""
+
+    if type(value) is not _CHARACTER_REF_TYPE:
+        raise ProfileValidationError("assignment")
+    character_ref = cast(CharacterRef, value)
+    canonical: CharacterRef | None = None
+    valid = False
+    failed = False
+    try:
+        canonical = CharacterRef(
+            source=character_ref.source,
+            authority_id=character_ref.authority_id,
+            character_id=character_ref.character_id,
+        )
+        valid = all(
+            _matches_exact_canonical_value(source, expected)
+            for source, expected in (
+                (character_ref.source, canonical.source),
+                (character_ref.authority_id, canonical.authority_id),
+                (character_ref.character_id, canonical.character_id),
+            )
+        )
+    except Exception:  # noqa: BLE001 - hostile identity values fail closed
+        failed = True
+    if failed or not valid or canonical is None:
+        raise ProfileValidationError("assignment")
+    return canonical
+
+
+def _canonicalize_exact_assignment(value: object) -> CharacterTTSAssignment:
+    """Return a fresh exact character assignment or fail closed."""
+
+    if type(value) is not _CHARACTER_TTS_ASSIGNMENT_TYPE:
+        raise ProfileValidationError("assignment")
+    assignment = cast(CharacterTTSAssignment, value)
+    canonical: CharacterTTSAssignment | None = None
+    valid = False
+    failed = False
+    try:
+        character_ref = _canonicalize_exact_character_ref(assignment.character_ref)
+        profile_id = assignment.profile_id
+        if type(profile_id) is not UUID or type(profile_id.int) is not int:
+            raise TypeError
+        canonical_profile_id = UUID(int=profile_id.int)
+        canonical = CharacterTTSAssignment(
+            character_ref=character_ref,
+            profile_id=canonical_profile_id,
+        )
+        valid = (
+            _matches_exact_canonical_value(
+                assignment.character_ref,
+                canonical.character_ref,
+            )
+            and profile_id.int == canonical_profile_id.int
+        )
+    except Exception:  # noqa: BLE001 - hostile assignment values fail closed
+        failed = True
+    if failed or not valid or canonical is None:
+        raise ProfileValidationError("assignment")
+    return canonical
 
 
 def _canonicalize_exact_profile(value: object) -> TTSGenerationProfile:
@@ -932,6 +1017,109 @@ class TTSProfileService:
             raise ProfileValidationError("assignment_count")
         return value
 
+    async def set_assignment(
+        self,
+        character_ref: CharacterRef,
+        loaded: LoadedTTSProfile,
+        expected_current: CharacterTTSAssignment | None,
+    ) -> CharacterTTSAssignment:
+        """Set one exact character assignment from caller-held profile state."""
+
+        canonical_ref = _canonicalize_exact_character_ref(character_ref)
+        profile = self._validate_loaded(loaded)
+        expected_assignment = (
+            None
+            if expected_current is None
+            else _canonicalize_exact_assignment(expected_current)
+        )
+        if (
+            expected_assignment is not None
+            and expected_assignment.character_ref != canonical_ref
+        ):
+            raise ProfileValidationError("assignment")
+
+        repository_generation = loaded.repository_generation
+        self._require_repository_generation(repository_generation)
+        draft = TTSProfileDraft(
+            display_name=profile.display_name,
+            provider_id=profile.provider_id,
+            model_id=profile.model_id,
+            voice_id=profile.voice_id,
+            response_format=profile.response_format,
+            speed=profile.speed,
+            options=profile.options,
+        )
+        await self._require_authoritative_capability(draft)
+        self._require_repository_generation(repository_generation)
+
+        failed = False
+        result = None
+        try:
+            result = await self._repository.set_assignment(
+                canonical_ref,
+                profile.profile_id,
+                expected_generation=repository_generation,
+                expected_profile_revision=profile.revision,
+                expected_current_profile_id=(
+                    None
+                    if expected_assignment is None
+                    else expected_assignment.profile_id
+                ),
+            )
+        except (ProfileRepositoryError, ProfileValidationError):
+            raise
+        except Exception:  # noqa: BLE001 - hide unexpected repository detail
+            failed = True
+        if failed or result is None:
+            raise ProfileServiceError("operation_failed")
+        value = self._require_admitted_store_result(
+            result,
+            repository_generation,
+        )
+        assignment = self._require_assignment_mutation_result(
+            value,
+            canonical_ref,
+            profile.profile_id,
+        )
+        self._require_repository_generation(repository_generation)
+        return assignment
+
+    async def detach_assignment(
+        self,
+        assignment: CharacterTTSAssignment,
+        repository_generation: int,
+    ) -> None:
+        """Detach one exact caller-held assignment without capability work."""
+
+        canonical_assignment = _canonicalize_exact_assignment(assignment)
+        expected_generation = _validate_nonnegative_integer(
+            repository_generation,
+            "generation",
+        )
+        self._require_repository_generation(expected_generation)
+
+        failed = False
+        result = None
+        try:
+            result = await self._repository.remove_assignment(
+                canonical_assignment.character_ref,
+                expected_generation=expected_generation,
+                expected_profile_id=canonical_assignment.profile_id,
+            )
+        except (ProfileRepositoryError, ProfileValidationError):
+            raise
+        except Exception:  # noqa: BLE001 - hide unexpected repository detail
+            failed = True
+        if failed or result is None:
+            raise ProfileServiceError("operation_failed")
+        value = self._require_admitted_store_result(
+            result,
+            expected_generation,
+        )
+        if value is not None:
+            raise ProfileServiceError("operation_failed")
+        self._require_repository_generation(expected_generation)
+
     async def delete_profile(self, loaded: LoadedTTSProfile) -> None:
         """Delete one loaded profile while retaining repository protection."""
 
@@ -1067,6 +1255,27 @@ class TTSProfileService:
         if failed or not valid or profile is None:
             raise ProfileServiceError("operation_failed")
         return profile
+
+    @staticmethod
+    def _require_assignment_mutation_result(
+        value: object,
+        character_ref: CharacterRef,
+        profile_id: UUID,
+    ) -> CharacterTTSAssignment:
+        assignment: CharacterTTSAssignment | None = None
+        failed = False
+        valid = False
+        try:
+            assignment = _canonicalize_exact_assignment(value)
+            valid = (
+                assignment.character_ref == character_ref
+                and assignment.profile_id == profile_id
+            )
+        except Exception:  # noqa: BLE001 - hostile results fail closed
+            failed = True
+        if failed or not valid or assignment is None:
+            raise ProfileServiceError("operation_failed")
+        return assignment
 
     def _current_configuration_revision(self) -> int:
         failed = False
