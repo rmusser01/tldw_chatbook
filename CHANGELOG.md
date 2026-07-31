@@ -41,6 +41,9 @@ and this project adheres to Some kind of Versioning
   `CodeRepoCopyPasteWindow` is unaffected.
 
 ### Changed
+- Textual 8.x is now required (`>=8.0.0,<9`): the former Textual 3.3
+  compatibility claim could crash MCP navigation because it uses Textual 8's
+  `Select.NULL` API. Source checkouts should reinstall dependencies.
 - Command palette dedupe (ADR-015): one navigation command per destination; legacy route
   names (media, search, study, writing, research, logs, stats, llm, stts, evals, coding,
   ccp, tools_settings, ingest, notes, chatbooks, subscriptions, customize, ...) are
