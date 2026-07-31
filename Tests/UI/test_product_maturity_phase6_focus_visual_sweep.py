@@ -14,7 +14,7 @@ import pytest
 from textual.css.query import NoMatches, QueryError, TooManyMatches
 from textual.widgets import Button, Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import (
     MainNavigationBar,
     NavigateToScreen,

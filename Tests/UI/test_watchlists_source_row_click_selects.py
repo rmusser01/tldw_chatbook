@@ -34,7 +34,7 @@ from Tests.UI.test_destination_visual_parity_correction import (
     _active_destination_screen,
     _visual_destination_harness,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
 from tldw_chatbook.UI.Watchlists_Modules.rules_pane import RulesPane

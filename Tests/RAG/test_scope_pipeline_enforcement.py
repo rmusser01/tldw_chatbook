@@ -69,7 +69,7 @@ from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 # shared across the Console UI test suites (e.g.
 # Tests/UI/test_console_internals_decomposition.py, Tests/UI/
 # test_destination_shells.py) rather than duplicating it here.
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 pytestmark = pytest.mark.unit
 

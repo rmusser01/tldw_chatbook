@@ -42,7 +42,7 @@ from Tests.Character_Chat.test_character_card_lenient_import import (
     _v2_card,
     _write_png_with_trailing_metadata,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.ui]
 

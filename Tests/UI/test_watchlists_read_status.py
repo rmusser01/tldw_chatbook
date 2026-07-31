@@ -32,7 +32,7 @@ import pytest
 from textual.widgets import Button, DataTable
 
 from Tests.UI.test_destination_shells import DestinationHarness
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane

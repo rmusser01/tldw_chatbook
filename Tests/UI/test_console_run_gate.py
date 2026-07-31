@@ -25,7 +25,7 @@ ALREADY_RUNNING_COPY = "A run is already running in this tab."
 
 
 def _build_screen():
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     app = _build_test_app()

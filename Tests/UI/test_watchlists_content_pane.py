@@ -311,7 +311,7 @@ async def test_selecting_an_item_renders_it_in_the_content_region():
     from textual.widgets import Static
 
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
     from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
 
@@ -367,7 +367,7 @@ async def test_content_region_is_gated_to_the_items_read_tab():
     preference for it.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
 
     app = _build_test_app()
@@ -404,7 +404,7 @@ async def test_content_region_gating_does_not_clobber_a_real_collapse_preference
     from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
 
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
 
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -553,7 +553,7 @@ async def test_j_and_k_move_to_the_next_and_previous_item_and_update_the_reader(
     `_mark_item_read_on_open`).
     """
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
     from textual.widgets import Static
 
@@ -621,7 +621,7 @@ async def test_j_and_k_do_not_raise_at_the_list_boundaries():
     application.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
     from textual.widgets import Static
 
@@ -669,7 +669,7 @@ async def test_typing_j_in_the_search_input_does_not_navigate():
     from textual.widgets import Input
 
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
 
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -724,7 +724,7 @@ async def test_navigate_item_is_a_noop_when_a_text_input_has_focus():
     from textual.widgets import Input
 
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
 
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -767,7 +767,7 @@ async def test_j_skips_items_hidden_by_a_filter_and_does_not_mark_them_read():
     they never saw.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
     from textual.widgets import Static
@@ -848,7 +848,7 @@ async def test_j_keeps_the_reader_the_pane_selection_and_the_cursor_in_sync():
     from textual.widgets import DataTable, Static
 
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 
     app = _build_test_app()
@@ -911,7 +911,7 @@ async def test_j_navigation_does_not_recompose_the_screen():
     consecutive `j` presses.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 
     app = _build_test_app()
@@ -966,7 +966,7 @@ async def test_j_and_k_move_forward_and_back_under_a_status_filter():
     The unfiltered path already passed, which is why this shipped.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
     from textual.widgets import Static
 
@@ -1021,7 +1021,7 @@ async def test_the_open_item_survives_a_rebuild_of_the_filtered_table():
     no row.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
 
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -1061,7 +1061,7 @@ async def test_k_with_nothing_open_goes_to_the_last_item_not_nowhere():
     real defect.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
 
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -1097,7 +1097,7 @@ async def test_opening_an_item_repaints_its_status_cell_in_the_table():
     from textual.widgets import DataTable
 
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
 
     app = _build_test_app()
@@ -1136,7 +1136,7 @@ async def test_opening_an_item_does_not_cancel_unrelated_background_work():
     from textual.worker import WorkerState
 
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
 
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -1177,7 +1177,7 @@ async def test_the_content_chevron_off_the_read_tab_neither_collapses_nor_persis
     inert.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
 
     app = _build_test_app()
@@ -1232,7 +1232,7 @@ async def test_a_workbench_rebuild_keeps_the_items_filter_search_and_selection()
     why it is not what this test drives.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
 
     app = _build_test_app()
@@ -1299,7 +1299,7 @@ async def test_mark_unread_refuses_to_overwrite_an_item_ingested_by_the_real_ges
     from textual.widgets import Button
 
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
     from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import IngestRequested
 
@@ -1359,7 +1359,7 @@ async def test_mark_unread_still_works_on_an_item_that_is_merely_read():
     from textual.widgets import Button
 
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
 
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -1406,7 +1406,7 @@ async def test_mark_unread_fails_closed_when_the_status_cannot_be_confirmed():
     from textual.widgets import Button
 
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
 
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -1455,7 +1455,7 @@ async def test_a_persisted_body_reaches_the_reader_end_to_end():
     from textual.widgets import Static
 
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 
     app = _build_test_app()
@@ -1543,7 +1543,7 @@ async def test_mark_unread_refuses_an_ingest_that_sits_beyond_a_lookup_page():
     from textual.widgets import Button
 
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
     from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import IngestRequested
 
@@ -1646,7 +1646,7 @@ async def test_soloing_content_then_leaving_read_leaves_a_centre_region_expanded
     their solo is still there when they come back to Read.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.region_layout import (
         CENTRE_REGIONS,
         Region,
@@ -1702,7 +1702,7 @@ async def test_solo_on_content_off_the_read_tab_is_refused():
     refused there; `Z` must be too.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
 
     app = _build_test_app()

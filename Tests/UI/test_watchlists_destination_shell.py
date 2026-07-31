@@ -14,7 +14,7 @@ from textual.widgets import DataTable
 from tldw_chatbook.Subscriptions.noise_defaults import default_ignore_selectors_text
 
 from Tests.UI.test_destination_shells import DestinationHarness
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )

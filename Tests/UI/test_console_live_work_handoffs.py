@@ -9,7 +9,7 @@ import pytest
 from textual.app import App
 
 from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (

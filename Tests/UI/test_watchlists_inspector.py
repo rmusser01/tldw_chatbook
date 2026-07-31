@@ -31,7 +31,7 @@ from Tests.UI.test_destination_visual_parity_correction import (
     _assert_visible_in_viewport,
     _visual_destination_harness,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_watchlists_item_actions import OTHER_ENTITIES, REAL_ITEM
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.Subscriptions.noise_defaults import DEFAULT_IGNORE_SELECTORS

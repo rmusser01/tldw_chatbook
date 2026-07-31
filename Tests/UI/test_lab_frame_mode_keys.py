@@ -11,7 +11,7 @@ from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.lab_mode_strip import LAB_MODE_CHIP_IDS
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 @pytest.fixture(autouse=True)

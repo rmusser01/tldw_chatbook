@@ -202,6 +202,24 @@ def temp_db_path(isolated_temp_dir):
 
 
 @pytest.fixture(autouse=True)
+def drain_test_app_user_data_dirs() -> "Iterator[None]":
+    """Remove the user-data dirs the shared app factory created during a test.
+
+    ``Tests/UI/app_factory._build_test_app`` records every ``mkdtemp`` it
+    makes; draining here (task-1458) stops the per-call leak that accumulated
+    324k orphaned sandboxes (~285GB) on one dev machine. The import is lazy
+    and conditional so the ~18k tests that never build an app pay nothing.
+
+    Yields:
+        None. Draining happens in teardown.
+    """
+    yield
+    factory = sys.modules.get("Tests.UI.app_factory")
+    if factory is not None:
+        factory.drain_created_dirs()
+
+
+@pytest.fixture(autouse=True)
 def restore_sys_path():
     """Automatically restore sys.path after each test."""
     original_path = sys.path.copy()

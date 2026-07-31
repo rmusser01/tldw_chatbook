@@ -16,7 +16,7 @@ import pytest
 import tldw_chatbook.app as app_module
 import tldw_chatbook.TTS as tts_package
 from Tests.TTS.adapter_fakes import FakeAdapterFactory, provider_spec
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,

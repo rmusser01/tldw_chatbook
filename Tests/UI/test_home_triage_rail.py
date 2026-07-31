@@ -7,7 +7,7 @@ import pytest
 
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from Tests.UI.test_home_screen import HomeHarness, _active_home_screen
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 TRIAGE_TEST_SIZE = (160, 44)
 

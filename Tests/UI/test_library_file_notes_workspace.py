@@ -43,7 +43,7 @@ from Tests.UI.test_library_shell import (  # noqa: E402
     _two_conversations,
     _wait_for_library_shell,
 )
-from Tests.UI.test_screen_navigation import _build_test_app  # noqa: E402
+from Tests.UI.app_factory import _build_test_app  # noqa: E402
 
 
 class _WorkspaceHarness(App[None]):

@@ -19,7 +19,7 @@ from Tests.UI.test_destination_shells import (
     _active_destination_screen,
     _wait_for_selector,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 pytestmark = pytest.mark.unit
 

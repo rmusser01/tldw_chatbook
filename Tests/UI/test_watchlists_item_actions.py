@@ -28,7 +28,7 @@ import pytest
 from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import DestinationHarness
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Subscriptions.watchlist_normalizers import (
     normalize_local_subscription_row,
     normalize_watchlist_alert_rule,

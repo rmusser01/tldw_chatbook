@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from Tests.UI.test_screen_navigation import _build_test_app  # noqa: E402
+from Tests.UI.app_factory import _build_test_app  # noqa: E402
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen  # noqa: E402
 from tldw_chatbook.Utils.ui_responsiveness import (  # noqa: E402
     UIResponsivenessMonitor,

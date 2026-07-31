@@ -14,7 +14,7 @@ pytestmark = pytest.mark.unit
 async def test_worker_error_records_worker_failed(monkeypatch):
     from textual.worker import Worker
 
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
 
     recorded: list[dict] = []
     monkeypatch.setattr(
@@ -56,7 +56,7 @@ async def test_successful_worker_records_nothing(monkeypatch):
     line per keystroke-triggered search across 500+ worker sites."""
     from textual.worker import Worker
 
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
 
     recorded: list[dict] = []
     monkeypatch.setattr(

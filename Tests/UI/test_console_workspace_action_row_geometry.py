@@ -18,7 +18,7 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 ROOT = Path(__file__).resolve().parents[2]
 BUNDLE = ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"

@@ -22,7 +22,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen

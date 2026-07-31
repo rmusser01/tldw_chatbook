@@ -44,7 +44,7 @@ from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from Tests.UI.test_destination_visual_parity_correction import (
     _visual_destination_harness,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Subscriptions import briefing_service
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.UI.Screens import watchlists_collections_screen as screen_module

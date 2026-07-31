@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 

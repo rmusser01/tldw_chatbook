@@ -15,7 +15,7 @@ from textual.widgets import Static
 
 from tldw_chatbook.UI.Navigation.pending_handoff_store import PendingHandoffStore
 from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 # route -> (screen import path pieces resolved lazily in the test), title

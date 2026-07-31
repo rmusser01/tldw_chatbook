@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from textual.widgets import Button, Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.app import TabNavigationProvider, TldwCli
 from tldw_chatbook.UI.Navigation.shell_destinations import (
     SHELL_DESTINATION_ORDER,

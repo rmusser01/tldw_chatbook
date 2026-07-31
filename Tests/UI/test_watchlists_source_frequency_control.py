@@ -24,7 +24,7 @@ from Tests.UI.test_destination_shells import (
 from Tests.UI.test_destination_visual_parity_correction import (
     _visual_destination_harness,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 
 # The small end the Watchlists parity suite covers, and the size the UAT ran at.
