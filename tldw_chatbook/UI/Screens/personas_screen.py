@@ -23,6 +23,8 @@ from textual.worker import Worker
 from textual.widgets import Button, Input, ListView, Static, TabbedContent, TextArea
 
 from ...Character_Chat.Character_Chat_Lib import (
+    CharacterCardImportOutcome,
+    CharacterCardTTSInspection,
     count_character_page,
     export_character_card_to_json,
     export_character_card_to_png,
@@ -50,12 +52,16 @@ from ...TTS import (
     CharacterRef,
     LoadedCharacterTTSAssignment,
     LoadedTTSProfile,
+    PortableProfileAvailabilityObservation,
+    PortableProfileImportPlan,
+    PortableProfileImportResult,
     ProfileRepositoryError,
     TTSProfileAvailability,
     TTSProfileAvailabilitySnapshot,
     TTSProfileDraft,
     TTSProfilePageSnapshot,
 )
+from ...TTS.profile_portability import PortableTTSProfile
 from ...tldw_api.character_persona_schemas import (
     LocalPersonaProfileCreate,
     LocalPersonaProfileUpdate,
@@ -88,6 +94,10 @@ from ...Widgets.Persona_Widgets.personas_character_tts_widget import (
     CharacterTTSProfileOption,
     CharacterTTSPresentationState,
     PersonasCharacterTTSWidget,
+)
+from ...Widgets.Persona_Widgets.character_tts_portability_dialogs import (
+    CharacterTTSExistingAssignmentDialog,
+    CharacterTTSProfileCollisionDialog,
 )
 from ...Widgets.Persona_Widgets.personas_character_dictionaries import (
     PersonasCharacterDictionariesWidget,
@@ -1294,6 +1304,13 @@ class PersonasScreen(BaseAppScreen):
             return
         for control in self.query(PersonasCharacterTTSWidget):
             control.apply_state(state)
+        try:
+            self.query_one(PersonasInspectorPane).set_tts_export_available(
+                self._local_character_actions_allowed()
+                and state.selected_profile_id is not None
+            )
+        except QueryError:
+            pass
 
     def _disable_character_tts_controls(
         self,
@@ -7577,75 +7594,111 @@ class PersonasScreen(BaseAppScreen):
             self._io_dialog_active = False
 
     async def _import_character_from_path(self, path: str) -> None:
-        """Import a character card file, then refresh, select, and reveal it."""
+        """Preflight one immutable card source, persist it, then apply TTS."""
+
         if not self._local_character_actions_allowed():
             return
-        # On a name conflict the importer returns the EXISTING character's id
-        # WITHOUT adding a row; on a new import it creates one. ``_characters``
-        # now holds only one page, so decide "existed vs imported" from the
-        # whole-library count (unfiltered) taken before/after, not a page-cache
-        # id membership check.
-        db = self._character_db()
-        pre_import_count = None
-        if db is not None:
-            try:
-                pre_import_count = await asyncio.to_thread(count_character_page, db)
-            except Exception:
-                logger.opt(exception=True).debug(
-                    "Pre-import character count failed; message will assume new."
-                )
-        if not self._local_character_actions_allowed():
-            return
+        file_type = Path(path).suffix.lower()
+        if file_type not in {".json", ".png", ".webp", ".md", ".markdown"}:
+            file_type = "other"
         try:
-            # Sync DB call; see the section comment for the threading choice.
-            imported_id = await asyncio.to_thread(
-                ccp_character_handler.import_character_card, path
+            source = validate_path_simple(path, require_exists=True)
+            source_bytes = await asyncio.to_thread(source.read_bytes)
+            inspection = await asyncio.to_thread(
+                ccp_character_handler.inspect_character_card_tts_attachment,
+                source_bytes,
             )
-        except Exception as exc:
-            file_type = Path(path).suffix.lower()
-            if file_type not in {".json", ".png", ".webp", ".md", ".markdown"}:
-                file_type = "other"
+        except Exception as error:
             logger.error(
-                "Character import failed (file_type={}, category={}).",
+                "Character import preflight failed (file_type={}, category={}).",
                 file_type,
-                type(exc).__name__,
+                type(error).__name__,
             )
             self._notify(
                 "Character import failed; verify the file and retry.",
                 "error",
             )
             return
-        if imported_id is None:
+        if type(inspection) is not CharacterCardTTSInspection:
             self._notify(
                 "Import failed: the file did not contain a valid character card.",
                 "error",
             )
             return
-        imported_id = str(imported_id)
-        if not self._local_character_actions_allowed():
-            return
-        if (
-            not self.is_mounted
-            or self.app.screen is not self
-            or self.state.active_mode != "characters"
-        ):
-            # Durable import already settled. Presentation belongs only to the
-            # still-mounted Characters owner; a future Personas visit reloads
-            # the database rather than refreshing this stale screen instance.
-            return
-        post_import_count = None
-        if db is not None:
+
+        portable = inspection.portable_profile
+        profile_service: Any | None = None
+        observation: PortableProfileAvailabilityObservation | None = None
+        if portable is not None:
             try:
-                post_import_count = await asyncio.to_thread(count_character_page, db)
-            except Exception:
-                logger.opt(exception=True).debug("Post-import character count failed.")
-        if not self._local_character_actions_allowed():
+                profile_service = await self._character_tts_profile_service()
+                observation = await profile_service.observe_portable_profile(portable)
+            except Exception as error:
+                logger.error(
+                    "Character voice preflight failed (category={}).",
+                    type(error).__name__,
+                )
+                self._notify(
+                    "The imported voice profile could not be checked. "
+                    "No character data was changed; refresh Speech settings and retry.",
+                    "error",
+                )
+                return
+            if type(observation) is not PortableProfileAvailabilityObservation:
+                self._notify(
+                    "The imported voice profile could not be checked. "
+                    "No character data was changed.",
+                    "error",
+                )
+                return
+
+        try:
+            outcome = await asyncio.to_thread(
+                ccp_character_handler.import_character_card_with_outcome,
+                source_bytes,
+            )
+        except Exception as error:
+            logger.error(
+                "Character import failed (file_type={}, category={}).",
+                file_type,
+                type(error).__name__,
+            )
+            self._notify(
+                "Character import failed; verify the file and retry.",
+                "error",
+            )
             return
-        existed_before = (
-            pre_import_count is not None
-            and post_import_count is not None
-            and post_import_count == pre_import_count
-        )
+        if type(outcome) is not CharacterCardImportOutcome:
+            self._notify(
+                "Import failed: the file did not contain a valid character card.",
+                "error",
+            )
+            return
+
+        voice_result = "none"
+        if portable is not None:
+            if outcome.portable_profile != portable:
+                voice_result = "failed"
+            elif self._character_import_presentation_is_current():
+                assert profile_service is not None and observation is not None
+                try:
+                    voice_result = await self._commit_imported_character_tts(
+                        profile_service,
+                        observation,
+                        outcome,
+                    )
+                except Exception as error:
+                    logger.error(
+                        "Imported character voice commit failed (category={}).",
+                        type(error).__name__,
+                    )
+                    voice_result = "failed"
+            else:
+                voice_result = "cancelled"
+
+        imported_id = str(outcome.character_id)
+        if not self._character_import_presentation_is_current():
+            return
         # Clear any active search (state + Input, as _apply_mode does) and reset
         # paging so the imported character shows on page 0 of the refreshed list.
         self._cancel_search_debounce()
@@ -7658,13 +7711,7 @@ class PersonasScreen(BaseAppScreen):
         except Exception:
             pass
         await self.character_handler.refresh_character_list()
-        if not self._local_character_actions_allowed():
-            return
-        if (
-            not self.is_mounted
-            or self.app.screen is not self
-            or self.state.active_mode != "characters"
-        ):
+        if not self._character_import_presentation_is_current():
             # The user left Characters mode while the import ran; the list is
             # refreshed but selection/center pane belong to the new mode.
             return
@@ -7674,17 +7721,12 @@ class PersonasScreen(BaseAppScreen):
             loaded = await asyncio.to_thread(
                 ccp_character_handler.fetch_character_by_id, imported_id
             )
-        except Exception:
-            logger.opt(exception=True).debug(
-                "Could not resolve imported character name by id."
+        except Exception as error:
+            logger.debug(
+                "Could not resolve imported character name by id (category={}).",
+                type(error).__name__,
             )
-        if not self._local_character_actions_allowed():
-            return
-        if (
-            not self.is_mounted
-            or self.app.screen is not self
-            or self.state.active_mode != "characters"
-        ):
+        if not self._character_import_presentation_is_current():
             return
         name = str((loaded or {}).get("name") or "Imported character")
         await self._select_character(imported_id, name)
@@ -7697,18 +7739,136 @@ class PersonasScreen(BaseAppScreen):
         # longer, matching the codebase's convention for confirmations that
         # need a deliberate beat to register (e.g. import-conflict warnings
         # elsewhere use timeout=6).
-        if existed_before:
-            self._notify(
-                "Character already existed; selected it. "
-                "Re-importing does not update an existing character.",
-                "information",
-                timeout=6.0,
-            )
-        else:
+        await self._notify_character_import_outcome(
+            outcome,
+            imported_id,
+            voice_result=voice_result,
+            attachment_warning=inspection.warning_code,
+        )
+
+    def _character_import_presentation_is_current(self) -> bool:
+        return (
+            self._local_character_actions_allowed()
+            and self.is_mounted
+            and self.app.screen is self
+            and self.state.active_mode == "characters"
+        )
+
+    async def _resolve_import_collision_choice(
+        self,
+        plan: PortableProfileImportPlan,
+    ) -> str | None:
+        if plan.allowed_choices == ("create",):
+            return "create"
+        result = await self.app.push_screen_wait(
+            CharacterTTSProfileCollisionDialog(plan)
+        )
+        return result if result in {"reuse", "copy"} else None
+
+    async def _confirm_reused_character_tts_apply(self) -> bool:
+        result = await self.app.push_screen_wait(
+            CharacterTTSExistingAssignmentDialog()
+        )
+        return result is True
+
+    async def _local_character_ref_for_import(
+        self,
+        character_id: int,
+    ) -> CharacterRef:
+        db = self._character_db()
+        get_authority = getattr(db, "get_local_authority_id", None)
+        if not callable(get_authority):
+            raise RuntimeError("local_authority_unavailable")
+        authority_id = await asyncio.to_thread(get_authority)
+        return CharacterRef(
+            source="local",
+            authority_id=authority_id,
+            character_id=str(character_id),
+        )
+
+    async def _commit_imported_character_tts(
+        self,
+        service: Any,
+        observation: PortableProfileAvailabilityObservation,
+        outcome: CharacterCardImportOutcome,
+    ) -> str:
+        if not outcome.created and not await self._confirm_reused_character_tts_apply():
+            return "cancelled"
+        plan = await service.inspect_portable_profile_import(observation)
+        if type(plan) is not PortableProfileImportPlan:
+            raise RuntimeError("invalid_profile_plan")
+        character_ref = await self._local_character_ref_for_import(
+            outcome.character_id
+        )
+        loaded_assignment = await service.get_assigned_profile(character_ref)
+        if type(loaded_assignment) is not LoadedCharacterTTSAssignment:
+            raise RuntimeError("invalid_assignment_snapshot")
+        current = loaded_assignment.snapshot
+        choice = await self._resolve_import_collision_choice(plan)
+        if choice is None:
+            return "cancelled"
+
+        result = await service.commit_portable_profile_import(
+            plan,
+            choice,
+            character_ref,
+            expected_current=(None if current is None else current.assignment),
+        )
+        if type(result) is not PortableProfileImportResult:
+            raise RuntimeError("invalid_profile_result")
+        if result.assignment is not None:
+            return "applied"
+        if result.created:
+            return "saved_for_repair"
+        return "preserved" if current is not None else "unassigned_unavailable"
+
+    async def _notify_character_import_outcome(
+        self,
+        outcome: CharacterCardImportOutcome,
+        imported_id: str,
+        *,
+        voice_result: str,
+        attachment_warning: str | None,
+    ) -> None:
+        if outcome.created:
             lore_note = await self._imported_lorebook_note(imported_id)
-            self._notify(
-                f"Character imported.{lore_note}", "information", timeout=6.0
+            message = f"Character imported.{lore_note}"
+        else:
+            message = (
+                "Character already existed; selected it. "
+                "Re-importing does not update an existing character."
             )
+        voice_copy = {
+            "applied": " The imported voice profile applied successfully.",
+            "saved_for_repair": (
+                " The voice profile was saved for repair but was not assigned "
+                "because it is not currently available."
+            ),
+            "preserved": (
+                " The imported voice is not currently available; the existing "
+                "voice assignment was preserved."
+            ),
+            "unassigned_unavailable": (
+                " The imported voice matches an existing profile that is not "
+                "currently available; the character remains unassigned. Repair "
+                "the profile in the voice profile library."
+            ),
+            "cancelled": " The voice profile was not changed.",
+            "failed": (
+                " The character was kept, but its voice profile could not be "
+                "saved or assigned; retry from the character voice controls."
+            ),
+        }.get(voice_result, "")
+        warning_copy = (
+            " The card's voice attachment was skipped."
+            if attachment_warning is not None
+            else ""
+        )
+        self._notify(
+            f"{message}{voice_copy}{warning_copy}",
+            "information" if voice_result != "failed" else "warning",
+            timeout=6.0,
+        )
 
     async def _imported_lorebook_note(self, character_id: str) -> str:
         """Return a " Lorebook 'X' attached (N entries)." suffix, or "" when
@@ -8102,13 +8262,30 @@ class PersonasScreen(BaseAppScreen):
         try:
             if kind == "character":
                 character_id = int(str(entity_id))
+                inspector = self.query_one(PersonasInspectorPane)
+                portable_profile = None
+                if inspector.include_tts_profile_in_export:
+                    portable_profile = self._portable_tts_profile_for_export()
+                    if portable_profile is None:
+                        self._notify(
+                            "The assigned voice profile is not ready to export. "
+                            "Refresh the character and retry.",
+                            "warning",
+                        )
+                        return
                 if fmt == "png":
                     await asyncio.to_thread(
-                        self._export_character_png_sync, character_id, target_path
+                        self._export_character_png_sync,
+                        character_id,
+                        target_path,
+                        portable_profile,
                     )
                 else:
                     await asyncio.to_thread(
-                        self._export_character_json_sync, character_id, target_path
+                        self._export_character_json_sync,
+                        character_id,
+                        target_path,
+                        portable_profile,
                     )
             elif kind == "persona":
                 if fmt != "json":
@@ -8122,23 +8299,78 @@ class PersonasScreen(BaseAppScreen):
             else:
                 self._notify("Export is not available for this selection.", "warning")
                 return
-        except Exception as exc:
-            logger.opt(exception=True).error(f"Error exporting to {target_path}: {exc}")
-            self._notify(f"Export failed: {exc}", "error")
+        except Exception as error:
+            logger.error(
+                "Personas export failed (format={}, category={}).",
+                fmt,
+                type(error).__name__,
+            )
+            self._notify("Export failed. The selected item was not written.", "error")
             return
-        self._notify(f"Exported to {target_path}", "information")
+        self._notify("Exported to the selected destination.", "information")
 
-    def _export_character_json_sync(self, character_id: int, target_path: str) -> None:
+    def _portable_tts_profile_for_export(self) -> PortableTTSProfile | None:
+        """Return the exact current local assignment as a sanitized profile."""
+
+        snapshot = self._character_tts_snapshot
+        entity_id = self.state.selected_entity_id
+        if (
+            snapshot is None
+            or snapshot.current is None
+            or self.state.selected_entity_kind != "character"
+            or self.state.runtime_source != "local"
+            or entity_id is None
+            or snapshot.runtime_source != "local"
+            or snapshot.character_id != str(entity_id)
+        ):
+            return None
+        profile = snapshot.current.profile
+        return PortableTTSProfile(
+            profile_id=profile.profile_id,
+            draft=TTSProfileDraft(
+                display_name=profile.display_name,
+                provider_id=profile.provider_id,
+                model_id=profile.model_id,
+                voice_id=profile.voice_id,
+                response_format=profile.response_format,
+                speed=profile.speed,
+                options=profile.options,
+            ),
+        )
+
+    def _export_character_json_sync(
+        self,
+        character_id: int,
+        target_path: str,
+        portable_profile: PortableTTSProfile | None = None,
+    ) -> None:
         """Sync JSON export; raises on failure (runs off the UI thread)."""
         if not self._local_character_actions_allowed():
             raise RuntimeError("Local character export is unavailable in server mode.")
         db = ccp_character_handler._default_character_db()
-        content = export_character_card_to_json(db, character_id, include_image=True)
+        if portable_profile is None:
+            content = export_character_card_to_json(
+                db,
+                character_id,
+                include_image=True,
+            )
+        else:
+            content = export_character_card_to_json(
+                db,
+                character_id,
+                include_image=True,
+                portable_tts_profile=portable_profile,
+            )
         if content is None:
             raise RuntimeError("export returned no data")
         self._write_text_file(target_path, content)
 
-    def _export_character_png_sync(self, character_id: int, target_path: str) -> None:
+    def _export_character_png_sync(
+        self,
+        character_id: int,
+        target_path: str,
+        portable_profile: PortableTTSProfile | None = None,
+    ) -> None:
         """Sync PNG export; the library writes the file and validates the path.
 
         ``export_character_card_to_png`` validates ``output_path`` against a
@@ -8149,9 +8381,21 @@ class PersonasScreen(BaseAppScreen):
             raise RuntimeError("Local character export is unavailable in server mode.")
         db = ccp_character_handler._default_character_db()
         target = Path(target_path).expanduser()
-        ok = export_character_card_to_png(
-            db, character_id, str(target), base_directory=str(target.parent)
-        )
+        if portable_profile is None:
+            ok = export_character_card_to_png(
+                db,
+                character_id,
+                str(target),
+                base_directory=str(target.parent),
+            )
+        else:
+            ok = export_character_card_to_png(
+                db,
+                character_id,
+                str(target),
+                base_directory=str(target.parent),
+                portable_tts_profile=portable_profile,
+            )
         if not ok:
             # The library returns False for several causes; surface them all.
             raise RuntimeError(
@@ -8173,7 +8417,11 @@ class PersonasScreen(BaseAppScreen):
         target = Path(target_path).expanduser()
         if not target.parent.exists():
             raise ValueError(f"destination directory does not exist: {target.parent}")
-        validated = validate_path(target, base_directory=target.parent)
+        validated = validate_path(
+            target,
+            base_directory=target.parent,
+            redact_paths=True,
+        )
         validated.write_text(content, encoding="utf-8")
 
     # ===== Delete =====

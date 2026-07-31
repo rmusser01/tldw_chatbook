@@ -2,7 +2,8 @@
 
 Status: Accepted
 Date: 2026-07-26
-Related Tasks: TASK-710, TASK-763
+Amended: 2026-07-31 (TASK-1626, explicit sanitized portability)
+Related Tasks: TASK-710, TASK-763, TASK-1626
 Extends: ADR-023
 Supersedes: N/A
 
@@ -60,10 +61,38 @@ online-backup semantics. Restore is explicit and runs through the repository
 lifecycle boundary; an open profile database is never restored by a raw file
 copy.
 
-Profile persistence is local-only in this decision. Server synchronization,
-automatic speech, managed audio.cpp process ownership, arbitrary provider
-options, legacy-adapter profile execution, and implicit character-card
-portability are excluded.
+Profile persistence remains local-only. Ordinary character-card export never
+includes profile or assignment data. An explicit local export may add one
+transient versioned payload at
+`data.extensions["tldw_chatbook/tts_generation_profile"]`, and standalone
+profile export uses the same sanitized payload. The payload contains only the
+portable UUID hint, display name, canonical provider/model/voice selection,
+format, speed, and validated profile-safe options. It excludes assignment
+authority, origins, credentials, process paths, health, timestamps, revisions,
+message text, and other connection or local lifecycle state. Export operates
+on a copy and never mutates the stored card.
+
+Imported attachments are hostile input. Chatbook bounds and structurally
+validates the exact payload, removes the reserved extension before character
+persistence, and treats the portable UUID as a correlation hint rather than
+local authority. Unknown versions/providers and malformed known payloads skip
+only the attachment with a bounded warning. Valid attachments use explicit
+UUID/name/generation-tuple collision choices and never update an existing
+profile silently. Current provider availability is observed separately from
+structural validity before any write and revalidated before assignment; a
+structurally valid unavailable profile may be stored visibly for repair but is
+not assigned.
+
+Character and profile stores do not pretend to share a transaction. Character
+persistence reports whether it created a row or reused a name conflict. Profile
+creation and any assignment are atomic within the profile repository. A reused
+character's assignment changes only after explicit confirmation. Cancellation
+performs no profile/assignment write; profile failure leaves a new character
+imported and unassigned and preserves a reused character's prior assignment.
+
+Server synchronization, managed audio.cpp process ownership, arbitrary
+provider options, legacy-adapter profile execution, implicit portability, and
+standalone profile import remain excluded.
 
 ## Context
 
@@ -93,6 +122,8 @@ fail-closed behavior for later UI and runtime slices.
 | Store assignments in the active character database | Makes assignments follow whichever database is currently open and cannot safely scope server characters or restored profile stores. |
 | Store profiles in the main conversation database | Couples independent profile lifecycle, backup, and migration to conversation storage and still leaves server-character authority ambiguous. |
 | Put provider URLs and credentials in each profile | Duplicates operational configuration and risks leaking secrets through logs, exports, or card portability. |
+| Persist the portable attachment in the local character card | Makes an untrusted transport object durable, leaks it through ordinary re-export, and creates two owners for profile truth. |
+| Treat the character and profile databases as one transaction | SQLite files and owners are independent; explicit ordering and compensation make partial success observable without inventing unsafe cross-store atomicity. |
 | Use JSON or TOML files | Loses transactional assignment updates, normalized uniqueness, optimistic revisions, foreign keys, bounded pagination, and consistent online backup. |
 | Open a new SQLite connection from each caller | Allows restore and stale queued operations to cross lifecycle boundaries and makes connection ownership difficult to audit. |
 | Use only an in-process lock | Cannot prevent another Chatbook process from holding the old database inode during replacement. |
@@ -137,8 +168,8 @@ fail-closed behavior for later UI and runtime slices.
 - Profile connection details, character authority, message text, credentials,
   origins, and local paths remain excluded from logs, metrics, and portable
   payloads.
-- Later slices own STTS profile management, authority acquisition, character
-  assignment UI, roleplay resolution, and optional sanitized card portability.
+- Optional portability is explicit and local-only. Ordinary stored cards remain
+  free of TTS attachments, and portable UUIDs never become assignment authority.
 - Managed audio.cpp launch and supervision remains a separate deferred task and
   is not implied by profile ownership.
 
@@ -158,3 +189,4 @@ fail-closed behavior for later UI and runtime slices.
 - [ADR-023 — TTS adapter registry and audio.cpp runtime boundary](023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
 - [TASK-710](<../tasks/task-710 - Make-external-audio.cpp-Console-TTS-settings-coherent.md>)
 - [TASK-763](<../tasks/task-763 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md>)
+- [TASK-1626](<../tasks/task-1626 - Add-sanitized-TTS-portability-to-local-character-cards.md>)

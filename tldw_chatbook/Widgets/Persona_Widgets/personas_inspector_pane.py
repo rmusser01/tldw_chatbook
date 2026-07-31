@@ -7,7 +7,7 @@ import re
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Button, ListItem, ListView, Static
+from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 
 from ..Console.console_image_viewer_modal import ClickableAvatarBox
 
@@ -90,6 +90,11 @@ class PersonasInspectorPane(Vertical):
         padding: 0 1;
         border: none;
     }
+
+    PersonasInspectorPane #personas-export-include-tts {
+        width: 100%;
+        height: auto;
+    }
     """
 
     def __init__(self, **kwargs) -> None:
@@ -101,6 +106,7 @@ class PersonasInspectorPane(Vertical):
         self._console_action_block_reason = "select an item"
         self._provider_block_reason: str | None = None
         self._conversation_lookup: dict[str, str] = {}
+        self._tts_export_available = False
 
     def compose(self) -> ComposeResult:
         """Compose the Inspector pane summary, readiness, and actions.
@@ -147,6 +153,12 @@ class PersonasInspectorPane(Vertical):
                 disabled=True,
                 classes="console-action-secondary",
             )
+            yield Checkbox(
+                "Include assigned voice profile",
+                id="personas-export-include-tts",
+                value=False,
+                disabled=True,
+            )
             yield Button(
                 "Export JSON",
                 id="personas-export-json",
@@ -177,6 +189,8 @@ class PersonasInspectorPane(Vertical):
         """
         self._has_selection = True
         self._selected_kind = kind
+        self._tts_export_available = False
+        self.query_one("#personas-export-include-tts", Checkbox).value = False
         self.query_one("#personas-selected-name", Static).update(f"Selected: {name}")
         self.query_one("#personas-selected-kind", Static).update(f"Type: {kind}")
         self._apply_action_state()
@@ -185,6 +199,8 @@ class PersonasInspectorPane(Vertical):
         self._has_selection = False
         self._is_unsaved = False
         self._selected_kind = None
+        self._tts_export_available = False
+        self.query_one("#personas-export-include-tts", Checkbox).value = False
         self.set_console_actions_enabled(False, reason="select an item")
         self.query_one("#personas-selected-name", Static).update("Selected: none")
         self.query_one("#personas-selected-kind", Static).update("Type: -")
@@ -195,6 +211,26 @@ class PersonasInspectorPane(Vertical):
     def set_unsaved(self, is_unsaved: bool) -> None:
         self._is_unsaved = is_unsaved
         self._apply_action_state()
+
+    def set_tts_export_available(self, available: bool) -> None:
+        """Expose explicit inclusion only when the selected card has a profile."""
+
+        self._tts_export_available = bool(available)
+        if not self._tts_export_available:
+            self.query_one("#personas-export-include-tts", Checkbox).value = False
+        self._apply_action_state()
+
+    @property
+    def include_tts_profile_in_export(self) -> bool:
+        """Return the current explicit opt-in; assignment presence is insufficient."""
+
+        checkbox = self.query_one("#personas-export-include-tts", Checkbox)
+        return (
+            self._selected_kind == "character"
+            and self._tts_export_available
+            and not checkbox.disabled
+            and checkbox.value
+        )
 
     def set_console_actions_enabled(
         self,
@@ -332,6 +368,22 @@ class PersonasInspectorPane(Vertical):
         console_applies = kind is None or kind in _CONSOLE_ACTION_APPLICABLE_KINDS
         export_json_applies = kind is None or kind in _EXPORT_JSON_APPLICABLE_KINDS
         export_png_applies = kind is None or kind in _EXPORT_PNG_APPLICABLE_KINDS
+        tts_checkbox = self.query_one("#personas-export-include-tts", Checkbox)
+        tts_checkbox.display = kind is None or kind == "character"
+        tts_checkbox.disabled = not (
+            export_enabled
+            and kind == "character"
+            and self._tts_export_available
+        )
+        tts_checkbox.tooltip = (
+            export_tooltip
+            if export_tooltip is not None
+            else (
+                None
+                if self._tts_export_available
+                else "Assign a voice profile before including it."
+            )
+        )
         # Attach: the selection gate only (staging context defers the reply).
         attach_btn = self.query_one("#personas-attach-to-console", Button)
         attach_btn.display = console_applies

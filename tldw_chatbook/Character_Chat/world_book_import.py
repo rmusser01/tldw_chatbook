@@ -203,9 +203,12 @@ def character_book_to_world_book_block(
     for i, entry in enumerate(entries_list):
         try:
             normalized.append(_normalize_entry(entry, i))
-        except ValueError as exc:
+        except ValueError:
             skipped += 1
-            logger.warning(f"character_book entry skipped on import: {exc}")
+            logger.warning(
+                "character_book entry skipped on import (entry_index={}).",
+                i,
+            )
     block = {
         "name": name,
         "description": str(book.get("description") or ""),

@@ -67,7 +67,10 @@ ROOT_DENIAL_RECOVERY_HINT = (
 
 
 def validate_path(
-    user_path: Union[str, Path], base_directory: Union[str, Path]
+    user_path: Union[str, Path],
+    base_directory: Union[str, Path],
+    *,
+    redact_paths: bool = False,
 ) -> Path:
     """
     Validates that a user-provided path is within the allowed base directory.
@@ -75,6 +78,8 @@ def validate_path(
     Args:
         user_path: The path provided by the user
         base_directory: The allowed base directory
+        redact_paths: Log only bounded failure categories when the path is
+            privacy-sensitive.
 
     Returns:
         Path: The validated absolute path
@@ -100,9 +105,12 @@ def validate_path(
         try:
             full_path.relative_to(base_directory)
         except ValueError:
-            logger.warning(
-                f"Path traversal attempt detected: {user_path} -> {full_path}"
-            )
+            if redact_paths:
+                logger.warning("Path traversal attempt detected.")
+            else:
+                logger.warning(
+                    f"Path traversal attempt detected: {user_path} -> {full_path}"
+                )
             log_counter(
                 "path_validation_security_violation",
                 labels={"type": "directory_traversal"},
@@ -115,7 +123,10 @@ def validate_path(
         # ancestor (e.g. ~/.local/share/...) must not falsely trip this.
         relative_parts = full_path.relative_to(base_directory).parts
         if any(part.startswith(".") for part in relative_parts if part != "."):
-            logger.warning(f"Hidden file/directory access attempt: {full_path}")
+            if redact_paths:
+                logger.warning("Hidden file/directory access attempt detected.")
+            else:
+                logger.warning(f"Hidden file/directory access attempt: {full_path}")
             log_counter(
                 "path_validation_security_violation",
                 labels={"type": "hidden_file_access"},
@@ -133,7 +144,10 @@ def validate_path(
         # does not walk base_directory's ancestors, so a base dir that lives
         # *under* a dotted ancestor (e.g. ~/.local/share/...) is unaffected.
         if base_directory.name.startswith("."):
-            logger.warning(f"Hidden base directory rejected: {base_directory}")
+            if redact_paths:
+                logger.warning("Hidden base directory rejected.")
+            else:
+                logger.warning(f"Hidden base directory rejected: {base_directory}")
             log_counter(
                 "path_validation_security_violation",
                 labels={"type": "hidden_file_access"},
@@ -164,9 +178,17 @@ def validate_path(
             labels={"error_type": type(e).__name__},
         )
 
-        logger.error(f"Path validation error for '{user_path}': {e}")
+        if redact_paths:
+            logger.error(
+                "Path validation failed (category={}).",
+                type(e).__name__,
+            )
+        else:
+            logger.error(f"Path validation error for '{user_path}': {e}")
         if isinstance(e, ValueError):
             raise
+        if redact_paths:
+            raise ValueError("Invalid path") from None
         raise ValueError(f"Invalid path: {user_path}")
 
 

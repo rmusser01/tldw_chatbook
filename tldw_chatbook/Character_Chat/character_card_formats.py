@@ -78,7 +78,10 @@ class CharacterCardFormatDetector:
                     return None, "unknown"
 
         if not isinstance(data, dict):
-            logger.error(f"Character card data must be a dictionary, got {type(data)}")
+            logger.error(
+                "Character card data must be a dictionary (type={}).",
+                type(data).__name__,
+            )
             return None, "unknown"
 
         # Detect format
@@ -88,8 +91,13 @@ class CharacterCardFormatDetector:
                 try:
                     parsed = self.parsers[format_name](data)
                     return parsed, format_name
-                except Exception as e:
-                    logger.error(f"Failed to parse {format_name} format: {e}")
+                except Exception as error:
+                    logger.error(
+                        "Character card format parser failed "
+                        "(format={}, category={}).",
+                        format_name,
+                        type(error).__name__,
+                    )
                     continue
 
         # Try generic parsing as last resort
@@ -97,8 +105,11 @@ class CharacterCardFormatDetector:
         try:
             parsed = self._parse_generic_format(data)
             return parsed, "generic"
-        except Exception as e:
-            logger.error(f"Generic parsing failed: {e}")
+        except Exception as error:
+            logger.error(
+                "Generic character card parsing failed (category={}).",
+                type(error).__name__,
+            )
             return None, "unknown"
 
     # Format detection methods
