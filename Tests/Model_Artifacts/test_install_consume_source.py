@@ -18,6 +18,7 @@ from Tests.Model_Artifacts.test_service import (
     descriptor,
     source_tree,
     install_inputs,
+    symlink_or_skip,
 )
 
 
@@ -106,3 +107,53 @@ def test_default_copy_behavior_unchanged(service: ModelArtifactService, tmp_path
     service.install(desc, source)
     for file in desc.files:
         assert (source / file.path).exists()
+
+
+def test_consume_source_rejects_symlinked_file(service: ModelArtifactService, tmp_path: Path) -> None:
+    """consume_source rejects when a declared file is a symlink."""
+    desc = descriptor()
+    source = Path(service.staging_path) / "managed" / "src"
+    source.mkdir(parents=True)
+    # Write the payload files to the source
+    for file in desc.files:
+        file_path = source / file.path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_bytes(b"x")
+
+    # Replace the declared file with a symlink
+    for file in desc.files:
+        file_path = source / file.path
+        file_path.unlink()
+        target = tmp_path / "external_target"
+        target.write_bytes(b"x")
+        symlink_or_skip(file_path, target, target_is_directory=False)
+
+    with pytest.raises(ArtifactPathError):
+        service.install(desc, source, consume_source=True)
+    # Files must still exist in source (not consumed on refusal).
+    for file in desc.files:
+        assert (source / file.path).exists()
+
+
+def test_consume_source_rejects_symlink_in_ancestry(service: ModelArtifactService, tmp_path: Path) -> None:
+    """consume_source rejects when source path contains a symlink component."""
+    desc = descriptor()
+    # Create actual directory with files
+    actual_source = Path(service.staging_path) / "managed" / "actual_src"
+    actual_source.mkdir(parents=True)
+    for file in desc.files:
+        file_path = actual_source / file.path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_bytes(b"x")
+
+    # Create a symlinked path to the source
+    symlink_parent = Path(service.staging_path) / "managed" / "symlink_parent"
+    symlink_parent.mkdir(parents=True)
+    symlink_source = symlink_parent / "symlinked_src"
+    symlink_or_skip(symlink_source, actual_source, target_is_directory=True)
+
+    with pytest.raises(ArtifactPathError):
+        service.install(desc, symlink_source, consume_source=True)
+    # Files must still exist in source (not consumed on refusal).
+    for file in desc.files:
+        assert (actual_source / file.path).exists()

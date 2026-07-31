@@ -2290,15 +2290,18 @@ class ModelArtifactService:
                 file — correctness over the disk optimization.
 
         Raises:
-            ArtifactPathError: consume_source with a source outside the root.
+            ArtifactPathError: consume_source with a source outside the root,
+                or when source path contains symlinks or redirects.
         """
         if consume_source:
-            resolved = source.resolve(strict=True)
+            # Validate source is inside root and contains no symlinks or
+            # redirects anywhere in its path hierarchy.
             try:
-                resolved.relative_to(self._root)
-            except ValueError as error:
+                self._assert_managed_path(source)
+            except ArtifactPathError as error:
                 raise ArtifactPathError(
-                    "consume_source requires a source inside the service root"
+                    "consume_source requires a source inside the service root "
+                    "with no symlink or redirect path components"
                 ) from error
 
         for item in descriptor.files:
