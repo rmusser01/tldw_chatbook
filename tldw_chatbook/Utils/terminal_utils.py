@@ -42,6 +42,26 @@ def detect_terminal_capabilities() -> Dict[str, any]:
         "recommended_mode": "pixels",  # Default to rich-pixels
     }
 
+    # tmux/screen panes inherit the HOST terminal's env (TERM_PROGRAM,
+    # ITERM_SESSION_ID, ...) but tmux does not pass graphics escape
+    # sequences (TGP/iTerm2/sixel) through to that host terminal, so
+    # trusting the leaked identity paints nothing at all. Half-block
+    # pixels are the only rendering that survives a multiplexer.
+    if os.environ.get("TMUX") or term.startswith(("screen", "tmux")):
+        capabilities["terminal_type"] = "tmux"
+        duration = time.time() - start_time
+        log_histogram("terminal_utils_detect_capabilities_duration", duration)
+        log_counter(
+            "terminal_utils_detect_capabilities_result",
+            labels={
+                "terminal_type": "tmux",
+                "has_sixel": str(capabilities["sixel"]),
+                "has_tgp": str(capabilities["tgp"]),
+                "recommended_mode": capabilities["recommended_mode"],
+            },
+        )
+        return capabilities
+
     # Check for specific terminals that support advanced graphics
 
     # Kitty terminal

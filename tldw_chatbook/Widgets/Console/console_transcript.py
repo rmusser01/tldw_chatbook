@@ -210,17 +210,38 @@ def _message_attachment_chips(message: ConsoleChatMessage) -> list[str]:
     return chips
 
 
-#: Inline markdown handled in-transcript: **bold** and `code`. Matched as closed
-#: pairs only, so an unclosed marker mid-stream stays literal until it closes.
-_INLINE_MD_RE = re.compile(r"\*\*(.+?)\*\*|`([^`]+)`")
+#: Inline markdown + roleplay flavor handled in-transcript: **bold**, `code`,
+#: *action/inner-monologue*, and "quoted speech" (straight or curly). Matched
+#: as closed pairs only, so an unclosed marker mid-stream stays literal until
+#: it closes. Order matters: ** before * so bold never half-matches as
+#: italics, and a quote swallows any markers inside it (task-1536).
+_INLINE_MD_RE = re.compile(
+    r"\*\*(.+?)\*\*"
+    r"|`([^`]+)`"
+    r"|(\"[^\"\n]+\")"
+    r"|(“[^”\n]+”)"
+    r"|\*([^*\n]+)\*"
+)
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
+
+#: Roleplay flavor styles (task-1536). Concrete colors, not theme variables:
+#: Content span styles are parsed directly and never resolve CSS ``$`` vars.
+#: All three read on the dark default theme and stay distinct from each
+#: other and from plain narration.
+_BOLD_STYLE = "bold #f7d774"
+_SPEECH_STYLE = "#8ecdf7"
+_ACTION_STYLE = "italic #b596d8"
 
 
 def _inline_markdown_spans(line: str) -> list:
-    """Split one line into Content segments, styling **bold**/`code` inline.
+    """Split one line into Content segments, styling inline flavor.
 
-    Text is always emitted literally (styles are applied via ``(text, style)``
-    tuples, never markup parsing), so message text can never inject Rich markup.
+    ``**bold**``, ``“quoted”``/``"quoted"`` speech, and
+    ``*action/inner monologue*`` each get a distinct style; `code` keeps its
+    plain italic. Text is always emitted literally (styles are applied via
+    ``(text, style)`` tuples, never markup parsing), so message text can
+    never inject Rich markup. Quotation marks stay visible inside the
+    styled speech span; bold/action marker characters are stripped.
 
     Args:
         line: A single raw text line.
@@ -233,10 +254,17 @@ def _inline_markdown_spans(line: str) -> list:
     for match in _INLINE_MD_RE.finditer(line):
         if match.start() > pos:
             out.append(line[pos : match.start()])
-        if match.group(1) is not None:
-            out.append((match.group(1), "bold"))
+        bold, code, quote, curly_quote, action = match.groups()
+        if bold is not None:
+            out.append((bold, _BOLD_STYLE))
+        elif code is not None:
+            out.append((code, "italic"))
+        elif quote is not None:
+            out.append((quote, _SPEECH_STYLE))
+        elif curly_quote is not None:
+            out.append((curly_quote, _SPEECH_STYLE))
         else:
-            out.append((match.group(2), "italic"))
+            out.append((action, _ACTION_STYLE))
         pos = match.end()
     if pos < len(line):
         out.append(line[pos:])

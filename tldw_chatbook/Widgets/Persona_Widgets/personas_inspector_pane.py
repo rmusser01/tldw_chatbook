@@ -9,6 +9,8 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, ListItem, ListView, Static
 
+from ..Console.console_image_viewer_modal import ClickableAvatarBox
+
 from .personas_pane_messages import ConversationRowSelected
 
 _UNSAVED_TOOLTIP = "Save before using this action; the selection has unsaved edits."
@@ -126,7 +128,7 @@ class PersonasInspectorPane(Vertical):
         # Portrait of the selected character. A roleplay user identifies a
         # character by its picture at least as much as by its name, and the
         # inspector previously showed every attribute EXCEPT the portrait.
-        yield Container(id="personas-inspector-avatar-thumb")
+        yield ClickableAvatarBox(id="personas-inspector-avatar-thumb")
         yield Static("Validation: OK", id="personas-validation-summary")
         yield Static("Conversations", classes="destination-section")
         yield ListView(id="personas-conversations-list")

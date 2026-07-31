@@ -52,6 +52,10 @@ from ...tldw_api.character_persona_schemas import (
 from ...Utils.path_validation import validate_path_simple
 from ...Utils.paths import get_user_data_dir
 from ...Widgets.destination_rail import DestinationRailHandle
+from ...Widgets.Console.console_image_viewer_modal import (
+    AvatarViewRequested,
+    ConsoleImageViewerModal,
+)
 from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
@@ -5132,6 +5136,24 @@ class PersonasScreen(BaseAppScreen):
             exclusive=True,
         )
 
+    @on(AvatarViewRequested)
+    def _handle_avatar_view_requested(self, message: AvatarViewRequested) -> None:
+        """Open the full-size portrait viewer for the Inspector thumb (task-1534)."""
+        message.stop()
+        cache = getattr(self, "_avatar_render_cache", None)
+        selected_id = str(self.state.selected_entity_id or "")
+        pil = None
+        if cache is not None and selected_id:
+            pil = cache.get_pil(f"inspector-avatar-{selected_id}")
+        if pil is None:
+            return
+        self.app.push_screen(
+            ConsoleImageViewerModal(
+                pil,
+                title=self.state.selected_entity_name or "Character portrait",
+            )
+        )
+
     async def _render_inspector_avatar(self) -> None:
         """Decode and mount the selected character's Inspector portrait.
 
@@ -5341,33 +5363,33 @@ class PersonasScreen(BaseAppScreen):
 
     @staticmethod
     def _build_avatar_pixels(cache: "ConsoleImageRenderCache", cache_key: str):
-        """Build a ``rich_pixels.Pixels`` sized to the avatar thumb box.
+        """Build a quadrant-mosaic renderable sized to the avatar thumb box.
 
         ``cache.get_pixels`` thumbnails to the 80x40 chat-transcript box,
         which is far larger than the character editor's compact avatar
-        preview; reusing it produces an oversized Pixels grid that Rich does
-        not reflow, so the small thumb container just crops it to a
-        top-left sliver. This instead pulls the cached full-size PIL image
-        and thumbnails a private copy to the avatar box (in half-block
-        "pixel" units: one character column is ~1px wide, one character
-        line is ~2px tall).
+        preview; reusing it produces an oversized grid that Rich does not
+        reflow, so the small thumb container just crops it to a top-left
+        sliver. This instead pulls the cached full-size PIL image and bakes
+        it to the avatar box via the quadrant mosaic (2x2 subpixels per
+        cell -- double the horizontal detail of the old half-block Pixels
+        renderer, same universal Block Elements font coverage).
 
         Args:
             cache: The render cache holding the decoded avatar image.
             cache_key: The per-session cache key ``prepare`` was called with.
 
         Returns:
-            A ``Pixels`` renderable fitted to the avatar box, or ``None``
-            when the image is not (or no longer) cached.
+            A mosaic ``Text`` renderable fitted to the avatar box, or
+            ``None`` when the image is not (or no longer) cached.
         """
-        import rich_pixels
+        from ...Utils.mosaic_render import mosaic_from_image
 
         pil = cache.get_pil(cache_key)
         if pil is None:
             return None
-        thumb = pil.copy()
-        thumb.thumbnail((AVATAR_THUMB_COLS, AVATAR_THUMB_LINES * 2))
-        return rich_pixels.Pixels.from_image(thumb)
+        return mosaic_from_image(
+            pil, AVATAR_THUMB_COLS, AVATAR_THUMB_LINES, fit="cover"
+        )
 
     async def _render_all_character_editor_thumbnails(
         self, character_id: int | None

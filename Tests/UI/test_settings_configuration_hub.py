@@ -7490,3 +7490,50 @@ def test_settings_source_labels_cover_every_resolvable_source():
 
     resolvable = {"settings_draft", "console_session", "chat_defaults", "default"}
     assert set(SETTINGS_SOURCE_LABELS) == resolvable
+
+
+# ---- [chat.images] render_remote_images toggle (task-1537 settings UI) ----
+
+
+def test_remote_images_toggle_label_reflects_config():
+    """The remote-images toggle label mirrors [chat.images].render_remote_images."""
+    app = _build_test_app()
+    app.app_config["COMPREHENSIVE_CONFIG_RAW"] = {
+        "chat": {"images": {"render_remote_images": True}}
+    }
+    screen = SettingsScreen(app)
+
+    assert screen._remote_images_button_label() == "Enabled"
+
+    app.app_config["COMPREHENSIVE_CONFIG_RAW"]["chat"]["images"][
+        "render_remote_images"
+    ] = False
+    assert screen._remote_images_button_label() == "Disabled"
+
+
+def test_remote_images_toggle_persists_and_pokes_live_config(monkeypatch):
+    """Toggling persists the dotted section AND updates the live app_config.
+
+    The App captures ``app_config`` once at startup, so the persisted write
+    alone would not take effect until restart -- the toggle must also poke
+    the in-memory raw tree the transcript gate reads.
+    """
+    app = _build_test_app()
+    app.app_config["COMPREHENSIVE_CONFIG_RAW"] = {"chat": {"images": {}}}
+    screen = SettingsScreen(app)
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_settings_to_cli_config",
+        lambda section_values: (saved.append(section_values), True)[1],
+    )
+
+    enabled = screen._toggle_remote_images()
+
+    assert enabled is True
+    assert saved == [{"chat.images": {"render_remote_images": True}}]
+    assert (
+        app.app_config["COMPREHENSIVE_CONFIG_RAW"]["chat"]["images"][
+            "render_remote_images"
+        ]
+        is True
+    )

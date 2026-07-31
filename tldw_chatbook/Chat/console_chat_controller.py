@@ -36,6 +36,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleStagedSource,
     MessageAttachment,
     derive_console_session_title,
+    fold_greeting_into_system_prompt,
     is_default_console_session_title,
 )
 from tldw_chatbook.Chat.citation_repair import (
@@ -6897,7 +6898,9 @@ class ConsoleChatController:
             return f"Agent run stuck: {reason or 'budget or loop limit reached'}."
         return f"Agent run failed: {reason or outcome.status}."
 
-    def _leading_system_message(self) -> list[dict[str, str]]:
+    def _leading_system_message(
+        self, *, greeting: str = ""
+    ) -> list[dict[str, str]]:
         """Return a single-item system message list when a system prompt is set.
 
         Applies to every native Console send path (submit, retry, regenerate,
@@ -6909,11 +6912,44 @@ class ConsoleChatController:
         ``self.system_prompt`` verbatim: leading/trailing whitespace and
         internal formatting (blank lines, indentation) are never altered, so
         a formatting-sensitive prompt reaches the provider unchanged.
+
+        Args:
+            greeting: Seeded assistant greeting to fold after the prompt
+                (task-1531); a non-blank greeting produces a system row even
+                when no system prompt is set, since the message array itself
+                must stay user-first for strict providers (task-427).
         """
         raw_system_prompt = self.system_prompt
         if not isinstance(raw_system_prompt, str) or not raw_system_prompt.strip():
+            raw_system_prompt = ""
+        content = fold_greeting_into_system_prompt(raw_system_prompt, greeting)
+        if not content.strip():
             return []
-        return [{"role": ConsoleMessageRole.SYSTEM.value, "content": raw_system_prompt}]
+        return [{"role": ConsoleMessageRole.SYSTEM.value, "content": content}]
+
+    @staticmethod
+    def _seeded_greeting_text(
+        session_messages: list[ConsoleChatMessage],
+    ) -> str:
+        """Return the text of leading assistant turns (the seeded greeting).
+
+        Mirrors ``_provider_message_payloads``'s leading-assistant drop rule:
+        every ASSISTANT message before the first USER turn is excluded from
+        the message array, so its text must travel in the system row instead.
+        Failed messages are skipped to match ``skip_failed`` send payloads.
+        """
+        collected: list[str] = []
+        for message in session_messages:
+            if message.role is ConsoleMessageRole.USER:
+                break
+            if message.role is not ConsoleMessageRole.ASSISTANT:
+                continue
+            if message.status == "failed":
+                continue
+            text = (message.content or "").strip()
+            if text:
+                collected.append(text)
+        return "\n\n".join(collected)
 
     def _apply_context_summary_compaction(
         self, session_id: str, provider_messages: list[dict[str, Any]]
@@ -7011,7 +7047,9 @@ class ConsoleChatController:
             if message.id == before_message_id:
                 break
             collected.append(message)
-        return self._leading_system_message() + self._provider_message_payloads(
+        return self._leading_system_message(
+            greeting=self._seeded_greeting_text(collected)
+        ) + self._provider_message_payloads(
             collected, skip_failed=True, annotate_ids=annotate_ids
         )
 
@@ -7027,7 +7065,9 @@ class ConsoleChatController:
             collected.append(message)
             if message.id == message_id:
                 break
-        return self._leading_system_message() + self._provider_message_payloads(
+        return self._leading_system_message(
+            greeting=self._seeded_greeting_text(collected)
+        ) + self._provider_message_payloads(
             collected,
             skip_failed=False,
             use_variant_content=True,
@@ -7093,9 +7133,11 @@ class ConsoleChatController:
                 continue
             if skip_failed and message.status == "failed":
                 continue
-            # A seeded character greeting is a display-only assistant turn:
-            # keep it out of the provider payload so strict providers (Anthropic,
-            # Gemini) never see an assistant-first message array (task-427).
+            # A seeded character greeting must not ride in the message array:
+            # strict providers (Anthropic, Gemini) reject an assistant-first
+            # array (task-427). Its text still reaches the provider -- the
+            # send seams fold it into the system row via
+            # ``_seeded_greeting_text`` (task-1531).
             if not seen_user and message.role is ConsoleMessageRole.ASSISTANT:
                 continue
             if message.role is ConsoleMessageRole.USER:

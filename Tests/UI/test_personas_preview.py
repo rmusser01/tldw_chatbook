@@ -707,3 +707,38 @@ async def test_alias_tokens_substitute_character_name_with_neutral_user():
             "Elara",
         )
         assert seed == "Hello User, I am Elara/Elara."
+
+
+# ---- build_preview_system_prompt (tasks 1530/1531) ----
+
+
+def test_build_preview_system_prompt_resolves_macros():
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        build_preview_system_prompt,
+    )
+
+    record = {"name": "Elara", "description": "{{char}} guides {{user}}."}
+
+    assert build_preview_system_prompt(record) == "Elara guides User."
+
+
+def test_build_preview_system_prompt_folds_greeting_after_prompt():
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        build_preview_system_prompt,
+    )
+
+    out = build_preview_system_prompt(
+        {"name": "Elara", "description": "Guide the user."},
+        greeting="Hello, traveler.",
+    )
+
+    assert out.startswith("Guide the user.")
+    assert "Hello, traveler." in out
+
+
+def test_build_preview_system_prompt_empty_record_falls_back():
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        build_preview_system_prompt,
+    )
+
+    assert build_preview_system_prompt({}) == "Stay in character."

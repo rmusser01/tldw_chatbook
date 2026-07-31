@@ -10,6 +10,7 @@ legacy chat defines those keys but never reads them.
 
 from __future__ import annotations
 
+import re
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -149,6 +150,63 @@ def resolve_show_character_avatar(app_config: Mapping[str, Any]) -> bool:
     """
     value = _chat_images_config(app_config).get("show_character_avatar", True)
     return bool(value)
+
+
+def resolve_render_remote_images(app_config: Mapping[str, Any]) -> bool:
+    """Whether the transcript renders images referenced by LINKS in replies.
+
+    Security-sensitive: fetching a model-suggested URL leaks the reader's
+    IP/user-agent to that host, so this is OFF unless the user explicitly
+    sets ``[chat.images] render_remote_images = true``. The fetch path
+    itself always goes through the egress-hardened image fetcher
+    (per-hop SSRF policy + byte caps) regardless of this setting.
+
+    Args:
+        app_config: The application config mapping (``[chat.images]``
+            section is read; missing sections are tolerated).
+
+    Returns:
+        True only when explicitly enabled.
+    """
+    return bool(_chat_images_config(app_config).get("render_remote_images", False))
+
+
+#: Markdown image links: ![alt](url) -- any http(s) URL.
+_MD_IMAGE_LINK_RE = re.compile(r"!\[[^\]]*\]\((https?://[^\s)]+)\)")
+#: Bare URLs are only treated as images when they end in an image
+#: extension (optionally followed by a query string).
+_BARE_IMAGE_URL_RE = re.compile(
+    r"(?<!\()\bhttps?://[^\s)\"'<>]+?\.(?:png|jpe?g|gif|webp)(?:\?[^\s)\"'<>]*)?",
+    re.IGNORECASE,
+)
+
+
+def extract_image_urls(text: str, *, limit: int = 3) -> list[str]:
+    """Extract renderable image URLs from message text.
+
+    Accepts markdown image links (any http(s) URL) and bare http(s) URLs
+    with an image extension. Order-preserving, deduplicated, capped.
+
+    Args:
+        text: The raw message body.
+        limit: Maximum URLs returned.
+
+    Returns:
+        Up to ``limit`` unique image URLs in first-appearance order.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+    matches = [
+        (m.start(), m.group(1)) for m in _MD_IMAGE_LINK_RE.finditer(text or "")
+    ] + [(m.start(), m.group(0)) for m in _BARE_IMAGE_URL_RE.finditer(text or "")]
+    for _pos, url in sorted(matches):
+        if url in seen:
+            continue
+        seen.add(url)
+        found.append(url)
+        if len(found) >= limit:
+            break
+    return found
 
 
 def resolve_react_character_expressions(app_config: Mapping[str, Any]) -> bool:
