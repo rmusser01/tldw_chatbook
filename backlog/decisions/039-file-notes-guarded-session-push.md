@@ -99,6 +99,13 @@ honest uncertain state when the result cannot be proved.
   credential helper, host key, or certificate exception. The authorization UI
   discloses that configured SSH or credential helpers may be contacted after
   authorization and that terminal prompts are disabled.
+- For SSH, bind the exact authorized URL host, username, and port in a
+  Chatbook-owned immutable OpenSSH invocation. Do not reread live user SSH
+  routing/command configuration after authorization. Existing agents,
+  standard identity-file locations, and standard known-hosts files remain
+  usable; host aliases, ProxyCommand/ProxyJump, custom IdentityFile selection,
+  and other behavior requiring live user SSH config are external-Git-only in
+  this slice.
 - Any change to the bound endpoint, ref, transport, repository identity,
   relevant configuration, or helper policy revokes the authorization even if
   values later change back. Monotonic epochs prevent value-level ABA from
@@ -112,12 +119,15 @@ honest uncertain state when the result cannot be proved.
   `Already published` and do not start a push. A missing ref, another OID,
   ambiguous response, inaccessible destination, or inability to prove the
   exact state blocks review.
-- The immutable review binds all local, candidate, destination,
-  authorization, and remote-preflight facts. Confirmation consumes one
-  single-use capability and freshly revalidates the candidate lineage,
-  repository/configuration/authorization epochs, and remote ref before any
-  push child starts. Drift invalidates the review instead of silently changing
-  its target.
+- The immutable review binds the exact root, repository/trust, candidate,
+  destination-policy/configuration, authorization, operation, and
+  remote-preflight facts. It deliberately excludes session-change,
+  Git-authority, status, staging, index, and worktree generations that may
+  advance through later note edits without changing the commit. Confirmation
+  consumes one single-use capability and freshly revalidates only the
+  push-relevant lineage, configuration/authorization epochs, and remote ref
+  before any push child starts. Push-relevant drift invalidates the review
+  instead of silently changing its target.
 - Invoke the frozen effective endpoint directly rather than invoking a remote
   name. Request exactly
   `<candidate-oid>:<destination-refs/heads/ref>` guarded by
@@ -131,6 +141,20 @@ honest uncertain state when the result cannot be proved.
   automatic retry. Use direct argument vectors without a shell, disable
   terminal prompting and stdin, and bypass local pre-push hooks with
   `--no-verify`.
+- Do not let a network child reread live source-repository, worktree, global,
+  or system Git configuration after authorization. Create one owner-only
+  temporary bare network-execution Git directory with no refs/remotes/hooks,
+  disable external config sources, copy only exact approved noninteractive
+  helper values from the authorized snapshot, omit all URL rewrites and
+  broadening settings, and pass the frozen endpoint only as an argument. Give
+  that isolated Git directory read-only object access through a
+  Chatbook-controlled alternate rooted at the verified common object
+  directory.
+- Retain the immutable execution context through review, children,
+  postflight, and query-only recovery. Remove it only after every owned
+  descendant is terminal and no recovery needs it. A crash-left owner-only
+  temporary directory contains no credentials or note content, is never
+  discovered or reused after restart, and is not a durable push journal.
 - Because Git LFS depends on the bypassed pre-push hook to publish required
   objects, block the operation when any path included by the candidate is
   governed by Git LFS. Chatbook does not attempt to emulate LFS upload or run
@@ -295,9 +319,10 @@ remain in force.
   automatic retries, and making recovery query-only may require the user to
   finish with external Git, but avoids duplicate or unintended updates.
 - Direct frozen-endpoint invocation prevents post-confirmation remote-name
-  redirection and avoids updating local remote-tracking refs. Local tracking
-  state may therefore remain stale until an external Git operation refreshes
-  it.
+  redirection. The isolated immutable network-execution context additionally
+  prevents a child from reapplying changed live Git configuration and avoids
+  updating local remote-tracking refs. Local tracking state may therefore
+  remain stale until an external Git operation refreshes it.
 - A forced process exit loses all guarded-push attribution. This is a deliberate
   consequence of retaining no private operational journal or credentials.
 - Persistent diagnostics stay payload-free. UI, logs, errors, and durable QA

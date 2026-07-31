@@ -213,6 +213,22 @@ generation for status/staging/commit, but it does not advance the push
 candidate generation. Later note edits therefore stale Session Git rows while
 leaving the immutable candidate available.
 
+Push authorization binds only push-relevant authority:
+
+- the selected-root `SessionBinding` generation;
+- repository identity and repository-trust generation;
+- candidate token and candidate generation;
+- destination-policy/configuration fingerprint and its observed generation;
+- destination-authorization epoch; and
+- exact push operation/review IDs.
+
+It deliberately does **not** bind the session-change sequence,
+`git_authority_generation`, status generation, staging-ownership generation, or
+current index/worktree signature after the guarded commit succeeds. Those
+values may advance through ordinary editing, autosave, Stage, or status
+refresh without changing the immutable commit. Root/repository/branch/candidate
+drift still invalidates push authority.
+
 Root/repository rebinding, repository-trust invalidation, local branch/HEAD
 lineage drift, process exit, or a newer guarded commit can revoke or replace
 the candidate. A newer guarded commit never accumulates its predecessor into a
@@ -285,7 +301,8 @@ The private candidate contains:
 - proof that the candidate has exactly one parent equal to the captured parent;
 - guarded-commit proof/capture identity;
 - opaque candidate token and monotonic candidate generation;
-- repository/binding/trust epochs current at publication;
+- exact selected-root binding generation, repository identity/trust
+  generation, and candidate generation current at publication;
 - commit subject and safe short-OID display facts;
 - committed session-note count, change-type counts, and sanitized included-note
   labels copied from the commit review; and
@@ -418,6 +435,7 @@ Plain HTTP and custom HTTP transport helpers block.
 Allow only unambiguous `ssh://` or standard scp-style endpoints with:
 
 - a valid host and repository path;
+- the exact URL host, username, and port used as connection-routing values;
 - batch/noninteractive operation;
 - existing host-key verification;
 - no automatic unknown-host acceptance;
@@ -425,10 +443,18 @@ Allow only unambiguous `ssh://` or standard scp-style endpoints with:
 - no repository/worktree-controlled SSH command/helper; and
 - no agent forwarding added by Chatbook.
 
+The network execution context supplies a Chatbook-owned OpenSSH invocation that
+does not reread live user SSH routing/command configuration after
+authorization. It binds the literal authorized host/user/port, batch and
+host-key policy, disables forwarding and interactive authentication, and may
+use the user's existing SSH agent, standard identity-file locations, and
+standard known-hosts files. Host aliases, ProxyCommand/ProxyJump, custom
+IdentityFile selection, or other behavior that depends on live user SSH config
+is unsupported in this slice and remains available through external Git.
+
 Unknown or changed host keys fail without offering an override. Pre-existing
-user SSH configuration, agents, credential services, and connection masters
-remain external authentication infrastructure; Chatbook does not claim to own
-or terminate those pre-existing processes.
+agents and credential services remain external authentication infrastructure;
+Chatbook does not claim to own or terminate those pre-existing processes.
 
 ### Rejected transports
 
@@ -444,8 +470,9 @@ Block:
 - credential-bearing endpoints.
 
 Sanitized display uses the explicit scheme, IDNA/punycode host, port when
-present, repository path, and full destination ref. Credential-bearing URLs
-block instead of being partially masked and accepted.
+present, normalized SSH username when applicable, literal authorized host,
+repository path, and full destination ref. Credential-bearing URLs block
+instead of being partially masked and accepted.
 
 ### Noninteractive child environment
 
@@ -466,6 +493,64 @@ existing noninteractive authentication path. It excludes:
 Chatbook then installs its own no-prompt controls, closes stdin, disables
 terminal prompting, and bounds stdout/stderr. Raw helper/Git output is used
 only inside the classifier and is never shown or persisted.
+
+## Frozen network execution context
+
+Passing a frozen URL is not sufficient by itself because an ordinary Git child
+can reread live system, global, repository, and worktree configuration and
+reapply URL rewrites or transport/helper settings after Chatbook's final
+validation.
+
+After destination authorization and before the first network command, the
+service creates one private immutable `NetworkGitExecutionContext`:
+
+- an owner-only temporary bare Git directory outside the notes root and source
+  repository;
+- no worktree, refs, remotes, tracking configuration, hooks, or URL-rewrite
+  rules;
+- a minimal owner-only config containing only the exact approved
+  noninteractive credential-helper and transport-neutral values copied from
+  the authorized configuration snapshot;
+- a Chatbook-owned immutable OpenSSH invocation specification for SSH
+  endpoints, with the exact authorized host/user/port and no live user SSH
+  routing/command config;
+- system and global Git configuration redirected to owner-only empty files or
+  otherwise disabled for every child;
+- source-object access only through a Chatbook-supplied read-only alternate
+  rooted at the already verified common object directory; and
+- exact command-scoped narrowing overrides for prompt, hook, tags, submodules,
+  maintenance, and filesystem-monitor behavior.
+
+The allowlist never copies:
+
+- `url.*.insteadOf` or `url.*.pushInsteadOf`;
+- a remote name, URL, refspec, mirror, receive-pack, or push option;
+- repository/worktree executable helpers or SSH commands;
+- HTTP extra headers, embedded credentials, certificate exceptions, proxy
+  commands, or transport-command overrides; or
+- unrelated source-repository configuration.
+
+Allowed credential-helper configuration is copied by exact key/value and
+configuration origin after policy validation; credential values are not.
+The endpoint is already fully resolved and is passed only as an argument.
+
+Every remote preflight, Confirm revalidation, push, postflight, and recovery
+query runs through this same context. Network children use the temporary bare
+Git directory, not the source worktree or its live config. The push child sees
+the candidate object through the controlled alternate but cannot update the
+source repository's refs, index, or config.
+
+The source configuration fingerprint includes relevant content plus source
+identity/change metadata. Confirm rejects a changed fingerprint, but a change
+after child spawn cannot redirect that child because the immutable execution
+context is already detached from the source configuration.
+
+The context is retained through review, active children, postflight, and
+uncertain query-only recovery. Cleanup occurs only after all owned descendants
+are terminal and no retained recovery needs it. A crash may leave an
+owner-only temporary directory containing no credentials or user content; it
+is never discovered or reused after restart and remains eligible only for
+ordinary operating-system temporary cleanup.
 
 ## LFS policy
 
@@ -510,7 +595,9 @@ gate. A removed panel cannot abandon or duplicate a check.
 
 The private review snapshot binds:
 
-- candidate token/generation and every owner epoch;
+- candidate token/generation, selected-root binding generation, repository
+  identity/trust generation, destination-policy/configuration generation,
+  destination-authorization epoch, and exact operation/review IDs;
 - root, repository, local branch, parent OID, and candidate OID;
 - sole-parent/direct-child proof;
 - commit subject and included-session-note provenance;
@@ -519,16 +606,19 @@ The private review snapshot binds:
 - transport and authentication-helper policy fingerprint;
 - destination-authorization handle/epoch;
 - exact remote-preflight observation of the parent; and
+- immutable network-execution-context identity; and
 - exact command policy, including lease, hook bypass, LFS result, and timeout.
 
 The workspace stores only an opaque single-use handle. The panel receives a
 separate immutable sanitized projection.
 
 No lock is held while the user reads the review. Confirm consumes the handle,
-reacquires the Git-mutation gate, and freshly repeats every local,
-configuration, authorization, LFS, and remote-ref proof. Any drift invalidates
-the review and returns to availability/recovery; it never substitutes a new
-destination or candidate.
+reacquires the Git-mutation gate, and freshly repeats the exact
+root/repository/branch/candidate, configuration, authorization, LFS, and
+remote-ref proofs. It does not compare session-change, status, staging, index,
+or worktree generations that ordinary later editing may legitimately advance.
+Any push-relevant drift invalidates the review and returns to
+availability/recovery; it never substitutes a new destination or candidate.
 
 ## Exact push execution
 
@@ -536,6 +626,7 @@ After Confirm revalidation, invoke one direct argument vector equivalent to:
 
 ```text
 git \
+  --git-dir=<private-network-execution-git-dir> \
   --no-replace-objects \
   -c core.fsmonitor=false \
   -c maintenance.auto=false \
@@ -553,7 +644,8 @@ git \
 
 The exact implementation may add command-scoped disabling overrides only when
 they narrow behavior and are covered by argument-vector tests. It must not use
-a shell or remote name.
+a shell or remote name, and it must not read live source-repository, worktree,
+global, or system Git configuration.
 
 The request contains:
 
@@ -1026,12 +1118,14 @@ Cover:
 - all remote refs/tags before and after, with only the approved destination ref
   changing;
 - all local refs before and after remaining unchanged because the frozen URL,
-  not a remote name, is invoked;
+  not a remote name, is invoked from the isolated network execution context;
 - local symbolic HEAD, `ls-files --stage -v -z`, config bytes, selected
   worktree bytes/modes, and logical File Notes replica state;
 - destination deletion after final revalidation: no recreation;
 - divergent advance after final revalidation: no overwrite;
 - configuration/authorization away-and-back ABA: no stale review;
+- source/local/global Git configuration mutation after final validation cannot
+  redirect a retained child or change its helper/transport policy;
 - fetch URL plus different push URL, multiple push URLs, mirror, refspec,
   push-option, receive-pack, pushRemote/default, `remote = .`, rewrite, and
   unsupported transport cases using real Git resolution where semantics
@@ -1068,6 +1162,8 @@ Prove:
   authorization;
 - one read-only connection after authorization;
 - no mutating request before final Confirm;
+- a live user SSH HostName/ProxyCommand/IdentityFile routing override is not
+  consulted by the frozen child;
 - unknown/wrong host key fails without prompting;
 - missing/wrong authentication fails promptly without prompting; and
 - no provider-secret canary reaches the SSH environment.
@@ -1120,6 +1216,8 @@ are explicitly excluded from this proof.
 Cover:
 
 - no network/helper contact before authorization;
+- immutable network-execution-context construction, owner-only lifecycle,
+  allowlisted copied configuration, and no live source-config reads;
 - exact parent/candidate/missing/divergent preflight;
 - Confirm revalidation of candidate, config, trust, LFS, and remote ref;
 - actual child-spawn cancellation boundary and pre-spawn launch failure;
@@ -1131,8 +1229,8 @@ Cover:
 - uncertain recovery retaining endpoint A after config changes to endpoint B;
 - candidate-token-scoped publication under newer candidate/local-state drift;
 - shutdown ordering before replica teardown;
-- restart constructing a new owner with no candidate or recovery attribution;
-  and
+- restart constructing a new owner with no candidate or recovery attribution,
+  while any orphaned temporary context is never discovered or reused; and
 - 30/60-second policies through injected clocks.
 
 ### Mounted Textual tests
