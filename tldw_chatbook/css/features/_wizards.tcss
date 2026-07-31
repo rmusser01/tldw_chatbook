@@ -1169,3 +1169,21 @@ SmartContentTree Tree > .selected-node {
     color: $text;
     text-style: bold underline;
 }
+
+/* TASK-1498: section headers inside the provider list, and the pinned
+ * found-a-server banner above it. */
+.setup-choice-header {
+    color: $text-muted;
+    text-style: bold;
+    padding: 0 1;
+}
+.setup-detected-banner {
+    margin-bottom: 1;
+}
+
+/* TASK-1498: the wizard's own show/hide toggles (discovery banner + button,
+ * Keep/Replace/Clear row) — the repo's ".hidden" convention is styled only
+ * for specific widgets elsewhere, so scope a real display:none here. */
+.setup-provider .hidden {
+    display: none;
+}

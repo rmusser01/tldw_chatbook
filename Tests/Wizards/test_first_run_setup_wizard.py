@@ -331,11 +331,15 @@ def test_provider_grouping_orders_cloud_then_local_then_custom():
             display_name="Anthropic", requires_api_key=True,
         ),
     )
-    grouped = ProviderStep._grouped(entries)
-    # Cloud (alpha) -> Local (alpha) -> Custom/legacy alias keys, last.
-    assert [entry.readiness_key for entry in grouped] == [
-        "anthropic", "openai", "ollama", "local_llamacpp",
-    ]
+    # TASK-1498: flat _grouped was replaced by sectioned _grouped_sections —
+    # Popular (fixed order) first, then Cloud/Local alphabetical, custom/
+    # legacy alias keys under Other, empty sections dropped.
+    sections = ProviderStep._grouped_sections(entries)
+    titles = [title for title, _ in sections]
+    assert titles == ["Popular", "Other"]
+    popular_keys = [e.readiness_key for e in dict(sections)["Popular"]]
+    assert popular_keys == ["openai", "anthropic", "ollama"]
+    assert [e.readiness_key for e in dict(sections)["Other"]] == ["local_llamacpp"]
 
 
 @pytest.mark.asyncio
@@ -1681,7 +1685,15 @@ async def test_ctrl_n_still_works_after_focus_was_on_a_now_hidden_widget():
         await pilot.pause(0.1)
 
         def _first_focusable(step):
-            return next((w for w in step.walk_children(Widget) if w.focusable), None)
+            # Mirrors production: hidden (display:none / .hidden) widgets must
+            # never be focus targets (TASK-1496/1498).
+            return next(
+                (
+                    w for w in step.walk_children(Widget)
+                    if w.focusable and w.display and not w.has_class("hidden")
+                ),
+                None,
+            )
 
         def _assert_focus_on_current_step_content() -> None:
             current = container.steps[container.current_step]
@@ -2400,3 +2412,33 @@ class TestThemePickerShortlist:
             assert str(app.theme) == getattr(target, "_theme_name")
             step.revert_preview()
             assert str(app.theme) == original
+
+
+@pytest.mark.asyncio
+async def test_provider_list_grouped_popular_first_with_pinned_discovery():
+    """TASK-1498: section headers, popular-first order, banner above list."""
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupRadioButton
+
+    step = _provider_step()
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        radio_set = step.query_one("#setup-provider-choice", RadioSet)
+        headers = [str(h.render()) for h in radio_set.query(".setup-choice-header")]
+        assert headers[0] == "Popular"
+        assert "Cloud" in headers and "Local" in headers
+        first_keys = [
+            (b.id or "").removeprefix("setup-provider-")
+            for b in radio_set.query(SetupRadioButton)
+        ][:4]
+        assert first_keys[0] == "openai"
+        assert "anthropic" in first_keys
+        # Radios still function with headers interleaved.
+        target = radio_set.query_one("#setup-provider-anthropic", SetupRadioButton)
+        target.value = True
+        await pilot.pause()
+        assert step.selected_provider_key == "anthropic"
+        # The discovery banner sits ABOVE the list in DOM order.
+        banner = step.query_one("#setup-provider-detected")
+        siblings = list(banner.parent.children)
+        assert siblings.index(banner) < siblings.index(radio_set)

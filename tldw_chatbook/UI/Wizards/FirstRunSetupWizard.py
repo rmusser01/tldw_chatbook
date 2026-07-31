@@ -124,11 +124,35 @@ class ProviderStep(SetupStep):
                 "be running — we'll look for them.",
                 classes="setup-subtitle",
             )
+            # TASK-1498: the discovery payoff is PINNED above the list — the
+            # subtitle promises "we'll look for them", so the found-server
+            # banner must appear where that promise was made, not below a
+            # scrolling list. Being before the RadioSet in DOM also keeps the
+            # TASK-1496 Tab order intact (radio → key input; the button is
+            # only reachable backwards or by click, and it is hidden until a
+            # server is actually found).
+            # Hidden until discovery finds something — an empty banner would
+            # otherwise burn two rows of the tight 120x40 budget that keeps
+            # the API-key input on screen (TASK-1495's row accounting).
+            yield Static(
+                "",
+                id="setup-provider-detected",
+                classes="setup-probe-status setup-detected-banner hidden",
+            )
+            yield Button(
+                "Use this server", id="setup-provider-use-detected",
+                classes="hidden", variant="primary",
+            )
             with RadioSet(id="setup-provider-choice", classes="setup-choice-list"):
-                for entry in self._grouped(entries):
-                    yield SetupRadioButton(
-                        entry.display_name, id=f"setup-provider-{entry.readiness_key}"
-                    )
+                # TASK-1498: visible group headers; popular providers first so
+                # the capped list's initial window is the useful one.
+                for group_title, group in self._grouped_sections(entries):
+                    yield Static(group_title, classes="setup-choice-header")
+                    for entry in group:
+                        yield SetupRadioButton(
+                            entry.display_name,
+                            id=f"setup-provider-{entry.readiness_key}",
+                        )
             # TASK-1496: key Input, its status line, and the Keep/Replace/
             # Clear affordances sit BEFORE the discovered-server banner/button
             # in both DOM and visual order now -- Tab from the RadioSet above
@@ -152,25 +176,57 @@ class ProviderStep(SetupStep):
                 yield Button("Replace", id="setup-provider-key-replace")
                 yield Button("Clear", id="setup-provider-key-clear")
             yield Static("", id="setup-provider-probe-status", classes="setup-probe-status")
-            yield Static("", id="setup-provider-detected", classes="setup-probe-status")
-            yield Button(
-                "Use this server", id="setup-provider-use-detected",
-                classes="hidden", variant="primary",
-            )
             yield Static("", classes="setup-step-error")
 
-    @staticmethod
-    def _grouped(entries):
+    # TASK-1498: providers most first-time users are actually looking for, in
+    # display order. Filtered against the live catalog, so a missing key
+    # simply doesn't render.
+    _POPULAR_PROVIDER_KEYS = ("openai", "anthropic", "ollama", "llama_cpp")
+
+    @classmethod
+    def _grouped_sections(cls, entries):
+        """Sectioned provider list: Popular, then Cloud, Local, Other.
+
+        Args:
+            entries: ConsoleProviderCatalogEntry sequence from the catalog.
+
+        Returns:
+            List of (section_title, entries) pairs, empty sections dropped.
+        """
         from tldw_chatbook.Chat.provider_catalog import (
             PROVIDER_CUSTOM_GROUP_KEYS,
         )
 
-        def group_rank(entry):
-            if entry.readiness_key in PROVIDER_CUSTOM_GROUP_KEYS:
-                return 2
-            return 0 if entry.requires_api_key else 1
-
-        return sorted(entries, key=lambda e: (group_rank(e), e.display_name.lower()))
+        by_key = {e.readiness_key: e for e in entries}
+        popular = [
+            by_key[key] for key in cls._POPULAR_PROVIDER_KEYS if key in by_key
+        ]
+        popular_keys = {e.readiness_key for e in popular}
+        rest = [e for e in entries if e.readiness_key not in popular_keys]
+        alpha = lambda e: e.display_name.lower()  # noqa: E731
+        cloud = sorted(
+            (e for e in rest
+             if e.requires_api_key
+             and e.readiness_key not in PROVIDER_CUSTOM_GROUP_KEYS),
+            key=alpha,
+        )
+        local = sorted(
+            (e for e in rest
+             if not e.requires_api_key
+             and e.readiness_key not in PROVIDER_CUSTOM_GROUP_KEYS),
+            key=alpha,
+        )
+        other = sorted(
+            (e for e in rest if e.readiness_key in PROVIDER_CUSTOM_GROUP_KEYS),
+            key=alpha,
+        )
+        sections = [
+            ("Popular", popular),
+            ("Cloud", cloud),
+            ("Local", local),
+            ("Other", other),
+        ]
+        return [(title, group) for title, group in sections if group]
 
     def on_show(self) -> None:
         super().on_show()
@@ -190,10 +246,12 @@ class ProviderStep(SetupStep):
         if not servers:
             return
         self.detected_server = servers[0]
-        self.query_one("#setup-provider-detected", Static).update(
+        banner = self.query_one("#setup-provider-detected", Static)
+        banner.update(
             f"Found a local server at {self.detected_server.base_url} "
             f"({self.detected_server.provider_key})."
         )
+        banner.remove_class("hidden")
         use_button = self.query_one("#setup-provider-use-detected", Button)
         use_button.remove_class("hidden")
 
@@ -1659,8 +1717,18 @@ class SetupWizardContainer(WizardContainer):
         super().show_step(step_index)
         try:
             current_step = self.steps[self.current_step]
+            # TASK-1496/1498: "focusable" alone is not enough — a widget
+            # hidden via display:none (e.g. the pinned "Use this server"
+            # button before discovery finds anything) must never be the
+            # focus target, or keyboard input lands on an invisible control.
             target = next(
-                (widget for widget in current_step.walk_children(Widget) if widget.focusable),
+                (
+                    widget
+                    for widget in current_step.walk_children(Widget)
+                    if widget.focusable
+                    and widget.display
+                    and not widget.has_class("hidden")
+                ),
                 None,
             )
             if target is None:
