@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
+from uuid import UUID
 
 import pytest
 
@@ -715,6 +716,34 @@ def test_profile_service_owns_only_existing_app_dependencies() -> None:
             raise AssertionError("not used")
 
         async def assignment_count(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("not used")
+
+        async def set_assignment(
+            self,
+            character_ref: tts_package.CharacterRef,
+            profile_id: UUID,
+            *,
+            expected_generation: int,
+            expected_profile_revision: int,
+            expected_current_profile_id: UUID | None,
+        ) -> tts_package.ProfileStoreResult[tts_package.CharacterTTSAssignment]:
+            del (
+                character_ref,
+                profile_id,
+                expected_generation,
+                expected_profile_revision,
+                expected_current_profile_id,
+            )
+            raise AssertionError("not used")
+
+        async def remove_assignment(
+            self,
+            character_ref: tts_package.CharacterRef,
+            *,
+            expected_generation: int,
+            expected_profile_id: UUID,
+        ) -> tts_package.ProfileStoreResult[None]:
+            del character_ref, expected_generation, expected_profile_id
             raise AssertionError("not used")
 
     class FocusedTTSService:
