@@ -409,7 +409,6 @@ class _PushDestinationPolicySnapshot:
     configuration: _ResolvedPushConfiguration
     network_configuration: NetworkConfigAuthorization
     source_objects: SourceObjectDirectoryAuthorization
-    object_format: Literal["sha1", "sha256"]
     candidate_tree_oid: str
     included_paths_fingerprint: str
 
@@ -3155,7 +3154,7 @@ class FileNotesGitService:
                     == network_configuration.copy_fingerprint
                     and prior.source_objects.identity_fingerprint
                     == source_objects.identity_fingerprint
-                    and prior.object_format == object_format
+                    and prior.source_objects.object_format == object_format
                 )
                 if not unchanged or not proof.cleanup():
                     return None, "blocked"
@@ -3186,7 +3185,6 @@ class FileNotesGitService:
                     configuration=configuration,
                     network_configuration=network_configuration,
                     source_objects=source_objects,
-                    object_format=object_format,
                     candidate_tree_oid=raw_commit.tree_object_id,
                     included_paths_fingerprint=attribute_fingerprint,
                 ),
@@ -3258,7 +3256,6 @@ class FileNotesGitService:
                 "attribute.git/config",
                 _render_isolated_repository_config(object_format),
             )
-            system_config = proof.create_file("system.gitconfig", b"")
             global_config = proof.create_file("global.gitconfig", b"")
             attributes_file = proof.create_file("global.attributes", b"")
             index_file = proof.reserve_index("candidate.index")
@@ -3278,7 +3275,6 @@ class FileNotesGitService:
                 "GIT_OBJECT_DIRECTORY": str(object_directory),
                 "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(source_objects),
                 "GIT_CONFIG_NOSYSTEM": "1",
-                "GIT_CONFIG_SYSTEM": str(system_config),
                 "GIT_CONFIG_GLOBAL": str(global_config),
                 "GIT_ATTR_NOSYSTEM": "1",
                 "HOME": str(home),

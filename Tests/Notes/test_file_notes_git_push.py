@@ -1108,7 +1108,7 @@ def test_network_context_rejects_object_ids_from_another_object_format(
     with pytest.raises(git_network.NetworkContextError) as error:
         context.build_push_argv(endpoint, parent_oid, candidate_oid)
 
-    assert error.value.code == "invalid_context"
+    assert error.value.code == "invalid_object_id"
     assert context.close() is True
 
 
@@ -1318,11 +1318,14 @@ def test_network_context_lease_copy_cannot_consume_genuine_release(
         (_PARENT_OID, "2" * 12),
         ("A" * 40, _CANDIDATE_OID),
         (_PARENT_OID, "B" * 40),
+        ("0" * 40, _CANDIDATE_OID),
+        (_PARENT_OID, _PARENT_OID),
+        (None, _CANDIDATE_OID),
     ],
 )
 def test_network_context_rejects_non_authoritative_object_ids(
     tmp_path: Path,
-    parent_oid: str,
+    parent_oid: object,
     candidate_oid: str,
 ) -> None:
     context = _issued_network_context(
@@ -1334,10 +1337,10 @@ def test_network_context_rejects_non_authoritative_object_ids(
         _DESTINATION_REF,
     )
 
-    with pytest.raises(PushContractError) as error:
+    with pytest.raises(git_network.NetworkContextError) as error:
         context.build_push_argv(
             frozen,
-            parent_oid,
+            parent_oid,  # type: ignore[arg-type]
             candidate_oid,
         )
 

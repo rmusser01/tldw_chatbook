@@ -560,6 +560,56 @@ def _create_network_context(
     return repository, destination, context
 
 
+def test_network_context_factory_rejects_explicit_empty_git_executable(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "network-contexts"
+    parent.mkdir(mode=0o700)
+
+    with pytest.raises(git_network.NetworkContextError) as error:
+        git_network.NetworkContextFactory(
+            environment={"PATH": os.defpath},
+            temporary_parent=parent,
+            git_executable="",
+            git_exec_path=_test_git_installation()[1],
+        )
+
+    assert error.value.code == "invalid_executable"
+
+
+def test_network_context_factory_rejects_explicit_empty_ssh_executable(
+    tmp_path: Path,
+) -> None:
+    repository = _network_repository(tmp_path)
+    endpoint = _network_endpoint("git@push.example.test:team/notes.git")
+    destination = endpoint.projection
+    source, configuration = _network_authorizations(
+        repository,
+        destination,
+    )
+    parent = tmp_path / "network-contexts"
+    parent.mkdir(mode=0o700)
+    git_executable, git_exec_path = _test_git_installation()
+    factory = git_network.NetworkContextFactory(
+        environment={"PATH": os.defpath},
+        temporary_parent=parent,
+        git_executable=str(git_executable),
+        git_exec_path=git_exec_path,
+        ssh_executable="",
+    )
+
+    with pytest.raises(git_network.NetworkContextError) as error:
+        factory.create(
+            repository=repository,
+            source_objects=source,
+            configuration=configuration,
+            destination=destination,
+            endpoint=endpoint,
+        )
+
+    assert error.value.code == "invalid_executable"
+
+
 def test_network_context_builds_private_bare_layout_without_source_mutation(
     tmp_path: Path,
 ) -> None:
@@ -595,7 +645,6 @@ def test_network_context_builds_private_bare_layout_without_source_mutation(
         "global.gitconfig",
         "home",
         "repository.git",
-        "system.gitconfig",
         "tmp",
         "xdg-config",
     }
@@ -621,7 +670,6 @@ def test_network_context_builds_private_bare_layout_without_source_mutation(
     assert "bare = true" in private_config
     assert "remote" not in private_config.lower()
     assert "push.example.test" not in private_config
-    assert Path(environment["GIT_CONFIG_SYSTEM"]).read_bytes() == b""
     assert Path(environment["GIT_CONFIG_GLOBAL"]).read_bytes() == b""
     assert environment["GIT_OBJECT_DIRECTORY"] == str(git_dir / "objects")
     assert environment["GIT_ALTERNATE_OBJECT_DIRECTORIES"] == str(
@@ -1141,7 +1189,6 @@ def test_network_context_config_copy_preserves_order_and_origin_binding(
         f"\thelper = {helper_name}\n"
     )
     assert "\tuseHttpPath = true\n" in private_config
-    assert configuration.fact_count == 3
     assert configuration.copy_fingerprint != changed_origin.copy_fingerprint
     assert context.config_copy_fingerprint == configuration.copy_fingerprint
     assert helper_name not in repr(configuration)
@@ -1150,7 +1197,7 @@ def test_network_context_config_copy_preserves_order_and_origin_binding(
     assert context.close() is True
 
 
-def test_network_context_rejects_forged_config_capability_with_newline(
+def test_network_context_rejects_unregistered_config_capability(
     tmp_path: Path,
 ) -> None:
     repository = _network_repository(tmp_path)
@@ -1160,23 +1207,7 @@ def test_network_context_rejects_forged_config_capability_with_newline(
         repository,
         destination,
     )
-    forged_fact = git_network._AuthorizedConfigFact(
-        "global",
-        "1" * 64,
-        "credential.useHttpPath",
-        "true\n[core]\n\tsshCommand = injected",
-    )
-    forged_record = git_network._NetworkConfigRecord(
-        "f" * 64,
-        "e" * 64,
-        destination,
-        (forged_fact,),
-    )
     forged = object.__new__(git_network.NetworkConfigAuthorization)
-    try:
-        object.__setattr__(forged, "_record", forged_record)
-    except AttributeError:
-        pass
 
     with pytest.raises(git_network.NetworkContextError):
         _network_factory(tmp_path).create(
@@ -1188,29 +1219,13 @@ def test_network_context_rejects_forged_config_capability_with_newline(
         )
 
 
-def test_network_context_rejects_forged_source_object_capability(
+def test_network_context_rejects_unregistered_source_object_capability(
     tmp_path: Path,
 ) -> None:
     repository = _network_repository(tmp_path)
     endpoint = _network_endpoint()
     destination = endpoint.projection
-    source_objects = Path(repository.git_common_dir) / "objects"
-    metadata = source_objects.stat()
-    forged_record = git_network._SourceObjectRecord(
-        source_objects,
-        _filesystem_identity(source_objects),
-        "sha1",
-        metadata.st_uid,
-        metadata.st_gid,
-        stat.S_IMODE(metadata.st_mode),
-        metadata.st_dev,
-        "f" * 64,
-    )
     forged = object.__new__(git_network.SourceObjectDirectoryAuthorization)
-    try:
-        object.__setattr__(forged, "_record", forged_record)
-    except AttributeError:
-        pass
     _source_authorization, configuration = _network_authorizations(
         repository,
         destination,
@@ -1370,6 +1385,8 @@ def test_source_object_authorization_fingerprint_binds_object_format(
         "sha256",
     )
 
+    assert sha1.object_format == "sha1"
+    assert sha256.object_format == "sha256"
     assert sha1.identity_fingerprint != sha256.identity_fingerprint
     with pytest.raises(git_network.NetworkContextError):
         git_network._authorize_source_object_directory(
@@ -2024,9 +2041,9 @@ def test_network_context_cleanup_refuses_unknown_or_hardlinked_shape(
     assert context.close() is False
     assert unknown.read_text(encoding="utf-8") == "do not delete broad trees"
     unknown.unlink()
-    system_config = Path(settings.environment["GIT_CONFIG_SYSTEM"])
-    external_link = root.parent / "external-system-link"
-    os.link(system_config, external_link)
+    global_config = Path(settings.environment["GIT_CONFIG_GLOBAL"])
+    external_link = root.parent / "external-global-link"
+    os.link(global_config, external_link)
     assert context.close() is False
     assert external_link.exists()
     external_link.unlink()
@@ -3201,7 +3218,6 @@ async def test_network_context_policy_retains_exact_approved_helper_and_objects(
 
     assert review.state == "ready"
     assert policy is not None
-    assert policy.network_configuration.fact_count == 1
     assert policy.source_objects.identity_fingerprint
     assert helper_name not in repr(policy.network_configuration)
     assert repository.git_common_dir not in repr(policy.source_objects)

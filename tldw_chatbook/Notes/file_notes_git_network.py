@@ -44,6 +44,7 @@ NetworkContextErrorCode = Literal[
     "invalid_context",
     "invalid_environment",
     "invalid_configuration",
+    "invalid_object_id",
     "invalid_source_objects",
     "unsafe_filesystem",
     "invalid_executable",
@@ -60,6 +61,9 @@ _ERROR_MESSAGES: dict[NetworkContextErrorCode, str] = {
     "invalid_environment": "The network Git environment is not allowed.",
     "invalid_configuration": (
         "The authorized network Git configuration is not allowed."
+    ),
+    "invalid_object_id": (
+        "The guarded push object IDs do not match the authorized format."
     ),
     "invalid_source_objects": (
         "The authorized source object directory is not available."
@@ -196,12 +200,6 @@ class NetworkConfigAuthorization:
         """Return the ordered key/value/origin copy fingerprint."""
         return _read_network_config_authorization(self).copy_fingerprint
 
-    @property
-    def fact_count(self) -> int:
-        """Return the number of exact facts authorized for copying."""
-        return len(_read_network_config_authorization(self).facts)
-
-
 @dataclass(frozen=True, slots=True)
 class _SourceObjectRecord:
     path: Path = field(repr=False)
@@ -210,7 +208,6 @@ class _SourceObjectRecord:
     owner: int
     group: int
     mode: int
-    device: int
     identity_fingerprint: str
 
 
@@ -234,6 +231,11 @@ class SourceObjectDirectoryAuthorization:
     def identity_fingerprint(self) -> str:
         """Return the path-and-filesystem-identity binding fingerprint."""
         return _read_source_object_authorization(self).identity_fingerprint
+
+    @property
+    def object_format(self) -> GitObjectFormat:
+        """Return the locally proved source Git object format."""
+        return _read_source_object_authorization(self).object_format
 
 
 def _validated_network_config_record(
@@ -408,7 +410,6 @@ def _validated_source_object_record(
         metadata.st_uid,
         metadata.st_gid,
         mode,
-        metadata.st_dev,
         digest.hexdigest(),
     )
     return record
@@ -531,7 +532,6 @@ class _PinnedAncestor:
     owner: int
     group: int
     mode: int
-    device: int
 
     def validate(self) -> bool:
         try:
@@ -544,7 +544,6 @@ class _PinnedAncestor:
             and metadata.st_uid == self.owner
             and metadata.st_gid == self.group
             and stat.S_IMODE(metadata.st_mode) == self.mode
-            and metadata.st_dev == self.device
             and _safe_owned_directory_mode(metadata)
         )
 
@@ -556,7 +555,6 @@ class _PinnedExecutable:
     owner: int
     group: int
     mode: int
-    device: int
     link_count: int
     ancestors: tuple[_PinnedAncestor, ...] = field(repr=False)
 
@@ -571,7 +569,6 @@ class _PinnedExecutable:
             and metadata.st_uid == self.owner
             and metadata.st_gid == self.group
             and stat.S_IMODE(metadata.st_mode) == self.mode
-            and metadata.st_dev == self.device
             and metadata.st_nlink == self.link_count
             and bool(metadata.st_mode & 0o111)
             and not metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
@@ -586,7 +583,6 @@ class _PinnedGitDispatchExecutable:
     owner: int
     group: int
     mode: int
-    device: int
     link_count: int
     target: _PinnedExecutable = field(repr=False)
 
@@ -606,7 +602,6 @@ class _PinnedGitDispatchExecutable:
             and metadata.st_uid == self.owner
             and metadata.st_gid == self.group
             and stat.S_IMODE(metadata.st_mode) == self.mode
-            and metadata.st_dev == self.device
             and metadata.st_nlink == self.link_count
             and resolved == self.target.path
             and self.target.validate()
@@ -620,7 +615,6 @@ class _PinnedSocket:
     owner: int
     group: int
     mode: int
-    device: int
     ancestors: tuple[_PinnedAncestor, ...] = field(repr=False)
 
     def validate(self) -> bool:
@@ -634,7 +628,6 @@ class _PinnedSocket:
             and metadata.st_uid == self.owner == os.geteuid()
             and metadata.st_gid == self.group
             and stat.S_IMODE(metadata.st_mode) == self.mode
-            and metadata.st_dev == self.device
             and all(ancestor.validate() for ancestor in self.ancestors)
         )
 
@@ -646,7 +639,6 @@ class _PinnedDirectory:
     owner: int
     group: int
     mode: int
-    device: int
     ancestors: tuple[_PinnedAncestor, ...] = field(repr=False)
 
     def validate(self) -> bool:
@@ -660,7 +652,6 @@ class _PinnedDirectory:
             and metadata.st_uid == self.owner
             and metadata.st_gid == self.group
             and stat.S_IMODE(metadata.st_mode) == self.mode
-            and metadata.st_dev == self.device
             and _safe_owned_directory_mode(metadata)
             and all(ancestor.validate() for ancestor in self.ancestors)
         )
@@ -725,7 +716,6 @@ class _KnownEntry:
     owner: int
     group: int
     mode: int
-    device: int
     link_count: int
     size: int
     digest: str | None = field(default=None, repr=False)
@@ -783,7 +773,6 @@ class _PrivateLayout:
             ("tmp", "directory", _READ_ONLY_DIRECTORY_MODE),
             ("repository.git/HEAD", "file", _FILE_MODE),
             ("repository.git/config", "file", _FILE_MODE),
-            ("system.gitconfig", "file", _FILE_MODE),
             ("global.gitconfig", "file", _FILE_MODE),
         )
         if ssh_adapter:
@@ -1055,7 +1044,12 @@ class NetworkGitExecutionContext:
         parent_oid: str,
         candidate_oid: str,
     ) -> tuple[str, ...]:
-        """Build one exact CAS push argv only from this live context."""
+        """Build one exact CAS push argv only from this live context.
+
+        Raises:
+            NetworkContextError: With ``invalid_object_id`` when either OID
+                is malformed or does not match the authorized object format.
+        """
         return _network_context_build_push_argv(
             self,
             endpoint,
@@ -1245,14 +1239,11 @@ def _make_network_context_registry():
             40 if authority.source_objects.object_format == "sha1" else 64
         )
         if (
-            len(parent_oid) in {40, 64}
-            and len(candidate_oid) in {40, 64}
-            and (
-                len(parent_oid) != expected_width
-                or len(candidate_oid) != expected_width
-            )
+            not _object_id_matches_format(parent_oid, expected_width)
+            or not _object_id_matches_format(candidate_oid, expected_width)
+            or parent_oid == candidate_oid
         ):
-            raise NetworkContextError("invalid_context")
+            raise NetworkContextError("invalid_object_id")
         return _build_push_argv(
             str(authority.git_executable.path),
             authority.command.git_dir,
@@ -1374,7 +1365,11 @@ class NetworkContextFactory:
         source = os.environ if environment is None else environment
         base = _allowlisted_base_environment(source, allow_ssh_agent)
         path_value = dict(base).get("PATH", os.defpath)
-        selected_git = git_executable or shutil.which("git", path=path_value)
+        selected_git = (
+            shutil.which("git", path=path_value)
+            if git_executable is None
+            else git_executable
+        )
         if selected_git is None:
             raise NetworkContextError("invalid_executable")
         object.__setattr__(self, "_base_environment", base)
@@ -1557,7 +1552,6 @@ class NetworkContextFactory:
                     source_record.object_format,
                 ),
             )
-            system_config = builder.file("system.gitconfig", b"")
             global_config = builder.file("global.gitconfig", b"")
             ssh_adapter = root / "ssh-adapter" if openssh is not None else None
             ssh_routing = (
@@ -1576,7 +1570,6 @@ class NetworkContextFactory:
                 git_dir=git_dir,
                 object_directory=object_directory,
                 source_objects=source_record.path,
-                system_config=system_config,
                 global_config=global_config,
                 home=home,
                 config_home=config_home,
@@ -1589,7 +1582,7 @@ class NetworkContextFactory:
             if openssh is not None:
                 if python_executable is None:
                     raise NetworkContextError("invalid_executable")
-                created_ssh_adapter = builder.file(
+                builder.file(
                     "ssh-adapter",
                     _render_ssh_adapter(
                         python=python_executable,
@@ -1599,8 +1592,6 @@ class NetworkContextFactory:
                     ),
                     executable=True,
                 )
-                if created_ssh_adapter != ssh_adapter:
-                    raise NetworkContextError("unsafe_filesystem")
             for child_directory in (home, config_home, private_tmp):
                 child_directory.chmod(_READ_ONLY_DIRECTORY_MODE)
             layout = _PrivateLayout.capture(
@@ -1658,9 +1649,10 @@ class NetworkContextFactory:
     ) -> tuple[OpenSSHInvocationSpec | None, _PinnedExecutable | None]:
         if destination.scheme != "ssh":
             return None, None
-        selected = self._ssh_executable_value or shutil.which(
-            "ssh",
-            path=search_path,
+        selected = (
+            shutil.which("ssh", path=search_path)
+            if self._ssh_executable_value is None
+            else self._ssh_executable_value
         )
         if selected is None or destination.ssh_user is None:
             raise NetworkContextError("invalid_openssh")
@@ -1736,7 +1728,6 @@ def _build_context_environment(
     git_dir: Path,
     object_directory: Path,
     source_objects: Path,
-    system_config: Path,
     global_config: Path,
     home: Path,
     config_home: Path,
@@ -1756,7 +1747,6 @@ def _build_context_environment(
             "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(source_objects),
             "GIT_CONFIG_GLOBAL": str(global_config),
             "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_SYSTEM": str(system_config),
             "GIT_DIR": str(git_dir),
             "GIT_EXEC_PATH": str(git_exec_path),
             "GIT_NO_LAZY_FETCH": "1",
@@ -2057,7 +2047,6 @@ def _pin_git_dispatch_executable(
         metadata.st_uid,
         metadata.st_gid,
         stat.S_IMODE(metadata.st_mode),
-        metadata.st_dev,
         metadata.st_nlink,
         target,
     )
@@ -2130,7 +2119,6 @@ def _capture_safe_ancestors(path: Path) -> tuple[_PinnedAncestor, ...]:
                 metadata.st_uid,
                 metadata.st_gid,
                 stat.S_IMODE(metadata.st_mode),
-                metadata.st_dev,
             )
         )
     return tuple(captured)
@@ -2162,7 +2150,6 @@ def _pin_agent_socket(value: str) -> _PinnedSocket:
         metadata.st_uid,
         metadata.st_gid,
         stat.S_IMODE(metadata.st_mode),
-        metadata.st_dev,
         ancestors,
     )
 
@@ -2194,7 +2181,6 @@ def _pin_executable(value: str, search_path: str) -> _PinnedExecutable:
         metadata.st_uid,
         metadata.st_gid,
         mode,
-        metadata.st_dev,
         metadata.st_nlink,
         _capture_safe_ancestors(candidate),
     )
@@ -2231,7 +2217,6 @@ def _pin_git_exec_directory(
         metadata.st_uid,
         metadata.st_gid,
         stat.S_IMODE(metadata.st_mode),
-        metadata.st_dev,
         ancestors,
     )
 
@@ -2257,7 +2242,6 @@ def _safe_temporary_parent(
         metadata.st_uid,
         metadata.st_gid,
         stat.S_IMODE(metadata.st_mode),
-        metadata.st_dev,
         _capture_safe_ancestors(parent),
     )
 
@@ -2294,7 +2278,6 @@ def _source_record_matches(record: _SourceObjectRecord) -> bool:
         and metadata.st_uid == record.owner
         and metadata.st_gid == record.group
         and stat.S_IMODE(metadata.st_mode) == record.mode
-        and metadata.st_dev == record.device
     )
 
 
@@ -2335,7 +2318,6 @@ def _capture_known_entry(
         metadata.st_uid,
         metadata.st_gid,
         mode,
-        metadata.st_dev,
         metadata.st_nlink,
         metadata.st_size,
         digest,
@@ -2353,7 +2335,6 @@ def _capture_parent_entry(parent: Path) -> _KnownEntry:
         metadata.st_uid,
         metadata.st_gid,
         stat.S_IMODE(metadata.st_mode),
-        metadata.st_dev,
         metadata.st_nlink,
         metadata.st_size,
     )
@@ -2377,7 +2358,7 @@ def _known_entry_matches(
         and metadata.st_uid == entry.owner
         and metadata.st_gid == entry.group
         and stat.S_IMODE(metadata.st_mode) == entry.mode
-        and metadata.st_dev == entry.device == root_device
+        and entry.identity.device == root_device
         and (
             metadata.st_nlink == entry.link_count
             or (allow_directory_link_drift and entry.kind == "directory")
@@ -2407,16 +2388,12 @@ def _parent_entry_matches(parent: Path, entry: _KnownEntry) -> bool:
         and metadata.st_uid == entry.owner
         and metadata.st_gid == entry.group
         and stat.S_IMODE(metadata.st_mode) == entry.mode
-        and metadata.st_dev == entry.device
     )
 
 
 def _file_digest(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(64 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
 def _filesystem_identity(metadata: os.stat_result) -> FileSystemIdentity:
@@ -2455,6 +2432,15 @@ def _path_is_within(path: Path, parent: Path) -> bool:
 
 def _is_hex_fingerprint(value: object) -> bool:
     return isinstance(value, str) and _HEX_256.fullmatch(value) is not None
+
+
+def _object_id_matches_format(value: object, expected_width: int) -> bool:
+    return (
+        type(value) is str
+        and len(value) == expected_width
+        and all(character in "0123456789abcdef" for character in value)
+        and any(character != "0" for character in value)
+    )
 
 
 def _digest_text(digest: object, value: str) -> None:
