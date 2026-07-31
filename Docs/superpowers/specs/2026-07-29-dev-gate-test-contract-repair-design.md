@@ -1012,6 +1012,10 @@ Update the tests to describe current behavior:
      exact values. Preserve category selection, provider recovery copy, and
      absence of a provider draft; do not change production navigation or add
      fixed pauses.
+107. In the Skill editor scroll regression, wait boundedly for focus-driven
+     scrolling to put the Trust review control inside the canvas viewport.
+     Preserve the real `VerticalScroll`, keyboard page-down, reset, focus, and
+     positive-scroll assertions; do not change production scrolling.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1415,6 +1419,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   host-dependent number of recompose turns. The assertions consume exact
   provider/model widget values, so boundedly waiting for those values is the
   smallest truthful readiness boundary.
+- Adding another pause after focusing the Skill Trust control would still assume
+  a host-dependent number of scroll-animation turns. Boundedly waiting for the
+  unchanged viewport-containment geometry directly observes the behavior the
+  regression exists to prove.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

@@ -4255,6 +4255,47 @@ inherited file drift outside the helper and corrected call sites. Independent
 review approved the helper, two-site inventory, and retained exact assertions
 with no findings.
 
+### Task 4cy: Wait for Skill editor focus-scroll geometry
+
+**Files:**
+- Modify: `Tests/Skills/test_skills_library_flow.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This aligns one visual regression with Textual's asynchronous
+focus-driven scrolling; it does not change Skill editor layout or scrolling
+behavior.
+
+- [x] **Step 1: Identify the focus-scroll settlement race**
+
+Full-gate attempt 42 fails after 12,271 passes after the Skill canvas has begun
+scrolling, but two pauses leave the Trust review button two rows below the
+viewport. The exact test passes alone, confirming a contention-sensitive
+settlement assumption rather than a missing scroll container or focus behavior.
+
+- [x] **Step 2: Wait boundedly for viewport containment**
+
+Replace only the two post-focus pauses with a bounded local loop that requires
+the existing canvas/button region containment predicate. Preserve the
+structural, keyboard-scroll, reset, focus, and positive-scroll assertions
+without adding a helper or production change.
+
+- [x] **Step 3: Verify Skill editor scroll coverage**
+
+Run the exact regression repeatedly, the complete Skills Library flow module,
+Ruff/format, and `git diff --check`.
+
+The exact scroll regression passed three independent repetitions (3/3), and the
+complete Skills Library flow module passed 21/21. `git diff --check` passes.
+Ruff reports two inherited E702 semicolon findings and inherited format drift
+outside the changed block; the new loop introduces no finding. Independent
+review approved the unchanged geometry contract, one-site bounded wait, and
+retained structural/keyboard/focus assertions with no findings.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
