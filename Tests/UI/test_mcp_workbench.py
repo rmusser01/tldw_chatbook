@@ -1258,6 +1258,7 @@ async def test_cancel_requested_cancels_worker():
     async with app.run_test() as pilot:
         await pilot.pause()
         await app.workers.wait_for_complete()
+        await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         workbench._selected_server_key = "local:docs"
         workbench._start_lifecycle("local:docs", "docs", "connect")

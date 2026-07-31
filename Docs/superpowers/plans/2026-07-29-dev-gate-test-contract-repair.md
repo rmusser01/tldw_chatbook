@@ -3913,6 +3913,46 @@ complete Library shell module passed 267/267. Ruff lint and `git diff --check`
 pass. Ruff format reports four inherited formatting hunks elsewhere in the
 module; neither added wait appears in that diff.
 
+### Task 4cq: Settle MCP child mounts after startup workers
+
+**Files:**
+- Modify: `Tests/UI/test_mcp_workbench.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This completes the test-only mounted-workbench boundary before a
+private lifecycle call; it does not change MCP runtime behavior or interfaces.
+
+- [x] **Step 1: Identify the worker-before-mount gap**
+
+Full-gate attempt 33 fails after 18,684 passes because the cancellation test's
+initial worker drain completes before Textual has mounted
+`#mcp-inspector-state`. The private lifecycle's optimistic resync then reaches
+the Inspector before that child exists. This is the same unavailable-to-users
+pre-mount test seam as attempt 31, not a production lifecycle path.
+
+- [x] **Step 2: Complete the established lifecycle boundary**
+
+After the initial `app.workers.wait_for_complete()`, use the same
+`pilot.pause()` post-worker mount settlement already used by sibling MCP
+workbench tests. Keep the blocked connect gate, direct lifecycle start, cancel
+request, and in-flight cleanup assertion unchanged.
+
+- [x] **Step 3: Verify MCP workbench coverage**
+
+Run the exact cancellation test repeatedly under current contention, the
+complete MCP workbench module, Ruff/format, and `git diff --check`.
+
+The exact cancellation test passed three concurrent repetitions, and the
+complete MCP workbench module passed 196/196. `git diff --check` passes. Ruff
+lint reports the same four inherited errors elsewhere in the module, and Ruff
+format reports inherited whole-file drift; the added post-worker pause is
+absent from both findings.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
