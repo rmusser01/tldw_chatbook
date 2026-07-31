@@ -2,7 +2,7 @@
 id: TASK-1615
 title: >-
   Semantic-similarity float-precision test fails on dev
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-31 15:40'
 labels:
@@ -21,5 +21,11 @@ priority: low
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] The test passes deterministically, with the fix in either the fixture or the short-circuit sentinel
+- [x] The test passes deterministically, with the fix in either the fixture or the short-circuit sentinel
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Root cause: both tests in TestSemanticSimilarityExactMatchShortCircuit proved their path by floating-point accident — the fixture vector's cosine self-similarity lands a few ULPs short of 1.0 on some BLAS/numpy builds but EXACTLY 1.0 on this machine's, making `score != 1.0` false (the reported failure) and the exact-match test's `score == 1.0` vacuous (it would pass without the short-circuit). Fix is structural: `_ConstantEmbeddingModel` counts `encode()` calls; the exact-match test asserts the model was never consulted, the near-miss test asserts it was. Score assertions retained where platform-independent (`== 1.0` by short-circuit construction; `approx(1.0)` sanity). Mutation-verified: disabling the short-circuit fails the exact-match test via encode_calls even where the score still computes 1.0.
+<!-- SECTION:NOTES:END -->
