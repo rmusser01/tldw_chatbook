@@ -70,6 +70,7 @@ class FakeDictationService:
         self.on_partial = None
         self.on_final = None
         self.on_error = None
+        self.on_segment_transcribing = None
         #: Set once `stop_dictation()` is running; if `stop_gate` is set too,
         #: it blocks there until released, so a test can drain events while
         #: the stop worker is provably mid-flight.
@@ -100,12 +101,14 @@ class FakeDictationService:
         on_final_transcript,
         on_state_change,
         on_error,
+        on_segment_transcribing=None,
         save_audio: bool = False,
     ) -> bool:
         self.start_calls += 1
         self.on_partial = on_partial_transcript
         self.on_final = on_final_transcript
         self.on_error = on_error
+        self.on_segment_transcribing = on_segment_transcribing
         self.save_audio = save_audio
         self.start_entered.set()
         if self.start_gate is not None:
@@ -128,6 +131,12 @@ class FakeDictationService:
     def emit_final(self, text: str) -> None:
         assert self.on_final is not None, "start_dictation() has not run yet"
         self.on_final(text)
+
+    def emit_segment_transcribing(self) -> None:
+        assert self.on_segment_transcribing is not None, (
+            "start_dictation() has not run yet"
+        )
+        self.on_segment_transcribing()
 
     def emit_error(self, message: str) -> None:
         assert self.on_error is not None, "start_dictation() has not run yet"
@@ -601,6 +610,226 @@ async def test_a_partial_arriving_outside_recording_never_reaches_the_chip(
         assert "ghost text" not in str(chip.renderable)
         assert str(chip.renderable) == ""
         assert console._console_dictation_partial == ""
+
+
+# --- VoiceSegmentTranscribing: per-segment "still working" feedback --------
+
+
+@pytest.mark.asyncio
+async def test_segment_transcribing_alone_does_not_mark_recognizer_output_heard(
+    monkeypatch,
+):
+    """Pins `ConsoleStreamingDictationSession._handle_event`'s explicit
+    exclusion: `VoiceSegmentTranscribing` only proves the silence gate fired,
+    not that the recognizer produced anything (see the adapter's own
+    docstring on `_handle_event` and `stop_and_transcribe`). A capture that
+    only ever sees this event -- no partial, no final -- must still read as
+    a genuinely silent microphone (`NO_CAPTURE_MESSAGE`), not a
+    heard-but-empty one (`NO_SPEECH_MESSAGE`).
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    sessions = _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        service.emit_segment_transcribing()
+        await pilot.pause()
+
+        # Direct pin on the adapter's private state, per the task's own
+        # instruction to pin this explicitly: neither field the event must
+        # not touch has moved.
+        session = sessions[-1]
+        assert session._heard_recognizer_output is False
+        assert session._segments == []
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        assert [
+            call
+            for call in notify.call_args_list
+            if "No audio was captured from the microphone." in str(call.args[0])
+            and call.kwargs.get("severity") == "error"
+        ], "a segment-transcribing-only capture must read as silent, not heard-but-empty"
+
+
+@pytest.mark.asyncio
+async def test_segment_transcribing_does_not_disturb_a_real_final_that_follows(
+    monkeypatch,
+):
+    """`_segments` must be untouched by the event: a real final right after
+    it inserts exactly its own text, nothing extra, nothing padded.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello world")
+        for _ in range(5):
+            composer.move_cursor_left()
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        service.emit_segment_transcribing()
+        await pilot.pause()
+        service.emit_final("dictated")
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        assert composer.draft_text() == "hello dictated world"
+
+
+@pytest.mark.asyncio
+async def test_the_chip_shows_a_transcribing_indication_while_a_segment_is_in_flight(
+    monkeypatch,
+):
+    """The visible half of the fix: a chip indication fills the gap between
+    the silence gate closing a segment and its (potentially seconds-long)
+    transcription landing -- otherwise indistinguishable from a dead capture.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        chip = composer.query_one("#console-voice-status", Static)
+        # Before the segment closes, the chip shows only the elapsed counter.
+        assert "Transcribing" not in _painted(chip)
+
+        service.emit_segment_transcribing()
+        await pilot.pause()
+
+        assert "Transcribing" in _painted(chip)
+        # The mic button itself is untouched -- this is a chip-only indication.
+        mic = composer.query_one("#console-dictation", Button)
+        assert str(mic.label) == "Rec ●"
+
+        # It reverts once the next event lands (a final, here).
+        service.emit_final("hello")
+        await pilot.pause()
+
+        assert "Transcribing" not in _painted(chip)
+
+        # The revert must be real internal state, not just a one-off render
+        # that happens to omit the indicator: a later redundant resync (the
+        # 0.2s Console UI-sync tick, or the elapsed-counter tick) must not
+        # bring it back from a merely-stale flag.
+        composer.tick_voice_elapsed()
+        await pilot.pause()
+        assert "Transcribing" not in _painted(chip)
+        composer.sync_dictation_state("recording")
+        await pilot.pause()
+        assert "Transcribing" not in _painted(chip)
+
+
+@pytest.mark.asyncio
+async def test_the_transcribing_indication_reverts_on_a_command_ack_too(monkeypatch):
+    """A capture-ending command landing (not a plain final) also supersedes it."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        service.emit_segment_transcribing()
+        await pilot.pause()
+        chip = composer.query_one("#console-voice-status", Static)
+        assert "Transcribing" in _painted(chip)
+
+        service.emit_final("Console, new paragraph.")
+        await pilot.pause()
+
+        assert "¶" in _painted(chip)
+        assert "Transcribing" not in _painted(chip)
+
+
+@pytest.mark.asyncio
+async def test_the_transcribing_indication_survives_a_redundant_resync(monkeypatch):
+    """The 0.2s Console UI-sync tick calls `sync_dictation_state("recording")`
+    unconditionally; it must not blank a live indication (same guard that
+    protects `_voice_preparing_message`/`_voice_partial`).
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        service.emit_segment_transcribing()
+        await pilot.pause()
+
+        # A redundant resync, exactly like the periodic Console UI-sync tick.
+        composer.sync_dictation_state("recording")
+        await pilot.pause()
+
+        chip = composer.query_one("#console-voice-status", Static)
+        assert "Transcribing" in _painted(chip)
+
+
+@pytest.mark.asyncio
+async def test_the_transcribing_indication_reverts_on_a_mid_capture_stop(monkeypatch):
+    """Stopping the mic directly (no final/command in between) is also a
+    state change and must clear the indication before the "transcribing"
+    stop-and-transcribe phase paints over it.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        service.emit_segment_transcribing()
+        await pilot.pause()
+        chip = composer.query_one("#console-voice-status", Static)
+        assert "Transcribing" in _painted(chip)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        # A fresh capture must start clean, with no leftover indication.
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        assert "Transcribing" not in _painted(chip)
 
 
 @pytest.mark.asyncio

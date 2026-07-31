@@ -558,6 +558,9 @@ class FakeDictationService:
     def emit_error(self, error):
         self._callbacks["on_error"](error)
 
+    def emit_segment_transcribing(self):
+        self._callbacks["on_segment_transcribing"]()
+
 
 class FakeAudioService:
     """Stands in for LazyLiveDictationService._audio_service.
@@ -2226,3 +2229,88 @@ def test_digits_survive_normalization_and_still_fail_open(monkeypatch):
     result = cvi.classify_segment("Console, send 2")
     assert isinstance(result, cvi.VoiceFinal)
     assert result.text == "Console, send 2"
+
+
+# --------------------------------------------------------------------------
+# `VoiceSegmentTranscribing`: fast-model default's companion feedback event.
+# `_run_begin()` wires `on_segment_transcribing` the same way it wires
+# `on_partial_transcript`/`on_final_transcript` -- bound to this attempt's
+# `capture_generation` at wiring time, forwarded through `_emit_capture_event`.
+# --------------------------------------------------------------------------
+
+
+def test_segment_transcribing_is_emitted_with_the_capture_generation_token(
+    monkeypatch,
+):
+    """Tagged the same way `on_partial_transcript`'s events are (Task 1's
+    `capture_generation` parameter): a real token makes `_emit_capture_event`
+    call `emit(event, generation)`, the two-arg form
+    `ConsoleStreamingDictationSession._handle_event` expects.
+    """
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
+
+    service = FakeDictationService()
+
+    def _service_factory(**kwargs):
+        service.kwargs = kwargs
+        return service
+
+    events: list[tuple] = []
+
+    def _emit(event, *args):
+        events.append((event, args[0] if args else None))
+
+    controller = cvi.ConsoleVoiceInputController(
+        emit=_emit,
+        spawn=lambda thunk: thunk(),
+        service_factory=_service_factory,
+    )
+
+    controller.start(capture_generation=7)
+    events.clear()
+
+    service.emit_segment_transcribing()
+
+    assert len(events) == 1
+    event, generation = events[0]
+    assert isinstance(event, cvi.VoiceSegmentTranscribing)
+    assert generation == 7
+
+
+def test_segment_transcribing_with_no_generation_tracking_uses_the_single_arg_emit(
+    monkeypatch,
+):
+    """`capture_generation=None` (every caller except
+    `ConsoleStreamingDictationSession`) means the plain single-arg emit
+    contract every non-Console caller relies on -- see
+    `_emit_capture_event`'s docstring. Using `events.append` directly as
+    `emit` is the pin: `list.append` raises `TypeError` on a second
+    positional argument, so this fails loudly if `generation` (`None`) were
+    ever passed through anyway.
+    """
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
+
+    service = FakeDictationService()
+
+    def _service_factory(**kwargs):
+        service.kwargs = kwargs
+        return service
+
+    events = []
+    controller = cvi.ConsoleVoiceInputController(
+        emit=events.append,
+        spawn=lambda thunk: thunk(),
+        service_factory=_service_factory,
+    )
+
+    controller.start()  # capture_generation defaults to None
+    events.clear()
+
+    service.emit_segment_transcribing()
+
+    assert len(events) == 1
+    assert isinstance(events[0], cvi.VoiceSegmentTranscribing)
