@@ -3953,6 +3953,46 @@ lint reports the same four inherited errors elsewhere in the module, and Ruff
 format reports inherited whole-file drift; the added post-worker pause is
 absent from both findings.
 
+### Task 4cr: Wait for the retained File Notes subtree to remount
+
+**Files:**
+- Modify: `Tests/UI/test_library_file_notes_workspace.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This aligns an existing test wait with the child identity it
+immediately asserts after asynchronous Textual remount; it does not change
+File Notes retention or source-switch behavior.
+
+- [x] **Step 1: Identify the root-before-subtree race**
+
+Full-gate attempt 34 fails after 17,720 passes because the retained File Notes
+workspace root has remounted, but `#file-notes-editor` has not yet rejoined its
+subtree. The immediate query fails and begins test teardown during the partial
+mount. The exact journey passes in isolation.
+
+- [x] **Step 2: Wait for the asserted retained editor**
+
+Tighten the journey's existing final-remount predicate to require the editor
+selector under the workspace before asserting the same workspace and editor
+object identities. Preserve source switching, dirty/conflict veto, flush,
+hidden-file refresh, and replica-lifetime coverage.
+
+- [x] **Step 3: Verify File Notes workspace coverage**
+
+Run the exact retained-workspace journey repeatedly under current contention,
+the complete File Notes workspace module, Ruff/format, and `git diff --check`.
+
+The exact retained-workspace journey passed three concurrent repetitions, and
+the complete File Notes workspace module passed 27/27. Ruff lint and
+`git diff --check` pass. Ruff format reports inherited formatting drift
+elsewhere in the module; the tightened remount predicate is absent from those
+findings.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

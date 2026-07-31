@@ -2210,8 +2210,10 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         screen.query_one("#library-notes-source-files", Button).press()
         await _wait_until(
             pilot,
-            lambda: bool(screen.query("#library-file-notes-workspace")),
-            "retained Files workspace did not remount",
+            lambda: bool(
+                screen.query("#library-file-notes-workspace #file-notes-editor")
+            ),
+            "retained Files workspace editor did not remount",
         )
         assert screen.query_one("#library-file-notes-workspace") is retained
         assert retained.query_one("#file-notes-editor", TextArea) is editor

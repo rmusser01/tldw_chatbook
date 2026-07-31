@@ -975,6 +975,11 @@ Update the tests to describe current behavior:
      the blocked connect gate, direct lifecycle start, cancel request, and
      in-flight cleanup assertion unchanged; do not add selector polling or a
      production pre-mount compatibility path.
+100. Make the retained File Notes source-switch journey's final remount wait
+     require its editor descendant before asserting the same editor object.
+     Keep the retained workspace identity, dirty/conflict veto, flush,
+     hidden-file refresh, and replica-lifetime assertions unchanged; do not
+     add production remount guards for a root-before-subtree test race.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
