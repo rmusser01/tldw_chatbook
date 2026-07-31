@@ -2176,7 +2176,7 @@ class FileNotesGitService:
                 reason,
                 "File Notes Git mutation admission was refused",
             )
-        self._commit_review_snapshots.clear()
+        self._discard_commit_review_snapshots()
         cycle: asyncio.Task[CommitReviewResult] | None = None
         try:
             cycle = self._create_task(
@@ -2270,7 +2270,7 @@ class FileNotesGitService:
                 "invalid_capability",
                 "Commit review capability is invalid or already consumed",
             )
-        self._commit_review_snapshots.clear()
+        self._discard_commit_review_snapshots()
         cycle: asyncio.Task[CommitOutcome] | None = None
         child_started_signal: asyncio.Future[bool] | None = None
         try:
@@ -2291,6 +2291,7 @@ class FileNotesGitService:
                 cycle.cancel()
             if child_started_signal is not None and not child_started_signal.done():
                 child_started_signal.set_result(False)
+            self._owner._discard_commit_authority(snapshot.capture)
             lease.release()
             raise
         self._commit_child_started = False
@@ -2366,7 +2367,9 @@ class FileNotesGitService:
             if snapshot.capture.binding == binding
         )
         for token in matching_tokens:
-            self._commit_review_snapshots.pop(token, None)
+            snapshot = self._commit_review_snapshots.pop(token, None)
+            if snapshot is not None:
+                self._owner._discard_commit_authority(snapshot.capture)
         self._retained_commit_operation = None
         return True
 
@@ -2835,6 +2838,12 @@ class FileNotesGitService:
                 self._remove_hooks_directory(hooks_directory)
             evidence = self._uncertain_commit
             if evidence is None or evidence.mutation_lease is not lease:
+                abandoned = (
+                    snapshot.capture
+                    if confirmation is None
+                    else confirmation.capture
+                )
+                self._owner._discard_commit_authority(abandoned)
                 lease.release()
 
     async def _revalidate_commit_confirmation(
@@ -2902,14 +2911,9 @@ class FileNotesGitService:
         identities = await self._resolve_commit_identities(repository)
         if identities != (snapshot.author, snapshot.committer):
             return None
-        capture = self._owner.capture_commit_authority(
+        capture = self._owner._recapture_commit_authority(
             lease,
-            binding=binding,
-            authority_generation=reviewed.authority_generation,
-            repository=repository,
-            head=reviewed.head,
-            group_sequence_ids=reviewed.group_sequence_ids,
-            _guarded_commit_identity=reviewed._guarded_commit_identity,
+            prior_capture=reviewed,
         )
         if capture is None:
             return None
@@ -3434,6 +3438,13 @@ class FileNotesGitService:
         self._settle_orphaned_commit()
         return self._orphaned_commit is not None
 
+    def _discard_commit_review_snapshots(self) -> None:
+        """Retire owner authority for every review capability being dropped."""
+        snapshots = tuple(self._commit_review_snapshots.values())
+        self._commit_review_snapshots.clear()
+        for snapshot in snapshots:
+            self._owner._discard_commit_authority(snapshot.capture)
+
     def _settle_orphaned_commit(self) -> None:
         """Settle one rebound child without recovering discarded commit proof."""
         lifecycle = self._orphaned_commit
@@ -3604,18 +3615,6 @@ class FileNotesGitService:
                 "Configure Git user.name and user.email, then review again."
             )
         author, committer = identities
-        capture = self._owner.capture_commit_authority(
-            lease,
-            binding=binding,
-            authority_generation=authority_generation,
-            repository=repository,
-            head=head,
-            group_sequence_ids=group_sequence_ids,
-        )
-        if capture is None:
-            return _blocked_commit_review("Session staging authority changed.")
-
-        token = object()
         included_notes: list[CommitIncludedNote] = []
         for group_id in proof.included_group_ids:
             change_type = _commit_review_change_type(
@@ -3632,6 +3631,24 @@ class FileNotesGitService:
                     change_type=change_type,
                 )
             )
+        capture = self._owner._capture_commit_authority_after_review(
+            lease,
+            binding=binding,
+            authority_generation=authority_generation,
+            repository=repository,
+            head=head,
+            group_sequence_ids=group_sequence_ids,
+            subject=message.partition(b"\n")[0].decode("utf-8"),
+            included_notes=tuple(
+                PushIncludedNote(note.group_id, note.display_text)
+                for note in included_notes
+            ),
+            change_types=tuple(note.change_type for note in included_notes),
+        )
+        if capture is None:
+            return _blocked_commit_review("Session staging authority changed.")
+
+        token = object()
         projection = CommitReviewProjection(
             branch=head.branch or "",
             old_commit=head.object_id or "",
@@ -3640,22 +3657,13 @@ class FileNotesGitService:
             author=author,
             committer=committer,
         )
-        candidate_seed = PushCandidateSeed.from_commit_capture(
-            capture,
-            subject=message.partition(b"\n")[0].decode("utf-8"),
-            included_notes=tuple(
-                PushIncludedNote(note.group_id, note.display_text)
-                for note in included_notes
-            ),
-            change_types=tuple(note.change_type for note in included_notes),
-        )
         self._commit_review_snapshots[token] = _CommitReviewSnapshot(
             capture=capture,
             proof=proof,
             message=message,
             author=author,
             committer=committer,
-            candidate_seed=candidate_seed,
+            candidate_seed=capture._candidate_seed,
         )
         return CommitReviewResult(
             "ready",
@@ -4267,7 +4275,7 @@ class FileNotesGitService:
             self._commit_child_started = False
             self._commit_child_started_signal = None
             self._retained_commit_operation = None
-            self._commit_review_snapshots.clear()
+            self._discard_commit_review_snapshots()
             if binding is not None:
                 self._owner.clear_ownership(binding)
                 self._owner.clear_status(binding)
@@ -4359,7 +4367,7 @@ class FileNotesGitService:
         self._commit_child_started = False
         self._commit_child_started_signal = None
         self._retained_commit_operation = None
-        self._commit_review_snapshots.clear()
+        self._discard_commit_review_snapshots()
         self._pending_status = None
         self._rerun_available = False
         self._status_dirty = False

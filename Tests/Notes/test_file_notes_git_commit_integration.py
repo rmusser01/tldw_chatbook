@@ -958,10 +958,8 @@ async def test_candidate_publication_review_snapshot_retains_provenance_seed(
     snapshot = service._commit_review_snapshots[result.handle._token]
     seed = snapshot.candidate_seed
     assert not hasattr(seed, "guarded_commit_capture")
-    assert (
-        seed._guarded_commit_identity
-        is snapshot.capture._guarded_commit_identity
-    )
+    assert not hasattr(seed, "_guarded_commit_identity")
+    assert seed is snapshot.capture._candidate_seed
     assert seed.subject == "Review subject"
     assert tuple(note.display_text for note in seed.included_notes) == ("note.md",)
     assert seed.change_types == ("Modified",)
@@ -1016,7 +1014,7 @@ async def test_candidate_publication_immediate_success_uses_owner_locked_seam(
     review_snapshot = service._commit_review_snapshots[review.handle._token]
     seed = review_snapshot.candidate_seed
     original_publish = FileNotesSessionOwner.publish_commit_outcome
-    observed: list[tuple[object, object]] = []
+    observed: list[tuple[object, object, object]] = []
 
     def observe_publication(self, lease, capture, publication):
         result = original_publish(self, lease, capture, publication)
@@ -1024,6 +1022,7 @@ async def test_candidate_publication_immediate_success_uses_owner_locked_seam(
             observed.append(
                 (
                     publication.candidate_seed,
+                    capture._candidate_seed,
                     self.snapshot(capture.binding).push_candidate,
                 )
             )
@@ -1040,7 +1039,8 @@ async def test_candidate_publication_immediate_success_uses_owner_locked_seam(
     assert outcome.state == "succeeded"
     assert len(observed) == 1
     assert observed[0][0] is seed
-    assert observed[0][1] == service._owner.snapshot(binding).push_candidate
+    assert observed[0][1] is seed
+    assert observed[0][2] == service._owner.snapshot(binding).push_candidate
     availability = service._owner.snapshot(binding).push_candidate
     assert availability is not None
     assert availability.candidate.parent_oid == review_snapshot.capture.head.object_id
@@ -1724,11 +1724,21 @@ async def test_complete_commit_proof_excludes_no_op_ownership_group(
     )
 
     assert result.state == "ready"
+    assert result.handle is not None
     assert result.projection is not None
     assert result.projection.included_note_count == 1
     assert tuple(note.display_text for note in result.projection.included_notes) == (
         "note.md",
     )
+    snapshot = service._commit_review_snapshots[result.handle._token]
+    reviewed_group_ids = tuple(
+        note.group_id for note in snapshot.candidate_seed.included_notes
+    )
+    assert frozenset(reviewed_group_ids) < frozenset(
+        snapshot.capture.group_sequence_ids
+    )
+    assert reviewed_group_ids == snapshot.proof.included_group_ids
+    assert snapshot.candidate_seed is snapshot.capture._candidate_seed
     await service.shutdown()
 
 
@@ -2219,6 +2229,42 @@ async def test_commit_confirmation_rejects_every_review_drift(
 
     assert outcome.state == "blocked"
     assert runner.commit_calls == 0
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_consumed_changed_message_retires_exact_review_authority(
+    tmp_path: Path,
+) -> None:
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("failure")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    reviewed = service._commit_review_snapshots[review.handle._token].capture
+
+    outcome = await service.start_commit(
+        binding,
+        review.handle,
+        subject="Changed subject",
+    )
+
+    assert outcome.state == "blocked"
+    assert runner.commit_calls == 0
+    later_lease = service._owner.try_acquire_mutation(binding)
+    assert later_lease is not None
+    try:
+        assert (
+            service._owner._recapture_commit_authority(
+                later_lease,
+                prior_capture=reviewed,
+            )
+            is None
+        )
+    finally:
+        later_lease.release()
     await service.shutdown()
 
 
@@ -2966,7 +3012,7 @@ async def test_commit_check_again_converges_to_exact_delayed_success(
     assert seed.subject == "Review subject"
     assert tuple(note.display_text for note in seed.included_notes) == ("note.md",)
     original_publish = FileNotesSessionOwner.publish_commit_outcome
-    observed: list[tuple[object, object]] = []
+    observed: list[tuple[object, object, object]] = []
 
     def observe_publication(self, lease, capture, publication):
         result = original_publish(self, lease, capture, publication)
@@ -2974,6 +3020,7 @@ async def test_commit_check_again_converges_to_exact_delayed_success(
             observed.append(
                 (
                     publication.candidate_seed,
+                    capture._candidate_seed,
                     self.snapshot(capture.binding).push_candidate,
                 )
             )
@@ -3000,7 +3047,8 @@ async def test_commit_check_again_converges_to_exact_delayed_success(
     assert service._uncertain_commit is None
     assert len(observed) == 1
     assert observed[0][0] is seed
-    assert observed[0][1] == snapshot.push_candidate
+    assert observed[0][1] is seed
+    assert observed[0][2] == snapshot.push_candidate
     assert snapshot.push_candidate is not None
     assert review.projection is not None
     assert snapshot.push_candidate.candidate.candidate_oid == new_head

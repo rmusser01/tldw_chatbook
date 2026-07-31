@@ -521,7 +521,7 @@ class GitMutationLease:
 
 @dataclass(frozen=True, slots=True)
 class CommitAuthorityCapture:
-    """Exact session-owned facts authorized by one active mutation lease."""
+    """Owner-issued internal facts for one exact reviewed commit."""
 
     binding: SessionBinding
     authority_generation: int
@@ -530,13 +530,7 @@ class CommitAuthorityCapture:
     head: HeadIdentity
     ownership: Mapping[int, StagingOwnership]
     group_sequence_ids: Mapping[int, tuple[int, ...]]
-    _guarded_commit_identity: object = field(repr=False, compare=False)
-    _mutation_token: object = field(repr=False, compare=False)
-    _quarantine_token: object | None = field(
-        default=None,
-        repr=False,
-        compare=False,
-    )
+    _candidate_seed: PushCandidateSeed = field(repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if (
@@ -565,7 +559,7 @@ class CommitAuthorityCapture:
 
 @dataclass(frozen=True, slots=True)
 class PushCandidateSeed:
-    """Immutable reviewed provenance carried through local commit recovery."""
+    """Immutable owner-issued provenance carried through commit recovery."""
 
     binding: SessionBinding
     repository: RepositoryIdentity
@@ -574,7 +568,6 @@ class PushCandidateSeed:
     subject: str
     included_notes: tuple[PushIncludedNote, ...]
     change_types: tuple[CommitReviewChangeType, ...]
-    _guarded_commit_identity: object = field(repr=False, compare=False)
 
     def __post_init__(self) -> None:
         notes = tuple(self.included_notes)
@@ -592,31 +585,10 @@ class PushCandidateSeed:
         object.__setattr__(self, "included_notes", notes)
         object.__setattr__(self, "change_types", change_types)
 
-    @classmethod
-    def from_commit_capture(
-        cls,
-        capture: CommitAuthorityCapture,
-        *,
-        subject: str,
-        included_notes: Sequence[PushIncludedNote],
-        change_types: Sequence[CommitReviewChangeType],
-    ) -> PushCandidateSeed:
-        """Copy the blob-free reviewed facts needed after group retirement."""
-        return cls(
-            binding=capture.binding,
-            repository=capture.repository,
-            repository_trust_generation=capture.repository_trust_generation,
-            parent_head=capture.head,
-            subject=subject,
-            included_notes=tuple(included_notes),
-            change_types=tuple(change_types),
-            _guarded_commit_identity=capture._guarded_commit_identity,
-        )
-
 
 @dataclass(frozen=True, slots=True)
-class PushCandidateCapture:
-    """Private exact authority for one validated local push candidate."""
+class _PushCandidateCapture:
+    """Owner-issued internal facts for one freshly proved push candidate."""
 
     binding: SessionBinding
     repository: RepositoryIdentity
@@ -625,9 +597,6 @@ class PushCandidateCapture:
     candidate: PushCandidateProjection
     change_types: tuple[CommitReviewChangeType, ...]
     sole_parent_oid: str
-    _guarded_commit_identity: object = field(repr=False, compare=False)
-    _owner: FileNotesSessionOwner = field(repr=False, compare=False)
-    _token: object = field(repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "change_types", tuple(self.change_types))
@@ -754,6 +723,7 @@ class _CommitQuarantine:
 
     token: object
     capture: CommitAuthorityCapture
+    _guarded_commit_identity: object = field(repr=False, compare=False)
     projection: CommitRecoveryProjection
 
 
@@ -761,12 +731,10 @@ class _CommitQuarantine:
 class _PushCandidate:
     """One private exact process-memory push candidate and its authority."""
 
-    token: object = field(repr=False, compare=False)
     generation: int
     binding: SessionBinding
     repository: RepositoryIdentity
     repository_trust_generation: int
-    _guarded_commit_identity: object = field(repr=False, compare=False)
     candidate: PushCandidateProjection
     change_types: tuple[CommitReviewChangeType, ...]
     sole_parent_oid: str
@@ -835,6 +803,10 @@ class FileNotesSessionOwner:
         "_git_shutdown_settlement",
         "_git_shutdown_settlement_future",
         "_git_status",
+        "_issued_commit_capture",
+        "_issued_commit_identity",
+        "_issued_commit_publication_token",
+        "_issued_commit_recovery",
         "_lock",
         "_mutation_token",
         "_next_sequence",
@@ -842,6 +814,7 @@ class FileNotesSessionOwner:
         "_root_commit_state",
         "_root_commit_token",
         "_push_candidate",
+        "_push_candidate_capture",
         "_push_candidate_generation",
         "_repository_trust_generation",
         "_shutdown",
@@ -866,6 +839,11 @@ class FileNotesSessionOwner:
         self._repository_trust_generation = 0
         self._push_candidate_generation = 0
         self._push_candidate: _PushCandidate | None = None
+        self._push_candidate_capture: _PushCandidateCapture | None = None
+        self._issued_commit_capture: CommitAuthorityCapture | None = None
+        self._issued_commit_identity: object | None = None
+        self._issued_commit_publication_token: object | None = None
+        self._issued_commit_recovery = False
         self._changes: list[SequencedSessionChange] = []
         self._next_sequence = 1
         self._trusted_repository: RepositoryIdentity | None = None
@@ -1271,7 +1249,7 @@ class FileNotesSessionOwner:
                 self._invalidate_git_authority_locked()
             return True
 
-    def capture_commit_authority(
+    def _capture_commit_authority_after_review(
         self,
         lease: GitMutationLease,
         *,
@@ -1280,13 +1258,17 @@ class FileNotesSessionOwner:
         repository: RepositoryIdentity,
         head: HeadIdentity,
         group_sequence_ids: Mapping[int, Collection[int]],
-        _guarded_commit_identity: object | None = None,
+        subject: str,
+        included_notes: Sequence[PushIncludedNote],
+        change_types: Sequence[CommitReviewChangeType],
     ) -> CommitAuthorityCapture | None:
-        """Capture exact commit authority under one active mutation lease."""
+        """Issue authority for exact provenance proved by the Git service."""
         sequence_ids = {
             group_id: tuple(group_sequences)
             for group_id, group_sequences in group_sequence_ids.items()
         }
+        notes = tuple(included_notes)
+        reviewed_change_types = tuple(change_types)
         with self._lock:
             if (
                 self._shutdown
@@ -1304,7 +1286,26 @@ class FileNotesSessionOwner:
                 )
             ):
                 return None
-            return CommitAuthorityCapture(
+            if any(
+                note.group_id not in sequence_ids
+                for note in notes
+            ):
+                return None
+            try:
+                seed = PushCandidateSeed(
+                    binding=binding,
+                    repository=repository,
+                    repository_trust_generation=(
+                        self._repository_trust_generation
+                    ),
+                    parent_head=head,
+                    subject=subject,
+                    included_notes=notes,
+                    change_types=reviewed_change_types,
+                )
+            except ValueError:
+                return None
+            capture = CommitAuthorityCapture(
                 binding=binding,
                 authority_generation=authority_generation,
                 repository_trust_generation=self._repository_trust_generation,
@@ -1312,15 +1313,79 @@ class FileNotesSessionOwner:
                 head=head,
                 ownership=self._staging_ownership,
                 group_sequence_ids=sequence_ids,
-                _guarded_commit_identity=(
-                    object()
-                    if _guarded_commit_identity is None
-                    else _guarded_commit_identity
-                ),
-                _mutation_token=lease._token,
+                _candidate_seed=seed,
             )
+            self._issued_commit_capture = capture
+            self._issued_commit_identity = object()
+            self._issued_commit_publication_token = None
+            self._issued_commit_recovery = False
+            return capture
 
-    def capture_push_candidate(
+    def _recapture_commit_authority(
+        self,
+        lease: GitMutationLease,
+        *,
+        prior_capture: CommitAuthorityCapture,
+    ) -> CommitAuthorityCapture | None:
+        """Reissue only the exact prior owner capture after fresh proof."""
+        with self._lock:
+            if (
+                self._shutdown
+                or self._commit_quarantine is not None
+                or self._status_token is not None
+                or prior_capture is not self._issued_commit_capture
+                or self._issued_commit_identity is None
+                or self._issued_commit_publication_token is not None
+                or not self._lease_is_active_locked(lease)
+                or prior_capture.binding != self._binding
+                or prior_capture.authority_generation
+                != self._git_authority_generation
+                or prior_capture.repository_trust_generation
+                != self._repository_trust_generation
+                or prior_capture.repository != self._trusted_repository
+                or not self._commit_capture_facts_match_locked(
+                    prior_capture.repository,
+                    prior_capture.head,
+                    prior_capture.ownership,
+                    prior_capture.group_sequence_ids,
+                )
+            ):
+                return None
+            capture = CommitAuthorityCapture(
+                binding=prior_capture.binding,
+                authority_generation=prior_capture.authority_generation,
+                repository_trust_generation=(
+                    prior_capture.repository_trust_generation
+                ),
+                repository=prior_capture.repository,
+                head=prior_capture.head,
+                ownership=prior_capture.ownership,
+                group_sequence_ids=prior_capture.group_sequence_ids,
+                _candidate_seed=prior_capture._candidate_seed,
+            )
+            self._issued_commit_capture = capture
+            self._issued_commit_publication_token = lease._token
+            self._issued_commit_recovery = False
+            return capture
+
+    def _discard_commit_authority(
+        self,
+        capture: CommitAuthorityCapture,
+    ) -> bool:
+        """Retire only the exact latest authority abandoned by the service."""
+        with self._lock:
+            if (
+                self._commit_quarantine is not None
+                or capture is not self._issued_commit_capture
+            ):
+                return False
+            self._issued_commit_capture = None
+            self._issued_commit_identity = None
+            self._issued_commit_publication_token = None
+            self._issued_commit_recovery = False
+            return True
+
+    def _capture_push_candidate_after_fresh_proof(
         self,
         binding: SessionBinding,
         *,
@@ -1328,8 +1393,8 @@ class FileNotesSessionOwner:
         repository: RepositoryIdentity,
         head: HeadIdentity,
         sole_parent_oid: str,
-    ) -> PushCandidateCapture | None:
-        """Validate exact local lineage and capture one private candidate.
+    ) -> _PushCandidateCapture | None:
+        """Issue internal candidate authority after trusted fresh local proof.
 
         The caller supplies fresh local-only repository, attached-HEAD, and
         sole-parent proof. A mismatch revokes only the exact candidate
@@ -1362,7 +1427,7 @@ class FileNotesSessionOwner:
             if not owner_facts_match or not lineage_matches:
                 self._revoke_push_candidate_locked()
                 return None
-            return PushCandidateCapture(
+            capture = _PushCandidateCapture(
                 binding=candidate.binding,
                 repository=candidate.repository,
                 repository_trust_generation=(
@@ -1372,28 +1437,17 @@ class FileNotesSessionOwner:
                 candidate=candidate.candidate,
                 change_types=candidate.change_types,
                 sole_parent_oid=candidate.sole_parent_oid,
-                _guarded_commit_identity=candidate._guarded_commit_identity,
-                _owner=self,
-                _token=candidate.token,
             )
+            self._push_candidate_capture = capture
+            return capture
 
-    def clear_push_candidate(self, capture: PushCandidateCapture) -> bool:
+    def clear_push_candidate(self, capture: _PushCandidateCapture) -> bool:
         """Compare-and-clear only one exact private candidate capability."""
         with self._lock:
             candidate = self._push_candidate
             if (
                 candidate is None
-                or capture._owner is not self
-                or capture._token is not candidate.token
-                or capture.binding != candidate.binding
-                or capture.repository != candidate.repository
-                or capture.repository_trust_generation
-                != candidate.repository_trust_generation
-                or capture.candidate_generation != candidate.generation
-                or capture.candidate != candidate.candidate
-                or capture.sole_parent_oid != candidate.sole_parent_oid
-                or capture._guarded_commit_identity
-                is not candidate._guarded_commit_identity
+                or capture is not self._push_candidate_capture
             ):
                 return False
             self._revoke_push_candidate_locked()
@@ -1425,6 +1479,9 @@ class FileNotesSessionOwner:
                 publication,
             ):
                 return CommitPublicationResult(published=False)
+            guarded_commit_identity = self._issued_commit_identity
+            if guarded_commit_identity is None:
+                return CommitPublicationResult(published=False)
             push_candidate: _PushCandidate | None = None
             if publication.state == "succeeded":
                 push_candidate = self._prepare_push_candidate_locked(
@@ -1435,7 +1492,7 @@ class FileNotesSessionOwner:
                     return CommitPublicationResult(published=False)
 
             recovery_capability: CommitRecoveryCapability | None = None
-            recovering = capture._quarantine_token is not None
+            recovering = self._commit_quarantine is not None
             if publication.state == "succeeded":
                 retired = frozenset(publication.retired_sequence_ids)
                 self._changes = [
@@ -1447,6 +1504,7 @@ class FileNotesSessionOwner:
                 assert push_candidate is not None
                 self._push_candidate_generation = push_candidate.generation
                 self._push_candidate = push_candidate
+                self._push_candidate_capture = None
                 if self._shutdown:
                     self._revoke_push_candidate_locked()
             elif publication.state == "failed_unchanged":
@@ -1464,14 +1522,19 @@ class FileNotesSessionOwner:
                     assert self._commit_quarantine is not None
                     quarantine_token = self._commit_quarantine.token
                     quarantine_capture = self._commit_quarantine.capture
+                    quarantine_identity = (
+                        self._commit_quarantine._guarded_commit_identity
+                    )
                 else:
                     quarantine_token = object()
                     quarantine_capture = capture
+                    quarantine_identity = guarded_commit_identity
                 self._staging_ownership.clear()
                 self._clear_git_status_locked(invalidate_authority=False)
                 self._commit_quarantine = _CommitQuarantine(
                     token=quarantine_token,
                     capture=quarantine_capture,
+                    _guarded_commit_identity=quarantine_identity,
                     projection=publication.recovery_projection,
                 )
                 recovery_capability = CommitRecoveryCapability(
@@ -1479,6 +1542,10 @@ class FileNotesSessionOwner:
                     quarantine_token,
                 )
 
+            self._issued_commit_capture = None
+            self._issued_commit_identity = None
+            self._issued_commit_publication_token = None
+            self._issued_commit_recovery = False
             self._invalidate_git_authority_locked()
             return CommitPublicationResult(
                 published=True,
@@ -1530,12 +1597,14 @@ class FileNotesSessionOwner:
                 head=quarantine.capture.head,
                 ownership=quarantine.capture.ownership,
                 group_sequence_ids=quarantine.capture.group_sequence_ids,
-                _guarded_commit_identity=(
-                    quarantine.capture._guarded_commit_identity
-                ),
-                _mutation_token=token,
-                _quarantine_token=quarantine.token,
+                _candidate_seed=quarantine.capture._candidate_seed,
             )
+            self._issued_commit_capture = capture
+            self._issued_commit_identity = (
+                quarantine._guarded_commit_identity
+            )
+            self._issued_commit_publication_token = token
+            self._issued_commit_recovery = True
             return CommitRecoveryAdmission(
                 lease=lease,
                 capture=capture,
@@ -1682,6 +1751,7 @@ class FileNotesSessionOwner:
                     self._shutdown_state = "open"
                 else:
                     self._commit_publication_closed = True
+                    self._discard_commit_quarantine_locked()
                     self._shutdown_error = error
                     self._shutdown_state = "failed"
                 self._shutdown_condition.notify_all()
@@ -1815,7 +1885,9 @@ class FileNotesSessionOwner:
         if (
             self._commit_publication_closed
             or not self._lease_is_active_locked(lease)
-            or capture._mutation_token is not lease._token
+            or capture is not self._issued_commit_capture
+            or self._issued_commit_identity is None
+            or self._issued_commit_publication_token is not lease._token
             or capture.binding != self._binding
             or capture.authority_generation != self._git_authority_generation
             or capture.repository_trust_generation
@@ -1824,11 +1896,10 @@ class FileNotesSessionOwner:
         ):
             return False
 
-        quarantine_token = capture._quarantine_token
-        if quarantine_token is None:
+        quarantine = self._commit_quarantine
+        if quarantine is None:
             return (
-                self._commit_quarantine is None
-                and dict(capture.ownership) == self._staging_ownership
+                dict(capture.ownership) == self._staging_ownership
                 and self._commit_capture_facts_match_locked(
                     capture.repository,
                     capture.head,
@@ -1837,13 +1908,11 @@ class FileNotesSessionOwner:
                 )
             )
 
-        quarantine = self._commit_quarantine
-        original = None if quarantine is None else quarantine.capture
+        original = quarantine.capture
         return (
-            quarantine is not None
-            and quarantine.token is quarantine_token
-            and not self._staging_ownership
-            and original is not None
+            not self._staging_ownership
+            and self._issued_commit_identity
+            is quarantine._guarded_commit_identity
             and original.binding == capture.binding
             and original.repository == capture.repository
             and original.head == capture.head
@@ -1861,9 +1930,11 @@ class FileNotesSessionOwner:
         return (
             not self._commit_publication_closed
             and self._lease_is_active_locked(lease)
-            and capture._mutation_token is lease._token
+            and capture is self._issued_commit_capture
+            and self._issued_commit_identity is not None
+            and self._issued_commit_publication_token is lease._token
+            and not self._issued_commit_recovery
             and capture.binding == self._binding
-            and capture._quarantine_token is None
             and self._commit_quarantine is None
         )
 
@@ -1951,7 +2022,7 @@ class FileNotesSessionOwner:
     ) -> bool:
         included_group_ids = tuple(note.group_id for note in seed.included_notes)
         return (
-            seed._guarded_commit_identity is capture._guarded_commit_identity
+            seed is capture._candidate_seed
             and seed.binding == capture.binding
             and seed.repository == capture.repository
             and seed.repository_trust_generation
@@ -1987,12 +2058,10 @@ class FileNotesSessionOwner:
         except PushContractError:
             return None
         return _PushCandidate(
-            token=object(),
             generation=self._push_candidate_generation + 1,
             binding=capture.binding,
             repository=capture.repository,
             repository_trust_generation=capture.repository_trust_generation,
-            _guarded_commit_identity=seed._guarded_commit_identity,
             candidate=projection,
             change_types=seed.change_types,
             sole_parent_oid=parent_oid,
@@ -2041,6 +2110,7 @@ class FileNotesSessionOwner:
             self._revoke_push_candidate_locked()
 
     def _revoke_push_candidate_locked(self) -> None:
+        self._push_candidate_capture = None
         if self._push_candidate is None:
             return
         self._push_candidate = None
@@ -2048,12 +2118,24 @@ class FileNotesSessionOwner:
 
     def _invalidate_git_authority_locked(self) -> None:
         self._git_authority_generation += 1
+        if (
+            self._mutation_token is None
+            and self._commit_quarantine is None
+        ):
+            self._issued_commit_capture = None
+            self._issued_commit_identity = None
+            self._issued_commit_publication_token = None
+            self._issued_commit_recovery = False
 
     def _discard_commit_quarantine_locked(self) -> None:
-        if self._commit_quarantine is None:
-            return
+        had_quarantine = self._commit_quarantine is not None
         self._commit_quarantine = None
-        self._invalidate_git_authority_locked()
+        self._issued_commit_capture = None
+        self._issued_commit_identity = None
+        self._issued_commit_publication_token = None
+        self._issued_commit_recovery = False
+        if had_quarantine:
+            self._invalidate_git_authority_locked()
 
     def _release_transition(self, token: object) -> None:
         with self._lock:
@@ -2063,6 +2145,11 @@ class FileNotesSessionOwner:
         with self._lock:
             if self._mutation_token is token:
                 self._mutation_token = None
+                if self._issued_commit_publication_token is token:
+                    self._issued_commit_capture = None
+                    self._issued_commit_identity = None
+                    self._issued_commit_publication_token = None
+                    self._issued_commit_recovery = False
 
     def _release_status(self, token: object) -> None:
         with self._lock:
