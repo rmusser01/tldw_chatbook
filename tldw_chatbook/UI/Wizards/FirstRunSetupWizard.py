@@ -574,8 +574,13 @@ class ModelStep(SetupStep):
             except Exception:
                 pass
         try:
+            # TASK-1503: display-case the provider in user copy — raw keys
+            # like "anthropic"/"llama_cpp" are internals, not UI language.
+            from tldw_chatbook.Chat.provider_catalog import provider_display_name
+
+            display = provider_display_name(provider_key) if provider_key else ""
             self.query_one("#setup-model-provider-line", Static).update(
-                f"Models for {provider_value or 'your provider'}."
+                f"Models for {display or 'your provider'}."
             )
         except Exception:
             pass
@@ -649,9 +654,18 @@ class ModelStep(SetupStep):
         # ones are still present, raising DuplicateIds.
         await radio_set.remove_children()
         if models:
+            # TASK-1503: the first entry (curated-default / top discovery hit)
+            # carries a "recommended" tag in its LABEL only; the clean model
+            # id lives on the button as `_model_id` so selection and commits
+            # never round-trip display decoration into config.
+            def _button(index: int, model_id: str) -> SetupRadioButton:
+                label = f"{model_id}   (recommended)" if index == 0 else model_id
+                button = SetupRadioButton(label, id=f"setup-model-option-{index}")
+                button._model_id = model_id
+                return button
+
             await radio_set.mount_all(
-                SetupRadioButton(model_id, id=f"setup-model-option-{index}")
-                for index, model_id in enumerate(models)
+                _button(index, model_id) for index, model_id in enumerate(models)
             )
         elif no_provider:
             await radio_set.mount(
@@ -669,7 +683,15 @@ class ModelStep(SetupStep):
     @on(RadioSet.Changed, "#setup-model-choice")
     def _on_model_chosen(self, event: RadioSet.Changed) -> None:
         if event.pressed is not None:
-            self.set_selected_model(str(event.pressed.label))
+            self.set_selected_model_from_button(event.pressed)
+
+    def set_selected_model_from_button(self, button: RadioButton) -> None:
+        """Select via a radio row, reading the clean id, not the label.
+
+        TASK-1503: labels may carry display decoration ("(recommended)");
+        the undecorated model id is stored on the button as ``_model_id``.
+        """
+        self.set_selected_model(getattr(button, "_model_id", str(button.label)))
 
     @on(Input.Changed, "#setup-model-custom")
     def _on_custom_model(self, event: Input.Changed) -> None:
@@ -689,7 +711,12 @@ class ModelStep(SetupStep):
         elif self._model_id_from_custom_input:
             self._model_id_from_custom_input = False
             pressed = self._live_pressed_radio()
-            self.selected_model_id = str(pressed.label) if pressed is not None else ""
+            # TASK-1503: clean id, never the (possibly decorated) label.
+            self.selected_model_id = (
+                str(getattr(pressed, "_model_id", pressed.label))
+                if pressed is not None
+                else ""
+            )
 
     def set_selected_model(self, model_id: str) -> None:
         self.selected_model_id = model_id
@@ -740,7 +767,10 @@ class ModelStep(SetupStep):
         if self.selected_model_id:
             return self.selected_model_id
         pressed = self._live_pressed_radio()
-        return str(pressed.label) if pressed is not None else ""
+        if pressed is None:
+            return ""
+        # TASK-1503: read the clean id, never the (possibly decorated) label.
+        return str(getattr(pressed, "_model_id", pressed.label))
 
     async def commit(self) -> tuple[bool, str]:
         _, provider_value = self._current_provider()
@@ -796,12 +826,17 @@ class RagStep(SetupStep):
                 # Static.update() treats [..] as Rich markup by default, so the
                 # extras-package brackets must be escaped or "[embeddings_rag]"
                 # silently vanishes from the rendered text instead of showing.
+                # TASK-1502: quoted plainly — backticks are markdown idiom and
+                # render literally in a TUI.
                 "RAG needs optional dependencies that aren't installed. Install the "
-                "extras package `tldw_chatbook\\[embeddings_rag]` with your package "
+                "extras package \"tldw_chatbook\\[embeddings_rag]\" with your package "
                 "manager, then revisit Settings ▸ RAG. Skipping for now is fine."
             )
             try:
-                self.query_one("#setup-rag-model-choice", RadioSet).disabled = True
+                # TASK-1502: hide the model list outright — a wall of disabled
+                # options under a "not installed" message reads as breakage
+                # and adds nothing the user can act on.
+                self.query_one("#setup-rag-model-choice", RadioSet).display = False
             except Exception:
                 pass
 

@@ -921,8 +921,11 @@ async def test_model_step_provider_switch_does_not_resurrect_stale_pressed_radio
         }
         step.on_show()
         await pilot.pause(0.1)
-        labels = [str(b.label) for b in radio_set.query(RadioButton)]
-        assert labels == ["model-b"]  # the re-render itself landed correctly
+        ids = [
+            str(getattr(b, "_model_id", b.label))
+            for b in radio_set.query(RadioButton)
+        ]
+        assert ids == ["model-b"]  # the re-render itself landed correctly
 
         ok, error = await step.commit()
         assert ok, error
@@ -989,8 +992,11 @@ async def test_model_step_curated_fallback_bridges_raw_provider_key(monkeypatch)
         step.on_show()
         await pilot.pause(0.1)
         radio_set = step.query_one("#setup-model-choice", RadioSet)
-        labels = [str(button.label) for button in radio_set.query(RadioButton)]
-        assert labels == ["gpt-curated-1", "gpt-curated-2"]
+        ids = [
+            str(getattr(button, "_model_id", button.label))
+            for button in radio_set.query(RadioButton)
+        ]
+        assert ids == ["gpt-curated-1", "gpt-curated-2"]
 
 
 @pytest.mark.asyncio
@@ -1031,8 +1037,11 @@ async def test_model_step_uses_scope_service_when_available():
             "mode": "local", "provider": "openai", "staged_settings": None
         }
         radio_set = step.query_one("#setup-model-choice", RadioSet)
-        labels = [str(button.label) for button in radio_set.query(RadioButton)]
-        assert labels == ["svc-model-a", "svc-model-b"]
+        ids = [
+            str(getattr(button, "_model_id", button.label))
+            for button in radio_set.query(RadioButton)
+        ]
+        assert ids == ["svc-model-a", "svc-model-b"]
 
 
 @pytest.mark.asyncio
@@ -1070,8 +1079,11 @@ async def test_model_step_discovery_timeout_falls_back_to_curated(monkeypatch):
         step.on_show()
         await pilot.pause(0.3)
         radio_set = step.query_one("#setup-model-choice", RadioSet)
-        labels = [str(button.label) for button in radio_set.query(RadioButton)]
-        assert labels == ["fallback-model"]
+        ids = [
+            str(getattr(button, "_model_id", button.label))
+            for button in radio_set.query(RadioButton)
+        ]
+        assert ids == ["fallback-model"]
 
 
 def test_model_step_worker_group_is_not_wizard_advance():
@@ -2194,3 +2206,64 @@ class TestSetupRadioButtonStructuralState:
                 if not isinstance(rb, SetupRadioButton)
             ]
             assert not plain, f"plain RadioButtons in wizard: {[rb.id or str(rb.label) for rb in plain]}"
+
+
+@pytest.mark.asyncio
+async def test_rag_step_missing_deps_hides_model_list_and_copy_has_no_backticks():
+    """TASK-1502: no disabled model wall under the not-installed message."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import RagStep
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = RagStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="rag", title="RAG", step_number=4),
+        deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        radio_set = step.query_one(RadioSet)
+        assert not radio_set.display, "disabled model list must be hidden entirely"
+        copy = str(step.query_one("#setup-rag-status", Static).render())
+        assert "`" not in copy
+
+
+@pytest.mark.asyncio
+async def test_model_step_subtitle_display_cases_provider_and_marks_recommended():
+    """TASK-1503: no raw provider keys in copy; first curated model marked."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ModelStep, SetupRadioButton
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={"provider": {"provider_key": "anthropic", "provider_value": "anthropic"}},
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = ModelStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="model", title="Model", step_number=3),
+        discover_models=AsyncMock(return_value=["model-alpha", "model-beta"]),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.3)
+        subtitle = str(step.query_one("#setup-model-provider-line", Static).render())
+        assert "anthropic" not in subtitle and "Anthropic" in subtitle
+        buttons = list(step.query(SetupRadioButton))
+        assert "recommended" in str(buttons[0].label)
+        assert "recommended" not in str(buttons[1].label)
+        # selecting the recommended row must commit the CLEAN model id
+        step.set_selected_model_from_button(buttons[0])
+        assert step.selected_model_id == "model-alpha"
