@@ -1504,3 +1504,99 @@ async def test_add_target_picker_option_labels_escape_markup_hazard_names(
         option_texts = [str(label) for label, _value in select._options]
         expected = escape_markup("loud[/]target (m)")
         assert any(text == expected for text in option_texts), option_texts
+
+
+@pytest.fixture
+def bench_with_two_saved_targets_only(evals_db: EvalsDB) -> tuple[str, dict[str, str]]:
+    """Two targets, both already saved on the bench, and NO other
+    `llama_cpp` `eval_models` row anywhere in the db -- "zero llama models
+    beyond them", per the whole-branch pre-PR review's own scenario for
+    the staged-edit-survival regression test below. Two (not one, not
+    three) so the test can drive two SEPARATE staged Remove mutations in a
+    row, each independently re-checked against the same unsaved Name/
+    probe text.
+    """
+    first_id = _make_model(evals_db, "first-target", model_id="m1")
+    second_id = _make_model(evals_db, "second-target", model_id="m2")
+    dataset_id = evals_db.create_dataset(
+        name="two-target-set",
+        format="custom",
+        source_path="inline:two-target-set",
+        metadata={"sample_count": 4},
+    )
+    config = BenchConfig(
+        name="two-target bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(first_id, second_id),
+    )
+    task_id = save_bench(evals_db, config)
+    return task_id, {"first": first_id, "second": second_id}
+
+
+@pytest.mark.asyncio
+async def test_staged_target_edits_survive_unsaved_name_and_probe_text(
+    evals_app, bench_with_two_saved_targets_only
+):
+    """Whole-branch pre-PR review: every OTHER Task 6 test drives a target
+    mutation against a form nobody has typed into, so nothing previously
+    proved the "targeted refresh, not a whole-widget recompose" contract
+    `_refresh_targets_section`'s own docstring claims -- a future
+    refactor to a bare `self.refresh(recompose=True)` there would pass
+    every existing test while silently discarding a user's unsaved Name/
+    Probes edit the instant they touched Add or Remove. This types into
+    both, then drives TWO separate staged Remove mutations in a row,
+    re-asserting survival after each -- not just the first, since a
+    recompose-based regression could plausibly be masked by state that
+    happens to survive exactly one refresh but not a second.
+    """
+    task_id, target_ids = bench_with_two_saved_targets_only
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        name_input = screen.query_one("#evals-bench-name", Input)
+        name_input.value = "typed-not-saved"
+        probes_area = screen.query_one("#evals-bench-probes", TextArea)
+        probes_area.text = "unsaved probe line"
+
+        assert screen.query_one("#evals-bench-target-0")
+        assert screen.query_one("#evals-bench-target-1")
+
+        # First staged mutation: remove the first target row.
+        await pilot.click("#evals-bench-target-remove-0")
+        await pilot.pause()
+
+        assert screen.query_one("#evals-bench-name", Input).value == "typed-not-saved"
+        assert screen.query_one("#evals-bench-probes", TextArea).text == "unsaved probe line"
+        # Also proves the SAME widget instances survived, not merely
+        # matching values from a rebuilt pair -- a recompose would have
+        # replaced both with fresh instances reading the last-SAVED
+        # config, which happens to have an empty description/name-suffix
+        # collision risk this identity check sidesteps entirely.
+        assert screen.query_one("#evals-bench-name", Input) is name_input
+        assert screen.query_one("#evals-bench-probes", TextArea) is probes_area
+        assert screen.query_one("#evals-bench-target-0")
+        assert not screen.query("#evals-bench-target-1")
+
+        # Second staged mutation: remove the remaining target too (it is
+        # now re-indexed to row 0 -- see `_build_target_row`'s own
+        # index-derived-id comment).
+        await pilot.click("#evals-bench-target-remove-0")
+        await pilot.pause()
+
+        assert screen.query_one("#evals-bench-name", Input).value == "typed-not-saved"
+        assert screen.query_one("#evals-bench-probes", TextArea).text == "unsaved probe line"
+        assert screen.query_one("#evals-bench-name", Input) is name_input
+        assert screen.query_one("#evals-bench-probes", TextArea) is probes_area
+        assert screen.query_one("#evals-bench-targets-empty")
+        assert not screen.query(".evals-bench-target-row")
+
+        # Neither mutation ever pressed Save -- both edits are still
+        # genuinely unsaved, and no form error was ever triggered. Scoped
+        # to the form's own error Static, mirroring the identical check in
+        # test_save_persists_every_field_and_reselects_the_bench.
+        assert not screen.query_one("#evals-bench-form-error").display
