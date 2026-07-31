@@ -18,7 +18,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
-from textual.events import DescendantFocus, Key
+from textual.events import DescendantFocus, Key, Resize
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -1176,11 +1176,7 @@ def _fold_long_tokens(text: str, limit: int = _FOLD_TOKEN_LIMIT) -> str:
         The text with pathological tokens folded at separator boundaries.
     """
 
-    def fold_token(match: re.Match[str]) -> str:
-        token = match.group(0)
-        if len(token) <= limit or not re.search(r"[./]", token):
-            return token
-        segments = re.split(r"(?<=[./])", token)
+    def pack(segments: list[str]) -> list[str]:
         lines: list[str] = []
         current = ""
         for segment in segments:
@@ -1191,7 +1187,24 @@ def _fold_long_tokens(text: str, limit: int = _FOLD_TOKEN_LIMIT) -> str:
                 current += segment
         if current:
             lines.append(current)
-        return "\n  ".join(lines)
+        return lines
+
+    def fold_token(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if len(token) <= limit or not re.search(r"[./]", token):
+            return token
+        # task-1623: break at "/" boundaries first so a path never splits
+        # its filename at the extension dot ("config." / "toml" read as a
+        # mid-filename break in the critique); fall back to "." breaks
+        # only for slash-free chunks that still exceed the limit.
+        slash_chunks = re.split(r"(?<=/)", token)
+        segments: list[str] = []
+        for chunk in slash_chunks:
+            if len(chunk) > limit:
+                segments.extend(re.split(r"(?<=\.)", chunk))
+            else:
+                segments.append(chunk)
+        return "\n  ".join(pack(segments))
 
     return re.sub(r"\S+", fold_token, text)
 
@@ -2016,6 +2029,7 @@ class SettingsScreen(BaseAppScreen):
         # mounted) -- `_select_category` alone only covers a later in-session
         # switch INTO the category.
         self._maybe_refresh_rag_index_status_on_show()
+        self.call_after_refresh(self._update_inspector_overflow_hint)
 
     def on_screen_resume(self) -> None:
         self._queue_sync_rows_refresh()
@@ -4071,6 +4085,16 @@ class SettingsScreen(BaseAppScreen):
         category_values = self._filtered_category_values(query_text)
         if category_values:
             self._select_category(category_values[0], restore_focus=True)
+            # task-1621: the filter has done its job -- clear it so the
+            # rail returns to the full category map. Residue used to prune
+            # the rail to the last search's matches for the rest of the
+            # session, with no clear-filter affordance advertised.
+            self.category_search_query = ""
+            try:
+                self.query_one("#settings-category-search", Input).value = ""
+            except QueryError:
+                pass
+            self._apply_category_search_filter()
 
     def _category_state_banner_text(self, category: SettingsCategoryId) -> str:
         if (
@@ -4098,34 +4122,77 @@ class SettingsScreen(BaseAppScreen):
             return (
                 "State: Unsaved changes | Save or Revert before leaving this category."
             )
-        if category is SettingsCategoryId.ADVANCED_CONFIG:
-            return "State: Guarded | Save blocked until the current text validates; backup created before overwrite."
-        if category is SettingsCategoryId.PROVIDERS_MODELS:
-            return "State: Shared with Console"
-        if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
-            return "State: Console scoped | Changes affect global Console fallbacks after save."
-        if category is SettingsCategoryId.LIBRARY_RAG:
-            return "State: Library scoped | Defaults affect future Library/RAG retrieval and display."
+        # task-1620: lead with the persistence badge -- the footer hints
+        # already honestly come and go with each category's save model,
+        # but nothing NAMED the model, so users trained on Save/Revert got
+        # silent contract changes (five models coexist on this screen).
+        badge = self._persistence_badge(category)
+        return f"State: {badge} | {self._category_state_scope_text(category)}"
+
+    def _persistence_badge(self, category: SettingsCategoryId) -> str:
+        """Name the save model the active category uses (task-1620).
+
+        Args:
+            category: The active Settings category.
+
+        Returns:
+            A short badge such as "Draft — save with s" that leads the
+            State banner in the same position on every category.
+        """
+        if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+            return "Draft — save with s"
         if category is SettingsCategoryId.IMAGE_GENERATION:
-            return "State: Image Gen scoped | Defaults affect future Console image generations."
-        if category is SettingsCategoryId.DIAGNOSTICS:
-            return "State: Safe to run | Validation and reload expose status without writing raw TOML."
-        if category is SettingsCategoryId.APPEARANCE:
-            return "State: Visual defaults | Settings owns launch and web display defaults."
-        if category is SettingsCategoryId.STORAGE:
+            return "Draft — Save/Revert below"
+        if category is SettingsCategoryId.SPLASH_SCREEN:
+            return "Auto-saved"
+        if category is SettingsCategoryId.WORKSPACES:
+            return "Applies immediately"
+        if category is SettingsCategoryId.THEME:
+            return "Managed in editor"
+        if category is SettingsCategoryId.INTERNAL_PROMPTS:
+            return "Per-item Save/Reset"
+        if category is SettingsCategoryId.ADVANCED_CONFIG:
+            return "Validate, then Save"
+        return "Read-only here"
+
+    def _category_state_scope_text(self, category: SettingsCategoryId) -> str:
+        """The category-scope half of the State banner (after the badge)."""
+        if category is SettingsCategoryId.ADVANCED_CONFIG:
             return (
-                "State: Storage defaults | Changes apply on next launch; "
-                "active handles stay unchanged."
+                "Save blocked until the current text validates; backup "
+                "created before overwrite."
             )
+        if category is SettingsCategoryId.PROVIDERS_MODELS:
+            return "Shared with Console"
+        if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
+            return "Changes affect global Console fallbacks after save."
+        if category is SettingsCategoryId.LIBRARY_RAG:
+            return "Defaults affect future Library/RAG retrieval and display."
+        if category is SettingsCategoryId.IMAGE_GENERATION:
+            return "Defaults affect future Console image generations."
+        if category is SettingsCategoryId.DIAGNOSTICS:
+            return "Validation and reload expose status without writing raw TOML."
+        if category is SettingsCategoryId.APPEARANCE:
+            return "Settings owns launch and web display defaults."
+        if category is SettingsCategoryId.STORAGE:
+            return "Changes apply on next launch; active handles stay unchanged."
         if category is SettingsCategoryId.PRIVACY_SECURITY:
-            return "State: Local privacy | Secrets stay redacted in validation and diagnostics."
+            return "Secrets stay redacted in validation and diagnostics."
+        if category is SettingsCategoryId.SPLASH_SCREEN:
+            return "Splash changes take effect as you make them."
+        if category is SettingsCategoryId.WORKSPACES:
+            return (
+                "Each action is reversible: unarchive restores, rename "
+                "again, or set another workspace active."
+            )
+        if category is SettingsCategoryId.THEME:
+            return "Use the editor's Apply/Save/Reset buttons below."
+        if category is SettingsCategoryId.INTERNAL_PROMPTS:
+            return "Each prompt saves and resets on its own."
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
             contract = self._domain_category_contract(category)
-            return (
-                "State: View only | "
-                f"Manage this in {contract.owner_destination}."
-            )
-        return "State: Active | Review readiness across Settings categories."
+            return f"Manage this in {contract.owner_destination}."
+        return "Review readiness across Settings categories."
 
     def _render_category_state_banner(self, category: SettingsCategoryId) -> Static:
         banner = Static(
@@ -4389,14 +4456,35 @@ class SettingsScreen(BaseAppScreen):
             self._settings_drafts.pop(category, None)
 
     def _console_behavior_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
-        """Focused-field guidance for Console Behavior (task-5).
+        """Focused-field guidance for Console Behavior (task-5/870/1612).
 
-        Only the "Max parallel agent runs" and (TASK-870) "Tool result
-        display cap" fields have dedicated guidance today; other Console
-        Behavior fields keep the always-visible "Control guide" static
-        block rendered in `_render_category_impact_pane` instead of
-        per-field guidance.
+        Every Console Behavior Input now has a dedicated entry; the
+        fallback rows render only while no field owns focus, so the
+        "Focus a field for guidance" promise is kept.
         """
+        if (
+            self._active_settings_field_id
+            == "settings-console-paste-collapse-threshold"
+        ):
+            return (
+                (
+                    "Purpose",
+                    "Smallest pasted chunk, in characters, that the composer "
+                    "collapses into a compact expandable block.",
+                ),
+                (
+                    "Consequences",
+                    "Pastes below the threshold stay inline exactly as typed; "
+                    "larger ones collapse with an expand control. The canonical "
+                    "message payload always keeps the full text either way.",
+                ),
+                ("Saved as", "console.paste_collapse_threshold"),
+                (
+                    "Applies",
+                    "Applies to the next paste immediately on save; already "
+                    "rendered pastes keep their current display.",
+                ),
+            )
         if self._active_settings_field_id == "settings-console-max-parallel-runs":
             return (
                 (
@@ -9113,7 +9201,7 @@ class SettingsScreen(BaseAppScreen):
                 tooltip="Toggle compact display for large pasted Console chunks.",
             )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Threshold", classes="settings-input-label")
+                yield Static("Threshold (chars)", classes="settings-input-label")
                 yield Input(
                     value=str(self._paste_collapse_threshold_value()),
                     id="settings-console-paste-collapse-threshold",
@@ -9161,7 +9249,7 @@ class SettingsScreen(BaseAppScreen):
             )
             with Horizontal(classes="settings-input-row"):
                 yield Static(
-                    "Tool result display cap", classes="settings-input-label"
+                    "Display cap (chars)", classes="settings-input-label"
                 )
                 yield Input(
                     value=str(self._tool_result_display_chars_value()),
@@ -10630,6 +10718,7 @@ class SettingsScreen(BaseAppScreen):
     def _render_workspaces_detail(self) -> ComposeResult:
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         yield Static("Workspace management", classes="destination-section")
+        yield self._render_category_state_banner(SettingsCategoryId.WORKSPACES)
         if registry is None:
             yield Static(
                 "Workspace service is not ready. Restart Chatbook and retry.",
@@ -10907,7 +10996,7 @@ class SettingsScreen(BaseAppScreen):
                         compact=True,
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Palette limit", classes="settings-input-label")
+                    yield Static("Palette limit (themes)", classes="settings-input-label")
                     yield Input(
                         value=str(values["palette_theme_limit"]),
                         id="settings-appearance-palette-theme-limit",
@@ -10916,7 +11005,7 @@ class SettingsScreen(BaseAppScreen):
                         restrict=r"^[0-9]*$",
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Web font size", classes="settings-input-label")
+                    yield Static("Web font size (px)", classes="settings-input-label")
                     yield Input(
                         value=str(values["font_size"]),
                         id="settings-appearance-font-size",
@@ -10947,7 +11036,7 @@ class SettingsScreen(BaseAppScreen):
                         tooltip="Toggle optional UI animation defaults.",
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Smooth scroll", classes="settings-input-label")
+                    yield Static("Smooth scrolling", classes="settings-input-label")
                     yield Button(
                         self._appearance_bool_label("smooth_scrolling"),
                         id="settings-appearance-smooth-scrolling",
@@ -10982,15 +11071,19 @@ class SettingsScreen(BaseAppScreen):
                 )
         elif category is SettingsCategoryId.THEME:
             yield Static("Theme", classes="destination-section settings-column-title")
+            yield self._render_category_state_banner(SettingsCategoryId.THEME)
             yield SettingsThemeEditor(id="settings-theme-editor")
         elif category is SettingsCategoryId.SPLASH_SCREEN:
             yield Static("Splash Screen", classes="destination-section settings-column-title")
+            yield self._render_category_state_banner(SettingsCategoryId.SPLASH_SCREEN)
             yield SettingsSplashScreenViewer(id="settings-splash-screen-viewer")
         elif category is SettingsCategoryId.INTERNAL_PROMPTS:
             yield Static("Internal Prompts", classes="destination-section settings-column-title")
+            yield self._render_category_state_banner(SettingsCategoryId.INTERNAL_PROMPTS)
             yield InternalPromptsPanel(id="settings-internal-prompts-panel")
         elif category is SettingsCategoryId.IMAGE_GENERATION:
             yield Static("Image Gen", classes="destination-section settings-column-title")
+            yield self._render_category_state_banner(SettingsCategoryId.IMAGE_GENERATION)
             image_gen_overlay = self._image_gen_overlay_values()
             self._queue_image_gen_select_suppression(image_gen_overlay)
             yield ImageGenSettingsPanel(
@@ -11688,6 +11781,17 @@ class SettingsScreen(BaseAppScreen):
                     impact_body.styles.scrollbar_size_vertical = 1
                     with impact_body:
                         yield from self._render_impact_pane_body()
+                    # task-1623: reserved fold-indicator row -- 8 of 26
+                    # critique captures ended the inspector mid-sentence
+                    # with nothing saying more content exists.
+                    overflow_hint = Static(
+                        "▼ more — scroll the inspector",
+                        id="settings-impact-overflow-hint",
+                    )
+                    overflow_hint.styles.height = 1
+                    overflow_hint.styles.color = "gray"
+                    overflow_hint.display = False
+                    yield overflow_hint
 
     def _category_value_from_button(self, button: Button) -> str | None:
         if not button.id or not button.has_class("settings-category-button"):
@@ -11964,6 +12068,9 @@ class SettingsScreen(BaseAppScreen):
             self._image_gen_raw_section_cache = None
         if restore_focus:
             self.call_after_refresh(self._focus_category, category_value)
+        # task-1623: the recompose minted a fresh (hidden) fold indicator;
+        # re-evaluate it against the new category's inspector content.
+        self.call_after_refresh(self._update_inspector_overflow_hint)
 
     @on(DescendantFocus)
     def handle_descendant_focus(self, event: DescendantFocus) -> None:
@@ -12021,11 +12128,8 @@ class SettingsScreen(BaseAppScreen):
             self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is SettingsCategoryId.CONSOLE_BEHAVIOR:
-            # task-5 + TASK-870: only "Max parallel agent runs" and "Tool
-            # result display cap" have dedicated focused-field guidance
-            # today; other Console Behavior fields keep the always-visible
-            # "Control guide" static block.
             console_behavior_field_ids = {
+                "settings-console-paste-collapse-threshold",
                 "settings-console-max-parallel-runs",
                 "settings-console-tool-result-display-chars",
             }
@@ -12144,6 +12248,11 @@ class SettingsScreen(BaseAppScreen):
             pane.scroll_to_widget(first_row, animate=False, force=True, top=True)
 
         self.call_after_refresh(_scroll)
+        # Qodo PR #1139: focus-driven guidance refreshes change the body's
+        # height in place (a real entry's wrapped Consequences vs the short
+        # fallback), so the fold indicator must be re-evaluated here too --
+        # mount/resize/category-switch alone leave it stale.
+        self.call_after_refresh(self._update_inspector_overflow_hint)
 
     @on(Collapsible.Toggled)
     def handle_settings_library_rag_collapsible_toggled(
@@ -12187,6 +12296,29 @@ class SettingsScreen(BaseAppScreen):
             return
         self.theme_editor_modified = event.is_modified
         self._refresh_theme_modified_widgets()
+
+    def _update_inspector_overflow_hint(self) -> None:
+        """Show the fold indicator only while the inspector body overflows.
+
+        Safe to call any time; queries are guarded and sizes are read from
+        the laid-out scroll container, so callers should route through
+        ``call_after_refresh`` when a recompose is in flight.
+        """
+        try:
+            body = self.query_one("#settings-impact-pane-body", VerticalScroll)
+            hint = self.query_one("#settings-impact-overflow-hint", Static)
+        except QueryError:
+            return
+        hint.display = body.virtual_size.height > body.container_size.height
+
+    def on_resize(self, event: Resize) -> None:
+        """Re-evaluate the inspector fold indicator on viewport changes.
+
+        Args:
+            event: The resize event; sizes are re-read after the refresh
+                completes, so only the notification matters here.
+        """
+        self.call_after_refresh(self._update_inspector_overflow_hint)
 
     def _refresh_theme_modified_widgets(self) -> None:
         """In-place refresh of the Theme dirty displays (rail marker, inspector row).

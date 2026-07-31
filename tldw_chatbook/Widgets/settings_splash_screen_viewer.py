@@ -124,7 +124,7 @@ class SettingsSplashScreenViewer(Vertical):
                 label_static = Static("Enabled", classes="settings-input-label")
                 # task-1561: the shared label column truncates longer
                 # labels ("Skip on keypress" showed as "Skip on").
-                label_static.styles.width = 17
+                label_static.styles.width = 20
                 yield label_static
                 yield Switch(
                     value=bool(self._config.get("enabled", True)),
@@ -139,7 +139,7 @@ class SettingsSplashScreenViewer(Vertical):
                 label_static = Static("Show progress", classes="settings-input-label")
                 # task-1561: the shared label column truncates longer
                 # labels ("Skip on keypress" showed as "Skip on").
-                label_static.styles.width = 17
+                label_static.styles.width = 20
                 yield label_static
                 yield Switch(
                     value=bool(self._config.get("show_progress", True)),
@@ -154,7 +154,7 @@ class SettingsSplashScreenViewer(Vertical):
                 label_static = Static("Skip on keypress", classes="settings-input-label")
                 # task-1561: the shared label column truncates longer
                 # labels ("Skip on keypress" showed as "Skip on").
-                label_static.styles.width = 17
+                label_static.styles.width = 20
                 yield label_static
                 yield Switch(
                     value=bool(self._config.get("skip_on_keypress", True)),

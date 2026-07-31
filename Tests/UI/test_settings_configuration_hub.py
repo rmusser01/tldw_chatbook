@@ -8002,3 +8002,143 @@ async def test_compact_input_edge_renders_under_real_bundle():
         field = screen.query_one("#settings-console-paste-collapse-threshold", Input)
         border_style = field.styles.border_left[0]
         assert border_style == "solid", f"rest edge missing: {border_style!r}"
+
+
+# ---- critique round-3 batch: tasks 1620-1625 ----
+
+
+def test_state_banner_leads_with_persistence_badge():
+    """Five save models coexist on this screen; the badge names the active
+    category's model in the same State-bar position everywhere (task-1620),
+    so the footer keys' coming and going stops reading as inconsistency."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    expected = {
+        SettingsCategoryId.CONSOLE_BEHAVIOR: "Draft — save with s",
+        SettingsCategoryId.SPLASH_SCREEN: "Auto-saved",
+        SettingsCategoryId.WORKSPACES: "Applies immediately",
+        SettingsCategoryId.THEME: "Managed in editor",
+        SettingsCategoryId.INTERNAL_PROMPTS: "Per-item Save/Reset",
+        SettingsCategoryId.ADVANCED_CONFIG: "Validate, then Save",
+        SettingsCategoryId.ARTIFACTS: "Read-only here",
+        SettingsCategoryId.IMAGE_GENERATION: "Draft — Save/Revert below",
+    }
+    for category, badge in expected.items():
+        text = screen._category_state_banner_text(category)
+        assert text.startswith(f"State: {badge} | "), (category, text)
+
+
+def test_state_banner_dirty_branch_keeps_priority():
+    """Unsaved changes outrank the badge -- the dirty banner is the model
+    talking, and its copy must stay the strongest signal."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    draft = SettingsDraft(category=SettingsCategoryId.CONSOLE_BEHAVIOR)
+    draft.set_value("paste_collapse_threshold", 50, 503)
+    screen._settings_drafts[SettingsCategoryId.CONSOLE_BEHAVIOR] = draft
+    text = screen._category_state_banner_text(SettingsCategoryId.CONSOLE_BEHAVIOR)
+    assert text == (
+        "State: Unsaved changes | Save or Revert before leaving this category."
+    )
+
+
+def test_workspaces_banner_names_reversal_paths():
+    """Workspaces applies immediately; the banner says how each action is
+    walked back instead of leaving 'no draft' unexplained (task-1620)."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    text = screen._category_state_banner_text(SettingsCategoryId.WORKSPACES)
+    assert "unarchive" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_filter_clears_after_opening_a_match():
+    """Enter-open used to leave the query behind, pruning the rail to the
+    last search's matches for the rest of the session (task-1621)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("console b")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.CONSOLE_BEHAVIOR.value
+        assert screen.category_search_query == ""
+        assert screen.query_one("#settings-category-search", Input).value == ""
+        storage_button = screen.query_one("#settings-category-storage", Button)
+        assert storage_button.display, "rail still pruned after open"
+
+
+def test_fold_prefers_slash_boundaries_over_extension_dots():
+    """'~/.config/tldw_cli/config.toml' folded as 'config.' / 'toml' --
+    a mid-filename break at the extension dot (task-1623). Slash
+    boundaries win; dots only split slash-free over-long chunks."""
+    folded = settings_screen_module._fold_long_tokens(
+        "~/.config/tldw_cli/config.toml"
+    )
+    lines = [line.strip() for line in folded.splitlines()]
+    assert lines[-1] == "config.toml"
+    assert not any(line.endswith("config.") for line in lines)
+
+
+def test_threshold_field_has_focused_guidance():
+    """The inspector promised setting-specific guidance on focus; the
+    Threshold field answered with the empty fallback (task-1622)."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen._active_settings_field_id = "settings-console-paste-collapse-threshold"
+    rows = screen._console_behavior_field_guidance_rows()
+    assert ("Saved as", "console.paste_collapse_threshold") in rows
+    assert all("No field-specific guidance" not in value for _, value in rows)
+
+
+@pytest.mark.asyncio
+async def test_numeric_labels_carry_units():
+    """'Threshold 50' and friends were unit-less mystery numerics; the
+    widened label column carries the unit (task-1622)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+        assert "Threshold (chars)" in text
+        assert "Display cap (chars)" in text
+
+
+@pytest.mark.asyncio
+async def test_inspector_overflow_hint_matches_body_overflow():
+    """The reserved fold-indicator row shows exactly when the inspector
+    body has more content than its viewport (task-1623)."""
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 40)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-privacy-security")
+        screen = _active_destination_screen(host)
+        for _ in range(6):
+            await pilot.pause()
+        body = screen.query_one("#settings-impact-pane-body", VerticalScroll)
+        hint = screen.query_one("#settings-impact-overflow-hint", Static)
+        overflows = body.virtual_size.height > body.container_size.height
+        assert hint.display == overflows
+        assert overflows, "expected Privacy inspector to overflow a 40-row harness"
+
+
+@pytest.mark.asyncio
+async def test_every_category_renders_the_state_banner():
+    """task-1620 AC: the persistence badge appears in the same State-bar
+    position on EVERY category -- the four own-persistence categories
+    (Theme, Splash, Internal Prompts, Image Gen) and Workspaces previously
+    skipped the banner entirely, so their save contract was unlabeled."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        for summary in screen._category_summaries():
+            screen._select_category(summary.category.value)
+            await pilot.pause()
+            await pilot.pause()
+            banner = screen.query_one("#settings-category-state-banner", Static)
+            assert str(banner.renderable).startswith("State: "), summary.category
