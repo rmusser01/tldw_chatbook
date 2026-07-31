@@ -1341,6 +1341,106 @@ async def test_attribute_proof_accepts_safe_owner_or_sticky_temp_parent(
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX ownership policy")
+def test_private_proof_routine_validation_does_not_reread_index(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    safe_parent = tmp_path / "safe"
+    safe_parent.mkdir(mode=0o700)
+    monkeypatch.setattr(git_service.tempfile, "tempdir", str(safe_parent))
+    _owner, _binding, repository = _candidate_owner(tmp_path)
+    proof = git_service._create_private_push_proof_directory(repository)
+    index_path = proof.reserve_index("index")
+    index_path.write_bytes(b"sealed index")
+    index_path.chmod(0o600)
+    assert proof.capture_index()
+    original_digest = git_service._bounded_file_descriptor_digest
+    digest_calls = 0
+
+    def count_digest(file_descriptor: int, expected_size: int) -> bytes | None:
+        nonlocal digest_calls
+        digest_calls += 1
+        return original_digest(file_descriptor, expected_size)
+
+    monkeypatch.setattr(
+        git_service,
+        "_bounded_file_descriptor_digest",
+        count_digest,
+    )
+
+    assert proof.validate()
+    assert digest_calls == 0
+
+    metadata = index_path.stat()
+    os.utime(
+        index_path,
+        ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 1_000_000_000),
+    )
+    assert not proof.validate()
+    assert digest_calls == 0
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX ownership policy")
+@pytest.mark.parametrize("error_type", [OSError, RuntimeError])
+def test_safe_private_parent_iterator_falls_back_after_policy_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
+) -> None:
+    temp_parent = tmp_path / "temp"
+    temp_parent.mkdir(mode=0o700)
+    monkeypatch.setattr(git_service.tempfile, "tempdir", str(temp_parent))
+    _owner, _binding, repository = _candidate_owner(tmp_path)
+    worktree = Path(repository.worktree_root)
+    repository_device = worktree.stat().st_dev
+    checked: list[tuple[Path, int]] = []
+
+    def check_parent(parent: Path, device: int) -> bool:
+        checked.append((parent, device))
+        if parent == temp_parent.resolve():
+            raise error_type("parent policy failed")
+        return True
+
+    monkeypatch.setattr(git_service, "_hooks_parent_is_safe", check_parent)
+
+    assert list(git_service._iter_safe_private_directory_parents(repository)) == [
+        (worktree, tmp_path.resolve(), repository_device)
+    ]
+    assert checked == [
+        (temp_parent.resolve(), repository_device),
+        (tmp_path.resolve(), repository_device),
+    ]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX ownership policy")
+def test_safe_private_parent_iterator_deduplicates_canonical_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _owner, _binding, repository = _candidate_owner(tmp_path)
+    worktree = Path(repository.worktree_root)
+    aliased_parent = worktree / ".."
+    monkeypatch.setattr(
+        git_service.tempfile,
+        "tempdir",
+        str(aliased_parent),
+    )
+    repository_device = worktree.stat().st_dev
+    checked: list[tuple[Path, int]] = []
+
+    def check_parent(parent: Path, device: int) -> bool:
+        checked.append((parent, device))
+        return True
+
+    monkeypatch.setattr(git_service, "_hooks_parent_is_safe", check_parent)
+
+    assert list(git_service._iter_safe_private_directory_parents(repository)) == [
+        (worktree, tmp_path.resolve(), repository_device)
+    ]
+    assert checked == [(tmp_path.resolve(), repository_device)]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX ownership policy")
 @pytest.mark.asyncio
 async def test_attribute_proof_directory_substitution_blocks_without_cleanup_follow(
     tmp_path: Path,

@@ -601,7 +601,7 @@ class _PrivatePushProofDirectory:
         return True
 
     def validate(self) -> bool:
-        """Validate parent, topology, identities, modes, owners, and contents."""
+        """Validate parent, topology, identities, and retained metadata."""
         if self._closed:
             return False
         try:
@@ -769,7 +769,16 @@ class _PrivatePushProofDirectory:
         entry: _PrivateProofEntry,
     ) -> bool:
         try:
-            return self._capture_entry(path, entry.kind) == entry
+            metadata = path.stat(follow_symlinks=False)
+            return (
+                path.resolve(strict=True) == path
+                and self._entry_from_metadata(
+                    metadata,
+                    entry.kind,
+                    entry.content_digest,
+                )
+                == entry
+            )
         except (OSError, RuntimeError):
             return False
 
@@ -7608,22 +7617,14 @@ def _uncertain_commit_outcome() -> CommitOutcome:
     return CommitOutcome("uncertain", _UNCERTAIN_COMMIT_MESSAGE)
 
 
-def _create_private_push_proof_directory(
+def _iter_safe_private_directory_parents(
     repository: RepositoryIdentity,
-) -> _PrivatePushProofDirectory:
-    """Create one identity-pinned proof root under an already-safe parent."""
-    if not _private_push_proof_apis_available():
-        raise OSError("Private push proof safety requires POSIX descriptor APIs")
+) -> Generator[tuple[Path, Path, int], None, None]:
+    """Yield canonical safe parents in preferred fallback order."""
     worktree = Path(repository.worktree_root).resolve(strict=True)
     repository_device = worktree.stat().st_dev
-    candidate_paths = (
-        Path(tempfile.gettempdir()),
-        worktree.parent,
-    )
     checked_parents: set[Path] = set()
-    for candidate in candidate_paths:
-        proof: _PrivatePushProofDirectory | None = None
-        root: Path | None = None
+    for candidate in (Path(tempfile.gettempdir()), worktree.parent):
         try:
             parent = candidate.resolve(strict=True)
             if parent in checked_parents:
@@ -7631,6 +7632,23 @@ def _create_private_push_proof_directory(
             checked_parents.add(parent)
             if not _hooks_parent_is_safe(parent, repository_device):
                 continue
+        except (OSError, RuntimeError):
+            continue
+        yield worktree, parent, repository_device
+
+
+def _create_private_push_proof_directory(
+    repository: RepositoryIdentity,
+) -> _PrivatePushProofDirectory:
+    """Create one identity-pinned proof root under an already-safe parent."""
+    if not _private_push_proof_apis_available():
+        raise OSError("Private push proof safety requires POSIX descriptor APIs")
+    for worktree, parent, repository_device in (
+        _iter_safe_private_directory_parents(repository)
+    ):
+        proof: _PrivatePushProofDirectory | None = None
+        root: Path | None = None
+        try:
             parent_identity = _filesystem_identity(parent)
             root = Path(
                 tempfile.mkdtemp(
@@ -7722,22 +7740,11 @@ def _create_private_hooks_directory(
     """Create and verify one empty owner-only hooks directory outside the repo."""
     if not _private_hooks_posix_ownership_apis_available():
         raise OSError("Private hooks safety requires POSIX ownership APIs")
-    worktree = Path(repository.worktree_root).resolve(strict=True)
-    repository_device = worktree.stat().st_dev
-    candidate_paths = (
-        Path(tempfile.gettempdir()),
-        worktree.parent,
-    )
-    checked_parents: set[Path] = set()
-    for candidate in candidate_paths:
+    for worktree, parent, repository_device in (
+        _iter_safe_private_directory_parents(repository)
+    ):
         directory: Path | None = None
         try:
-            parent = candidate.resolve(strict=True)
-            if parent in checked_parents:
-                continue
-            checked_parents.add(parent)
-            if not _hooks_parent_is_safe(parent, repository_device):
-                continue
             directory = Path(
                 tempfile.mkdtemp(
                     prefix=".chatbook-hooks-",
