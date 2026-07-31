@@ -175,9 +175,11 @@ _LOCAL_PUSH_CONFIG_PATTERN = (
     r"^(branch\..*\.(remote|merge|pushremote)|remote\.pushdefault|"
     r"remote\..*\.(url|pushurl|mirror|push|pushoption|receivepack|vcs|proxy)|"
     r"push\.pushoption|url\..*\.(pushinsteadof|insteadof)|http\..*|"
-    r"credential\..*helper|core\.sshcommand|ssh\.variant|filter\.lfs\..*)$"
+    r"credential\..*helper|core\.sshcommand|ssh\.variant|filter\.lfs\..*|"
+    r"include\.path|includeif\..*\.path)$"
 )
 _LOCAL_PUSH_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024
+_LOCAL_PUSH_PROOF_FILE_LIMIT_BYTES = 64 * 1024 * 1024
 DEFAULT_GIT_STDERR_LIMIT_BYTES = 4096
 DEFAULT_COMMIT_PROOF_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024
 DEFAULT_COMMIT_PROOF_STDERR_LIMIT_BYTES = DEFAULT_GIT_STDERR_LIMIT_BYTES
@@ -387,6 +389,475 @@ class _PushDestinationPolicySnapshot:
     configuration: _ResolvedPushConfiguration
     candidate_tree_oid: str
     included_paths_fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PrivateProofEntry:
+    """Retained identity and contents of one allowlisted proof component."""
+
+    identity: FileSystemIdentity
+    kind: Literal["directory", "file"]
+    mode: int
+    owner: int
+    size: int
+    mtime_ns: int
+    ctime_ns: int
+    content_digest: bytes | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _ExternalProofDirectory:
+    """Stable metadata for one read-only directory outside the proof root."""
+
+    identity: FileSystemIdentity
+    mode: int
+    owner: int
+    group: int
+
+
+class _PrivatePushProofDirectory:
+    """Owner-only proof tree with fail-closed exact cleanup.
+
+    The safe-parent and ``0700`` root policy excludes other principals from
+    substitution; processes with the same effective UID, and root, are trusted.
+    """
+
+    __slots__ = (
+        "root",
+        "_parent_identity",
+        "_repository_device",
+        "_entries",
+        "_external_directories",
+        "_index_path",
+        "_closed",
+    )
+
+    def __init__(
+        self,
+        *,
+        root: Path,
+        parent_identity: FileSystemIdentity,
+        repository_device: int,
+    ) -> None:
+        self.root = root
+        self._parent_identity = parent_identity
+        self._repository_device = repository_device
+        self._entries: dict[Path, _PrivateProofEntry] = {
+            root: self._capture_entry(root, "directory")
+        }
+        self._external_directories: dict[
+            Path,
+            _ExternalProofDirectory,
+        ] = {}
+        self._index_path: Path | None = None
+        self._closed = False
+
+    def __enter__(self) -> _PrivatePushProofDirectory:
+        return self
+
+    def __exit__(self, *_exception: object) -> None:
+        if not self._closed:
+            self.cleanup()
+
+    def create_directory(self, relative_path: str) -> Path:
+        """Create and retain one owner-only directory."""
+        path = self._new_path(relative_path)
+        if not self.validate():
+            raise OSError("Private proof tree changed before directory creation")
+        try:
+            path.mkdir(mode=0o700)
+            path.chmod(0o700)
+            self._entries[path] = self._capture_entry(path, "directory")
+        except OSError:
+            _remove_private_hooks_directory(path)
+            raise
+        if not self.validate():
+            raise OSError("Private proof directory identity changed")
+        return path
+
+    def create_file(self, relative_path: str, payload: bytes) -> Path:
+        """Create and retain one owner-only file exclusively without symlinks."""
+        if len(payload) > _LOCAL_PUSH_PROOF_FILE_LIMIT_BYTES:
+            raise OSError("Private proof seed exceeds the bounded file limit")
+        path = self._new_path(relative_path)
+        if not self.validate():
+            raise OSError("Private proof tree changed before file creation")
+        file_descriptor: int | None = None
+        created_identity: FileSystemIdentity | None = None
+        try:
+            file_descriptor = os.open(
+                path,
+                (
+                    os.O_RDWR
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | os.O_NOFOLLOW
+                    | os.O_CLOEXEC
+                ),
+                0o600,
+            )
+            created_identity = _identity_from_stat_result(
+                os.fstat(file_descriptor)
+            )
+            os.fchmod(file_descriptor, 0o600)
+            view = memoryview(payload)
+            while view:
+                written = os.write(file_descriptor, view)
+                if written <= 0:
+                    raise OSError("Private proof seed write did not progress")
+                view = view[written:]
+        except OSError:
+            if file_descriptor is not None:
+                os.close(file_descriptor)
+            self._unlink_exact_file(path, created_identity)
+            raise
+        os.close(file_descriptor)
+        self._entries[path] = self._capture_entry(path, "file")
+        if not self.validate():
+            raise OSError("Private proof file identity changed")
+        return path
+
+    def reserve_index(self, relative_path: str) -> Path:
+        """Reserve the only path Git may create in the private proof tree."""
+        if self._index_path is not None:
+            raise OSError("Private proof index is already reserved")
+        path = self._new_path(relative_path)
+        self._index_path = path
+        return path
+
+    def capture_index(self) -> bool:
+        """Pin and seal the exact index emitted by one settled read-tree."""
+        path = self._index_path
+        if (
+            self._closed
+            or path is None
+            or path in self._entries
+        ):
+            return False
+        file_descriptor: int | None = None
+        safe_identity: FileSystemIdentity | None = None
+        try:
+            file_descriptor = os.open(
+                path,
+                (
+                    os.O_RDONLY
+                    | os.O_NONBLOCK
+                    | os.O_NOFOLLOW
+                    | os.O_CLOEXEC
+                ),
+            )
+            metadata = os.fstat(file_descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_dev != self._repository_device
+                or metadata.st_uid != os.geteuid()
+                or metadata.st_nlink != 1
+                or metadata.st_size < 0
+            ):
+                raise OSError("Private proof index identity is unsafe")
+            safe_identity = _identity_from_stat_result(metadata)
+            if metadata.st_size > _LOCAL_PUSH_PROOF_FILE_LIMIT_BYTES:
+                raise OSError("Private proof index exceeds the bounded limit")
+            os.fchmod(file_descriptor, 0o600)
+            metadata = os.fstat(file_descriptor)
+            digest = _bounded_file_descriptor_digest(
+                file_descriptor,
+                metadata.st_size,
+            )
+            entry = self._entry_from_metadata(metadata, "file", digest)
+            path_metadata = path.stat(follow_symlinks=False)
+            if (
+                path.resolve(strict=True) != path
+                or self._entry_from_metadata(
+                    path_metadata,
+                    "file",
+                    digest,
+                )
+                != entry
+            ):
+                raise OSError("Private proof index path changed")
+        except (OSError, RuntimeError):
+            if file_descriptor is not None:
+                os.close(file_descriptor)
+            self._unlink_exact_file(path, safe_identity)
+            return False
+        os.close(file_descriptor)
+        self._entries[path] = entry
+        return self.validate()
+
+    def track_external_directory(
+        self,
+        path: Path,
+        identity: FileSystemIdentity,
+    ) -> bool:
+        """Pin one canonical object directory accessed read-only by Git."""
+        try:
+            snapshot = self._capture_external_directory(path)
+        except (OSError, RuntimeError):
+            return False
+        if snapshot.identity != identity:
+            return False
+        self._external_directories[path] = snapshot
+        return True
+
+    def validate(self) -> bool:
+        """Validate parent, topology, identities, modes, owners, and contents."""
+        if self._closed:
+            return False
+        try:
+            return (
+                self._private_tree_matches()
+                and all(
+                    self._external_directory_matches(path, snapshot)
+                    for path, snapshot
+                    in self._external_directories.items()
+                )
+            )
+        except (KeyError, OSError, RuntimeError):
+            return False
+
+    def cleanup(self) -> bool:
+        """Remove only the fully validated allowlisted tree, never recursively."""
+        if self._closed:
+            return False
+        if not self._private_tree_matches():
+            self._closed = True
+            return False
+        try:
+            ordered = sorted(
+                self._entries.items(),
+                key=lambda item: len(item[0].parts),
+                reverse=True,
+            )
+            for path, entry in ordered:
+                if entry.kind != "file":
+                    continue
+                if not self._entry_matches(path, entry):
+                    raise OSError("Private proof file changed before cleanup")
+                path.unlink()
+            for path, entry in ordered:
+                if entry.kind != "directory":
+                    continue
+                if (
+                    not self._entry_matches(path, entry)
+                    or any(path.iterdir())
+                ):
+                    raise OSError(
+                        "Private proof directory changed before cleanup"
+                    )
+                path.rmdir()
+            if _path_present(self.root):
+                raise OSError("Private proof root survived cleanup")
+            if not self._parent_matches():
+                raise OSError("Private proof parent changed during cleanup")
+        except OSError:
+            self._closed = True
+            return False
+        self._closed = True
+        return True
+
+    def _private_tree_matches(self) -> bool:
+        try:
+            return (
+                self._parent_matches()
+                and self.root.resolve(strict=True) == self.root
+                and all(
+                    self._entry_matches(path, entry)
+                    for path, entry in self._entries.items()
+                )
+                and self._shape_matches()
+            )
+        except (KeyError, OSError, RuntimeError):
+            return False
+
+    def _new_path(
+        self,
+        relative_path: str,
+    ) -> Path:
+        if self._closed or not relative_path:
+            raise OSError("Private proof directory is closed")
+        candidate = Path(relative_path)
+        parts = candidate.parts
+        path = self.root.joinpath(*parts)
+        if (
+            candidate.is_absolute()
+            or not parts
+            or any(part in {"", ".", ".."} for part in parts)
+            or path in self._entries
+            or path == self._index_path
+            or path.parent not in self._entries
+            or self._entries[path.parent].kind != "directory"
+            or _path_present(path)
+        ):
+            raise OSError("Private proof path is invalid or already reserved")
+        return path
+
+    def _capture_entry(
+        self,
+        path: Path,
+        kind: Literal["directory", "file"],
+    ) -> _PrivateProofEntry:
+        metadata = path.stat(follow_symlinks=False)
+        if path.resolve(strict=True) != path:
+            raise OSError("Private proof component metadata is unsafe")
+        digest: bytes | None = None
+        if kind == "file":
+            self._entry_from_metadata(metadata, kind, b"")
+            file_descriptor = os.open(
+                path,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
+            try:
+                descriptor_metadata = os.fstat(file_descriptor)
+                if (
+                    _identity_from_stat_result(descriptor_metadata)
+                    != _identity_from_stat_result(metadata)
+                ):
+                    raise OSError("Private proof file identity changed")
+                digest = _bounded_file_descriptor_digest(
+                    file_descriptor,
+                    descriptor_metadata.st_size,
+                )
+            finally:
+                os.close(file_descriptor)
+            if digest is None:
+                raise OSError("Private proof file digest is unavailable")
+        return self._entry_from_metadata(metadata, kind, digest)
+
+    def _entry_from_metadata(
+        self,
+        metadata: os.stat_result,
+        kind: Literal["directory", "file"],
+        digest: bytes | None,
+    ) -> _PrivateProofEntry:
+        required_mode = 0o700 if kind == "directory" else 0o600
+        if (
+            metadata.st_dev != self._repository_device
+            or metadata.st_uid != os.geteuid()
+            or stat.S_IMODE(metadata.st_mode) != required_mode
+            or (
+                kind == "directory"
+                and not stat.S_ISDIR(metadata.st_mode)
+            )
+            or (
+                kind == "file"
+                and (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or metadata.st_nlink != 1
+                    or metadata.st_size < 0
+                    or metadata.st_size
+                    > _LOCAL_PUSH_PROOF_FILE_LIMIT_BYTES
+                    or digest is None
+                )
+            )
+        ):
+            raise OSError("Private proof component metadata is unsafe")
+        return _PrivateProofEntry(
+            _identity_from_stat_result(metadata),
+            kind,
+            stat.S_IMODE(metadata.st_mode),
+            metadata.st_uid,
+            metadata.st_size if kind == "file" else 0,
+            metadata.st_mtime_ns if kind == "file" else 0,
+            metadata.st_ctime_ns if kind == "file" else 0,
+            digest,
+        )
+
+    def _entry_matches(
+        self,
+        path: Path,
+        entry: _PrivateProofEntry,
+    ) -> bool:
+        try:
+            return self._capture_entry(path, entry.kind) == entry
+        except (OSError, RuntimeError):
+            return False
+
+    def _shape_matches(self) -> bool:
+        expected: dict[Path, set[str]] = {
+            path: set()
+            for path, entry in self._entries.items()
+            if entry.kind == "directory"
+        }
+        for path in self._entries:
+            if path != self.root:
+                expected[path.parent].add(path.name)
+        for path, names in expected.items():
+            found: set[str] = set()
+            with os.scandir(path) as children:
+                for child in children:
+                    if child.name not in names:
+                        return False
+                    found.add(child.name)
+            if found != names:
+                return False
+        return True
+
+    @staticmethod
+    def _capture_external_directory(
+        path: Path,
+    ) -> _ExternalProofDirectory:
+        metadata = path.stat(follow_symlinks=False)
+        mode = stat.S_IMODE(metadata.st_mode)
+        if (
+            path.resolve(strict=True) != path
+            or not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid not in {0, os.geteuid()}
+            or mode & (stat.S_IWGRP | stat.S_IWOTH)
+        ):
+            raise OSError("External proof directory metadata is unsafe")
+        return _ExternalProofDirectory(
+            _identity_from_stat_result(metadata),
+            mode,
+            metadata.st_uid,
+            metadata.st_gid,
+        )
+
+    @staticmethod
+    def _external_directory_matches(
+        path: Path,
+        snapshot: _ExternalProofDirectory,
+    ) -> bool:
+        return (
+            _PrivatePushProofDirectory._capture_external_directory(path)
+            == snapshot
+        )
+
+    @staticmethod
+    def _unlink_exact_file(
+        path: Path,
+        identity: FileSystemIdentity | None,
+    ) -> None:
+        if identity is None:
+            return
+        try:
+            metadata = path.stat(follow_symlinks=False)
+            if (
+                _identity_from_stat_result(metadata) == identity
+                and stat.S_ISREG(metadata.st_mode)
+                and metadata.st_uid == os.geteuid()
+                and metadata.st_nlink == 1
+            ):
+                path.unlink()
+        except OSError:
+            pass
+
+    def _parent_matches(self) -> bool:
+        parent = self.root.parent
+        try:
+            path_metadata = parent.stat(follow_symlinks=False)
+        except (OSError, RuntimeError):
+            return False
+        return (
+            parent.resolve(strict=True) == parent
+            and _identity_from_stat_result(path_metadata)
+            == self._parent_identity
+            and stat.S_ISDIR(path_metadata.st_mode)
+            and _hooks_parent_is_safe(
+                parent,
+                self._repository_device,
+            )
+        )
 
 
 GitStatusAdmissionReason = Literal[
@@ -2091,18 +2562,21 @@ class FileNotesGitService:
             return None, "stale"
 
         candidate = availability.candidate
-        with tempfile.TemporaryDirectory(
-            prefix=".chatbook-push-proof-"
-        ) as proof_directory_text:
-            proof_directory = Path(proof_directory_text)
-            hooks_directory = proof_directory / "hooks"
-            hooks_directory.mkdir(mode=0o700)
-            index_file = proof_directory / "candidate.index"
+        proof: _PrivatePushProofDirectory | None = None
+        try:
+            proof = _create_private_push_proof_directory(repository)
+            hooks_directory = proof.create_directory("hooks")
+        except (OSError, RuntimeError):
+            if proof is not None:
+                proof.cleanup()
+            return None, "blocked"
+        with proof:
             prefix = self._local_push_proof_prefix(hooks_directory)
 
             branch_result = await self._run_local_push_proof_command(
                 repository,
                 (*prefix, "symbolic-ref", "--quiet", "HEAD"),
+                proof=proof,
             )
             head_result = await self._run_local_push_proof_command(
                 repository,
@@ -2113,6 +2587,7 @@ class FileNotesGitService:
                     "--quiet",
                     "HEAD^{commit}",
                 ),
+                proof=proof,
             )
             branch = (
                 _single_git_value(branch_result.stdout)
@@ -2133,6 +2608,7 @@ class FileNotesGitService:
             object_result = await self._run_local_push_proof_command(
                 repository,
                 (*prefix, "cat-file", "commit", candidate.candidate_oid),
+                proof=proof,
             )
             if not _command_succeeded(object_result):
                 return None, "blocked"
@@ -2172,6 +2648,7 @@ class FileNotesGitService:
                 repository,
                 prefix,
                 candidate.local_branch_ref,
+                proof=proof,
             )
             if configuration is None:
                 return None, "blocked"
@@ -2190,6 +2667,7 @@ class FileNotesGitService:
                     candidate.candidate_oid,
                     "--",
                 ),
+                proof=proof,
             )
             included_paths = (
                 _parse_candidate_paths(paths_result.stdout)
@@ -2201,18 +2679,12 @@ class FileNotesGitService:
 
             attribute_context = self._prepare_candidate_attribute_proof(
                 repository,
-                proof_directory,
+                proof,
                 hooks_directory,
-                index_file,
             )
             if attribute_context is None:
                 return None, "blocked"
-            (
-                attribute_prefix,
-                index_environment,
-                source_objects,
-                source_objects_identity,
-            ) = attribute_context
+            attribute_prefix, index_environment = attribute_context
             tree_result = await self._run_local_push_proof_command(
                 repository,
                 (
@@ -2220,7 +2692,9 @@ class FileNotesGitService:
                     "read-tree",
                     raw_commit.tree_object_id,
                 ),
+                proof=proof,
                 environment=index_environment,
+                capture_index=True,
             )
             if not _command_succeeded(tree_result):
                 return None, "blocked"
@@ -2234,6 +2708,7 @@ class FileNotesGitService:
                     "--stdin",
                     "filter",
                 ),
+                proof=proof,
                 environment=index_environment,
                 stdin=b"\0".join(included_paths) + b"\0",
             )
@@ -2245,18 +2720,8 @@ class FileNotesGitService:
                 if _command_succeeded(attribute_result)
                 else None
             )
-            if attribute_fingerprint is None:
+            if attribute_fingerprint is None or not proof.validate():
                 return None, "blocked"
-            try:
-                objects_unchanged = (
-                    source_objects.resolve(strict=True) == source_objects
-                    and _filesystem_identity(source_objects)
-                    == source_objects_identity
-                )
-            except (OSError, RuntimeError):
-                objects_unchanged = False
-            if not objects_unchanged:
-                return None, "stale"
             if not self._repository_identity_matches(binding, repository):
                 return None, "stale"
 
@@ -2270,8 +2735,12 @@ class FileNotesGitService:
                     and prior.configuration.transport.configured_identity
                     == configuration.transport.configured_identity
                 )
-                return (prior, "blocked") if unchanged else (None, "blocked")
+                if not unchanged or not proof.cleanup():
+                    return None, "blocked"
+                return prior, "blocked"
 
+            if not proof.cleanup():
+                return None, "blocked"
             owner_capture = (
                 self._owner._capture_destination_policy_after_fresh_proof(
                     candidate_capture,
@@ -2319,14 +2788,11 @@ class FileNotesGitService:
     def _prepare_candidate_attribute_proof(
         self,
         repository: RepositoryIdentity,
-        proof_directory: Path,
+        proof: _PrivatePushProofDirectory,
         hooks_directory: Path,
-        index_file: Path,
     ) -> tuple[
         tuple[str, ...],
         dict[str, str],
-        Path,
-        FileSystemIdentity,
     ] | None:
         """Create an isolated exact-tree attribute reader with object-only access."""
         source_objects = Path(repository.git_common_dir) / "objects"
@@ -2335,35 +2801,31 @@ class FileNotesGitService:
             if canonical_objects != source_objects or not source_objects.is_dir():
                 return None
             source_objects_identity = _filesystem_identity(source_objects)
-
-            git_dir = proof_directory / "attribute.git"
-            object_directory = git_dir / "objects"
-            refs_directory = git_dir / "refs"
-            worktree = proof_directory / "attribute-worktree"
-            home = proof_directory / "attribute-home"
-            config_home = home / ".config"
-            for directory in (
-                git_dir,
-                object_directory,
-                refs_directory,
-                worktree,
-                home,
-                config_home,
+            if not proof.track_external_directory(
+                source_objects,
+                source_objects_identity,
             ):
-                directory.mkdir(mode=0o700)
-
-            head_file = git_dir / "HEAD"
-            system_config = proof_directory / "system.gitconfig"
-            global_config = proof_directory / "global.gitconfig"
-            attributes_file = proof_directory / "global.attributes"
-            for path, payload in (
-                (head_file, b"ref: refs/heads/isolated\n"),
-                (system_config, b""),
-                (global_config, b""),
-                (attributes_file, b""),
-            ):
-                path.write_bytes(payload)
-                path.chmod(0o600)
+                return None
+            git_dir = proof.create_directory("attribute.git")
+            object_directory = proof.create_directory(
+                "attribute.git/objects"
+            )
+            proof.create_directory("attribute.git/refs")
+            worktree = proof.create_directory("attribute-worktree")
+            home = proof.create_directory("attribute-home")
+            config_home = proof.create_directory(
+                "attribute-home/.config"
+            )
+            proof.create_file(
+                "attribute.git/HEAD",
+                b"ref: refs/heads/isolated\n",
+            )
+            system_config = proof.create_file("system.gitconfig", b"")
+            global_config = proof.create_file("global.gitconfig", b"")
+            attributes_file = proof.create_file("global.attributes", b"")
+            index_file = proof.reserve_index("candidate.index")
+            if not proof.validate():
+                return None
         except (OSError, RuntimeError):
             return None
 
@@ -2395,8 +2857,6 @@ class FileNotesGitService:
         return (
             prefix,
             environment,
-            source_objects,
-            source_objects_identity,
         )
 
     async def _read_push_configuration(
@@ -2404,6 +2864,8 @@ class FileNotesGitService:
         repository: RepositoryIdentity,
         prefix: tuple[str, ...],
         branch_ref: str,
+        *,
+        proof: _PrivatePushProofDirectory,
     ) -> _ResolvedPushConfiguration | None:
         argv = (
             *prefix,
@@ -2415,7 +2877,11 @@ class FileNotesGitService:
             "--get-regexp",
             _LOCAL_PUSH_CONFIG_PATTERN,
         )
-        first = await self._run_local_push_proof_command(repository, argv)
+        first = await self._run_local_push_proof_command(
+            repository,
+            argv,
+            proof=proof,
+        )
         if not _command_succeeded(first):
             return None
         first_facts = _parse_push_config_facts(
@@ -2425,7 +2891,11 @@ class FileNotesGitService:
         )
         if first_facts is None:
             return None
-        second = await self._run_local_push_proof_command(repository, argv)
+        second = await self._run_local_push_proof_command(
+            repository,
+            argv,
+            proof=proof,
+        )
         if not _command_succeeded(second) or second.stdout != first.stdout:
             return None
         second_facts = _parse_push_config_facts(
@@ -2449,9 +2919,13 @@ class FileNotesGitService:
         repository: RepositoryIdentity,
         argv: Sequence[GitArg],
         *,
+        proof: _PrivatePushProofDirectory,
         environment: Mapping[str, str] | None = None,
         stdin: bytes | None = None,
+        capture_index: bool = False,
     ) -> GitCommandResult:
+        if not proof.validate():
+            return GitCommandResult(126, b"", b"")
         try:
             result = await self._runner.run(
                 tuple(argv),
@@ -2468,16 +2942,23 @@ class FileNotesGitService:
             )
         except GitRunCancelled as cancellation:
             if cancellation.result is not None:
-                return await self._settle_commit_proof_result(
+                result = await self._settle_commit_proof_result(
                     cancellation.result
                 )
-            retained_child = cancellation.retained_child
-            assert retained_child is not None
-            await self._drain_commit_proof_child(retained_child)
-            raise
+            else:
+                retained_child = cancellation.retained_child
+                assert retained_child is not None
+                await self._drain_commit_proof_child(retained_child)
+                raise
         except OSError:
-            return GitCommandResult(127, b"", b"")
-        return await self._settle_commit_proof_result(result)
+            result = GitCommandResult(127, b"", b"")
+        else:
+            result = await self._settle_commit_proof_result(result)
+        if capture_index and not proof.capture_index():
+            return GitCommandResult(126, b"", b"")
+        if not proof.validate():
+            return GitCommandResult(126, b"", b"")
+        return result
 
     def retained_status(
         self,
@@ -7125,6 +7606,113 @@ def _blocked_commit_review(message: str) -> CommitReviewResult:
 def _uncertain_commit_outcome() -> CommitOutcome:
     """Return the exact bounded uncertainty copy."""
     return CommitOutcome("uncertain", _UNCERTAIN_COMMIT_MESSAGE)
+
+
+def _create_private_push_proof_directory(
+    repository: RepositoryIdentity,
+) -> _PrivatePushProofDirectory:
+    """Create one identity-pinned proof root under an already-safe parent."""
+    if not _private_push_proof_apis_available():
+        raise OSError("Private push proof safety requires POSIX descriptor APIs")
+    worktree = Path(repository.worktree_root).resolve(strict=True)
+    repository_device = worktree.stat().st_dev
+    candidate_paths = (
+        Path(tempfile.gettempdir()),
+        worktree.parent,
+    )
+    checked_parents: set[Path] = set()
+    for candidate in candidate_paths:
+        proof: _PrivatePushProofDirectory | None = None
+        root: Path | None = None
+        try:
+            parent = candidate.resolve(strict=True)
+            if parent in checked_parents:
+                continue
+            checked_parents.add(parent)
+            if not _hooks_parent_is_safe(parent, repository_device):
+                continue
+            parent_identity = _filesystem_identity(parent)
+            root = Path(
+                tempfile.mkdtemp(
+                    prefix=".chatbook-push-proof-",
+                    dir=str(parent),
+                )
+            )
+            if (
+                root.parent != parent
+                or root.is_relative_to(worktree)
+            ):
+                raise OSError("Private proof root location is unsafe")
+            root.chmod(0o700)
+            proof = _PrivatePushProofDirectory(
+                root=root,
+                parent_identity=parent_identity,
+                repository_device=repository_device,
+            )
+            if proof.validate():
+                return proof
+        except (OSError, RuntimeError):
+            pass
+        if proof is not None:
+            proof.cleanup()
+        elif root is not None:
+            _remove_private_hooks_directory(root)
+    raise OSError("Unable to create a private push proof directory")
+
+
+def _private_push_proof_apis_available() -> bool:
+    """Return whether descriptor-relative proof safety can run fail-closed."""
+    required_attributes = (
+        "O_CLOEXEC",
+        "O_NONBLOCK",
+        "O_NOFOLLOW",
+        "fchmod",
+        "pread",
+    )
+    return (
+        _private_hooks_posix_ownership_apis_available()
+        and all(hasattr(os, attribute) for attribute in required_attributes)
+    )
+
+
+def _identity_from_stat_result(
+    metadata: os.stat_result,
+) -> FileSystemIdentity:
+    """Project one stat result to the repository identity primitive."""
+    return FileSystemIdentity(
+        device=metadata.st_dev,
+        inode=metadata.st_ino,
+    )
+
+
+def _bounded_file_descriptor_digest(
+    file_descriptor: int,
+    expected_size: int,
+) -> bytes | None:
+    """Hash exactly one bounded pinned file without changing its offset."""
+    if (
+        expected_size < 0
+        or expected_size > _LOCAL_PUSH_PROOF_FILE_LIMIT_BYTES
+    ):
+        return None
+    digest = hashlib.sha256()
+    offset = 0
+    try:
+        while offset < expected_size:
+            chunk = os.pread(
+                file_descriptor,
+                min(_GIT_STREAM_CHUNK_BYTES, expected_size - offset),
+                offset,
+            )
+            if not chunk:
+                return None
+            digest.update(chunk)
+            offset += len(chunk)
+        if os.pread(file_descriptor, 1, expected_size):
+            return None
+    except OSError:
+        return None
+    return digest.digest()
 
 
 def _create_private_hooks_directory(

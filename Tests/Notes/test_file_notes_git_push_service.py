@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import replace
@@ -10,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import tldw_chatbook.Notes.file_notes_git_push as push_contracts
+import tldw_chatbook.Notes.file_notes_git_service as git_service
 from tldw_chatbook.Notes.file_notes_git_push import PushContractError
 from tldw_chatbook.Notes.file_notes_git_service import (
     AsyncGitProcessRunner,
@@ -461,12 +463,18 @@ class _ControlledLocalProofRunner:
         lfs_paths: frozenset[bytes] = frozenset(),
         malformed_attributes: bool = False,
         change_config_during_read: bool = False,
+        index_payload: bytes = b"controlled-index",
+        index_directory: bool = False,
+        read_tree_returncode: int = 0,
     ) -> None:
         self.repository = repository
         self.paths = paths
         self.lfs_paths = lfs_paths
         self.malformed_attributes = malformed_attributes
         self.change_config_during_read = change_config_during_read
+        self.index_payload = index_payload
+        self.index_directory = index_directory
+        self.read_tree_returncode = read_tree_returncode
         self.config_reads = 0
         self.calls: list[
             tuple[tuple[str | bytes, ...], Mapping[str, str], bytes | None]
@@ -539,7 +547,12 @@ class _ControlledLocalProofRunner:
         if "diff-tree" in command:
             return GitCommandResult(0, b"\0".join(self.paths) + b"\0", b"")
         if "read-tree" in command:
-            return GitCommandResult(0, b"", b"")
+            index_path = Path(environment["GIT_INDEX_FILE"])
+            if self.index_directory:
+                index_path.mkdir(mode=0o700)
+            else:
+                index_path.write_bytes(self.index_payload)
+            return GitCommandResult(self.read_tree_returncode, b"", b"")
         if "check-attr" in command:
             assert stdin is not None
             if self.malformed_attributes:
@@ -593,6 +606,56 @@ class _RecordingAsyncGitRunner:
 
     def release_retained_child(self, token):
         return self.delegate.release_retained_child(token)
+
+
+class _ReplacingAttributeProofRunner(_RecordingAsyncGitRunner):
+    """Replace the isolated Git directory after read-tree settles."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.replaced = False
+        self.replacement_marker: Path | None = None
+
+    async def run(self, argv, **kwargs) -> GitCommandResult:
+        result = await super().run(argv, **kwargs)
+        command = tuple(os.fsdecode(argument) for argument in argv)
+        if "read-tree" not in command or self.replaced:
+            return result
+
+        environment = kwargs["environment"]
+        git_dir = Path(environment["GIT_DIR"])
+        displaced = git_dir.with_name(f"{git_dir.name}.displaced")
+        git_dir.rename(displaced)
+        git_dir.mkdir(mode=0o700)
+        (git_dir / "objects").mkdir(mode=0o700)
+        (git_dir / "refs").mkdir(mode=0o700)
+        info = git_dir / "info"
+        info.mkdir(mode=0o700)
+        (git_dir / "HEAD").write_text(
+            "ref: refs/heads/replaced\n",
+            encoding="utf-8",
+        )
+        marker = info / "attributes"
+        marker.write_text("*.md -filter\n", encoding="utf-8")
+        self.replaced = True
+        self.replacement_marker = marker
+        return result
+
+
+class _ChangingObjectDirectoryModeRunner(_ControlledLocalProofRunner):
+    """Change source-object directory metadata after isolated read-tree."""
+
+    def __init__(self, repository: RepositoryIdentity) -> None:
+        super().__init__(repository)
+        self.changed = False
+
+    async def run(self, argv, **kwargs) -> GitCommandResult:
+        result = await super().run(argv, **kwargs)
+        command = tuple(os.fsdecode(argument) for argument in argv)
+        if "read-tree" in command and not self.changed:
+            (Path(self.repository.git_common_dir) / "objects").chmod(0o777)
+            self.changed = True
+        return result
 
 
 @pytest.mark.asyncio
@@ -1125,6 +1188,320 @@ async def test_exact_candidate_tree_lfs_ignores_external_attribute_sources(
         for index, (command, result) in enumerate(runner.calls)
     )
     assert review.state == expected, diagnostic
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("conditional", [False, True], ids=["include", "include-if"])
+async def test_configuration_include_edge_aba_revokes_stale_authorization(
+    tmp_path: Path,
+    conditional: bool,
+) -> None:
+    root, parent_oid, candidate_oid = _real_candidate_repository(tmp_path)
+    git_dir = root / ".git"
+    included_values = (
+        '[branch "main"]\n'
+        "\tremote = origin\n"
+        f"\tmerge = {BRANCH_REF}\n"
+        '[remote "origin"]\n'
+        "\turl = https://push.example.test/team/notes.git\n"
+    )
+    (git_dir / "include-a.conf").write_text(
+        included_values,
+        encoding="utf-8",
+    )
+    (git_dir / "include-b.conf").write_text(
+        included_values,
+        encoding="utf-8",
+    )
+
+    def local_config(include_name: str) -> str:
+        section = (
+            '[includeIf "onbranch:main"]'
+            if conditional
+            else "[include]"
+        )
+        return f"{section}\n\tpath = {include_name}\n"
+
+    config = git_dir / "config"
+    config.write_text(local_config("include-a.conf"), encoding="utf-8")
+    owner, binding, _repository = _owner_for_candidate(
+        root,
+        parent_oid,
+        candidate_oid,
+    )
+    executable = shutil.which("git")
+    assert executable is not None
+    service = FileNotesGitService(
+        owner,
+        git_executable=executable,
+        environment={},
+    )
+    initial = await service.review_push_destination(binding)
+    initial_policy = service._push_destination_policy
+    assert initial.state == "ready"
+    assert initial_policy is not None
+    authorization = service.authorize_push_destination(binding)
+    assert authorization is not None
+
+    replacement = git_dir / "config.next"
+    replacement.write_text(
+        local_config("include-b.conf"),
+        encoding="utf-8",
+    )
+    replacement.replace(config)
+    replacement.write_text(
+        local_config("include-a.conf"),
+        encoding="utf-8",
+    )
+    replacement.replace(config)
+
+    valid = await service.revalidate_push_destination(binding, authorization)
+    refreshed = await service.review_push_destination(binding)
+    refreshed_policy = service._push_destination_policy
+
+    assert valid is False
+    assert refreshed.state == "ready"
+    assert refreshed_policy is not None
+    assert (
+        refreshed_policy.configuration.configuration_fingerprint
+        != initial_policy.configuration.configuration_fingerprint
+    )
+    assert not owner._destination_authorization_matches(
+        initial_policy.owner_capture,
+        authorization,
+    )
+    await service.shutdown()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX ownership policy")
+@pytest.mark.asyncio
+async def test_attribute_proof_rejects_unsafe_nonsticky_temp_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    unsafe_parent = tmp_path / "unsafe"
+    unsafe_parent.mkdir(mode=0o700)
+    unsafe_parent.chmod(0o777)
+    monkeypatch.setattr(git_service.tempfile, "tempdir", str(unsafe_parent))
+    root, parent_oid, candidate_oid = _real_candidate_repository(
+        unsafe_parent,
+    )
+    owner, binding, _repository = _owner_for_candidate(
+        root,
+        parent_oid,
+        candidate_oid,
+    )
+    executable = shutil.which("git")
+    assert executable is not None
+    service = FileNotesGitService(
+        owner,
+        git_executable=executable,
+        environment={},
+    )
+
+    review = await service.review_push_destination(binding)
+
+    assert review.state == "blocked"
+    await service.shutdown()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX ownership policy")
+@pytest.mark.parametrize("parent_mode", [0o700, 0o1777], ids=["owner", "sticky"])
+@pytest.mark.asyncio
+async def test_attribute_proof_accepts_safe_owner_or_sticky_temp_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    parent_mode: int,
+) -> None:
+    safe_parent = tmp_path / "safe"
+    safe_parent.mkdir(mode=0o700)
+    safe_parent.chmod(parent_mode)
+    monkeypatch.setattr(git_service.tempfile, "tempdir", str(safe_parent))
+    root, parent_oid, candidate_oid = _real_candidate_repository(
+        safe_parent,
+    )
+    owner, binding, _repository = _owner_for_candidate(
+        root,
+        parent_oid,
+        candidate_oid,
+    )
+    executable = shutil.which("git")
+    assert executable is not None
+    service = FileNotesGitService(
+        owner,
+        git_executable=executable,
+        environment={},
+    )
+
+    review = await service.review_push_destination(binding)
+
+    assert review.state == "ready"
+    await service.shutdown()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX ownership policy")
+@pytest.mark.asyncio
+async def test_attribute_proof_directory_substitution_blocks_without_cleanup_follow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    safe_parent = tmp_path / "safe"
+    safe_parent.mkdir(mode=0o700)
+    monkeypatch.setattr(git_service.tempfile, "tempdir", str(safe_parent))
+    root, parent_oid, candidate_oid = _real_candidate_repository(
+        safe_parent,
+        lfs=True,
+    )
+    owner, binding, _repository = _owner_for_candidate(
+        root,
+        parent_oid,
+        candidate_oid,
+    )
+    executable = shutil.which("git")
+    assert executable is not None
+    runner = _ReplacingAttributeProofRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable=executable,
+        environment={},
+    )
+
+    review = await service.review_push_destination(binding)
+
+    assert review.state == "blocked"
+    assert runner.replaced is True
+    assert runner.replacement_marker is not None
+    assert runner.replacement_marker.exists()
+    assert not any(
+        "check-attr" in command
+        for command, _result in runner.calls
+    )
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_attribute_proof_rejects_directory_index_without_mutating_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    safe_parent = tmp_path / "safe"
+    safe_parent.mkdir(mode=0o700)
+    monkeypatch.setattr(git_service.tempfile, "tempdir", str(safe_parent))
+    owner, binding, repository = _candidate_owner(tmp_path)
+    runner = _ControlledLocalProofRunner(
+        repository,
+        index_directory=True,
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+
+    review = await service.review_push_destination(binding)
+
+    read_tree_environments = [
+        environment
+        for argv, environment, _stdin in runner.calls
+        if "read-tree" in tuple(os.fsdecode(argument) for argument in argv)
+    ]
+    assert review.state == "blocked"
+    assert len(read_tree_environments) == 1
+    index_path = Path(read_tree_environments[0]["GIT_INDEX_FILE"])
+    assert index_path.is_dir()
+    assert stat.S_IMODE(index_path.stat().st_mode) == 0o700
+    assert not any(
+        "check-attr" in tuple(
+            os.fsdecode(argument) for argument in argv
+        )
+        for argv, _environment, _stdin in runner.calls
+    )
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("index_payload", "read_tree_returncode"),
+    [(b"x" * 64, 0), (b"partial", 1)],
+    ids=["oversized", "failed-partial"],
+)
+async def test_attribute_proof_rejected_index_leaves_no_proof_residue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    index_payload: bytes,
+    read_tree_returncode: int,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    monkeypatch.setattr(
+        git_service,
+        "_LOCAL_PUSH_PROOF_FILE_LIMIT_BYTES",
+        32,
+    )
+    runner = _ControlledLocalProofRunner(
+        repository,
+        index_payload=index_payload,
+        read_tree_returncode=read_tree_returncode,
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+
+    review = await service.review_push_destination(binding)
+
+    read_tree_environments = [
+        environment
+        for argv, environment, _stdin in runner.calls
+        if "read-tree" in tuple(os.fsdecode(argument) for argument in argv)
+    ]
+    assert review.state == "blocked"
+    assert len(read_tree_environments) == 1
+    index_path = Path(read_tree_environments[0]["GIT_INDEX_FILE"])
+    assert not index_path.parent.exists()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_attribute_proof_rejects_source_object_metadata_change(
+    tmp_path: Path,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    objects = Path(repository.git_common_dir) / "objects"
+    original_mode = stat.S_IMODE(objects.stat().st_mode)
+    runner = _ChangingObjectDirectoryModeRunner(repository)
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+
+    try:
+        review = await service.review_push_destination(binding)
+    finally:
+        objects.chmod(original_mode)
+
+    assert review.state == "blocked"
+    assert runner.changed is True
+    read_tree_environments = [
+        environment
+        for argv, environment, _stdin in runner.calls
+        if "read-tree" in tuple(os.fsdecode(argument) for argument in argv)
+    ]
+    assert len(read_tree_environments) == 1
+    index_path = Path(read_tree_environments[0]["GIT_INDEX_FILE"])
+    assert not index_path.parent.exists()
+    assert not any(
+        "check-attr" in tuple(
+            os.fsdecode(argument) for argument in argv
+        )
+        for argv, _environment, _stdin in runner.calls
+    )
     await service.shutdown()
 
 
