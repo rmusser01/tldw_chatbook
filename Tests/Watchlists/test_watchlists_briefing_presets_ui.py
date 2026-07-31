@@ -35,7 +35,7 @@ from Tests.UI.test_destination_shells import DestinationHarness
 from Tests.UI.test_destination_visual_parity_correction import (
     ProductionCSSDestinationHarness,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions.briefing_cast import (
     dump_roster,
