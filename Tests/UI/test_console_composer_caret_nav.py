@@ -42,6 +42,10 @@ async def _focused_composer(host, pilot, text: str) -> ConsoleComposerBar:
     composer.load_draft(text)
     composer.focus()
     await pilot.pause()
+    # De-flake (established pattern, test_console_composer_cursor.py): own
+    # every blink phase so a painted-caret-glyph assertion can never race a
+    # periodic blink tick that hides it.
+    composer._cursor_blink_timer.pause()
     return composer
 
 
@@ -293,3 +297,215 @@ async def test_moving_up_above_the_visible_window_scrolls_it_to_follow_the_caret
         await pilot.pause()
         assert composer.cursor_index == 5
         assert "LINE0" in visible_draft.render_line(0).text
+
+
+# ---------------------------------------------------------------------------
+# Fix round 2 (review): the splice-based mapping drifted on soft-wrapped
+# rows. Coverage below cross-checks `cursor_index` against the INDEPENDENTLY
+# PAINTED caret glyph (`_draft_renderable`'s own splice, an entirely
+# different code path) rather than trusting the same arithmetic under test
+# to also grade itself -- the review's own blind-spot list.
+# ---------------------------------------------------------------------------
+
+
+def _painted_caret_rowcol(visible_draft: Static) -> tuple[int, int]:
+    """Return (row, column) of the painted caret glyph, or raise if absent."""
+    for row in range(visible_draft.size.height):
+        text = visible_draft.render_line(row).text
+        column = text.find(ConsoleComposerBar.CURSOR_GLYPH)
+        if column != -1:
+            return row, column
+    raise AssertionError("caret glyph not painted in any visible row")
+
+
+@pytest.mark.asyncio
+async def test_down_across_soft_wrapped_rows_matches_painted_caret_including_column_zero():
+    """HIGH fix: Down across soft-wrapped rows, at several columns including
+    0, must land at the same column (clamped to the row below's length) --
+    verified two ways: against `_wrap_draft_line_slices` (the row/offset
+    authority) AND against the independently-painted caret glyph. The
+    reviewer's differential sweep found 114/150 wrong positions on this
+    exact shape (digits, no whitespace, no explicit `\\n`) under the old
+    splice-based mapping, including a degenerate case where Down from
+    column 0 didn't change rows at all -- covered explicitly below.
+    """
+    app, _ = _ready_host()
+    host = _CssTrueConsoleHarness(app)
+    async with host.run_test(size=APP_SIZE) as pilot:
+        text = "".join(str(i % 10) for i in range(150))
+        composer = await _focused_composer(host, pilot, text)
+        width = composer._draft_render_width()
+        slices = ConsoleComposerBar._wrap_draft_line_slices(text, width)
+        assert len(slices) == 3  # still soft-wrapped into 3 rows at this width.
+        row0, row1, row2 = slices
+
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+
+        for column in (0, 1, 10, len(row0.text) // 2, len(row0.text) - 1):
+            composer.position_cursor_from_display_index(row0.start + column)
+            await pilot.pause()
+            assert _painted_caret_rowcol(visible_draft) == (0, column), column
+
+            moved = composer.move_cursor_down()
+            await pilot.pause()
+
+            expected_column = min(column, len(row1.text))
+            expected_index = row1.start + expected_column
+            assert moved is True, column
+            assert composer.cursor_index == expected_index, column
+            assert (
+                _painted_caret_rowcol(visible_draft) == (1, expected_column)
+            ), column
+
+        # row1 -> row2: row2 is the SHORT remainder row, so a late column in
+        # row1 exercises the clamp on a genuinely soft-wrapped transition
+        # (the existing clamp test only covers explicit-`\n` rows).
+        assert len(row2.text) < len(row1.text)
+        late_column = len(row1.text) - 1
+        composer.position_cursor_from_display_index(row1.start + late_column)
+        await pilot.pause()
+        assert _painted_caret_rowcol(visible_draft) == (1, late_column)
+
+        moved = composer.move_cursor_down()
+        await pilot.pause()
+
+        expected_column = len(row2.text)  # clamped to row2's own length.
+        assert moved is True
+        assert composer.cursor_index == row2.start + expected_column
+        assert _painted_caret_rowcol(visible_draft) == (2, expected_column)
+
+
+@pytest.mark.asyncio
+async def test_up_from_the_first_column_after_a_whitespace_wrap_boundary_ascends():
+    """MEDIUM fix: a caret sitting right at a whitespace wrap boundary (the
+    first column of a soft-wrapped row) must resolve Up to the row ABOVE,
+    matching where the caret is actually PAINTED -- the old space-splice
+    model kept it on the row below (a space extends the trailing whitespace
+    run and stays on the earlier row; the real `CURSOR_GLYPH` attaches to
+    the following word and wraps down), so `move_cursor_up()` returned
+    False on a caret the user can plainly see sitting on the row below.
+    """
+    app, _ = _ready_host()
+    host = _CssTrueConsoleHarness(app)
+    async with host.run_test(size=APP_SIZE) as pilot:
+        text = "the quick brown fox jumps over the lazy dog by the winding river " * 3
+        composer = await _focused_composer(host, pilot, text)
+        width = composer._draft_render_width()
+        slices = ConsoleComposerBar._wrap_draft_line_slices(text, width)
+        assert len(slices) >= 2
+        # A genuine soft-wrap boundary: row0's end IS row1's start (no
+        # separator between them -- this is prose with no explicit `\n`).
+        assert slices[0].end == slices[1].start
+
+        boundary_index = slices[1].start  # column 0 of row 1.
+        composer.position_cursor_from_display_index(boundary_index)
+        await pilot.pause()
+
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        # Pins the review's premise: the caret paints on row 1, column 0 --
+        # not row 0 -- before any move happens.
+        assert _painted_caret_rowcol(visible_draft) == (1, 0)
+
+        moved = composer.move_cursor_up()
+        await pilot.pause()
+
+        assert moved is True
+        assert composer.cursor_index == slices[0].start  # column 0 of row 0.
+        assert _painted_caret_rowcol(visible_draft) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_windowed_draft_with_unequal_row_lengths_clamps_while_climbing():
+    """Windowed (>4-row) draft with genuinely UNEQUAL row lengths -- the
+    original windowed test used 8 equal-length rows, which the report
+    itself noted meant "no clamp is ever needed"; this one forces a clamp
+    mid-climb (row2 is 1 character) while also exercising two no-clamp
+    transitions, cross-checked against hand-derived offsets from the same
+    `_wrap_draft_line_slices` rows the implementation itself walks.
+    """
+    app, _ = _ready_host()
+    host = _CssTrueConsoleHarness(app)
+    async with host.run_test(size=APP_SIZE) as pilot:
+        rows = ["SENT0", "B" * 20, "C", "D" * 15, "EE"]
+        text = "\n".join(rows)
+        composer = await _focused_composer(host, pilot, text)
+        assert composer.cursor_index == len(text)  # tail: row4 ("EE"), col 2.
+
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        initial_painted = "".join(
+            visible_draft.render_line(row).text
+            for row in range(visible_draft.size.height)
+        )
+        assert "SENT0" not in initial_painted  # row0 starts outside the window.
+
+        # Hand-derived from the same row boundaries `_wrap_draft_line_slices`
+        # produces for this text (verified independently: row0 "SENT0" [0,5),
+        # row1 "B"*20 [6,26), row2 "C" [27,28), row3 "D"*15 [29,44), row4
+        # "EE" [45,47)). Column carried from row4 (2) clamps to row2's
+        # single character (up#2, 2 -> 1); every other step carries its
+        # column unclamped.
+        expected_after_each_up = [31, 28, 7, 1]
+
+        for expected in expected_after_each_up:
+            assert composer.move_cursor_up() is True
+            await pilot.pause()
+            assert composer.cursor_index == expected
+
+        # Row0 is now inside the (re-centered) window, and painted at the
+        # very top since nothing is scrolled off above it. The caret glyph
+        # lands mid-word (column 1 of "SENT0"), splitting the literal
+        # substring -- strip it before checking row content.
+        row0_stripped = visible_draft.render_line(0).text.replace(
+            ConsoleComposerBar.CURSOR_GLYPH, ""
+        )
+        assert "SENT0" in row0_stripped
+        assert _painted_caret_rowcol(visible_draft) == (0, 1)
+
+        # One more Up: already on row 0 -- False, nothing moves further.
+        assert composer.move_cursor_up() is False
+        assert composer.cursor_index == 1
+
+
+# ---------------------------------------------------------------------------
+# Fix round 2 (review): LOW findings -- a no-op boundary Up/Down must still
+# collapse a full-draft selection and break undo-coalescing, exactly like
+# every other move method's own boundary case (`move_cursor_left` at index
+# 0, `move_cursor_right` at the draft's end). Pure unmounted-widget tests,
+# following `test_console_composer_undo.py`'s own established convention.
+# ---------------------------------------------------------------------------
+
+
+def test_noop_up_collapses_a_full_draft_selection_so_typing_inserts_not_replaces():
+    composer = ConsoleComposerBar()
+    composer.load_draft("hello")
+    composer.select_all_draft()
+    assert composer.has_full_draft_selection() is True
+
+    moved = composer.move_cursor_up()  # single row -- boundary, no-op.
+
+    assert moved is False
+    assert composer.has_full_draft_selection() is False
+    composer.insert_text("X")
+    assert composer.draft_text() == "helloX"  # inserted at the caret, not a replace.
+
+
+def test_noop_down_breaks_typed_run_coalescing_like_every_other_cursor_key():
+    composer = ConsoleComposerBar()
+    for character in "ab":
+        composer.insert_text(character)
+    assert composer.draft_text() == "ab"
+
+    moved = composer.move_cursor_down()  # single row -- boundary, no-op.
+
+    assert moved is False
+    for character in "cd":
+        composer.insert_text(character)
+    assert composer.draft_text() == "abcd"
+
+    # Two separate undo arcs ("cd" then "ab"), not one combined "abcd" --
+    # proves the no-op broke coalescing between the two typed runs.
+    assert composer.undo() is True
+    assert composer.draft_text() == "ab"
+    assert composer.undo() is True
+    assert composer.draft_text() == ""
+    assert composer.undo() is False
