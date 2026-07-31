@@ -990,6 +990,33 @@ def test_release_checker_rejects_missing_database_migration(
     assert missing in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("missing", sorted(RUNTIME_MIGRATION_PATHS))
+def test_release_checker_rejects_missing_database_migration_from_sdist(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    missing: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    sdist = next(dist_dir.glob("*.tar.gz"))
+    rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+    with (
+        tarfile.open(sdist, "r:gz") as source,
+        tarfile.open(rewritten, "w:gz") as destination,
+    ):
+        for member in source.getmembers():
+            if member.name.endswith(f"/{missing}"):
+                continue
+            stream = source.extractfile(member) if member.isfile() else None
+            destination.addfile(member, stream)
+    rewritten.replace(sdist)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert missing in result.stdout + result.stderr
+
+
 def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
     built_distributions: BuiltDistributions,
     tmp_path: Path,
