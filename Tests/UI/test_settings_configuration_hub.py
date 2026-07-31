@@ -7953,3 +7953,52 @@ async def test_disabled_save_revert_carry_text_annotation():
         save = screen.query_one("#settings-save-category", Button)
         assert save.disabled is False
         assert str(save.label) == "Save (s)"
+
+
+# ---- task-1586: interactive-control convention ----
+
+_CONVENTION_CSS_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+
+
+def test_input_focus_bg_token_completes_task_345_contract():
+    """$ds-input-focus-bg aliased $ds-surface-raised (= $surface), which
+    nullified the settings fields' focus background swap -- the exact
+    failure mode task-345's comment documents and fixed for $ds-focus-bg
+    but not for this token (critique: no visible focus indicator on
+    center-pane fields)."""
+    src = (_CONVENTION_CSS_ROOT / "core" / "_variables.tcss").read_text()
+    assert "$ds-input-focus-bg: $ds-focus-bg;" in src
+
+
+def test_compact_inputs_carry_rest_edge_and_focus_edge():
+    """The control convention (task-1586): editable fields carry a
+    one-column left edge at rest (presence of the edge, not its color, is
+    the carrier) and a thick accent edge plus the distinct focus
+    background when focused. Left borders cost a column, never a row, so
+    the dense one-row forms keep their height."""
+    src = (
+        _CONVENTION_CSS_ROOT / "components" / "_agentic_terminal.tcss"
+    ).read_text()
+    rest = re.search(r"\.settings-compact-input \{[^}]*\}", src)
+    focus = re.search(r"\.settings-compact-input:focus \{[^}]*\}", src)
+    assert rest and focus
+    assert "border-left: solid $ds-control-edge;" in rest.group(0)
+    assert "height: 1;" in rest.group(0)
+    assert "border-left: thick $ds-action-focus;" in focus.group(0)
+
+
+@pytest.mark.asyncio
+async def test_compact_input_edge_renders_under_real_bundle():
+    """Computed-style check: the rest edge actually applies under the real
+    CSS bundle (the pytest plain harness cannot see bundle interference)."""
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(
+            screen, pilot, "#settings-console-paste-collapse-threshold", timeout=8.0
+        )
+        field = screen.query_one("#settings-console-paste-collapse-threshold", Input)
+        border_style = field.styles.border_left[0]
+        assert border_style == "solid", f"rest edge missing: {border_style!r}"
