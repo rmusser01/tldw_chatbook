@@ -279,9 +279,7 @@ async def test_resolution_error_prompts_and_returns_exact_override_decision(
     assert decisions[0].token == token
     assert decisions[0].accepted is accepted
     fake_app.push_screen_wait.assert_awaited_once()
-    assert not any(
-        isinstance(message, TTSPlaybackEvent) for message in fake_app.posted
-    )
+    assert not any(isinstance(message, TTSPlaybackEvent) for message in fake_app.posted)
 
 
 @pytest.mark.asyncio

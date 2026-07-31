@@ -266,9 +266,7 @@ async def test_unassigned_character_reads_once_then_uses_global_resolution() -> 
     await asyncio.sleep(0)
 
     assert profile_service.calls == [cast(CharacterRef, snapshot.character_ref)]
-    assert handler.generated == [
-        ("Character response.", snapshot.message_id, None)
-    ]
+    assert handler.generated == [("Character response.", snapshot.message_id, None)]
     assert handler.resolutions[0] is not None
     assert handler.resolutions[0].source == "global"
 
@@ -291,9 +289,7 @@ async def test_resolution_failure_offers_single_use_override_without_cooldown() 
     )
 
     completion = next(
-        message
-        for message in handler.messages
-        if isinstance(message, TTSCompleteEvent)
+        message for message in handler.messages if isinstance(message, TTSCompleteEvent)
     )
     assert completion.error
     assert completion.global_override_token is not None
@@ -307,9 +303,7 @@ async def test_resolution_failure_offers_single_use_override_without_cooldown() 
     await asyncio.sleep(0)
     await asyncio.sleep(0)
 
-    assert handler.generated == [
-        ("Character response.", snapshot.message_id, None)
-    ]
+    assert handler.generated == [("Character response.", snapshot.message_id, None)]
     assert handler.resolutions[0] is not None
     assert handler.resolutions[0].source == "explicit_override"
     assert snapshot.message_id in handler._request_cooldown
@@ -411,13 +405,9 @@ async def test_unknown_and_expired_override_tokens_do_no_admission_work(
 
     handler = _RecordingHandler(unavailable_profile_service)
     handler._tts_service = object()
-    await handler.handle_tts_request(
-        TTSMessageSpeechRequestEvent(snapshot, validator)
-    )
+    await handler.handle_tts_request(TTSMessageSpeechRequestEvent(snapshot, validator))
     completion = next(
-        message
-        for message in handler.messages
-        if isinstance(message, TTSCompleteEvent)
+        message for message in handler.messages if isinstance(message, TTSCompleteEvent)
     )
     assert completion.global_override_token is not None
     pending = handler._pending_global_overrides[completion.global_override_token]
@@ -438,9 +428,7 @@ async def test_unknown_and_expired_override_tokens_do_no_admission_work(
             "get_event_loop",
             lambda: SimpleNamespace(
                 time=lambda: (
-                    pending.created_at
-                    + handler.GLOBAL_OVERRIDE_TTL_SECONDS
-                    + 1.0
+                    pending.created_at + handler.GLOBAL_OVERRIDE_TTL_SECONDS + 1.0
                 )
             ),
         )

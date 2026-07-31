@@ -577,9 +577,7 @@ async def test_assigned_console_snapshot_uses_exact_profile_and_complete_wav(
     )
     snapshot = store.issue_tts_message_speech_snapshot(message.id)
     assert snapshot.character_ref is not None
-    profile_service = _StaticProfileService(
-        _assigned_profile(snapshot.character_ref)
-    )
+    profile_service = _StaticProfileService(_assigned_profile(snapshot.character_ref))
 
     async def load_profile_service() -> _StaticProfileService:
         return profile_service
@@ -600,9 +598,7 @@ async def test_assigned_console_snapshot_uses_exact_profile_and_complete_wav(
             timeout=_WAIT_SECONDS,
         )
         completion = next(
-            event
-            for event in handler.messages
-            if isinstance(event, TTSCompleteEvent)
+            event for event in handler.messages if isinstance(event, TTSCompleteEvent)
         )
         artifact = completion.audio_file
 
@@ -669,9 +665,7 @@ async def test_assigned_exact_failure_never_calls_global_or_offers_fallback(
     )
     snapshot = store.issue_tts_message_speech_snapshot(message.id)
     assert snapshot.character_ref is not None
-    profile_service = _StaticProfileService(
-        _assigned_profile(snapshot.character_ref)
-    )
+    profile_service = _StaticProfileService(_assigned_profile(snapshot.character_ref))
 
     async def load_profile_service() -> _StaticProfileService:
         return profile_service
@@ -691,9 +685,7 @@ async def test_assigned_exact_failure_never_calls_global_or_offers_fallback(
             timeout=_WAIT_SECONDS,
         )
         completion = next(
-            event
-            for event in handler.messages
-            if isinstance(event, TTSCompleteEvent)
+            event for event in handler.messages if isinstance(event, TTSCompleteEvent)
         )
 
         assert completion.audio_file is None
