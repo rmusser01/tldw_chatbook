@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
+import sys
+import zlib
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
 
+import tldw_chatbook.Notes.file_notes_git_network as git_network
 import tldw_chatbook.Notes.file_notes_git_push as push_contracts
 import tldw_chatbook.Notes.file_notes_git_service as git_service
 from tldw_chatbook.Notes.file_notes_git_push import PushContractError
@@ -369,6 +376,1824 @@ def test_local_destination_proof_environment_strips_all_redirects_and_helpers() 
 def _filesystem_identity(path: Path) -> FileSystemIdentity:
     metadata = path.stat()
     return FileSystemIdentity(metadata.st_dev, metadata.st_ino)
+
+
+def _network_repository(tmp_path: Path) -> RepositoryIdentity:
+    root = tmp_path / "source-notes"
+    git_dir = root / ".git"
+    objects = git_dir / "objects"
+    (git_dir / "refs" / "heads").mkdir(parents=True)
+    objects.mkdir()
+    (git_dir / "config").write_text(
+        "[core]\n\tbare = false\n",
+        encoding="utf-8",
+    )
+    (git_dir / "index").write_bytes(b"source-index")
+    (git_dir / "refs" / "heads" / "main").write_text(
+        "b" * 40 + "\n",
+        encoding="ascii",
+    )
+    (root / "note.md").write_text(
+        "PRIVATE NOTE BODY MUST NOT ENTER NETWORK CONTEXT\n",
+        encoding="utf-8",
+    )
+    return RepositoryIdentity(
+        worktree_root=str(root.resolve()),
+        git_dir=str(git_dir.resolve()),
+        git_common_dir=str(git_dir.resolve()),
+        worktree_identity=_filesystem_identity(root),
+        git_dir_identity=_filesystem_identity(git_dir),
+        git_common_dir_identity=_filesystem_identity(git_dir),
+    )
+
+
+def _network_destination(
+    endpoint: str = "https://push.example.test/team/notes.git",
+):
+    return _network_endpoint(endpoint).projection
+
+
+def _network_endpoint(
+    endpoint: str = "https://push.example.test/team/notes.git",
+):
+    return push_contracts._freeze_push_endpoint(endpoint, BRANCH_REF)
+
+
+def _network_authorizations(
+    repository: RepositoryIdentity,
+    destination,
+    *,
+    facts=(),
+):
+    source_objects = Path(repository.git_common_dir) / "objects"
+    source_authorization = git_network._authorize_source_object_directory(
+        source_objects,
+        _filesystem_identity(source_objects),
+    )
+    config_authorization = git_network._authorize_network_config_facts(
+        tuple(facts),
+        configuration_fingerprint="f" * 64,
+        destination=destination,
+    )
+    return source_authorization, config_authorization
+
+
+@lru_cache(maxsize=1)
+def _test_git_installation() -> tuple[Path, Path]:
+    developer_git = Path(
+        "/Library/Developer/CommandLineTools/usr/bin/git"
+    )
+    if developer_git.is_file():
+        git_executable = developer_git
+    else:
+        selected = shutil.which("git", path=os.defpath)
+        assert selected is not None
+        git_executable = Path(selected)
+    result = subprocess.run(
+        (str(git_executable), "--exec-path"),
+        env={"LC_ALL": "C", "PATH": os.defpath},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    assert result.returncode == 0
+    git_exec_path = Path(result.stdout.strip())
+    assert git_exec_path.is_absolute() and git_exec_path.is_dir()
+    return git_executable.resolve(), git_exec_path.resolve()
+
+
+def _network_factory(
+    tmp_path: Path,
+    *,
+    environment: Mapping[str, str] | None = None,
+    ssh_executable: Path | None = None,
+    git_exec_path: Path | None = None,
+    allow_ssh_agent: bool = False,
+) -> git_network.NetworkContextFactory:
+    parent = tmp_path / "network-contexts"
+    parent.mkdir(mode=0o700, exist_ok=True)
+    git_executable, installed_exec_path = _test_git_installation()
+    return git_network.NetworkContextFactory(
+        environment={} if environment is None else environment,
+        temporary_parent=parent,
+        git_executable=str(git_executable),
+        git_exec_path=(
+            installed_exec_path
+            if git_exec_path is None
+            else git_exec_path
+        ),
+        ssh_executable=(
+            None if ssh_executable is None else str(ssh_executable)
+        ),
+        allow_ssh_agent=allow_ssh_agent,
+    )
+
+
+def _create_network_context(
+    tmp_path: Path,
+    *,
+    endpoint: str = "https://push.example.test/team/notes.git",
+    facts=(),
+    environment: Mapping[str, str] | None = None,
+    ssh_executable: Path | None = None,
+    git_exec_path: Path | None = None,
+    allow_ssh_agent: bool = False,
+):
+    repository = _network_repository(tmp_path)
+    frozen_endpoint = _network_endpoint(endpoint)
+    destination = frozen_endpoint.projection
+    source_authorization, config_authorization = _network_authorizations(
+        repository,
+        destination,
+        facts=facts,
+    )
+    factory = _network_factory(
+        tmp_path,
+        environment=environment,
+        ssh_executable=ssh_executable,
+        git_exec_path=git_exec_path,
+        allow_ssh_agent=allow_ssh_agent,
+    )
+    context = factory.create(
+        repository=repository,
+        source_objects=source_authorization,
+        configuration=config_authorization,
+        destination=destination,
+        endpoint=frozen_endpoint,
+    )
+    return repository, destination, context
+
+
+def test_network_context_builds_private_bare_layout_without_source_mutation(
+    tmp_path: Path,
+) -> None:
+    repository = _network_repository(tmp_path)
+    source_files = {
+        relative: (Path(repository.git_dir) / relative).read_bytes()
+        for relative in ("config", "index", "refs/heads/main")
+    }
+    destination = _network_destination()
+    source_authorization, config_authorization = _network_authorizations(
+        repository,
+        destination,
+    )
+    context = _network_factory(tmp_path).create(
+        repository=repository,
+        source_objects=source_authorization,
+        configuration=config_authorization,
+        destination=destination,
+        endpoint=_network_endpoint(),
+    )
+
+    settings = context.command_settings()
+    environment = settings.environment
+    git_dir = Path(environment["GIT_DIR"])
+    root = git_dir.parent
+
+    assert settings.cwd == str(git_dir)
+    assert settings.stdin is None
+    assert settings.stdin_closed is True
+    assert stat.S_IMODE(root.stat().st_mode) == 0o700
+    assert stat.S_IMODE(git_dir.stat().st_mode) == 0o700
+    assert set(path.name for path in root.iterdir()) == {
+        "global.gitconfig",
+        "home",
+        "repository.git",
+        "system.gitconfig",
+        "tmp",
+        "xdg-config",
+    }
+    assert set(path.name for path in git_dir.iterdir()) == {
+        "HEAD",
+        "config",
+        "objects",
+        "refs",
+    }
+    assert set(path.name for path in (git_dir / "objects").iterdir()) == {
+        "info",
+        "pack",
+    }
+    assert not any(
+        (git_dir / name).exists()
+        for name in ("hooks", "index", "remotes", "worktrees")
+    )
+    assert not any((git_dir / "refs").iterdir())
+    assert (git_dir / "HEAD").read_text(encoding="ascii") == (
+        "ref: refs/heads/chatbook-isolated\n"
+    )
+    private_config = (git_dir / "config").read_text(encoding="utf-8")
+    assert "bare = true" in private_config
+    assert "remote" not in private_config.lower()
+    assert "push.example.test" not in private_config
+    assert Path(environment["GIT_CONFIG_SYSTEM"]).read_bytes() == b""
+    assert Path(environment["GIT_CONFIG_GLOBAL"]).read_bytes() == b""
+    assert environment["GIT_OBJECT_DIRECTORY"] == str(git_dir / "objects")
+    assert environment["GIT_ALTERNATE_OBJECT_DIRECTORIES"] == str(
+        Path(repository.git_common_dir) / "objects"
+    )
+    assert Path(environment["HOME"]).parent == root
+    assert Path(environment["XDG_CONFIG_HOME"]).parent == root
+    assert Path(environment["TMPDIR"]).parent == root
+    for path in root.rglob("*"):
+        mode = stat.S_IMODE(path.lstat().st_mode)
+        assert mode == (0o700 if path.is_dir() else 0o600)
+        if path.is_file():
+            assert b"PRIVATE NOTE BODY" not in path.read_bytes()
+    assert {
+        relative: (Path(repository.git_dir) / relative).read_bytes()
+        for relative in source_files
+    } == source_files
+
+    assert context.close() is True
+    assert not root.exists()
+
+
+def test_network_environment_is_allowlist_with_chatbook_controls(
+    tmp_path: Path,
+) -> None:
+    ambient = {
+        "PATH": "/trusted/bin",
+        "TMPDIR": "/ambient/tmp",
+        "SSH_AUTH_SOCK": "/private/agent.sock",
+        "GIT_DIR": "CANARY_GIT_DIR",
+        "GIT_WORK_TREE": "CANARY_WORKTREE",
+        "GIT_COMMON_DIR": "CANARY_COMMON",
+        "GIT_INDEX_FILE": "CANARY_INDEX",
+        "GIT_OBJECT_DIRECTORY": "CANARY_OBJECTS",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES": "CANARY_ALTERNATE",
+        "GIT_CONFIG": "CANARY_CONFIG",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "core.sshCommand",
+        "GIT_CONFIG_VALUE_0": "CANARY_COMMAND",
+        "GIT_EXEC_PATH": "/ambient/git-exec",
+        "GIT_NAMESPACE": "CANARY_NAMESPACE",
+        "GIT_REPLACE_REF_BASE": "CANARY_REPLACE",
+        "GIT_AUTHOR_NAME": "CANARY_AUTHOR",
+        "GIT_AUTHOR_EMAIL": "author@example.test",
+        "GIT_AUTHOR_DATE": "yesterday",
+        "GIT_COMMITTER_NAME": "CANARY_COMMITTER",
+        "GIT_COMMITTER_DATE": "tomorrow",
+        "GIT_ASKPASS": "CANARY_ASKPASS",
+        "SSH_ASKPASS": "CANARY_SSH_ASKPASS",
+        "GIT_EDITOR": "CANARY_EDITOR",
+        "GIT_PAGER": "CANARY_PAGER",
+        "PAGER": "CANARY_PAGER",
+        "GIT_TERMINAL_PROMPT": "1",
+        "GIT_SSH": "CANARY_SSH",
+        "GIT_SSH_COMMAND": "CANARY_SSH_COMMAND",
+        "GIT_PROXY_COMMAND": "CANARY_PROXY_COMMAND",
+        "HTTPS_PROXY": "https://proxy.example.test",
+        "http_proxy": "http://proxy.example.test",
+        "OPENAI_API_KEY": "CANARY_PROVIDER_TOKEN",
+        "AWS_SECRET_ACCESS_KEY": "CANARY_CLOUD_TOKEN",
+        "CHATBOOK_UNRELATED_STATE": "CANARY_APP_STATE",
+        "HOME": "/ambient/home",
+        "XDG_CONFIG_HOME": "/ambient/xdg",
+    }
+    _repository, _destination, context = _create_network_context(
+        tmp_path,
+        environment=ambient,
+    )
+
+    settings = context.command_settings()
+    environment = settings.environment
+
+    assert "/trusted/bin" not in environment["PATH"].split(os.pathsep)
+    assert all(
+        Path(component).is_absolute()
+        for component in environment["PATH"].split(os.pathsep)
+    )
+    assert "SSH_AUTH_SOCK" not in environment
+    assert environment["GIT_TERMINAL_PROMPT"] == "0"
+    assert environment["GCM_INTERACTIVE"] == "Never"
+    assert environment["GCM_GUI_PROMPT"] == "0"
+    assert environment["SSH_ASKPASS_REQUIRE"] == "never"
+    assert environment["GIT_PAGER"] == ""
+    assert environment["GIT_OPTIONAL_LOCKS"] == "0"
+    assert environment["GIT_NO_LAZY_FETCH"] == "1"
+    assert environment["GIT_NO_REPLACE_OBJECTS"] == "1"
+    assert environment["GIT_CONFIG_NOSYSTEM"] == "1"
+    assert environment["GIT_EXEC_PATH"] != ambient["GIT_EXEC_PATH"]
+    assert Path(environment["GIT_EXEC_PATH"]) == _test_git_installation()[1]
+    assert environment["LC_ALL"] == "C"
+    assert environment["TMPDIR"] != ambient["TMPDIR"]
+    assert environment["HOME"] != ambient["HOME"]
+    assert environment["XDG_CONFIG_HOME"] != ambient["XDG_CONFIG_HOME"]
+    rejected = {
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_CONFIG",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
+        "GIT_NAMESPACE",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_AUTHOR_DATE",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_DATE",
+        "GIT_ASKPASS",
+        "SSH_ASKPASS",
+        "GIT_EDITOR",
+        "PAGER",
+        "GIT_SSH",
+        "GIT_SSH_COMMAND",
+        "GIT_PROXY_COMMAND",
+        "HTTPS_PROXY",
+        "http_proxy",
+        "OPENAI_API_KEY",
+        "AWS_SECRET_ACCESS_KEY",
+        "CHATBOOK_UNRELATED_STATE",
+    }
+    assert rejected.isdisjoint(environment)
+    assert all("CANARY" not in value for value in environment.values())
+    assert settings.environment_fingerprint
+    with pytest.raises(TypeError):
+        environment["INJECTED"] = "value"  # type: ignore[index]
+    assert context.close() is True
+
+
+def _short_agent_socket_path(tmp_path: Path) -> Path:
+    suffix = f".s{os.getpid():x}{id(tmp_path) & 0xFFFF:x}"
+    return Path.cwd() / suffix
+
+
+def _bound_agent_socket(path: Path) -> socket.socket:
+    agent = socket.socket(socket.AF_UNIX)
+    try:
+        agent.bind(str(path))
+    except OSError as error:
+        agent.close()
+        pytest.skip(f"AF_UNIX fixture unavailable: {error.errno}")
+    return agent
+
+
+def test_network_environment_preserves_ssh_agent_only_when_authorized(
+    tmp_path: Path,
+) -> None:
+    agent_path = _short_agent_socket_path(tmp_path)
+    agent = _bound_agent_socket(agent_path)
+    try:
+        ambient = {
+            "PATH": "/trusted/bin",
+            "SSH_AUTH_SOCK": str(agent_path),
+        }
+        _repository, _destination, context = _create_network_context(
+            tmp_path,
+            environment=ambient,
+        )
+
+        environment = context.command_settings().environment
+
+        assert "SSH_AUTH_SOCK" not in environment
+        assert context.close() is True
+    finally:
+        agent.close()
+        agent_path.unlink(missing_ok=True)
+
+
+def test_network_environment_pins_authorized_owner_agent_socket(
+    tmp_path: Path,
+) -> None:
+    agent_path = _short_agent_socket_path(tmp_path)
+    original = _bound_agent_socket(agent_path)
+    try:
+        _repository, _destination, context = _create_network_context(
+            tmp_path,
+            endpoint="ssh://git@push.example.test:22/team/notes.git",
+            environment={"SSH_AUTH_SOCK": str(agent_path.resolve())},
+            ssh_executable=_fake_ssh_executable(tmp_path),
+            allow_ssh_agent=True,
+        )
+        assert context.command_settings().environment[
+            "SSH_AUTH_SOCK"
+        ] == str(agent_path.resolve())
+
+        original.close()
+        agent_path.unlink()
+        replacement = _bound_agent_socket(agent_path)
+        try:
+            with pytest.raises(git_network.NetworkContextError):
+                context.command_settings()
+        finally:
+            replacement.close()
+
+        assert context.close() is True
+    finally:
+        original.close()
+        agent_path.unlink(missing_ok=True)
+
+
+def test_network_environment_rejects_non_socket_ssh_agent(
+    tmp_path: Path,
+) -> None:
+    not_a_socket = tmp_path / "agent.sock"
+    not_a_socket.write_text("not a socket\n", encoding="utf-8")
+
+    with pytest.raises(git_network.NetworkContextError):
+        _create_network_context(
+            tmp_path,
+            endpoint="ssh://git@push.example.test:22/team/notes.git",
+            environment={"SSH_AUTH_SOCK": str(not_a_socket)},
+            ssh_executable=_fake_ssh_executable(tmp_path),
+            allow_ssh_agent=True,
+        )
+
+
+def test_https_network_context_ignores_invalid_ssh_agent(
+    tmp_path: Path,
+) -> None:
+    missing_agent = tmp_path / "missing-agent.sock"
+
+    _repository, _destination, context = _create_network_context(
+        tmp_path,
+        environment={"SSH_AUTH_SOCK": str(missing_agent)},
+        allow_ssh_agent=True,
+    )
+
+    assert "SSH_AUTH_SOCK" not in context.command_settings().environment
+    assert context.close() is True
+
+
+@pytest.mark.parametrize(
+    "socket_path",
+    ["/private/agent-%h.sock", "/private/agent-${LC_ALL}.sock"],
+)
+def test_network_environment_rejects_openssh_agent_token_expansion(
+    socket_path: str,
+) -> None:
+    assert not git_network._safe_environment_value(
+        "SSH_AUTH_SOCK",
+        socket_path,
+    )
+
+
+def test_network_environment_rejects_agent_identity_substitution_at_command_seam(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    socket_path = Path.cwd() / ".chatbook-virtual-agent"
+    identity = 1001
+    original_stat = Path.stat
+    original_resolve = Path.resolve
+
+    def virtual_stat(path: Path, *args, **kwargs):
+        if path == socket_path:
+            return os.stat_result(
+                (
+                    stat.S_IFSOCK | 0o600,
+                    identity,
+                    16777231,
+                    1,
+                    os.geteuid(),
+                    os.getegid(),
+                    0,
+                    0,
+                    0,
+                    0,
+                )
+            )
+        return original_stat(path, *args, **kwargs)
+
+    def virtual_resolve(path: Path, *, strict: bool = False) -> Path:
+        if path == socket_path:
+            return socket_path
+        return original_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "stat", virtual_stat)
+    monkeypatch.setattr(Path, "resolve", virtual_resolve)
+    _repository, _destination, context = _create_network_context(
+        tmp_path,
+        endpoint="ssh://git@push.example.test:22/team/notes.git",
+        environment={"SSH_AUTH_SOCK": str(socket_path)},
+        ssh_executable=_fake_ssh_executable(tmp_path),
+        allow_ssh_agent=True,
+    )
+    assert context.command_settings().environment["SSH_AUTH_SOCK"] == str(
+        socket_path
+    )
+
+    identity += 1
+
+    with pytest.raises(git_network.NetworkContextError):
+        context.command_settings()
+    assert context.close() is True
+
+
+def test_https_network_context_drops_authorized_ssh_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    socket_path = Path.cwd() / ".chatbook-virtual-https-agent"
+    original_stat = Path.stat
+    original_resolve = Path.resolve
+
+    def virtual_stat(path: Path, *args, **kwargs):
+        if path == socket_path:
+            return os.stat_result(
+                (
+                    stat.S_IFSOCK | 0o600,
+                    2001,
+                    16777231,
+                    1,
+                    os.geteuid(),
+                    os.getegid(),
+                    0,
+                    0,
+                    0,
+                    0,
+                )
+            )
+        return original_stat(path, *args, **kwargs)
+
+    def virtual_resolve(path: Path, *, strict: bool = False) -> Path:
+        if path == socket_path:
+            return socket_path
+        return original_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "stat", virtual_stat)
+    monkeypatch.setattr(Path, "resolve", virtual_resolve)
+    _repository, _destination, context = _create_network_context(
+        tmp_path,
+        environment={"SSH_AUTH_SOCK": str(socket_path)},
+        allow_ssh_agent=True,
+    )
+
+    assert "SSH_AUTH_SOCK" not in context.command_settings().environment
+    assert context.close() is True
+
+
+@pytest.mark.parametrize("search_path", [".:/usr/bin", ":/usr/bin", "bin"])
+def test_network_environment_rejects_relative_or_empty_search_path(
+    tmp_path: Path,
+    search_path: str,
+) -> None:
+    git_executable = shutil.which("git")
+    assert git_executable is not None
+
+    with pytest.raises(git_network.NetworkContextError):
+        git_network.NetworkContextFactory(
+            environment={"PATH": search_path},
+            temporary_parent=tmp_path,
+            git_executable=git_executable,
+            git_exec_path=_test_git_installation()[1],
+        )
+
+
+def test_network_context_config_copy_preserves_order_and_origin_binding(
+    tmp_path: Path,
+) -> None:
+    helper_name = _approved_helper_name()
+    if helper_name is None:
+        pytest.skip("No guarded helper allowlist is defined for this platform")
+    facts = (
+        _fact("credential.helper", "", scope="system", origin="1" * 64),
+        _fact(
+            "credential.helper",
+            helper_name,
+            scope="global",
+            origin="2" * 64,
+        ),
+        _fact(
+            "credential.useHttpPath",
+            "true",
+            scope="global",
+            origin="2" * 64,
+        ),
+    )
+    repository = _network_repository(tmp_path)
+    destination = _network_destination()
+    source_authorization, configuration = _network_authorizations(
+        repository,
+        destination,
+        facts=facts,
+    )
+    changed_origin = git_network._authorize_network_config_facts(
+        tuple(
+            replace(fact, origin_identity="3" * 64)
+            if fact.value == helper_name
+            else fact
+            for fact in facts
+        ),
+        configuration_fingerprint="f" * 64,
+        destination=destination,
+    )
+    helper_bin = tmp_path / "helper-bin"
+    helper_bin.mkdir(mode=0o700)
+    helper = helper_bin / f"git-credential-{helper_name}"
+    helper.write_text("not executed\n", encoding="utf-8")
+    helper.chmod(0o700)
+    context = _network_factory(
+        tmp_path,
+        environment={"PATH": str(helper_bin)},
+    ).create(
+        repository=repository,
+        source_objects=source_authorization,
+        configuration=configuration,
+        destination=destination,
+        endpoint=_network_endpoint(),
+    )
+
+    settings = context.command_settings()
+    private_config = Path(settings.environment["GIT_DIR"], "config").read_text(
+        encoding="utf-8"
+    )
+
+    assert private_config.index("\thelper =\n") < private_config.index(
+        f"\thelper = {helper_name}\n"
+    )
+    assert "\tuseHttpPath = true\n" in private_config
+    assert configuration.fact_count == 3
+    assert configuration.copy_fingerprint != changed_origin.copy_fingerprint
+    assert context.config_copy_fingerprint == configuration.copy_fingerprint
+    assert helper_name not in repr(configuration)
+    assert repository.git_dir not in repr(context)
+    assert repository.git_dir not in repr(settings)
+    assert context.close() is True
+
+
+def test_network_context_rejects_forged_config_capability_with_newline(
+    tmp_path: Path,
+) -> None:
+    repository = _network_repository(tmp_path)
+    endpoint = _network_endpoint()
+    destination = endpoint.projection
+    source_authorization, _configuration = _network_authorizations(
+        repository,
+        destination,
+    )
+    forged_fact = git_network._AuthorizedConfigFact(
+        "global",
+        "1" * 64,
+        "credential.useHttpPath",
+        "true\n[core]\n\tsshCommand = injected",
+    )
+    forged_record = git_network._NetworkConfigRecord(
+        "f" * 64,
+        "e" * 64,
+        destination,
+        (forged_fact,),
+    )
+    forged = object.__new__(git_network.NetworkConfigAuthorization)
+    try:
+        object.__setattr__(forged, "_record", forged_record)
+    except AttributeError:
+        pass
+
+    with pytest.raises(git_network.NetworkContextError):
+        _network_factory(tmp_path).create(
+            repository=repository,
+            source_objects=source_authorization,
+            configuration=forged,
+            destination=destination,
+            endpoint=endpoint,
+        )
+
+
+def test_network_context_rejects_forged_source_object_capability(
+    tmp_path: Path,
+) -> None:
+    repository = _network_repository(tmp_path)
+    endpoint = _network_endpoint()
+    destination = endpoint.projection
+    source_objects = Path(repository.git_common_dir) / "objects"
+    metadata = source_objects.stat()
+    forged_record = git_network._SourceObjectRecord(
+        source_objects,
+        _filesystem_identity(source_objects),
+        metadata.st_uid,
+        metadata.st_gid,
+        stat.S_IMODE(metadata.st_mode),
+        metadata.st_dev,
+        "f" * 64,
+    )
+    forged = object.__new__(git_network.SourceObjectDirectoryAuthorization)
+    try:
+        object.__setattr__(forged, "_record", forged_record)
+    except AttributeError:
+        pass
+    _source_authorization, configuration = _network_authorizations(
+        repository,
+        destination,
+    )
+
+    with pytest.raises(git_network.NetworkContextError):
+        _network_factory(tmp_path).create(
+            repository=repository,
+            source_objects=forged,
+            configuration=configuration,
+            destination=destination,
+            endpoint=endpoint,
+        )
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "scope"),
+    [
+        ("url.https://safe.example/.insteadOf", "https://old/", "global"),
+        ("remote.origin.url", "https://safe.example/repo.git", "global"),
+        ("remote.origin.push", "refs/heads/*:refs/heads/*", "global"),
+        ("remote.origin.mirror", "true", "global"),
+        ("remote.origin.receivePack", "custom", "system"),
+        ("push.pushOption", "ci.skip", "global"),
+        ("http.extraHeader", "Authorization: secret", "global"),
+        ("http.sslVerify", "false", "system"),
+        ("http.proxy", "https://proxy.example.test", "global"),
+        ("core.sshCommand", "/tmp/custom-ssh", "system"),
+        ("ssh.variant", "plink", "global"),
+        ("credential.username", "private-user", "global"),
+        ("credential.helper", "osxkeychain", "local"),
+        ("credential.helper", "manager", "worktree"),
+        ("credential.helper", "!touch SHOULD_NOT_RUN", "global"),
+        ("credential.helper", "manager --file secret", "global"),
+        ("credential.helper", "/tmp/custom-helper", "system"),
+        (
+            "credential.https://user:secret@safe.example.helper",
+            "manager",
+            "global",
+        ),
+        ("credential.useHttpPath", "sometimes", "global"),
+    ],
+    ids=[
+        "url-rewrite",
+        "remote-url",
+        "remote-refspec",
+        "mirror",
+        "receive-pack",
+        "push-option",
+        "extra-header",
+        "tls-exception",
+        "proxy",
+        "ssh-command",
+        "ssh-variant",
+        "credential-value",
+        "local-helper",
+        "worktree-helper",
+        "shell-helper",
+        "helper-arguments",
+        "helper-path",
+        "credential-bearing-scope",
+        "unvalidated-boolean",
+    ],
+)
+def test_network_context_config_copy_rejects_unapproved_facts(
+    key: str,
+    value: str,
+    scope: str,
+) -> None:
+    destination = _network_destination()
+
+    with pytest.raises(git_network.NetworkContextError):
+        git_network._authorize_network_config_facts(
+            (_fact(key, value, scope=scope),),
+            configuration_fingerprint="f" * 64,
+            destination=destination,
+        )
+
+
+def test_network_context_config_copy_is_https_only() -> None:
+    destination = _network_destination(
+        "ssh://git@push.example.test:22/team/notes.git"
+    )
+
+    with pytest.raises(git_network.NetworkContextError):
+        git_network._authorize_network_config_facts(
+            (_fact("credential.helper", "manager", scope="global"),),
+            configuration_fingerprint="f" * 64,
+            destination=destination,
+        )
+
+
+def test_network_context_config_snapshot_rejects_scoped_use_http_path() -> None:
+    destination = _network_destination()
+
+    with pytest.raises(git_network.NetworkContextError):
+        git_network._authorize_network_config_snapshot(
+            (
+                _fact(
+                    "credential.https://push.example.test/team/notes.git."
+                    "useHttpPath",
+                    "true",
+                    scope="global",
+                ),
+            ),
+            configuration_fingerprint="f" * 64,
+            destination=destination,
+        )
+
+
+def test_network_context_config_rejects_unapproved_named_helper() -> None:
+    destination = _network_destination()
+
+    with pytest.raises(git_network.NetworkContextError):
+        git_network._authorize_network_config_facts(
+            (
+                _fact(
+                    "credential.helper",
+                    "chatbook-unapproved-helper",
+                    scope="global",
+                ),
+            ),
+            configuration_fingerprint="f" * 64,
+            destination=destination,
+        )
+
+
+def test_network_context_rejects_source_alternate_path_separator(
+    tmp_path: Path,
+) -> None:
+    source_objects = tmp_path / "source:alternate" / "objects"
+    source_objects.mkdir(parents=True)
+
+    with pytest.raises(git_network.NetworkContextError):
+        git_network._authorize_source_object_directory(
+            source_objects,
+            _filesystem_identity(source_objects),
+        )
+
+
+def _fake_ssh_executable(tmp_path: Path) -> Path:
+    executable = tmp_path / "trusted-ssh"
+    executable.write_text("not executed\n", encoding="utf-8")
+    executable.chmod(0o700)
+    return executable
+
+
+def _recording_ssh_executable(tmp_path: Path) -> tuple[Path, Path]:
+    log_path = tmp_path / "ssh-argv.json"
+    executable = tmp_path / "recording-ssh"
+    executable.write_text(
+        (
+            f"#!{Path(sys.executable).resolve()} -I\n"
+            "import json\n"
+            "from pathlib import Path\n"
+            "import sys\n"
+            f"Path({str(log_path)!r}).write_text(\n"
+            "    json.dumps(sys.argv[1:]), encoding='utf-8'\n"
+            ")\n"
+            "raise SystemExit(73)\n"
+        ),
+        encoding="utf-8",
+    )
+    executable.chmod(0o700)
+    return executable, log_path
+
+
+def _recording_git_dispatch_executable(
+    path: Path,
+    log_path: Path,
+    *,
+    credential: bool = False,
+) -> None:
+    path.write_text(
+        (
+            f"#!{Path(sys.executable).resolve()} -I\n"
+            "import json\n"
+            "import os\n"
+            "from pathlib import Path\n"
+            "import sys\n"
+            f"Path({str(log_path)!r}).write_text(\n"
+            "    json.dumps({\n"
+            "        'argv': sys.argv,\n"
+            "        'environment': dict(os.environ),\n"
+            "    }),\n"
+            "    encoding='utf-8',\n"
+            ")\n"
+            + (
+                "if sys.argv[1:] == ['get']:\n"
+                "    print('username=pinned-user')\n"
+                "    print('password=pinned-password')\n"
+                if credential
+                else "raise SystemExit(73)\n"
+            )
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o700)
+
+
+def _write_loose_blob(objects: Path, payload: bytes) -> str:
+    object_payload = b"blob " + str(len(payload)).encode() + b"\0" + payload
+    object_id = hashlib.sha1(object_payload).hexdigest()
+    destination = objects / object_id[:2] / object_id[2:]
+    destination.parent.mkdir()
+    destination.write_bytes(zlib.compress(object_payload))
+    return object_id
+
+
+def test_openssh_invocation_is_exact_literal_direct_argv(
+    tmp_path: Path,
+) -> None:
+    executable = _fake_ssh_executable(tmp_path)
+    repository, destination, context = _create_network_context(
+        tmp_path,
+        endpoint="ssh://git@[2001:db8::1]:2222/team/notes.git",
+        ssh_executable=executable,
+        environment={"PATH": "/trusted/bin"},
+    )
+
+    invocation = context.openssh_invocation()
+
+    assert invocation is not None
+    assert invocation.argv == (
+        str(executable.resolve()),
+        "-F",
+        "none",
+        "-T",
+        "-o",
+        "SendEnv=GIT_PROTOCOL",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        "CheckHostIP=yes",
+        "-o",
+        "PreferredAuthentications=publickey",
+        "-o",
+        "PasswordAuthentication=no",
+        "-o",
+        "KbdInteractiveAuthentication=no",
+        "-o",
+        "ChallengeResponseAuthentication=no",
+        "-o",
+        "NumberOfPasswordPrompts=0",
+        "-o",
+        "ForwardAgent=no",
+        "-o",
+        "ForwardX11=no",
+        "-o",
+        "ClearAllForwardings=yes",
+        "-o",
+        "ProxyCommand=none",
+        "-o",
+        "ProxyJump=none",
+        "-o",
+        "CanonicalizeHostname=no",
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ControlPath=none",
+        "-o",
+        "ControlPersist=no",
+        "-o",
+        "UpdateHostKeys=no",
+        "-o",
+        "KnownHostsCommand=none",
+        "-o",
+        "PermitLocalCommand=no",
+        "-o",
+        "RequestTTY=no",
+        "-o",
+        "IdentityAgent=none",
+        "-o",
+        "HostName=2001:db8::1",
+        "-p",
+        "2222",
+        "-l",
+        "git",
+        "--",
+        "2001:db8::1",
+    )
+    assert not any("IdentityFile=" in argument for argument in invocation.argv)
+    assert not any("AskPass" in argument for argument in invocation.argv)
+    assert "IdentityAgent=none" in invocation.argv
+    assert "GIT_SSH_COMMAND" not in context.command_settings().environment
+    assert destination.host == "2001:db8::1"
+    assert repository.git_dir not in repr(invocation)
+    with pytest.raises(FrozenInstanceError):
+        invocation.argv = ()  # type: ignore[misc]
+    assert context.close() is True
+
+
+def test_openssh_git_adapter_executes_only_exact_frozen_route_without_network(
+    tmp_path: Path,
+) -> None:
+    endpoint_value = "ssh://git@[2001:db8::1]:2222/team/notes.git"
+    executable, log_path = _recording_ssh_executable(tmp_path)
+    _repository, _destination, context = _create_network_context(
+        tmp_path,
+        endpoint=endpoint_value,
+        ssh_executable=executable,
+    )
+    endpoint = push_contracts._freeze_push_endpoint(endpoint_value, BRANCH_REF)
+    settings = context.command_settings()
+    invocation = context.openssh_invocation()
+
+    assert invocation is not None
+    assert "GIT_SSH_COMMAND" not in settings.environment
+    assert settings.environment["GIT_SSH_VARIANT"] == "ssh"
+    adapter = Path(settings.environment["GIT_SSH"])
+    assert adapter.is_file()
+    assert stat.S_IMODE(adapter.stat().st_mode) == 0o700
+
+    result = subprocess.run(
+        context.build_query_argv(endpoint),
+        cwd=settings.cwd,
+        env=dict(settings.environment),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert tuple(json.loads(log_path.read_text(encoding="utf-8"))) == (
+        *invocation.argv[1:],
+        "git-upload-pack /team/notes.git",
+    )
+
+    log_path.unlink()
+    rejected = subprocess.run(
+        (
+            str(adapter),
+            "-p",
+            "2222",
+            "git@2001:db8::1",
+            "git-upload-pack '/other.git'",
+        ),
+        cwd=settings.cwd,
+        env=dict(settings.environment),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    assert rejected.returncode == 126
+    assert not log_path.exists()
+
+    tampered_environment = dict(settings.environment)
+    tampered_environment["CHATBOOK_NETWORK_SSH_PATH"] = "/other.git"
+    tampered = subprocess.run(
+        (
+            str(adapter),
+            "-p",
+            "2222",
+            "git@2001:db8::1",
+            "git-upload-pack '/team/notes.git'",
+        ),
+        cwd=settings.cwd,
+        env=tampered_environment,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    assert tampered.returncode == 126
+    assert not log_path.exists()
+
+    canonicalized = subprocess.run(
+        (
+            str(adapter),
+            "-p",
+            "2222",
+            "git@2001:db8::1",
+            'git-upload-pack "/team/notes.git"',
+        ),
+        cwd=settings.cwd,
+        env=dict(settings.environment),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    assert canonicalized.returncode == 73
+    assert tuple(json.loads(log_path.read_text(encoding="utf-8"))) == (
+        *invocation.argv[1:],
+        "git-upload-pack /team/notes.git",
+    )
+    assert context.close() is True
+
+
+def test_openssh_git_adapter_accepts_actual_scp_push_receive_pack(
+    tmp_path: Path,
+) -> None:
+    endpoint_value = "git@push.example.test:team/notes.git"
+    repository = _network_repository(tmp_path)
+    candidate_oid = _write_loose_blob(
+        Path(repository.git_common_dir) / "objects",
+        b"guarded candidate",
+    )
+    endpoint = _network_endpoint(endpoint_value)
+    destination = endpoint.projection
+    source_authorization, configuration = _network_authorizations(
+        repository,
+        destination,
+    )
+    executable, log_path = _recording_ssh_executable(tmp_path)
+    context = _network_factory(
+        tmp_path,
+        ssh_executable=executable,
+    ).create(
+        repository=repository,
+        source_objects=source_authorization,
+        configuration=configuration,
+        destination=destination,
+        endpoint=endpoint,
+    )
+    settings = context.command_settings()
+    invocation = context.openssh_invocation()
+    assert invocation is not None
+
+    result = subprocess.run(
+        context.build_push_argv(
+            endpoint,
+            "a" * 40,
+            candidate_oid,
+        ),
+        cwd=settings.cwd,
+        env=dict(settings.environment),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert tuple(json.loads(log_path.read_text(encoding="utf-8"))) == (
+        *invocation.argv[1:],
+        "git-receive-pack team/notes.git",
+    )
+    assert context.close() is True
+
+
+def test_network_context_crash_left_files_exclude_transient_routing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent_path = Path.cwd() / ".chatbook-private-agent-canary"
+    original_stat = Path.stat
+    original_resolve = Path.resolve
+
+    def virtual_stat(path: Path, *args, **kwargs):
+        if path == agent_path:
+            return os.stat_result(
+                (
+                    stat.S_IFSOCK | 0o600,
+                    3001,
+                    16777231,
+                    1,
+                    os.geteuid(),
+                    os.getegid(),
+                    0,
+                    0,
+                    0,
+                    0,
+                )
+            )
+        return original_stat(path, *args, **kwargs)
+
+    def virtual_resolve(path: Path, *, strict: bool = False) -> Path:
+        if path == agent_path:
+            return agent_path
+        return original_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "stat", virtual_stat)
+    monkeypatch.setattr(Path, "resolve", virtual_resolve)
+    endpoint_value = (
+        "private-user-canary@private-host-canary.example.test:"
+        "private/repository-route-canary.git"
+    )
+    repository, _destination, context = _create_network_context(
+        tmp_path,
+        endpoint=endpoint_value,
+        environment={
+            "SSH_AUTH_SOCK": str(agent_path),
+            "CHATBOOK_UNRELATED_STATE": "PRIVATE_ENV_CANARY",
+        },
+        ssh_executable=_fake_ssh_executable(tmp_path),
+        allow_ssh_agent=True,
+    )
+    settings = context.command_settings()
+    root = Path(settings.cwd).parent
+    forbidden = (
+        endpoint_value,
+        "private-user-canary",
+        "private-host-canary.example.test",
+        "private/repository-route-canary.git",
+        str(agent_path),
+        repository.worktree_root,
+        repository.git_dir,
+        repository.git_common_dir,
+        str(Path(repository.git_common_dir) / "objects"),
+        "PRIVATE_ENV_CANARY",
+    )
+
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        payload = path.read_bytes()
+        assert all(value.encode() not in payload for value in forbidden)
+
+    assert context.close() is True
+
+
+def test_https_network_context_has_no_openssh_invocation(
+    tmp_path: Path,
+) -> None:
+    _repository, _destination, context = _create_network_context(tmp_path)
+
+    assert context.openssh_invocation() is None
+    assert context.close() is True
+
+
+def test_openssh_executable_substitution_invalidates_context_capability(
+    tmp_path: Path,
+) -> None:
+    executable = _fake_ssh_executable(tmp_path)
+    _repository, _destination, context = _create_network_context(
+        tmp_path,
+        endpoint="ssh://git@push.example.test:22/team/notes.git",
+        ssh_executable=executable,
+    )
+    displaced = executable.with_suffix(".displaced")
+    executable.rename(displaced)
+    executable.write_text("replacement\n", encoding="utf-8")
+    executable.chmod(0o700)
+
+    with pytest.raises(git_network.NetworkContextError):
+        context.openssh_invocation()
+
+    assert context.close() is True
+
+
+def test_network_context_builders_require_live_exact_context_endpoint(
+    tmp_path: Path,
+) -> None:
+    repository, _destination, context = _create_network_context(tmp_path)
+    other_repository = _network_repository(tmp_path / "other")
+    other_endpoint = _network_endpoint(
+        "https://other.example.test/team/notes.git"
+    )
+    other_destination = other_endpoint.projection
+    other_source, other_config = _network_authorizations(
+        other_repository,
+        other_destination,
+    )
+    other_parent = tmp_path / "other-contexts"
+    other_parent.mkdir(mode=0o700)
+    other = git_network.NetworkContextFactory(
+        environment={},
+        temporary_parent=other_parent,
+        git_exec_path=_test_git_installation()[1],
+    ).create(
+        repository=other_repository,
+        source_objects=other_source,
+        configuration=other_config,
+        destination=other_destination,
+        endpoint=other_endpoint,
+    )
+    resolved = _resolve(_base_facts())
+    endpoint = resolved.transport.endpoint
+    assert endpoint is not None
+
+    query = context.build_query_argv(endpoint)
+    push = context.build_push_argv(
+        endpoint,
+        "b" * 40,
+        "d" * 40,
+    )
+
+    private_git_dir = context.command_settings().environment[
+        "GIT_DIR"
+    ]
+    assert f"--git-dir={private_git_dir}" in query
+    assert f"--git-dir={private_git_dir}" in push
+    assert "ls-remote" in query
+    assert "push" in push
+    assert repository.worktree_root not in query
+    assert repository.worktree_root not in push
+    with pytest.raises(git_network.NetworkContextError):
+        context.build_query_argv(other_endpoint)
+    assert context.close() is True
+    with pytest.raises(git_network.NetworkContextError):
+        context.build_query_argv(endpoint)
+    assert other.close() is True
+
+
+def test_network_context_cleanup_waits_for_every_retained_purpose(
+    tmp_path: Path,
+) -> None:
+    _repository, _destination, context = _create_network_context(tmp_path)
+    root = Path(
+        context.command_settings().environment["GIT_DIR"]
+    ).parent
+    review = context.retain("review")
+    active = context.retain("active")
+    recovery = context.retain("recovery")
+
+    assert context.close() is False
+    assert root.exists()
+    assert context.command_settings().cwd
+    with pytest.raises(git_network.NetworkContextError):
+        context.retain("active")
+    assert review.release() is True
+    assert review.release() is False
+    assert active.release() is True
+    assert root.exists()
+    assert recovery.release() is True
+    assert not root.exists()
+    assert context.cleaned is True
+
+
+def test_network_context_lease_is_bound_to_its_issuing_context(
+    tmp_path: Path,
+) -> None:
+    _repository, _destination, first = _create_network_context(
+        tmp_path / "first"
+    )
+    _repository, _destination, second = _create_network_context(
+        tmp_path / "second"
+    )
+    lease = first.retain("active")
+
+    assert first.close() is False
+    assert lease.release() is True
+    assert first.cleaned is True
+    assert second.cleaned is False
+    assert second.close() is True
+
+
+def test_network_context_cleanup_refuses_unknown_or_hardlinked_shape(
+    tmp_path: Path,
+) -> None:
+    _repository, _destination, context = _create_network_context(tmp_path)
+    settings = context.command_settings()
+    root = Path(settings.environment["GIT_DIR"]).parent
+    unknown = root / "unexpected"
+    unknown.write_text("do not delete broad trees", encoding="utf-8")
+
+    assert context.close() is False
+    assert unknown.read_text(encoding="utf-8") == "do not delete broad trees"
+    unknown.unlink()
+    system_config = Path(settings.environment["GIT_CONFIG_SYSTEM"])
+    external_link = root.parent / "external-system-link"
+    os.link(system_config, external_link)
+    assert context.close() is False
+    assert external_link.exists()
+    external_link.unlink()
+    assert context.close() is True
+    assert not root.exists()
+
+
+def test_network_context_cleanup_retries_its_own_partial_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _repository, _destination, context = _create_network_context(tmp_path)
+    settings = context.command_settings()
+    root = Path(settings.environment["GIT_DIR"]).parent
+    fail_path = Path(settings.environment["GIT_CONFIG_GLOBAL"])
+    original_unlink = Path.unlink
+    failed = False
+
+    def fail_once(path: Path, *args, **kwargs) -> None:
+        nonlocal failed
+        if path == fail_path and not failed:
+            failed = True
+            raise OSError("injected cleanup interruption")
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_once)
+    assert context.close() is False
+    assert failed is True
+    assert root.exists()
+
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    assert context.close() is True
+    assert not root.exists()
+
+
+def test_network_context_cleanup_tracks_file_before_failed_initialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _network_repository(tmp_path)
+    destination = _network_destination()
+    source, config = _network_authorizations(repository, destination)
+    factory = _network_factory(tmp_path)
+    parent = tmp_path / "network-contexts"
+
+    def fail_fchmod(_descriptor: int, _mode: int) -> None:
+        raise OSError("injected file initialization failure")
+
+    monkeypatch.setattr(git_network.os, "fchmod", fail_fchmod)
+    with pytest.raises(git_network.NetworkContextError):
+        factory.create(
+            repository=repository,
+            source_objects=source,
+            configuration=config,
+            destination=destination,
+            endpoint=_network_endpoint(),
+        )
+
+    assert tuple(parent.iterdir()) == ()
+
+
+def test_network_context_rejects_safe_leaf_under_writable_ancestor(
+    tmp_path: Path,
+) -> None:
+    unsafe = tmp_path / "unsafe-ancestor"
+    unsafe.mkdir(mode=0o700)
+    unsafe.chmod(0o777)
+    parent = unsafe / "private-parent"
+    parent.mkdir(mode=0o700)
+    repository = _network_repository(tmp_path / "repository")
+    destination = _network_destination()
+    source, config = _network_authorizations(repository, destination)
+    git_executable = shutil.which("git")
+    assert git_executable is not None
+    factory = git_network.NetworkContextFactory(
+        environment={},
+        temporary_parent=parent,
+        git_executable=git_executable,
+        git_exec_path=_test_git_installation()[1],
+    )
+
+    with pytest.raises(git_network.NetworkContextError):
+        factory.create(
+            repository=repository,
+            source_objects=source,
+            configuration=config,
+            destination=destination,
+            endpoint=_network_endpoint(),
+        )
+
+
+def test_network_context_rejects_executable_under_writable_ancestor(
+    tmp_path: Path,
+) -> None:
+    unsafe = tmp_path / "unsafe-executable-ancestor"
+    unsafe.mkdir(mode=0o700)
+    unsafe.chmod(0o777)
+    executable = unsafe / "git"
+    executable.write_text("not executed\n", encoding="utf-8")
+    executable.chmod(0o700)
+
+    with pytest.raises(git_network.NetworkContextError):
+        git_network.NetworkContextFactory(
+            environment={},
+            temporary_parent=tmp_path,
+            git_executable=str(executable),
+            git_exec_path=_test_git_installation()[1],
+        )
+
+
+def _approved_helper_name() -> str | None:
+    if sys.platform == "darwin":
+        return "osxkeychain"
+    return None
+
+
+def test_network_context_pins_approved_helper_and_removes_unrelated_path(
+    tmp_path: Path,
+) -> None:
+    helper_name = _approved_helper_name()
+    if helper_name is None:
+        pytest.skip("No guarded helper allowlist is defined for this platform")
+    proved_exec_path = tmp_path / "proved-exec-path"
+    proved_exec_path.mkdir(mode=0o700)
+    _recording_git_dispatch_executable(
+        proved_exec_path / "git-remote-https",
+        tmp_path / "unused-remote-log.json",
+    )
+    helper = proved_exec_path / f"git-credential-{helper_name}"
+    helper.write_text("not executed\n", encoding="utf-8")
+    helper.chmod(0o700)
+    unrelated = tmp_path / "unrelated-bin"
+    unrelated.mkdir(mode=0o700)
+    _repository, _destination, context = _create_network_context(
+        tmp_path,
+        facts=(
+            _fact(
+                "credential.helper",
+                helper_name,
+                scope="global",
+            ),
+        ),
+        environment={"PATH": str(unrelated)},
+        git_exec_path=proved_exec_path,
+    )
+    settings = context.command_settings()
+
+    assert str(unrelated) not in settings.environment["PATH"].split(os.pathsep)
+    helper.unlink()
+    with pytest.raises(git_network.NetworkContextError):
+        context.command_settings()
+    assert context.close() is True
+
+
+def test_network_context_proved_git_exec_path_dispatches_pinned_targets(
+    tmp_path: Path,
+) -> None:
+    helper_name = _approved_helper_name()
+    if helper_name is None:
+        pytest.skip("No guarded helper allowlist is defined for this platform")
+    git_executable, _installed_exec_path = _test_git_installation()
+    proved_exec_path = tmp_path / "proved-git-exec"
+    proved_exec_path.mkdir(mode=0o700)
+    remote_log = tmp_path / "remote-helper.json"
+    _recording_git_dispatch_executable(
+        proved_exec_path / "git-remote-https",
+        remote_log,
+    )
+    credential_log = tmp_path / "credential-helper.json"
+    _recording_git_dispatch_executable(
+        proved_exec_path / f"git-credential-{helper_name}",
+        credential_log,
+        credential=True,
+    )
+    repository = _network_repository(tmp_path)
+    endpoint = _network_endpoint()
+    destination = endpoint.projection
+    source_authorization, configuration = _network_authorizations(
+        repository,
+        destination,
+        facts=(
+            _fact(
+                "credential.helper",
+                helper_name,
+                scope="global",
+            ),
+        ),
+    )
+    parent = tmp_path / "network-contexts"
+    parent.mkdir(mode=0o700)
+    context = git_network.NetworkContextFactory(
+        environment={},
+        temporary_parent=parent,
+        git_executable=str(git_executable),
+        git_exec_path=proved_exec_path,
+    ).create(
+        repository=repository,
+        source_objects=source_authorization,
+        configuration=configuration,
+        destination=destination,
+        endpoint=endpoint,
+    )
+    settings = context.command_settings()
+    context_exec_path = Path(settings.environment["GIT_EXEC_PATH"])
+
+    assert context_exec_path == proved_exec_path
+    assert {
+        path.name for path in context_exec_path.iterdir()
+    } == {
+        "git-remote-https",
+        f"git-credential-{helper_name}",
+    }
+    assert all(
+        stat.S_IMODE(path.stat().st_mode) == 0o700
+        for path in context_exec_path.iterdir()
+    )
+    query = subprocess.run(
+        context.build_query_argv(endpoint),
+        cwd=settings.cwd,
+        env=dict(settings.environment),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    assert query.returncode != 0
+    remote_record = json.loads(remote_log.read_text(encoding="utf-8"))
+    endpoint_value = "https://push.example.test/team/notes.git"
+    assert remote_record["argv"] == [
+        str(proved_exec_path / "git-remote-https"),
+        endpoint_value,
+        endpoint_value,
+    ]
+    assert remote_record["environment"]["GIT_EXEC_PATH"] == str(
+        context_exec_path
+    )
+
+    credential = subprocess.run(
+        (
+            str(git_executable.resolve()),
+            f"--git-dir={settings.cwd}",
+            "credential",
+            "fill",
+        ),
+        cwd=settings.cwd,
+        env=dict(settings.environment),
+        input=(
+            b"protocol=https\n"
+            b"host=push.example.test\n"
+            b"path=team/notes.git\n\n"
+        ),
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    assert credential.returncode == 0
+    assert b"username=pinned-user" in credential.stdout
+    credential_record = json.loads(
+        credential_log.read_text(encoding="utf-8")
+    )
+    assert credential_record["argv"] == [
+        str(proved_exec_path / f"git-credential-{helper_name}"),
+        "get",
+    ]
+    assert credential_record["environment"]["GIT_EXEC_PATH"] == str(
+        context_exec_path
+    )
+    assert context.close() is True
+
+
+@pytest.mark.parametrize(
+    "executable_kind",
+    ["git-exec-path", "git", "python", "ssh", "https-helper"],
+)
+def test_network_context_rejects_source_repository_network_executables(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    executable_kind: str,
+) -> None:
+    repository = _network_repository(tmp_path)
+    source_root = Path(repository.worktree_root)
+    endpoint_value = (
+        "ssh://git@push.example.test:22/team/notes.git"
+        if executable_kind in {"python", "ssh"}
+        else "https://push.example.test/team/notes.git"
+    )
+    endpoint = _network_endpoint(endpoint_value)
+    destination = endpoint.projection
+    source_authorization, configuration = _network_authorizations(
+        repository,
+        destination,
+    )
+    git_executable, installed_exec_path = _test_git_installation()
+    selected_git = git_executable
+    selected_exec_path = installed_exec_path
+    selected_ssh: Path | None = None
+
+    source_executable = source_root / f"network-{executable_kind}"
+    source_executable.write_text("not executed\n", encoding="utf-8")
+    source_executable.chmod(0o700)
+    if executable_kind == "git-exec-path":
+        source_executable.unlink()
+        selected_exec_path = source_root / "git-exec"
+        selected_exec_path.mkdir(mode=0o700)
+        _recording_git_dispatch_executable(
+            selected_exec_path / "git-remote-https",
+            tmp_path / "unused-contained-exec-log.json",
+        )
+    elif executable_kind == "git":
+        source_executable = source_executable.rename(source_root / "git")
+        selected_git = source_executable
+    elif executable_kind == "python":
+        monkeypatch.setattr(git_network.sys, "executable", str(source_executable))
+    elif executable_kind == "ssh":
+        selected_ssh = source_executable
+    else:
+        selected_exec_path = tmp_path / "proved-exec-path"
+        selected_exec_path.mkdir(mode=0o700)
+        (selected_exec_path / "git-remote-https").symlink_to(
+            source_executable
+        )
+
+    parent = tmp_path / "network-contexts"
+    parent.mkdir(mode=0o700)
+    factory = git_network.NetworkContextFactory(
+        environment={"PATH": os.defpath},
+        temporary_parent=parent,
+        git_executable=str(selected_git),
+        git_exec_path=selected_exec_path,
+        ssh_executable=(
+            None if selected_ssh is None else str(selected_ssh)
+        ),
+    )
+
+    with pytest.raises(git_network.NetworkContextError):
+        factory.create(
+            repository=repository,
+            source_objects=source_authorization,
+            configuration=configuration,
+            destination=destination,
+            endpoint=endpoint,
+        )
+
+
+def test_https_network_context_ignores_source_repository_python(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _network_repository(tmp_path)
+    source_python = Path(repository.worktree_root) / "python"
+    source_python.write_text("not executed\n", encoding="utf-8")
+    source_python.chmod(0o700)
+    monkeypatch.setattr(git_network.sys, "executable", str(source_python))
+    endpoint = _network_endpoint()
+    destination = endpoint.projection
+    source_authorization, configuration = _network_authorizations(
+        repository,
+        destination,
+    )
+    parent = tmp_path / "network-contexts"
+    parent.mkdir(mode=0o700)
+
+    context = git_network.NetworkContextFactory(
+        environment={},
+        temporary_parent=parent,
+        git_executable=str(_test_git_installation()[0]),
+        git_exec_path=_test_git_installation()[1],
+    ).create(
+        repository=repository,
+        source_objects=source_authorization,
+        configuration=configuration,
+        destination=destination,
+        endpoint=endpoint,
+    )
+
+    source_python.unlink()
+    assert context.command_settings().cwd
+    assert context.close() is True
+
+
+def test_network_context_rejects_credential_helper_inside_source_repository(
+    tmp_path: Path,
+) -> None:
+    helper_name = _approved_helper_name()
+    if helper_name is None:
+        pytest.skip("No guarded helper allowlist is defined for this platform")
+    repository = _network_repository(tmp_path)
+    helper_bin = Path(repository.worktree_root) / "helper-bin"
+    helper_bin.mkdir(mode=0o700)
+    helper = helper_bin / f"git-credential-{helper_name}"
+    helper.write_text("not executed\n", encoding="utf-8")
+    helper.chmod(0o700)
+    proved_exec_path = tmp_path / "proved-exec-path"
+    proved_exec_path.mkdir(mode=0o700)
+    _recording_git_dispatch_executable(
+        proved_exec_path / "git-remote-https",
+        tmp_path / "unused-source-remote-log.json",
+    )
+    (proved_exec_path / f"git-credential-{helper_name}").symlink_to(
+        helper
+    )
+    endpoint = _network_endpoint()
+    destination = endpoint.projection
+    source_authorization, configuration = _network_authorizations(
+        repository,
+        destination,
+        facts=(
+            _fact(
+                "credential.helper",
+                helper_name,
+                scope="global",
+            ),
+        ),
+    )
+
+    with pytest.raises(git_network.NetworkContextError):
+        _network_factory(
+            tmp_path,
+            environment={},
+            git_exec_path=proved_exec_path,
+        ).create(
+            repository=repository,
+            source_objects=source_authorization,
+            configuration=configuration,
+            destination=destination,
+            endpoint=endpoint,
+        )
+
+
+def test_network_context_never_discovers_or_reuses_crash_left_directory(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "network-contexts"
+    parent.mkdir(mode=0o700)
+    orphan = parent / ".chatbook-network-git-crash-left"
+    orphan.mkdir(mode=0o700)
+    marker = orphan / "opaque-marker"
+    marker.write_bytes(b"no credentials or note body")
+    repository = _network_repository(tmp_path)
+    destination = _network_destination()
+    source, config = _network_authorizations(repository, destination)
+
+    context = git_network.NetworkContextFactory(
+        environment={},
+        temporary_parent=parent,
+        git_exec_path=_test_git_installation()[1],
+    ).create(
+        repository=repository,
+        source_objects=source,
+        configuration=config,
+        destination=destination,
+        endpoint=_network_endpoint(),
+    )
+    root = Path(
+        context.command_settings().environment["GIT_DIR"]
+    ).parent
+
+    assert root != orphan
+    assert marker.read_bytes() == b"no credentials or note body"
+    assert context.close() is True
+    assert orphan.exists()
 
 
 def _candidate_owner(
@@ -922,6 +2747,9 @@ async def test_unknown_scope_home_fallback_helper_blocks_when_xdg_is_set(
 async def test_unknown_scope_xdg_global_config_is_admitted_and_fingerprinted(
     tmp_path: Path,
 ) -> None:
+    helper_name = _approved_helper_name()
+    if helper_name is None:
+        pytest.skip("No guarded helper allowlist is defined for this platform")
     owner, binding, repository = _candidate_owner(tmp_path)
     home = tmp_path / "home"
     xdg_config = tmp_path / "xdg" / "git" / "config"
@@ -932,7 +2760,7 @@ async def test_unknown_scope_xdg_global_config_is_admitted_and_fingerprinted(
     runner.config_payload = base_payload + _unknown_scope_config_record(
         xdg_config,
         "credential.helper",
-        "store-one",
+        "",
     )
     service = FileNotesGitService(
         owner,
@@ -949,7 +2777,7 @@ async def test_unknown_scope_xdg_global_config_is_admitted_and_fingerprinted(
     runner.config_payload = base_payload + _unknown_scope_config_record(
         xdg_config,
         "credential.helper",
-        "store-two",
+        helper_name,
     )
     second = await service.review_push_destination(binding)
     second_policy = service._push_destination_policy
@@ -968,6 +2796,9 @@ async def test_unknown_scope_xdg_global_config_is_admitted_and_fingerprinted(
 async def test_unknown_scope_home_fallback_is_global_when_xdg_is_unset(
     tmp_path: Path,
 ) -> None:
+    helper_name = _approved_helper_name()
+    if helper_name is None:
+        pytest.skip("No guarded helper allowlist is defined for this platform")
     owner, binding, repository = _candidate_owner(tmp_path)
     home = tmp_path / "home"
     home_fallback = home / ".config" / "git" / "config"
@@ -977,7 +2808,7 @@ async def test_unknown_scope_home_fallback_is_global_when_xdg_is_unset(
     runner.config_payload += _unknown_scope_config_record(
         home_fallback,
         "credential.helper",
-        "store",
+        helper_name,
     )
     service = FileNotesGitService(
         owner,
@@ -990,6 +2821,111 @@ async def test_unknown_scope_home_fallback_is_global_when_xdg_is_unset(
 
     assert review.state == "ready"
     assert review.authorization is not None
+
+
+@pytest.mark.asyncio
+async def test_network_context_policy_retains_exact_approved_helper_and_objects(
+    tmp_path: Path,
+) -> None:
+    helper_name = _approved_helper_name()
+    if helper_name is None:
+        pytest.skip("No guarded helper allowlist is defined for this platform")
+    owner, binding, repository = _candidate_owner(tmp_path)
+    home = tmp_path / "home"
+    global_config = home / ".config" / "git" / "config"
+    global_config.parent.mkdir(parents=True)
+    global_config.write_text("[credential]\n", encoding="utf-8")
+    runner = _ControlledLocalProofRunner(repository)
+    runner.config_payload += _unknown_scope_config_record(
+        global_config,
+        "credential.helper",
+        helper_name,
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={"HOME": str(home)},
+    )
+
+    review = await service.review_push_destination(binding)
+    policy = service._push_destination_policy
+
+    assert review.state == "ready"
+    assert policy is not None
+    assert policy.network_configuration.fact_count == 1
+    assert policy.source_objects.identity_fingerprint
+    assert helper_name not in repr(policy.network_configuration)
+    assert repository.git_common_dir not in repr(policy.source_objects)
+
+
+@pytest.mark.asyncio
+async def test_network_context_policy_blocks_global_shell_credential_helper(
+    tmp_path: Path,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    home = tmp_path / "home"
+    global_config = home / ".config" / "git" / "config"
+    global_config.parent.mkdir(parents=True)
+    global_config.write_text("[credential]\n", encoding="utf-8")
+    runner = _ControlledLocalProofRunner(repository)
+    runner.config_payload += _unknown_scope_config_record(
+        global_config,
+        "credential.helper",
+        "!touch SHOULD_NOT_RUN",
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={"HOME": str(home)},
+    )
+
+    review = await service.review_push_destination(binding)
+
+    assert review.state == "blocked"
+    assert service.authorize_push_destination(binding) is None
+    assert not any(
+        {"credential", "ls-remote", "push"}.intersection(
+            os.fsdecode(argument) for argument in argv
+        )
+        for argv, _environment, _stdin in runner.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_network_context_policy_captures_and_blocks_scoped_use_http_path(
+    tmp_path: Path,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    home = tmp_path / "home"
+    global_config = home / ".config" / "git" / "config"
+    global_config.parent.mkdir(parents=True)
+    global_config.write_text("[credential]\n", encoding="utf-8")
+    runner = _ControlledLocalProofRunner(repository)
+    runner.config_payload += _unknown_scope_config_record(
+        global_config,
+        "credential.https://push.example.test/team/notes.git.usehttppath",
+        "true",
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={"HOME": str(home)},
+    )
+
+    review = await service.review_push_destination(binding)
+
+    assert review.state == "blocked"
+    assert service.authorize_push_destination(binding) is None
+    assert runner.config_reads == 2
+    assert not any(
+        {"credential", "ls-remote", "push"}.intersection(
+            os.fsdecode(argument) for argument in argv
+        )
+        for argv, _environment, _stdin in runner.calls
+    )
 
 
 @pytest.mark.asyncio

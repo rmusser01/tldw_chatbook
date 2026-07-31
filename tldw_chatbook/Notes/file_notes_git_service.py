@@ -48,6 +48,13 @@ from tldw_chatbook.Notes.file_notes_git_push import (
     _push_destination_policy_result,
     _resolve_push_configuration,
 )
+from tldw_chatbook.Notes.file_notes_git_network import (
+    NetworkConfigAuthorization,
+    NetworkContextError,
+    SourceObjectDirectoryAuthorization,
+    _authorize_network_config_snapshot,
+    _authorize_source_object_directory,
+)
 from tldw_chatbook.Notes.git_process_containment import (
     AsyncChildProcess,
     OwnedProcessTree,
@@ -183,7 +190,8 @@ _LOCAL_PUSH_CONFIG_PATTERN = (
     r"^(branch\..*\.(remote|merge|pushremote)|remote\.pushdefault|"
     r"remote\..*\.(url|pushurl|mirror|push|pushoption|receivepack|vcs|proxy)|"
     r"push\.pushoption|url\..*\.(pushinsteadof|insteadof)|http\..*|"
-    r"credential\..*helper|core\.sshcommand|ssh\.variant|filter\.lfs\..*|"
+    r"credential\..*(helper|usehttppath)|core\.sshcommand|"
+    r"ssh\.variant|filter\.lfs\..*|"
     r"include\.path|includeif\..*\.path)$"
 )
 _LOCAL_PUSH_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024
@@ -399,6 +407,8 @@ class _PushDestinationPolicySnapshot:
     owner_capture: _DestinationPolicyCapture
     candidate_capture: _PushCandidateCapture
     configuration: _ResolvedPushConfiguration
+    network_configuration: NetworkConfigAuthorization
+    source_objects: SourceObjectDirectoryAuthorization
     candidate_tree_oid: str
     included_paths_fingerprint: str
 
@@ -3034,14 +3044,15 @@ class FileNotesGitService:
                 ):
                     return None, "stale"
 
-            configuration = await self._read_push_configuration(
+            configuration_proof = await self._read_push_configuration(
                 repository,
                 prefix,
                 candidate.local_branch_ref,
                 proof=proof,
             )
-            if configuration is None:
+            if configuration_proof is None:
                 return None, "blocked"
+            configuration, network_configuration = configuration_proof
 
             paths_result = await self._run_local_push_proof_command(
                 repository,
@@ -3074,7 +3085,11 @@ class FileNotesGitService:
             )
             if attribute_context is None:
                 return None, "blocked"
-            attribute_prefix, index_environment = attribute_context
+            (
+                attribute_prefix,
+                index_environment,
+                source_objects,
+            ) = attribute_context
             tree_result = await self._run_local_push_proof_command(
                 repository,
                 (
@@ -3124,6 +3139,10 @@ class FileNotesGitService:
                     == configuration.configuration_fingerprint
                     and prior.configuration.transport.configured_identity
                     == configuration.transport.configured_identity
+                    and prior.network_configuration.copy_fingerprint
+                    == network_configuration.copy_fingerprint
+                    and prior.source_objects.identity_fingerprint
+                    == source_objects.identity_fingerprint
                 )
                 if not unchanged or not proof.cleanup():
                     return None, "blocked"
@@ -3152,6 +3171,8 @@ class FileNotesGitService:
                     owner_capture=owner_capture,
                     candidate_capture=candidate_capture,
                     configuration=configuration,
+                    network_configuration=network_configuration,
+                    source_objects=source_objects,
                     candidate_tree_oid=raw_commit.tree_object_id,
                     included_paths_fingerprint=attribute_fingerprint,
                 ),
@@ -3183,6 +3204,7 @@ class FileNotesGitService:
     ) -> tuple[
         tuple[str, ...],
         dict[str, str],
+        SourceObjectDirectoryAuthorization,
     ] | None:
         """Create an isolated exact-tree attribute reader with object-only access."""
         source_objects = Path(repository.git_common_dir) / "objects"
@@ -3196,6 +3218,12 @@ class FileNotesGitService:
                 source_objects_identity,
             ):
                 return None
+            source_objects_authorization = (
+                _authorize_source_object_directory(
+                    source_objects,
+                    source_objects_identity,
+                )
+            )
             git_dir = proof.create_directory("attribute.git")
             object_directory = proof.create_directory(
                 "attribute.git/objects"
@@ -3216,7 +3244,7 @@ class FileNotesGitService:
             index_file = proof.reserve_index("candidate.index")
             if not proof.validate():
                 return None
-        except (OSError, RuntimeError):
+        except (NetworkContextError, OSError, RuntimeError):
             return None
 
         environment = build_local_push_proof_environment(
@@ -3247,6 +3275,7 @@ class FileNotesGitService:
         return (
             prefix,
             environment,
+            source_objects_authorization,
         )
 
     async def _read_push_configuration(
@@ -3256,7 +3285,10 @@ class FileNotesGitService:
         branch_ref: str,
         *,
         proof: _PrivatePushProofDirectory,
-    ) -> _ResolvedPushConfiguration | None:
+    ) -> tuple[
+        _ResolvedPushConfiguration,
+        NetworkConfigAuthorization,
+    ] | None:
         argv = (
             *prefix,
             "config",
@@ -3296,13 +3328,21 @@ class FileNotesGitService:
         if second_facts is None or second_facts != first_facts:
             return None
         try:
-            return _resolve_push_configuration(
+            resolved = _resolve_push_configuration(
                 second_facts,
                 branch_ref,
                 self._transport_admission,
             )
-        except PushContractError:
+            network_configuration = _authorize_network_config_snapshot(
+                second_facts,
+                configuration_fingerprint=(
+                    resolved.configuration_fingerprint
+                ),
+                destination=resolved.transport.destination,
+            )
+        except (NetworkContextError, PushContractError):
             return None
+        return resolved, network_configuration
 
     async def _run_local_push_proof_command(
         self,

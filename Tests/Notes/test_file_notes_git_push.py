@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 from collections.abc import Callable
 from dataclasses import FrozenInstanceError, asdict, fields, is_dataclass
+from pathlib import Path
 
 import pytest
 
+import tldw_chatbook.Notes.file_notes_git_network as git_network
 import tldw_chatbook.Notes.file_notes_git_push as push_contracts
 from tldw_chatbook.Notes.file_notes_git_push import (
     PushAuthorizationHandle,
@@ -21,8 +26,6 @@ from tldw_chatbook.Notes.file_notes_git_push import (
     PushReviewHandle,
     PushReviewProjection,
     RemoteRefObservation,
-    build_push_argv,
-    build_push_query_argv,
     classify_push_diagnostic,
     parse_ls_remote_refs,
     parse_push_endpoint,
@@ -30,6 +33,10 @@ from tldw_chatbook.Notes.file_notes_git_push import (
     push_outcome_copy,
     push_recovery_copy,
     validate_destination_ref,
+)
+from tldw_chatbook.Notes.file_notes_session_owner import (
+    FileSystemIdentity,
+    RepositoryIdentity,
 )
 
 
@@ -56,6 +63,84 @@ def _destination() -> PushDestinationProjection:
         "https://example.com/team/notes.git",
         _DESTINATION_REF,
     )
+
+
+def _path_identity(path: Path) -> FileSystemIdentity:
+    metadata = path.stat()
+    return FileSystemIdentity(metadata.st_dev, metadata.st_ino)
+
+
+def _issued_network_context(
+    tmp_path: Path,
+    *,
+    endpoint: str,
+):
+    worktree = tmp_path / "source"
+    git_dir = worktree / ".git"
+    objects = git_dir / "objects"
+    objects.mkdir(parents=True)
+    git_dir.joinpath("config").write_text(
+        "[core]\n\tbare = false\n",
+        encoding="utf-8",
+    )
+    repository = RepositoryIdentity(
+        worktree_root=str(worktree.resolve()),
+        git_dir=str(git_dir.resolve()),
+        git_common_dir=str(git_dir.resolve()),
+        worktree_identity=_path_identity(worktree),
+        git_dir_identity=_path_identity(git_dir),
+        git_common_dir_identity=_path_identity(git_dir),
+    )
+    frozen_endpoint = push_contracts._freeze_push_endpoint(
+        endpoint,
+        _DESTINATION_REF,
+    )
+    destination = frozen_endpoint.projection
+    source_objects = git_network._authorize_source_object_directory(
+        objects,
+        _path_identity(objects),
+    )
+    configuration = git_network._authorize_network_config_facts(
+        (),
+        configuration_fingerprint="f" * 64,
+        destination=destination,
+    )
+    context_parent = tmp_path / "contexts"
+    context_parent.mkdir(mode=0o700)
+    developer_git = Path(
+        "/Library/Developer/CommandLineTools/usr/bin/git"
+    )
+    git_executable = (
+        str(developer_git)
+        if developer_git.is_file()
+        else shutil.which("git", path=os.defpath)
+    )
+    assert git_executable is not None
+    exec_path_result = subprocess.run(
+        (git_executable, "--exec-path"),
+        env={"LC_ALL": "C", "PATH": os.defpath},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    assert exec_path_result.returncode == 0
+    git_exec_path = Path(exec_path_result.stdout.strip()).resolve()
+    assert git_exec_path.is_dir()
+    context = git_network.NetworkContextFactory(
+        environment={"PATH": os.defpath},
+        temporary_parent=context_parent,
+        git_executable=git_executable,
+        git_exec_path=git_exec_path,
+    ).create(
+        repository=repository,
+        source_objects=source_objects,
+        configuration=configuration,
+        destination=destination,
+        endpoint=frozen_endpoint,
+    )
+    return context
 
 
 def test_production_transport_admission_rejects_local_and_file_endpoints() -> None:
@@ -899,19 +984,29 @@ def test_diagnostic_classifier_discards_raw_bytes_and_canaries(
     assert "\u202e" not in rendered
 
 
-def test_query_argv_is_the_exact_frozen_destination_contract() -> None:
+def test_network_context_query_argv_is_exact_and_factory_issued(
+    tmp_path: Path,
+) -> None:
+    context = _issued_network_context(
+        tmp_path,
+        endpoint="https://例え.テスト/team/notes.git",
+    )
     frozen = push_contracts._freeze_push_endpoint(
         "https://例え.テスト/team/notes.git",
         _DESTINATION_REF,
     )
-
-    assert build_push_query_argv(
+    settings = context.command_settings()
+    git_executable = shutil.which(
         "git",
-        "/private/network.git",
+        path=settings.environment["PATH"],
+    )
+    assert git_executable is not None
+
+    assert context.build_query_argv(
         frozen,
     ) == (
-        "git",
-        "--git-dir=/private/network.git",
+        str(Path(git_executable).resolve()),
+        f"--git-dir={settings.environment['GIT_DIR']}",
         "--no-replace-objects",
         "-c",
         "core.fsmonitor=false",
@@ -925,25 +1020,36 @@ def test_query_argv_is_the_exact_frozen_destination_contract() -> None:
         "https://xn--r8jz45g.xn--zckzah/team/notes.git",
         _DESTINATION_REF,
     )
+    assert context.close() is True
 
 
-def test_push_argv_is_the_exact_one_commit_compare_and_swap_contract() -> None:
+def test_network_context_push_argv_is_exact_compare_and_swap(
+    tmp_path: Path,
+) -> None:
+    context = _issued_network_context(
+        tmp_path,
+        endpoint="git@example.com:team/notes.git",
+    )
     frozen = push_contracts._freeze_push_endpoint(
         "git@example.com:team/notes.git",
         _DESTINATION_REF,
     )
-
-    argv = build_push_argv(
+    settings = context.command_settings()
+    git_executable = shutil.which(
         "git",
-        "/private/network.git",
+        path=settings.environment["PATH"],
+    )
+    assert git_executable is not None
+
+    argv = context.build_push_argv(
         frozen,
         _PARENT_OID,
         _CANDIDATE_OID,
     )
 
     assert argv == (
-        "git",
-        "--git-dir=/private/network.git",
+        str(Path(git_executable).resolve()),
+        f"--git-dir={settings.environment['GIT_DIR']}",
         "--no-replace-objects",
         "-c",
         "core.fsmonitor=false",
@@ -961,16 +1067,21 @@ def test_push_argv_is_the_exact_one_commit_compare_and_swap_contract() -> None:
         "git@example.com:team/notes.git",
         f"{_CANDIDATE_OID}:{_DESTINATION_REF}",
     )
+    assert context.close() is True
 
 
-def test_push_argv_excludes_all_broadening_and_implicit_behavior() -> None:
+def test_network_context_push_argv_excludes_broadening_and_implicit_behavior(
+    tmp_path: Path,
+) -> None:
+    context = _issued_network_context(
+        tmp_path,
+        endpoint="https://example.com/team/notes.git",
+    )
     frozen = push_contracts._freeze_push_endpoint(
         "https://example.com/team/notes.git",
         _DESTINATION_REF,
     )
-    argv = build_push_argv(
-        "git",
-        "/private/network.git",
+    argv = context.build_push_argv(
         frozen,
         _PARENT_OID,
         _CANDIDATE_OID,
@@ -996,6 +1107,7 @@ def test_push_argv_excludes_all_broadening_and_implicit_behavior() -> None:
     assert forbidden.isdisjoint(argv)
     assert argv.count(f"{_CANDIDATE_OID}:{_DESTINATION_REF}") == 1
     assert argv.count(f"--force-with-lease={_DESTINATION_REF}:{_PARENT_OID}") == 1
+    assert context.close() is True
 
 
 def test_private_endpoint_has_no_public_constructor_or_revealing_repr() -> None:
@@ -1011,16 +1123,104 @@ def test_private_endpoint_has_no_public_constructor_or_revealing_repr() -> None:
     assert frozen.projection == _destination()
 
 
-def test_push_builder_rejects_a_forged_private_endpoint_instance() -> None:
+def test_network_context_rejects_forged_private_endpoint_instance(
+    tmp_path: Path,
+) -> None:
+    context = _issued_network_context(
+        tmp_path,
+        endpoint="https://example.com/team/notes.git",
+    )
     forged = object.__new__(push_contracts._FrozenPushEndpoint)
     object.__setattr__(forged, "projection", _destination())
 
-    with pytest.raises(PushContractError) as error:
-        build_push_query_argv("git", "/private/network.git", forged)
+    with pytest.raises(git_network.NetworkContextError) as error:
+        context.build_query_argv(forged)
 
     assert not hasattr(push_contracts, "_ENDPOINT_SEAL")
-    assert error.value.code == "invalid_endpoint"
+    assert error.value.code == "invalid_context"
     assert "super-secret-token" not in str(error.value)
+    assert context.close() is True
+
+
+def test_network_context_builder_rejects_unissued_foreign_and_cleaned_contexts(
+    tmp_path: Path,
+) -> None:
+    context = _issued_network_context(
+        tmp_path,
+        endpoint="https://example.com/team/notes.git",
+    )
+    endpoint = push_contracts._freeze_push_endpoint(
+        "https://example.com/team/notes.git",
+        _DESTINATION_REF,
+    )
+    foreign_endpoint = push_contracts._freeze_push_endpoint(
+        "https://other.example.com/team/notes.git",
+        _DESTINATION_REF,
+    )
+    forged = object.__new__(git_network.NetworkGitExecutionContext)
+
+    with pytest.raises(git_network.NetworkContextError):
+        forged.build_query_argv(endpoint)
+    with pytest.raises(git_network.NetworkContextError):
+        context.build_query_argv(foreign_endpoint)
+    assert context.close() is True
+    with pytest.raises(git_network.NetworkContextError):
+        context.build_query_argv(endpoint)
+
+
+def test_network_context_settings_mutation_cannot_redirect_private_builders(
+    tmp_path: Path,
+) -> None:
+    context = _issued_network_context(
+        tmp_path,
+        endpoint="https://example.com/team/notes.git",
+    )
+    endpoint = push_contracts._freeze_push_endpoint(
+        "https://example.com/team/notes.git",
+        _DESTINATION_REF,
+    )
+    settings = context.command_settings()
+    expected_git_dir = settings.environment["GIT_DIR"]
+
+    with pytest.raises(TypeError):
+        settings.environment["GIT_DIR"] = "/tmp/redirected"  # type: ignore[index]
+    object.__setattr__(
+        settings,
+        "environment",
+        {"GIT_DIR": "/tmp/redirected-by-caller"},
+    )
+    argv = context.build_query_argv(endpoint)
+    fresh = context.command_settings()
+
+    assert f"--git-dir={expected_git_dir}" in argv
+    assert "/tmp/redirected-by-caller" not in argv
+    assert fresh.environment["GIT_DIR"] == expected_git_dir
+    assert fresh is not settings
+    assert context.close() is True
+
+
+def test_network_context_forged_alias_cannot_reuse_genuine_private_state(
+    tmp_path: Path,
+) -> None:
+    context = _issued_network_context(
+        tmp_path,
+        endpoint="https://example.com/team/notes.git",
+    )
+    endpoint = push_contracts._freeze_push_endpoint(
+        "https://example.com/team/notes.git",
+        _DESTINATION_REF,
+    )
+    forged = object.__new__(git_network.NetworkGitExecutionContext)
+    object.__setattr__(forged, "_state", context._state)
+
+    with pytest.raises(git_network.NetworkContextError):
+        forged.command_settings()
+    with pytest.raises(git_network.NetworkContextError):
+        forged.build_query_argv(endpoint)
+    with pytest.raises(git_network.NetworkContextError):
+        forged.close()
+
+    assert context.close() is True
 
 
 @pytest.mark.parametrize(
@@ -1032,25 +1232,29 @@ def test_push_builder_rejects_a_forged_private_endpoint_instance() -> None:
         (_PARENT_OID, "B" * 40),
     ],
 )
-def test_push_builder_rejects_non_authoritative_object_ids(
+def test_network_context_rejects_non_authoritative_object_ids(
+    tmp_path: Path,
     parent_oid: str,
     candidate_oid: str,
 ) -> None:
+    context = _issued_network_context(
+        tmp_path,
+        endpoint="https://example.com/team/notes.git",
+    )
     frozen = push_contracts._freeze_push_endpoint(
         "https://example.com/team/notes.git",
         _DESTINATION_REF,
     )
 
     with pytest.raises(PushContractError) as error:
-        build_push_argv(
-            "git",
-            "/private/network.git",
+        context.build_push_argv(
             frozen,
             parent_oid,
             candidate_oid,
         )
 
     assert error.value.code == "invalid_object_id"
+    assert context.close() is True
 
 
 @pytest.mark.parametrize(

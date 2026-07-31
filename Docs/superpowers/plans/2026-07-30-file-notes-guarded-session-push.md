@@ -483,13 +483,16 @@ git commit -m "feat(notes): contain retained Git process trees [TASK-1566]"
 **Files:**
 
 - Create: `tldw_chatbook/Notes/file_notes_git_network.py`
+- Modify: `tldw_chatbook/Notes/file_notes_git_push.py`
 - Modify: `tldw_chatbook/Notes/file_notes_git_service.py`
+- Modify: `Tests/Notes/test_file_notes_git_push.py`
 - Modify: `Tests/Notes/test_file_notes_git_push_service.py`
 
 - [ ] Write failing tests for owner-only temporary directory/file modes,
-  private bare Git layout, no refs/remotes/hooks, empty/disabled system and
-  global config, controlled source-object alternate, and cleanup only after all
-  retained work/recovery ends.
+  private bare Git layout with its required empty `refs/` directory but no ref
+  files/remotes/hooks, empty/disabled system and global config, controlled
+  source-object alternate, and cleanup only after all retained work/recovery
+  ends.
 - [ ] Write failing allowlist tests starting from an empty environment. Preserve
   only required OS/Git/noninteractive-auth values; reject repository/index/
   object/config/namespace/replace redirects, identity/date overrides, askpass,
@@ -508,7 +511,7 @@ git commit -m "feat(notes): contain retained Git process trees [TASK-1566]"
 - [ ] Run:
 
 ```bash
-python3 -m pytest Tests/Notes/test_file_notes_git_push_service.py -q -k "network_context or network_environment or openssh or cleanup"
+python3 -m pytest Tests/Notes/test_file_notes_git_push.py Tests/Notes/test_file_notes_git_push_service.py -q -k "network_context or network_environment or openssh or cleanup"
 ```
 
 Expected: FAIL because the immutable context does not exist.
@@ -523,8 +526,8 @@ Expected: FAIL because the immutable context does not exist.
 - [ ] Run:
 
 ```bash
-python3 -m ruff check tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_push_service.py
-python3 -m compileall -q tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/file_notes_git_service.py
+python3 -m ruff check tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/file_notes_git_push.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_push.py Tests/Notes/test_file_notes_git_push_service.py
+python3 -m compileall -q tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/file_notes_git_push.py tldw_chatbook/Notes/file_notes_git_service.py
 git diff --check
 ```
 
@@ -533,7 +536,7 @@ Expected: all commands exit 0.
 - [ ] Commit:
 
 ```bash
-git add tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_push_service.py
+git add Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/file_notes_git_push.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_push.py Tests/Notes/test_file_notes_git_push_service.py
 git commit -m "feat(notes): isolate guarded push execution [TASK-1566]"
 ```
 

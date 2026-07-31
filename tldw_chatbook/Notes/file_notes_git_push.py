@@ -1237,7 +1237,7 @@ def classify_push_diagnostic(payload: bytes) -> PushDiagnostic:
     return PushDiagnostic(category, _DIAGNOSTIC_MESSAGES[category])
 
 
-def build_push_query_argv(
+def _build_push_query_argv(
     git_executable: str,
     private_network_git_dir: str,
     endpoint: _FrozenPushEndpoint,
@@ -1270,7 +1270,7 @@ def build_push_query_argv(
     )
 
 
-def build_push_argv(
+def _build_push_argv(
     git_executable: str,
     private_network_git_dir: str,
     endpoint: _FrozenPushEndpoint,
@@ -1670,8 +1670,6 @@ __all__ = [
     "PushReviewProjection",
     "RemoteRefObservation",
     "TransportAdmission",
-    "build_push_argv",
-    "build_push_query_argv",
     "classify_push_diagnostic",
     "parse_ls_remote_refs",
     "parse_push_endpoint",
