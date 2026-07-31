@@ -1329,6 +1329,70 @@ async def test_voice_provider_overridden_notifies_once_per_app_run(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_model_default_notifies_once_per_app_run(monkeypatch):
+    """Review finding L1, mirroring `test_voice_provider_overridden_notifies_once_per_app_run`.
+
+    `fast_default_displaced_configured_model` is once-per-run guidance
+    (a deliberate latency policy, not a failure), not once-per-capture noise.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    monkeypatch.setattr(
+        voice_module,
+        "resolve",
+        lambda: voice_module.EffectiveConfig(
+            provider="faster-whisper",
+            model="base",
+            language="en",
+            configured_provider="faster-whisper",
+            was_overridden=False,
+            model_overridden_for_dictation=True,
+            configured_model="distil-large-v3",
+            fast_default_displaced_configured_model=True,
+        ),
+    )
+    _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    def _default_calls():
+        return [
+            call
+            for call in notify.call_args_list
+            if "distil-large-v3" in str(call.args[0]) and "base" in str(call.args[0])
+        ]
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        first_capture_calls = _default_calls()
+        assert len(first_capture_calls) == 1
+        assert first_capture_calls[0].kwargs.get("severity") == "information"
+        notify.reset_mock()
+
+        # A brand-new controller instance for the second capture -- exercises
+        # the app-run guard, not the controller's own once-per-instance latch.
+        console._console_dictation_session = None
+
+        await pilot.pause(0.5)
+        assert await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        assert _default_calls() == []
+
+
+@pytest.mark.asyncio
 async def test_a_probe_crash_at_mount_does_not_brick_the_button(monkeypatch):
     """A bug in the (find_spec-only) probe must fail open, not disable forever."""
 

@@ -739,6 +739,92 @@ def test_provider_override_is_announced_once(monkeypatch):
     assert overrides[0].effective == "faster-whisper"
 
 
+def test_model_default_is_announced_once(monkeypatch):
+    """Review finding L1: the fast default displacing a differing
+    configured `transcription.default_model` gets a once-per-controller
+    advisory, mirroring `test_provider_override_is_announced_once` exactly.
+    """
+    controller, events, _ = _controller(monkeypatch)
+    _stub_settings(
+        monkeypatch,
+        {
+            "transcription.default_provider": "faster-whisper",
+            "transcription.default_model": "distil-large-v3",
+        },
+    )
+
+    controller.start()
+    controller.stop()
+    controller.start()
+
+    defaults = [e for e in events if isinstance(e, cvi.VoiceDictationModelDefaulted)]
+    assert len(defaults) == 1
+    assert defaults[0].configured == "distil-large-v3"
+    assert defaults[0].effective == cvi.DICTATION_FAST_MODEL_DEFAULT
+
+
+def test_model_default_is_not_announced_with_nothing_configured_to_displace(
+    monkeypatch,
+):
+    """No `transcription.default_model` configured means there is nothing
+    the fast default "displaced" -- a bare default winning over an equally
+    unconfigured slot needs no advisory.
+    """
+    controller, events, _ = _controller(monkeypatch)
+    # `_controller()`'s own settings leave `transcription.default_model` unset.
+
+    controller.start()
+
+    defaults = [e for e in events if isinstance(e, cvi.VoiceDictationModelDefaulted)]
+    assert defaults == []
+
+
+def test_model_default_is_not_announced_for_an_explicit_dictation_model_override(
+    monkeypatch,
+):
+    """An explicit `dictation.model` is the user's own deliberate choice --
+    no advisory needed, even though `transcription.default_model` differs.
+    """
+    controller, events, _ = _controller(monkeypatch)
+    _stub_settings(
+        monkeypatch,
+        {
+            "transcription.default_provider": "faster-whisper",
+            "transcription.default_model": "distil-large-v3",
+            "dictation.model": "tiny",
+        },
+    )
+
+    controller.start()
+
+    defaults = [e for e in events if isinstance(e, cvi.VoiceDictationModelDefaulted)]
+    assert defaults == []
+
+
+def test_model_default_is_not_announced_for_a_non_fast_provider(monkeypatch):
+    """Only the `DICTATION_FAST_MODEL_PROVIDER` branch can displace anything;
+    every other provider keeps reading `transcription.default_model` as-is.
+    """
+    controller, events, _ = _controller(
+        monkeypatch, spawn=lambda thunk: thunk()
+    )
+    monkeypatch.setattr(
+        cvi, "installed_local_providers", lambda: ("parakeet-mlx",)
+    )
+    _stub_settings(
+        monkeypatch,
+        {
+            "transcription.default_provider": "parakeet-mlx",
+            "transcription.default_model": "v2",
+        },
+    )
+
+    controller.start()
+
+    defaults = [e for e in events if isinstance(e, cvi.VoiceDictationModelDefaulted)]
+    assert defaults == []
+
+
 def test_vad_unavailable_is_announced_once_across_captures(monkeypatch):
     """Mirrors `test_provider_override_is_announced_once` exactly.
 
