@@ -28,7 +28,7 @@ import time
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Sequence, Union
 from urllib.parse import urlparse, urlunparse
 
 # Third-Party Libraries
@@ -100,6 +100,22 @@ def ensure_site_configs_schema(db_path) -> None:
     with closing(connect_private_sqlite("db.subscriptions.site_configs", db_path)) as conn:
         conn.executescript(SITE_CONFIGS_DDL)
         conn.commit()
+
+
+#: Sentinel default for `SubscriptionsDB.set_watchlist_briefing_settings`'s
+#: `default_preset_id` parameter, distinguishing "leave this column alone"
+#: (the default, when the caller doesn't pass the argument at all) from
+#: `None` (a real value meaning "clear the default preset"). A plain `None`
+#: default could not carry both meanings.
+_UNSET = object()
+
+#: Max ids bound in one `get_subscription_items_by_ids` statement's
+#: `IN (...)` clause. Chunked rather than bound in a single unbounded
+#: statement for the same reason `briefing_selection._window_rows` avoids a
+#: per-id `NOT IN` (see its docstring): SQLite has a host-parameter limit,
+#: and a heavy user's briefing can reference far more items than is safe to
+#: bind in one query.
+_ITEM_ID_LOOKUP_CHUNK_SIZE = 500
 
 
 class SubscriptionsDB(BaseDB):
@@ -742,6 +758,53 @@ class SubscriptionsDB(BaseDB):
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_briefing_items_item "
             "ON briefing_items(item_id)"
+        )
+
+        # Briefing presets + scripts (spec #2 phase 2a): a preset is a named,
+        # reusable N-speaker roster (plus optional style notes and a
+        # provider/model override); a script is one cast run of a specific
+        # `briefings` row. Scripts snapshot the roster and preset name at
+        # cast time (`roster_snapshot_json`, `preset_name`) rather than
+        # joining back to `briefing_presets` live -- editing or deleting a
+        # preset later must never change the meaning of a script someone
+        # already cast, so `preset_id` here is deliberately NOT a foreign
+        # key: it is a best-effort back-reference only, and outliving its
+        # target is expected, not an error. `briefing_id`, in contrast, IS a
+        # real FK with `ON DELETE CASCADE` -- a script has no meaning once
+        # the briefing it narrates is gone. Additive `CREATE TABLE IF NOT
+        # EXISTS`, no data migration, so the `BEGIN IMMEDIATE` machinery used
+        # for other rebuilds in this file is deliberately not cargo-culted in
+        # here (see Docs/superpowers/specs/2026-07-30-watchlists-briefings-design.md).
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS briefing_presets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                style_notes TEXT,
+                provider TEXT,
+                model TEXT,
+                roster_json TEXT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS briefing_scripts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                briefing_id INTEGER NOT NULL REFERENCES briefings(id) ON DELETE CASCADE,
+                preset_id INTEGER,
+                preset_name TEXT NOT NULL,
+                roster_snapshot_json TEXT NOT NULL,
+                turns_json TEXT,
+                status TEXT NOT NULL DEFAULT 'generating',
+                error TEXT,
+                model_used TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_briefing_scripts_briefing "
+            "ON briefing_scripts(briefing_id, status)"
         )
 
         # local_watchlist_runs is guaranteed to exist: BaseDB.__init__ runs
@@ -1752,6 +1815,382 @@ class SubscriptionsDB(BaseDB):
                 (watchlist_id,),
             ).fetchone()
         return row[0] if row is not None else None
+
+    # --- Briefing presets & scripts (spec #2 phase 2a) ---
+
+    def insert_briefing_preset(
+        self,
+        name: str,
+        *,
+        roster_json: str,
+        style_notes: Optional[str] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> int:
+        """Create a new `briefing_presets` row.
+
+        Args:
+            name: Display name for the preset.
+            roster_json: Canonical JSON encoding of the speaker roster (see
+                `briefing_cast.dump_roster`). Stored verbatim; this layer
+                does not parse or validate it.
+            style_notes: Optional free-text style guidance appended to the
+                cast prompt.
+            provider: Optional LLM provider override for casting. `None`
+                defers to `generate_script`'s own default resolution.
+            model: Optional LLM model override for casting.
+
+        Returns:
+            The new row's `id`.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "INSERT INTO briefing_presets (name, roster_json, style_notes, "
+                "provider, model) VALUES (?, ?, ?, ?, ?)",
+                (name, roster_json, style_notes, provider, model),
+            )
+            return cursor.lastrowid
+
+    def update_briefing_preset(self, preset_id: int, **fields: Any) -> None:
+        """Update named columns on a `briefing_presets` row by id.
+
+        Matches `update_briefing`'s pattern: keys are validated against an
+        explicit allowlist of real `briefing_presets` columns rather than
+        trusted blindly, so a typo'd or renamed field raises immediately
+        instead of silently building a SET clause for a column that was
+        never meant to be settable this way. Each key surviving the
+        allowlist is additionally run through `sql_validation.
+        validate_identifier` before it reaches the SQL text --
+        belt-and-suspenders against the allowlist itself being edited to
+        something unsafe later.
+
+        Args:
+            preset_id: `briefing_presets.id` of the row to update.
+            **fields: Column/value pairs to set. A no-op (returns
+                immediately) when empty. `updated_at` is bumped to
+                `CURRENT_TIMESTAMP` automatically unless the caller passes
+                it explicitly.
+
+        Raises:
+            ValueError: If any key in `fields` is not an allowed column, or
+                fails `validate_identifier`.
+        """
+        allowed_fields = (
+            "name",
+            "roster_json",
+            "style_notes",
+            "provider",
+            "model",
+            "updated_at",
+        )
+        if not fields:
+            return
+        for key in fields:
+            if key not in allowed_fields:
+                raise ValueError(f"update_briefing_preset: unknown field {key!r}")
+            if not validate_identifier(key, "column name"):
+                raise ValueError(f"update_briefing_preset: invalid field {key!r}")
+
+        set_clause = ", ".join(f"{key} = ?" for key in fields)
+        values = list(fields.values())
+        # Only append the automatic timestamp bump when the caller didn't
+        # already supply `updated_at` explicitly -- otherwise the column
+        # would appear twice in the same SET clause.
+        extra = "" if "updated_at" in fields else ", updated_at = CURRENT_TIMESTAMP"
+        values.append(preset_id)
+        with self.transaction() as conn:
+            conn.execute(
+                f"UPDATE briefing_presets SET {set_clause}{extra} WHERE id = ?",
+                values,
+            )
+
+    def get_briefing_preset(self, preset_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch one `briefing_presets` row by id.
+
+        Args:
+            preset_id: `briefing_presets.id` to look up.
+
+        Returns:
+            The row as a dict, or `None` if no row has that id.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM briefing_presets WHERE id = ?", (preset_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_briefing_presets(self) -> List[Dict[str, Any]]:
+        """List every `briefing_presets` row, alphabetically by name.
+
+        Returns:
+            All `briefing_presets` rows ordered by `name` ascending
+            (case-sensitive SQLite default collation), then `id` as the
+            tiebreaker for two presets sharing a name.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM briefing_presets ORDER BY name ASC, id ASC"
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def delete_briefing_preset(self, preset_id: int) -> bool:
+        """Hard-delete a `briefing_presets` row.
+
+        `briefing_scripts.preset_id` is not a foreign key (by design -- see
+        the DDL comment in `_ensure_watchlists_schema`), so any script
+        already cast from this preset is untouched: its `preset_name` and
+        `roster_snapshot_json` already hold everything it needs, and its
+        `preset_id` simply becomes a dangling back-reference, exactly as
+        expected once the preset it named is gone.
+
+        Args:
+            preset_id: `briefing_presets.id` of the row to delete.
+
+        Returns:
+            `True` if a row was deleted, `False` if no row had that id.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM briefing_presets WHERE id = ?", (preset_id,)
+            )
+            return cursor.rowcount > 0
+
+    def insert_briefing_script(
+        self,
+        briefing_id: int,
+        *,
+        preset_id: Optional[int],
+        preset_name: str,
+        roster_snapshot_json: str,
+        status: str = "generating",
+    ) -> int:
+        """Create a new `briefing_scripts` row for a briefing.
+
+        Args:
+            briefing_id: The `briefings.id` this script narrates. The row
+                is deleted automatically if that briefing is ever deleted
+                (`ON DELETE CASCADE`).
+            preset_id: The preset this cast started from, or `None` if the
+                preset was deleted before this call (or never existed).
+                Not a foreign key -- see `delete_briefing_preset`.
+            preset_name: The preset's name at cast time, snapshotted so a
+                later preset rename/delete never changes what this script
+                says it was cast from.
+            roster_snapshot_json: Canonical JSON encoding of the resolved
+                roster at cast time (see `briefing_cast.dump_roster`).
+            status: Initial status. Defaults to `"generating"`, matching
+                every real caller's use -- the row exists before the LLM
+                call is even made, so a crash before the first write still
+                leaves a `generating` row for `fail_interrupted_scripts` to
+                find.
+
+        Returns:
+            The new row's `id`.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "INSERT INTO briefing_scripts (briefing_id, preset_id, preset_name, "
+                "roster_snapshot_json, status) VALUES (?, ?, ?, ?, ?)",
+                (briefing_id, preset_id, preset_name, roster_snapshot_json, status),
+            )
+            return cursor.lastrowid
+
+    def update_briefing_script(self, script_id: int, **fields: Any) -> None:
+        """Update named columns on a `briefing_scripts` row by id.
+
+        Matches `update_briefing`'s pattern: keys are validated against an
+        explicit allowlist of real `briefing_scripts` columns rather than
+        trusted blindly, so a typo'd or renamed field raises immediately
+        instead of silently building a SET clause for a column that was
+        never meant to be settable this way. Each key surviving the
+        allowlist is additionally run through `sql_validation.
+        validate_identifier` before it reaches the SQL text --
+        belt-and-suspenders against the allowlist itself being edited to
+        something unsafe later.
+
+        Args:
+            script_id: `briefing_scripts.id` of the row to update.
+            **fields: Column/value pairs to set. A no-op (returns
+                immediately) when empty. `updated_at` is bumped to
+                `CURRENT_TIMESTAMP` automatically unless the caller passes
+                it explicitly.
+
+        Raises:
+            ValueError: If any key in `fields` is not an allowed column, or
+                fails `validate_identifier`.
+        """
+        allowed_fields = (
+            "status",
+            "error",
+            "turns_json",
+            "model_used",
+            "updated_at",
+        )
+        if not fields:
+            return
+        for key in fields:
+            if key not in allowed_fields:
+                raise ValueError(f"update_briefing_script: unknown field {key!r}")
+            if not validate_identifier(key, "column name"):
+                raise ValueError(f"update_briefing_script: invalid field {key!r}")
+
+        set_clause = ", ".join(f"{key} = ?" for key in fields)
+        values = list(fields.values())
+        # Only append the automatic timestamp bump when the caller didn't
+        # already supply `updated_at` explicitly -- otherwise the column
+        # would appear twice in the same SET clause.
+        extra = "" if "updated_at" in fields else ", updated_at = CURRENT_TIMESTAMP"
+        values.append(script_id)
+        with self.transaction() as conn:
+            conn.execute(
+                f"UPDATE briefing_scripts SET {set_clause}{extra} WHERE id = ?",
+                values,
+            )
+
+    def get_briefing_script(self, script_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch one `briefing_scripts` row by id.
+
+        Args:
+            script_id: `briefing_scripts.id` to look up.
+
+        Returns:
+            The row as a dict, or `None` if no row has that id.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM briefing_scripts WHERE id = ?", (script_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_briefing_scripts(self, briefing_id: int) -> List[Dict[str, Any]]:
+        """List a briefing's cast scripts, newest first.
+
+        Args:
+            briefing_id: The briefing to list scripts for.
+
+        Returns:
+            Every `briefing_scripts` row for `briefing_id`, newest first by
+            `created_at` then `id` (the tiebreaker for rows created within
+            the same timestamp resolution).
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM briefing_scripts WHERE briefing_id = ? "
+                "ORDER BY created_at DESC, id DESC",
+                (briefing_id,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def set_watchlist_briefing_settings(
+        self,
+        watchlist_id: int,
+        *,
+        selection_mode: Optional[str] = None,
+        default_preset_id: object = _UNSET,
+    ) -> None:
+        """Write a watchlist's briefing selection mode and/or default preset.
+
+        Two independent, optional writes in one call:
+
+        - `selection_mode`: when given, must be one of the valid modes
+          below and replaces `watchlists.briefing_selection_mode`. `None`
+          (the default) leaves the column untouched -- there is no way to
+          ask this column to be cleared to NULL, since a watchlist's
+          selection mode is never meant to be absent.
+        - `default_preset_id`: uses the module-level `_UNSET` sentinel
+          (rather than `None`) as its "leave alone" default, because `None`
+          is itself a legitimate value here -- it clears
+          `watchlists.default_briefing_preset_id` back to "no default
+          preset". Passing nothing leaves the column untouched; passing
+          `None` explicitly clears it; passing an id sets it.
+
+        Args:
+            watchlist_id: `watchlists.id` of the row to update.
+            selection_mode: One of `("auto", "curated", "auto_featured")`,
+                or `None` to leave the current value alone.
+            default_preset_id: A `briefing_presets.id`, `None` to clear, or
+                the `_UNSET` sentinel (default) to leave the current value
+                alone.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: If `selection_mode` is given and is not one of the
+                valid modes.
+        """
+        # Pact: this tuple must name the exact same three strings, in the
+        # same meaning, as `briefing_selection.VALID_MODES`
+        # (`tldw_chatbook/Subscriptions/briefing_selection.py`) -- this DB
+        # module cannot import from `Subscriptions/` (the dependency runs
+        # the other way: `Subscriptions/` imports `DB/`), so the two cannot
+        # share a single source of truth in code. TASK-1393 ordering-pact
+        # convention: grep "briefing_selection.VALID_MODES" if you are
+        # changing either side, and change both together.
+        valid_modes = ("auto", "curated", "auto_featured")
+
+        updates: List[str] = []
+        values: List[Any] = []
+        if selection_mode is not None:
+            if selection_mode not in valid_modes:
+                raise ValueError(
+                    f"set_watchlist_briefing_settings: unknown selection_mode "
+                    f"{selection_mode!r}; valid modes: {list(valid_modes)}"
+                )
+            updates.append("briefing_selection_mode = ?")
+            values.append(selection_mode)
+        if default_preset_id is not _UNSET:
+            updates.append("default_briefing_preset_id = ?")
+            values.append(default_preset_id)
+
+        if not updates:
+            return
+
+        values.append(watchlist_id)
+        with self.transaction() as conn:
+            conn.execute(
+                f"UPDATE watchlists SET {', '.join(updates)} WHERE id = ?",
+                values,
+            )
+
+    def get_subscription_items_by_ids(
+        self, item_ids: Sequence[int]
+    ) -> Dict[int, Dict[str, Any]]:
+        """Fetch `subscription_items` rows by id, keyed by id.
+
+        Chunks the `IN (...)` lookup at `_ITEM_ID_LOOKUP_CHUNK_SIZE` ids per
+        statement rather than binding the entire `item_ids` sequence as one
+        query (the Qodo unbounded-`NOT IN` lesson from phase 1's
+        `briefing_selection._window_rows` -- see its docstring): a single
+        statement bound with hundreds or thousands of placeholders risks
+        SQLite's host-parameter limit for a heavy user's briefing.
+
+        Args:
+            item_ids: `subscription_items.id` values to fetch. Duplicates
+                and any order are fine; the return value is keyed by id.
+
+        Returns:
+            A dict mapping each id in `item_ids` that actually has a row to
+            that row as a dict. Ids with no matching row are simply absent
+            -- not mapped to `None`. Returns `{}` for empty input.
+        """
+        if not item_ids:
+            return {}
+
+        result: Dict[int, Dict[str, Any]] = {}
+        ids = list(item_ids)
+        with self.transaction() as conn:
+            for start in range(0, len(ids), _ITEM_ID_LOOKUP_CHUNK_SIZE):
+                chunk = ids[start : start + _ITEM_ID_LOOKUP_CHUNK_SIZE]
+                placeholders = ", ".join("?" * len(chunk))
+                cursor = conn.execute(
+                    f"SELECT * FROM subscription_items WHERE id IN ({placeholders})",
+                    chunk,
+                )
+                for row in cursor.fetchall():
+                    row_dict = dict(row)
+                    result[row_dict["id"]] = row_dict
+        return result
 
     def find_duplicate_items(
         self, item_url: str, item_hash: str
