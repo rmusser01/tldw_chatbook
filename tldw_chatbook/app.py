@@ -6700,7 +6700,7 @@ class TldwCli(
         try:
             if event.message_id:
                 # Find the message widget and update progress
-                for message_widget in self.query(ChatMessage).union(
+                for message_widget in list(self.query(ChatMessage)) + list(
                     self.query(ChatMessageEnhanced)
                 ):
                     if (

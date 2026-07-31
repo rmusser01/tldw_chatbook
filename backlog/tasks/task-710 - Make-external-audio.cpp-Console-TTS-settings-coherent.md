@@ -236,9 +236,25 @@ TASK-710 therefore remains **In Progress** and is not marked Done.
   after the two preceding wizard tests because the resulting `HomeScreen` lacks
   the expected shell-nav button. It is intentionally not fixed in this TTS
   closeout.
-- No process is listening on `127.0.0.1:8080`, so a fresh live external
-  audio.cpp rerun remains unavailable. Chatbook did not launch or supervise a
-  server. TASK-710 remains **In Progress**.
+- At the time of that audit, no process was listening on `127.0.0.1:8080`, so
+  a fresh live external audio.cpp rerun was unavailable. Chatbook did not launch
+  or supervise a server. TASK-710 remained **In Progress**.
+
+### Post-UAT progress-handler correction (2026-07-31)
+
+- A fresh live Console UAT exposed one caught UI error on each progress event:
+  the progress handler called unsupported `DOMQuery.union()`. The handler now
+  uses the same materialized two-query iteration as the working completion
+  handler.
+- A real-Textual regression test first reproduced the exact error and then
+  passed after the correction. The focused Console/native lifecycle set passed
+  all 35 tests; targeted Ruff lint and the new test file's format check passed.
+- The complete first-user UAT then passed against the user-owned listener at
+  `127.0.0.1:8080`: four progress events completed without handler errors, one
+  829,118-byte mono PCM16 WAV played through `afplay` (exit 0), and no streaming
+  events were emitted. The listener remained healthy under the same PID 36992
+  before and after the run. Evidence is retained under
+  `/private/tmp/tldw-task710-live-uat-v4963vrz`.
 
 ## Implementation Notes
 
@@ -261,6 +277,8 @@ TASK-710 therefore remains **In Progress** and is not marked Done.
 - No storage migration, dependency, managed-process behavior, or character
   profile behavior was added. ADR-023 is the governing amended decision; a new
   ADR was not created.
+- Corrected the shared TTS progress handler's Textual query iteration and added
+  a real-DOM regression test; no event, adapter, or runtime contract changed.
 - Added-line process-keyword review found only restart-recommendation copy and
   an in-process `asyncio.Event` close signal; it found no process launch or
   control API. The only changed profile-named file is the approved design
