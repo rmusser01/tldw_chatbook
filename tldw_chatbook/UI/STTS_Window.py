@@ -115,6 +115,17 @@ _PROFILE_RESULT_STALE_COPY = (
     "TTS settings changed after this audio was generated. Generate a new "
     "result before saving it as a profile."
 )
+STTS_VIEW_KEYS = frozenset(
+    {
+        "playground",
+        "profiles",
+        "settings",
+        "voice-cloning",
+        "effects",
+        "audiobook",
+        "dictation",
+    }
+)
 
 
 
@@ -4394,6 +4405,21 @@ class STTSWindow(Container):
             )
         self._mounted_view = "playground"
 
+    def on_mount(self) -> None:
+        """Apply any view request that arrived before child composition."""
+
+        self.call_after_refresh(self._apply_initial_view_request)
+
+    def _apply_initial_view_request(self) -> None:
+        """Reconcile retained navigation after the default child has mounted."""
+
+        force = (
+            self.current_view == "playground"
+            and self._pending_playground_preset is not None
+        )
+        if force or self.current_view != getattr(self, "_mounted_view", None):
+            self._mount_view(self.current_view, force=force)
+
     def _speech_capability_status_text(self) -> str:
         """Return a concise local speech dependency status for the sidebar."""
         check_tts_deps()
@@ -4443,9 +4469,40 @@ class STTSWindow(Container):
         which took down the whole screen. Mirrors the same QueryError
         tolerance `LLMManagementWindow.watch_active_view` carries.
         """
-        if new_view == getattr(self, "_mounted_view", None):
-            return
+        self._mount_view(new_view)
 
+    def select_view(
+        self,
+        view: str,
+        *,
+        profile_preset: TTSPlaygroundSelectionPreset | None = None,
+    ) -> None:
+        """Select an existing view and apply an exact one-shot preset."""
+
+        if type(view) is not str or view not in STTS_VIEW_KEYS:
+            raise ValueError("invalid Speech view")
+        if profile_preset is not None and (
+            view != "playground"
+            or type(profile_preset) is not TTSPlaygroundSelectionPreset
+        ):
+            raise ValueError("invalid Speech profile preset")
+        if view == "playground":
+            self._pending_playground_preset = profile_preset
+        else:
+            self._pending_playground_preset = None
+        if self.current_view != view:
+            self.current_view = view
+            return
+        if profile_preset is not None:
+            self._mount_view(view, force=True)
+
+    def _mount_view(self, new_view: str, *, force: bool = False) -> None:
+        """Replace the mounted content when a view change requires it."""
+
+        if type(new_view) is not str or new_view not in STTS_VIEW_KEYS:
+            return
+        if not force and new_view == getattr(self, "_mounted_view", None):
+            return
         try:
             content_container = self.query_one(".stts-content", Container)
         except QueryError:
@@ -4453,6 +4510,9 @@ class STTSWindow(Container):
                 "STTS content container not mounted yet; deferring view "
                 f"change to '{new_view}' until compose completes."
             )
+            return
+        if force and new_view == "playground":
+            self._apply_pending_playground_preset()
             return
 
         # Give widgets a chance to clean up before removal
@@ -4470,7 +4530,6 @@ class STTSWindow(Container):
         self._mounted_view = new_view
         if new_view == "playground":
             preset = self._pending_playground_preset
-            self._pending_playground_preset = None
             content_container.mount(
                 SpeechPlaygroundPane(
                     id="speech-playground-pane",
@@ -4478,6 +4537,8 @@ class STTSWindow(Container):
                     axis_defaults=_seed_axis_defaults(),
                 )
             )
+            if self._pending_playground_preset is preset:
+                self._pending_playground_preset = None
         elif new_view == "profiles":
             content_container.mount(STTSProfileLibrary(self._load_profile_service))
         elif new_view == "settings":
@@ -4499,6 +4560,30 @@ class STTSWindow(Container):
         # NoMatches on the first view change. The screen watches
         # `current_view` and applies `is-active` itself.
 
+    def _apply_pending_playground_preset(
+        self,
+        retries_remaining: int = 3,
+    ) -> None:
+        """Apply a same-view exact preset after nested controls mount."""
+
+        if not self.is_mounted or self.current_view != "playground":
+            return
+        try:
+            playground = self.query_one(SpeechPlaygroundPane)
+        except QueryError:
+            if retries_remaining > 0:
+                self.call_after_refresh(
+                    self._apply_pending_playground_preset,
+                    retries_remaining - 1,
+                )
+            return
+        preset = self._pending_playground_preset
+        if preset is None:
+            return
+        playground.apply_profile_preset(preset)
+        if self._pending_playground_preset is preset:
+            self._pending_playground_preset = None
+
     @on(ProfilePreviewRequested)
     def on_profile_preview_requested(
         self,
@@ -4507,8 +4592,7 @@ class STTSWindow(Container):
         """Hand one exact preset to the next Playground mount."""
         if type(message.preset) is not TTSPlaygroundSelectionPreset:
             return
-        self._pending_playground_preset = message.preset
-        self.current_view = "playground"
+        self.select_view("playground", profile_preset=message.preset)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle sidebar button presses and delegate to content widgets"""

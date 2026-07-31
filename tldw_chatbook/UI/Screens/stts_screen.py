@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -10,6 +11,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+from ...TTS import TTSPlaygroundSelectionPreset
 from ..Lab_Modules.lab_speech_status import (
     SPEECH_CAPABILITY_SELECTOR,
     speech_capability_detail,
@@ -18,7 +20,7 @@ from ..Lab_Modules.lab_speech_status import (
     speech_dependencies_available,
 )
 from ..Lab_Modules.lab_workbench import LAB_RAIL_ROW_CLASS
-from ..STTS_Window import STTSWindow
+from ..STTS_Window import STTS_VIEW_KEYS, STTSWindow
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from .lab_frame import LabScreen
 
@@ -77,6 +79,9 @@ class STTSScreen(LabScreen):
         """
         super().__init__(app_instance, "stts", **kwargs)
         self.stts_window: STTSWindow | None = None
+        self._pending_navigation_context: (
+            tuple[str, TTSPlaygroundSelectionPreset | None] | None
+        ) = None
 
     def lab_header_state(self) -> WorkbenchHeaderState:
         """Return the Speech header copy and derived readiness.
@@ -176,6 +181,35 @@ class STTSScreen(LabScreen):
         self.watch(
             self.stts_window, "current_view", self._sync_rail_active, init=True
         )
+        self._apply_pending_navigation_context()
+
+    def apply_navigation_context(self, context: Mapping[str, object]) -> None:
+        """Retain one validated process-local Speech destination request."""
+
+        if not isinstance(context, Mapping):
+            return
+        view = context.get("view")
+        if type(view) is not str or view not in STTS_VIEW_KEYS:
+            return
+        has_preset = "profile_preset" in context
+        preset = context.get("profile_preset")
+        if has_preset and (
+            view != "playground"
+            or type(preset) is not TTSPlaygroundSelectionPreset
+        ):
+            return
+        exact_preset = preset if has_preset else None
+        self._pending_navigation_context = (view, exact_preset)
+        self._apply_pending_navigation_context()
+
+    def _apply_pending_navigation_context(self) -> None:
+        window = self.stts_window
+        context = self._pending_navigation_context
+        if window is None or context is None:
+            return
+        self._pending_navigation_context = None
+        view, preset = context
+        window.select_view(view, profile_preset=preset)
 
     def _sync_rail_active(self, current_view: str) -> None:
         """Move the rail highlight to the row matching the active view.
