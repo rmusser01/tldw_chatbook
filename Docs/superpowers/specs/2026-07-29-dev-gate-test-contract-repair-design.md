@@ -320,6 +320,10 @@ The failures reproduce on an exact `origin/dev` checkout:
   suites, the same contention stretches application startup to nearly three
   seconds and can push the subsequent Git preflight beyond the one-second guard
   even though the controlled operation proceeds correctly.
+- The skeletal Console-action test waits a fixed 0.1 seconds before reading
+  Workflows recovery copy. Workflows loads its Console context in a worker and
+  recomposes, so the disabled loading button can exist before the final recovery
+  `Static` is mounted under full-suite load.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -934,6 +938,9 @@ Update the tests to describe current behavior:
 91. Give the file-notes owner lifecycle module one shared, contention-tolerant
     timeout for its controlled asynchronous settlement guards. This is not a
     performance threshold and does not delay successful tests.
+92. Make the skeletal Console-action test wait briefly for its exact recovery
+    copy instead of assuming the Workflows worker and recompose finish within a
+    fixed sleep.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library

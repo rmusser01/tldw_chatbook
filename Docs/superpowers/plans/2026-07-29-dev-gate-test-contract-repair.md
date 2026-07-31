@@ -3647,6 +3647,39 @@ repository load and the complete module passed 9/9. Ruff lint and
 `git diff --check` pass. Ruff format reports the same inherited whole-file
 drift on both the changed file and its untouched `HEAD` version.
 
+### Task 4cj: Wait for final Console recovery copy
+
+**Files:**
+- Modify: `Tests/UI/test_console_live_work_handoffs.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This aligns a UI test wait with the existing Workflows background
+load and recompose; it does not change application behavior.
+
+- [x] **Step 1: Isolate the intermediate loading state**
+
+The full gate fails after 15,741 passes because the Workflows loading button is
+mounted and disabled while the final recovery `Static` is not yet mounted. The
+exact parameter passes alone.
+
+- [x] **Step 2: Wait for the asserted terminal copy**
+
+Replace the fixed 0.1-second precondition with a bounded two-second loop for the
+exact recovery copy. Keep the disabled-button and no-dispatch assertions.
+
+- [x] **Step 3: Verify Console live-work handoff coverage**
+
+Run both skeletal-destination parameters repeatedly, the complete live-work
+handoff module, Ruff/format, and `git diff --check`.
+
+Both parameters passed three consecutive runs and the complete module passed
+48/48. Ruff lint, Ruff format, and `git diff --check` pass.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

@@ -121,6 +121,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #91 Shared-RAG concurrency regressions use a fresh construction lock for their controlled race, so an unrelated in-flight application model build cannot prevent the test threads from reaching their controlled synchronization points.
 - [ ] #92 Evals results-grid tests wait for the selected run group's grid to mount instead of assuming one event-loop pause completes the scheduled screen recompose.
 - [ ] #93 ProductionApp file-notes owner lifecycle synchronization uses a bounded timeout that tolerates concurrent repository test load without turning the guards into performance assertions.
+- [ ] #94 Skeletal destination Console-action coverage waits for the final recovery copy instead of assuming a background Workflows load and recompose finish within a fixed sleep.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -219,6 +220,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 85. Isolate shared-RAG construction-race regressions from unrelated process-wide background builds with a class-local autouse fixture that replaces their build lock.
 86. Replace the Evals results-grid test helper's single-pause mount assumption with a bounded selector wait.
 87. Replace one-second file-notes lifecycle deadlock guards with a shared contention-tolerant settlement timeout.
-88. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-89. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+88. Replace the skeletal Console-action test's fixed precondition sleep with a bounded wait for its exact recovery copy.
+89. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+90. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
