@@ -48,8 +48,17 @@ class _ConstantEmbeddingModel:
 
     def __init__(self, vector):
         self._vector = vector
+        #: Number of encode() calls — the STRUCTURAL proof of which path
+        #: ran. The original detection relied on this vector's cosine
+        #: self-similarity landing a few ULPs short of 1.0, but that is
+        #: platform-dependent (on some BLAS/numpy builds the rounding
+        #: cancels and it computes exactly 1.0, making score-based
+        #: assertions vacuous or false — TASK-1615). Whether the model was
+        #: consulted at all is deterministic everywhere.
+        self.encode_calls = 0
 
     def encode(self, texts):
+        self.encode_calls += 1
         return [self._vector for _ in texts]
 
 
@@ -529,16 +538,23 @@ class TestSemanticSimilarityExactMatchShortCircuit:
         )
 
         assert score == 1.0
+        # Structural proof the short-circuit fired: the model was never
+        # consulted. Without this, the test is vacuous on platforms where
+        # the vector's self-similarity happens to compute exactly 1.0
+        # (TASK-1615) - the score alone cannot distinguish the two paths
+        # there.
+        assert model.encode_calls == 0
 
     def test_non_identical_strings_still_use_the_embedding_path(self):
         """Only LITERAL equality short-circuits; near-misses must not.
 
         "4" and "4 " are different strings (trailing space), so they must
         still go through the embedding model rather than short-circuiting.
-        Both map to the same precision-losing vector here, so the result
-        should be extremely close to 1.0 but demonstrably NOT the exact
-        1.0 the short-circuit would produce - proving this pair took the
-        embedding path, not the short-circuit.
+        The proof is structural - the model's encode() was consulted - not
+        score-based: both strings map to the same constant vector, whose
+        cosine self-similarity is exactly 1.0 on some BLAS/numpy builds
+        (TASK-1615), so ``score != 1.0`` was platform-dependent and false
+        here.
         """
         model = _ConstantEmbeddingModel(_PRECISION_LOSING_VECTOR)
 
@@ -546,7 +562,7 @@ class TestSemanticSimilarityExactMatchShortCircuit:
             "4", "4 ", embedding_model=model
         )
 
-        assert score != 1.0
+        assert model.encode_calls > 0
         assert score == pytest.approx(1.0)
 
 
