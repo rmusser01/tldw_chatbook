@@ -3,6 +3,7 @@
 # Property-based tests for the Prompts_DB_v2 library using Hypothesis.
 
 # Imports
+import sqlite3
 import uuid
 import pytest
 from pathlib import Path
@@ -66,6 +67,35 @@ def db_instance(db_path, client_id):
     db.close_connection()
 
 
+
+
+# task-1463: hypothesis runs many examples against ONE function-scoped
+# `db_instance`, so tests that assume a fresh database per example accumulated
+# cross-example state (sync logs, name collisions, soft-deleted residue) and
+# failed the moment this file first executed — it was dormant under an
+# uncollectable tests_* filename. Such tests build their own database per
+# example via this helper; PromptsDatabase's full DDL costs only ~6.8ms.
+_example_dbs: list = []
+
+
+def _fresh_example_db(tmp_path: Path) -> PromptsDatabase:
+    db = PromptsDatabase(
+        tmp_path / f"example-{uuid.uuid4().hex}.sqlite", "hypothesis_client"
+    )
+    _example_dbs.append(db)
+    return db
+
+
+@pytest.fixture(autouse=True)
+def _close_example_dbs():
+    yield
+    while _example_dbs:
+        try:
+            _example_dbs.pop().close_connection()
+        except Exception:
+            pass
+
+
 # --- Hypothesis Strategies ---
 
 # Strategy for text fields that cannot be empty or just whitespace.
@@ -94,7 +124,12 @@ def st_prompt_data(draw):
 
 
 # A strategy for a non-one integer to test version validation triggers.
-st_bad_version_offset = st.integers().filter(lambda x: x != 1)
+# Bounded (task-1463): unbounded integers overflow SQLite's int64 in
+# `version + offset`, failing on the artifact instead of the property
+# (any non-+1 increment must be rejected by the sync trigger).
+st_bad_version_offset = st.integers(min_value=-1000, max_value=1000).filter(
+    lambda x: x != 1
+)
 
 
 # --- Test Classes ---
@@ -177,12 +212,13 @@ class TestPromptProperties:
 
     @given(prompt_data=st_prompt_data())
     def test_soft_delete_makes_item_unfindable(
-        self, db_instance: PromptsDatabase, prompt_data: dict
+        self, tmp_path: Path, prompt_data: dict
     ):
         """
         Property: After soft-deleting a prompt, it should not be retrievable by
         default methods, but should exist in the DB with deleted=1.
         """
+        db_instance = _fresh_example_db(tmp_path)
         try:
             prompt_id, _, _ = db_instance.add_prompt(**prompt_data)
         except ConflictError:
@@ -212,7 +248,7 @@ class TestPromptProperties:
     )
     def test_update_with_stale_version_fails_via_trigger(
         self,
-        db_instance: PromptsDatabase,
+        tmp_path: Path,
         initial_prompt: dict,
         update_name: str,
         version_offset: int,
@@ -221,6 +257,7 @@ class TestPromptProperties:
         Property: Attempting a direct DB update with a version that does not increment
         by exactly 1 must be rejected by the database trigger.
         """
+        db_instance = _fresh_example_db(tmp_path)
         try:
             prompt_id, _, _ = db_instance.add_prompt(**initial_prompt)
         except ConflictError:
@@ -230,7 +267,10 @@ class TestPromptProperties:
 
         # Attempt a direct DB update with a bad version number.
         # This tests the 'prompts_validate_sync_update' trigger.
-        with pytest.raises(DatabaseError) as excinfo:
+        # execute_query wraps OperationalError in DatabaseError but lets the
+        # trigger's sqlite3.IntegrityError propagate raw (contract drift while
+        # this file was dormant — task-1463).
+        with pytest.raises(sqlite3.IntegrityError) as excinfo:
             db_instance.execute_query(
                 "UPDATE Prompts SET name = ?, version = ? WHERE id = ?",
                 (update_name, original_prompt["version"] + version_offset, prompt_id),
@@ -244,13 +284,16 @@ class TestKeywordAndLinkingProperties:
 
     @given(keyword_text=st_required_text)
     def test_keyword_normalization_and_roundtrip(
-        self, db_instance: PromptsDatabase, keyword_text: str
+        self, tmp_path: Path, keyword_text: str
     ):
         """
         Property: Adding a keyword normalizes it (lowercase, stripped).
         Retrieving it returns the normalized version.
         """
-        kw_id, kw_uuid = db_instance.add_keyword(keyword_text)
+        db_instance = _fresh_example_db(tmp_path)
+        kw_id = db_instance.add_keyword(keyword_text)
+        kw_row = db_instance.get_active_keyword_by_text(keyword_text.strip().lower())
+        kw_uuid = kw_row["uuid"] if kw_row else None
         assert kw_id is not None
         assert kw_uuid is not None
 
@@ -260,18 +303,23 @@ class TestKeywordAndLinkingProperties:
 
     @given(keyword=st_required_text)
     def test_add_keyword_is_idempotent_on_undelete(
-        self, db_instance: PromptsDatabase, keyword: str
+        self, tmp_path: Path, keyword: str
     ):
         """
         Property: Adding a keyword that was previously soft-deleted should reactivate
         it (not create a new one), and its version should be correctly incremented.
         """
+        db_instance = _fresh_example_db(tmp_path)
         # 1. Add for the first time
-        kw_id_v1, _ = db_instance.add_keyword(keyword)
+        kw_id_v1 = db_instance.add_keyword(keyword)
+        # The dormant-era code called get_prompt_by_id with a KEYWORD id (its
+        # own comment admitted "wrong get method") — never caught because the
+        # file never ran (task-1463). Assert on the keyword record instead.
         assert (
-            db_instance.get_prompt_by_id(kw_id_v1) is not None
-        )  # Using wrong get method in original code
-        kw_v1 = db_instance.get_active_keyword_by_text(keyword)
+            db_instance.get_active_keyword_by_text(keyword.strip().lower())
+            is not None
+        )
+        kw_v1 = db_instance.get_active_keyword_by_text(keyword.strip().lower())
         assert kw_v1["version"] == 1
 
         # 2. Soft delete it
@@ -286,16 +334,17 @@ class TestKeywordAndLinkingProperties:
         assert raw_kw["version"] == 2
 
         # 3. Add it again (should trigger undelete)
-        kw_id_v3, _ = db_instance.add_keyword(keyword)
+        kw_id_v3 = db_instance.add_keyword(keyword)
 
         # Assert it's the same record
         assert kw_id_v3 == kw_id_v1
 
-        kw_v3 = db_instance.get_active_keyword_by_text(keyword)
+        kw_v3 = db_instance.get_active_keyword_by_text(keyword.strip().lower())
         assert kw_v3 is not None
-        assert not db_instance.get_prompt_by_id(kw_v3["id"], include_deleted=True)[
-            "deleted"
-        ]
+        raw_v3 = db_instance.execute_query(
+            "SELECT deleted FROM PromptKeywordsTable WHERE id=?", (kw_v3["id"],)
+        ).fetchone()
+        assert raw_v3["deleted"] == 0
         # The version should be 3 (1=create, 2=delete, 3=undelete/update)
         assert kw_v3["version"] == 3
 
@@ -344,13 +393,17 @@ class TestAdvancedProperties:
 
     @given(prompt_data=st_prompt_data())
     def test_soft_deleted_item_is_not_in_fts(
-        self, db_instance: PromptsDatabase, prompt_data: dict
+        self, tmp_path: Path, prompt_data: dict
     ):
         """
         Property: Once a prompt is soft-deleted, it must not appear in FTS search results.
         """
-        # Ensure the name has a unique, searchable term.
-        unique_term = str(uuid.uuid4())
+        db_instance = _fresh_example_db(tmp_path)
+        # Unique searchable term, FTS5-syntax-free: search_prompts documents
+        # that search_query is used VERBATIM as the MATCH clause (sanitizing
+        # is the caller's job, e.g. library_fts_query.build_fts_match_query),
+        # and a hyphenated uuid4() str is FTS column-filter syntax (task-1463).
+        unique_term = uuid.uuid4().hex
         prompt_data["name"] = f"{prompt_data['name']} {unique_term}"
 
         try:
@@ -372,12 +425,13 @@ class TestAdvancedProperties:
 
     @given(prompt_data=st_prompt_data())
     def test_add_creates_correct_sync_log_entries(
-        self, db_instance: PromptsDatabase, prompt_data: dict
+        self, tmp_path: Path, prompt_data: dict
     ):
         """
         Property: Adding a new prompt must create the correct 'create' and 'link'
         operations in the sync_log.
         """
+        db_instance = _fresh_example_db(tmp_path)
         latest_change_id_before = (
             db_instance.get_sync_log_entries(limit=1)[-1]["change_id"]
             if db_instance.get_sync_log_entries(limit=1)
@@ -421,12 +475,13 @@ class TestAdvancedProperties:
 
     @given(prompt_data=st_prompt_data())
     def test_delete_creates_correct_sync_log_entries(
-        self, db_instance: PromptsDatabase, prompt_data: dict
+        self, tmp_path: Path, prompt_data: dict
     ):
         """
         Property: Soft-deleting a prompt must create a 'delete' log for the prompt
         and 'unlink' logs for all its keyword connections.
         """
+        db_instance = _fresh_example_db(tmp_path)
         try:
             prompt_id, prompt_uuid, _ = db_instance.add_prompt(**prompt_data)
         except ConflictError:
@@ -468,12 +523,13 @@ class TestAdvancedProperties:
 class TestDataIntegrityAndConcurrency:
     """Tests for database constraints and thread safety."""
 
-    def test_add_prompt_with_conflicting_name_fails(self, db_instance: PromptsDatabase):
+    def test_add_prompt_with_conflicting_name_fails(self, tmp_path: Path):
         """
         Property: Adding a prompt with a name that already exists (and overwrite=False)
         must raise a ConflictError.
         """
-        prompt_data = {"name": "Unique Prompt Name", "author": "Tester"}
+        db_instance = _fresh_example_db(tmp_path)
+        prompt_data = {"name": "Unique Prompt Name", "author": "Tester", "details": None}
         db_instance.add_prompt(**prompt_data)
 
         # Attempt to add again with the same name
@@ -481,14 +537,15 @@ class TestDataIntegrityAndConcurrency:
             db_instance.add_prompt(**prompt_data, overwrite=False)
 
     def test_update_prompt_to_conflicting_name_fails(
-        self, db_instance: PromptsDatabase
+        self, tmp_path: Path
     ):
         """
         Property: Updating a prompt's name to a name that is already used by
         another active prompt must raise a ConflictError.
         """
-        p1_id, _, _ = db_instance.add_prompt(name="Prompt One", author="A")
-        db_instance.add_prompt(name="Prompt Two", author="B")  # The conflicting name
+        db_instance = _fresh_example_db(tmp_path)
+        p1_id, _, _ = db_instance.add_prompt(name="Prompt One", author="A", details=None)
+        db_instance.add_prompt(name="Prompt Two", author="B", details=None)  # The conflicting name
 
         update_payload = {"name": "Prompt Two"}
         with pytest.raises(ConflictError):
@@ -517,31 +574,45 @@ class TestDataIntegrityAndConcurrency:
         assert len(connection_ids) == 5
 
     def test_wal_mode_allows_concurrent_reads_during_write_transaction(
-        self, db_instance: PromptsDatabase
+        self, tmp_path: Path
     ):
         """
         Property: In WAL mode, one thread can read from the DB while another
         thread has an open write transaction.
         """
+        db_instance = _fresh_example_db(tmp_path)
         prompt_id, _, _ = db_instance.add_prompt(
-            name="Concurrent Read Test", details="Original"
+            name="Concurrent Read Test", author=None, details="Original"
         )
 
         write_transaction_started = threading.Event()
         read_result = []
 
         def writer_thread():
-            # The update method opens its own transaction
-            with db_instance.transaction():
-                db_instance.execute_query(
-                    "UPDATE Prompts SET details = 'Updated' WHERE id = ?", (prompt_id,)
-                )
-                write_transaction_started.set()  # Signal that the transaction is open
-                time.sleep(0.2)  # Hold the transaction open
-            # Transaction commits here
+            # The update method opens its own transaction. The raw UPDATE must
+            # satisfy the prompts_validate_sync_update trigger (task-1463: the
+            # dormant-era version didn't bump `version`, the trigger aborted
+            # the transaction before the event was set, and the reader's
+            # unbounded wait() deadlocked the whole run).
+            try:
+                with db_instance.transaction():
+                    db_instance.execute_query(
+                        "UPDATE Prompts SET details = 'Updated', "
+                        "version = version + 1 WHERE id = ?",
+                        (prompt_id,),
+                    )
+                    write_transaction_started.set()  # Transaction is open
+                    time.sleep(0.2)  # Hold the transaction open
+                # Transaction commits here
+            finally:
+                # A failed writer must still release the reader; the asserts
+                # below then fail loudly instead of the test hanging.
+                write_transaction_started.set()
 
         def reader_thread():
-            write_transaction_started.wait()  # Wait until the writer is in its transaction
+            # Bounded: a coordination failure must FAIL the test, never hang
+            # the suite (thread-method timeouts kill the entire pytest run).
+            assert write_transaction_started.wait(timeout=10)
             # This read should succeed immediately and read the state BEFORE the commit.
             prompt = db_instance.get_prompt_by_id(prompt_id)
             read_result.append(prompt)
@@ -551,8 +622,9 @@ class TestDataIntegrityAndConcurrency:
 
         w.start()
         r.start()
-        w.join()
-        r.join()
+        w.join(timeout=15)
+        r.join(timeout=15)
+        assert not w.is_alive() and not r.is_alive(), "threads failed to finish"
 
         # The reader thread should have completed successfully and read the *original* state.
         assert len(read_result) == 1
