@@ -505,10 +505,11 @@ class _WindowsFailedAdmissionProcess:
     ) -> None:
         self._kernel = kernel
         self._process_handle = 0
+        self._process_info: Any | None = None
         self._stdin_handle = 0
         self._stdout_handle = 0
         self._stderr_handle = 0
-        self.pid = 0
+        self._pid = 0
         self.returncode: int | None = None
         self.stdin = _ClosingWindowsPipeWriter(self) if stdin else None
         self.stdout = _ClosedWindowsPipeReader()
@@ -523,6 +524,18 @@ class _WindowsFailedAdmissionProcess:
         self._process_handle = process_handle
         self.pid = pid
 
+    def attach_process_info(self, process_info: Any) -> None:
+        """Own native process storage before CreateProcessW can populate it."""
+        self._process_info = process_info
+
+    def detach_process_info(self) -> None:
+        """Release native backup storage after normal adoption completes."""
+        self._process_info = None
+
+    def owns_process_info(self) -> bool:
+        """Return whether native launch storage remains retained."""
+        return self._process_info is not None
+
     def adopt_pipes(
         self,
         stdin_handle: int,
@@ -534,15 +547,23 @@ class _WindowsFailedAdmissionProcess:
         self._stdout_handle = stdout_handle
         self._stderr_handle = stderr_handle
 
-    def clear_process(self) -> None:
-        """Forget raw process state after failed adoption cleanup."""
-        self._process_handle = 0
-        self.pid = 0
+    @property
+    def pid(self) -> int:
+        """Return the adopted PID or its native backup value."""
+        if self._pid:
+            return self._pid
+        if self._process_info is None:
+            return 0
+        return int(self._process_info.dwProcessId)
+
+    @pid.setter
+    def pid(self, value: int) -> None:
+        self._pid = value
 
     def wrapper_handles(self) -> tuple[int, int | None, int, int]:
         """Return raw handles while this fallback remains their owner."""
         return (
-            self._process_handle,
+            self._owned_process_handle(),
             self._stdin_handle or None,
             self._stdout_handle,
             self._stderr_handle,
@@ -551,6 +572,7 @@ class _WindowsFailedAdmissionProcess:
     def transfer_to_wrapper(self) -> None:
         """Relinquish raw handles after full wrapper construction succeeds."""
         self._process_handle = 0
+        self._process_info = None
         self._stdin_handle = 0
         self._stdout_handle = 0
         self._stderr_handle = 0
@@ -564,7 +586,7 @@ class _WindowsFailedAdmissionProcess:
     async def wait(self) -> int:
         self._close_pipe_handles()
         while self.returncode is None:
-            if not self._process_handle:
+            if not self._owned_process_handle():
                 raise OSError("Windows failed-admission process handle was lost")
             if self.poll() is not None:
                 break
@@ -573,13 +595,13 @@ class _WindowsFailedAdmissionProcess:
         return self.returncode
 
     def poll(self) -> int | None:
-        handle = self._process_handle
+        handle = self._owned_process_handle()
         if self.returncode is not None or not handle:
             return self.returncode
         if not self._kernel.process_signaled(handle):
             return None
         self.returncode = self._kernel.exit_code(handle)
-        self._process_handle = 0
+        self._clear_owned_process_handle()
         self._kernel.close_handle(handle)
         return self.returncode
 
@@ -597,10 +619,16 @@ class _WindowsFailedAdmissionProcess:
 
     def close(self) -> None:
         self._close_pipe_handles()
-        handle = self._process_handle
-        self._process_handle = 0
-        if handle:
-            self._kernel.close_handle(handle)
+        process_handle = self._owned_process_handle()
+        thread_handle = self._owned_thread_handle()
+        self._clear_owned_process_handle()
+        if self._process_info is not None:
+            self._process_info.hThread = 0
+        self._process_info = None
+        if process_handle:
+            self._kernel.close_handle(process_handle)
+        if thread_handle:
+            self._kernel.close_handle(thread_handle)
 
     def _close_pipe_handles(self) -> None:
         self.close_stdin()
@@ -611,8 +639,26 @@ class _WindowsFailedAdmissionProcess:
                 self._kernel.close_handle(handle)
 
     def _terminate_direct(self, exit_code: int) -> None:
+        process_handle = self._owned_process_handle()
+        if process_handle:
+            self._kernel.terminate_process(process_handle, exit_code)
+
+    def _owned_process_handle(self) -> int:
         if self._process_handle:
-            self._kernel.terminate_process(self._process_handle, exit_code)
+            return self._process_handle
+        if self._process_info is None:
+            return 0
+        return int(self._process_info.hProcess or 0)
+
+    def _owned_thread_handle(self) -> int:
+        if self._process_info is None:
+            return 0
+        return int(self._process_info.hThread or 0)
+
+    def _clear_owned_process_handle(self) -> None:
+        self._process_handle = 0
+        if self._process_info is not None:
+            self._process_info.hProcess = 0
 
 
 class _WindowsAsyncChildProcess:
@@ -785,6 +831,7 @@ class _WindowsKernel:
                 child_handles=(child_stdin, child_stdout, child_stderr),
                 fallback=fallback,
                 identity=identity,
+                tree=tree,
             )
             fallback.adopt_pipes(
                 parent_stdin,
@@ -835,7 +882,17 @@ class _WindowsKernel:
         except ProcessTreeAdmissionError:
             raise
         except BaseException as error:
-            if tree is not None and identity is not None and identity.pid > 0:
+            if (
+                tree is not None
+                and identity is not None
+                and (
+                    identity.pid > 0
+                    or (
+                        fallback is not None
+                        and fallback.owns_process_info()
+                    )
+                )
+            ):
                 raise ProcessTreeAdmissionError(
                     "Windows process-tree admission failed",
                     tree,
@@ -999,6 +1056,7 @@ class _WindowsKernel:
         child_handles: tuple[int, int, int],
         fallback: _WindowsFailedAdmissionProcess,
         identity: _WindowsJobIdentity,
+        tree: OwnedProcessTree,
     ) -> None:
         attribute_size = self.ctypes.c_size_t()
         self.kernel32.InitializeProcThreadAttributeList(
@@ -1053,6 +1111,7 @@ class _WindowsKernel:
                 | self._CREATE_UNICODE_ENVIRONMENT
                 | self._EXTENDED_STARTUPINFO_PRESENT
             )
+            fallback.attach_process_info(process_info)
             if not self.kernel32.CreateProcessW(
                 argv[0],
                 command_line,
@@ -1065,31 +1124,40 @@ class _WindowsKernel:
                 self.ctypes.byref(startup),
                 self.ctypes.byref(process_info),
             ):
+                fallback.detach_process_info()
                 raise self._last_error("CreateProcessW")
-            process_handle = process_info.hProcess
-            thread_handle = process_info.hThread
-            pid = process_info.dwProcessId
             try:
+                process_handle, thread_handle, pid = (
+                    self._process_info_values(process_info)
+                )
                 fallback.adopt(process_handle, pid)
                 identity.thread_handle = thread_handle
                 identity.pid = pid
-            except BaseException:
-                try:
-                    self.terminate_process(process_handle, 127)
-                except BaseException:
-                    fallback._process_handle = process_handle
-                    fallback.pid = pid
-                    identity.thread_handle = thread_handle
-                    identity.pid = pid
-                    raise
-                fallback.clear_process()
+                fallback.detach_process_info()
+            except BaseException as error:
                 identity.thread_handle = 0
                 identity.pid = 0
-                self.close_handle(thread_handle)
-                self.close_handle(process_handle)
-                raise
+                try:
+                    self.terminate_process(
+                        fallback._owned_process_handle(),
+                        127,
+                    )
+                except BaseException:
+                    pass
+                raise ProcessTreeAdmissionError(
+                    "Windows process-tree admission failed",
+                    tree,
+                ) from error
         finally:
             self.kernel32.DeleteProcThreadAttributeList(attribute_list)
+
+    def _process_info_values(self, process_info: Any) -> tuple[int, int, int]:
+        """Extract native process identity only after storage has an owner."""
+        return (
+            self._handle_value(process_info.hProcess),
+            self._handle_value(process_info.hThread),
+            int(process_info.dwProcessId),
+        )
 
     def _environment_block(self, environment: Mapping[str, str]) -> Any:
         entries: list[str] = []

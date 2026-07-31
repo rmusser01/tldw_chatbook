@@ -184,6 +184,7 @@ def _fake_windows_kernel(
         child_handles: tuple[int, int, int],
         fallback: containment._WindowsFailedAdmissionProcess,
         identity: containment._WindowsJobIdentity,
+        tree: containment.OwnedProcessTree,
     ) -> None:
         assert argv == ("C:/Git/bin/git.exe", "push")
         assert cwd == "C:/repo"
@@ -192,6 +193,8 @@ def _fake_windows_kernel(
         trace.append("create_suspended_with_exact_handle_list")
         if create_process_fails:
             raise OSError("process creation failed")
+        assert tree.process is fallback
+        assert tree.native_identity is identity
         fallback.adopt(500, 4242)
         identity.thread_handle = 501
         identity.pid = 4242
@@ -346,85 +349,92 @@ async def test_windows_owner_allocation_failure_precedes_child_creation(
     assert close_counts == {100: 1}
 
 
-def test_windows_post_create_adoption_failure_terminates_raw_child(
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_point", ["extraction", "adoption"])
+@pytest.mark.parametrize("terminate_process_fails", [False, True])
+async def test_windows_post_create_failure_is_retained_until_process_signals(
     monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+    terminate_process_fails: bool,
 ) -> None:
-    kernel, calls = _ctypes_windows_kernel_for_create_process()
-    fallback = containment._WindowsFailedAdmissionProcess(
-        kernel,
-        stdin=False,
+    kernel, calls = _ctypes_windows_kernel_for_create_process(
+        terminate_process_fails=terminate_process_fails,
     )
-    identity = containment._WindowsJobIdentity(100, 0)
+    pipe_pairs = iter(((200, 201), (300, 301), (400, 401)))
+    kernel._create_job = lambda: 100
+    kernel._pipe = lambda *, parent_reads: next(pipe_pairs)
+    controller = containment._WindowsJobObjectController()
+    controller._kernel = kernel
 
-    def fail_adoption(*args, **kwargs):
+    def fail_boundary(*args, **kwargs):
         del args, kwargs
-        calls.trace.append("adoption_failed")
-        raise MemoryError("process adoption failed")
+        calls.trace.append(f"{failure_point}_failed")
+        raise MemoryError(f"process {failure_point} failed")
 
-    monkeypatch.setattr(fallback, "adopt", fail_adoption)
-
-    with pytest.raises(MemoryError, match="process adoption failed"):
-        kernel._create_process(
-            ("C:/Git/bin/git.exe", "push"),
-            cwd="C:/repo",
-            environment={"PATH": "C:/Git/bin"},
-            child_handles=(201, 301, 401),
-            fallback=fallback,
-            identity=identity,
+    if failure_point == "adoption":
+        monkeypatch.setattr(
+            containment._WindowsFailedAdmissionProcess,
+            "adopt",
+            fail_boundary,
+        )
+    else:
+        monkeypatch.setattr(
+            kernel,
+            "_process_info_values",
+            fail_boundary,
+            raising=False,
         )
 
+    with pytest.raises(containment.ProcessTreeAdmissionError) as raised:
+        await controller.spawn(
+            "C:/Git/bin/git.exe",
+            "push",
+            cwd="C:/repo",
+            environment={"PATH": "C:/Git/bin"},
+            stdin=False,
+        )
+
+    tree = raised.value.tree
+    fallback = tree.process
+    assert isinstance(fallback, containment._WindowsFailedAdmissionProcess)
     assert calls.trace.index("create_process") < calls.trace.index(
-        "adoption_failed"
+        f"{failure_point}_failed"
     )
-    assert calls.trace.index("adoption_failed") < calls.trace.index(
+    assert calls.trace.index(f"{failure_point}_failed") < calls.trace.index(
         "terminate_process"
     )
     close_counts = collections.Counter(calls.closed_handles)
-    assert close_counts[500] == 1
-    assert close_counts[501] == 1
-    assert max(close_counts.values()) == 1
-    assert fallback.wrapper_handles()[0] == 0
-    assert identity.pid == 0
-    assert identity.thread_handle == 0
-
-
-def test_windows_failed_adoption_retains_child_when_termination_is_unproven(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    kernel, calls = _ctypes_windows_kernel_for_create_process(
-        terminate_process_fails=True,
-    )
-    fallback = containment._WindowsFailedAdmissionProcess(
-        kernel,
-        stdin=False,
-    )
-    identity = containment._WindowsJobIdentity(100, 0)
-
-    def fail_adoption(*args, **kwargs):
-        del args, kwargs
-        calls.trace.append("adoption_failed")
-        raise MemoryError("process adoption failed")
-
-    monkeypatch.setattr(fallback, "adopt", fail_adoption)
-
-    with pytest.raises(OSError, match="TerminateProcess failed"):
-        kernel._create_process(
-            ("C:/Git/bin/git.exe", "push"),
-            cwd="C:/repo",
-            environment={"PATH": "C:/Git/bin"},
-            child_handles=(201, 301, 401),
-            fallback=fallback,
-            identity=identity,
-        )
-
-    assert calls.trace.index("adoption_failed") < calls.trace.index(
-        "terminate_process"
-    )
-    assert calls.closed_handles == []
+    assert close_counts == {
+        200: 1,
+        201: 1,
+        300: 1,
+        301: 1,
+        400: 1,
+        401: 1,
+    }
     assert fallback.wrapper_handles()[0] == 500
     assert fallback.pid == 4242
-    assert identity.pid == 4242
-    assert identity.thread_handle == 501
+    assert not await controller.wait(tree, timeout=0)
+    assert collections.Counter(calls.closed_handles) == close_counts
+
+    calls.process_signaled = True
+    assert await controller.wait(tree, timeout=0.01)
+    controller.close(tree)
+    controller.close(tree)
+
+    close_counts = collections.Counter(calls.closed_handles)
+    assert close_counts == {
+        100: 1,
+        200: 1,
+        201: 1,
+        300: 1,
+        301: 1,
+        400: 1,
+        401: 1,
+        500: 1,
+        501: 1,
+    }
+    assert tree.closed
 
 
 @pytest.mark.asyncio
@@ -777,6 +787,7 @@ class _FakeCreateProcessCalls:
     ) -> None:
         self.kernel = kernel
         self.terminate_process_fails = terminate_process_fails
+        self.process_signaled = False
         self.trace: list[str] = []
         self.created: dict[str, object] = {}
         self.closed_handles: list[int] = []
@@ -875,6 +886,18 @@ class _FakeCreateProcessCalls:
         self.closed_handles.append(int(handle or 0))
         return True
 
+    def WaitForSingleObject(self, process_handle, timeout: int) -> int:
+        assert int(process_handle or 0) == 500
+        assert timeout == 0
+        if self.process_signaled:
+            return self.kernel._WAIT_OBJECT_0
+        return self.kernel._WAIT_TIMEOUT
+
+    def GetExitCodeProcess(self, process_handle, code_pointer) -> bool:
+        assert int(process_handle or 0) == 500
+        code_pointer._obj.value = 127
+        return True
+
 
 def _ctypes_windows_kernel_for_create_process(
     *,
@@ -903,6 +926,7 @@ def test_windows_containment_createprocess_uses_exact_abi_contract() -> None:
         stdin=False,
     )
     identity = containment._WindowsJobIdentity(100, 0)
+    tree = containment.OwnedProcessTree(fallback, identity)
 
     kernel._create_process(
         (executable, "push", "arg with space"),
@@ -911,6 +935,7 @@ def test_windows_containment_createprocess_uses_exact_abi_contract() -> None:
         child_handles=(201, 301, 401),
         fallback=fallback,
         identity=identity,
+        tree=tree,
     )
 
     assert fallback.wrapper_handles()[0] == 500
