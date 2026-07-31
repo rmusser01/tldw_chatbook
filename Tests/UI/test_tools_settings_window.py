@@ -11,7 +11,7 @@ import toml
 
 from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 import tldw_chatbook.app as app_module
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.Tools_Settings_Window import ToolsSettingsWindow

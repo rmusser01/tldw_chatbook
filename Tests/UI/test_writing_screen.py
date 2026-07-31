@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import ListView, Static, TextArea, Tree
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Writing_Interop.server_writing_service import (
     REASON_DIRECT_MANUSCRIPT_SCENE,
     REASON_SCENE_REPARENT,

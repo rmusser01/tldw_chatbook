@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 from textual.widgets import Button, Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 import tldw_chatbook.app as app_module
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState

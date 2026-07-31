@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from textual.binding import Binding
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook import app as app_module
 from tldw_chatbook.UI.Workbench.focus import WorkbenchFocusRegistry
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState

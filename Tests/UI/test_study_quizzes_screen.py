@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 from textual.widgets import Button, Input, ListView, Select, Static, TextArea
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_study_dashboard import DashboardStudyScopeService
 import tldw_chatbook.app as app_module
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState

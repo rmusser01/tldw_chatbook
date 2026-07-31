@@ -9,7 +9,7 @@ import pytest
 from textual.containers import Container
 from textual.widgets import Button, Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_study_dashboard import (
     DashboardQuizScopeService,
     DashboardStudyScopeService,

@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button, OptionList
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
 if TYPE_CHECKING:

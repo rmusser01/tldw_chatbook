@@ -10,7 +10,7 @@ Console); the window itself is exercised directly here.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.CodeRepoCopyPasteWindow import CodeRepoCopyPasteWindow
 from tldw_chatbook.Utils.github_api_client import GitHubAPIError
 
