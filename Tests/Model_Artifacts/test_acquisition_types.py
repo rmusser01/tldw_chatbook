@@ -27,8 +27,21 @@ if TYPE_CHECKING:
 def make_descriptor(
     ref: ArtifactRef | None = None,
     dependencies: tuple[ArtifactRef, ...] = (),
+    files_body: bytes | None = None,
+    source_url: str | None = None,
 ) -> ArtifactDescriptor:
-    """Build a minimal descriptor for testing."""
+    """Build a minimal descriptor for testing.
+
+    Args:
+        ref: The reference to build the descriptor for (defaults to a
+            fixed "root" reference).
+        dependencies: Dependency references for closure-walk tests.
+        files_body: Payload bytes for the single declared file, used by
+            preflight/fetch tests that need a real byte count and digest
+            (defaults to the historical single-byte ``b"x"`` content).
+        source_url: Override for ``source_url``, e.g. a fixture server URL
+            (defaults to the historical placeholder URL).
+    """
     from tldw_chatbook.Model_Artifacts import (
         ArtifactDescriptor,
         ArtifactFile,
@@ -40,7 +53,7 @@ def make_descriptor(
     if ref is None:
         ref = ArtifactRef("root", "r" * 40, "int8")
 
-    content = b"x"
+    content = files_body if files_body is not None else b"x"
     files = (ArtifactFile("model.onnx", len(content), hashlib.sha256(content).hexdigest()),)
 
     return ArtifactDescriptor(
@@ -52,7 +65,7 @@ def make_descriptor(
         model_family="test-family",
         upstream_repository="test/repo",
         upstream_revision="main",
-        source_url="https://example.test/model",
+        source_url=source_url if source_url is not None else "https://example.test/model",
         precision="int8",
         license_id="test-license",
         license_url="https://example.test/license",
