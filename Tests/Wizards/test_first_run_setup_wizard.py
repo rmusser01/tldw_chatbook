@@ -2494,3 +2494,37 @@ async def test_key_hints_footer_and_test_button_probe():
         step.query_one("#setup-provider-test", Button).press()
         await pilot.pause(0.3)
         assert probe.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_provider_reentry_with_visible_discovery_button_focuses_list():
+    """Review finding: after discovery unhides the pinned button, re-entering
+    Provider must still focus the RadioSet, not the earlier-in-DOM button."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        SetupWizardContainer,
+    )
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import TRACK_QUICK
+
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        await pilot.pause(0.1)
+        await pilot.press("ctrl+n")  # Welcome -> Provider
+        await pilot.pause(0.2)
+        provider_step = container.steps[container.current_step]
+        # Simulate discovery having found a server: banner + button visible.
+        provider_step.query_one("#setup-provider-detected").remove_class("hidden")
+        provider_step.query_one("#setup-provider-use-detected", Button).remove_class("hidden")
+        await pilot.pause(0.1)
+        await pilot.press("ctrl+n")  # Provider -> Model
+        await pilot.pause(0.2)
+        await pilot.press("ctrl+b")  # back to Provider (re-entry)
+        await pilot.pause(0.2)
+        radio_set = provider_step.query_one("#setup-provider-choice", RadioSet)
+        assert app.focused is radio_set, f"focus stole by {app.focused!r}"

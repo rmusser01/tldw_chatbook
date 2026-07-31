@@ -632,14 +632,8 @@ async def test_summary_exit_buttons_visible_at_120x40_full_track(
 
             exit_chat = app.screen.query_one("#setup-exit-chat", Button)
             exit_home = app.screen.query_one("#setup-exit-home", Button)
-            print("DEBUG exit_chat region:", exit_chat.region, "display:", exit_chat.styles.display, "visible:", exit_chat.visible)
-            print("DEBUG screen size:", app.screen.size)
             from textual.widgets import Button as _B
             all_buttons = [w for w in app.screen._compositor.visible_widgets if isinstance(w, _B)]
-            print("DEBUG all Button widgets in visible_widgets:", [(w.id, w.region) for w in all_buttons])
-            print("DEBUG exit_chat identity in list:", exit_chat in all_buttons, id(exit_chat))
-            print("DEBUG exit_chat is_mounted:", exit_chat.is_mounted)
-            print("DEBUG exit_chat ancestors:", [type(a).__name__ for a in exit_chat.ancestors_with_self])
             strips = app.screen._compositor.render_strips()
             rendered_text = "\n".join(
                 "".join(segment.text for segment in strip) for strip in strips

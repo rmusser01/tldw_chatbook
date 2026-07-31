@@ -16,7 +16,6 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, RadioButton, RadioSet, Static, Switch
-from textual.widgets._toggle_button import ToggleButton
 
 
 class SetupRadioButton(RadioButton):
@@ -33,8 +32,15 @@ class SetupRadioButton(RadioButton):
 
     @property
     def _button(self):
+        # BUTTON_INNER is ToggleButton's documented per-instance glyph seam;
+        # super() resolves the parent property without importing Textual's
+        # private module or touching .fget. The remaining coupling (that a
+        # ``_button`` property renders the glyph at all) is pinned by
+        # test_selected_and_unselected_glyphs_differ_structurally, so a
+        # Textual upgrade that changes the mechanism fails loudly in CI
+        # instead of silently regressing to color-only state.
         self.BUTTON_INNER = "●" if self.value else "○"
-        return ToggleButton._button.fget(self)
+        return super()._button
 
 from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardContainer,
@@ -71,6 +77,19 @@ class SetupStep(WizardStep):
     async def commit(self) -> tuple[bool, str]:
         """Persist this step's data. Return (ok, error_message)."""
         return True, ""
+
+    def preferred_focus(self) -> Optional[Widget]:
+        """The widget this step wants focused on entry, or None.
+
+        Returns:
+            A displayed, focusable descendant to focus when the step is
+            shown, or None to fall back to the container's first-displayed-
+            focusable heuristic. Steps whose DOM order puts a conditional
+            affordance ahead of their primary control (ProviderStep's pinned
+            discovery button) override this so re-entry cannot land focus on
+            the secondary control.
+        """
+        return None
 
     def show_step_error(self, message: str) -> None:
         try:
@@ -232,6 +251,18 @@ class ProviderStep(SetupStep):
             ("Other", other),
         ]
         return [(title, group) for title, group in sections if group]
+
+    def preferred_focus(self) -> Optional[Widget]:
+        """Focus the provider list on entry, even when the pinned discovery
+        button is visible (it precedes the list in DOM order).
+
+        Returns:
+            The provider RadioSet, or None if it is not queryable yet.
+        """
+        try:
+            return self.query_one("#setup-provider-choice", RadioSet)
+        except Exception:
+            return None
 
     def on_show(self) -> None:
         super().on_show()
@@ -760,6 +791,10 @@ class ModelStep(SetupStep):
 
         TASK-1503: labels may carry display decoration ("(recommended)");
         the undecorated model id is stored on the button as ``_model_id``.
+
+        Args:
+            button: The pressed radio row; its ``_model_id`` attribute (or
+                label when absent) supplies the model id to select.
         """
         self.set_selected_model(getattr(button, "_model_id", str(button.label)))
 
@@ -1742,16 +1777,27 @@ class SetupWizardContainer(WizardContainer):
             # hidden via display:none (e.g. the pinned "Use this server"
             # button before discovery finds anything) must never be the
             # focus target, or keyboard input lands on an invisible control.
-            target = next(
-                (
-                    widget
-                    for widget in current_step.walk_children(Widget)
-                    if widget.focusable
-                    and widget.display
-                    and not widget.has_class("hidden")
-                ),
-                None,
-            )
+            target = None
+            if isinstance(current_step, SetupStep):
+                preferred = current_step.preferred_focus()
+                if (
+                    preferred is not None
+                    and preferred.focusable
+                    and preferred.display
+                    and not preferred.has_class("hidden")
+                ):
+                    target = preferred
+            if target is None:
+                target = next(
+                    (
+                        widget
+                        for widget in current_step.walk_children(Widget)
+                        if widget.focusable
+                        and widget.display
+                        and not widget.has_class("hidden")
+                    ),
+                    None,
+                )
             if target is None:
                 next_button = self.query_one("#wizard-next", Button)
                 target = (

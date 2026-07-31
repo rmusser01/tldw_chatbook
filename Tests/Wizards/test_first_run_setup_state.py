@@ -580,6 +580,7 @@ class TestSummaryThreeState:
     """TASK-1504: matrix distinguishes configured / default / attention."""
 
     def test_untouched_defaults_are_not_claimed_as_configured(self):
+        """Template values render as – default, never as ✓ configured."""
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (
             ROW_DEFAULT,
             build_summary_rows,
@@ -594,6 +595,7 @@ class TestSummaryThreeState:
         assert rows["RAG"].state == ROW_DEFAULT  # optional, not an error
 
     def test_plaintext_keys_flag_encryption_as_attention(self):
+        """Unencrypted stored keys make the encryption row a ✗ call to action."""
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (
             ROW_ATTENTION,
             build_summary_rows,
@@ -605,6 +607,7 @@ class TestSummaryThreeState:
         assert rows["Key encryption"].glyph == "✗"
 
     def test_provider_without_model_is_attention_but_default_when_unconfigured(self):
+        """A half-finished provider setup flags the model row; a pristine config does not."""
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (
             ROW_ATTENTION,
             ROW_DEFAULT,
@@ -621,6 +624,7 @@ class TestSummaryThreeState:
         assert configured["Default model"].state == ROW_ATTENTION
 
     def test_custom_theme_earns_configured(self):
+        """Only a user-changed theme earns the ✓ configured state."""
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (
             ROW_CONFIGURED,
             build_summary_rows,
