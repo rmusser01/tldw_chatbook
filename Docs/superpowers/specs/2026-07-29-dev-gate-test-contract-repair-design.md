@@ -315,6 +315,11 @@ The failures reproduce on an exact `origin/dev` checkout:
 - The Evals results-grid selection helper assumes one event-loop pause completes
   a scheduled screen recompose. Under the full-gate load, the pause can return
   before `#evals-results-grid` mounts even though the same test passes alone.
+- The ProductionApp file-notes owner lifecycle tests use one-second timeouts as
+  deadlock guards around controlled task signals. Under concurrent repository
+  suites, the same contention stretches application startup to nearly three
+  seconds and can push the subsequent Git preflight beyond the one-second guard
+  even though the controlled operation proceeds correctly.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -926,6 +931,9 @@ Update the tests to describe current behavior:
 90. Make the shared Evals run-group selection helper wait briefly for the
     results-grid selector instead of treating one event-loop pause as a mount
     completion guarantee.
+91. Give the file-notes owner lifecycle module one shared, contention-tolerant
+    timeout for its controlled asynchronous settlement guards. This is not a
+    performance threshold and does not delay successful tests.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library

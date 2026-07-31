@@ -3611,6 +3611,42 @@ passed 42/42. Ruff lint and `git diff --check` pass. Ruff format reports the
 same inherited whole-file drift on both the changed file and its untouched
 `HEAD` version, so this correction does not rewrite unrelated test formatting.
 
+### Task 4ci: Make file-notes lifecycle guards contention-tolerant
+
+**Files:**
+- Modify: `Tests/ProductionApp/test_file_notes_session_owner_lifecycle.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** These test-only timeouts guard against deadlocks; they do not define
+an application performance contract.
+
+- [x] **Step 1: Confirm contention-sensitive timeout behavior**
+
+The full gate and exact test time out waiting one second for a controlled Git
+commit signal while three other repository pytest runs are active. The same
+contention stretches application startup to almost three seconds and pushes the
+subsequent Git preflight beyond the one-second guard.
+
+- [x] **Step 2: Share a bounded settlement timeout**
+
+Use one 10-second module constant for all five controlled `asyncio.wait_for`
+settlement guards. Successful waits still return immediately.
+
+- [x] **Step 3: Verify file-notes owner lifecycle coverage**
+
+Run the exact regression repeatedly under the current contention, the complete
+owner-lifecycle module, Ruff/format, and `git diff --check`.
+
+The exact regression passed three consecutive runs under the same concurrent
+repository load and the complete module passed 9/9. Ruff lint and
+`git diff --check` pass. Ruff format reports the same inherited whole-file
+drift on both the changed file and its untouched `HEAD` version.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
