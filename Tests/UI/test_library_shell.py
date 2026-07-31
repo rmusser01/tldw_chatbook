@@ -6635,12 +6635,17 @@ async def test_library_shell_note_conflict_during_preview_reads_live_text():
     save from the conflict UI -- and visibly revert the user's on-screen
     edits on the next recompose.
     """
-    app = _build_test_app()
+    app = _build_test_app(configured_default="library")
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
-    host = LibraryHarness(app)
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
+    async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, LibraryScreen),
+            message="production app did not mount Library",
+        )
+        screen = app.screen
+        assert isinstance(screen, LibraryScreen)
         await _wait_for_library_shell(screen, pilot)
         await _open_note_editor(screen, pilot)
 
@@ -6660,7 +6665,10 @@ async def test_library_shell_note_conflict_during_preview_reads_live_text():
         screen.query_one("#library-note-save").press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_note_autosave_state == "conflict",
+            lambda: (
+                screen._library_note_autosave_state == "conflict"
+                and bool(screen.query("#library-note-body"))
+            ),
             message="The version conflict was never reached.",
         )
 

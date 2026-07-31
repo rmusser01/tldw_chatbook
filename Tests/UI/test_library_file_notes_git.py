@@ -3196,15 +3196,41 @@ async def test_repository_retrust_consumes_rejected_status_before_fresh_refresh(
         identity=FileSystemIdentity(3, 4),
     )
     replacement_release = asyncio.Event()
+    app = _build_test_app(configured_default="library")
 
     try:
-        async with _WorkspaceHarness(workspace).run_test(
-            size=(120, 40)
-        ) as pilot:
+        async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: workspace.initialized,
-                "scan did not finish",
+                lambda: isinstance(app.screen, LibraryScreen),
+                "production app did not mount Library",
+            )
+            screen = app.screen
+            assert isinstance(screen, LibraryScreen)
+            screen._library_file_notes_workspace_factory = lambda: workspace
+            await _wait_until(
+                pilot,
+                lambda: (
+                    screen._library_loaded
+                    and bool(screen.query("#library-rail"))
+                ),
+                "Library shell did not load",
+            )
+            await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+            await _wait_until(
+                pilot,
+                lambda: bool(screen.query("#library-notes-source-files")),
+                "Library Notes source selector did not mount",
+            )
+            screen.query_one("#library-notes-source-files", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.initialized
+                    and workspace.is_mounted
+                    and screen._library_file_notes_workspace is workspace
+                ),
+                "production Library did not mount File Notes",
             )
             entry = workspace.query_one("#file-notes-session-changes", Button)
             entry.press()
@@ -3248,10 +3274,13 @@ async def test_repository_retrust_consumes_rejected_status_before_fresh_refresh(
             entry.press()
             await _wait_until(
                 pilot,
-                lambda: isinstance(workspace.app.screen, SessionGitTrustDialog),
+                lambda: (
+                    isinstance(app.screen, SessionGitTrustDialog)
+                    and bool(app.screen.query("#confirm-button"))
+                ),
                 "replacement repository trust prompt did not open",
             )
-            workspace.app.screen.query_one("#confirm-button", Button).press()
+            app.screen.query_one("#confirm-button", Button).press()
             await _wait_until(
                 pilot,
                 lambda: len(git_service.status_calls) == 2,

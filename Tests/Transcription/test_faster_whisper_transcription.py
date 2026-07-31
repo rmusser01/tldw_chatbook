@@ -19,7 +19,6 @@ from tldw_chatbook.Local_Ingestion.transcription_service import (
     _LegacyTranscriptionBackend as TranscriptionService,
     TranscriptionError,
     FASTER_WHISPER_AVAILABLE,
-    protect_file_descriptors,
 )
 
 
@@ -1075,72 +1074,6 @@ class TestFasterWhisperPerformance:
 
                 finally:
                     os.unlink(tmp.name)
-
-
-class TestFasterWhisperFileDescriptorProtection:
-    """Test file descriptor protection mechanism."""
-
-    def test_protect_file_descriptors_context(self):
-        """Test the protect_file_descriptors context manager."""
-        import sys
-
-        # Save original
-        original_stdout = sys.stdout
-        original_stderr = sys.stderr
-
-        # Create mock file objects
-        mock_stdout = MagicMock()
-        mock_stdout.fileno.side_effect = ValueError("I/O operation on closed file")
-
-        sys.stdout = mock_stdout
-        sys.stderr = mock_stdout
-
-        try:
-            with protect_file_descriptors():
-                # Should have valid file descriptors inside context
-                assert sys.stdout != mock_stdout
-                assert sys.stderr != mock_stdout
-
-                # Should be able to get file descriptors
-                stdout_fd = sys.stdout.fileno()
-                stderr_fd = sys.stderr.fileno()
-
-                assert isinstance(stdout_fd, int)
-                assert isinstance(stderr_fd, int)
-
-            # Should be restored after context
-            assert sys.stdout == mock_stdout
-            assert sys.stderr == mock_stdout
-
-        finally:
-            # Restore original
-            sys.stdout = original_stdout
-            sys.stderr = original_stderr
-
-    def test_protect_file_descriptors_with_exception(self):
-        """Test file descriptor protection handles exceptions properly."""
-        import sys
-
-        original_stdout = sys.stdout
-
-        mock_stdout = MagicMock()
-        mock_stdout.fileno.side_effect = ValueError("Closed file")
-
-        sys.stdout = mock_stdout
-
-        try:
-            with pytest.raises(RuntimeError):
-                with protect_file_descriptors():
-                    # Should have valid stdout
-                    assert sys.stdout != mock_stdout
-                    # Raise exception
-                    raise RuntimeError("Test exception")
-
-            # Should still restore stdout
-            assert sys.stdout == mock_stdout
-
-        finally:
-            sys.stdout = original_stdout
 
 
 if __name__ == "__main__":

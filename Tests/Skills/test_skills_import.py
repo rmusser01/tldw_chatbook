@@ -25,11 +25,12 @@ import time
 from pathlib import Path
 
 import pytest
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input
 
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
 from tldw_chatbook.tldw_api.skills_schemas import SKILL_NAME_PATTERN
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 from Tests.Skills.test_skills_library_flow import (
     _real_trust_service,
@@ -110,7 +111,9 @@ async def _run_skills_import_via_ui(
     carries the imported skill's NAME, so callers assert the name-specific
     line and a stale success from the previous import can never satisfy it.
     """
-    previous = str(screen.query_one("#library-skills-import-status", Static).renderable)
+    status_widgets = list(screen.query("#library-skills-import-status"))
+    assert status_widgets, "Skills import status did not mount"
+    previous = str(status_widgets[0].renderable)
     screen.query_one("#library-skills-import-path", Input).value = str(path)
     await pilot.pause()
     screen.query_one("#library-skills-import-run", Button).press()
@@ -118,11 +121,11 @@ async def _run_skills_import_via_ui(
     status_text = previous
     deadline = time.monotonic() + deadline_seconds
     while time.monotonic() < deadline:
-        status_text = str(
-            screen.query_one("#library-skills-import-status", Static).renderable
-        )
-        if status_text != previous:
-            return status_text
+        status_widgets = list(screen.query("#library-skills-import-status"))
+        if status_widgets:
+            status_text = str(status_widgets[0].renderable)
+            if status_text != previous:
+                return status_text
         await pilot.pause(0.02)
     return status_text
 
@@ -138,13 +141,17 @@ async def test_import_real_superpowers_skills_lands_trust_pending(tmp_path):
     the 64-char limit; the real descriptions are well under 1000 chars).
     """
     local_service, service = _real_skills_scope_service_with_trust(tmp_path)
-    app = _build_test_app()
+    app = _build_test_app(configured_default="library")
     _wire_empty_non_skill_services(app)
     app.skills_scope_service = service
-    host = LibraryHarness(app)
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
+    async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        for _ in range(200):
+            if isinstance(app.screen, LibraryScreen):
+                break
+            await pilot.pause(0.01)
+        assert isinstance(app.screen, LibraryScreen)
+        screen = app.screen
         await _wait_for_library_shell(screen, pilot)
         await _open_skills_import_row(screen, pilot)
 
