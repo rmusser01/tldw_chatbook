@@ -16,13 +16,30 @@ viewer (**Ctrl+Shift+P**), the **Inspector** rail on the right (click its
 handle to expand), the status chips above the composer, and the composer
 for `/prompt`, `/system`, and `/prefill`.
 
-## The "Chat Context" viewer (Ctrl+Shift+P)
+## Layout tour
 
 ![The Chat Context viewer](../images/console/context-modal.svg)
 
+Where this page's controls live:
+
+- **The "Chat Context" viewer** (captured above) — a window over the
+  screen, opened with **Ctrl+Shift+P**.
+- **The Inspector rail** (right edge) — the "Sources" tray at the top, the
+  retrieval-scope row beneath it, the "Prefill" rows when one is armed, the
+  "Live work sources" card, and the "Chat Dictionaries" / "World Books"
+  blocks at the bottom.
+- **The status chips** above the composer — "RAG: on/off", "Sources: N
+  staged", and the "Scope: N" chip once retrieval is narrowed.
+- **The composer** — where `/prompt`, `/system`, and `/prefill` are typed;
+  the left rail's Model section carries the clickable `System:` line.
+
+## Features & controls
+
+### The "Chat Context" viewer (Ctrl+Shift+P)
+
 Press **Ctrl+Shift+P** to open **Chat Context** — a read-only snapshot of
 what the model has seen and is about to see. The header carries an
-approximate token count (e.g. `(~1,234 tokens)`) when a draft-based
+approximate token count (e.g. `(~1234 tokens)`) when a draft-based
 estimate exists; mid-stream a warning reads "A response is in progress;
 snapshot may change." Two tabs:
 
@@ -42,7 +59,7 @@ path), and **Close** (also `Escape`). Payloads over 1 MiB are not
 rendered inline — the viewer shows "Context exceeds 1 MiB. Use Save to
 File to view the full payload."
 
-## System prompt
+### System prompt
 
 Type `/system` (or use the palette entry **Console: Edit system prompt**,
 or click the `System:` line in the left rail's **Model** section — it
@@ -57,7 +74,7 @@ prompt** picker. A saved prompt without a system part is refused with
 `Prompt "<name>" has no system part.` — picker rows show " (no system
 part)".
 
-## Saved prompts (/prompt)
+### Saved prompts (/prompt)
 
 `/prompt <name>` **replaces your current draft** with the saved prompt's
 user text (exact match, then unique prefix). Bare `/prompt`, or an
@@ -66,7 +83,7 @@ prompts…"; empty state "No saved prompts yet — create them in Library ▸
 Prompts."). A large prompt body arrives in the composer as a collapsed
 paste token — click it (or press Enter on it) to unfurl.
 
-## Response prefill (/prefill)
+### Response prefill (/prefill)
 
 A prefill is text the assistant's reply must continue from — useful for
 forcing a format ("Here is the JSON:") or an opening tone.
@@ -84,7 +101,7 @@ Prefill text is capped at 4,000 characters. While armed it shows in the
 Inspector rows **Prefill (next send only)** / **Prefill (pinned)** and in
 the Chat Context viewer's **Response Prefill** fold.
 
-## RAG scope
+### RAG scope
 
 RAG scope limits retrieval to chosen Library items instead of searching
 everything. The Inspector's retrieval-scope row has three states:
@@ -112,19 +129,20 @@ workspace"); a conversation's scope then narrows *within* it — items
 outside are suffixed "— outside workspace scope", and the effective scope
 is the intersection (chip tooltip: `conversation 2 ∩ workspace 5 → 2`).
 
-## Staged sources & Library RAG
+### Staged sources & Library RAG
 
 The Inspector's **Sources** tray lists context staged for the run, one
 row per source with a status word (ready / running / blocked / muted);
 empty state: "No sources attached. Stage sources from Library." The
-control-bar **Attach context** action is the staging entry point.
+control-bar **Attach context** action opens the "Console context" rail;
+the staging itself is done from the Library screen.
 
 To gather evidence *before* sending, use the Inspector's **Live work
 sources** card: type a question into "Ask Library sources before sending"
 and press **Run Library RAG** (also a control-bar action). It searches
 your Library (notes, media, conversations) and stages what it finds.
 
-## Citations
+### Citations
 
 When a reply is grounded in sources, a **Sources (N)** button appears
 under it, opening the **Sources** window: `[S1]`-numbered rows, a detail
@@ -137,7 +155,7 @@ then "Citations repaired" or "Citations repaired · View original attempt"
 of the pre-repair text, headed "Original attempt (not selected)"), or
 "Citation repair unavailable · Original response kept".
 
-## Chat dictionaries & world books
+### Chat dictionaries & world books
 
 Chat dictionaries rewrite matching text before it reaches the model;
 world books inject lore entries into the prompt when their keywords come

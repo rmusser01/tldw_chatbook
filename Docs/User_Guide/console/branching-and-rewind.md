@@ -20,6 +20,20 @@ These controls live inside the Console transcript and composer — see
   (click a row, or move the selection with `j`/`k`).
 - **/rewind** is typed into the composer like any other slash command.
 
+## Layout tour
+
+![The Rewind menu with a prompt selected](../images/console/rewind-modal.svg)
+
+Branching lives in two places on the Console screen:
+
+- **The action row** under a selected message — **<**, **>**, and **♻** sit
+  between "Save as..." and "--->"; when variants exist, the message's role
+  label above it carries the "(2/2)"-style counter.
+- **The "Rewind" menu** (captured above) — opened by typing `/rewind`. Your
+  earlier prompts are listed newest-first as "#1 …" rows; selecting one
+  reveals the "Restore to here" / "Summarize up to here" / "Never mind"
+  buttons below a "Selected #N: …" line.
+
 ## Features & controls
 
 ### Response variants (♻, <, >)
@@ -66,11 +80,9 @@ Select one of **your** messages and press `e` (or click **Edit**) to open the
 
 ### The /rewind menu
 
-Type `/rewind` in the composer and press Enter. The **Rewind** menu lists
-your earlier prompts newest-first as "#1 …" rows; pick one to reveal three
-buttons:
-
-![The Rewind menu with a prompt selected](../images/console/rewind-modal.svg)
+Type `/rewind` in the composer and press Enter. The **Rewind** menu (see
+the capture in the Layout tour) lists your earlier prompts newest-first as
+"#1 …" rows; pick one to reveal three buttons:
 
 - **Restore to here** — your visible conversation returns to just before
   that prompt, and the prompt's full text is placed back in the composer so

@@ -136,8 +136,8 @@ tooltip "Wait for response to finish before using message actions."
 
 ### Save a reply as a Note
 1. Select the assistant reply and click **Save as...**.
-2. Choose **Note** — toast: "Saved message as Note." It appears on the
-   Notes screen.
+2. Choose **Note** — toast: "Saved message as Note." It appears in
+   Library ▸ Notes.
 
 ## Keyboard & commands
 

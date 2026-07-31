@@ -8,7 +8,16 @@ run*. This page covers what you see while a run is in flight, how tool-call
 approvals work, how background runs in other tabs surface, and how skills and
 MCP tools plug in. For the Console screen itself see [Console](../console.md).
 
-## Every tab is its own agent
+## Getting there
+
+Open Console (**Ctrl+2**) and send a message — runs happen wherever you
+chat, no separate mode to enable. The surfaces this page covers: the
+transcript's inline tool rows, the **Agent** section in the left "Console
+context" rail, the Inspector's status rows, the status chips above the
+composer, and the approval and confirm cards that appear above the
+transcript.
+
+## Layout tour — what you see during a run
 
 Each Console tab runs its own agent, and a run keeps going in the background
 while you're on another tab. The first time you open a second tab (**Ctrl+T**),
@@ -21,8 +30,6 @@ The number is your configured cap (default 3). Sending past the cap is
 refused with a message like "2 agents already running (…). Wait for one to
 finish or interrupt it." Runs live only while Console stays open — see
 [Console agent runs are screen-scoped](../index.md#console-agent-runs-are-screen-scoped).
-
-## What you see during a run
 
 **In the transcript** — inline `Tool` rows appear between your message and the
 reply:
@@ -46,7 +53,7 @@ reply:
 
 **In the Inspector** (right rail) — the "Status:" line tracks the run
 (`Status: Ready` / `Status: Generating…` / `Status: Needs approval` /
-`Status: Blocked`), and the "Run recipe" row summarizes provider / model /
+`Status: Source blocked` / `Status: Blocked`), and the "Run recipe" row summarizes provider / model /
 sources / tools / approvals for the next send.
 
 **In the status chips** (above the composer) — "Tools: N ready" counts the
@@ -55,7 +62,9 @@ tools available to the agent ("Tools: not loaded" until your first send), and
 clickable: it jumps you to the pending approval card (with nothing pending it
 just says "No approval is pending.").
 
-## Approvals — tools ask before they run
+## Features & controls
+
+### Approvals — tools ask before they run
 
 Nothing is ever auto-approved, and built-in tools always ask first. When the
 agent wants to run a tool, the run pauses and an **"Approval required"** card
@@ -83,7 +92,7 @@ current definition — if the server later changes the tool, the approval card
 comes back with a "(definition changed)" badge. Review or change a remembered
 allow from the tool's row on the [MCP screen](../mcp.md).
 
-## Background & parked runs
+### Background & parked runs
 
 Tabs with unwatched activity carry a status marker, listed in F1 help:
 
@@ -99,7 +108,7 @@ Tabs with unwatched activity carry a status marker, listed in F1 help:
 - The left rail pins a fleet summary line whenever other tabs are busy:
   "N other agents running, M waiting for approval."
 
-## Skills
+### Skills
 
 Skills are reusable instruction packs kept in Library ▸ Skills.
 
@@ -125,7 +134,7 @@ appears above the transcript:
   **Deny**, and the note: "It runs with a scrubbed environment in a temporary
   folder (not the skill's own folder); only its output comes back."
 
-## MCP tools
+### MCP tools
 
 Servers you configure on the [MCP screen](../mcp.md) surface in Console as
 extra tools the agent can call. The Inspector's **MCP** row (under Tools)
@@ -133,7 +142,7 @@ shows their state: "N tools ready", or "N servers enabled, not connected" when
 servers are configured but unreachable. MCP tool calls go through the same
 "Approval required" card as everything else.
 
-## Stopping & leaving
+### Stopping & leaving
 
 - **Stop** (appears next to Send while a run is active) stops **this tab's
   run only** — other tabs keep going. The partial reply is tagged

@@ -43,9 +43,10 @@ button appears for clearing what's staged. While dictating, a status chip
    Finder's Copy) also work and are attached in order until the limit.
    With nothing usable on the clipboard you get "No image on the clipboard."
 
-No slash command attaches files. The **Attach** action in the top control
-bar is different — it opens the rail for staging Library/workspace context
-(see [Context & RAG](context-and-rag.md)), not the file picker.
+No slash command attaches files. The **Attach context** action in the top
+control bar is different — it opens the "Console context" rail (source
+staging is done from Library — see [Context & RAG](context-and-rag.md)),
+not the file picker.
 
 ### What "attach" actually does — images vs. everything else
 

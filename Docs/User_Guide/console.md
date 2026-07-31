@@ -29,8 +29,8 @@ orientation tour; the details live on six child pages:
 Top to bottom:
 
 - **Header** — the title "Console", the subtitle "— Chat, source handoffs,
-  live runs, and control actions.", and a status badge that reads **ready**,
-  **running**, or **blocked** depending on the active session.
+  live runs, and control actions.", and a status badge that reads **Ready**,
+  **Running**, or **Blocked** depending on the active session.
 - **Control bar** — one row of buttons: **New tab**, **Settings**,
   **Attach context**, **Run Library RAG**, **Save Chatbook**, **Help**.
 - **Left rail: "Console context"** — sections **Session** (workspace and
@@ -46,7 +46,9 @@ Top to bottom:
   you (pending approvals, an available artifact). Opened, it holds
   **Sources**, the retrieval scope row ("Scope: everything" until you
   narrow it), a run status line, groups such as **Run**, **Tools**,
-  **Approvals**, and **Artifacts**, and the **Session Settings** summary.
+  **Approvals**, and **Artifacts**, the **"Live work sources"** card
+  (ask Library sources before sending), and the **Session Settings**
+  summary.
 - **Status chip strip** — one row of chips directly above the composer:
   **Provider**, **Model**, **Assistant**, **RAG**, **Sources**, **Tools**,
   **Approvals**, and — once retrieval is narrowed — **Scope**.
@@ -81,7 +83,7 @@ they are, the empty transcript reads "Ready — type a message to begin."
 |---|---|
 | **New tab** | Creates a Console tab — see [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md). |
 | **Settings** | Opens the "Console Settings" modal (provider, model, tools, and generation). |
-| **Attach context** | Stages Library or workspace context — see [Context & RAG](console/context-and-rag.md). |
+| **Attach context** | Opens the "Console context" rail (staging itself is done from Library) — see [Context & RAG](console/context-and-rag.md). |
 | **Run Library RAG** | Searches Library evidence before sending — see [Context & RAG](console/context-and-rag.md). |
 | **Save Chatbook** | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
 | **Help** | Opens the Console help panel (same as F1). |
@@ -90,13 +92,14 @@ they are, the empty transcript reads "Ready — type a message to begin."
 
 | Control | What it does |
 |---|---|
-| **◂** (rail header) | Collapses that rail. |
+| **◂** / **▸** (rail headers) | Collapse that rail (**◂** on "Console context", **▸** on "Inspector"). |
 | **Context ▸** handle | Reopens the collapsed "Console context" rail. |
 | **Inspector** handle | Reopens the collapsed "Inspector" rail; shows badges like "1 appr" (pending approvals) or "art" (artifact ready). |
 | **Session** section | Workspace controls and the conversation browser — see [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md). |
 | **Model** section | Read-only Provider / Model / Temperature / Max tokens lines plus a **Configure** button that opens Console Settings. |
 | **Agent** section | Live run status and the full run log — see [Agent runs & tools](console/agent-runs-and-tools.md). |
 | **Details** section | Storage, sync, file tools, server, and handoff status for the workspace. |
+| **Character** section | Appears only when the character-avatar preference is on: the active character's portrait (click to enlarge) and name. |
 
 ### Status chips
 

@@ -64,7 +64,7 @@ On a local-only setup the server lines collapse into one line:
 | "New tab" (strip or control bar) / Ctrl+T | Opens a fresh chat tab |
 | Click a tab | Switches to it; a second click on the active tab opens "Rename Chat Tab" |
 | Middle-click a tab | Closes it |
-| "✕" on a tab | Closes it; if the tab has messages, a "Close Tab" confirmation asks "This tab has messages that will be lost.\n\nClose it anyway?" with "Close" / "Keep" |
+| "✕" on a tab | Closes it; if the tab has messages, a "Close Tab" confirmation warns "This tab has messages that will be lost." and asks "Close it anyway?" — "Close" / "Keep" |
 | Alt+1 … Alt+9 | Jumps straight to tab 1–9 |
 | Marker glyph (● ◆ ✓ ✗) | That tab's agent-run status — clears when you visit the tab |
 
