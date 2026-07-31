@@ -7,7 +7,6 @@ import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterable, Literal, Protocol
-from urllib.parse import urljoin
 
 import httpx
 
@@ -666,6 +665,11 @@ class ArtifactAcquisitionService:
                 update as bytes stream in.
 
         Raises:
+            CatalogError: ``descriptor`` declares more than one file --
+                per-file source URLs are undefined until the catalog work
+                (TASK-596/1301) specifies them (see ``_file_url``). Raised
+                before touching staging, the sidecar, or the network: a
+                catalog-contract problem, not a transfer failure.
             TransferError: A file failed to fetch -- network/transport
                 failure, disk I/O failure (e.g. ENOSPC), an egress-policy
                 block, or a response body exceeding the file's declared
@@ -677,6 +681,17 @@ class ArtifactAcquisitionService:
                 stream_fetch's internal chunks (asyncio-native, no manual
                 polling).
         """
+
+        if len(descriptor.files) != 1:
+            # Fail loudly before any I/O: see _file_url for why guessing a
+            # per-file URL for a multi-file descriptor is unsafe.
+            ref = descriptor.reference
+            raise CatalogError(
+                f"{ref.artifact_id}@{ref.revision} declares "
+                f"{len(descriptor.files)} files, but per-file source URLs "
+                "are undefined until the catalog work (TASK-596/1301) "
+                "specifies them"
+            )
 
         staging_dir.mkdir(parents=True, exist_ok=True)
         sidecar_path = staging_dir / "fetch-state.json"
@@ -705,10 +720,15 @@ class ArtifactAcquisitionService:
         exactly one file -- the only shape exercised end-to-end so far --
         ``source_url`` IS that file's URL directly, matching how
         ``_probe_gating`` already treats it (a bare GET/HEAD target, never
-        joined with anything). For a descriptor declaring more than one
-        file, ``source_url`` is treated as the artifact's base location and
-        each file's relative ``path`` is joined onto it (trailing slash
-        ensured) -- the conventional repo-resolve-URL shape.
+        joined with anything).
+
+        ``ArtifactDescriptor`` permits more than one declared file, but
+        nothing upstream of this task defines what a multi-file
+        descriptor's per-file URLs actually are -- guessing a joined
+        ``source_url`` + ``file.path`` URL here would silently fetch the
+        WRONG bytes for every file whenever that guess doesn't match
+        reality, with no signal to the caller that anything went wrong.
+        Failing loudly is safer than guessing quietly: see ``Raises``.
 
         Args:
             descriptor: The artifact descriptor supplying ``source_url``.
@@ -716,14 +736,23 @@ class ArtifactAcquisitionService:
 
         Returns:
             The absolute URL to GET this file's bytes from.
+
+        Raises:
+            CatalogError: ``descriptor`` declares more than one file --
+                per-file source URLs are undefined until the catalog work
+                (TASK-596/1301) specifies them.
         """
 
-        if len(descriptor.files) == 1:
-            return descriptor.source_url
-        base = descriptor.source_url
-        if not base.endswith("/"):
-            base += "/"
-        return urljoin(base, file.path)
+        if len(descriptor.files) != 1:
+            ref = descriptor.reference
+            raise CatalogError(
+                f"{ref.artifact_id}@{ref.revision} declares "
+                f"{len(descriptor.files)} files, but per-file source URLs "
+                "are undefined until the catalog work (TASK-596/1301) "
+                "specifies them -- refusing to guess a URL for "
+                f"'{file.path}'"
+            )
+        return descriptor.source_url
 
     @staticmethod
     def _load_fetch_sidecar(sidecar_path: Path) -> dict:
@@ -827,6 +856,14 @@ class ArtifactAcquisitionService:
             # Reconciliation already confirms the on-disk file is exactly
             # the declared size -- nothing left to fetch. SHA-256 content
             # correctness is Task 8's pre-verify job, not this phase's.
+            # A zero-byte declared file reconciles to recorded_done == 0
+            # == size_bytes WITHOUT ever creating the destination (nothing
+            # to stream, nothing to reconcile against) -- create it empty
+            # so Task 8's pre-verify hashes a real empty file instead of
+            # raising FileNotFoundError on a "complete" file that was
+            # never actually written.
+            if not destination.exists():
+                destination.touch()
             if not entry.get("complete") or entry.get("bytes_done") != recorded_done:
                 sidecar["files"][file.path] = {
                     "etag": entry.get("etag"),

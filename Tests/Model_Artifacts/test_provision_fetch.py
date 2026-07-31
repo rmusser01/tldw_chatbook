@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 import errno
+import hashlib
 import json
 import threading
 from urllib.parse import urlparse
@@ -20,12 +21,21 @@ import pytest
 
 from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 from Tests.Model_Artifacts.test_acquisition_types import DictCatalog, make_descriptor
-from tldw_chatbook.Model_Artifacts import ArtifactRef, closure_fingerprint
+from tldw_chatbook.Model_Artifacts import (
+    ArtifactDescriptor,
+    ArtifactFile,
+    ArtifactFormat,
+    ArtifactRef,
+    ArtifactRole,
+    ProvenanceClass,
+    closure_fingerprint,
+)
 from tldw_chatbook.Model_Artifacts import fetch as fetch_module
 from tldw_chatbook.Model_Artifacts.acquisition import (
     AcquisitionConsent,
     AcquisitionProgress,
     ArtifactAcquisitionService,
+    CatalogError,
     TransferError,
     _ProvisionProgressState,
 )
@@ -45,6 +55,45 @@ def _trusted(srv: FixtureArtifactServer) -> frozenset:
     identical helper for why this is the bare hostname, not a URL)."""
 
     return frozenset({urlparse(srv.url("/")).hostname})
+
+
+def _make_two_file_descriptor(source_url: str) -> ArtifactDescriptor:
+    """A 2-file descriptor -- ``make_descriptor`` only ever builds one file.
+
+    Only the file COUNT matters for the CatalogError coverage below: real
+    per-file URLs for a multi-file descriptor don't exist yet (that's
+    TASK-596/1301's job), so there is nothing meaningful to make these
+    URLs resolve to.
+    """
+
+    ref = ArtifactRef("multi-file-model", "r" * 40, "int8")
+    files = (
+        ArtifactFile("a.bin", 4, hashlib.sha256(b"aaaa").hexdigest()),
+        ArtifactFile("b.bin", 4, hashlib.sha256(b"bbbb").hexdigest()),
+    )
+    return ArtifactDescriptor(
+        reference=ref,
+        model_id="test/model",
+        role=ArtifactRole.ROOT,
+        format=ArtifactFormat.ONNX,
+        consumer="test",
+        model_family="test-family",
+        upstream_repository="test/repo",
+        upstream_revision="main",
+        source_url=source_url,
+        precision="int8",
+        license_id="test-license",
+        license_url="https://example.test/license",
+        usage_notice="Test model",
+        runtime_name="test-runtime",
+        runtime_version_constraint="==1.0.0",
+        supported_os=("linux",),
+        supported_architectures=("x86-64",),
+        provenance=(ProvenanceClass.CHATBOOK_CURATED,),
+        files=files,
+        expected_installed_bytes=8,
+        dependencies=(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +211,58 @@ async def test_fetch_skips_file_already_complete_in_sidecar(tmp_path):
 
         assert "/model.onnx" not in srv.requests
         assert progress_state.bytes_done == 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_zero_byte_file_creates_empty_destination_and_skips_network(tmp_path):
+    """A zero-byte declared file must never leave the sidecar claiming
+    'complete' over a destination that doesn't exist -- Task 8's pre-verify
+    would hit FileNotFoundError trying to hash it."""
+
+    with FixtureArtifactServer() as srv:
+        # Deliberately no route registered: a zero-byte file has nothing to
+        # stream and must never attempt a network request at all.
+        core = ModelArtifactService(tmp_path / "root")
+        svc = ArtifactAcquisitionService(core, trusted_origins=_trusted(srv))
+        desc = make_descriptor(files_body=b"", source_url=srv.url("/model.onnx"))
+        staging_dir = tmp_path / "staging" / "m"
+
+        progress_state = _ProvisionProgressState(callback=None, bytes_total=0)
+        await svc._fetch_artifact(desc, staging_dir, progress_state)
+
+        destination = staging_dir / "model.onnx"
+        assert destination.exists()
+        assert destination.read_bytes() == b""
+        sidecar = json.loads((staging_dir / "fetch-state.json").read_text())
+        entry = sidecar["files"]["model.onnx"]
+        assert entry["complete"] is True
+        assert entry["bytes_done"] == 0
+        assert "/model.onnx" not in srv.requests
+
+
+@pytest.mark.asyncio
+async def test_fetch_multi_file_descriptor_raises_catalog_error_without_touching_anything(
+    tmp_path,
+):
+    """Per-file URLs for a multi-file descriptor are undefined until the
+    catalog work (TASK-596/1301) specifies them. ``_fetch_artifact`` must
+    fail loudly with a typed CatalogError instead of silently guessing a
+    joined URL and fetching the wrong bytes -- and must do so before
+    touching staging, the sidecar, or the network at all."""
+
+    with FixtureArtifactServer() as srv:
+        core = ModelArtifactService(tmp_path / "root")
+        svc = ArtifactAcquisitionService(core, trusted_origins=_trusted(srv))
+        desc = _make_two_file_descriptor(srv.url("/base/"))
+        staging_dir = tmp_path / "staging" / "m"
+
+        progress_state = _ProvisionProgressState(callback=None, bytes_total=8)
+        with pytest.raises(CatalogError) as excinfo:
+            await svc._fetch_artifact(desc, staging_dir, progress_state)
+
+        assert "multi-file-model" in str(excinfo.value)
+        assert not staging_dir.exists()
+        assert not srv.requests
 
 
 @pytest.mark.asyncio
