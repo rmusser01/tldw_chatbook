@@ -35,7 +35,12 @@ class SettingsThemeEditor(Vertical):
     current_theme_name = reactive("textual-dark")
     current_theme_data: reactive[dict[str, str]] = reactive({}, layout=False)
     is_dark_theme = reactive(True)
-    is_modified = reactive(False)
+    # init=False: the init-time watch call would post ThemeModifiedStatus(False)
+    # on every mount, and SettingsScreen recomposes on that reactive -- paired
+    # with the load-time True post below, each recompose mounted an editor
+    # whose posts forced the next recompose (an event-loop-starving storm
+    # that froze the whole app while Theme was open).
+    is_modified = reactive(False, init=False)
 
     BASE_COLORS = [
         "primary",
@@ -418,8 +423,13 @@ class SettingsThemeEditor(Vertical):
             if color_value:
                 if self._validate_color_input(color_value):
                     self._update_color_swatch(color_name, color_value)
-                    self.current_theme_data[color_name] = color_value
-                    self.is_modified = True
+                    # load_theme sets current_theme_data before writing the
+                    # Input values, so the Changed events it queues arrive
+                    # carrying values equal to the stored ones: a programmatic
+                    # reload, not a user edit.
+                    if self.current_theme_data.get(color_name) != color_value:
+                        self.current_theme_data[color_name] = color_value
+                        self.is_modified = True
                     event.input.remove_class("invalid-color")
                 else:
                     event.input.add_class("invalid-color")
@@ -428,6 +438,10 @@ class SettingsThemeEditor(Vertical):
     @on(Switch.Changed, "#settings-theme-dark-mode")
     def on_dark_mode_changed(self, event: Switch.Changed) -> None:
         """Handle dark mode switch changes."""
+        if event.value == self.is_dark_theme:
+            # _update_dark_mode_switch syncing the widget to the loaded
+            # theme -- not a user edit.
+            return
         self.is_dark_theme = event.value
         self.is_modified = True
 
