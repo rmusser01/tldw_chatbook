@@ -61,6 +61,14 @@ and the runner, both of which the source-scan test mentioned above
 (``Tests/UI/test_evals_bench_editor.py``) pins this module can never
 reach, even transitively. ``stage_target()`` is the targeted
 (non-recompose) call the screen makes once it has created the row.
+
+Task-1610: ``BenchEditor.is_dirty()`` reports whether the mounted form (the
+five fields above plus the staged target list) differs from
+``self._loaded_config`` -- read by ``evals_screen.py``'s
+``_selection_unmoved_since_launch`` so a run/sample-bench worker completing
+while this editor holds unsaved edits degrades to a toast instead of
+calling ``select()``, which would otherwise recompose this whole widget
+and silently discard everything not yet Saved.
 """
 
 from __future__ import annotations
@@ -105,6 +113,24 @@ def _target_status_text(preflight: dict[str, Any], target_id: str) -> str:
         # preflight ever made.
         return "Not yet checked"
     return result.status_label
+
+
+def _parse_probes_text(probes_text: str) -> tuple[str, ...]:
+    """Splits a probes ``TextArea``'s raw text into one probe per line,
+    dropping only ZERO-LENGTH lines -- a whitespace-only line (e.g. a lone
+    ``" "``) is kept byte-exact. See ``BenchEditor._on_save_pressed``'s own
+    inline comment for the full rationale (a user pressing Enter after the
+    last probe, or leaving a blank line, produces a genuine zero-length
+    line that ``BenchConfig`` would otherwise carry all the way through a
+    run as a meaningless empty probe; "whitespace preserved exactly" is a
+    claim about a token's CONTENT, so only the zero-length case is special).
+
+    The ONE shared parse between Save (``_on_save_pressed``) and
+    ``BenchEditor.is_dirty()`` -- both must agree on what counts as an
+    edit, or a probes change Save treats as a no-op could still trip the
+    dirty check, or the reverse.
+    """
+    return tuple(line for line in probes_text.split("\n") if line != "")
 
 
 def _resolve_bench_targets(db: EvalsDB, target_ids: Sequence[str]) -> list[Target]:
@@ -224,6 +250,76 @@ class BenchEditor(Vertical):
         #: target readiness only ever changes on a fresh bench selection,
         #: never mid-edit.
         self._preflight_map: dict[str, PreflightResult] = {}
+
+    def is_dirty(self) -> bool:
+        """True when the mounted form differs from ``self._loaded_config``
+        -- i.e. there is unsaved state a recompose would destroy (task-1610:
+        a background run/sample-bench worker completing must not force
+        ``evals_screen.py``'s own ``select()`` while this is true -- see
+        that module's ``_selection_unmoved_since_launch``, which queries
+        this method defensively).
+
+        Computed on demand by re-reading the same five widgets
+        ``_on_save_pressed`` reads and comparing each to what ``compose()``
+        loaded -- no field here posts a live ``Changed`` message (see the
+        module docstring's "display-only until Save" paragraph), so there
+        is no watcher to drive this reactively instead. Probes go through
+        ``_parse_probes_text``, the exact same helper Save itself uses, so
+        the two can never disagree about what counts as an edit. Target
+        edits are staged directly onto ``self._staged_target_ids`` (Task
+        6's Add/Remove handlers) rather than read from a widget, so that
+        list is compared to ``loaded.target_ids`` verbatim.
+
+        ``False`` when this widget never composed a form at all --
+        ``self._loaded_config`` stays ``None`` in both of ``compose()``'s
+        early-return branches (no db, or an unreadable bench row) -- there
+        is no form to have edited. An unparseable Top-K value counts as
+        dirty (the user typed SOMETHING different from the loaded int),
+        matching Save's own treatment of that value as a real, if invalid,
+        edit -- see ``_on_save_pressed``'s identical `int(...)` parse.
+
+        Returns:
+            bool: True when any form field or the staged target list
+            differs from the loaded bench state; False for a pristine
+            form or when no form composed at all.
+        """
+        loaded = self._loaded_config
+        if loaded is None:
+            return False
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            name = self.query_one("#evals-bench-name", Input).value
+            description = self.query_one("#evals-bench-description", Input).value
+            prompt_mode = self.query_one("#evals-bench-prompt-mode", Select).value
+            top_k_raw = self.query_one("#evals-bench-top-k", Input).value
+            probes_text = self.query_one("#evals-bench-probes", TextArea).text
+        except QueryError:
+            # Defensive only: this widget always composes all five fields
+            # together with `_loaded_config` (see compose()'s own early
+            # returns above) -- treating an unreadable form as dirty is the
+            # conservative direction if that invariant is ever broken (a
+            # false positive here degrades a completing worker to a toast;
+            # a false negative would let it destroy real unsaved state).
+            return True
+
+        if name != loaded.name:
+            return True
+        if description != loaded.description:
+            return True
+        if prompt_mode != loaded.prompt_mode:
+            return True
+        try:
+            top_k = int(top_k_raw.strip())
+        except ValueError:
+            return True
+        if top_k != loaded.top_k:
+            return True
+        if _parse_probes_text(probes_text) != tuple(loaded.probes):
+            return True
+        if tuple(self._staged_target_ids) != tuple(loaded.target_ids):
+            return True
+        return False
 
     def compose(self) -> ComposeResult:
         db = self._view_model.db
@@ -637,22 +733,14 @@ class BenchEditor(Vertical):
             self._show_form_error(TOP_K_ERROR_TEXT)
             return
 
-        # One probe per line, whitespace preserved exactly -- see the
-        # module docstring and `render_snippet_cell`'s own callers below.
-        # Splitting on "\n" alone is not enough: a user who presses Enter
-        # after the last probe (or leaves a blank line anywhere) produces
-        # a genuine zero-length line -- `BenchConfig` accepts it happily,
-        # and `analysis.resolve_probe` would then carry a meaningless
-        # empty-string probe column all the way through a run. Only a
-        # ZERO-LENGTH line is dropped here; a WHITESPACE-ONLY line (e.g. a
-        # lone " ") is kept byte-exact -- "whitespace preserved exactly"
-        # is a claim about a token's CONTENT, and a single space is a
-        # legitimate (if unusual) exact token, not an empty one. Note this
-        # is a real distinction from `compose()`'s own `"\n".join(config.
+        # One probe per line, whitespace preserved exactly -- see
+        # `_parse_probes_text`'s own docstring for the full rationale
+        # (also shared, verbatim, with `is_dirty()` below). Note this is a
+        # real distinction from `compose()`'s own `"\n".join(config.
         # probes)`, which never appends a trailing newline of its own --
         # `TextArea.text` reflects exactly what the user TYPED, trailing
         # Enter-press included, and that is a different guarantee.
-        probes = tuple(line for line in probes_text.split("\n") if line != "")
+        probes = _parse_probes_text(probes_text)
 
         try:
             config = BenchConfig(

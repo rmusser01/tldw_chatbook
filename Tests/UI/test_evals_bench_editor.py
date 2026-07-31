@@ -36,7 +36,11 @@ from tldw_chatbook.Evals.word_bench.storage import (
 )
 from tldw_chatbook.UI.Evals import bench_editor as bench_editor_module
 from tldw_chatbook.UI.Evals import inspector as inspector_module
-from tldw_chatbook.UI.Evals.bench_editor import CLASSIC_TASK_DEFERRAL_SENTENCE, TOP_K_ERROR_TEXT
+from tldw_chatbook.UI.Evals.bench_editor import (
+    CLASSIC_TASK_DEFERRAL_SENTENCE,
+    TOP_K_ERROR_TEXT,
+    BenchEditor,
+)
 from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook.UI.Evals.inspector import EvalsInspector
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen, EvalsSelection
@@ -1648,3 +1652,207 @@ async def test_staged_target_edits_survive_unsaved_name_and_probe_text(
         # to the form's own error Static, mirroring the identical check in
         # test_save_persists_every_field_and_reselects_the_bench.
         assert not screen.query_one("#evals-bench-form-error").display
+
+
+# ---------------------------------------------------------------------------
+# task-1610: BenchEditor.is_dirty() -- read by evals_screen.py's
+# `_selection_unmoved_since_launch` so a completing run/sample-bench worker
+# never recomposes over unsaved form state.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_is_false_immediately_after_a_fresh_selection(
+    evals_app, bench_with_mixed_readiness
+):
+    """A just-composed editor, untouched, reads clean -- the baseline every
+    other test below flips away from."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        editor = evals_app.screen.query_one(BenchEditor)
+        assert editor.is_dirty() is False
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_flips_true_independently_for_each_scalar_field(
+    evals_app, bench_with_mixed_readiness
+):
+    """Name/Description/Prompt-mode/Top-K each flip `is_dirty()` to True on
+    their own -- exercised one field at a time against a freshly
+    re-selected (clean) editor, so an earlier field's edit can never mask a
+    later one's assertion. Also covers an UNPARSEABLE Top-K value: Save
+    treats that as a real (if invalid) edit -- see `_on_save_pressed`'s own
+    `int(...)` parse -- and `is_dirty()` must agree, not silently read it
+    as unchanged."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        screen = evals_app.screen
+
+        screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen.query_one("#evals-bench-name", Input).value = "renamed"
+        assert screen.query_one(BenchEditor).is_dirty() is True
+
+        screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen.query_one("#evals-bench-description", Input).value = "new description"
+        assert screen.query_one(BenchEditor).is_dirty() is True
+
+        screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen.query_one("#evals-bench-prompt-mode", Select).value = "chat"
+        assert screen.query_one(BenchEditor).is_dirty() is True
+
+        screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen.query_one("#evals-bench-top-k", Input).value = "999"
+        assert screen.query_one(BenchEditor).is_dirty() is True
+
+        screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen.query_one("#evals-bench-top-k", Input).value = "not-a-number"
+        assert screen.query_one(BenchEditor).is_dirty() is True
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_is_false_when_probes_textarea_exactly_matches_loaded_probes(
+    evals_app, bench_with_mixed_readiness
+):
+    """Setting the TextArea back to a byte-exact reconstruction of the
+    loaded probes (`bench_with_mixed_readiness`'s own `(" Sure", " I")`,
+    exactly what `compose()` itself renders as `"\\n".join(...)`) reads
+    clean -- proves the comparison is content-based, not merely "has the
+    widget's `.text` ever been assigned to"."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        editor = screen.query_one(BenchEditor)
+
+        screen.query_one("#evals-bench-probes", TextArea).text = " Sure\n I"
+        assert editor.is_dirty() is False
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_flips_true_on_a_whitespace_only_probe_line_addition(
+    evals_app, bench_with_mixed_readiness
+):
+    """A trailing whitespace-only line (a lone `" "`) is a real, distinct
+    probe -- not a zero-length line `_parse_probes_text` would drop -- so
+    adding one is a genuine edit `is_dirty()` must catch."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        editor = screen.query_one(BenchEditor)
+
+        screen.query_one("#evals-bench-probes", TextArea).text = " Sure\n I\n "
+        assert editor.is_dirty() is True
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_is_false_when_a_trailing_empty_line_is_added(
+    evals_app, bench_with_mixed_readiness
+):
+    """The zero-length-line filter `_parse_probes_text` shares with Save:
+    a bare trailing Enter-press (a genuine zero-length line) parses to the
+    SAME probe tuple as the loaded config, so it must not read as dirty --
+    mirrors `test_trailing_newline_after_the_last_probe_does_not_persist_
+    an_empty_probe`'s save-path assertion for the dirty check."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        editor = screen.query_one(BenchEditor)
+
+        screen.query_one("#evals-bench-probes", TextArea).text = " Sure\n I\n"
+        assert editor.is_dirty() is False
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_flips_true_on_a_staged_target_add(
+    evals_app, bench_with_available_add_target
+):
+    task_id, _existing_id, addable_id = bench_with_available_add_target
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        editor = screen.query_one(BenchEditor)
+        assert editor.is_dirty() is False
+
+        select = screen.query_one("#evals-bench-add-target", Select)
+        select.value = addable_id
+        await pilot.click("#evals-bench-add-target-button")
+        await pilot.pause()
+
+        assert editor.is_dirty() is True
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_flips_true_on_a_staged_target_remove(
+    evals_app, bench_with_mixed_readiness
+):
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        editor = screen.query_one(BenchEditor)
+        assert editor.is_dirty() is False
+
+        await pilot.click("#evals-bench-target-remove-0")
+        await pilot.pause()
+
+        assert editor.is_dirty() is True
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_is_false_again_after_save_and_reload(
+    evals_app, evals_db, bench_with_mixed_readiness
+):
+    """Save -> `Saved` -> the screen's own `select()` recomposes from the
+    freshly persisted row: the new `BenchEditor` instance (a real rebuild,
+    not the same one) reads clean again -- the round-trip this whole
+    feature exists to protect: an in-flight worker completing AFTER a Save
+    must still be free to auto-navigate."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        screen.query_one("#evals-bench-name", Input).value = "renamed-and-saved"
+
+        assert screen.query_one(BenchEditor).is_dirty() is True
+
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        editor = screen.query_one(BenchEditor)
+        assert editor.is_dirty() is False
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_is_false_when_the_widget_never_composed_a_form(evals_app):
+    """The two `compose()` early-return branches (no db, unreadable row)
+    leave `_loaded_config` at `None` and never yield the Save button that
+    would need `_on_save_pressed`'s widgets to exist -- `is_dirty()` must
+    not raise `QueryError` reaching for widgets that were never composed,
+    and must report clean (there is no form to have edited)."""
+    editor = BenchEditor(
+        EvalsViewModel(None), "does-not-exist", id="evals-bench-editor-standalone"
+    )
+    assert editor.is_dirty() is False
