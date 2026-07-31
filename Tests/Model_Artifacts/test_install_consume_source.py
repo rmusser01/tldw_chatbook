@@ -110,7 +110,12 @@ def test_default_copy_behavior_unchanged(service: ModelArtifactService, tmp_path
 
 
 def test_consume_source_rejects_symlinked_file(service: ModelArtifactService, tmp_path: Path) -> None:
-    """consume_source rejects when a declared file is a symlink."""
+    """consume_source rejects when a declared file is a symlink.
+
+    NOTE: This test exercises the _validate_payload_tree layer (defense-in-depth).
+    The primary pin for _copy_payload containment is test_consume_source_outside_root_raises,
+    which verifies that outside-root sources are caught by _assert_managed_path(source).
+    """
     desc = descriptor()
     source = Path(service.staging_path) / "managed" / "src"
     source.mkdir(parents=True)
@@ -136,7 +141,12 @@ def test_consume_source_rejects_symlinked_file(service: ModelArtifactService, tm
 
 
 def test_consume_source_rejects_symlink_in_ancestry(service: ModelArtifactService, tmp_path: Path) -> None:
-    """consume_source rejects when source path contains a symlink component."""
+    """consume_source rejects when source path contains a symlink component.
+
+    NOTE: This test exercises the _assert_managed_path layer (defense-in-depth).
+    The primary pin for _copy_payload containment is test_consume_source_outside_root_raises,
+    which verifies that outside-root sources are caught by _assert_managed_path(source).
+    """
     desc = descriptor()
     # Create actual directory with files
     actual_source = Path(service.staging_path) / "managed" / "actual_src"
