@@ -13,6 +13,8 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
+import shutil
+
 import pytest
 
 from tldw_chatbook.Chatbooks.chatbook_creator import ChatbookCreator
@@ -26,7 +28,7 @@ PNG_POS2 = b"png-bytes-position-2"
 
 
 @pytest.fixture
-def source_env(tmp_path):
+def source_env(tmp_path, chachanotes_template_db):
     """A source DB holding one conversation whose message carries 3 images."""
     db_dir = tmp_path / "source"
     db_dir.mkdir()
@@ -37,6 +39,7 @@ def source_env(tmp_path):
         "Evals": str(db_dir / "evals.db"),
         "RAG": str(db_dir / "rag.db"),
     }
+    shutil.copyfile(chachanotes_template_db, db_paths["ChaChaNotes"])
     db = CharactersRAGDB(db_paths["ChaChaNotes"], "test-source")
     conv_id = db.add_conversation(
         {

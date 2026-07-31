@@ -53,8 +53,13 @@ def memory_db_paths():
 
 
 @pytest.fixture
-def populated_chachanotes_db(mock_db_paths):
-    """Create a populated ChaChaNotes database."""
+def populated_chachanotes_db(mock_db_paths, chachanotes_template_db):
+    """Create a populated ChaChaNotes database (schema from the session template).
+
+    Population happens live below — only the ~137ms schema DDL is replaced by
+    a ~10.5ms template copy (task-1462); rows stay per-test-fresh.
+    """
+    shutil.copyfile(chachanotes_template_db, mock_db_paths["ChaChaNotes"])
     db = CharactersRAGDB(mock_db_paths["ChaChaNotes"], "test")
 
     # Add test characters

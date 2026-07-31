@@ -8,6 +8,8 @@ Chatbook Performance Tests
 Tests focused on performance characteristics and optimization.
 """
 
+import shutil
+
 import pytest
 import time
 import threading
@@ -95,7 +97,7 @@ class TestChatbookPerformance:
     """Performance tests for chatbook operations."""
 
     @pytest.fixture
-    def performance_db_setup(self, tmp_path):
+    def performance_db_setup(self, tmp_path, chachanotes_template_db):
         """Setup databases for performance testing."""
         db_dir = tmp_path / "perf_dbs"
         db_dir.mkdir()
@@ -107,6 +109,7 @@ class TestChatbookPerformance:
         }
 
         # Initialize databases
+        shutil.copyfile(chachanotes_template_db, db_paths["ChaChaNotes"])
         chacha_db = CharactersRAGDB(db_paths["ChaChaNotes"], "perf_test")
         media_db = MediaDatabase(db_paths["Media"], "perf_test")
         prompts_db = PromptsDatabase(db_paths["Prompts"], "perf_test")

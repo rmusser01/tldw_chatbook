@@ -201,6 +201,33 @@ def temp_db_path(isolated_temp_dir):
 # ========== Cleanup and Isolation Fixtures ==========
 
 
+@pytest.fixture(scope="session")
+def chachanotes_template_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build the schema-complete CharactersRAGDB template once per session.
+
+    CharactersRAGDB's full schema DDL costs ~137ms per construction; copying
+    this template and reopening costs ~10.5ms (task-1460). Hosted here so any
+    directory's fixtures can copy it (ChaChaNotesDB, Chatbooks — task-1462);
+    the import is lazy, so sessions that never request the fixture never pay
+    for it. client_id is per-row attribution: the empty template carries no
+    identity to re-stamp.
+
+    Args:
+        tmp_path_factory: pytest's session-scoped temp directory factory.
+
+    Returns:
+        Path to a closed, WAL-checkpointed, sidecar-free template file.
+    """
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    template = tmp_path_factory.mktemp("chachanotes-template") / "template.sqlite"
+    db = CharactersRAGDB(template, "template_builder")
+    db.close_connection()
+    leftovers = [s for s in ("-wal", "-shm") if Path(f"{template}{s}").exists()]
+    assert not leftovers, f"template close left WAL sidecars: {leftovers}"
+    return template
+
+
 @pytest.fixture(autouse=True)
 def install_css_parse_cache() -> "Iterator[None]":
     """Install the session-global CSS parse cache once Textual is imported.
