@@ -1615,6 +1615,15 @@ class SetupWizardContainer(WizardContainer):
         # dismissing the screen twice -- see those methods' docstrings.
         self._finalized = False
 
+    def on_mount(self) -> None:
+        """TASK-1499: base on_mount renders the progress row from the FULL
+        step list; rebuild it immediately so the initial render honors the
+        quick-track default (4 dots, "Step 1 of 4") instead of front-loading
+        all nine steps before the user has chosen anything."""
+        super().on_mount()
+        self._rebuild_progress()
+        self.update_progress()
+
     # -- step construction -------------------------------------------------
     def _create_steps(self) -> List[WizardStep]:
         # Later tasks append real steps here; the skeleton ships Welcome +

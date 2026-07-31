@@ -2462,6 +2462,14 @@ async def test_key_hints_footer_and_test_button_probe():
         text = str(hints.render())
         assert "Ctrl+N" in text and "Esc" in text
         assert hints in app.screen._compositor.visible_widgets
+        # The docked hints line must not push the nav bar's buttons off
+        # screen (container yields a row via height:1fr).
+        next_button = wizard.query_one("#wizard-next", Button)
+        assert next_button in app.screen._compositor.visible_widgets
+        # TASK-1499: the INITIAL progress render honors the quick default.
+        from tldw_chatbook.UI.Wizards.BaseWizard import WizardProgress
+        progress = wizard.query_one(WizardProgress)
+        assert progress.total_steps == 4
 
     # Test button: fires the probe with the typed key.
     probe = AsyncMock()

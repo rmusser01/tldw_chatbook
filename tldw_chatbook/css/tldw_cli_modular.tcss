@@ -14377,6 +14377,14 @@ SmartContentTree Tree > .selected-node {
     min-width: 8;
 }
 
+/* TASK-1505: with the key-hints line docked at the screen's bottom, the
+ * wizard container must yield that row — height:100% (the shared framework
+ * default) would push the navigation bar's last row off screen. Scoped to
+ * the setup wizard's own screen. */
+FirstRunSetupWizard SetupWizardContainer {
+    height: 1fr;
+}
+
 /* ===== MODULE: features/_chatbooks.tcss ===== */
 /* _chatbooks.tcss */
 /* Styles for the Chatbooks window */
