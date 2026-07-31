@@ -131,6 +131,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #101 The MCP lifecycle-cancellation regression lets Textual finish the post-worker mount cycle before invoking its private lifecycle seam, while preserving the deliberately blocked operation, cancel request, and in-flight cleanup assertion.
 - [ ] #102 The Library Database-to-Files remount journey waits for the retained File Notes editor subtree, not only its workspace root, before asserting editor identity and hidden-file refresh behavior.
 - [ ] #103 Library export starts its worker after the running-state recompose has refreshed, so an immediate completion updates the current canvas and leaves Export enabled for retry while preserving typed-field identity on completion.
+- [ ] #104 Focused Study scope-load regressions await the current deferred initial-load seam instead of the now-synchronous `on_mount`, while preserving scope precedence, validation, controller reset, initialization ordering, and runtime-backend recomputation coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -239,6 +240,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 95. Let Textual finish the MCP workbench's post-worker mount cycle before starting the cancellation regression's private lifecycle operation.
 96. Require the retained File Notes editor subtree to remount before the Database-to-Files journey asserts its identity and refresh behavior.
 97. Defer Library export worker dispatch until the running-state recompose has refreshed so fast completion targets the current canvas.
-98. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-99. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+98. Retarget direct Study scope-load tests from the intentionally synchronous mount hook to its deferred initial-load seam.
+99. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+100. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

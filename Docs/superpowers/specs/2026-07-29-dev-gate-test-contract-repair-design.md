@@ -985,6 +985,13 @@ Update the tests to describe current behavior:
      single-flight/cancellation guards, and targeted completion update so a
      fast completion cannot update the old canvas before the running canvas
      mounts; do not add a retry loop or recompose on completion.
+102. Retarget the seven focused Study scope-load tests from the intentionally
+     synchronous `on_mount` hook to `_load_after_mount_inner`, the deferred
+     coroutine that now owns the behavior those tests assert. Keep scope
+     precedence, invalid-workspace handling, local-backend posture, controller
+     reset, initialization ordering, and runtime-backend recomputation
+     assertions unchanged. Dedicated TASK-1320 coverage continues to prove
+     that the real mount schedules this work off the application message pump.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1361,6 +1368,12 @@ behavior. No compatibility shims. No broad deletion of live tests.
   Hugging Face cache rules. The suite already has an explicit `--run-slow`
   contract for real inference; consistently marking the two omissions is both
   clearer and smaller.
+- Making `StudyScreen.on_mount` async again would reverse TASK-1320 and put
+  scoped I/O back on Textual's application message pump. Calling the
+  synchronous hook and then manually starting its worker would couple focused
+  scope-state tests to Textual scheduling. Awaiting the existing deferred load
+  coroutine exercises their current unit boundary directly, while the
+  dedicated off-message-pump suite retains real mount-scheduling coverage.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

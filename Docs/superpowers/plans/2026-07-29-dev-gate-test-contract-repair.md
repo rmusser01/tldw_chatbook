@@ -4038,6 +4038,48 @@ Ruff format reports inherited formatting drift elsewhere in
 `library_screen.py`; the deferred dispatch and its docstring are absent from
 those findings.
 
+### Task 4ct: Align Study scope tests with deferred mount loading
+
+**Files:**
+- Modify: `Tests/UI/test_study_screen.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This aligns focused unit tests with the synchronous mount and
+deferred initial-load boundary already accepted in TASK-1320; it does not
+change production lifecycle, scope ownership, or application architecture.
+
+- [x] **Step 1: Identify the retired async lifecycle call**
+
+Full-gate attempt 37 fails after 21,170 passes because the first of seven
+focused Study scope tests awaits `StudyScreen.on_mount()`. TASK-1320
+intentionally made that hook synchronous and moved its scoped I/O into
+`_load_after_mount_inner()` via a deferred worker so mounting cannot block the
+application message pump. The dedicated off-message-pump suite covers that
+real scheduling boundary.
+
+- [x] **Step 2: Invoke the deferred load seam directly**
+
+Replace only the seven direct `await screen.on_mount()` calls with
+`await screen._load_after_mount_inner()`. Preserve every scope, validation,
+controller, ordering, and backend-change assertion without adding a helper,
+sleep, production compatibility path, or duplicate worker scheduling.
+
+- [x] **Step 3: Verify Study coverage**
+
+Run all seven corrected tests repeatedly under current contention, the complete
+Study screen module, the dedicated TASK-1320 mount-I/O coverage, Ruff/format,
+and `git diff --check`.
+
+The corrected seven-test set passed three concurrent repetitions (21/21), the
+complete Study screen module passed 18/18, and the dedicated mount-I/O suite
+passed 10/10. Scoped Ruff lint and format checks pass, as does
+`git diff --check`.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
