@@ -5627,6 +5627,92 @@ async def _prepare_exact_push_review(
 
 
 @pytest.mark.asyncio
+async def test_workspace_rehydrate_retained_push_phases_keep_exact_candidate(
+    tmp_path: Path,
+) -> None:
+    """Losing phase-owned identity would let UI bind an old op to a new commit."""
+    owner, binding, repository = _candidate_owner(tmp_path)
+    candidate = owner.snapshot(binding).push_candidate
+    assert candidate is not None
+    runner = _ControlledExactPushRunner(
+        repository,
+        observations=(
+            _remote_observation("b" * 40),
+            _remote_observation("b" * 40),
+            _remote_observation("d" * 40),
+        ),
+        push_result=_accepted_push_result(),
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+        network_context_factory=_network_factory(tmp_path),
+    )
+
+    assert (await service.start_push_review(binding)).state == "ready"
+    local_proof = _current_push_operation(service, binding)
+    assert local_proof.candidate == candidate
+
+    reviewed = await service.authorize_and_check_push(binding, local_proof)
+    assert reviewed.handle is not None
+    preflight = _current_push_operation(service, binding)
+    assert preflight.candidate == candidate
+
+    result = await service.start_push(binding, reviewed.handle)
+    push = _current_push_operation(service, binding)
+    assert result.state == "succeeded"
+    assert push.candidate == candidate
+    assert owner.snapshot(binding).push_candidate is None
+
+
+@pytest.mark.asyncio
+async def test_workspace_rehydrate_recovery_uses_retained_candidate_evidence(
+    tmp_path: Path,
+) -> None:
+    """Recovery identity must come from frozen evidence, not live UI state."""
+    owner, binding, repository = _candidate_owner(tmp_path)
+    candidate = owner.snapshot(binding).push_candidate
+    assert candidate is not None
+    runner = _ControlledExactPushRunner(
+        repository,
+        observations=(
+            _remote_observation("b" * 40),
+            _remote_observation("b" * 40),
+            _remote_observation("b" * 40),
+            _remote_observation("d" * 40),
+        ),
+        push_result=_accepted_push_result(),
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+        network_context_factory=_network_factory(tmp_path),
+    )
+    reviewed = await _prepare_exact_push_review(service, binding)
+    assert (await service.start_push(binding, reviewed.handle)).state == "uncertain"
+    uncertain = _current_push_operation(service, binding)
+    assert uncertain.candidate == candidate
+    evidence = service._uncertain_push
+    assert evidence is not None
+    assert owner.clear_push_candidate(evidence.candidate_capture)
+    recovery_snapshot = owner.snapshot(binding)
+    assert recovery_snapshot.push_candidate is None
+    assert recovery_snapshot.push_recovery is not None
+    assert recovery_snapshot.push_recovery_candidate == candidate
+
+    recovered = await service.check_push_again(binding, uncertain)
+    recovery = _current_push_operation(service, binding)
+
+    assert recovered.state == "succeeded"
+    assert recovery.kind == "recovery"
+    assert recovery.candidate == candidate
+
+
+@pytest.mark.asyncio
 async def test_confirm_consumes_review_once_and_exact_push_postflight_succeeds(
     tmp_path: Path,
 ) -> None:

@@ -498,6 +498,7 @@ class FileNotesSessionSnapshot:
     destination_authorization_epoch: int = 0
     push_review_generation: int = 0
     push_recovery: PushRecoveryProjection | None = None
+    push_recovery_candidate: PushCandidateAvailability | None = None
     push_recovery_available: bool = False
     push_recovery_generation: int = 0
 
@@ -621,6 +622,15 @@ class _PushCandidateCapture:
     def selected_root_generation(self) -> int:
         """Return the exact selected-root generation bound to this authority."""
         return self.binding.generation
+
+    @property
+    def availability(self) -> PushCandidateAvailability:
+        """Return the sanitized identity retained across push phases."""
+        return PushCandidateAvailability(
+            generation=self.candidate_generation,
+            candidate=self.candidate,
+            change_types=self.change_types,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1147,6 +1157,11 @@ class FileNotesSessionOwner:
                 ),
                 push_review_generation=self._push_review_generation,
                 push_recovery=self._push_recovery_projection,
+                push_recovery_candidate=(
+                    None
+                    if self._push_recovery_capture is None
+                    else self._push_recovery_capture.candidate_capture.availability
+                ),
                 push_recovery_available=(
                     self._push_recovery_capture is not None
                     and self._push_recovery_descendants_terminal

@@ -91,6 +91,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     HeadIdentity,
     IndexBaseline,
     IndexEntry,
+    PushCandidateAvailability,
     RepositoryIdentity,
     SequencedSessionChange,
     SessionBinding,
@@ -1248,6 +1249,7 @@ class RetainedPushOperation:
     binding: SessionBinding
     operation_id: int
     kind: Literal["local_proof", "preflight", "push", "recovery"]
+    candidate: PushCandidateAvailability
     _settlement: asyncio.Task[
         PushDestinationPolicyResult
         | PushPreflightResult
@@ -3199,6 +3201,13 @@ class FileNotesGitService:
                 admission.reason or "mutation_active",
                 "File Notes Git mutation admission was refused",
             )
+        candidate = self._owner.snapshot(binding).push_candidate
+        if candidate is None:
+            lease.release()
+            raise GitMutationAdmissionError(
+                "stale_binding",
+                "Guarded push candidate is stale",
+            )
         self._push_operation_generation += 1
         operation_generation = self._push_operation_generation
         cycle: asyncio.Task[PushDestinationPolicyResult] | None = None
@@ -3221,6 +3230,7 @@ class FileNotesGitService:
             binding,
             operation_generation,
             "local_proof",
+            candidate,
             cycle,
         )
         cycle.add_done_callback(self._push_local_proof_cycle_completed)
@@ -3332,6 +3342,7 @@ class FileNotesGitService:
         if (
             policy is None
             or policy.candidate_capture.binding != binding
+            or operation.candidate != policy.candidate_capture.availability
             or binding != self._owner.current_binding()
         ):
             raise GitMutationAdmissionError(
@@ -3383,6 +3394,7 @@ class FileNotesGitService:
             binding,
             operation_generation,
             "preflight",
+            operation.candidate,
             cycle,
         )
         cycle.add_done_callback(self._push_preflight_cycle_completed)
@@ -3738,6 +3750,8 @@ class FileNotesGitService:
             or previous_operation.binding != binding
             or previous_operation.kind != "preflight"
             or not previous_operation.settled
+            or previous_operation.candidate
+            != snapshot.policy.candidate_capture.availability
             or (self._push_cycle is not None and not self._push_cycle.done())
         ):
             raise GitMutationAdmissionError(
@@ -3809,6 +3823,7 @@ class FileNotesGitService:
             binding,
             self._push_operation_generation,
             "push",
+            previous_operation.candidate,
             cycle,
             child_started_signal,
         )
@@ -4302,6 +4317,7 @@ class FileNotesGitService:
             or operation is not self._retained_push_operation
             or operation.binding != evidence.binding
             or operation.operation_id != evidence.operation_id
+            or operation.candidate != evidence.candidate_capture.availability
             or not evidence.descendants_terminal
             or (
                 self._push_recovery_cycle is not None
@@ -4335,6 +4351,7 @@ class FileNotesGitService:
             or operation is not self._retained_push_operation
             or operation.binding != evidence.binding
             or operation.operation_id != evidence.operation_id
+            or operation.candidate != evidence.candidate_capture.availability
         ):
             raise GitMutationAdmissionError(
                 "invalid_capability",
@@ -4390,6 +4407,7 @@ class FileNotesGitService:
             binding,
             next_operation_id,
             "recovery",
+            evidence.candidate_capture.availability,
             cycle,
         )
         cycle.add_done_callback(self._push_recovery_cycle_completed)
