@@ -542,8 +542,10 @@ class VoiceVadUnavailable:
 #: the microphone is open when this would need to be said, and speaking over
 #: an open mic is exactly what `spoken_feedback` avoids everywhere else.
 VAD_UNAVAILABLE_MESSAGE = (
-    "Voice commands unavailable this session: voice-activity detection "
-    "failed to load. Dictation still works; commands execute when you stop."
+    "Voice input is degraded: voice-activity detection (webrtcvad) is not "
+    "installed in this Python environment. NOTHING will appear until you "
+    "press stop, and voice commands will not fire. Run the app from a "
+    "Python with the speech_recording extras installed."
 )
 
 
