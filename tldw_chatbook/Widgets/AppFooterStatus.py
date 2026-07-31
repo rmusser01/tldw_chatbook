@@ -89,7 +89,7 @@ class AppFooterStatus(Widget):
         self._shortcut_display = Static(self._shortcut_text, id="footer-key-quit")
         self._word_count_display: Static = Static("", id="footer-word-count")
         self._token_count_display: Static = Static(
-            "Tokens: -- | ", id="footer-token-count"
+            "Tokens: --", id="footer-token-count"
         )
         self._db_status_display: Static = Static("", id="internal-db-size-indicator")
         # The stats read as cryptic single letters (P: / C/N: / M:); a hover

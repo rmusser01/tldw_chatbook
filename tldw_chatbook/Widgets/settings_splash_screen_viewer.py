@@ -166,7 +166,7 @@ class SettingsSplashScreenViewer(Vertical):
                     classes="settings-toggle-state",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Duration", classes="settings-input-label")
+                yield Static("Duration (s)", classes="settings-input-label")
                 yield Input(
                     value=str(self._config.get("duration", 2.5)),
                     id="settings-splash-duration",
@@ -175,7 +175,7 @@ class SettingsSplashScreenViewer(Vertical):
                     restrict=r"^[0-9]*\.?[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Animation speed", classes="settings-input-label")
+                yield Static("Animation speed (x)", classes="settings-input-label")
                 yield Input(
                     value=str(self._config.get("animation_speed", 1.0)),
                     id="settings-splash-animation-speed",
