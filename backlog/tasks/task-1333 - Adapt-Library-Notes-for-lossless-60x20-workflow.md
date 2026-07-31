@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-31 00:19'
-updated_date: '2026-07-31 01:23'
+updated_date: '2026-07-31 01:42'
 labels: []
 dependencies:
   - TASK-400
@@ -17,6 +17,7 @@ references:
   - backlog/decisions/027-portable-database-note-session-coordinator.md
 documentation:
   - Docs/superpowers/specs/2026-07-30-library-notes-adaptive-60x20-design.md
+  - Docs/superpowers/plans/2026-07-30-library-notes-adaptive-60x20.md
 priority: high
 ---
 
