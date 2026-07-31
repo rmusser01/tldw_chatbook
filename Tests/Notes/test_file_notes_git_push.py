@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 import shutil
 import subprocess
@@ -74,13 +75,23 @@ def _issued_network_context(
     tmp_path: Path,
     *,
     endpoint: str,
+    object_format: str = "sha1",
 ):
     worktree = tmp_path / "source"
     git_dir = worktree / ".git"
     objects = git_dir / "objects"
     objects.mkdir(parents=True)
     git_dir.joinpath("config").write_text(
-        "[core]\n\tbare = false\n",
+        (
+            "[core]\n"
+            f"\trepositoryFormatVersion = {1 if object_format == 'sha256' else 0}\n"
+            "\tbare = false\n"
+            + (
+                "[extensions]\n\tobjectFormat = sha256\n"
+                if object_format == "sha256"
+                else ""
+            )
+        ),
         encoding="utf-8",
     )
     repository = RepositoryIdentity(
@@ -99,6 +110,7 @@ def _issued_network_context(
     source_objects = git_network._authorize_source_object_directory(
         objects,
         _path_identity(objects),
+        object_format,
     )
     configuration = git_network._authorize_network_config_facts(
         (),
@@ -1070,6 +1082,36 @@ def test_network_context_push_argv_is_exact_compare_and_swap(
     assert context.close() is True
 
 
+@pytest.mark.parametrize(
+    ("object_format", "parent_oid", "candidate_oid"),
+    [
+        ("sha1", _SHA256_PARENT, _SHA256_CANDIDATE),
+        ("sha256", _PARENT_OID, _CANDIDATE_OID),
+    ],
+)
+def test_network_context_rejects_object_ids_from_another_object_format(
+    tmp_path: Path,
+    object_format: str,
+    parent_oid: str,
+    candidate_oid: str,
+) -> None:
+    context = _issued_network_context(
+        tmp_path,
+        endpoint="https://example.com/team/notes.git",
+        object_format=object_format,
+    )
+    endpoint = push_contracts._freeze_push_endpoint(
+        "https://example.com/team/notes.git",
+        _DESTINATION_REF,
+    )
+
+    with pytest.raises(git_network.NetworkContextError) as error:
+        context.build_push_argv(endpoint, parent_oid, candidate_oid)
+
+    assert error.value.code == "invalid_context"
+    assert context.close() is True
+
+
 def test_network_context_push_argv_excludes_broadening_and_implicit_behavior(
     tmp_path: Path,
 ) -> None:
@@ -1199,7 +1241,12 @@ def test_network_context_settings_mutation_cannot_redirect_private_builders(
     assert context.close() is True
 
 
-def test_network_context_forged_alias_cannot_reuse_genuine_private_state(
+def test_network_context_capability_issuers_have_no_module_secret() -> None:
+    assert not hasattr(git_network, "_CONTEXT_SECRET")
+    assert not hasattr(git_network, "_LEASE_SECRET")
+
+
+def test_network_context_exposes_no_authority_or_lifecycle_state_to_aliases(
     tmp_path: Path,
 ) -> None:
     context = _issued_network_context(
@@ -1211,7 +1258,20 @@ def test_network_context_forged_alias_cannot_reuse_genuine_private_state(
         _DESTINATION_REF,
     )
     forged = object.__new__(git_network.NetworkGitExecutionContext)
-    object.__setattr__(forged, "_state", context._state)
+
+    assert not any(
+        hasattr(context, name)
+        for name in (
+            "_state",
+            "endpoint",
+            "command",
+            "configuration",
+            "source_objects",
+            "lifecycle",
+        )
+    )
+    with pytest.raises(AttributeError):
+        object.__setattr__(forged, "_state", object())
 
     with pytest.raises(git_network.NetworkContextError):
         forged.command_settings()
@@ -1221,6 +1281,34 @@ def test_network_context_forged_alias_cannot_reuse_genuine_private_state(
         forged.close()
 
     assert context.close() is True
+
+
+def test_network_context_lease_copy_cannot_consume_genuine_release(
+    tmp_path: Path,
+) -> None:
+    context = _issued_network_context(
+        tmp_path,
+        endpoint="https://example.com/team/notes.git",
+    )
+    lease = context.retain("active")
+
+    assert not any(
+        hasattr(lease, name)
+        for name in (
+            "_context",
+            "_state",
+            "_token",
+            "_released",
+            "lifecycle",
+        )
+    )
+    with pytest.raises(git_network.NetworkContextError):
+        copy.copy(lease)
+
+    assert context.close() is False
+    assert lease.release() is True
+    assert lease.release() is False
+    assert context.cleaned is True
 
 
 @pytest.mark.parametrize(

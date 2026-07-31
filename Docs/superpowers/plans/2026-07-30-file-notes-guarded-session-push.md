@@ -6,7 +6,7 @@
 
 **Architecture:** Extend the existing process-owned `FileNotesSessionOwner`, `FileNotesGitService`, Prepare panel, and File Notes workspace. The owner atomically creates and retains one exact push candidate; the service alone resolves and contacts the destination through an immutable isolated Git context; the process runner owns network process trees through settlement; the workspace coordinates retained presentation; and the panel remains projection-only. Markdown/text files remain authoritative and SQLite remains an independent replica.
 
-**Tech Stack:** Python 3.11+, asyncio subprocesses, Git 2.x plumbing/porcelain and smart transports, stdlib `ctypes` for Windows Job Objects, OpenSSH, immutable dataclasses, Textual 3.3+, pytest/pytest-asyncio, disposable Git repositories, and hermetic loopback SSH/HTTPS fixtures.
+**Tech Stack:** Python 3.11+, POSIX owner/mode semantics and process groups, Git 2.x SHA-1/SHA-256 plumbing/porcelain and smart transports, OpenSSH, immutable dataclasses plus exact-instance weak registries, Textual 3.3+, pytest/pytest-asyncio, disposable Git repositories, and hermetic loopback SSH/HTTPS fixtures. Guarded push fails closed on Windows pending separately approved owner-only ACL work.
 
 **Backlog:** [TASK-1566](../../../backlog/tasks/task-1566%20-%20Add-guarded-exact-session-commit-push-to-File-Notes.md)
 
@@ -20,7 +20,7 @@
 
 **ADR path:** `backlog/decisions/039-file-notes-guarded-session-push.md`
 
-**Reason:** Guarded push changes the remote/network/authentication security boundary, adds an exact external compare-and-swap contract and uncertain network recovery, extends process/session ownership, and adds a long-lived Prepare-panel workflow.
+**Reason:** Guarded push changes the remote/network/authentication security boundary, adds an exact external compare-and-swap contract and uncertain network recovery, extends process/session ownership, adds a long-lived Prepare-panel workflow, and requires explicit platform, private-artifact, and Git object-format boundaries.
 
 ---
 
@@ -40,9 +40,18 @@
 - Production supports only verified HTTPS and literal-host OpenSSH/scp
   destinations with existing noninteractive authentication. Production
   continues to reject local/file/plaintext/custom-helper transports.
+- Guarded push is POSIX-only. Windows must fail closed before private-context
+  creation, helper contact, SSH launch, or network access until separately
+  approved owner-only ACL work exists; Job Objects alone do not admit it.
 - Every network Git child runs from one owner-only immutable temporary bare
   context, with live source/local/global/system configuration disabled and
   source objects exposed only through a controlled read-only alternate.
+- Public context/lease capabilities expose no state or release token. Exact
+  instances are registry-bound to frozen authority facts and separate private
+  lifecycle bookkeeping. Child-visible HOME/XDG/TMP directories are pinned
+  read-only after construction.
+- Prove, bind, and revalidate the source Git object format. The private bare
+  context and every authoritative OID must match SHA-1 or SHA-256 exactly.
 - Request exactly
   `<candidate-oid>:<destination-ref>` with
   `--force-with-lease=<destination-ref>:<parent-oid>`. Send no implicit
@@ -75,13 +84,15 @@
 - `tldw_chatbook/Notes/file_notes_git_network.py`
   - Private `NetworkGitExecutionContext`, minimal allowlisted network
     environment, immutable OpenSSH invocation, owner-only temporary bare Git
-    context, controlled object alternate, and exact cleanup.
+    context, controlled format-bound object alternate, zero-field registry
+    capabilities, read-only child scratch roots, and exact cleanup.
   - No authority, retained-task ownership, or outcome classification.
 - `tldw_chatbook/Notes/git_process_containment.py`
   - One small platform adapter for POSIX process groups and Windows Job
     Objects, used by `AsyncGitProcessRunner`. Windows admission must be
     race-free: the child is created suspended, assigned to the Job Object, and
-    only then resumed.
+    only then resumed. This shared runner support does not admit guarded push
+    on Windows without the separately approved private-artifact ACL boundary.
   - No Git policy or push state.
 - `Tests/Notes/test_file_notes_git_push.py`
   - Pure contracts, policy, parsers, argv, safe-copy, and redaction tests.
@@ -482,6 +493,10 @@ git commit -m "feat(notes): contain retained Git process trees [TASK-1566]"
 
 **Files:**
 
+- Modify: `backlog/decisions/039-file-notes-guarded-session-push.md`
+- Modify: `backlog/tasks/task-1566 - Add-guarded-exact-session-commit-push-to-File-Notes.md`
+- Modify: `Docs/superpowers/specs/2026-07-30-file-notes-guarded-session-push-design.md`
+- Modify: `Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md`
 - Create: `tldw_chatbook/Notes/file_notes_git_network.py`
 - Modify: `tldw_chatbook/Notes/file_notes_git_push.py`
 - Modify: `tldw_chatbook/Notes/file_notes_git_service.py`
@@ -508,17 +523,44 @@ git commit -m "feat(notes): contain retained Git process trees [TASK-1566]"
   askpass/live user routing config, existing agent/default identity locations/
   standard known-hosts only, and no `ProxyCommand`, `ProxyJump`, host alias, or
   custom `IdentityFile`.
+- [ ] Write failing exact-instance capability tests proving public context and
+  lease objects expose no state/token fields; endpoint, command, copied-config,
+  source-authorization, mutation, copy, and forged-alias attempts cannot
+  redirect a genuine context or release another lease.
+- [ ] Write failing mode/real-child tests proving child-visible HOME,
+  XDG_CONFIG_HOME, and TMP/TEMP/TMPDIR are exact `0500` directories after
+  construction; real Git plus fake SSH/approved-helper paths need no writes,
+  scratch creation fails, and exact retryable cleanup still succeeds.
+- [ ] Write or retain an explicit Windows refusal test proving failure occurs
+  before private-context creation, helper contact, SSH launch, or network
+  activity. Do not add Windows ACL behavior in this task.
+- [ ] Write failing SHA-256 real-Git tests that initialize a source with
+  `git init --object-format=sha256`, prove the controlled alternate can query
+  and push its candidate, and prove format drift or wrong-length OIDs block
+  locally. Use the same format for candidate attribute isolation if the RED
+  regression proves Git requires it.
 - [ ] Run:
 
 ```bash
-python3 -m pytest Tests/Notes/test_file_notes_git_push.py Tests/Notes/test_file_notes_git_push_service.py -q -k "network_context or network_environment or openssh or cleanup"
+python3 -m pytest Tests/Notes/test_file_notes_git_push.py Tests/Notes/test_file_notes_git_push_service.py -q -k "network_context or network_environment or openssh or cleanup or object_format or sha256 or windows"
 ```
 
-Expected: FAIL because the immutable context does not exist.
+Expected: FAIL on the exact-instance registry, read-only child-directory,
+Windows-refusal, or object-format gap being introduced by each isolated RED
+test.
 
 - [ ] Implement `NetworkGitExecutionContext` and `NetworkContextFactory` in
   the new module. Use exact known-shape cleanup and never discover/reuse
   crash-left directories after restart.
+- [ ] Issue zero-field public contexts and leases through closure-backed
+  exact-instance weak registries. Store immutable authority facts separately
+  from inaccessible mutable lifecycle/lease bookkeeping.
+- [ ] Finish constructing the private tree before changing HOME/XDG/TMP to
+  `0500`; capture and revalidate their exact modes without broad cleanup.
+- [ ] Capture and revalidate the locally proved source object format through
+  the opaque source authorization/fingerprint/context. Render
+  `extensions.objectFormat = sha256` only for SHA-256 and enforce matching OID
+  lengths before any network/helper contact.
 - [ ] Make every future query/push command require the context identity and
   run against its bare Git directory. The frozen endpoint remains an argv
   argument, never a remote configuration entry.
@@ -536,7 +578,7 @@ Expected: all commands exit 0.
 - [ ] Commit:
 
 ```bash
-git add Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/file_notes_git_push.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_push.py Tests/Notes/test_file_notes_git_push_service.py
+git add backlog/decisions/039-file-notes-guarded-session-push.md "backlog/tasks/task-1566 - Add-guarded-exact-session-commit-push-to-File-Notes.md" Docs/superpowers/specs/2026-07-30-file-notes-guarded-session-push-design.md Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/file_notes_git_push.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_push.py Tests/Notes/test_file_notes_git_push_service.py
 git commit -m "feat(notes): isolate guarded push execution [TASK-1566]"
 ```
 
@@ -1129,6 +1171,8 @@ Expected: all commands exit 0.
   - no local/ref/index/config/note/replica mutation during quiescent push;
   - truthful uncertainty and query-only recovery;
   - no raw secret/private output;
+  - exact-instance context/lease opacity, read-only child scratch roots,
+    SHA-1/SHA-256 format binding, and Windows fail-closed admission;
   - editable notes during retained push; and
   - no database/durable push state/general Git feature.
 - [ ] Request focused code review. Resolve technically valid findings with

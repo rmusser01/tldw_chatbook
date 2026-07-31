@@ -409,6 +409,7 @@ class _PushDestinationPolicySnapshot:
     configuration: _ResolvedPushConfiguration
     network_configuration: NetworkConfigAuthorization
     source_objects: SourceObjectDirectoryAuthorization
+    object_format: Literal["sha1", "sha256"]
     candidate_tree_oid: str
     included_paths_fingerprint: str
 
@@ -2983,6 +2984,7 @@ class FileNotesGitService:
                 (
                     *prefix,
                     "rev-parse",
+                    "--show-object-format=storage",
                     "--verify",
                     "--quiet",
                     "HEAD^{commit}",
@@ -2994,16 +2996,24 @@ class FileNotesGitService:
                 if _command_succeeded(branch_result)
                 else None
             )
-            head_oid = (
-                _ascii_object_id(head_result.stdout)
+            format_and_head = (
+                _git_object_format_and_oid(head_result.stdout)
                 if _command_succeeded(head_result)
                 else None
             )
-            if (
-                branch != candidate.local_branch_ref
-                or head_oid != candidate.candidate_oid
-            ):
+            if branch != candidate.local_branch_ref:
                 return None, "stale"
+            if format_and_head is None:
+                return None, "blocked"
+            object_format, head_oid = format_and_head
+            if head_oid != candidate.candidate_oid:
+                return None, "stale"
+            expected_oid_width = 40 if object_format == "sha1" else 64
+            if (
+                len(candidate.parent_oid) != expected_oid_width
+                or len(candidate.candidate_oid) != expected_oid_width
+            ):
+                return None, "blocked"
 
             object_result = await self._run_local_push_proof_command(
                 repository,
@@ -3018,7 +3028,8 @@ class FileNotesGitService:
                 return None, "blocked"
             if (
                 raw_commit.parent_object_id != candidate.parent_oid
-                or len(raw_commit.tree_object_id) != len(candidate.candidate_oid)
+                or len(raw_commit.parent_object_id) != expected_oid_width
+                or len(raw_commit.tree_object_id) != expected_oid_width
             ):
                 return None, "blocked"
             fresh_head = HeadIdentity.attached(branch, head_oid)
@@ -3082,6 +3093,7 @@ class FileNotesGitService:
                 repository,
                 proof,
                 hooks_directory,
+                object_format,
             )
             if attribute_context is None:
                 return None, "blocked"
@@ -3143,6 +3155,7 @@ class FileNotesGitService:
                     == network_configuration.copy_fingerprint
                     and prior.source_objects.identity_fingerprint
                     == source_objects.identity_fingerprint
+                    and prior.object_format == object_format
                 )
                 if not unchanged or not proof.cleanup():
                     return None, "blocked"
@@ -3173,6 +3186,7 @@ class FileNotesGitService:
                     configuration=configuration,
                     network_configuration=network_configuration,
                     source_objects=source_objects,
+                    object_format=object_format,
                     candidate_tree_oid=raw_commit.tree_object_id,
                     included_paths_fingerprint=attribute_fingerprint,
                 ),
@@ -3201,6 +3215,7 @@ class FileNotesGitService:
         repository: RepositoryIdentity,
         proof: _PrivatePushProofDirectory,
         hooks_directory: Path,
+        object_format: Literal["sha1", "sha256"],
     ) -> tuple[
         tuple[str, ...],
         dict[str, str],
@@ -3222,6 +3237,7 @@ class FileNotesGitService:
                 _authorize_source_object_directory(
                     source_objects,
                     source_objects_identity,
+                    object_format,
                 )
             )
             git_dir = proof.create_directory("attribute.git")
@@ -3237,6 +3253,10 @@ class FileNotesGitService:
             proof.create_file(
                 "attribute.git/HEAD",
                 b"ref: refs/heads/isolated\n",
+            )
+            proof.create_file(
+                "attribute.git/config",
+                _render_isolated_repository_config(object_format),
             )
             system_config = proof.create_file("system.gitconfig", b"")
             global_config = proof.create_file("global.gitconfig", b"")
@@ -8478,6 +8498,44 @@ def _ascii_object_id(payload: bytes) -> str | None:
     if any(character not in "0123456789abcdefABCDEF" for character in value):
         return None
     return value.lower()
+
+
+def _git_object_format_and_oid(
+    payload: bytes,
+) -> tuple[Literal["sha1", "sha256"], str] | None:
+    """Parse exact storage-format and complete object-ID proof output."""
+    parts = payload.split(b"\n")
+    if len(parts) != 3 or parts[-1] != b"":
+        return None
+    object_format_bytes, object_id_bytes, _terminator = parts
+    if object_format_bytes == b"sha1":
+        object_format: Literal["sha1", "sha256"] = "sha1"
+        expected_width = 40
+    elif object_format_bytes == b"sha256":
+        object_format = "sha256"
+        expected_width = 64
+    else:
+        return None
+    object_id = _ascii_object_id(object_id_bytes + b"\n")
+    if object_id is None or len(object_id) != expected_width:
+        return None
+    return object_format, object_id
+
+
+def _render_isolated_repository_config(
+    object_format: Literal["sha1", "sha256"],
+) -> bytes:
+    """Render the minimum exact config for a format-matched private Git dir."""
+    if object_format == "sha1":
+        return b"[core]\n\trepositoryFormatVersion = 0\n"
+    if object_format == "sha256":
+        return (
+            b"[core]\n"
+            b"\trepositoryFormatVersion = 1\n"
+            b"[extensions]\n"
+            b"\tobjectFormat = sha256\n"
+        )
+    raise ValueError("unsupported object format")
 
 
 def _filesystem_identity(path: Path) -> FileSystemIdentity:

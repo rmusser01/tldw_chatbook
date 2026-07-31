@@ -373,24 +373,56 @@ def test_local_destination_proof_environment_strips_all_redirects_and_helpers() 
     assert environment["LC_ALL"] == "C"
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (b"sha1\n" + b"a" * 40 + b"\n", ("sha1", "a" * 40)),
+        (b"sha256\n" + b"b" * 64 + b"\n", ("sha256", "b" * 64)),
+        (b"sha1\n" + b"a" * 64 + b"\n", None),
+        (b"sha256\n" + b"b" * 40 + b"\n", None),
+        (b"sha512\n" + b"c" * 64 + b"\n", None),
+        (b"sha1\n" + b"a" * 40, None),
+        (b"sha1\n" + b"a" * 40 + b"\nextra\n", None),
+    ],
+)
+def test_git_object_format_and_oid_parser_is_exact(
+    payload: bytes,
+    expected: tuple[str, str] | None,
+) -> None:
+    assert git_service._git_object_format_and_oid(payload) == expected
+
+
 def _filesystem_identity(path: Path) -> FileSystemIdentity:
     metadata = path.stat()
     return FileSystemIdentity(metadata.st_dev, metadata.st_ino)
 
 
-def _network_repository(tmp_path: Path) -> RepositoryIdentity:
+def _network_repository(
+    tmp_path: Path,
+    *,
+    object_format: str = "sha1",
+) -> RepositoryIdentity:
     root = tmp_path / "source-notes"
     git_dir = root / ".git"
     objects = git_dir / "objects"
     (git_dir / "refs" / "heads").mkdir(parents=True)
     objects.mkdir()
     (git_dir / "config").write_text(
-        "[core]\n\tbare = false\n",
+        (
+            "[core]\n"
+            f"\trepositoryFormatVersion = {1 if object_format == 'sha256' else 0}\n"
+            "\tbare = false\n"
+            + (
+                "[extensions]\n\tobjectFormat = sha256\n"
+                if object_format == "sha256"
+                else ""
+            )
+        ),
         encoding="utf-8",
     )
     (git_dir / "index").write_bytes(b"source-index")
     (git_dir / "refs" / "heads" / "main").write_text(
-        "b" * 40 + "\n",
+        "b" * (64 if object_format == "sha256" else 40) + "\n",
         encoding="ascii",
     )
     (root / "note.md").write_text(
@@ -424,11 +456,13 @@ def _network_authorizations(
     destination,
     *,
     facts=(),
+    object_format: str = "sha1",
 ):
     source_objects = Path(repository.git_common_dir) / "objects"
     source_authorization = git_network._authorize_source_object_directory(
         source_objects,
         _filesystem_identity(source_objects),
+        object_format,
     )
     config_authorization = git_network._authorize_network_config_facts(
         tuple(facts),
@@ -598,7 +632,16 @@ def test_network_context_builds_private_bare_layout_without_source_mutation(
     assert Path(environment["TMPDIR"]).parent == root
     for path in root.rglob("*"):
         mode = stat.S_IMODE(path.lstat().st_mode)
-        assert mode == (0o700 if path.is_dir() else 0o600)
+        expected_mode = (
+            0o500
+            if path in {
+                Path(environment["HOME"]),
+                Path(environment["XDG_CONFIG_HOME"]),
+                Path(environment["TMPDIR"]),
+            }
+            else (0o700 if path.is_dir() else 0o600)
+        )
+        assert mode == expected_mode
         if path.is_file():
             assert b"PRIVATE NOTE BODY" not in path.read_bytes()
     assert {
@@ -608,6 +651,62 @@ def test_network_context_builds_private_bare_layout_without_source_mutation(
 
     assert context.close() is True
     assert not root.exists()
+
+
+def test_network_context_child_scratch_directories_reject_writes(
+    tmp_path: Path,
+) -> None:
+    _repository, _destination, context = _create_network_context(tmp_path)
+    settings = context.command_settings()
+
+    scratch_names = (
+        "HOME",
+        "XDG_CONFIG_HOME",
+        "TMP",
+        "TEMP",
+        "TMPDIR",
+    )
+    for name in scratch_names:
+        directory = Path(settings.environment[name])
+        assert stat.S_IMODE(directory.stat().st_mode) == 0o500
+        result = subprocess.run(
+            (
+                str(Path(sys.executable).resolve()),
+                "-I",
+                "-c",
+                (
+                    "import os, sys; from pathlib import Path; "
+                    "(Path(os.environ[sys.argv[1]]) / "
+                    "('forbidden-' + sys.argv[1])).write_bytes(b'x')"
+                ),
+                name,
+            ),
+            cwd=settings.cwd,
+            env=dict(settings.environment),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+        assert result.returncode != 0
+        assert not (directory / f"forbidden-{name}").exists()
+
+    git_result = subprocess.run(
+        (
+            str(_test_git_installation()[0]),
+            f"--git-dir={settings.cwd}",
+            "rev-parse",
+            "--git-dir",
+        ),
+        cwd=settings.cwd,
+        env=dict(settings.environment),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    assert git_result.returncode == 0
+    assert context.close() is True
 
 
 def test_network_environment_is_allowlist_with_chatbook_controls(
@@ -715,6 +814,41 @@ def test_network_environment_is_allowlist_with_chatbook_controls(
     with pytest.raises(TypeError):
         environment["INJECTED"] = "value"  # type: ignore[index]
     assert context.close() is True
+
+
+def test_windows_network_context_refuses_before_private_or_external_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forbidden_calls: list[str] = []
+    before = set(tmp_path.iterdir())
+
+    def forbidden(name: str):
+        def invoke(*_args, **_kwargs):
+            forbidden_calls.append(name)
+            raise AssertionError(f"Windows refusal reached {name}")
+
+        return invoke
+
+    monkeypatch.setattr(git_network.os, "name", "nt")
+    monkeypatch.setattr(git_network.tempfile, "mkdtemp", forbidden("mkdtemp"))
+    monkeypatch.setattr(git_network.shutil, "which", forbidden("which"))
+    monkeypatch.setattr(
+        git_network,
+        "_pin_git_dispatch_executable",
+        forbidden("git-dispatch"),
+    )
+
+    with pytest.raises(git_network.NetworkContextError) as error:
+        git_network.NetworkContextFactory(
+            environment={},
+            temporary_parent=tmp_path,
+            git_exec_path=tmp_path,
+        )
+
+    assert error.value.code == "unsupported_platform"
+    assert forbidden_calls == []
+    assert set(tmp_path.iterdir()) == before
 
 
 def _short_agent_socket_path(tmp_path: Path) -> Path:
@@ -1065,6 +1199,7 @@ def test_network_context_rejects_forged_source_object_capability(
     forged_record = git_network._SourceObjectRecord(
         source_objects,
         _filesystem_identity(source_objects),
+        "sha1",
         metadata.st_uid,
         metadata.st_gid,
         stat.S_IMODE(metadata.st_mode),
@@ -1213,6 +1348,34 @@ def test_network_context_rejects_source_alternate_path_separator(
         git_network._authorize_source_object_directory(
             source_objects,
             _filesystem_identity(source_objects),
+            "sha1",
+        )
+
+
+def test_source_object_authorization_fingerprint_binds_object_format(
+    tmp_path: Path,
+) -> None:
+    source_objects = tmp_path / "source" / ".git" / "objects"
+    source_objects.mkdir(parents=True)
+    identity = _filesystem_identity(source_objects)
+
+    sha1 = git_network._authorize_source_object_directory(
+        source_objects,
+        identity,
+        "sha1",
+    )
+    sha256 = git_network._authorize_source_object_directory(
+        source_objects,
+        identity,
+        "sha256",
+    )
+
+    assert sha1.identity_fingerprint != sha256.identity_fingerprint
+    with pytest.raises(git_network.NetworkContextError):
+        git_network._authorize_source_object_directory(
+            source_objects,
+            identity,
+            "sha512",  # type: ignore[arg-type]
         )
 
 
@@ -1256,10 +1419,24 @@ def _recording_git_dispatch_executable(
             "import os\n"
             "from pathlib import Path\n"
             "import sys\n"
+            "scratch_writes = {}\n"
+            "for name in ('HOME', 'XDG_CONFIG_HOME', 'TMPDIR'):\n"
+            "    scratch = Path(os.environ[name]) / ('helper-' + name)\n"
+            "    try:\n"
+            "        descriptor = os.open(\n"
+            "            scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600\n"
+            "        )\n"
+            "    except OSError:\n"
+            "        scratch_writes[name] = False\n"
+            "    else:\n"
+            "        os.close(descriptor)\n"
+            "        scratch.unlink()\n"
+            "        scratch_writes[name] = True\n"
             f"Path({str(log_path)!r}).write_text(\n"
             "    json.dumps({\n"
             "        'argv': sys.argv,\n"
             "        'environment': dict(os.environ),\n"
+            "        'scratch_writes': scratch_writes,\n"
             "    }),\n"
             "    encoding='utf-8',\n"
             ")\n"
@@ -1518,6 +1695,123 @@ def test_openssh_git_adapter_accepts_actual_scp_push_receive_pack(
         *invocation.argv[1:],
         "git-receive-pack team/notes.git",
     )
+    assert context.close() is True
+
+
+def test_real_sha256_network_context_uses_alternate_for_query_and_push(
+    tmp_path: Path,
+) -> None:
+    root, parent_oid, candidate_oid = _real_candidate_repository(
+        tmp_path,
+        object_format="sha256",
+    )
+    _owner, _binding, repository = _owner_for_candidate(
+        root,
+        parent_oid,
+        candidate_oid,
+    )
+    endpoint = _network_endpoint(
+        "git@push.example.test:team/notes.git"
+    )
+    destination = endpoint.projection
+    source_authorization, configuration = _network_authorizations(
+        repository,
+        destination,
+        object_format="sha256",
+    )
+    executable, log_path = _recording_ssh_executable(tmp_path)
+    context = _network_factory(
+        tmp_path,
+        ssh_executable=executable,
+    ).create(
+        repository=repository,
+        source_objects=source_authorization,
+        configuration=configuration,
+        destination=destination,
+        endpoint=endpoint,
+    )
+    settings = context.command_settings()
+    invocation = context.openssh_invocation()
+    assert invocation is not None
+    private_config = Path(settings.environment["GIT_DIR"]) / "config"
+    object_query = (
+        str(_test_git_installation()[0]),
+        f"--git-dir={settings.environment['GIT_DIR']}",
+        "--no-replace-objects",
+        "cat-file",
+        "-e",
+        f"{candidate_oid}^{{commit}}",
+    )
+    missing_alternate_environment = dict(settings.environment)
+    missing_alternate_environment["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = str(
+        tmp_path / "missing-objects"
+    )
+
+    missing_alternate = subprocess.run(
+        object_query,
+        cwd=settings.cwd,
+        env=missing_alternate_environment,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    resolved_from_authorized_alternate = subprocess.run(
+        object_query,
+        cwd=settings.cwd,
+        env=dict(settings.environment),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert missing_alternate.returncode != 0
+    assert resolved_from_authorized_alternate.returncode == 0
+    assert not log_path.exists()
+
+    query = subprocess.run(
+        context.build_query_argv(endpoint),
+        cwd=settings.cwd,
+        env=dict(settings.environment),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert query.returncode != 0
+    assert tuple(json.loads(log_path.read_text(encoding="utf-8"))) == (
+        *invocation.argv[1:],
+        "git-upload-pack team/notes.git",
+    )
+    log_path.unlink()
+
+    push = subprocess.run(
+        context.build_push_argv(endpoint, parent_oid, candidate_oid),
+        cwd=settings.cwd,
+        env=dict(settings.environment),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert push.returncode != 0
+    assert tuple(json.loads(log_path.read_text(encoding="utf-8"))) == (
+        *invocation.argv[1:],
+        "git-receive-pack team/notes.git",
+    )
+    assert private_config.read_text(encoding="utf-8") == (
+        "[core]\n"
+        "\trepositoryFormatVersion = 1\n"
+        "\tfileMode = true\n"
+        "\tbare = true\n"
+        "\tlogAllRefUpdates = false\n"
+        "[extensions]\n"
+        "\tobjectFormat = sha256\n"
+    )
+    assert len(parent_oid) == len(candidate_oid) == 64
     assert context.close() is True
 
 
@@ -1969,6 +2263,11 @@ def test_network_context_proved_git_exec_path_dispatches_pinned_targets(
     assert remote_record["environment"]["GIT_EXEC_PATH"] == str(
         context_exec_path
     )
+    assert remote_record["scratch_writes"] == {
+        "HOME": False,
+        "XDG_CONFIG_HOME": False,
+        "TMPDIR": False,
+    }
 
     credential = subprocess.run(
         (
@@ -2000,6 +2299,11 @@ def test_network_context_proved_git_exec_path_dispatches_pinned_targets(
     assert credential_record["environment"]["GIT_EXEC_PATH"] == str(
         context_exec_path
     )
+    assert credential_record["scratch_writes"] == {
+        "HOME": False,
+        "XDG_CONFIG_HOME": False,
+        "TMPDIR": False,
+    }
     assert context.close() is True
 
 
@@ -2291,6 +2595,7 @@ class _ControlledLocalProofRunner:
         index_payload: bytes = b"controlled-index",
         index_directory: bool = False,
         read_tree_returncode: int = 0,
+        object_format: str = "sha1",
     ) -> None:
         self.repository = repository
         self.paths = paths
@@ -2300,6 +2605,7 @@ class _ControlledLocalProofRunner:
         self.index_payload = index_payload
         self.index_directory = index_directory
         self.read_tree_returncode = read_tree_returncode
+        self.object_format = object_format
         self.config_reads = 0
         self.calls: list[
             tuple[tuple[str | bytes, ...], Mapping[str, str], bytes | None]
@@ -2345,7 +2651,15 @@ class _ControlledLocalProofRunner:
         if "symbolic-ref" in command:
             return GitCommandResult(0, BRANCH_REF.encode() + b"\n", b"")
         if "rev-parse" in command:
-            return GitCommandResult(0, b"d" * 40 + b"\n", b"")
+            assert "--show-object-format=storage" in command
+            return GitCommandResult(
+                0,
+                self.object_format.encode("ascii")
+                + b"\n"
+                + b"d" * 40
+                + b"\n",
+                b"",
+            )
         if "cat-file" in command:
             return GitCommandResult(
                 0,
@@ -2585,6 +2899,40 @@ async def test_confirm_revalidation_revokes_authorization_when_lfs_policy_change
     assert not owner._destination_authorization_matches(
         policy.owner_capture,
         authorization,
+    )
+
+
+@pytest.mark.asyncio
+async def test_confirm_revalidation_revokes_authorization_on_format_mismatch(
+    tmp_path: Path,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    runner = _ControlledLocalProofRunner(repository)
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+    review = await service.review_push_destination(binding)
+    authorization = service.authorize_push_destination(binding)
+    assert review.state == "ready"
+    assert authorization is not None
+    epoch = owner.snapshot(binding).destination_authorization_epoch
+    runner.object_format = "sha256"
+    first_revalidation_call = len(runner.calls)
+
+    valid = await service.revalidate_push_destination(binding, authorization)
+
+    assert valid is False
+    assert owner.snapshot(binding).destination_authorization_epoch > epoch
+    assert not any(
+        {"ls-remote", "push"}.intersection(
+            os.fsdecode(argument) for argument in argv
+        )
+        for argv, _environment, _stdin in runner.calls[
+            first_revalidation_call:
+        ]
     )
 
 
@@ -2979,10 +3327,16 @@ def _real_candidate_repository(
     tmp_path: Path,
     *,
     lfs: bool = False,
+    object_format: str = "sha1",
 ) -> tuple[Path, str, str]:
-    root = tmp_path / ("real-lfs" if lfs else "real")
+    root = tmp_path / (
+        f"real-{object_format}-lfs" if lfs else f"real-{object_format}"
+    )
     root.mkdir()
-    _git(root, "init", "-b", "main")
+    init_arguments = ["init", "-b", "main"]
+    if object_format == "sha256":
+        init_arguments.insert(1, "--object-format=sha256")
+    _git(root, *init_arguments)
     if lfs:
         (root / ".gitattributes").write_text(
             "*.md filter=lfs diff=lfs merge=lfs -text\n",
@@ -3061,6 +3415,55 @@ async def test_real_candidate_tree_destination_and_lfs_proof_is_local_only(
         for index, (command, result) in enumerate(runner.calls)
     )
     assert review.state == expected, diagnostic
+    assert _git(root, "status", "--porcelain").stdout == b""
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_real_sha256_lfs_proof_reaches_exact_tree_attribute_check(
+    tmp_path: Path,
+) -> None:
+    root, parent_oid, candidate_oid = _real_candidate_repository(
+        tmp_path,
+        lfs=True,
+        object_format="sha256",
+    )
+    owner, binding, _repository = _owner_for_candidate(
+        root,
+        parent_oid,
+        candidate_oid,
+    )
+    executable = shutil.which("git")
+    assert executable is not None
+    runner = _RecordingAsyncGitRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable=executable,
+        environment={},
+    )
+
+    review = await service.review_push_destination(binding)
+
+    read_tree = [
+        result
+        for command, result in runner.calls
+        if "read-tree" in command
+    ]
+    check_attr = [
+        result
+        for command, result in runner.calls
+        if "check-attr" in command
+    ]
+    diagnostic = "\n".join(
+        f"{index}: rc={result.returncode} argv={command!r} "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        for index, (command, result) in enumerate(runner.calls)
+    )
+    assert review.state == "blocked", diagnostic
+    assert len(read_tree) == 1 and read_tree[0].returncode == 0, diagnostic
+    assert len(check_attr) == 1 and check_attr[0].returncode == 0, diagnostic
+    assert len(parent_oid) == len(candidate_oid) == 64
     assert _git(root, "status", "--porcelain").stdout == b""
     await service.shutdown()
 
@@ -3474,7 +3877,7 @@ async def test_attribute_proof_rejected_index_leaves_no_proof_residue(
     monkeypatch.setattr(
         git_service,
         "_LOCAL_PUSH_PROOF_FILE_LIMIT_BYTES",
-        32,
+        48,
     )
     runner = _ControlledLocalProofRunner(
         repository,

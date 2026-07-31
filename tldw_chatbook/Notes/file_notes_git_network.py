@@ -50,6 +50,7 @@ NetworkContextErrorCode = Literal[
     "invalid_openssh",
 ]
 NetworkRetentionPurpose = Literal["review", "active", "recovery"]
+GitObjectFormat = Literal["sha1", "sha256"]
 
 _ERROR_MESSAGES: dict[NetworkContextErrorCode, str] = {
     "unsupported_platform": (
@@ -73,9 +74,8 @@ _GIT_BOOLEAN = frozenset(
     {"true", "false", "yes", "no", "on", "off", "1", "0"}
 )
 _SSH_SECRET = object()
-_CONTEXT_SECRET = object()
-_LEASE_SECRET = object()
 _DIRECTORY_MODE = 0o700
+_READ_ONLY_DIRECTORY_MODE = 0o500
 _FILE_MODE = 0o600
 _CONTEXT_PREFIX = ".chatbook-network-git-"
 _ADAPTER_MODE = 0o700
@@ -206,6 +206,7 @@ class NetworkConfigAuthorization:
 class _SourceObjectRecord:
     path: Path = field(repr=False)
     identity: FileSystemIdentity
+    object_format: GitObjectFormat
     owner: int
     group: int
     mode: int
@@ -348,12 +349,14 @@ def _authorize_network_config_snapshot(
 def _validated_source_object_record(
     path: str | os.PathLike[str],
     expected_identity: FileSystemIdentity,
+    object_format: GitObjectFormat,
 ) -> _SourceObjectRecord:
     """Pin one already-proved canonical common object directory.
 
     Args:
         path: Canonical common Git object directory.
         expected_identity: Identity observed by the preceding local proof.
+        object_format: Object format observed by the same local proof.
 
     Returns:
         Opaque identity-pinned authorization.
@@ -362,7 +365,11 @@ def _validated_source_object_record(
         NetworkContextError: If the directory is not the exact proved object.
     """
     _require_posix()
-    if type(expected_identity) is not FileSystemIdentity:
+    if (
+        type(expected_identity) is not FileSystemIdentity
+        or type(object_format) is not str
+        or object_format not in {"sha1", "sha256"}
+    ):
         raise NetworkContextError("invalid_source_objects")
     try:
         candidate = Path(path)
@@ -391,11 +398,13 @@ def _validated_source_object_record(
         str(metadata.st_uid),
         str(metadata.st_gid),
         str(mode),
+        object_format,
     ):
         _digest_text(digest, value)
     record = _SourceObjectRecord(
         canonical,
         expected_identity,
+        object_format,
         metadata.st_uid,
         metadata.st_gid,
         mode,
@@ -443,8 +452,13 @@ def _make_authorization_registry():
     def authorize_source(
         path: str | os.PathLike[str],
         expected_identity: FileSystemIdentity,
+        object_format: GitObjectFormat,
     ) -> SourceObjectDirectoryAuthorization:
-        record = _validated_source_object_record(path, expected_identity)
+        record = _validated_source_object_record(
+            path,
+            expected_identity,
+            object_format,
+        )
         authorization = object.__new__(
             SourceObjectDirectoryAuthorization
         )
@@ -751,33 +765,41 @@ class _PrivateLayout:
     ) -> _PrivateLayout:
         parent_entry = _capture_parent_entry(parent)
         relative_paths: tuple[
-            tuple[str, Literal["file", "directory", "executable"]],
+            tuple[
+                str,
+                Literal["file", "directory", "executable"],
+                int,
+            ],
             ...,
         ] = (
-            (".", "directory"),
-            ("repository.git", "directory"),
-            ("repository.git/objects", "directory"),
-            ("repository.git/objects/info", "directory"),
-            ("repository.git/objects/pack", "directory"),
-            ("repository.git/refs", "directory"),
-            ("home", "directory"),
-            ("xdg-config", "directory"),
-            ("tmp", "directory"),
-            ("repository.git/HEAD", "file"),
-            ("repository.git/config", "file"),
-            ("system.gitconfig", "file"),
-            ("global.gitconfig", "file"),
+            (".", "directory", _DIRECTORY_MODE),
+            ("repository.git", "directory", _DIRECTORY_MODE),
+            ("repository.git/objects", "directory", _DIRECTORY_MODE),
+            ("repository.git/objects/info", "directory", _DIRECTORY_MODE),
+            ("repository.git/objects/pack", "directory", _DIRECTORY_MODE),
+            ("repository.git/refs", "directory", _DIRECTORY_MODE),
+            ("home", "directory", _READ_ONLY_DIRECTORY_MODE),
+            ("xdg-config", "directory", _READ_ONLY_DIRECTORY_MODE),
+            ("tmp", "directory", _READ_ONLY_DIRECTORY_MODE),
+            ("repository.git/HEAD", "file", _FILE_MODE),
+            ("repository.git/config", "file", _FILE_MODE),
+            ("system.gitconfig", "file", _FILE_MODE),
+            ("global.gitconfig", "file", _FILE_MODE),
         )
         if ssh_adapter:
-            relative_paths = (*relative_paths, ("ssh-adapter", "executable"))
+            relative_paths = (
+                *relative_paths,
+                ("ssh-adapter", "executable", _ADAPTER_MODE),
+            )
         entries = tuple(
             _capture_known_entry(
                 root,
                 root if relative == "." else root / relative,
                 kind,
                 relative,
+                expected_mode=expected_mode,
             )
-            for relative, kind in relative_paths
+            for relative, kind, expected_mode in relative_paths
         )
         return cls(root, parent, parent_entry, entries)
 
@@ -939,162 +961,31 @@ class _LayoutBuilder:
             pass
 
 
-class _ContextState:
-    __slots__ = (
-        "layout",
-        "command",
-        "temporary_parent",
-        "git_executable",
-        "git_exec_directory",
-        "python_executable",
-        "dispatch_executables",
-        "agent_socket",
-        "source_objects",
-        "configuration",
-        "destination",
-        "endpoint",
-        "openssh",
-        "lock",
-        "leases",
-        "close_requested",
-        "cleaned",
-        "owner_ref",
+@dataclass(frozen=True, slots=True)
+class _ContextAuthority:
+    command: _CommandRecord = field(repr=False)
+    temporary_parent: _PinnedDirectory = field(repr=False)
+    git_executable: _PinnedExecutable = field(repr=False)
+    git_exec_directory: _PinnedDirectory = field(repr=False)
+    python_executable: _PinnedExecutable | None = field(repr=False)
+    dispatch_executables: tuple[_PinnedGitDispatchExecutable, ...] = field(
+        repr=False
     )
-
-    def __init__(
-        self,
-        *,
-        layout: _PrivateLayout,
-        command: _CommandRecord,
-        temporary_parent: _PinnedDirectory,
-        git_executable: _PinnedExecutable,
-        git_exec_directory: _PinnedDirectory,
-        python_executable: _PinnedExecutable | None,
-        dispatch_executables: tuple[_PinnedGitDispatchExecutable, ...],
-        agent_socket: _PinnedSocket | None,
-        source_objects: _SourceObjectRecord,
-        configuration: _NetworkConfigRecord,
-        destination: PushDestinationProjection,
-        endpoint: str,
-        openssh: OpenSSHInvocationSpec | None,
-    ) -> None:
-        self.layout = layout
-        self.command = command
-        self.temporary_parent = temporary_parent
-        self.git_executable = git_executable
-        self.git_exec_directory = git_exec_directory
-        self.python_executable = python_executable
-        self.dispatch_executables = dispatch_executables
-        self.agent_socket = agent_socket
-        self.source_objects = source_objects
-        self.configuration = configuration
-        self.destination = destination
-        self.endpoint = endpoint
-        self.openssh = openssh
-        self.lock = threading.RLock()
-        self.leases: dict[object, NetworkRetentionPurpose] = {}
-        self.close_requested = False
-        self.cleaned = False
-        self.owner_ref: weakref.ReferenceType[NetworkGitExecutionContext] | None = (
-            None
-        )
-
-    def bind(self, owner: NetworkGitExecutionContext) -> None:
-        with self.lock:
-            if self.owner_ref is not None:
-                raise NetworkContextError("invalid_context")
-            self.owner_ref = weakref.ref(owner)
-
-    def require_owner(self, owner: NetworkGitExecutionContext) -> None:
-        with self.lock:
-            if self.owner_ref is None or self.owner_ref() is not owner:
-                raise NetworkContextError("invalid_context")
-
-    def require_live(self) -> None:
-        with self.lock:
-            if (
-                self.cleaned
-                or not self.layout.validate()
-                or not self.temporary_parent.validate()
-                or not self.git_executable.validate()
-                or not self.git_exec_directory.validate()
-                or (
-                    self.python_executable is not None
-                    and not self.python_executable.validate()
-                )
-                or not all(
-                    executable.validate()
-                    for executable in self.dispatch_executables
-                )
-                or (
-                    self.agent_socket is not None
-                    and not self.agent_socket.validate()
-                )
-                or not _source_record_matches(self.source_objects)
-                or (self.openssh is not None and not self.openssh._validate())
-            ):
-                raise NetworkContextError("invalid_context")
-
-    def retain(self, purpose: NetworkRetentionPurpose) -> object:
-        with self.lock:
-            if self.close_requested:
-                raise NetworkContextError("invalid_context")
-            self.require_live()
-            token = object()
-            self.leases[token] = purpose
-            return token
-
-    def release(self, token: object) -> bool:
-        with self.lock:
-            if token not in self.leases:
-                return False
-            del self.leases[token]
-            if self.close_requested and not self.leases:
-                self._attempt_cleanup()
-            return True
-
-    def close(self) -> bool:
-        with self.lock:
-            if self.cleaned:
-                return True
-            self.close_requested = True
-            if self.leases:
-                return False
-            return self._attempt_cleanup()
-
-    def _attempt_cleanup(self) -> bool:
-        if self.layout.cleanup():
-            self.cleaned = True
-            return True
-        return False
+    agent_socket: _PinnedSocket | None = field(repr=False)
+    source_objects: _SourceObjectRecord = field(repr=False)
+    configuration: _NetworkConfigRecord = field(repr=False)
+    destination: PushDestinationProjection = field(repr=False)
+    endpoint: str = field(repr=False)
+    openssh: OpenSSHInvocationSpec | None = field(repr=False)
 
 
 class NetworkContextLease:
     """Opaque single-release holder for review, active, or recovery work."""
 
-    __slots__ = ("_context", "_state", "_token", "_released")
+    __slots__ = ("__weakref__",)
 
-    def __new__(
-        cls,
-        secret: object | None = None,
-        *,
-        context: NetworkGitExecutionContext | None = None,
-        state: _ContextState | None = None,
-        token: object | None = None,
-    ) -> NetworkContextLease:
-        if (
-            secret is not _LEASE_SECRET
-            or context is None
-            or state is None
-            or token is None
-        ):
-            raise TypeError("Network context leases are context-issued")
-        instance = super().__new__(cls)
-        object.__setattr__(instance, "_context", context)
-        object.__setattr__(instance, "_state", state)
-        object.__setattr__(instance, "_token", token)
-        object.__setattr__(instance, "_released", False)
-        return instance
+    def __new__(cls) -> NetworkContextLease:
+        raise TypeError("Network context leases are context-issued")
 
     def __setattr__(self, _name: str, _value: object) -> None:
         raise FrozenInstanceError("cannot change network context lease")
@@ -1102,31 +993,24 @@ class NetworkContextLease:
     def __repr__(self) -> str:
         return "NetworkContextLease(<opaque>)"
 
+    def __copy__(self) -> NetworkContextLease:
+        raise NetworkContextError("invalid_context")
+
+    def __deepcopy__(self, _memo: object) -> NetworkContextLease:
+        raise NetworkContextError("invalid_context")
+
     def release(self) -> bool:
         """Release this exact holder once."""
-        self._state.require_owner(self._context)
-        if self._released:
-            return False
-        released = self._state.release(self._token)
-        object.__setattr__(self, "_released", True)
-        return released
+        return _release_network_context_lease(self)
 
 
 class NetworkGitExecutionContext:
     """Opaque immutable capability for one private network Git directory."""
 
-    __slots__ = ("_state", "__weakref__")
+    __slots__ = ("__weakref__",)
 
-    def __new__(
-        cls,
-        secret: object | None = None,
-        state: _ContextState | None = None,
-    ) -> NetworkGitExecutionContext:
-        if secret is not _CONTEXT_SECRET or state is None:
-            raise TypeError("Network Git execution contexts are factory-issued")
-        instance = super().__new__(cls)
-        object.__setattr__(instance, "_state", state)
-        return instance
+    def __new__(cls) -> NetworkGitExecutionContext:
+        raise TypeError("Network Git execution contexts are factory-issued")
 
     def __setattr__(self, _name: str, _value: object) -> None:
         raise FrozenInstanceError("cannot change network Git execution context")
@@ -1134,44 +1018,36 @@ class NetworkGitExecutionContext:
     def __repr__(self) -> str:
         return "NetworkGitExecutionContext(<opaque>)"
 
+    def __copy__(self) -> NetworkGitExecutionContext:
+        raise NetworkContextError("invalid_context")
+
+    def __deepcopy__(self, _memo: object) -> NetworkGitExecutionContext:
+        raise NetworkContextError("invalid_context")
+
     @property
     def config_copy_fingerprint(self) -> str:
         """Return the ordered copied-fact fingerprint without private values."""
-        state = self._state_or_raise()
-        return state.configuration.copy_fingerprint
+        return _network_context_config_copy_fingerprint(self)
 
     @property
     def cleaned(self) -> bool:
         """Return whether exact cleanup has completed."""
-        state = self._state_or_raise()
-        with state.lock:
-            return state.cleaned
+        return _network_context_is_cleaned(self)
 
     def command_settings(self) -> NetworkCommandSettings:
         """Return a detached view of live cwd/environment/stdin settings."""
-        state = self._state_or_raise()
-        state.require_live()
-        return state.command.detached_settings()
+        return _network_context_command_settings(self)
 
     def openssh_invocation(self) -> OpenSSHInvocationSpec | None:
         """Return the immutable direct SSH argv only for an SSH endpoint."""
-        state = self._state_or_raise()
-        state.require_live()
-        if state.openssh is not None:
-            state.openssh.argv
-        return state.openssh
+        return _network_context_openssh_invocation(self)
 
     def build_query_argv(
         self,
         endpoint: _FrozenPushEndpoint,
     ) -> tuple[str, ...]:
         """Build a query argv only from this live context and frozen endpoint."""
-        state = self._require_endpoint(endpoint)
-        return _build_push_query_argv(
-            str(state.git_executable.path),
-            state.command.git_dir,
-            endpoint,
-        )
+        return _network_context_build_query_argv(self, endpoint)
 
     def build_push_argv(
         self,
@@ -1180,10 +1056,8 @@ class NetworkGitExecutionContext:
         candidate_oid: str,
     ) -> tuple[str, ...]:
         """Build one exact CAS push argv only from this live context."""
-        state = self._require_endpoint(endpoint)
-        return _build_push_argv(
-            str(state.git_executable.path),
-            state.command.git_dir,
+        return _network_context_build_push_argv(
+            self,
             endpoint,
             parent_oid,
             candidate_oid,
@@ -1194,45 +1068,270 @@ class NetworkGitExecutionContext:
         purpose: NetworkRetentionPurpose,
     ) -> NetworkContextLease:
         """Retain exact review/active/recovery ownership until release."""
-        state = self._state_or_raise()
-        if purpose not in {"review", "active", "recovery"}:
-            raise NetworkContextError("invalid_context")
-        token = state.retain(purpose)
-        return NetworkContextLease(
-            _LEASE_SECRET,
-            context=self,
-            state=state,
-            token=token,
-        )
+        return _retain_network_context(self, purpose)
 
     def close(self) -> bool:
         """Request exact cleanup, deferred until every holder releases."""
-        state = self._state_or_raise()
-        return state.close()
+        return _close_network_context(self)
 
-    def _require_endpoint(
-        self,
+
+def _make_network_context_registry():
+    class _ContextLifecycle:
+        __slots__ = (
+            "authority",
+            "layout",
+            "lock",
+            "leases",
+            "close_requested",
+            "cleaned",
+        )
+
+        def __init__(
+            self,
+            authority: _ContextAuthority,
+            layout: _PrivateLayout,
+        ) -> None:
+            self.authority = authority
+            self.layout = layout
+            self.lock = threading.RLock()
+            self.leases: dict[
+                NetworkContextLease,
+                NetworkRetentionPurpose,
+            ] = {}
+            self.close_requested = False
+            self.cleaned = False
+
+        def require_live(self) -> None:
+            authority = self.authority
+            with self.lock:
+                if (
+                    self.cleaned
+                    or not self.layout.validate()
+                    or not authority.temporary_parent.validate()
+                    or not authority.git_executable.validate()
+                    or not authority.git_exec_directory.validate()
+                    or (
+                        authority.python_executable is not None
+                        and not authority.python_executable.validate()
+                    )
+                    or not all(
+                        executable.validate()
+                        for executable in authority.dispatch_executables
+                    )
+                    or (
+                        authority.agent_socket is not None
+                        and not authority.agent_socket.validate()
+                    )
+                    or not _source_record_matches(authority.source_objects)
+                    or (
+                        authority.openssh is not None
+                        and not authority.openssh._validate()
+                    )
+                ):
+                    raise NetworkContextError("invalid_context")
+
+        def attempt_cleanup(self) -> bool:
+            if self.layout.cleanup():
+                self.cleaned = True
+                return True
+            return False
+
+    class _LeaseRecord:
+        __slots__ = ("context", "released")
+
+        def __init__(self, context: NetworkGitExecutionContext) -> None:
+            self.context = context
+            self.released = False
+
+    contexts: weakref.WeakKeyDictionary[
+        NetworkGitExecutionContext,
+        _ContextLifecycle,
+    ] = weakref.WeakKeyDictionary()
+    leases: weakref.WeakKeyDictionary[
+        NetworkContextLease,
+        _LeaseRecord,
+    ] = weakref.WeakKeyDictionary()
+
+    def read_context(
+        context: NetworkGitExecutionContext,
+    ) -> _ContextLifecycle:
+        if type(context) is not NetworkGitExecutionContext:
+            raise NetworkContextError("invalid_context")
+        lifecycle = contexts.get(context)
+        if lifecycle is None:
+            raise NetworkContextError("invalid_context")
+        return lifecycle
+
+    def issue_context(
+        authority: _ContextAuthority,
+        layout: _PrivateLayout,
+    ) -> NetworkGitExecutionContext:
+        if (
+            type(authority) is not _ContextAuthority
+            or type(layout) is not _PrivateLayout
+        ):
+            raise NetworkContextError("invalid_context")
+        context = object.__new__(NetworkGitExecutionContext)
+        contexts[context] = _ContextLifecycle(authority, layout)
+        return context
+
+    def config_copy_fingerprint(
+        context: NetworkGitExecutionContext,
+    ) -> str:
+        return read_context(context).authority.configuration.copy_fingerprint
+
+    def is_cleaned(context: NetworkGitExecutionContext) -> bool:
+        lifecycle = read_context(context)
+        with lifecycle.lock:
+            return lifecycle.cleaned
+
+    def command_settings(
+        context: NetworkGitExecutionContext,
+    ) -> NetworkCommandSettings:
+        lifecycle = read_context(context)
+        with lifecycle.lock:
+            lifecycle.require_live()
+            return lifecycle.authority.command.detached_settings()
+
+    def openssh_invocation(
+        context: NetworkGitExecutionContext,
+    ) -> OpenSSHInvocationSpec | None:
+        lifecycle = read_context(context)
+        with lifecycle.lock:
+            lifecycle.require_live()
+            openssh = lifecycle.authority.openssh
+            if openssh is not None:
+                openssh.argv
+            return openssh
+
+    def require_endpoint(
+        context: NetworkGitExecutionContext,
         endpoint: _FrozenPushEndpoint,
-    ) -> _ContextState:
-        state = self._state_or_raise()
-        state.require_live()
-        try:
-            endpoint_value, projection = _read_frozen_endpoint(endpoint)
-        except ValueError:
-            raise NetworkContextError("invalid_context") from None
-        if endpoint_value != state.endpoint or projection != state.destination:
-            raise NetworkContextError("invalid_context")
-        return state
+    ) -> _ContextAuthority:
+        lifecycle = read_context(context)
+        with lifecycle.lock:
+            lifecycle.require_live()
+            try:
+                endpoint_value, projection = _read_frozen_endpoint(endpoint)
+            except ValueError:
+                raise NetworkContextError("invalid_context") from None
+            authority = lifecycle.authority
+            if (
+                endpoint_value != authority.endpoint
+                or projection != authority.destination
+            ):
+                raise NetworkContextError("invalid_context")
+            return authority
 
-    def _state_or_raise(self) -> _ContextState:
-        try:
-            state = self._state
-        except AttributeError:
-            raise NetworkContextError("invalid_context") from None
-        if type(state) is not _ContextState:
+    def build_query_argv(
+        context: NetworkGitExecutionContext,
+        endpoint: _FrozenPushEndpoint,
+    ) -> tuple[str, ...]:
+        authority = require_endpoint(context, endpoint)
+        return _build_push_query_argv(
+            str(authority.git_executable.path),
+            authority.command.git_dir,
+            endpoint,
+        )
+
+    def build_push_argv(
+        context: NetworkGitExecutionContext,
+        endpoint: _FrozenPushEndpoint,
+        parent_oid: str,
+        candidate_oid: str,
+    ) -> tuple[str, ...]:
+        authority = require_endpoint(context, endpoint)
+        expected_width = (
+            40 if authority.source_objects.object_format == "sha1" else 64
+        )
+        if (
+            len(parent_oid) in {40, 64}
+            and len(candidate_oid) in {40, 64}
+            and (
+                len(parent_oid) != expected_width
+                or len(candidate_oid) != expected_width
+            )
+        ):
             raise NetworkContextError("invalid_context")
-        state.require_owner(self)
-        return state
+        return _build_push_argv(
+            str(authority.git_executable.path),
+            authority.command.git_dir,
+            endpoint,
+            parent_oid,
+            candidate_oid,
+        )
+
+    def retain_context(
+        context: NetworkGitExecutionContext,
+        purpose: NetworkRetentionPurpose,
+    ) -> NetworkContextLease:
+        if purpose not in {"review", "active", "recovery"}:
+            raise NetworkContextError("invalid_context")
+        lifecycle = read_context(context)
+        with lifecycle.lock:
+            if lifecycle.close_requested:
+                raise NetworkContextError("invalid_context")
+            lifecycle.require_live()
+            lease = object.__new__(NetworkContextLease)
+            leases[lease] = _LeaseRecord(context)
+            lifecycle.leases[lease] = purpose
+            return lease
+
+    def release_lease(lease: NetworkContextLease) -> bool:
+        if type(lease) is not NetworkContextLease:
+            raise NetworkContextError("invalid_context")
+        record = leases.get(lease)
+        if record is None:
+            raise NetworkContextError("invalid_context")
+        lifecycle = read_context(record.context)
+        with lifecycle.lock:
+            if record.released:
+                return False
+            if lease not in lifecycle.leases:
+                raise NetworkContextError("invalid_context")
+            del lifecycle.leases[lease]
+            record.released = True
+            if lifecycle.close_requested and not lifecycle.leases:
+                lifecycle.attempt_cleanup()
+            return True
+
+    def close_context(context: NetworkGitExecutionContext) -> bool:
+        lifecycle = read_context(context)
+        with lifecycle.lock:
+            if lifecycle.cleaned:
+                return True
+            lifecycle.close_requested = True
+            if lifecycle.leases:
+                return False
+            return lifecycle.attempt_cleanup()
+
+    return (
+        issue_context,
+        config_copy_fingerprint,
+        is_cleaned,
+        command_settings,
+        openssh_invocation,
+        build_query_argv,
+        build_push_argv,
+        retain_context,
+        release_lease,
+        close_context,
+    )
+
+
+(
+    _issue_network_context,
+    _network_context_config_copy_fingerprint,
+    _network_context_is_cleaned,
+    _network_context_command_settings,
+    _network_context_openssh_invocation,
+    _network_context_build_query_argv,
+    _network_context_build_push_argv,
+    _retain_network_context,
+    _release_network_context_lease,
+    _close_network_context,
+) = _make_network_context_registry()
+del _make_network_context_registry
 
 
 class NetworkContextFactory:
@@ -1453,7 +1552,10 @@ class NetworkContextFactory:
             )
             builder.file(
                 "repository.git/config",
-                _render_private_config(config_record.facts),
+                _render_private_config(
+                    config_record.facts,
+                    source_record.object_format,
+                ),
             )
             system_config = builder.file("system.gitconfig", b"")
             global_config = builder.file("global.gitconfig", b"")
@@ -1499,6 +1601,8 @@ class NetworkContextFactory:
                 )
                 if created_ssh_adapter != ssh_adapter:
                     raise NetworkContextError("unsafe_filesystem")
+            for child_directory in (home, config_home, private_tmp):
+                child_directory.chmod(_READ_ONLY_DIRECTORY_MODE)
             layout = _PrivateLayout.capture(
                 root,
                 parent,
@@ -1512,8 +1616,7 @@ class NetworkContextFactory:
                 environment=tuple(environment),
                 environment_fingerprint=environment_fingerprint,
             )
-            state = _ContextState(
-                layout=layout,
+            authority = _ContextAuthority(
                 command=command,
                 temporary_parent=parent_record,
                 git_executable=self._git_executable,
@@ -1527,9 +1630,7 @@ class NetworkContextFactory:
                 endpoint=endpoint_value,
                 openssh=openssh,
             )
-            context = NetworkGitExecutionContext(_CONTEXT_SECRET, state)
-            state.bind(context)
-            return context
+            return _issue_network_context(authority, layout)
         except NetworkContextError:
             if builder is not None:
                 builder.cleanup_partial()
@@ -1771,14 +1872,31 @@ def _config_copy_fingerprint(
 
 def _render_private_config(
     facts: tuple[_AuthorizedConfigFact, ...],
+    object_format: GitObjectFormat,
 ) -> bytes:
+    if (
+        type(object_format) is not str
+        or object_format not in {"sha1", "sha256"}
+    ):
+        raise NetworkContextError("invalid_source_objects")
     lines = [
         "[core]\n",
-        "\trepositoryFormatVersion = 0\n",
+        (
+            "\trepositoryFormatVersion = 0\n"
+            if object_format == "sha1"
+            else "\trepositoryFormatVersion = 1\n"
+        ),
         "\tfileMode = true\n",
         "\tbare = true\n",
         "\tlogAllRefUpdates = false\n",
     ]
+    if object_format == "sha256":
+        lines.extend(
+            (
+                "[extensions]\n",
+                "\tobjectFormat = sha256\n",
+            )
+        )
     if facts:
         lines.append("[credential]\n")
     for fact in facts:
@@ -2185,19 +2303,25 @@ def _capture_known_entry(
     path: Path,
     kind: Literal["file", "directory", "executable"],
     relative_path: str = ".",
+    *,
+    expected_mode: int | None = None,
 ) -> _KnownEntry:
     metadata = path.stat(follow_symlinks=False)
     mode = stat.S_IMODE(metadata.st_mode)
-    expected_mode = {
-        "directory": _DIRECTORY_MODE,
-        "file": _FILE_MODE,
-        "executable": _ADAPTER_MODE,
-    }[kind]
+    required_mode = (
+        {
+            "directory": _DIRECTORY_MODE,
+            "file": _FILE_MODE,
+            "executable": _ADAPTER_MODE,
+        }[kind]
+        if expected_mode is None
+        else expected_mode
+    )
     is_regular = kind in {"file", "executable"}
     if (
         metadata.st_uid != os.geteuid()
         or metadata.st_dev != root.stat(follow_symlinks=False).st_dev
-        or mode != expected_mode
+        or mode != required_mode
         or (kind == "directory") != stat.S_ISDIR(metadata.st_mode)
         or is_regular != stat.S_ISREG(metadata.st_mode)
         or (is_regular and metadata.st_nlink != 1)

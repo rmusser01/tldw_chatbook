@@ -69,6 +69,9 @@ Chatbook never automatically retries an uncertain push.
   for or stores credentials.
 - Support only secure HTTPS with normal certificate verification and standard
   OpenSSH/scp-style SSH with existing host-key verification.
+- Admit guarded push only on POSIX. Windows fails closed before private-context
+  creation, helper contact, SSH launch, or network access until separately
+  approved native owner-only ACL work exists.
 - Invoke the frozen effective endpoint, not the configured remote name.
 - Require the remote destination to report the candidate's exact parent before
   review and immediately before push.
@@ -107,6 +110,8 @@ Chatbook never automatically retries an uncertain push.
 - Persistent Session Git operation indicator across panel removal/remount
 - Focused pure, repository, transport, lifecycle, UI, and full-app acceptance
   verification
+- SHA-1 and SHA-256 source repositories through an exactly matched private
+  network-context object format
 
 ### Excluded
 
@@ -132,6 +137,8 @@ Chatbook never automatically retries an uncertain push.
   services, pre-existing SSH agents/control masters, or already-running server
   work
 - Database schema changes or any change to disk/SQLite authority
+- Windows guarded-push execution or an approximation based on `chmod`/Job
+  Objects without a separately approved owner-only ACL boundary
 
 ## Chosen approach
 
@@ -253,9 +260,12 @@ operation and uncertain push evidence. It does not overload
 `RetainedCommitOperation`, `CommitOutcome`, or commit recovery contracts.
 
 The existing `GitProcessRunner`/`AsyncGitProcessRunner` boundary is extended so
-network commands run in an isolated POSIX process group or Windows Job Object.
-The service receives the actual direct-child-spawn signal from the runner.
-Intent to spawn is not the cancellation boundary.
+admitted network commands run in an isolated POSIX process group. The shared
+runner may retain Windows Job Object support for other child lifecycles, but
+guarded push fails closed on Windows because containment does not prove the
+private context's owner-only ACL. The service receives the actual
+direct-child-spawn signal from the runner. Intent to spawn is not the
+cancellation boundary.
 
 ### Workspace
 
@@ -521,6 +531,40 @@ service creates one private immutable `NetworkGitExecutionContext`:
 - exact command-scoped narrowing overrides for prompt, hook, tags, submodules,
   maintenance, and filesystem-monitor behavior.
 
+The source-object authorization also binds a locally proved Git object format:
+
+- capture the exact source format without network/helper contact;
+- allow only Git's `sha1` and `sha256` formats;
+- include it in the opaque source-authorization fingerprint;
+- freshly re-prove it during Confirm, then require the exact format-bound
+  source authorization and object-directory identity at context-use seams;
+- render `extensions.objectFormat = sha256` in the private bare config only
+  for a SHA-256 source; and
+- require parent/candidate/remote OIDs to have the exact format's hex length.
+
+A format read failure, source-format drift, SHA-1/SHA-256 OID mismatch, or
+unsupported format blocks locally. Any temporary bare repository used for
+candidate-tree attribute isolation must use the same proved format when real
+Git demonstrates that the alternate otherwise cannot resolve the candidate.
+
+Public context and lease objects are zero-field exact-instance capabilities.
+Closure-backed weak registries associate a genuine issued context with frozen
+authority facts and separately inaccessible mutable lifecycle/lease state.
+They associate each genuine lease with exactly its issuing context and one
+single-release record. Public objects expose no `_state`, token, endpoint,
+command, configuration, source-authorization, or lifecycle attribute that
+`object.__setattr__`, copying, or an unregistered alias can transplant.
+
+The context root, private Git directories, and files are constructed with
+owner-only POSIX modes. Once construction is complete, child-visible `HOME`,
+`XDG_CONFIG_HOME`, and `TMP`/`TEMP`/`TMPDIR` directories are changed to `0500`
+and their identities and exact modes are pinned. Real Git and the approved
+transport/helper paths must operate without writing them; attempted scratch
+creation must fail. Cleanup removes only the exact known empty shape and
+remains retryable. This protects against other principals. Processes running
+as the same effective UID, and root, remain inside the documented trusted
+local boundary.
+
 The allowlist never copies:
 
 - `url.*.insteadOf` or `url.*.pushInsteadOf`;
@@ -691,9 +735,11 @@ The actual runner spawn signal atomically changes the UI and service boundary:
 - reopening Prepare reattaches to the exact retained operation without
   launching another child.
 
-Every network command runs in a new POSIX process group or Windows Job Object.
-Bounded settlement performs graceful terminate, force-kill, and pipe drain.
-Recovery remains disabled until every owned descendant is known terminal.
+Every admitted network command runs in a new POSIX process group. Bounded
+settlement performs graceful terminate, force-kill, and pipe drain. Recovery
+remains disabled until every owned descendant is known terminal. On Windows,
+guarded push refuses admission before this lifecycle begins; a Job Object does
+not substitute for the missing private-artifact ACL proof.
 
 This ownership does not extend to pre-existing agents/control masters,
 credential-service daemons, or work already running on the server. Killing the
@@ -1201,7 +1247,10 @@ PIDs/heartbeats, and can ignore graceful termination.
 Assert:
 
 - POSIX process-group termination locally;
-- Windows Job Object behavior only on a Windows test runner;
+- shared-runner Windows Job Object behavior may retain its own qualification,
+  but it is not guarded-push acceptance evidence;
+- explicit Windows guarded-push refusal before private context/helper/network
+  contact;
 - bounded terminate/force-kill/drain;
 - no surviving owned descendants before recovery enables;
 - mutation/transition gate retention while settlement is unproved;
@@ -1218,6 +1267,11 @@ Cover:
 - no network/helper contact before authorization;
 - immutable network-execution-context construction, owner-only lifecycle,
   allowlisted copied configuration, and no live source-config reads;
+- exact-instance context/lease forgery resistance and inaccessible lifecycle
+  state;
+- read-only child `HOME`/XDG/TMP operation with failed scratch creation;
+- SHA-1/SHA-256 format capture, revalidation, matching private configuration,
+  and local format/OID mismatch refusal;
 - exact parent/candidate/missing/divergent preflight;
 - Confirm revalidation of candidate, config, trust, LFS, and remote ref;
 - actual child-spawn cancellation boundary and pre-spawn launch failure;

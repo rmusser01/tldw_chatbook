@@ -150,6 +150,13 @@ honest uncertain state when the result cannot be proved.
   that isolated Git directory read-only object access through a
   Chatbook-controlled alternate rooted at the verified common object
   directory.
+- Prove and pin the source repository object format locally before creating
+  the network context. Confirm freshly re-proves it, context-use seams require
+  the exact format-bound source authorization and object-directory identity,
+  the private bare repository uses the same format, and only matching-width
+  OIDs are accepted. A missing, unsupported, changed, or mismatched format
+  blocks before network/helper contact. SHA-1 and SHA-256 repositories remain
+  separate authorities; Chatbook never guesses or translates formats.
 - Retain the immutable execution context through review, children,
   postflight, and query-only recovery. Remove it only after every owned
   descendant is terminal and no recovery needs it. A crash-left owner-only
@@ -166,14 +173,41 @@ honest uncertain state when the result cannot be proved.
   repository/worktree configuration, note bytes, File Notes replica rows,
   revisions or tombstones, or session history.
 
+### Platform and private-artifact boundary
+
+- Guarded push is admitted only on POSIX platforms where Chatbook can prove
+  the owner/mode properties used by the isolated network context. On Windows,
+  guarded push is unavailable and fails closed before context creation,
+  credential-helper contact, SSH launch, or any network child. Existing
+  Windows Job Object process-containment support does not establish an
+  owner-only discretionary ACL for these private artifacts and therefore does
+  not admit this workflow.
+- Windows guarded push requires separately approved native owner-only ACL
+  design and implementation work. This ADR does not approximate that boundary
+  with `chmod`, broaden the current task into Windows ACL management, or claim
+  partial guarded-push support on Windows.
+- The context root and Git directories are owner-only. After construction,
+  child-visible `HOME`, `XDG_CONFIG_HOME`, and `TMP`/`TEMP`/`TMPDIR` directories
+  are read/execute-only to the owner and their exact modes are pinned through
+  cleanup. Git, OpenSSH, and approved helpers must not require scratch writes
+  there. The documented local threat boundary continues to trust processes
+  running as the same effective UID and root; mode bits do not isolate one
+  same-UID process from another.
+- Public context and lease objects carry no reachable authority, lifecycle,
+  or release-token fields. Exact-instance weak registries bind them to frozen
+  authority facts and inaccessible mutable lifecycle bookkeeping, so copying,
+  aliasing, or attribute mutation cannot transfer or redirect capability.
+
 ### Operation ownership and recovery
 
 - The existing application-session Git service owns remote checks, the push,
   postflight, and recovery checks independently of any mounted panel. Each
   external operation uses a bounded, noninteractive child lifecycle in an
-  isolated POSIX process group or Windows Job Object and retains descendants
-  through terminate, force-kill, and output drain. If owned descendant
-  termination cannot be proved, the outcome remains uncertain.
+  isolated POSIX process group and retains descendants through terminate,
+  force-kill, and output drain. The shared runner may contain other Windows
+  children with a Job Object, but guarded push itself fails closed on Windows
+  under the platform boundary above. If owned descendant termination cannot be
+  proved, the outcome remains uncertain.
 - Pre-existing SSH agents, credential services, connection masters, server
   processes, remote hooks, CI, and mirrors are outside Chatbook's child
   ownership. The UI and diagnostics do not claim that terminating a local
@@ -328,6 +362,12 @@ remain in force.
 - Persistent diagnostics stay payload-free. UI, logs, errors, and durable QA
   evidence use sanitized structured facts rather than raw remote/helper
   output, credentials, or note content.
+- Windows users continue to use external Git for this workflow until a
+  separately approved native ACL boundary exists. Chatbook makes no claim that
+  POSIX mode checks or Windows Job Objects provide that missing privacy proof.
+- SHA-256 repositories use a matching SHA-256 private bare context and
+  64-hex OIDs; SHA-1 repositories use the ordinary SHA-1 context and 40-hex
+  OIDs. Format drift or cross-format OIDs fail locally.
 
 ## Alternatives considered
 
@@ -349,6 +389,8 @@ remain in force.
 | Fetch to reconcile uncertain state | Fetch mutates local refs and expands the network/repository boundary when an exact query of the retained destination is sufficient. |
 | Persist candidate and recovery state | Durable recovery would add private operational storage, migration, stale-credential/trust semantics, and restart attribution beyond this slice. |
 | Add provider-specific Git hosting APIs | It would add provider credentials and divergent service contracts without improving the exact standard-Git ref-update guarantee. |
+| Treat guarded push as portable through `chmod` or Job Objects | POSIX mode bits and child containment do not prove an owner-only Windows ACL; Windows remains fail-closed pending separately approved native ACL work. |
+| Assume every source repository uses SHA-1 | Git supports SHA-256 repositories; an unmatched private bare repository cannot safely resolve or publish those objects through an alternate. |
 
 ## Links
 
