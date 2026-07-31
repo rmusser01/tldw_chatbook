@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 from textual.app import App
+from textual.widgets import Button, Static
 
-from tldw_chatbook.TTS import TTSPlaygroundSelectionPreset
+from tldw_chatbook.TTS import STTSGeneratedAudio, TTSPlaygroundSelectionPreset
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.stts_profile_library import STTSProfileLibrary
@@ -20,6 +24,22 @@ def _preset() -> TTSPlaygroundSelectionPreset:
         speed=1.0,
         options={},
         availability="available",
+    )
+
+
+def _artifact(tmp_path, operation_id: str) -> STTSGeneratedAudio:
+    path = tmp_path / f"{operation_id}.wav"
+    path.write_bytes(b"RIFFold-audio")
+    return STTSGeneratedAudio(
+        path=path,
+        provider_id="audio_cpp",
+        model_id="old-model",
+        voice_id="old-voice",
+        source_text="Old result.",
+        operation_id=operation_id,
+        audio_format="wav",
+        content_type="audio/wav",
+        metadata={},
     )
 
 
@@ -98,6 +118,65 @@ async def test_exact_preset_applies_to_an_already_open_playground() -> None:
                 and screen.query_one(SpeechPlaygroundPane)._profile_preset is preset
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_exact_preset_retires_existing_playground_audio(tmp_path) -> None:
+    app = _SpeechHost()
+    screen = app.screen_under_test
+    artifact = _artifact(tmp_path, "old-complete-operation")
+    retire = Mock()
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: len(screen.query(SpeechPlaygroundPane)) == 1,
+        )
+        playground = screen.query_one(SpeechPlaygroundPane)
+        playground._store_delivered_artifact(artifact, announce=False)
+        app._stts_handler = SimpleNamespace(retire_playground_context=retire)
+
+        screen.apply_navigation_context(
+            {"view": "playground", "profile_preset": _preset()}
+        )
+        await _wait_until(pilot, lambda: retire.call_count == 1)
+
+        assert playground.current_audio_artifact is None
+        assert playground.current_audio_file is None
+        assert playground.query_one("#audio-play-btn", Button).disabled is True
+        assert playground.query_one("#audio-export-btn", Button).disabled is True
+        assert (
+            str(playground.query_one("#audio-player-status", Static).renderable)
+            == "Nothing loaded"
+        )
+
+
+@pytest.mark.asyncio
+async def test_exact_preset_rejects_late_prior_generation_completion(tmp_path) -> None:
+    app = _SpeechHost()
+    screen = app.screen_under_test
+    artifact = _artifact(tmp_path, "old-in-flight-operation")
+    retire = Mock()
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: len(screen.query(SpeechPlaygroundPane)) == 1,
+        )
+        playground = screen.query_one(SpeechPlaygroundPane)
+        playground._generation_operation_id = artifact.operation_id
+        app._stts_handler = SimpleNamespace(retire_playground_context=retire)
+
+        screen.apply_navigation_context(
+            {"view": "playground", "profile_preset": _preset()}
+        )
+        await _wait_until(pilot, lambda: retire.call_count == 1)
+        playground._generation_complete(artifact)
+
+        assert playground.current_audio_artifact is None
+        assert playground.current_audio_file is None
+        assert playground.query_one("#audio-play-btn", Button).disabled is True
+        assert playground.query_one("#audio-export-btn", Button).disabled is True
 
 
 @pytest.mark.parametrize(

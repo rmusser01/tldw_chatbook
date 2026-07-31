@@ -131,6 +131,26 @@ async def test_generic_or_persona_speech_resolves_global_without_profile_work(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("assistant_kind", ("", "charcter", "generic "))
+async def test_unknown_assistant_kind_fails_closed_without_profile_work(
+    assistant_kind: str,
+) -> None:
+    service = _FakeProfileService(result=object())
+    resolver = CharacterTTSRequestResolver(service)
+
+    with pytest.raises(CharacterTTSResolutionError) as caught:
+        await resolver.resolve(
+            text="Do not silently route malformed authorship.",
+            assistant_kind=assistant_kind,
+            character_ref=None,
+        )
+
+    assert caught.value.code == "authorship_invalid"
+    assert caught.value.allow_global_override is False
+    assert service.calls == []
+
+
+@pytest.mark.asyncio
 async def test_unassigned_character_resolves_global_after_one_exact_joined_read() -> (
     None
 ):

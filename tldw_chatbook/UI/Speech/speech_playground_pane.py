@@ -423,7 +423,7 @@ class SpeechPlaygroundPane(
 
         try:
             group = self.query_one("#speech-param-group")
-            text_pane = self.query_one("#speech-text-pane")
+            _text_pane = self.query_one("#speech-text-pane")
         except NoMatches:
             return
 
@@ -550,6 +550,7 @@ class SpeechPlaygroundPane(
 
         if type(preset) is not TTSPlaygroundSelectionPreset:
             raise TypeError("preset must be TTSPlaygroundSelectionPreset")
+        self._retire_profile_playback_context()
         self.init_profile_state(preset)
         if self.is_mounted:
             self.call_after_refresh(self._finish_profile_preset_mount)

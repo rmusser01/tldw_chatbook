@@ -1076,6 +1076,56 @@ async def test_successful_replacement_and_shutdown_delete_owned_artifacts() -> N
 
 
 @pytest.mark.asyncio
+async def test_retiring_playground_context_discards_current_artifact() -> None:
+    app = _DeliveryApp()
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = _NativeService(
+        _Response(_CountingStream((b"RIFF", b"current")))
+    )
+    await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(_snapshot()))
+    artifact = handler.playground_state().artifact
+    assert artifact is not None
+    assert artifact.path.exists()
+
+    handler.retire_playground_context()
+
+    state = handler.playground_state()
+    assert state.artifact is None
+    assert handler._current_audio_file is None
+    assert not artifact.path.exists()
+    assert handler._playground_audio_files == set()
+    assert handler._playground_operation_files == {}
+
+
+@pytest.mark.asyncio
+async def test_retiring_playground_context_fences_in_flight_completion() -> None:
+    release = asyncio.Event()
+    response = _Response(_CountingStream((b"RIFF",), blocked=release))
+    playground = _DeliveryPlayground()
+    app = _DeliveryApp(playground)
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = _NativeService(response)
+    handler.start_playground_generation(STTSPlaygroundGenerateEvent(_snapshot()))
+    await asyncio.sleep(0)
+    generation_task = handler._generation_task
+    assert generation_task is not None
+    assert handler.playground_state().generation_active is True
+
+    handler.retire_playground_context()
+    release.set()
+    await asyncio.gather(generation_task, return_exceptions=True)
+
+    state = handler.playground_state()
+    assert state.generation_active is False
+    assert state.active_operation_id is None
+    assert state.artifact is None
+    assert playground.completions == []
+    assert app.notifications == []
+    assert handler._playground_audio_files == set()
+    assert handler._playground_operation_files == {}
+
+
+@pytest.mark.asyncio
 async def test_leased_artifact_survives_replacement_until_release() -> None:
     app = _DeliveryApp()
     handler = STTSEventHandler(app=app)

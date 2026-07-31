@@ -9022,6 +9022,73 @@ async def test_character_tts_server_principal_change_rejects_late_population(
         )
 
 
+async def test_character_tts_local_authority_change_rejects_late_population(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    profile = _character_tts_profile(1)
+    original_ref = CharacterRef(
+        source="local",
+        authority_id="local-authority-before-restore",
+        character_id="1",
+    )
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(profile,),
+            total=1,
+        ),
+        assigned=LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=AssignedTTSProfileSnapshot(
+                assignment=CharacterTTSAssignment(
+                    character_ref=original_ref,
+                    profile_id=profile.profile_id,
+                ),
+                profile=profile,
+            ),
+        ),
+    )
+    authority_reader = Mock(
+        side_effect=(
+            "local-authority-before-restore",
+            "local-authority-after-restore",
+        )
+    )
+    mock_app_instance.runtime_backend = "local"
+    mock_app_instance.chachanotes_db = SimpleNamespace(
+        get_local_authority_id=authority_reader,
+        get_character_card_by_id=lambda _character_id: {
+            **CHARACTERS[0],
+            "extensions": {},
+        },
+    )
+    mock_app_instance._ensure_tts_profile_service = AsyncMock(
+        return_value=service
+    )
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        screen.state.select_entity(
+            entity_kind="character",
+            entity_id="1",
+            entity_name="Detective Sam",
+        )
+        screen._character_tts_request_generation += 1
+        await screen._character_tts_refresh_worker(
+            screen._character_tts_request_generation,
+            "1",
+            "local",
+        )
+
+        assert authority_reader.call_count == 2
+        assert service.get_calls == [original_ref]
+        assert screen._character_tts_snapshot is None
+        assert screen._character_tts_presentation.controls_enabled is False
+
+
 async def test_character_tts_missing_local_authority_disables_without_profile_reads(
     mock_app_instance,
     stub_characters,
@@ -9209,6 +9276,55 @@ async def test_character_tts_preview_create_and_edit_reuse_existing_speech_surfa
                 draft,
             )
         ]
+
+
+async def test_character_tts_preview_rechecks_local_authority(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    profile = _character_tts_profile(1)
+    character_ref = CharacterRef(
+        source="local",
+        authority_id="local-test-authority",
+        character_id="1",
+    )
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(profile,),
+            total=1,
+        ),
+        assigned=LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=AssignedTTSProfileSnapshot(
+                assignment=CharacterTTSAssignment(
+                    character_ref=character_ref,
+                    profile_id=profile.profile_id,
+                ),
+                profile=profile,
+            ),
+        ),
+    )
+    _configure_character_tts_app(mock_app_instance, service)
+    authority_reader = Mock(return_value="local-test-authority")
+    mock_app_instance.chachanotes_db.get_local_authority_id = authority_reader
+    app = _NavCaptureApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+        assert screen._character_tts_snapshot is not None
+
+        authority_reader.return_value = "different-local-authority"
+        screen.post_message(
+            CharacterTTSActionRequested("preview", profile.profile_id)
+        )
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+
+        assert app.nav_contexts == []
 
 
 async def test_character_tts_conflict_refreshes_and_stale_selection_cannot_publish(

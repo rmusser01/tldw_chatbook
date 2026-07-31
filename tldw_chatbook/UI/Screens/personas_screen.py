@@ -1461,11 +1461,11 @@ class PersonasScreen(BaseAppScreen):
         except Exception:
             return False
 
-    async def _character_tts_mutation_context_is_current(
+    async def _character_tts_authority_context_is_current(
         self,
         snapshot: _CharacterTTSControlSnapshot,
     ) -> bool:
-        """Revalidate exact authority immediately before a mutation."""
+        """Revalidate exact authority before publishing or using a snapshot."""
 
         if not self._character_tts_snapshot_context_is_current(snapshot):
             return False
@@ -1634,7 +1634,7 @@ class PersonasScreen(BaseAppScreen):
             availability_by_id[loaded.profile.profile_id]
             for loaded in loaded_profiles
         )
-        return _CharacterTTSControlSnapshot(
+        snapshot = _CharacterTTSControlSnapshot(
             request_generation=request_generation,
             runtime_source=runtime_source,
             character_id=character_id,
@@ -1649,6 +1649,9 @@ class PersonasScreen(BaseAppScreen):
             expected_server_id=expected_server_id,
             server_context_capture=capture,
         )
+        if not await self._character_tts_authority_context_is_current(snapshot):
+            return None
+        return snapshot
 
     @staticmethod
     def _character_tts_presentation_from_snapshot(
@@ -1846,14 +1849,14 @@ class PersonasScreen(BaseAppScreen):
         profile_id: UUID | None,
         snapshot: _CharacterTTSControlSnapshot,
     ) -> None:
-        if not await self._character_tts_mutation_context_is_current(snapshot):
+        if not await self._character_tts_authority_context_is_current(snapshot):
             return
         current_assignment = (
             None if snapshot.current is None else snapshot.current.assignment
         )
         try:
             service = await self._character_tts_profile_service()
-            if not await self._character_tts_mutation_context_is_current(snapshot):
+            if not await self._character_tts_authority_context_is_current(snapshot):
                 return
             if action == "assign" and profile_id is not None:
                 tokens = self._character_tts_profile_tokens(snapshot, profile_id)
@@ -1903,13 +1906,13 @@ class PersonasScreen(BaseAppScreen):
         snapshot: _CharacterTTSControlSnapshot,
     ) -> None:
         tokens = self._character_tts_profile_tokens(snapshot, profile_id)
-        if tokens is None or not self._character_tts_snapshot_context_is_current(
+        if tokens is None or not await self._character_tts_authority_context_is_current(
             snapshot
         ):
             return
         try:
             service = await self._character_tts_profile_service()
-            if not self._character_tts_snapshot_context_is_current(snapshot):
+            if not await self._character_tts_authority_context_is_current(snapshot):
                 return
             preset = service.preview_preset(*tokens)
         except asyncio.CancelledError:
@@ -1917,7 +1920,7 @@ class PersonasScreen(BaseAppScreen):
         except Exception as error:
             self._publish_character_tts_action_error(snapshot, error)
             return
-        if self._character_tts_snapshot_context_is_current(snapshot):
+        if await self._character_tts_authority_context_is_current(snapshot):
             self._navigate_to_speech(preset=preset)
 
     async def _character_tts_edit_worker(
@@ -1926,7 +1929,7 @@ class PersonasScreen(BaseAppScreen):
         snapshot: _CharacterTTSControlSnapshot,
     ) -> None:
         tokens = self._character_tts_profile_tokens(snapshot, profile_id)
-        if tokens is None or not await self._character_tts_mutation_context_is_current(
+        if tokens is None or not await self._character_tts_authority_context_is_current(
             snapshot
         ):
             return
@@ -1939,7 +1942,7 @@ class PersonasScreen(BaseAppScreen):
             if (
                 type(count) is not int
                 or count < 0
-                or not await self._character_tts_mutation_context_is_current(
+                or not await self._character_tts_authority_context_is_current(
                     snapshot
                 )
             ):
@@ -1954,7 +1957,7 @@ class PersonasScreen(BaseAppScreen):
             if (
                 draft is None
                 or type(draft) is not TTSProfileDraft
-                or not await self._character_tts_mutation_context_is_current(
+                or not await self._character_tts_authority_context_is_current(
                     snapshot
                 )
             ):

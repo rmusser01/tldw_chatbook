@@ -143,10 +143,12 @@ class CharacterTTSRequestResolver:
         validated_text = self._validate_text(text)
         if assistant_kind is not None and type(assistant_kind) is not str:
             raise CharacterTTSResolutionError("authorship_invalid")
-        if assistant_kind != "character":
+        if assistant_kind in {None, "generic", "persona"}:
             if character_ref is not None:
                 raise CharacterTTSResolutionError("authorship_invalid")
             return _global_resolution("global")
+        if assistant_kind != "character":
+            raise CharacterTTSResolutionError("authorship_invalid")
         if character_ref is None:
             raise CharacterTTSResolutionError("authority_missing")
         if type(character_ref) is not CharacterRef:

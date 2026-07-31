@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from loguru import logger
-from textual.widgets import Button, RichLog, Static, TextArea
+from textual.widgets import Button, ProgressBar, RichLog, Static, TextArea
 
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
 from tldw_chatbook.Widgets.enhanced_file_picker import (
@@ -34,12 +34,13 @@ from tldw_chatbook.TTS import STTSGeneratedAudio
 
 
 EXAMPLE_TEXTS = [
-        "Welcome to the Text-to-Speech playground! This is where you can experiment with different voices, providers, and settings to create natural-sounding speech.",
-        "The quick brown fox jumps over the lazy dog. This pangram contains all letters of the alphabet.",
-        "In a world of artificial intelligence, the ability to convert text into natural speech opens countless possibilities.",
-        "Testing, one, two, three. Can you hear the difference between various voice models?",
-        "Good morning! Today's weather is sunny with a high of 75 degrees. Perfect for a walk in the park.",
-    ]
+    "Welcome to the Text-to-Speech playground! This is where you can experiment with different voices, providers, and settings to create natural-sounding speech.",
+    "The quick brown fox jumps over the lazy dog. This pangram contains all letters of the alphabet.",
+    "In a world of artificial intelligence, the ability to convert text into natural speech opens countless possibilities.",
+    "Testing, one, two, three. Can you hear the difference between various voice models?",
+    "Good morning! Today's weather is sunny with a high of 75 degrees. Perfect for a walk in the park.",
+]
+
 
 class SpeechPlaybackMixin:
     """Transport, export and picker behaviour, independent of the layout."""
@@ -49,6 +50,11 @@ class SpeechPlaybackMixin:
         artifact: STTSGeneratedAudio | None,
     ) -> None:
         """Store one delivered artifact independently of current selectors."""
+        if (
+            artifact is not None
+            and artifact.operation_id == self._retired_profile_operation_id
+        ):
+            return
         if (
             artifact is not None
             and self._generation_operation_id is not None
@@ -78,8 +84,98 @@ class SpeechPlaybackMixin:
         self._play_worker_task: Any = None
         #: Releases the current artifact's hold; called before replacing it.
         self._active_playback_release: Callable[[], None] | None = None
+        #: A generation retired by an exact profile navigation.
+        self._retired_profile_operation_id: str | None = None
         self.example_texts = EXAMPLE_TEXTS
 
+    def _retire_profile_playback_context(self) -> None:
+        """Retire audio and generation state before applying an exact profile."""
+
+        operation_id = self._generation_operation_id
+        if isinstance(operation_id, str):
+            self._retired_profile_operation_id = operation_id
+        self._generation_operation_id = None
+
+        self.app.workers.cancel_group(self, "stts-playback")
+        progress_task = self._progress_timer_task
+        if progress_task is not None and not progress_task.done():
+            progress_task.cancel()
+        self._progress_timer_task = None
+        play_worker = self._play_worker_task
+        if play_worker is not None and not play_worker.is_finished:
+            play_worker.cancel()
+        self._play_worker_task = None
+
+        release_artifact = self._active_playback_release
+        self._active_playback_release = None
+        handler = getattr(self.app, "_stts_handler", None)
+        retire = getattr(handler, "retire_playground_context", None)
+        if callable(retire):
+            try:
+                retire()
+            except Exception as error:
+                logger.debug(
+                    "Could not retire Playground handler context ({})",
+                    type(error).__name__,
+                )
+
+        self.current_audio_artifact = None
+        self.current_audio_file = None
+        if self.is_mounted:
+            self.query_one("#audio-play-btn", Button).disabled = True
+            self.query_one("#pause-audio-btn", Button).disabled = True
+            self.query_one("#stop-audio-btn", Button).disabled = True
+            self.query_one("#audio-export-btn", Button).disabled = True
+            self.query_one("#audio-player-status", Static).update("Nothing loaded")
+            progress = self.query_one("#audio-progress-bar", ProgressBar)
+            progress.update(total=100, progress=0)
+            progress.add_class("hidden")
+            self.query_one("#audio-time-display", Static).update("0:00 / 0:00")
+            self.query_one("#generation-status-container").add_class("hidden")
+            self._sync_save_profile_action()
+            self._sync_generate_enabled()
+
+        player = getattr(self.app, "audio_player", None)
+        stop = getattr(player, "stop", None)
+        if not callable(stop):
+            if release_artifact is not None:
+                release_artifact()
+            return
+        stop_playback = self._stop_retired_profile_playback(
+            stop,
+            release_artifact,
+        )
+        try:
+            self.run_worker(
+                stop_playback,
+                group="stts-playback",
+                exclusive=True,
+                exit_on_error=False,
+            )
+        except Exception:
+            stop_playback.close()
+            if release_artifact is not None:
+                release_artifact()
+
+    @staticmethod
+    async def _stop_retired_profile_playback(
+        stop: Callable[[], Any],
+        release_artifact: Callable[[], None] | None,
+    ) -> None:
+        """Stop old playback without publishing status into the new profile."""
+
+        try:
+            await stop()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logger.debug(
+                "Could not stop retired Playground playback ({})",
+                type(error).__name__,
+            )
+        finally:
+            if release_artifact is not None:
+                release_artifact()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
