@@ -249,6 +249,20 @@ def test_read_only_attachment_inspection_returns_valid_profile_without_a_databas
     assert result.warning_code is None
 
 
+def test_string_attachment_inspection_rejects_path_validation_violation(
+    tmp_path: Path,
+) -> None:
+    unsafe_path = tmp_path / "private;card.json"
+    unsafe_path.write_text(
+        json.dumps(_card(attachment=_valid_attachment())),
+        encoding="utf-8",
+    )
+
+    result = character_lib.inspect_character_card_tts_attachment(str(unsafe_path))
+
+    assert result is None
+
+
 def test_read_only_attachment_inspection_reports_absence_and_bounded_warning() -> None:
     inspector = getattr(character_lib, "inspect_character_card_tts_attachment", None)
     assert callable(inspector), "the read-only attachment inspection API is missing"

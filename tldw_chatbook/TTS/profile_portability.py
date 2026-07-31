@@ -13,6 +13,9 @@ from tldw_chatbook.TTS.profile_types import TTSProfileDraft, canonical_json_opti
 
 PORTABLE_PROFILE_SCHEMA_VERSION = 1
 CHARACTER_CARD_TTS_EXTENSION_KEY = "tldw_chatbook/tts_generation_profile"
+# The cap covers the whole envelope. Portable audio.cpp drafts require empty
+# options, and their other validated text fields keep the largest valid UTF-8
+# envelope below 3 KiB; the remaining budget rejects hostile future payloads.
 _MAX_ATTACHMENT_BYTES = 16 * 1024
 _MAX_CONTAINER_LEVELS = 4
 _WIRE_FIELDS = frozenset(
@@ -71,7 +74,18 @@ class PortableProfileDecodeResult:
 
 
 def portable_profile_payload(profile: PortableTTSProfile) -> dict[str, Any]:
-    """Return the exact version-one sanitized payload for ``profile``."""
+    """Return the exact version-one sanitized payload for a profile.
+
+    Args:
+        profile: Validated local audio.cpp selection to make portable.
+
+    Returns:
+        The strict version-one wire payload containing only portable fields.
+
+    Raises:
+        ProfileValidationError: If ``profile`` is not a portable audio.cpp
+            profile selection.
+    """
 
     if type(profile) is not PortableTTSProfile:
         raise ProfileValidationError("profiles")
@@ -91,7 +105,18 @@ def portable_profile_payload(profile: PortableTTSProfile) -> dict[str, Any]:
 
 
 def portable_profile_json(profile: PortableTTSProfile) -> str:
-    """Return deterministic standalone JSON for a sanitized profile."""
+    """Return deterministic standalone JSON for a sanitized profile.
+
+    Args:
+        profile: Validated local audio.cpp selection to serialize.
+
+    Returns:
+        Pretty-printed version-one JSON containing only portable fields.
+
+    Raises:
+        ProfileValidationError: If ``profile`` is not a portable audio.cpp
+            profile selection.
+    """
 
     return json.dumps(
         portable_profile_payload(profile),
@@ -158,9 +183,20 @@ def _validate_attachment_bounds(payload: object) -> None:
 
 
 def decode_portable_profile(payload: object) -> PortableProfileDecodeResult:
-    """Decode one hostile attachment without echoing attacker-controlled data."""
+    """Decode one hostile attachment without echoing attacker-controlled data.
+
+    Args:
+        payload: Untrusted character-card attachment value.
+
+    Returns:
+        A bounded valid, skipped, or invalid result. Invalid input is never
+        raised or copied into the result.
+    """
 
     try:
+        # Deliberately bound bytes, depth, and cycles before constructing any
+        # schema/domain object. Exact wire checks prevent coercion, while
+        # TTSProfileDraft remains the centralized semantic validator.
         _validate_attachment_bounds(payload)
         assert type(payload) is dict
         schema_version = payload.get("schema_version")

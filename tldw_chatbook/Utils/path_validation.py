@@ -89,6 +89,7 @@ def validate_path(
     """
     start_time = time.time()
     log_counter("path_validation_validate_path_attempt")
+    redacted_failure: str | None = None
 
     try:
         # Convert to Path objects
@@ -115,6 +116,9 @@ def validate_path(
                 "path_validation_security_violation",
                 labels={"type": "directory_traversal"},
             )
+            if redact_paths:
+                redacted_failure = "Path is outside the allowed directory"
+                raise ValueError(redacted_failure)
             raise ValueError(f"Path '{user_path}' is outside the allowed directory")
 
         # Additional checks for safety.
@@ -131,6 +135,10 @@ def validate_path(
                 "path_validation_security_violation",
                 labels={"type": "hidden_file_access"},
             )
+            if redact_paths:
+                redacted_failure = (
+                    "Access to hidden files/directories is not allowed"
+                )
             raise ValueError("Access to hidden files/directories is not allowed")
 
         # Some callers pass the destination's own immediate parent as
@@ -152,6 +160,10 @@ def validate_path(
                 "path_validation_security_violation",
                 labels={"type": "hidden_file_access"},
             )
+            if redact_paths:
+                redacted_failure = (
+                    "Access to hidden files/directories is not allowed"
+                )
             raise ValueError("Access to hidden files/directories is not allowed")
 
         # Log success
@@ -185,10 +197,10 @@ def validate_path(
             )
         else:
             logger.error(f"Path validation error for '{user_path}': {e}")
+        if redact_paths:
+            raise ValueError(redacted_failure or "Invalid path") from None
         if isinstance(e, ValueError):
             raise
-        if redact_paths:
-            raise ValueError("Invalid path") from None
         raise ValueError(f"Invalid path: {user_path}")
 
 

@@ -2522,18 +2522,30 @@ def inspect_character_card_tts_attachment(
         card_json: str | None
         if isinstance(file_input, str):
             source_kind = _bounded_card_source_type(file_input)
-            if not os.path.exists(file_input):
+            try:
+                validated_path = validate_path_simple(
+                    file_input,
+                    require_exists=True,
+                )
+            except ValueError:
+                logger.error(
+                    "Character inspection source path was rejected "
+                    "(source_type={}).",
+                    source_kind,
+                )
+                return None
+            if not validated_path.is_file():
                 logger.error(
                     "Character inspection source was not found (source_type={}).",
                     source_kind,
                 )
                 return None
             if source_kind in {".png", ".webp"}:
-                with open(file_input, "rb") as source:
+                with open(validated_path, "rb") as source:
                     source_bytes = source.read()
                 card_json = extract_json_from_image_file(io.BytesIO(source_bytes))
             else:
-                with open(file_input, "r", encoding="utf-8") as source:
+                with open(validated_path, "r", encoding="utf-8") as source:
                     card_json = source.read()
         else:
             if isinstance(file_input, bytes):

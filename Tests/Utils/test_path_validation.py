@@ -49,6 +49,17 @@ class TestValidatePath:
             with pytest.raises(ValueError, match="outside the allowed directory"):
                 validate_path("subdir/../../..", base_dir)
 
+    def test_redacted_traversal_error_does_not_echo_the_private_path(self):
+        """Redacted validation keeps traversal exception text value-free."""
+        with tempfile.TemporaryDirectory() as base_dir:
+            private_path = Path(base_dir).parent / "private-character-export.json"
+
+            with pytest.raises(ValueError) as caught:
+                validate_path(private_path, base_dir, redact_paths=True)
+
+            assert str(caught.value) == "Path is outside the allowed directory"
+            assert private_path.name not in str(caught.value)
+
     def test_hidden_file_access_blocked(self):
         """Test that hidden files/directories are blocked."""
         with tempfile.TemporaryDirectory() as base_dir:
