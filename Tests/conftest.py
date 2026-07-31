@@ -202,6 +202,26 @@ def temp_db_path(isolated_temp_dir):
 
 
 @pytest.fixture(autouse=True)
+def install_css_parse_cache() -> "Iterator[None]":
+    """Install the session-global CSS parse cache once Textual is imported.
+
+    Lazy and conditional (task-1459): test modules import Textual at
+    collection time, so by the first test's fixture setup the module is in
+    ``sys.modules`` whenever this session will mount apps — and sessions that
+    never touch Textual never import the cache. TLDW_TEST_CSS_CACHE=0
+    disables it (the install() itself re-checks the env var).
+
+    Yields:
+        None. Installation (idempotent) happens in setup.
+    """
+    if "textual.css.stylesheet" in sys.modules:
+        from Tests.UI import css_cache
+
+        css_cache.install()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def drain_test_app_user_data_dirs() -> "Iterator[None]":
     """Remove the user-data dirs the shared app factory created during a test.
 

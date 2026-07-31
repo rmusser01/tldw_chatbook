@@ -478,6 +478,29 @@ believing determinism: the rotating victim only shows on the second run.
 
 ---
 
+## Measure the identical-run noise floor before reading an A/B outcome diff
+
+**TASK-1459, 2026-07-30.** The CSS parse-cache canary (full Tests/UI, cache on
+vs off) showed 12 pass->fail flips and zero recoveries — directional, exactly
+what cross-instance cache corruption would look like, and the spike's gate said
+any diff means fall back or no-go. Before ruling, a control pair of two
+IDENTICAL cache-off runs was diffed: **28 regressed + 4 recovered against each
+other** — the machine's own flip rate was ~3x the "cache effect", the flagged
+tests A/B'd identically in isolation with the cache on and off, and the
+cache-on run sat between the two cache-off runs on failures and wall time
+(which grew from 13:37 to 23:12 across the evening as concurrent sessions
+loaded the machine).
+
+**What to do.** An "outcome diff must be empty" gate is unfalsifiable on a
+machine whose identical-run diff is nonzero — and on shared dev machines it
+usually is. Before attributing an A/B diff to the change, run the A/A control
+and use *its* magnitude as the acceptance bound; attribute individual flips
+only via isolation reruns under both configurations. Directionality alone
+(12-vs-0) is not attribution: later runs on a loading machine flip
+asymmetrically toward failure.
+
+---
+
 ## Related
 
 - `lessons-live-verification.md` — why the suite could not see seven of these defects
