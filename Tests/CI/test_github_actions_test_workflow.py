@@ -18,6 +18,13 @@ def _workflow_text() -> str:
 def _all_tests_job_block() -> str:
     workflow = _workflow_text()
     start = workflow.index("  all-tests:")
+    end = workflow.index("  nightly-deep:", start)
+    return workflow[start:end]
+
+
+def _nightly_deep_job_block() -> str:
+    workflow = _workflow_text()
+    start = workflow.index("  nightly-deep:")
     end = workflow.index("  test-summary:", start)
     return workflow[start:end]
 
@@ -51,7 +58,7 @@ def _artifact_lease_shape_job_block() -> str:
 def _artifact_lease_gate_job_block() -> str:
     workflow = _workflow_text()
     start = workflow.index("  artifact-lease-gate:")
-    end = workflow.index("  integration-tests:", start)
+    end = workflow.index("  ui-tests:", start)
     return workflow[start:end]
 
 
@@ -128,8 +135,8 @@ def test_ci_exercises_mcp_against_minimum_textual() -> None:
     assert "Tests/UI/test_mcp_workbench.py" in textual_minimum
     assert "Tests/UI/test_mcp_tools_mode.py" in textual_minimum
     assert (
-        "needs: [unit-tests, integration-tests, ui-tests, textual-minimum, "
-        "artifact-lease-gate]" in test_summary
+        "needs: [core-tests, ui-tests, textual-minimum, artifact-lease-gate]"
+        in test_summary
     )
 
 
@@ -203,3 +210,35 @@ def test_artifact_lease_gate_exposes_stable_required_context() -> None:
     )
     assert "exit 1" in gate
     assert "artifact-lease-gate" in test_summary
+
+
+def test_pr_gate_shards_cover_the_whole_tree_in_parallel() -> None:
+    """task-1465: core+ui shards replace the 27-file `-m unit` selection."""
+    workflow = _workflow_text()
+
+    assert "  core-tests:" in workflow
+    assert "pytest Tests --ignore=Tests/UI" in workflow
+    assert workflow.count("-n auto --dist loadscope --max-worker-restart=3") >= 2
+    # The fake stratification and its duplicate full-run workflow are gone.
+    assert "pytest -m unit" not in workflow
+    assert "pytest -m integration" not in workflow
+    assert not (PROJECT_ROOT / ".github" / "workflows" / "python-app.yml").exists()
+
+
+def test_nightly_deep_runs_the_tiers_the_pr_gate_does_not() -> None:
+    """task-1465: serial + thorough + --run-slow + cache-off + breadth, on dev."""
+    workflow = _workflow_text()
+    nightly = _nightly_deep_job_block()
+
+    assert "- cron:" in workflow
+    assert (
+        "if: github.event_name == 'schedule' || "
+        "github.event_name == 'workflow_dispatch'" in nightly
+    )
+    assert "ref: dev" in nightly
+    assert "--run-slow" in nightly
+    assert "TLDW_HYPOTHESIS_PROFILE: thorough" in nightly
+    assert 'TLDW_TEST_CSS_CACHE: "0"' in nightly
+    assert "-n auto" not in nightly  # serial on purpose: order-regression canary
+    assert "windows-latest" in nightly
+    assert "macos-latest" in nightly

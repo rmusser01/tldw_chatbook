@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ "main", "dev" ]
   workflow_dispatch:
+  schedule:
+    # Nightly deep run (08:30 UTC); the job checks out dev explicitly because
+    # scheduled workflows execute from the default branch.
+    - cron: '30 8 * * *'
 
 permissions:
   contents: read
@@ -24,60 +28,59 @@ defaults:
     shell: bash
 
 jobs:
-  unit-tests:
-    name: Unit Tests - Python ${{ matrix.python-version }} - ${{ matrix.os }}
+  core-tests:
+    # task-1465: full coverage on every PR replaces `-m unit` (which selected
+    # 27 of ~950 files while ~590 files ran in no PR-triggered job). The UI
+    # shard is its own job below; OS/Python breadth lives in nightly-deep.
+    name: Core Tests (all but UI) - Python ${{ matrix.python-version }} - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13"]
-        exclude:
-          # Exclude Windows + Python 3.13 if not yet supported
-          - os: windows-latest
-            python-version: "3.13"
-    
+        include:
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.12"
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'pip'
-    
-    - name: Install core dependencies
+
+    - name: Install all dependencies
       run: |
         python -m pip install --upgrade pip setuptools wheel
         pip install -r requirements.txt
         pip install -r requirements-test.txt
-        pip install pytest-json-report pytest-cov
-    
-    - name: Install Windows-specific dependencies
-      if: runner.os == 'Windows'
+        pip install pytest-json-report
+        pip install -e ".[embeddings_rag,websearch,chunker]"
+
+    - name: Setup test environment
       run: |
-        # Install Windows-specific packages if needed
-        pip install windows-curses || echo "windows-curses not needed"
-    
-    - name: Run unit tests
-      shell: bash
+        python -c "import nltk; nltk.download('punkt', quiet=True)"
+        python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
+
+    - name: Run core tests in parallel
       run: |
-        pytest -m unit \
+        pytest Tests --ignore=Tests/UI \
+          -n auto --dist loadscope --max-worker-restart=3 \
+          --timeout=300 \
           --json-report \
-          --json-report-file=unit-test-results-${{ matrix.os }}-${{ matrix.python-version }}.json \
-          --cov=tldw_chatbook \
-          --cov-report=xml:coverage-unit-${{ matrix.os }}-${{ matrix.python-version }}.xml \
-          --cov-report=term-missing \
-          -v
-    
+          --json-report-file=core-test-results-${{ matrix.os }}-${{ matrix.python-version }}.json
+
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: unit-test-results-${{ matrix.os }}-${{ matrix.python-version }}
+        name: core-test-results-${{ matrix.os }}-${{ matrix.python-version }}
         path: |
-          unit-test-results-*.json
-          coverage-unit-*.xml
+          core-test-results-*.json
 
   artifact-lease-spike:
     name: Artifact leases - Python ${{ matrix.python-version }} - ${{ matrix.os }}
@@ -144,57 +147,6 @@ jobs:
           exit 1
         fi
 
-  integration-tests:
-    name: Integration Tests - Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
-    
-    - name: Install all dependencies
-      run: |
-        python -m pip install --upgrade pip setuptools wheel
-        pip install -r requirements.txt
-        pip install -r requirements-test.txt
-        pip install pytest-json-report pytest-cov
-        # Install optional dependencies for integration tests
-        pip install -e ".[embeddings_rag,websearch,chunker]"
-    
-    - name: Setup test environment
-      run: |
-        # Download NLTK data if needed
-        python -c "import nltk; nltk.download('punkt', quiet=True)"
-        python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
-    
-    - name: Run integration tests
-      run: |
-        pytest -m integration \
-          --json-report \
-          --json-report-file=integration-test-results-${{ matrix.python-version }}.json \
-          --cov=tldw_chatbook \
-          --cov-report=xml:coverage-integration-${{ matrix.python-version }}.xml \
-          --cov-report=term-missing \
-          -v
-    
-    - name: Upload test results
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: integration-test-results-${{ matrix.python-version }}
-        path: |
-          integration-test-results-*.json
-          coverage-integration-*.xml
-  
   ui-tests:
     name: UI Tests
     runs-on: ubuntu-latest
@@ -218,26 +170,16 @@ jobs:
         # Install textual dev tools for better debugging
         pip install textual-dev
     
-    - name: Run UI tests
-      # Run the full Tests/UI directory, not just the 47 ui-marked tests —
-      # the unmarked ~2000 tests previously ran nowhere and rotted silently
-      # (repaired in PRs #508/#510; suite is green as of those merges).
+    - name: Run UI tests in parallel
+      # The full Tests/UI directory (not just ui-marked tests), sharded with
+      # xdist (task-1465). ui-marked tests OUTSIDE Tests/UI are covered by
+      # core-tests, which runs everything but this directory.
       run: |
         pytest Tests/UI \
+          -n auto --dist loadscope --max-worker-restart=3 \
           --timeout=180 \
           --json-report \
-          --json-report-file=ui-test-results.json \
-          -v
-
-    - name: Run ui-marked tests outside Tests/UI
-      # A couple dozen ui-marked tests live in other Tests/ directories;
-      # keep collecting them so the directory switch above loses nothing.
-      run: |
-        pytest Tests -m ui --ignore=Tests/UI \
-          --timeout=180 \
-          --json-report \
-          --json-report-file=ui-marked-test-results.json \
-          -v
+          --json-report-file=ui-test-results.json
 
     - name: Upload test results
       if: always()
@@ -246,7 +188,6 @@ jobs:
         name: ui-test-results
         path: |
           ui-test-results.json
-          ui-marked-test-results.json
 
   textual-minimum:
     name: MCP - Minimum Textual 8.0.0
@@ -335,10 +276,81 @@ jobs:
         name: codecov-umbrella
         fail_ci_if_error: false
   
+  nightly-deep:
+    # task-1465: the deep tiers' only home — serial execution (order-regression
+    # canary), thorough Hypothesis profile, the --run-slow tests (which
+    # previously ran NOWHERE), CSS parse cache off (task-1459 soak), coverage,
+    # and the OS/Python breadth removed from the PR gate. Scheduled workflows
+    # run from the default branch, so this checks out dev explicitly.
+    name: Nightly Deep - Python ${{ matrix.python-version }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: macos-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.12"
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: dev
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
+    - name: Install all dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
+        pip install pytest-json-report pytest-cov
+        pip install -e ".[embeddings_rag,websearch,chunker]"
+
+    - name: Setup test environment
+      run: |
+        python -c "import nltk; nltk.download('punkt', quiet=True)"
+        python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
+
+    - name: Run deep suite (serial, thorough, slow tiers, cache-off)
+      env:
+        TLDW_HYPOTHESIS_PROFILE: thorough
+        TLDW_TEST_CSS_CACHE: "0"
+      run: |
+        pytest ./Tests/ \
+          --run-slow \
+          --timeout=600 \
+          --json-report \
+          --json-report-file=nightly-test-results-${{ matrix.os }}-${{ matrix.python-version }}.json \
+          --cov=tldw_chatbook \
+          --cov-report=xml:coverage-nightly-${{ matrix.os }}-${{ matrix.python-version }}.xml
+
+    - name: Upload nightly results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: nightly-test-results-${{ matrix.os }}-${{ matrix.python-version }}
+        path: |
+          nightly-test-results-*.json
+          coverage-nightly-*.xml
+
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [unit-tests, integration-tests, ui-tests, textual-minimum, artifact-lease-gate]
+    needs: [core-tests, ui-tests, textual-minimum, artifact-lease-gate]
     if: always()
     
     steps:
