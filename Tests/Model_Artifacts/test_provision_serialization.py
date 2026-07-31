@@ -24,6 +24,7 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
     AcquisitionConsent,
     ArtifactAcquisitionService,
     ConsentMismatchError,
+    TransferError,
 )
 from tldw_chatbook.Model_Artifacts.leases import (
     ArtifactLeaseTimeoutError,
@@ -336,14 +337,19 @@ async def test_provision_holds_session_lease_across_phase_stub(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_provision_not_yet_installed_reaches_fetch_stub(tmp_path):
-    """A not-yet-installed artifact really does reach the fetch stub.
+async def test_provision_not_yet_installed_reaches_fetch_phase(tmp_path):
+    """A not-yet-installed artifact really does reach the fetch phase.
 
-    Regression guard for the stub contract itself (lessons-testing-evidence:
-    a guard/extension-point that no test ever calls is unverified plumbing).
-    Consent is constructed directly rather than via preflight().grant() to
-    stay network-free -- preflight() would otherwise gating-probe this
-    artifact's placeholder source_url.
+    Regression guard for the extension point itself (lessons-testing-
+    evidence: a guard/extension-point that no test ever calls is unverified
+    plumbing). Originally asserted the Task 6 stub's ``NotImplementedError``;
+    Task 7 replaced that stub with a real implementation, so reaching it now
+    means a genuine network attempt against the placeholder ``source_url``
+    (an RFC 2606 ``.test`` domain, guaranteed to never resolve) -- which the
+    egress policy's DNS-failure path rejects, wrapped as ``TransferError``.
+    Consent is constructed directly rather than via ``preflight().grant()``
+    to keep this test's OWN setup network-free -- ``preflight()`` would
+    otherwise gating-probe this same placeholder URL itself.
     """
 
     core = ModelArtifactService(tmp_path / "root")
@@ -353,5 +359,6 @@ async def test_provision_not_yet_installed_reaches_fetch_stub(tmp_path):
     catalog = DictCatalog({root: desc})
     consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(root, ()))
 
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(TransferError) as excinfo:
         await svc.provision(root, consent, catalog)
+    assert excinfo.value.retryable is False

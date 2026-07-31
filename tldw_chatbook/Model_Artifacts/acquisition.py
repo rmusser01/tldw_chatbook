@@ -7,11 +7,21 @@ import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterable, Literal, Protocol
+from urllib.parse import urljoin
 
 import httpx
 
+from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise_async
 
+from .fetch import (
+    FetchRestartRequired,
+    FetchResult,
+    FetchTooLargeError,
+    FetchTransportError,
+    FetchValidators,
+    stream_fetch,
+)
 from .leases import ArtifactLeaseTimeoutError, ArtifactOperationLease, LeaseMode
 from .service import (
     ACQUISITION_SESSION_LEASE_KEY,
@@ -21,7 +31,7 @@ from .service import (
 )
 
 if TYPE_CHECKING:
-    from .service import ArtifactDescriptor, ModelArtifactService
+    from .service import ArtifactDescriptor, ArtifactFile, ModelArtifactService
 
 
 # Constants per spec (Docs/superpowers/specs/2026-07-30-managed-model-acquisition-design.md)
@@ -626,8 +636,27 @@ class ArtifactAcquisitionService:
     ) -> None:
         """Stream every declared file into durable staging with resume support.
 
-        Stub (Task 6); Task 7 implements this phase. The signature is final
-        -- ``provision()``'s call site will not change when it does.
+        For each file declared on ``descriptor``: a sidecar entry already
+        marked complete (and whose on-disk size matches) is skipped outright;
+        otherwise the durable sidecar's ``bytes_done`` is reconciled against
+        the file's ACTUAL on-disk size before any resume is attempted (see
+        ``_reconcile_durable_bytes``), then the file is streamed via
+        ``fetch.stream_fetch`` -- resumed with a ``Range`` request when
+        strong validators survive reconciliation, restarted from zero
+        otherwise. ``fetch.FetchRestartRequired`` (validators changed, or
+        the server ignored ``Range``) truncates and restarts that one file
+        from zero exactly once inline; this is unrelated to Task 8's
+        pre-verify refetch-once counter, which guards against a corrupt
+        payload that DOWNLOADED cleanly but fails its SHA-256.
+
+        Durability order (spec-mandated): ``stream_fetch`` fsyncs the file's
+        data before returning; only after a successful return is the sidecar
+        rewritten (atomically, via the same ``atomic_write_json`` the core
+        uses) to record the new checkpoint. A file that fails to fetch at
+        all -- network drop, ENOSPC, oversized body -- leaves the sidecar
+        untouched at its last durable checkpoint; the staging directory and
+        any unfsynced on-disk bytes past that checkpoint are left in place
+        (never cleaned up here) for a later resume attempt to reconcile.
 
         Args:
             descriptor: The artifact whose declared files to fetch.
@@ -637,10 +666,310 @@ class ArtifactAcquisitionService:
                 update as bytes stream in.
 
         Raises:
-            NotImplementedError: Always, until Task 7 implements this phase.
+            TransferError: A file failed to fetch -- network/transport
+                failure, disk I/O failure (e.g. ENOSPC), an egress-policy
+                block, or a response body exceeding the file's declared
+                size. ``retryable`` is True for transport/I/O failures,
+                False for an egress block or an oversized body (the same
+                URL would presumably answer the same way again).
+            asyncio.CancelledError: Propagated untouched if this call is
+                cancelled while awaiting network I/O; honored between
+                stream_fetch's internal chunks (asyncio-native, no manual
+                polling).
         """
 
-        raise NotImplementedError("fetch phase is implemented in a later task")
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        sidecar_path = staging_dir / "fetch-state.json"
+        sidecar = self._load_fetch_sidecar(sidecar_path)
+
+        client = self._client_factory() if self._client_factory is not None else None
+        owns_client = client is None
+        if owns_client:
+            client = httpx.AsyncClient()
+        assert client is not None
+        try:
+            for file in descriptor.files:
+                await self._fetch_one_file(
+                    descriptor, file, staging_dir, sidecar, sidecar_path, progress_state, client
+                )
+        finally:
+            if owns_client:
+                await client.aclose()
+
+    def _file_url(self, descriptor: ArtifactDescriptor, file: ArtifactFile) -> str:
+        """Resolve one declared file's download URL.
+
+        ``ArtifactDescriptor.source_url`` is the only fetchable location
+        this schema carries today (Task 596/1301's catalog work owns
+        richer per-file source metadata); when a descriptor declares
+        exactly one file -- the only shape exercised end-to-end so far --
+        ``source_url`` IS that file's URL directly, matching how
+        ``_probe_gating`` already treats it (a bare GET/HEAD target, never
+        joined with anything). For a descriptor declaring more than one
+        file, ``source_url`` is treated as the artifact's base location and
+        each file's relative ``path`` is joined onto it (trailing slash
+        ensured) -- the conventional repo-resolve-URL shape.
+
+        Args:
+            descriptor: The artifact descriptor supplying ``source_url``.
+            file: The declared file whose URL to resolve.
+
+        Returns:
+            The absolute URL to GET this file's bytes from.
+        """
+
+        if len(descriptor.files) == 1:
+            return descriptor.source_url
+        base = descriptor.source_url
+        if not base.endswith("/"):
+            base += "/"
+        return urljoin(base, file.path)
+
+    @staticmethod
+    def _load_fetch_sidecar(sidecar_path: Path) -> dict:
+        """Best-effort load of a fetch-state sidecar; a missing/corrupt one reads empty.
+
+        Args:
+            sidecar_path: The ``fetch-state.json`` path for one artifact.
+
+        Returns:
+            ``{"files": {...}}`` -- the parsed sidecar, or an empty shell.
+        """
+
+        try:
+            payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"files": {}}
+        files = payload.get("files") if isinstance(payload, dict) else None
+        return {"files": files if isinstance(files, dict) else {}}
+
+    @staticmethod
+    def _reconcile_durable_bytes(destination: Path, recorded_done: int) -> int:
+        """Trust on-disk bytes only up to the sidecar's durable checkpoint.
+
+        ``fetch.stream_fetch`` resumes by opening its destination in append
+        mode at whatever the file's CURRENT length happens to be -- it does
+        not seek to ``resume_from`` itself. A file that grew past the last
+        durable sidecar checkpoint (a crash or dropped connection after
+        partial, un-fsynced writes) must be truncated back down to that
+        checkpoint before any resume is attempted, or unverified bytes would
+        be silently trusted. Symmetrically, a file SHORTER than the sidecar
+        claims means the sidecar itself over-claims -- nothing about it can
+        be trusted, so this restarts the file from zero.
+
+        Args:
+            destination: The staged file's path (may not exist yet).
+            recorded_done: The sidecar's last durably recorded byte count
+                for this file (0 if there is no usable entry).
+
+        Returns:
+            The byte count now safe to resume from -- always either
+            ``recorded_done`` (file truncated down to it, or already
+            consistent) or ``0`` (sidecar over-claimed; file removed).
+        """
+
+        actual_bytes = destination.stat().st_size if destination.exists() else 0
+        if actual_bytes > recorded_done:
+            with open(destination, "r+b") as fh:
+                fh.truncate(recorded_done)
+            return recorded_done
+        if actual_bytes < recorded_done:
+            if destination.exists():
+                destination.unlink()
+            return 0
+        return recorded_done
+
+    async def _fetch_one_file(
+        self,
+        descriptor: ArtifactDescriptor,
+        file: ArtifactFile,
+        staging_dir: Path,
+        sidecar: dict,
+        sidecar_path: Path,
+        progress_state: _ProvisionProgressState,
+        client: httpx.AsyncClient,
+    ) -> None:
+        """Fetch (or skip, or resume, or restart) one declared file.
+
+        Args:
+            descriptor: The artifact this file belongs to.
+            file: The declared file to fetch.
+            staging_dir: The durable staging directory for this artifact.
+            sidecar: The mutable in-memory sidecar payload (``{"files": {}}``);
+                updated and persisted in place on a successful fetch.
+            sidecar_path: Where to atomically persist ``sidecar`` after a
+                successful fetch.
+            progress_state: Closure-wide progress accounting.
+            client: The shared ``httpx.AsyncClient`` for this artifact's
+                fetch phase.
+
+        Raises:
+            TransferError: See ``_fetch_artifact``.
+        """
+
+        destination = staging_dir / file.path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+
+        entry = sidecar["files"].get(file.path)
+        entry = dict(entry) if isinstance(entry, dict) else {}
+        recorded_raw = entry.get("bytes_done")
+        recorded_done = (
+            recorded_raw
+            if isinstance(recorded_raw, int)
+            and not isinstance(recorded_raw, bool)
+            and recorded_raw >= 0
+            else 0
+        )
+
+        recorded_done = self._reconcile_durable_bytes(destination, recorded_done)
+
+        if recorded_done == file.size_bytes:
+            # Reconciliation already confirms the on-disk file is exactly
+            # the declared size -- nothing left to fetch. SHA-256 content
+            # correctness is Task 8's pre-verify job, not this phase's.
+            if not entry.get("complete") or entry.get("bytes_done") != recorded_done:
+                sidecar["files"][file.path] = {
+                    "etag": entry.get("etag"),
+                    "last_modified": entry.get("last_modified"),
+                    "bytes_done": recorded_done,
+                    "complete": True,
+                }
+                atomic_write_json(sidecar_path, sidecar)
+            return
+
+        validators: FetchValidators | None = None
+        if entry.get("etag") is not None or entry.get("last_modified") is not None:
+            validators = FetchValidators(
+                etag=entry.get("etag"), last_modified=entry.get("last_modified")
+            )
+        resume_from = (
+            recorded_done if recorded_done and validators is not None and validators.strong else 0
+        )
+
+        url = self._file_url(descriptor, file)
+
+        def on_chunk(count: int) -> None:
+            progress_state.bytes_done += count
+            if progress_state.callback is not None:
+                progress_state.callback(
+                    AcquisitionProgress(
+                        phase="fetch",
+                        ref=descriptor.reference,
+                        file=file.path,
+                        bytes_done=progress_state.bytes_done,
+                        bytes_total=progress_state.bytes_total,
+                    )
+                )
+
+        try:
+            result, used_resume_from = await self._stream_with_restart(
+                url,
+                destination,
+                client=client,
+                max_bytes=file.size_bytes,
+                resume_from=resume_from,
+                validators=validators,
+                on_chunk=on_chunk,
+            )
+        except OSError as exc:
+            raise TransferError(
+                f"I/O error fetching '{file.path}': {exc}", retryable=True
+            ) from exc
+        except FetchTooLargeError as exc:
+            raise TransferError(
+                f"upstream body exceeds declared size for '{file.path}': {exc}",
+                retryable=False,
+            ) from exc
+        except FetchTransportError as exc:
+            raise TransferError(
+                f"transport error fetching '{file.path}': {exc}", retryable=True
+            ) from exc
+        except EgressBlockedError as exc:
+            # Never a raw exception mid-provision (spec's never-trap rule):
+            # unlike _probe_gating's own best-effort HEAD probe (which
+            # silently skips a blocked URL -- consent doesn't hinge on it),
+            # an egress block during the real fetch means these bytes
+            # genuinely cannot be retrieved. Not retryable: it's a policy
+            # decision on this URL, not a transient network condition.
+            raise TransferError(
+                f"egress policy blocked fetching '{file.path}': {exc}", retryable=False
+            ) from exc
+
+        total_done = used_resume_from + result.bytes_written
+        sidecar["files"][file.path] = {
+            "etag": result.validators.etag,
+            "last_modified": result.validators.last_modified,
+            "bytes_done": total_done,
+            "complete": total_done == file.size_bytes,
+        }
+        atomic_write_json(sidecar_path, sidecar)
+
+    async def _stream_with_restart(
+        self,
+        url: str,
+        destination: Path,
+        *,
+        client: httpx.AsyncClient,
+        max_bytes: int,
+        resume_from: int,
+        validators: FetchValidators | None,
+        on_chunk: Callable[[int], None],
+    ) -> tuple[FetchResult, int]:
+        """Call ``stream_fetch``, restarting once from zero on FetchRestartRequired.
+
+        Args:
+            url: The file's download URL.
+            destination: Where to stream the file's bytes.
+            client: The shared ``httpx.AsyncClient``.
+            max_bytes: The hard bound on the final file size (the
+                descriptor's declared ``size_bytes`` for this file).
+            resume_from: Durable bytes already on disk (post-reconciliation).
+            validators: Validators the existing bytes were fetched under.
+            on_chunk: Progress callback forwarded to ``stream_fetch``.
+
+        Returns:
+            The successful ``FetchResult`` together with the ``resume_from``
+            value actually used to obtain it (``0`` if a restart occurred).
+
+        Raises:
+            FetchRestartRequired: Raised again if even a from-zero attempt
+                is rejected (not expected in practice -- ``stream_fetch``
+                only raises this for a nonzero ``resume_from``).
+            FetchTooLargeError: Propagated from ``stream_fetch``.
+            FetchTransportError: Propagated from ``stream_fetch``.
+            OSError: Propagated from a local disk failure (e.g. ENOSPC).
+        """
+
+        try:
+            result = await stream_fetch(
+                url,
+                destination,
+                client=client,
+                max_bytes=max_bytes,
+                resume_from=resume_from,
+                validators=validators,
+                headers=None,
+                trusted_origins=self._trusted_origins,
+                on_chunk=on_chunk,
+            )
+            return result, resume_from
+        except FetchRestartRequired:
+            if resume_from == 0:
+                raise
+            if destination.exists():
+                destination.unlink()
+            result = await stream_fetch(
+                url,
+                destination,
+                client=client,
+                max_bytes=max_bytes,
+                resume_from=0,
+                validators=None,
+                headers=None,
+                trusted_origins=self._trusted_origins,
+                on_chunk=on_chunk,
+            )
+            return result, 0
 
     async def _preverify_artifact(
         self,

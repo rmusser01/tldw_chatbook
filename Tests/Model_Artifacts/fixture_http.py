@@ -18,6 +18,8 @@ class _Route:
     require_token: str | None
     last_modified: str | None = None
     ignore_if_range: bool = False
+    pause_after: int | None = None
+    pause_event: threading.Event | None = None
 
 
 class FixtureArtifactServer:
@@ -103,6 +105,20 @@ class FixtureArtifactServer:
                     self.wfile.flush()
                     self.connection.close()  # simulate mid-body drop
                     return
+                pause_at = route.pause_after
+                if pause_at is not None and pause_at < len(body):
+                    # Write a first slice, then block this request-handler
+                    # thread on a test-supplied gate before sending the
+                    # rest -- a genuinely slow/open connection for
+                    # cancellation tests, not a sleep-based guess. Bounded
+                    # so a test that forgets to set the gate can't hang
+                    # server teardown forever.
+                    self.wfile.write(body[:pause_at])
+                    self.wfile.flush()
+                    if route.pause_event is not None:
+                        route.pause_event.wait(timeout=5.0)
+                    self.wfile.write(body[pause_at:])
+                    return
                 self.wfile.write(body)
 
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -120,6 +136,8 @@ class FixtureArtifactServer:
         disconnect_after: int | None = None,
         require_token: str | None = None,
         ignore_if_range: bool = False,
+        pause_after: int | None = None,
+        pause_event: threading.Event | None = None,
     ) -> None:
         """Register (or replace) a route this server responds to.
 
@@ -140,6 +158,12 @@ class FixtureArtifactServer:
                 (206) unconditionally even when ``If-Range`` doesn't match
                 the route's current validator, instead of falling back to a
                 full 200.
+            pause_after: If set, write only this many bytes, then block the
+                request-handler thread on ``pause_event`` (bounded to 5s)
+                before sending the rest -- keeps a connection genuinely
+                open/slow for cancellation tests.
+            pause_event: The gate ``pause_after`` blocks on; the test sets
+                it to release the remainder of the body.
         """
         if etag and weak_etag:
             etag = f"W/{etag}"
@@ -151,6 +175,8 @@ class FixtureArtifactServer:
             require_token=require_token,
             last_modified=last_modified,
             ignore_if_range=ignore_if_range,
+            pause_after=pause_after,
+            pause_event=pause_event,
         )
 
     def url(self, path: str) -> str:
