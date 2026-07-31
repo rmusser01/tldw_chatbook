@@ -13,7 +13,9 @@ import tldw_chatbook.Notes.file_notes_session_owner as session_owner
 from tldw_chatbook.Notes.file_notes_git_commit import CommitRecoveryProjection
 from tldw_chatbook.Notes.file_notes_git_push import (
     PushIncludedNote,
+    RemoteRefObservation,
     parse_push_endpoint,
+    push_recovery_copy,
 )
 from tldw_chatbook.Notes.file_notes_session_owner import (
     CommitAuthorityCapture,
@@ -1075,6 +1077,169 @@ def test_spent_push_review_cannot_revoke_new_review_under_same_authorization(
         )
         is not None
     )
+
+
+def _retain_owner_uncertain_push(
+    owner: FileNotesSessionOwner,
+    binding: SessionBinding,
+    *,
+    descendants_terminal: bool,
+):
+    repository, candidate, policy = _capture_destination_policy(owner, binding)
+    assert policy is not None
+    authorization = owner._authorize_destination_policy(policy)
+    assert authorization is not None
+    operation_id = object()
+    context = object()
+    issued = owner._capture_push_review_after_parent_observation(
+        policy,
+        authorization,
+        operation_id=operation_id,
+        network_context=context,
+        command_policy_fingerprint="4" * 64,
+        parent_oid="b" * 40,
+    )
+    assert issued is not None
+    review, _projection = issued
+    lease = owner.try_acquire_mutation(binding)
+    assert lease is not None
+    consumed_review = owner._consume_push_review(
+        review,
+        operation_id=operation_id,
+        network_context=context,
+    )
+    assert consumed_review is not None
+    recovery = push_recovery_copy(
+        policy.destination,
+        RemoteRefObservation("malformed"),
+    )
+    retained = owner._retain_uncertain_push(
+        lease,
+        consumed_review,
+        recovery,
+        descendants_terminal=descendants_terminal,
+    )
+    assert retained is not None
+    capture, handle = retained
+    return repository, candidate, policy, lease, capture, handle
+
+
+def test_uncertain_push_owner_retains_single_use_query_authority_and_gate(
+    tmp_path: Path,
+) -> None:
+    """A reusable review or an early recovery admission must be impossible."""
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    (
+        _repository,
+        _candidate,
+        _policy,
+        lease,
+        recovery_capture,
+        recovery_handle,
+    ) = _retain_owner_uncertain_push(
+        owner,
+        binding,
+        descendants_terminal=False,
+    )
+
+    snapshot = owner.snapshot(binding)
+    assert snapshot.push_recovery is not None
+    assert snapshot.push_recovery_available is False
+    assert snapshot.push_review_generation > 0
+    assert owner.mutation_active(binding)
+    assert not owner._consume_push_recovery(
+        recovery_capture,
+        recovery_handle,
+    )
+
+    assert owner._mark_push_recovery_descendants_terminal(recovery_capture)
+    assert owner.snapshot(binding).push_recovery_available is True
+    assert owner._consume_push_recovery(recovery_capture, recovery_handle)
+    assert not owner._consume_push_recovery(recovery_capture, recovery_handle)
+    parent = push_recovery_copy(
+        recovery_capture.destination,
+        RemoteRefObservation("parent", "b" * 40),
+    )
+    next_handle = owner._publish_push_recovery(
+        recovery_capture,
+        parent,
+    )
+    assert next_handle is not None
+    assert next_handle is not recovery_handle
+    assert owner.snapshot(binding).push_recovery == parent
+    assert owner.mutation_active(binding)
+    assert owner._clear_push_recovery(recovery_capture)
+    lease.release()
+    assert owner.snapshot(binding).push_recovery is None
+    assert not owner.mutation_active(binding)
+
+
+def test_uncertain_push_owner_trust_aba_needs_fresh_frozen_identity_grant(
+    tmp_path: Path,
+) -> None:
+    """An old recovery handle must not survive trust ABA."""
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    (
+        repository,
+        _candidate,
+        policy,
+        lease,
+        recovery_capture,
+        stale_handle,
+    ) = _retain_owner_uncertain_push(
+        owner,
+        binding,
+        descendants_terminal=True,
+    )
+
+    assert owner.clear_trust_if_matches(binding, repository)
+    assert owner.publish_trust(binding, repository)
+    assert not owner._consume_push_recovery(recovery_capture, stale_handle)
+    fresh_handle = owner._authorize_push_recovery(recovery_capture)
+
+    assert fresh_handle is not None
+    assert fresh_handle is not stale_handle
+    assert recovery_capture.destination == policy.destination
+    assert owner._consume_push_recovery(recovery_capture, fresh_handle)
+    assert owner._clear_push_recovery(recovery_capture)
+    lease.release()
+
+
+def test_uncertain_push_restart_discards_process_only_attribution(
+    tmp_path: Path,
+) -> None:
+    """A new process must never infer or revive an uncertain push attempt."""
+    root = tmp_path / "notes"
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    (
+        _repository,
+        _candidate,
+        _policy,
+        _lease,
+        _recovery_capture,
+        _recovery_handle,
+    ) = _retain_owner_uncertain_push(
+        owner,
+        binding,
+        descendants_terminal=True,
+    )
+    assert owner.snapshot(binding).push_recovery is not None
+
+    owner.shutdown()
+
+    closed = owner.snapshot(binding)
+    assert closed.push_candidate is None
+    assert closed.push_recovery is None
+    assert not owner.mutation_active(binding)
+    restarted = FileNotesSessionOwner()
+    restarted_binding = restarted.select_root(root)
+    restarted_snapshot = restarted.snapshot(restarted_binding)
+    assert restarted_snapshot.push_candidate is None
+    assert restarted_snapshot.push_recovery is None
+    assert restarted_snapshot.push_recovery_generation == 0
 
 
 def test_candidate_publication_is_atomic_with_success_and_copies_provenance(

@@ -21,9 +21,12 @@ from tldw_chatbook.Notes.file_notes_git_push import (
     PushContractError,
     PushDestinationProjection,
     PushIncludedNote,
+    PushRecoveryHandle,
+    PushRecoveryProjection,
     PushReviewHandle,
     PushReviewProjection,
     _issue_push_authorization_handle,
+    _issue_push_recovery_handle,
     _issue_push_review_handle,
 )
 
@@ -494,6 +497,9 @@ class FileNotesSessionSnapshot:
     destination_policy_generation: int = 0
     destination_authorization_epoch: int = 0
     push_review_generation: int = 0
+    push_recovery: PushRecoveryProjection | None = None
+    push_recovery_available: bool = False
+    push_recovery_generation: int = 0
 
 
 class FileNotesGitServiceLifecycle(Protocol):
@@ -799,6 +805,21 @@ class _RetiredPushReview:
     authorization_epoch: int
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class _PushRecoveryCapture:
+    """Exact immutable identity for one uncertain query-only recovery."""
+
+    binding: SessionBinding
+    candidate_capture: _PushCandidateCapture = field(repr=False)
+    destination: PushDestinationProjection
+    parent_oid: str
+    candidate_oid: str
+    repository_trust_generation: int
+    destination_policy_generation: int
+    destination_authorization_epoch: int
+    generation: int
+
+
 @dataclass(frozen=True, slots=True)
 class RootCommitReservation:
     """Fail-fast ownership of one validated root commit."""
@@ -877,6 +898,13 @@ class FileNotesSessionOwner:
         "_push_review_capture",
         "_push_review_generation",
         "_retired_push_review",
+        "_push_recovery_capture",
+        "_push_recovery_descendants_terminal",
+        "_push_recovery_generation",
+        "_push_recovery_grant",
+        "_push_recovery_grant_trust_generation",
+        "_push_recovery_projection",
+        "_push_recovery_query_trust_generation",
         "_shutdown",
         "_shutdown_condition",
         "_shutdown_error",
@@ -912,6 +940,13 @@ class FileNotesSessionOwner:
         self._push_review_capture: _PushReviewCapture | None = None
         self._push_review_generation = 0
         self._retired_push_review: _RetiredPushReview | None = None
+        self._push_recovery_capture: _PushRecoveryCapture | None = None
+        self._push_recovery_projection: PushRecoveryProjection | None = None
+        self._push_recovery_descendants_terminal = False
+        self._push_recovery_generation = 0
+        self._push_recovery_grant: PushRecoveryHandle | None = None
+        self._push_recovery_grant_trust_generation = 0
+        self._push_recovery_query_trust_generation: int | None = None
         self._issued_commit_capture: CommitAuthorityCapture | None = None
         self._issued_commit_identity: object | None = None
         self._issued_commit_publication_token: object | None = None
@@ -1111,6 +1146,12 @@ class FileNotesSessionOwner:
                     self._destination_authorization_epoch
                 ),
                 push_review_generation=self._push_review_generation,
+                push_recovery=self._push_recovery_projection,
+                push_recovery_available=(
+                    self._push_recovery_capture is not None
+                    and self._push_recovery_descendants_terminal
+                ),
+                push_recovery_generation=self._push_recovery_generation,
             )
 
     def publish_trust(
@@ -1779,6 +1820,180 @@ class FileNotesSessionOwner:
             self._push_review_generation += 1
             return capture
 
+    def _retain_uncertain_push(
+        self,
+        lease: GitMutationLease,
+        review: _PushReviewCapture,
+        projection: PushRecoveryProjection,
+        *,
+        descendants_terminal: bool,
+    ) -> tuple[_PushRecoveryCapture, PushRecoveryHandle] | None:
+        """Replace consumed push authority with one query-only capability."""
+        if (
+            type(projection) is not PushRecoveryProjection
+            or type(descendants_terminal) is not bool
+        ):
+            return None
+        with self._lock:
+            policy = review.policy_capture
+            candidate_capture = review.candidate_capture
+            retired = self._retired_push_review
+            if (
+                self._push_recovery_capture is not None
+                or not self._lease_is_active_locked(lease)
+                or retired is None
+                or retired.authorization is not review.authorization
+                or retired.authorization_epoch != review.authorization_epoch
+                or projection.destination != policy.destination
+                or candidate_capture.binding != self._binding
+            ):
+                return None
+            if review.authorization is self._destination_authorization:
+                self._revoke_destination_authorization_locked(force_epoch=True)
+            self._push_recovery_generation += 1
+            capture = _PushRecoveryCapture(
+                binding=candidate_capture.binding,
+                candidate_capture=candidate_capture,
+                destination=policy.destination,
+                parent_oid=candidate_capture.candidate.parent_oid,
+                candidate_oid=candidate_capture.candidate.candidate_oid,
+                repository_trust_generation=(
+                    candidate_capture.repository_trust_generation
+                ),
+                destination_policy_generation=policy.policy_generation,
+                destination_authorization_epoch=(
+                    review.authorization_epoch
+                ),
+                generation=self._push_recovery_generation,
+            )
+            handle = _issue_push_recovery_handle()
+            self._push_recovery_capture = capture
+            self._push_recovery_projection = projection
+            self._push_recovery_descendants_terminal = descendants_terminal
+            self._push_recovery_grant = handle
+            self._push_recovery_grant_trust_generation = (
+                self._repository_trust_generation
+            )
+            self._push_recovery_query_trust_generation = None
+            return capture, handle
+
+    def _mark_push_recovery_descendants_terminal(
+        self,
+        capture: _PushRecoveryCapture,
+    ) -> bool:
+        """Enable query admission only for the exact settled recovery."""
+        with self._lock:
+            if capture is not self._push_recovery_capture:
+                return False
+            if not self._push_recovery_descendants_terminal:
+                self._push_recovery_descendants_terminal = True
+                self._push_recovery_generation += 1
+            return True
+
+    def _mark_push_recovery_descendants_unsettled(
+        self,
+        capture: _PushRecoveryCapture,
+    ) -> bool:
+        """Disable further queries when a recovery child lacks settlement."""
+        with self._lock:
+            if capture is not self._push_recovery_capture:
+                return False
+            if self._push_recovery_descendants_terminal:
+                self._push_recovery_descendants_terminal = False
+                self._push_recovery_generation += 1
+            return True
+
+    def _consume_push_recovery(
+        self,
+        capture: _PushRecoveryCapture,
+        handle: PushRecoveryHandle,
+    ) -> bool:
+        """Consume one exact trust-current query capability once."""
+        with self._lock:
+            if (
+                self._shutdown
+                or capture is not self._push_recovery_capture
+                or handle is not self._push_recovery_grant
+                or capture.binding != self._binding
+                or not self._push_recovery_descendants_terminal
+                or self._push_recovery_grant_trust_generation
+                != self._repository_trust_generation
+                or self._mutation_token is None
+            ):
+                return False
+            self._push_recovery_query_trust_generation = (
+                self._push_recovery_grant_trust_generation
+            )
+            self._push_recovery_grant = None
+            self._push_recovery_generation += 1
+            return True
+
+    def _authorize_push_recovery(
+        self,
+        capture: _PushRecoveryCapture,
+    ) -> PushRecoveryHandle | None:
+        """Issue a fresh query-only grant for the same frozen destination."""
+        with self._lock:
+            if (
+                self._shutdown
+                or capture is not self._push_recovery_capture
+                or capture.binding != self._binding
+                or not self._push_recovery_descendants_terminal
+                or self._mutation_token is None
+            ):
+                return None
+            handle = _issue_push_recovery_handle()
+            self._push_recovery_grant = handle
+            self._push_recovery_grant_trust_generation = (
+                self._repository_trust_generation
+            )
+            self._push_recovery_query_trust_generation = None
+            self._push_recovery_generation += 1
+            return handle
+
+    def _publish_push_recovery(
+        self,
+        capture: _PushRecoveryCapture,
+        projection: PushRecoveryProjection,
+    ) -> PushRecoveryHandle | None:
+        """Publish one unresolved query result and renew only query authority."""
+        if type(projection) is not PushRecoveryProjection:
+            return None
+        with self._lock:
+            if (
+                self._shutdown
+                or capture is not self._push_recovery_capture
+                or capture.binding != self._binding
+                or projection.destination != capture.destination
+                or self._push_recovery_grant is not None
+                or self._push_recovery_query_trust_generation is None
+                or self._mutation_token is None
+            ):
+                return None
+            query_trust_generation = self._push_recovery_query_trust_generation
+            self._push_recovery_projection = projection
+            self._push_recovery_query_trust_generation = None
+            self._push_recovery_generation += 1
+            if query_trust_generation != self._repository_trust_generation:
+                return None
+            handle = _issue_push_recovery_handle()
+            self._push_recovery_grant = handle
+            self._push_recovery_grant_trust_generation = (
+                self._repository_trust_generation
+            )
+            return handle
+
+    def _clear_push_recovery(
+        self,
+        capture: _PushRecoveryCapture,
+    ) -> bool:
+        """Compare-and-clear one exact process-only recovery identity."""
+        with self._lock:
+            if capture is not self._push_recovery_capture:
+                return False
+            self._discard_push_recovery_locked()
+            return True
+
     def _revoke_destination_authorization(
         self,
         authorization: PushAuthorizationHandle,
@@ -2088,7 +2303,6 @@ class FileNotesSessionOwner:
                 assert self._shutdown_error is not None
                 raise self._shutdown_error
             self._shutdown = True
-            self._revoke_push_candidate_locked()
             self._commit_publication_closed = False
             self._git_shutdown_settlement_future = None
             self._shutdown_state = "closing"
@@ -2112,6 +2326,7 @@ class FileNotesSessionOwner:
                 else:
                     self._commit_publication_closed = True
                     self._discard_commit_quarantine_locked()
+                    self._discard_push_process_state_locked()
                     self._shutdown_error = error
                     self._shutdown_state = "failed"
                 self._shutdown_condition.notify_all()
@@ -2121,6 +2336,7 @@ class FileNotesSessionOwner:
             if self._git_shutdown_settlement is None:
                 self._commit_publication_closed = True
                 self._discard_commit_quarantine_locked()
+                self._discard_push_process_state_locked()
             self._shutdown_state = "closed"
             self._shutdown_condition.notify_all()
 
@@ -2137,6 +2353,7 @@ class FileNotesSessionOwner:
                 if self._shutdown:
                     self._commit_publication_closed = True
                     self._discard_commit_quarantine_locked()
+                    self._discard_push_process_state_locked()
                 return
             settlement_future = self._git_shutdown_settlement_future
             if settlement_future is None:
@@ -2159,6 +2376,7 @@ class FileNotesSessionOwner:
             with self._lock:
                 self._commit_publication_closed = True
                 self._discard_commit_quarantine_locked()
+                self._discard_push_process_state_locked()
 
     @staticmethod
     def _retrieve_git_shutdown_settlement(
@@ -2515,6 +2733,24 @@ class FileNotesSessionOwner:
         self._push_review_capture = None
         if had_review:
             self._push_review_generation += 1
+
+    def _discard_push_recovery_locked(self) -> None:
+        """Discard one process-only uncertain recovery without side effects."""
+        had_recovery = self._push_recovery_capture is not None
+        self._push_recovery_capture = None
+        self._push_recovery_projection = None
+        self._push_recovery_descendants_terminal = False
+        self._push_recovery_grant = None
+        self._push_recovery_grant_trust_generation = 0
+        self._push_recovery_query_trust_generation = None
+        if had_recovery:
+            self._push_recovery_generation += 1
+
+    def _discard_push_process_state_locked(self) -> None:
+        """Forget every in-memory push attribution only after settlement."""
+        self._revoke_push_candidate_locked()
+        self._discard_push_recovery_locked()
+        self._mutation_token = None
 
     def _invalidate_git_authority_locked(self) -> None:
         self._git_authority_generation += 1

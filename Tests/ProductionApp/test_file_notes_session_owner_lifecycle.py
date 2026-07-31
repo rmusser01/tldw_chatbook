@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from os import fsdecode
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,18 @@ from Tests.Notes.test_file_notes_git_commit_integration import (
     _init_repository,
     _prepare_owned_review,
     _prepare_uncertain_commit_recovery,
+)
+from Tests.Notes.test_file_notes_git_push_service import (
+    _BlockingExactPushRunner,
+    _BlockingPushPreflightRunner,
+    _ControlledExactPushRunner,
+    _accepted_push_result,
+    _authorize_current_push,
+    _candidate_owner,
+    _current_push_operation,
+    _network_factory,
+    _prepare_exact_push_review,
+    _remote_observation,
 )
 from Tests.UI.app_factory import _build_test_app
 
@@ -87,6 +100,73 @@ class _BlockingOwnerProbe:
             self.events.append("git-owner-failed")
             raise self.failure
         self.events.append("git-owner-settled")
+
+
+class _ShutdownSettledPushRunner(_BlockingExactPushRunner):
+    """Let owner-first shutdown settle an already-started exact push."""
+
+    def __init__(self, *args, events: list[str], **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.events = events
+
+    async def run(self, argv, **kwargs):
+        command = tuple(fsdecode(argument) for argument in argv)
+        try:
+            return await super().run(argv, **kwargs)
+        finally:
+            if "push" in command:
+                self.events.append("push-settled")
+
+    def shutdown(self) -> None:
+        self.events.append("runner-shutdown")
+        self.release_push.set()
+
+
+class _ShutdownSettledPreflightRunner(_BlockingPushPreflightRunner):
+    """Let owner-first shutdown settle one retained preflight query."""
+
+    def __init__(self, *args, events: list[str], **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.events = events
+
+    async def run(self, argv, **kwargs):
+        command = tuple(fsdecode(argument) for argument in argv)
+        try:
+            return await super().run(argv, **kwargs)
+        finally:
+            if "ls-remote" in command:
+                self.events.append("preflight-settled")
+
+    def shutdown(self) -> None:
+        self.events.append("runner-shutdown")
+        self.release_query.set()
+
+
+class _ShutdownSettledRecoveryRunner(_ControlledExactPushRunner):
+    """Pause only the manual query after an uncertain push has settled."""
+
+    def __init__(self, *args, events: list[str], **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.events = events
+        self.query_count = 0
+        self.recovery_started = asyncio.Event()
+        self.release_recovery = asyncio.Event()
+
+    async def run(self, argv, **kwargs):
+        command = tuple(fsdecode(argument) for argument in argv)
+        if "ls-remote" in command:
+            self.query_count += 1
+            if self.query_count == 4:
+                self.recovery_started.set()
+                await self.release_recovery.wait()
+                result = await super().run(argv, **kwargs)
+                self.events.append("recovery-settled")
+                return result
+        return await super().run(argv, **kwargs)
+
+    def shutdown(self) -> None:
+        self.events.append("runner-shutdown")
+        self.release_recovery.set()
 
 
 async def _wait_for_library(app, pilot) -> LibraryScreen:
@@ -424,3 +504,91 @@ async def test_retained_commit_shutdown_joins_cancelled_recovery_before_owner_cl
     assert runner.commit_calls == 1
     assert not owner.mutation_active(binding)
     assert owner.snapshot(binding).commit_recovery is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ("preflight", "push", "recovery"))
+async def test_push_shutdown_settles_owner_before_replica_teardown(
+    tmp_path: Path,
+    phase: str,
+) -> None:
+    """Active guarded-push work must settle before mounted replica teardown."""
+    events: list[str] = []
+    owner, binding, repository = _candidate_owner(tmp_path)
+    if phase == "preflight":
+        runner = _ShutdownSettledPreflightRunner(
+            repository,
+            _remote_observation("b" * 40),
+            events=events,
+        )
+    elif phase == "push":
+        runner = _ShutdownSettledPushRunner(
+            repository,
+            observations=(
+                _remote_observation("b" * 40),
+                _remote_observation("b" * 40),
+                _remote_observation("d" * 40),
+            ),
+            push_result=_accepted_push_result(),
+            events=events,
+        )
+    else:
+        runner = _ShutdownSettledRecoveryRunner(
+            repository,
+            observations=(
+                _remote_observation("b" * 40),
+                _remote_observation("b" * 40),
+                _remote_observation("b" * 40),
+                _remote_observation("d" * 40),
+            ),
+            push_result=_accepted_push_result(),
+            events=events,
+        )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+        network_context_factory=_network_factory(tmp_path),
+    )
+    owner.attach_git_service(service)
+    workspace = _ReplicaWorkspaceProbe(events)
+    app = _build_test_app(configured_default="library")
+    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    app.file_notes_session_owner = owner
+    waiter = None
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        screen = await _wait_for_library(app, pilot)
+        screen._library_file_notes_workspace = workspace
+        if phase == "preflight":
+            assert (await service.start_push_review(binding)).state == "ready"
+            waiter = _authorize_current_push(service, binding)
+            await asyncio.wait_for(runner.started.wait(), 1.0)
+        elif phase == "push":
+            reviewed = await _prepare_exact_push_review(service, binding)
+            waiter = service.start_push(binding, reviewed.handle)
+            await asyncio.wait_for(runner.push_started.wait(), 1.0)
+        else:
+            reviewed = await _prepare_exact_push_review(service, binding)
+            pushed = await service.start_push(binding, reviewed.handle)
+            assert pushed.state == "uncertain"
+            waiter = service.check_push_again(
+                binding,
+                _current_push_operation(service, binding),
+            )
+            await asyncio.wait_for(runner.recovery_started.wait(), 1.0)
+
+    assert waiter is not None
+    await asyncio.wait_for(waiter, 1.0)
+    settled_event = f"{phase}-settled"
+    assert events.index("runner-shutdown") < events.index(settled_event)
+    assert events.index(settled_event) < events.index("replica-closed")
+    assert workspace.shutdown_calls == 1
+    assert not owner.mutation_active(binding)
+    snapshot = owner.snapshot(binding)
+    assert snapshot.push_candidate is None
+    assert snapshot.push_recovery is None
+    context_parent = tmp_path / "network-contexts"
+    assert not context_parent.exists() or not any(context_parent.iterdir())

@@ -227,6 +227,24 @@ class _RecordingRunner(AsyncGitProcessRunner):
         return result
 
 
+class _LostPushResponseRunner(_RecordingRunner):
+    """Run the real update, then discard its response to force uncertainty."""
+
+    async def run(self, argv: Sequence[GitArg], **kwargs) -> GitCommandResult:
+        result = await super().run(argv, **kwargs)
+        command = tuple(os.fsdecode(argument) for argument in argv)
+        if "push" not in command:
+            return result
+        return GitCommandResult(
+            None,
+            b"",
+            b"",
+            termination_uncertain=True,
+            owned_process_tree=result.owned_process_tree,
+            containment_proved=result.containment_proved,
+        )
+
+
 class _Barrier:
     def __init__(self) -> None:
         self.entered = asyncio.Event()
@@ -595,6 +613,62 @@ async def test_exact_push_uses_frozen_context_during_concurrent_edit_and_config_
         assert (source / "note.md").read_bytes() == concurrent_bytes
         assert replica.get_bytes(str(source.resolve()), "note.md") == concurrent_bytes
         assert owner.snapshot(binding).push_candidate is None
+    finally:
+        replica.close()
+        await service.shutdown()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="guarded push is POSIX-only")
+@pytest.mark.asyncio
+async def test_uncertain_push_recovery_queries_original_without_touching_notes(
+    tmp_path: Path,
+) -> None:
+    """A lost response recovers desired state with one query and no retry."""
+    source, destination, (parent_oid, candidate_oid) = (
+        _init_source_and_destination(tmp_path)
+    )
+    decoy = tmp_path / "replacement.git"
+    _git(tmp_path, "init", "--bare", str(decoy))
+    owner, binding = _owner_for_candidate(source, parent_oid, candidate_oid)
+    runner = _LostPushResponseRunner()
+    service = _service(owner, runner)
+    reviewed = await _review(service, binding)
+    replica = FileNotesReplica(tmp_path / "file-notes.sqlite3")
+
+    pushed = await service.start_push(binding, reviewed.handle)
+
+    assert pushed.state == "uncertain"
+    assert owner.mutation_active(binding)
+    assert _git_dir(destination, "rev-parse", BRANCH_REF).decode().strip() == (
+        candidate_oid
+    )
+    _git(source, "config", "remote.origin.pushurl", str(decoy))
+    edited = b"same-root edit during uncertain recovery\n"
+    (source / "note.md").write_bytes(edited)
+    assert owner.record_change(binding, SessionChange("modified", "note.md"))
+    replica.upsert_file(
+        str(source.resolve()),
+        "note.md",
+        edited,
+        content_hash="f" * 64,
+        decoded_text=edited.decode(),
+        size=len(edited),
+        mtime_ns=3,
+    )
+    try:
+        operation = service.retained_push_operation(binding)
+        assert operation is not None
+        recovery = await service.check_push_again(binding, operation)
+
+        assert recovery.state == "succeeded"
+        assert not owner.mutation_active(binding)
+        assert owner.snapshot(binding).push_recovery is None
+        assert replica.get_bytes(str(source.resolve()), "note.md") == edited
+        assert (source / "note.md").read_bytes() == edited
+        assert not _refs(decoy, bare=True)
+        push_calls = [argv for argv, _kwargs in runner.calls if "push" in argv]
+        assert len(push_calls) == 1
+        assert runner.calls[-1][0][-2:] == (str(destination), BRANCH_REF)
     finally:
         replica.close()
         await service.shutdown()
