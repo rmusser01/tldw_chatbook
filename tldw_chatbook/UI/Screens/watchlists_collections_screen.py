@@ -63,6 +63,7 @@ from ..Watchlists_Modules.artifacts_pane import (
     GenerateBriefingRequested,
     RefreshBriefingsRequested,
 )
+from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
 from ..Watchlists_Modules.content_pane import ContentPane, UnreadToggleRequested
 from ..Watchlists_Modules.items_pane import (
     ItemSelected,
@@ -343,6 +344,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # the watchlist actually generating instead of falsely claiming
         # "this watchlist" (whole-branch review fix 4).
         self._briefing_in_flight_watchlist_id: int | None = None
+        # Briefing presets (spec #2 phase 2a, Task 3): reloaded whenever
+        # `BriefingPresetModal` dismisses `True` (see
+        # `_open_briefing_preset_manager`). Task 4 wires this list into the
+        # Artifacts toolbar's default-preset picker; held here now so that
+        # contract -- "the modal dismisses True, the screen reloads its
+        # preset list" -- is real before that picker exists to consume it.
+        self._loaded_briefing_presets: list[dict[str, Any]] = []
         # The item currently open in the CONTENT reader (Task 4). Held here
         # for the identical reason as `_loaded_items` above: `_build_content_pane`
         # is a factory the workbench calls on every region rebuild, and a
@@ -3184,6 +3192,110 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.run_worker(
             self._load_briefings(), exclusive=True, group="wl-briefings-load"
         )
+
+    # --- Briefing presets (spec #2 phase 2a, Task 3): manager modal --------
+    #
+    # `BriefingPresetModal` owns its own reads and writes; this screen's job
+    # is only what the brief calls "mount/dismiss wiring" -- build the two
+    # option lists the modal is not entitled to query for itself, push it,
+    # and reload the preset list iff the modal reports a real change. Task 4
+    # adds the toolbar's "Presets..." button/message that calls
+    # `_open_briefing_preset_manager`; nothing here depends on that button
+    # existing yet.
+
+    async def _load_character_options(self) -> list[tuple[str, int]]:
+        """Character cards for the preset modal's per-speaker Select.
+
+        Built here rather than inside the modal (brief: "the modal never
+        queries other DBs itself"). Degrades to `[]` -- disabling the field,
+        never the modal -- when `chachanotes_db` is unbound or the lookup
+        fails.
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return []
+        try:
+            cards = await asyncio.to_thread(db.list_character_cards)
+        except Exception as exc:  # noqa: BLE001 - degrade the field, not the modal
+            logger.warning(
+                "Failed to load character cards for briefing presets: "
+                f"{type(exc).__name__}"
+            )
+            return []
+        return [
+            (str(card.get("name") or ""), int(card["id"]))
+            for card in cards
+            if card.get("id") is not None
+        ]
+
+    async def _load_voice_options(self) -> list[tuple[str, str]]:
+        """Voice profiles for the preset modal's per-speaker Select.
+
+        Same degrade-the-field rule as `_load_character_options`.
+        `TTSProfileService.list_profiles` is already async and already
+        offloads its own repository I/O (see `STTSProfileLibrary`'s
+        identical direct-`await` usage) -- no `asyncio.to_thread` wrapper
+        needed around it here.
+        """
+        service = getattr(self.app_instance, "_tts_profile_service", None)
+        if service is None:
+            return []
+        try:
+            page = await service.list_profiles()
+        except Exception as exc:  # noqa: BLE001 - degrade the field, not the modal
+            logger.warning(
+                "Failed to load voice profiles for briefing presets: "
+                f"{type(exc).__name__}"
+            )
+            return []
+        return [
+            (profile.display_name, str(profile.profile_id))
+            for profile in page.profiles
+        ]
+
+    async def _load_briefing_presets(self) -> None:
+        """Re-read every stored `briefing_presets` row, name ASC.
+
+        Task 4 wires `_loaded_briefing_presets` into the Artifacts
+        toolbar's default-preset picker; nothing renders it yet. Held and
+        reloaded here regardless, so "the modal dismisses `True`, the
+        screen reloads its preset list" is a real, testable contract before
+        that picker exists to consume the result.
+        """
+        db = self._briefings_db()
+        if db is None:
+            self._loaded_briefing_presets = []
+            return
+        try:
+            rows = await asyncio.to_thread(db.list_briefing_presets)
+            self._loaded_briefing_presets = [dict(row) for row in rows]
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.warning(f"Failed to list briefing presets: {type(exc).__name__}")
+            self._loaded_briefing_presets = []
+
+    async def _open_briefing_preset_manager(self) -> None:
+        """Open `BriefingPresetModal`, then reload presets iff it changed.
+
+        A `False`/cancelled dismiss leaves `_loaded_briefing_presets`
+        untouched, matching every other reload-on-change flow already on
+        this screen (`_create_watchlist_flow`, `_rename_watchlist_flow`,
+        `_delete_watchlist_flow`).
+        """
+        db = self._briefings_db()
+        if db is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        character_options = await self._load_character_options()
+        voice_options = await self._load_voice_options()
+        changed = await self.app.push_screen_wait(
+            BriefingPresetModal(
+                db,
+                character_options=character_options,
+                voice_options=voice_options,
+            )
+        )
+        if changed:
+            await self._load_briefing_presets()
 
     @on(GenerateBriefingRequested)
     def handle_generate_briefing_requested(
