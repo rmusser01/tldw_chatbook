@@ -384,6 +384,55 @@ async def test_provider_step_one_click_connect_adopts_discovered_server():
 
 
 @pytest.mark.asyncio
+async def test_provider_step_tab_from_radio_reaches_key_input_before_detected_button():
+    """TASK-1496: with a discovered local server (the "Use this server"
+    Button unhidden), Tab from the provider RadioSet must reach the API-key
+    Input BEFORE that Button. Textual's focus chain follows DOM/compose()
+    order, and before this fix the detected-server banner+Button sat ahead
+    of the key Input in that order (unhidden the instant discovery
+    resolved) -- so Tab from the radio list landed on the Button instead. A
+    typed key then silently went nowhere (a Button does not accept text
+    input) and note_key_entered() never fired, so Protect-keys could never
+    activate (the exact live-UAT symptom TASK-1496 describes).
+    ProviderStep.compose() now yields the key Input (and its Keep/Replace/
+    Clear affordances) BEFORE the detected-server banner and Button, so Tab
+    order matches the intended radio-list -> key-input ->
+    Keep/Replace/Clear -> detected-server-button sequence exactly, and a
+    typed key lands where the user is actually looking.
+    """
+    from unittest.mock import AsyncMock
+
+    server = DiscoveredLocalServer(
+        provider_key="llama_cpp", base_url="http://127.0.0.1:8080", model_ids=("m1",)
+    )
+    step = _provider_step(discover=AsyncMock(return_value=(server,)))
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        use_button = step.query_one("#setup-provider-use-detected", Button)
+        assert "hidden" not in use_button.classes  # sanity: discovery landed
+
+        radio_set = step.query_one("#setup-provider-choice", RadioSet)
+        radio_set.focus()
+        await pilot.pause(0.1)
+        assert app.focused is radio_set  # sanity: focus starts on the radio list
+
+        await pilot.press("tab")
+        await pilot.pause(0.1)
+        key_input = step.query_one("#setup-provider-key-input", Input)
+        assert app.focused is key_input, (
+            f"Tab from the radio list landed on {app.focused!r}, not the key "
+            "Input -- a discovered server must not steal focus ahead of it"
+        )
+
+        await pilot.press("s", "k", "-", "t", "e", "s", "t")
+        assert key_input.value == "sk-test", (
+            "typed characters after Tab must land in the key Input, not be "
+            "silently swallowed by a focused Button"
+        )
+
+
+@pytest.mark.asyncio
 async def test_provider_step_masked_key_never_round_trips_configured_secret():
     """A configured (non-env) secret renders as presence only -- never a value."""
     wizard = MagicMock()

@@ -30,7 +30,24 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 
 class SetupStep(WizardStep):
-    """Base step: adds an awaitable commit hook and an inline error line."""
+    """Base step: adds an awaitable commit hook and an inline error line.
+
+    TASK-1495: also tags every setup step with its own ``setup-step`` CSS
+    class. BaseWizard.py's shared ``.wizard-step`` rule (never modified --
+    see this module's own docstring) is ``height: 100%`` with no overflow,
+    which silently clips any step whose natural content is taller than the
+    surrounding ``.wizard-steps-container`` -- Provider's ~27-row provider
+    list plus its API-key field is the case that motivated this fix. Scoping
+    the scroll-region CSS to ``.setup-step`` (added here, in this module
+    only) rather than touching ``.wizard-step`` itself keeps the Chatbook
+    wizards -- whose steps carry no ``setup-step`` class -- byte-for-byte
+    unaffected; see ``_wizards.tcss``'s "First-run setup wizard" section for
+    the actual scroll/height rules keyed off this class.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.add_class("setup-step")
 
     async def commit(self) -> tuple[bool, str]:
         """Persist this step's data. Return (ok, error_message)."""
@@ -88,16 +105,25 @@ class ProviderStep(SetupStep):
                 "be running — we'll look for them.",
                 classes="setup-subtitle",
             )
-            with RadioSet(id="setup-provider-choice"):
+            with RadioSet(id="setup-provider-choice", classes="setup-choice-list"):
                 for entry in self._grouped(entries):
                     yield RadioButton(
                         entry.display_name, id=f"setup-provider-{entry.readiness_key}"
                     )
-            yield Static("", id="setup-provider-detected", classes="setup-probe-status")
-            yield Button(
-                "Use this server", id="setup-provider-use-detected",
-                classes="hidden", variant="primary",
-            )
+            # TASK-1496: key Input, its status line, and the Keep/Replace/
+            # Clear affordances sit BEFORE the discovered-server banner/button
+            # in both DOM and visual order now -- Tab from the RadioSet above
+            # must reach the key Input next, not a below-the-fold "Use this
+            # server" Button (Textual's focus chain follows DOM order, not
+            # rendered position). Before this reorder, a discovered local
+            # server unhid that Button ahead of the Input in DOM order, so
+            # Tab landed on it instead; a typed API key then went into a
+            # Button (which does not accept text input) and vanished
+            # silently, and Protect-keys could never activate since
+            # note_key_entered() never fired. Putting the detected-server
+            # affordance LAST (see below) makes Tab order match visual
+            # top-to-bottom order exactly: radio list -> key input ->
+            # Keep/Replace/Clear -> detected-server button.
             yield Label("API key", classes="setup-field-label")
             yield Input(password=True, id="setup-provider-key-input",
                         placeholder="Paste your API key")
@@ -107,6 +133,11 @@ class ProviderStep(SetupStep):
                 yield Button("Replace", id="setup-provider-key-replace")
                 yield Button("Clear", id="setup-provider-key-clear")
             yield Static("", id="setup-provider-probe-status", classes="setup-probe-status")
+            yield Static("", id="setup-provider-detected", classes="setup-probe-status")
+            yield Button(
+                "Use this server", id="setup-provider-use-detected",
+                classes="hidden", variant="primary",
+            )
             yield Static("", classes="setup-step-error")
 
     @staticmethod
@@ -473,7 +504,7 @@ class ModelStep(SetupStep):
         with Vertical(classes="setup-model"):
             yield Static("Pick a default model", classes="setup-title")
             yield Static("", id="setup-model-provider-line", classes="setup-subtitle")
-            with RadioSet(id="setup-model-choice"):
+            with RadioSet(id="setup-model-choice", classes="setup-choice-list"):
                 # disabled=True: an un-disabled placeholder is a real,
                 # toggleable RadioButton -- pressing Enter/Space while it is
                 # the only/highlighted option (e.g. an impatient user, or
@@ -726,7 +757,7 @@ class RagStep(SetupStep):
         with Vertical(classes="setup-rag"):
             yield Static("Search & RAG", classes="setup-title")
             yield Static("", id="setup-rag-status", classes="setup-subtitle")
-            with RadioSet(id="setup-rag-model-choice"):
+            with RadioSet(id="setup-rag-model-choice", classes="setup-choice-list"):
                 for model_id in self._embedding_model_ids():
                     yield RadioButton(model_id)
             yield Static("", classes="setup-step-error")
@@ -946,13 +977,13 @@ class AppearanceStep(SetupStep):
         with Vertical(classes="setup-appearance"):
             yield Static("Appearance", classes="setup-title")
             yield Label("Theme", classes="setup-field-label")
-            with RadioSet(id="setup-theme-choice"):
+            with RadioSet(id="setup-theme-choice", classes="setup-choice-list"):
                 for theme_name in self._theme_names():
                     yield RadioButton(
                         theme_name, value=(theme_name == prefill.default_theme)
                     )
             yield Label("Splash screen card", classes="setup-field-label")
-            with RadioSet(id="setup-splash-choice"):
+            with RadioSet(id="setup-splash-choice", classes="setup-choice-list"):
                 yield RadioButton("Surprise me (random)", value=True)
                 for card_name in self._card_names()[:10]:
                     yield RadioButton(card_name)
@@ -1048,7 +1079,7 @@ class WelcomeStep(SetupStep):
                 "changed later in Settings, and every step can be skipped.",
                 classes="setup-subtitle",
             )
-            with RadioSet(id="setup-track-choice"):
+            with RadioSet(id="setup-track-choice", classes="setup-choice-list"):
                 yield RadioButton(
                     "Quick setup — provider & model (recommended)",
                     value=True,
@@ -1196,13 +1227,20 @@ class SummaryStep(SetupStep):
             yield Static("", id="setup-summary-rows", markup=False)
             yield Static("", id="setup-summary-footer", classes="setup-subtitle",
                         markup=False)
-            with Horizontal(classes="setup-summary-actions"):
-                if getattr(self.wizard, "rerun", False):
-                    yield Button("Done", id="setup-exit-done", variant="primary")
-                    yield Button("Go to Chat", id="setup-exit-chat")
-                else:
-                    yield Button("Start chatting", id="setup-exit-chat", variant="primary")
-                    yield Button("Explore on my own", id="setup-exit-home")
+        # The exit actions are a DIRECT child of the step (the .setup-step
+        # scroll container), not of the scrolling .setup-summary Vertical:
+        # Textual docks position against the container's visible frame and
+        # never scroll with content, which is what keeps the wizard's final
+        # CTAs on screen no matter how tall the read-back matrix gets
+        # (TASK-1495 AC #3 -- full-track content previously pushed them
+        # below the fold at 120x40).
+        with Horizontal(classes="setup-summary-actions"):
+            if getattr(self.wizard, "rerun", False):
+                yield Button("Done", id="setup-exit-done", variant="primary")
+                yield Button("Go to Chat", id="setup-exit-chat")
+            else:
+                yield Button("Start chatting", id="setup-exit-chat", variant="primary")
+                yield Button("Explore on my own", id="setup-exit-home")
 
     def on_show(self) -> None:
         super().on_show()
