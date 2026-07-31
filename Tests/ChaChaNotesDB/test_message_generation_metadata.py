@@ -1,8 +1,11 @@
+import shutil
+
 import pytest
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 @pytest.fixture
-def db(tmp_path):
+def db(tmp_path, chachanotes_template_db):
+    shutil.copyfile(chachanotes_template_db, tmp_path / "t.db")
     d = CharactersRAGDB(tmp_path / "t.db", "test-client")
     yield d
     d.close_connection()

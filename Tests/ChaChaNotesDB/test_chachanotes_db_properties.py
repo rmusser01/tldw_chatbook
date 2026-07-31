@@ -5,6 +5,8 @@
 #
 # Imports
 import uuid
+import shutil
+
 import pytest
 import json
 from pathlib import Path
@@ -92,7 +94,7 @@ def db_path(tmp_path):
 
 
 @pytest.fixture(scope="function")
-def db_instance(db_path, client_id):
+def db_instance(db_path, client_id, chachanotes_template_db):
     """Creates a DB instance for each test, ensuring a fresh database."""
     current_db_path = Path(db_path)
     # Ensure no leftover files from a failed previous run
@@ -101,6 +103,7 @@ def db_instance(db_path, client_id):
         if p.exists():
             p.unlink(missing_ok=True)
 
+    shutil.copyfile(chachanotes_template_db, current_db_path)
     db = CharactersRAGDB(current_db_path, client_id)
     yield db
     db.close_connection()

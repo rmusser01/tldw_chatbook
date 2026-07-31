@@ -2,6 +2,8 @@ import json
 import uuid
 from pathlib import Path
 
+import shutil
+
 import pytest
 
 from Tests.ChaChaNotesDB.legacy_conversation_schema import (
@@ -22,11 +24,12 @@ def db_path(tmp_path):
 
 
 @pytest.fixture
-def db_instance(db_path, client_id):
+def db_instance(db_path, client_id, chachanotes_template_db):
     current_db_path = Path(db_path)
     for suffix in ["", "-wal", "-shm"]:
         Path(str(current_db_path) + suffix).unlink(missing_ok=True)
 
+    shutil.copyfile(chachanotes_template_db, current_db_path)
     db = CharactersRAGDB(current_db_path, client_id)
     try:
         yield db

@@ -2,6 +2,8 @@
 #
 #
 # Imports
+import shutil
+
 import pytest
 import sqlite3
 import json
@@ -44,8 +46,8 @@ def db_path(tmp_path):
 
 
 @pytest.fixture(scope="function")
-def db_instance(db_path, client_id):
-    """Creates a DB instance for each test, ensuring a fresh database."""
+def db_instance(db_path, client_id, chachanotes_template_db):
+    """Creates a DB instance for each test from the session template (task-1460)."""
     current_db_path = Path(db_path)
 
     # Clean up any existing files from previous runs to be safe
@@ -59,6 +61,7 @@ def db_instance(db_path, client_id):
 
     db = None
     try:
+        shutil.copyfile(chachanotes_template_db, current_db_path)
         db = CharactersRAGDB(current_db_path, client_id)
         yield db
     finally:
