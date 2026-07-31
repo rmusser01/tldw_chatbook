@@ -893,13 +893,39 @@ class ToolsStep(SetupStep):
                 classes="setup-subtitle",
             )
             for entry in self._entries:
+                title, desc = self._TOOL_COPY.get(
+                    entry.tool_name,
+                    (entry.tool_name.replace("_", " ").capitalize(), ""),
+                )
                 with Horizontal(classes="setup-tool-row"):
                     yield Switch(
                         value=gate_values.get(entry.gate_key, False),
                         id=f"setup-tool-{entry.tool_name}",
                     )
-                    yield Label(entry.tool_name.replace("_", " "))
+                    with Vertical(classes="setup-tool-text"):
+                        yield Label(title, classes="setup-tool-name")
+                        yield Static(
+                            desc,
+                            id=f"setup-tool-desc-{entry.tool_name}",
+                            classes="setup-tool-desc",
+                            markup=False,
+                        )
             yield Static("", classes="setup-step-error")
+
+    # TASK-1501: plain-language names and one-line descriptions per built-in
+    # tool. The ⚠ marks tools that create or change data on disk — a static
+    # judgment mirroring each tool's risk_tags without importing the tool
+    # modules at compose time. An unknown (future) tool degrades to its
+    # capitalized name with no description rather than breaking the step.
+    _TOOL_COPY = {
+        "read_file": ("Read file", "Read a file you point the assistant at."),
+        "list_directory": ("List directory", "Browse the contents of a folder."),
+        "write_file": ("Write file", "⚠ Creates or overwrites files on disk."),
+        "create_note": ("Create note", "⚠ Adds new notes to your notebook."),
+        "update_note": ("Update note", "⚠ Edits your existing notes."),
+        "glob_files": ("Find files", "Match file names by pattern (like *.md)."),
+        "grep_files": ("Search in files", "Search inside files for text."),
+    }
 
     def gate_key_for(self, switch: Switch) -> str:
         tool_name = (switch.id or "").removeprefix("setup-tool-")
@@ -1331,7 +1357,7 @@ class SummaryStep(SetupStep):
         # bracketed literal in a label/detail (e.g. a package extra name)
         # must be escaped or it silently vanishes from the rendered text.
         lines = [
-            f"{'✓' if row.ok else '✗'} {row.label}"
+            f"{row.glyph} {row.label}"
             + (f" — {row.detail}" if row.detail else "")
             for row in rows
         ]
@@ -1405,7 +1431,11 @@ class SetupWizardContainer(WizardContainer):
     def __init__(self, app_instance, rerun: bool = False, **kwargs):
         self.rerun = rerun
         self.key_entered = False
-        self.track = wizard_state.TRACK_FULL
+        # TASK-1499: default to the QUICK track — it is the preselected
+        # (recommended) Welcome option, so the progress row anchors at
+        # "Step 1 of 4" instead of front-loading all nine steps before
+        # the user has chosen anything. Picking Full expands it.
+        self.track = wizard_state.TRACK_QUICK
         steps = self._create_steps()
         super().__init__(
             app_instance=app_instance,
@@ -1439,12 +1469,12 @@ class SetupWizardContainer(WizardContainer):
             ModelStep(wizard=self, config=cfg(wizard_state.STEP_MODEL, "Model", 3)),
             RagStep(wizard=self, config=cfg(wizard_state.STEP_RAG, "RAG", 4)),
             ToolsStep(wizard=self, config=cfg(wizard_state.STEP_TOOLS, "Tools", 5)),
-            NotesSyncStep(wizard=self, config=cfg(wizard_state.STEP_NOTES, "Notes sync", 6)),
+            NotesSyncStep(wizard=self, config=cfg(wizard_state.STEP_NOTES, "Notes", 6)),
             AppearanceStep(
-                wizard=self, config=cfg(wizard_state.STEP_APPEARANCE, "Appearance", 7)
+                wizard=self, config=cfg(wizard_state.STEP_APPEARANCE, "Style", 7)
             ),
             ProtectKeysStep(
-                wizard=self, config=cfg(wizard_state.STEP_PROTECT, "Protect keys", 8)
+                wizard=self, config=cfg(wizard_state.STEP_PROTECT, "Protect", 8)
             ),
             SummaryStep(wizard=self, config=cfg(wizard_state.STEP_SUMMARY, "Summary", 9)),
         ]

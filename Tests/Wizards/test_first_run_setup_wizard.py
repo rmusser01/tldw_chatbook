@@ -2267,3 +2267,59 @@ async def test_model_step_subtitle_display_cases_provider_and_marks_recommended(
         # selecting the recommended row must commit the CLEAN model id
         step.set_selected_model_from_button(buttons[0])
         assert step.selected_model_id == "model-alpha"
+
+
+@pytest.mark.asyncio
+async def test_tools_step_rows_are_described_and_do_not_overlap():
+    """TASK-1501: aligned rows with plain-language descriptions."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ToolsStep
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = ToolsStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="tools", title="Tools", step_number=5),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        switches = list(step.query(Switch))
+        assert switches, "tools step must render switches"
+        # Every row carries a human description (not just the raw tool name).
+        descs = [str(s.render()) for s in step.query(".setup-tool-desc")]
+        assert len(descs) == len(switches)
+        assert all(d.strip() for d in descs)
+        # The original defect: switch borders collided into following rows.
+        regions = sorted((sw.region.y, sw.region.bottom) for sw in switches)
+        for (y1, b1), (y2, _b2) in zip(regions, regions[1:]):
+            assert b1 <= y2, f"tool rows overlap: row ending {b1} vs row starting {y2}"
+        # Mutating tools carry a visible warning in their description.
+        write_desc = str(
+            step.query_one("#setup-tool-desc-write_file", Static).render()
+        )
+        assert "⚠" in write_desc
+
+
+@pytest.mark.asyncio
+async def test_progress_defaults_to_quick_track_and_titles_fit():
+    """TASK-1499: Welcome anchors at the recommended 4-step count, and no
+    step title exceeds the ~8-char budget the progress row can render."""
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import TRACK_QUICK
+
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        assert container.track == TRACK_QUICK
+        assert len(container.active_ids) == 4  # welcome, provider, model, summary
+        for step in container.steps:
+            title = step.config.title
+            assert len(title) <= 8, f"step title too long for progress row: {title!r}"
