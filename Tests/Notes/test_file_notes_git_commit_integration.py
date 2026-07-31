@@ -970,6 +970,42 @@ async def test_candidate_publication_review_snapshot_retains_provenance_seed(
 
 
 @pytest.mark.asyncio
+async def test_candidate_publication_escapes_bidi_and_format_path_provenance(
+    tmp_path: Path,
+) -> None:
+    note_path = "notes/[draft]-\u202eevil\u200b.md"
+    expected_display = r"notes/[draft]-\u202eevil\u200b.md"
+    repository = _init_repository(tmp_path, note_path=note_path)
+    (repository / note_path).write_text("changed\n", encoding="utf-8")
+
+    service, binding, review = await _stage_changes_then_review(
+        repository,
+        (SessionChange("modified", note_path),),
+    )
+
+    assert review.state == "ready"
+    assert review.handle is not None
+    assert review.projection is not None
+    assert review.projection.included_notes[0].display_text == expected_display
+    review_snapshot = service._commit_review_snapshots[review.handle._token]
+    assert (
+        review_snapshot.candidate_seed.included_notes[0].display_text
+        == expected_display
+    )
+
+    outcome = await service.start_commit(binding, review.handle)
+
+    assert outcome.state == "succeeded"
+    availability = service._owner.snapshot(binding).push_candidate
+    assert availability is not None
+    assert (
+        availability.candidate.included_notes[0].display_text
+        == expected_display
+    )
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_candidate_publication_immediate_success_uses_owner_locked_seam(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

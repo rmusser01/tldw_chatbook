@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import unicodedata
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -128,6 +129,13 @@ def _sanitize_display_path(path: str) -> str:
             display.append(f"\\x{codepoint:02x}")
         elif 0xDC80 <= codepoint <= 0xDCFF:
             display.append(f"\\x{codepoint - 0xDC00:02x}")
+        elif (
+            unicodedata.category(character) in {"Cf", "Cs"}
+            or codepoint in {0x2028, 0x2029}
+        ):
+            escape_width = 4 if codepoint <= 0xFFFF else 8
+            escape_prefix = "u" if escape_width == 4 else "U"
+            display.append(f"\\{escape_prefix}{codepoint:0{escape_width}x}")
         else:
             display.append(character)
     return "".join(display)
