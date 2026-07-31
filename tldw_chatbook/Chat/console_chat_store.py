@@ -127,7 +127,15 @@ class ConsoleChatPersistence(Protocol):
         """
 
     def get_message_version(self, message_id: str) -> int | None:
-        """Return the current positive durable row version, if trustworthy."""
+        """Return the current positive durable row version, if trustworthy.
+
+        Args:
+            message_id: Persisted Chat message identifier.
+
+        Returns:
+            The exact positive integer row version, or ``None`` when the row
+            cannot provide a trustworthy version fence.
+        """
 
     def update_conversation_system_prompt(
         self,

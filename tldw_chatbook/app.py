@@ -6527,7 +6527,11 @@ class TldwCli(
         if handler:
             await handler.handle_tts_request(event)
         else:
-            self.loguru_logger.error("TTS handler not initialized")
+            self.loguru_logger.error(
+                "TTS handler not initialized "
+                "(operation=trusted_console_speech, "
+                "outcome_code=handler_unavailable)"
+            )
             await self.post_message(
                 TTSCompleteEvent(
                     message_id=event.message_id,

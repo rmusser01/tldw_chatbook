@@ -96,6 +96,46 @@ async def test_app_routes_snapshot_event_without_logging_private_snapshot_data()
 
 
 @pytest.mark.asyncio
+async def test_app_snapshot_handler_unavailable_logs_only_safe_context():
+    store = ConsoleChatStore()
+    session = store.create_session(
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        assistant_authority_id="PRIVATE_AUTHORITY",
+        character_id=7,
+    )
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="PRIVATE_RESPONSE_TEXT",
+    )
+    event = TTSMessageSpeechRequestEvent(
+        store.issue_tts_message_speech_snapshot(message.id),
+        store.validate_tts_message_speech_snapshot,
+    )
+    fake_app = _FakeApp()
+    fake_app._ensure_tts_handler = AsyncMock(return_value=None)
+    fake_app.post_message = AsyncMock()
+
+    await TldwCli.handle_tts_message_speech_request_event(fake_app, event)
+
+    fake_app.loguru_logger.error.assert_called_once_with(
+        "TTS handler not initialized "
+        "(operation=trusted_console_speech, outcome_code=handler_unavailable)"
+    )
+    rendered_logs = repr(fake_app.loguru_logger.method_calls)
+    assert "PRIVATE_RESPONSE_TEXT" not in rendered_logs
+    assert "PRIVATE_AUTHORITY" not in rendered_logs
+    assert message.id not in rendered_logs
+    fake_app.post_message.assert_awaited_once()
+    completion = fake_app.post_message.await_args.args[0]
+    assert isinstance(completion, TTSCompleteEvent)
+    assert completion.message_id == message.id
+    assert completion.error == "TTS service not available"
+
+
+@pytest.mark.asyncio
 async def test_console_speak_autoplay_when_no_legacy_widget_claims_message(tmp_path):
     """No legacy widget claims the message id (the Console case) -> the
     handler must post TTSPlaybackEvent(action="play") itself after the native
