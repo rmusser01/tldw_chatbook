@@ -50,6 +50,7 @@ async def test_production_app_backup_publishes_one_complete_manifest(
     _disable_splash(monkeypatch)
     app = TldwCli()
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
 
     try:
         async with app.run_test(size=(120, 40)) as pilot:

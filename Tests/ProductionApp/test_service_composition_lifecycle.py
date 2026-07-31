@@ -178,6 +178,7 @@ async def test_production_app_composes_one_stable_dependency_graph(
     _disable_splash(monkeypatch)
     app = TldwCli()
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     identities = _service_identities(app)
 
     try:
@@ -207,6 +208,7 @@ async def test_production_app_scheduler_worker_settles_without_contract_error(
     _disable_splash(monkeypatch)
     app = TldwCli()
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     scheduler_errors: list[str] = []
     sink_id: int | None = None
 

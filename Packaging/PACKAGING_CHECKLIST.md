@@ -20,8 +20,8 @@ must start from a fresh output directory; do not treat an existing checkout
   source-only `stats_screen.css` input, and project/vendored licenses.
 - [x] The wheel contains the compiled CSS bundle, RAG pipeline configuration,
   thirteen chunking JSON templates, eval configuration, configuration
-  resources, the ChaChaNotes citation-provenance runtime migration, and both
-  vendored license notices.
+  resources, the ChaChaNotes citation-provenance and character-authority
+  runtime migrations, and both vendored license notices.
 - [x] The wheel excludes source-only CSS, example TOML, development Markdown,
   the namespace-discovered chunking example, tests, caches, and OS metadata.
 - [x] Wheel and sdist metadata use Core Metadata 2.4 and declare the project

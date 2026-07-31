@@ -41,6 +41,13 @@ TEMPLATE_NAMES = {
 CITATION_MIGRATION_PATH = (
     "tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql"
 )
+CHARACTER_AUTHORITY_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v27_to_v28_character_authority.sql"
+)
+RUNTIME_MIGRATION_PATHS = {
+    CITATION_MIGRATION_PATH,
+    CHARACTER_AUTHORITY_MIGRATION_PATH,
+}
 INSTALLED_PROBE = r"""
 from pathlib import Path
 import ast
@@ -809,19 +816,17 @@ def test_built_artifacts_match_distribution_contract(
         "tldw_chatbook/css/tldw_cli_modular.tcss",
         "tldw_chatbook/css/components/stats_screen.css",
         "tldw_chatbook/Config_Files/rag_pipelines.toml",
-        CITATION_MIGRATION_PATH,
         "tldw_chatbook/Evals/config/eval_config.yaml",
         "tldw_chatbook/Third_Party/aider/LICENSE.txt",
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-    }
+    } | RUNTIME_MIGRATION_PATHS
     required_wheel = {
         "tldw_chatbook/css/tldw_cli_modular.tcss",
         "tldw_chatbook/Config_Files/rag_pipelines.toml",
-        CITATION_MIGRATION_PATH,
         "tldw_chatbook/Evals/config/eval_config.yaml",
         "tldw_chatbook/Third_Party/aider/LICENSE.txt",
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-    }
+    } | RUNTIME_MIGRATION_PATHS
     assert not required_sdist - sdist_members
     assert not required_wheel - wheel_members
 
@@ -958,9 +963,11 @@ def test_release_checker_rejects_missing_runtime_data(
     assert missing in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("missing", sorted(RUNTIME_MIGRATION_PATHS))
 def test_release_checker_rejects_missing_database_migration(
     built_distributions: BuiltDistributions,
     tmp_path: Path,
+    missing: str,
 ) -> None:
     dist_dir = tmp_path / "dist"
     shutil.copytree(built_distributions.dist_dir, dist_dir)
@@ -971,14 +978,14 @@ def test_release_checker_rejects_missing_database_migration(
         zipfile.ZipFile(rewritten, "w") as destination,
     ):
         for member in source.infolist():
-            if member.filename != CITATION_MIGRATION_PATH:
+            if member.filename != missing:
                 destination.writestr(member, source.read(member.filename))
     rewritten.replace(wheel)
 
     result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
 
     assert result.returncode == 1
-    assert CITATION_MIGRATION_PATH in result.stdout + result.stderr
+    assert missing in result.stdout + result.stderr
 
 
 def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(

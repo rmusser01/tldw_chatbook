@@ -64,6 +64,7 @@ def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
     _disable_splash(monkeypatch)
     app = TldwCli()
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     return app
 
 
@@ -295,9 +296,7 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
                     ),
                     encoding="utf-8",
                 )
-            (prompt_folder / "ignored.dat").write_text(
-                "unsupported", encoding="utf-8"
-            )
+            (prompt_folder / "ignored.dat").write_text("unsupported", encoding="utf-8")
             library._library_prompts_import_path = str(prompt_folder)
             folder_worker = library._start_library_prompts_import()
             assert folder_worker is not None
@@ -307,9 +306,7 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
                 "2 imported · 0 skipped (duplicate name)"
             )
 
-            library._library_prompts_import_path = str(
-                tmp_path / "does-not-exist.json"
-            )
+            library._library_prompts_import_path = str(tmp_path / "does-not-exist.json")
             invalid_path_worker = library._start_library_prompts_import()
             assert invalid_path_worker is not None
             assert invalid_path_worker.node is app
@@ -451,9 +448,7 @@ async def test_real_library_prompt_insert_reaches_console_composer(
             prompt_id = saved["local_id"]
 
             app.post_message(NavigateToScreen("prompts"))
-            library = await _wait_for_screen(
-                app, pilot, LibraryScreen, TAB_LIBRARY
-            )
+            library = await _wait_for_screen(app, pilot, LibraryScreen, TAB_LIBRARY)
             for _ in range(300):
                 prompt_rows = library.query(f"#library-prompt-row-{prompt_id}")
                 if prompt_rows:
@@ -469,7 +464,9 @@ async def test_real_library_prompt_insert_reaches_console_composer(
                     break
                 await pilot.pause(0.01)
             else:
-                raise AssertionError("production Library did not open the prompt editor")
+                raise AssertionError(
+                    "production Library did not open the prompt editor"
+                )
 
             insert_buttons.first().press()
             chat = await _wait_for_screen(app, pilot, ChatScreen, TAB_CHAT)

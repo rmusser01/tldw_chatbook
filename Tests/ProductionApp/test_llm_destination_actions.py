@@ -852,6 +852,7 @@ async def test_production_llm_lifecycle_generations_survive_window_replacement(
     monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
     app = TldwCli()
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app._initial_tab_value = TAB_LLM
 
     try:
@@ -1093,6 +1094,7 @@ async def test_production_llm_async_results_require_current_owner_and_generation
     monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
     app = TldwCli()
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app._initial_tab_value = TAB_LLM
 
     try:
@@ -1272,6 +1274,7 @@ async def test_production_llm_duplicate_starts_are_reserved_for_every_provider(
     monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
     app = TldwCli()
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app._initial_tab_value = TAB_LLM
     executable = tmp_path / "server"
     executable.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -1365,6 +1368,7 @@ async def test_production_llm_destination_owns_navigation_actions_and_recovery(
     )
     app = TldwCli()
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app._initial_tab_value = TAB_LLM
 
     try:

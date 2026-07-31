@@ -64,6 +64,7 @@ def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
     app = TldwCli()
     app.app_config = load_settings(force_reload=True)
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app.providers_models = dict(PROVIDERS_MODELS)
     app._initial_tab_value = TAB_CHAT
     return app
@@ -88,6 +89,19 @@ async def _wait_for_widget(screen, pilot, selector: str, widget_type):
             pass
         await pilot.pause(0.01)
     raise AssertionError(f"production screen did not render {selector}")
+
+
+async def _wait_for_mounted_widget(screen, pilot, selector: str, widget_type):
+    for _ in range(300):
+        try:
+            widget = screen.query_one(selector)
+            assert isinstance(widget, widget_type)
+            if widget.is_mounted:
+                return widget
+        except NoMatches:
+            pass
+        await pilot.pause(0.01)
+    raise AssertionError(f"production screen did not mount {selector}")
 
 
 async def _wait_until(pilot, predicate, failure: str) -> None:
@@ -269,6 +283,12 @@ async def test_settings_save_preserves_user_session_then_away_command_hands_off(
                 Select,
             )
             await _wait_for_widget(provider_select, pilot, "#label", Widget)
+            await _wait_for_mounted_widget(
+                provider_select,
+                pilot,
+                "SelectOverlay",
+                Widget,
+            )
             selected_provider = settings._provider_select_value_for_provider(
                 "Anthropic"
             )

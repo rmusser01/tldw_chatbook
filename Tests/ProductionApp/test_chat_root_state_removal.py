@@ -141,6 +141,7 @@ def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
     app = TldwCli()
     app.app_config = load_settings(force_reload=True)
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app.providers_models = {"OpenAI": ["gpt-task-650"]}
     app._initial_tab_value = TAB_CHAT
     return app

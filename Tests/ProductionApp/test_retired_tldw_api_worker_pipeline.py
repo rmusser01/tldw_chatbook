@@ -75,6 +75,7 @@ def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
     monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
     app = TldwCli()
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     return app
 
 
