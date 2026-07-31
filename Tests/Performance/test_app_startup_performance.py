@@ -664,6 +664,8 @@ async def test_tts_handler_initializes_on_first_use(monkeypatch) -> None:
 
     assert initialized.is_set()
     assert handler is app._tts_handler
+    assert handler._profile_service_loader == app._ensure_tts_profile_service
+    assert app._tts_profile_service is None
 
 
 @pytest.mark.asyncio

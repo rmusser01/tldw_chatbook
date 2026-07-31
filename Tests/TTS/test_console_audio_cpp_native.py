@@ -4,9 +4,11 @@ import asyncio
 import stat
 import threading
 from collections.abc import AsyncIterator, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 import pytest
 
@@ -31,6 +33,15 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRequest,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
+from tldw_chatbook.TTS.profile_service import LoadedCharacterTTSAssignment
+from tldw_chatbook.TTS.profile_types import (
+    AssignedTTSProfileSnapshot,
+    CharacterRef,
+    CharacterTTSAssignment,
+    TTSGenerationProfile,
+    TTSProfileDraft,
+)
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 
 _WAIT_SECONDS = 1.0
@@ -149,8 +160,12 @@ class _CapturingAdapter:
 
 
 class _Handler(TTSEventHandler):
-    def __init__(self, timeline: list[str] | None = None) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        timeline: list[str] | None = None,
+        profile_service_loader=None,
+    ) -> None:
+        super().__init__(profile_service_loader=profile_service_loader)
         self.messages: list[object] = []
         self.completion_posted = asyncio.Event()
         self.timeline = timeline
@@ -265,6 +280,8 @@ class _DefaultService:
             else snapshot_provider_id
         )
         self.calls: list[tuple[str, str | None, object]] = []
+        self.exact_calls: list[tuple[TTSRequest, object]] = []
+        self.exact_error: BaseException | None = None
 
     def preferences_snapshot(self) -> SimpleNamespace:
         return SimpleNamespace(provider_id=self.snapshot_provider_id)
@@ -278,6 +295,27 @@ class _DefaultService:
     ) -> _Response:
         self.calls.append((text, voice_override, progress_sink))
         return self.response
+
+    async def synthesize_exact(
+        self,
+        request: TTSRequest,
+        progress_sink: object = None,
+    ) -> tuple[_Response, TTSRequestedSelectionSnapshot]:
+        self.exact_calls.append((request, progress_sink))
+        if self.exact_error is not None:
+            raise self.exact_error
+        return (
+            self.response,
+            TTSRequestedSelectionSnapshot(
+                provider_id=request.provider_id,
+                model_id=request.model_id,
+                voice_id=request.voice,
+                response_format=request.response_format,
+                speed=request.speed,
+                options=request.options,
+                configuration_revision=3,
+            ),
+        )
 
     async def generate_audio_stream(
         self,
@@ -304,6 +342,55 @@ def _external_preferences() -> dict[str, Any]:
             },
         }
     }
+
+
+class _StaticProfileService:
+    def __init__(self, result: LoadedCharacterTTSAssignment) -> None:
+        self.result = result
+        self.calls: list[CharacterRef] = []
+
+    async def get_assigned_profile(
+        self,
+        character_ref: CharacterRef,
+    ) -> LoadedCharacterTTSAssignment:
+        self.calls.append(character_ref)
+        return self.result
+
+
+def _assigned_profile(character_ref: CharacterRef) -> LoadedCharacterTTSAssignment:
+    draft = TTSProfileDraft(
+        display_name="Mira voice",
+        provider_id="audio_cpp",
+        model_id="assigned-model",
+        voice_id="assigned-voice",
+        response_format="wav",
+        speed=1.0,
+        options={},
+    )
+    profile = TTSGenerationProfile(
+        profile_id=UUID("11111111-1111-4111-8111-111111111111"),
+        display_name=draft.display_name,
+        normalized_name=draft.normalized_name,
+        provider_id=draft.provider_id,
+        model_id=draft.model_id,
+        voice_id=draft.voice_id,
+        response_format=draft.response_format,
+        speed=draft.speed,
+        options=draft.options,
+        revision=5,
+        created_at=datetime(2026, 7, 31, tzinfo=UTC),
+        updated_at=datetime(2026, 7, 31, tzinfo=UTC),
+    )
+    return LoadedCharacterTTSAssignment(
+        repository_generation=3,
+        snapshot=AssignedTTSProfileSnapshot(
+            assignment=CharacterTTSAssignment(
+                character_ref=character_ref,
+                profile_id=profile.profile_id,
+            ),
+            profile=profile,
+        ),
+    )
 
 
 @pytest.mark.asyncio
@@ -345,7 +432,17 @@ async def test_console_audio_cpp_snapshot_uses_native_default_without_rewriting_
         yield b""  # pragma: no cover
 
     service.generate_audio_stream = reject_legacy  # type: ignore[method-assign]
-    handler = _Handler(timeline)
+    profile_service = _StaticProfileService(
+        LoadedCharacterTTSAssignment(
+            repository_generation=3,
+            snapshot=None,
+        )
+    )
+
+    async def load_profile_service() -> _StaticProfileService:
+        return profile_service
+
+    handler = _Handler(timeline, load_profile_service)
     handler._request_cooldown = {}
     handler._tts_service = service
     store = ConsoleChatStore()
@@ -393,6 +490,13 @@ async def test_console_audio_cpp_snapshot_uses_native_default_without_rewriting_
                 options={},
             )
         ]
+        assert profile_service.calls == [
+            CharacterRef(
+                source="local",
+                authority_id="local-authority",
+                character_id="7",
+            )
+        ]
         assert legacy_calls == 0
         assert adapter.response_close_calls == 1
         assert artifact is not None
@@ -418,6 +522,188 @@ async def test_console_audio_cpp_snapshot_uses_native_default_without_rewriting_
 
     assert artifact is not None
     assert not artifact.exists()
+
+
+@pytest.mark.asyncio
+async def test_assigned_console_snapshot_uses_exact_profile_and_complete_wav(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timeline: list[str] = []
+    response = _Response(
+        _RecordingStream(_WAV_CHUNKS, timeline),
+        model_id="assigned-model",
+    )
+    service = _DefaultService(response)
+    metric_calls: list[tuple[str, dict[str, Any]]] = []
+
+    def capture_counter(
+        name: str,
+        value: int = 1,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        del value
+        metric_calls.append((name, dict(labels or {})))
+
+    def capture_histogram(
+        name: str,
+        value: float,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        del value
+        metric_calls.append((name, dict(labels or {})))
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_counter",
+        capture_counter,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_histogram",
+        capture_histogram,
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        assistant_authority_id="local-authority",
+        character_id=7,
+        character_name="Mira",
+    )
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Assigned character response",
+    )
+    snapshot = store.issue_tts_message_speech_snapshot(message.id)
+    assert snapshot.character_ref is not None
+    profile_service = _StaticProfileService(
+        _assigned_profile(snapshot.character_ref)
+    )
+
+    async def load_profile_service() -> _StaticProfileService:
+        return profile_service
+
+    handler = _Handler(profile_service_loader=load_profile_service)
+    handler._tts_service = service
+    handler._temp_manager = _RecordingTempManager(tmp_path)
+    artifact: Path | None = None
+    try:
+        await handler.handle_tts_request(
+            TTSMessageSpeechRequestEvent(
+                snapshot,
+                store.validate_tts_message_speech_snapshot,
+            )
+        )
+        await asyncio.wait_for(
+            handler.completion_posted.wait(),
+            timeout=_WAIT_SECONDS,
+        )
+        completion = next(
+            event
+            for event in handler.messages
+            if isinstance(event, TTSCompleteEvent)
+        )
+        artifact = completion.audio_file
+
+        assert completion.error is None
+        assert service.calls == []
+        assert len(service.exact_calls) == 1
+        request, progress_sink = service.exact_calls[0]
+        assert request == TTSRequest(
+            provider_id="audio_cpp",
+            model_id="assigned-model",
+            text="Assigned character response",
+            voice="assigned-voice",
+            response_format="wav",
+            speed=1.0,
+            options={},
+        )
+        assert callable(progress_sink)
+        assert profile_service.calls == [snapshot.character_ref]
+        assert artifact is not None
+        assert artifact.suffix == ".wav"
+        assert artifact.read_bytes() == b"".join(_WAV_CHUNKS)
+        assert response.close_calls == 1
+        assert response.byte_stream.close_calls == 1
+        assert [labels for _name, labels in metric_calls] == [
+            {
+                "provider_id": "audio_cpp",
+                "resolution_source": "assigned",
+                "outcome_code": "success",
+            },
+            {
+                "provider_id": "audio_cpp",
+                "resolution_source": "assigned",
+                "outcome_code": "success",
+            },
+        ]
+    finally:
+        await handler.cleanup_tts_resources()
+
+    assert artifact is not None
+    assert not artifact.exists()
+
+
+@pytest.mark.asyncio
+async def test_assigned_exact_failure_never_calls_global_or_offers_fallback(
+    tmp_path: Path,
+) -> None:
+    response = _Response(_RecordingStream(_WAV_CHUNKS, []))
+    service = _DefaultService(response)
+    service.exact_error = RuntimeError(
+        "https://user:credential@example.test/private/path"
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        assistant_authority_id="local-authority",
+        character_id=7,
+    )
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Assigned character response",
+    )
+    snapshot = store.issue_tts_message_speech_snapshot(message.id)
+    assert snapshot.character_ref is not None
+    profile_service = _StaticProfileService(
+        _assigned_profile(snapshot.character_ref)
+    )
+
+    async def load_profile_service() -> _StaticProfileService:
+        return profile_service
+
+    handler = _Handler(profile_service_loader=load_profile_service)
+    handler._tts_service = service
+    handler._temp_manager = _RecordingTempManager(tmp_path)
+    try:
+        await handler.handle_tts_request(
+            TTSMessageSpeechRequestEvent(
+                snapshot,
+                store.validate_tts_message_speech_snapshot,
+            )
+        )
+        await asyncio.wait_for(
+            handler.completion_posted.wait(),
+            timeout=_WAIT_SECONDS,
+        )
+        completion = next(
+            event
+            for event in handler.messages
+            if isinstance(event, TTSCompleteEvent)
+        )
+
+        assert completion.audio_file is None
+        assert completion.error
+        assert "credential" not in completion.error
+        assert completion.global_override_token is None
+        assert len(service.exact_calls) == 1
+        assert service.calls == []
+    finally:
+        await handler.cleanup_tts_resources()
 
 
 @pytest.mark.asyncio

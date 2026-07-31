@@ -3,12 +3,14 @@
 #
 # Imports
 import asyncio
-from collections.abc import Callable
+import re
+from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import Dict, Optional, TypeVar
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass
+from uuid import uuid4
 from loguru import logger
 
 # Third-party imports
@@ -19,13 +21,20 @@ from tldw_chatbook.Chat.console_speech import (
     ConsoleSpeechSnapshotRejected,
     TTSMessageSpeechSnapshot,
 )
-from tldw_chatbook.TTS import get_tts_service
+from tldw_chatbook.TTS import (
+    CharacterTTSRequestResolution,
+    CharacterTTSRequestResolver,
+    CharacterTTSResolutionError,
+    TTSRequestedSelectionSnapshot,
+    get_tts_service,
+)
 from tldw_chatbook.TTS.adapter_types import (
     TTSConfigurationRevisionError,
     TTSOperationError,
     TTSProgress,
     TTSProviderReconfiguringError,
     TTSProviderUnavailableError,
+    TTSRequest,
     TTSRegistryClosedError,
 )
 from tldw_chatbook.Utils.secure_temp_files import get_temp_manager, secure_delete_file
@@ -35,6 +44,7 @@ _TTS_ARTIFACT_WRITE_BATCH_BYTES = 64 * 1024
 _TTS_IO_CANCELLATION_JOIN_TIMEOUT_SECONDS = 1.0
 _TTS_SECURE_DELETE_TIMEOUT_SECONDS = 1.0
 _TTS_RETAINED_WORK_DRAIN_TIMEOUT_SECONDS = 1.0
+_GLOBAL_OVERRIDE_TOKEN_PATTERN = re.compile(r"[0-9a-f]{32}\Z")
 
 
 class _TTSResponseContractError(RuntimeError):
@@ -102,11 +112,33 @@ class TTSCompleteEvent(Message):
         message_id: str,
         audio_file: Optional[Path] = None,
         error: Optional[str] = None,
+        global_override_token: str | None = None,
     ):
         super().__init__()
+        if global_override_token is not None and not (
+            type(global_override_token) is str
+            and _GLOBAL_OVERRIDE_TOKEN_PATTERN.fullmatch(global_override_token)
+        ):
+            raise ValueError("global override token must be lowercase hexadecimal")
         self.message_id = message_id
         self.audio_file = audio_file
         self.error = error
+        self.global_override_token = global_override_token
+
+
+class TTSGlobalOverrideDecisionEvent(Message):
+    """Accept or decline one handler-issued global-voice fallback capability."""
+
+    def __init__(self, token: str, accepted: bool) -> None:
+        super().__init__()
+        if type(token) is not str or not _GLOBAL_OVERRIDE_TOKEN_PATTERN.fullmatch(
+            token
+        ):
+            raise ValueError("token must be 32 lowercase hexadecimal characters")
+        if type(accepted) is not bool:
+            raise ValueError("accepted must be a boolean")
+        self.token = token
+        self.accepted = accepted
 
 
 class TTSPlaybackEvent(Message):
@@ -158,6 +190,15 @@ class TTSUsageRecord:
     format: str
     estimated_cost: float
     created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingGlobalOverride:
+    """Private admission state retained behind an opaque one-use token."""
+
+    snapshot: TTSMessageSpeechSnapshot
+    validator: Callable[[TTSMessageSpeechSnapshot], str]
+    created_at: float
 
 
 class CostTracker:
@@ -257,9 +298,17 @@ class TTSEventHandler:
     COOLDOWN_SECONDS = 2.0  # Minimum time between requests for same message
     COOLDOWN_CLEANUP_INTERVAL = 300.0  # Clean up old entries every 5 minutes
     MAX_COOLDOWN_ENTRIES = 1000  # Maximum entries to keep in memory
+    GLOBAL_OVERRIDE_TTL_SECONDS = 300.0
+    MAX_PENDING_GLOBAL_OVERRIDES = 32
 
-    def __init__(self):
+    def __init__(
+        self,
+        profile_service_loader: Callable[[], Awaitable[object | None]]
+        | None = None,
+    ):
         self._tts_service = None
+        self._profile_service_loader = profile_service_loader
+        self._pending_global_overrides: dict[str, _PendingGlobalOverride] = {}
         self._temp_manager = get_temp_manager()
         self._audio_files: Dict[str, Path] = {}  # Track audio files by message_id
         self._artifact_cleanup_retry: set[Path] = set()
@@ -346,43 +395,11 @@ class TTSEventHandler:
     ) -> None:
         """Admit a trusted request, then run the shared TTS generation path."""
         if isinstance(event, TTSMessageSpeechRequestEvent):
-            try:
-                request_text = event.validator(event.snapshot)
-            except ConsoleSpeechSnapshotRejected as error:
-                logger.warning(
-                    "Console speech snapshot rejected (outcome_code={})",
-                    error.code.value,
-                )
-                await self._post_tts_message(
-                    TTSCompleteEvent(
-                        message_id=event.message_id,
-                        error=str(error),
-                    )
-                )
-                return
-            except Exception:
-                logger.warning(
-                    "Console speech snapshot rejected "
-                    "(outcome_code=validator_failure)"
-                )
-                await self._post_tts_message(
-                    TTSCompleteEvent(
-                        message_id=event.message_id,
-                        error=ConsoleSpeechSnapshotRejected.USER_COPY,
-                    )
-                )
-                return
-            if type(request_text) is not str:
-                logger.warning(
-                    "Console speech snapshot rejected "
-                    "(outcome_code=invalid_validator_result)"
-                )
-                await self._post_tts_message(
-                    TTSCompleteEvent(
-                        message_id=event.message_id,
-                        error=ConsoleSpeechSnapshotRejected.USER_COPY,
-                    )
-                )
+            request_text = await self._validate_message_speech_snapshot(
+                event.snapshot,
+                event.validator,
+            )
+            if request_text is None:
                 return
             request_message_id: str | None = event.message_id
             request_voice: str | None = None
@@ -390,108 +407,334 @@ class TTSEventHandler:
             request_text = event.text
             request_message_id = event.message_id
             request_voice = event.voice
+            # Preserve the legacy explicit-request maintenance behavior even
+            # when no service is available. Trusted snapshots keep their
+            # stricter validate/resolve-before-cooldown ordering below.
+            self._enforce_cooldown_limit()
 
+        text = await self._prepare_tts_text(
+            request_text,
+            request_message_id or "unknown",
+        )
+        if text is None:
+            return
+
+        resolution: CharacterTTSRequestResolution | None = None
+        if isinstance(event, TTSMessageSpeechRequestEvent):
+            try:
+                resolution = await self._resolve_message_speech_request(
+                    text,
+                    event.snapshot,
+                )
+            except CharacterTTSResolutionError as error:
+                token = None
+                if error.allow_global_override:
+                    token = self._issue_global_override(
+                        event.snapshot,
+                        event.validator,
+                    )
+                logger.warning(
+                    "Console character speech resolution failed "
+                    "(outcome_code={})",
+                    error.code,
+                )
+                await self._post_tts_message(
+                    TTSCompleteEvent(
+                        message_id=event.message_id,
+                        error=str(error),
+                        global_override_token=token,
+                    )
+                )
+                return
+
+        await self._admit_tts_generation(
+            text=text,
+            message_id=request_message_id or "adhoc",
+            voice=request_voice,
+            resolution=resolution,
+        )
+
+    async def handle_tts_global_override_decision(
+        self,
+        event: TTSGlobalOverrideDecisionEvent,
+    ) -> None:
+        """Consume one fallback decision and re-admit its original snapshot."""
+        pending = self._consume_global_override(event.token)
+        if pending is None or not event.accepted:
+            return
+
+        request_text = await self._validate_message_speech_snapshot(
+            pending.snapshot,
+            pending.validator,
+        )
+        if request_text is None:
+            return
+        text = await self._prepare_tts_text(
+            request_text,
+            pending.snapshot.message_id,
+        )
+        if text is None:
+            return
+
+        resolver = CharacterTTSRequestResolver(None)
+        resolution = resolver.resolve_explicit_global_override(text=text)
+
+        await self._admit_tts_generation(
+            text=text,
+            message_id=pending.snapshot.message_id,
+            voice=None,
+            resolution=resolution,
+        )
+
+    async def _validate_message_speech_snapshot(
+        self,
+        snapshot: TTSMessageSpeechSnapshot,
+        validator: Callable[[TTSMessageSpeechSnapshot], str],
+    ) -> str | None:
+        """Validate one handler-retained snapshot without exposing its content."""
+        try:
+            request_text = validator(snapshot)
+        except ConsoleSpeechSnapshotRejected as error:
+            logger.warning(
+                "Console speech snapshot rejected (outcome_code={})",
+                error.code.value,
+            )
+            await self._post_tts_message(
+                TTSCompleteEvent(
+                    message_id=snapshot.message_id,
+                    error=str(error),
+                )
+            )
+            return None
+        except Exception:
+            logger.warning(
+                "Console speech snapshot rejected "
+                "(outcome_code=validator_failure)"
+            )
+            await self._post_tts_message(
+                TTSCompleteEvent(
+                    message_id=snapshot.message_id,
+                    error=ConsoleSpeechSnapshotRejected.USER_COPY,
+                )
+            )
+            return None
+        if type(request_text) is not str:
+            logger.warning(
+                "Console speech snapshot rejected "
+                "(outcome_code=invalid_validator_result)"
+            )
+            await self._post_tts_message(
+                TTSCompleteEvent(
+                    message_id=snapshot.message_id,
+                    error=ConsoleSpeechSnapshotRejected.USER_COPY,
+                )
+            )
+            return None
+        return request_text
+
+    async def _prepare_tts_text(
+        self,
+        request_text: object,
+        message_id: str,
+    ) -> str | None:
+        """Validate and normalize text before assignment or cooldown admission."""
+        if not self._tts_service:
+            logger.error("TTS service not initialized")
+            await self._post_tts_message(
+                TTSCompleteEvent(
+                    message_id=message_id,
+                    error="TTS service not available",
+                )
+            )
+            return None
+        if type(request_text) is not str or not request_text:
+            await self._post_tts_message(
+                TTSCompleteEvent(
+                    message_id=message_id,
+                    error="No text provided for TTS generation",
+                )
+            )
+            return None
+
+        max_tts_length = 5000
+        if len(request_text) > max_tts_length:
+            logger.warning("TTS text exceeds the configured length limit")
+            await self._post_tts_message(
+                TTSCompleteEvent(
+                    message_id=message_id,
+                    error=(
+                        "Text is too long for TTS. Maximum "
+                        f"{max_tts_length} characters allowed."
+                    ),
+                )
+            )
+            return None
+
+        text = " ".join(request_text.split())
+        if not text:
+            await self._post_tts_message(
+                TTSCompleteEvent(
+                    message_id=message_id,
+                    error="Text contains only whitespace",
+                )
+            )
+            return None
+        return text
+
+    async def _resolve_message_speech_request(
+        self,
+        text: str,
+        snapshot: TTSMessageSpeechSnapshot,
+    ) -> CharacterTTSRequestResolution:
+        """Resolve an exact assignment only for verified character authorship."""
+        profile_service = None
+        if snapshot.assistant_kind == "character":
+            loader = self._profile_service_loader
+            if loader is not None:
+                try:
+                    profile_service = await loader()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    logger.warning(
+                        "TTS profile service load failed "
+                        "(exception_category={})",
+                        type(error).__name__,
+                    )
+        resolver = CharacterTTSRequestResolver(profile_service)
+        return await resolver.resolve(
+            text=text,
+            assistant_kind=snapshot.assistant_kind,
+            character_ref=snapshot.character_ref,
+        )
+
+    def _issue_global_override(
+        self,
+        snapshot: TTSMessageSpeechSnapshot,
+        validator: Callable[[TTSMessageSpeechSnapshot], str],
+    ) -> str:
+        """Retain bounded private fallback state behind a random capability."""
+        current_time = asyncio.get_event_loop().time()
+        self._prune_global_overrides(current_time)
+        if len(self._pending_global_overrides) >= self.MAX_PENDING_GLOBAL_OVERRIDES:
+            oldest_token = min(
+                self._pending_global_overrides,
+                key=lambda token: self._pending_global_overrides[token].created_at,
+            )
+            del self._pending_global_overrides[oldest_token]
+
+        token = uuid4().hex
+        while token in self._pending_global_overrides:
+            token = uuid4().hex
+        self._pending_global_overrides[token] = _PendingGlobalOverride(
+            snapshot=snapshot,
+            validator=validator,
+            created_at=current_time,
+        )
+        return token
+
+    def _consume_global_override(
+        self,
+        token: str,
+    ) -> _PendingGlobalOverride | None:
+        """Atomically consume a non-expired capability."""
+        pending = self._pending_global_overrides.pop(token, None)
+        if pending is None:
+            return None
+        current_time = asyncio.get_event_loop().time()
+        if current_time - pending.created_at > self.GLOBAL_OVERRIDE_TTL_SECONDS:
+            return None
+        self._prune_global_overrides(current_time)
+        return pending
+
+    def _prune_global_overrides(self, current_time: float) -> None:
+        cutoff = current_time - self.GLOBAL_OVERRIDE_TTL_SECONDS
+        expired = [
+            token
+            for token, pending in self._pending_global_overrides.items()
+            if pending.created_at < cutoff
+        ]
+        for token in expired:
+            del self._pending_global_overrides[token]
+
+    async def _admit_tts_generation(
+        self,
+        *,
+        text: str,
+        message_id: str,
+        voice: str | None,
+        resolution: CharacterTTSRequestResolution | None,
+    ) -> None:
+        """Apply cooldown only after validation and character resolution."""
         current_time = asyncio.get_event_loop().time()
         if current_time - self._last_cooldown_cleanup > self.COOLDOWN_CLEANUP_INTERVAL:
             self._cleanup_cooldown_dict(current_time)
             self._last_cooldown_cleanup = current_time
         self._enforce_cooldown_limit()
 
-        if not self._tts_service:
-            logger.error("TTS service not initialized")
-            await self._post_tts_message(
-                TTSCompleteEvent(
-                    message_id=request_message_id or "unknown",
-                    error="TTS service not available",
-                )
-            )
-            return
-
-        # Validate input text
-        if not request_text:
-            await self._post_tts_message(
-                TTSCompleteEvent(
-                    message_id=request_message_id or "unknown",
-                    error="No text provided for TTS generation",
-                )
-            )
-            return
-
-        # Check text length limits
-        MAX_TTS_LENGTH = 5000  # Maximum characters for TTS
-        if len(request_text) > MAX_TTS_LENGTH:
-            logger.warning(f"TTS text too long: {len(request_text)} characters")
-            await self._post_tts_message(
-                TTSCompleteEvent(
-                    message_id=request_message_id or "unknown",
-                    error=f"Text is too long for TTS. Maximum {MAX_TTS_LENGTH} characters allowed.",
-                )
-            )
-            return
-
-        # Basic sanitization - remove excessive whitespace
-        text = " ".join(request_text.split())
-        if len(text) < 1:
-            await self._post_tts_message(
-                TTSCompleteEvent(
-                    message_id=request_message_id or "unknown",
-                    error="Text contains only whitespace",
-                )
-            )
-            return
-
-        # Check rate limiting for this message
-        message_id = request_message_id or "adhoc"
-
         if message_id in self._request_cooldown:
             time_since_last = current_time - self._request_cooldown[message_id]
             if time_since_last < self.COOLDOWN_SECONDS:
+                wait_seconds = self.COOLDOWN_SECONDS - time_since_last
                 logger.warning(
-                    f"TTS request too soon for message {message_id}. Please wait {self.COOLDOWN_SECONDS - time_since_last:.1f}s"
+                    "TTS request rejected by message cooldown "
+                    "(wait_seconds={:.1f})",
+                    wait_seconds,
                 )
                 await self._post_tts_message(
                     TTSCompleteEvent(
                         message_id=message_id,
-                        error=f"Please wait {self.COOLDOWN_SECONDS - time_since_last:.1f} seconds before requesting TTS again",
+                        error=(
+                            f"Please wait {wait_seconds:.1f} seconds before "
+                            "requesting TTS again"
+                        ),
                     )
                 )
                 return
 
-        # Update cooldown tracker
         self._request_cooldown[message_id] = current_time
-
-        # Check if we need to evict old entries (LRU style)
         self._enforce_cooldown_limit()
 
-        # Start TTS generation task
         task = asyncio.create_task(
             self._generate_tts_with_rate_limit(
-                text,  # Use sanitized text
+                text,
                 message_id,
-                request_voice,
+                voice,
+                resolution,
             )
         )
-        # Track the task
         asyncio.create_task(self._add_active_task(task))
 
     async def _generate_tts_with_rate_limit(
-        self, text: str, message_id: Optional[str], voice: Optional[str]
+        self,
+        text: str,
+        message_id: Optional[str],
+        voice: Optional[str],
+        resolution: CharacterTTSRequestResolution | None = None,
     ) -> None:
         """Generate TTS audio (rate limiting handled by TTSService)"""
         try:
-            await self._generate_tts(text, message_id, voice)
+            await self._generate_tts(text, message_id, voice, resolution)
         except asyncio.CancelledError:
             logger.info(f"TTS generation cancelled for message {message_id}")
             raise
 
     async def _generate_tts(
-        self, text: str, message_id: Optional[str], voice: Optional[str]
+        self,
+        text: str,
+        message_id: Optional[str],
+        voice: Optional[str],
+        resolution: CharacterTTSRequestResolution | None = None,
     ) -> None:
-        """Generate one complete default TTS response and publish its artifact."""
+        """Generate one complete resolved TTS response and publish its artifact."""
         from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
         normalized_message_id = message_id or "adhoc"
-        resolution_source = "explicit_override" if voice is not None else "global"
+        resolution_source = (
+            resolution.source
+            if resolution is not None
+            else ("explicit_override" if voice is not None else "global")
+        )
         start_time = asyncio.get_event_loop().time()
         outcome_code = "generation_failed"
         provider_id: str | None = None
@@ -503,13 +746,28 @@ class TTSEventHandler:
             if service is None:
                 raise TTSProviderUnavailableError("TTS service is unavailable")
 
-            try:
-                preferences = service.preferences_snapshot()
-                candidate_provider_id = getattr(preferences, "provider_id", None)
-                if isinstance(candidate_provider_id, str) and candidate_provider_id:
-                    provider_id = candidate_provider_id
-            except Exception:
-                logger.debug("TTS metric provider snapshot is unavailable")
+            exact_request = (
+                resolution.request
+                if resolution is not None and resolution.source == "assigned"
+                else None
+            )
+            if exact_request is not None:
+                provider_id = exact_request.provider_id
+            else:
+                try:
+                    preferences = service.preferences_snapshot()
+                    candidate_provider_id = getattr(
+                        preferences,
+                        "provider_id",
+                        None,
+                    )
+                    if (
+                        isinstance(candidate_provider_id, str)
+                        and candidate_provider_id
+                    ):
+                        provider_id = candidate_provider_id
+                except Exception:
+                    logger.debug("TTS metric provider snapshot is unavailable")
 
             await self._post_tts_message(
                 TTSProgressEvent(
@@ -542,20 +800,45 @@ class TTSEventHandler:
 
             primary_error: BaseException | None = None
             try:
-                response = await service.synthesize_default(
-                    text=text,
-                    voice_override=voice,
-                    progress_sink=progress_sink,
-                )
+                if exact_request is not None:
+                    response, requested_selection = await service.synthesize_exact(
+                        exact_request,
+                        progress_sink=progress_sink,
+                    )
+                    self._validate_exact_selection(
+                        exact_request,
+                        requested_selection,
+                    )
+                else:
+                    response = await service.synthesize_default(
+                        text=text,
+                        voice_override=voice,
+                        progress_sink=progress_sink,
+                    )
                 if (
                     not isinstance(response.provider_id, str)
                     or not response.provider_id
                 ):
                     raise _TTSResponseContractError
+                if (
+                    exact_request is not None
+                    and response.provider_id != exact_request.provider_id
+                ):
+                    raise _TTSResponseContractError
                 provider_id = response.provider_id
                 if not isinstance(response.model_id, str) or not response.model_id:
                     raise _TTSResponseContractError
+                if (
+                    exact_request is not None
+                    and response.model_id != exact_request.model_id
+                ):
+                    raise _TTSResponseContractError
                 audio_format = self._response_audio_format(response.audio_format)
+                if (
+                    exact_request is not None
+                    and audio_format != exact_request.response_format
+                ):
+                    raise _TTSResponseContractError
 
                 def remember_cancelled_creation(path: Path) -> None:
                     nonlocal artifact_path
@@ -686,6 +969,33 @@ class TTSEventHandler:
                     )
                 except Exception:
                     logger.debug("TTS metric publication failed")
+
+    @staticmethod
+    def _validate_exact_selection(
+        request: TTSRequest,
+        selection: object,
+    ) -> None:
+        """Reject exact-service provenance that differs from the admitted request."""
+        if type(selection) is not TTSRequestedSelectionSnapshot:
+            raise _TTSResponseContractError
+        expected = (
+            request.provider_id,
+            request.model_id,
+            request.voice,
+            request.response_format,
+            request.speed,
+            request.options,
+        )
+        actual = (
+            selection.provider_id,
+            selection.model_id,
+            selection.voice_id,
+            selection.response_format,
+            selection.speed,
+            selection.options,
+        )
+        if actual != expected:
+            raise _TTSResponseContractError
 
     async def _run_blocking_tts_io(
         self,
@@ -1195,6 +1505,8 @@ class TTSEventHandler:
 
     async def cleanup_tts_resources(self) -> None:
         """Clean up all TTS resources"""
+        self._pending_global_overrides.clear()
+
         # Cancel all active tasks with lock
         async with self._active_tasks_lock:
             tasks_to_cancel = list(self._active_tasks)
