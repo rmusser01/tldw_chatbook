@@ -616,6 +616,24 @@ COMMAND_PHRASES: dict[str, str] = {
     "new session": "new-session",
 }
 
+#: Recognizer mis-hearings observed on real hardware, mapped to the phrase
+#: the speaker actually said. Consulted ONLY after an exact `COMMAND_PHRASES`
+#: match fails, and only for the whole prefix-stripped remainder -- so the
+#: fail-open rule ("ambiguous resolves to text") still governs everything not
+#: literally in this table. Every entry must name the incident that earned
+#: it; do not add speculative homophones, each one widens what can no longer
+#: be dictated as text.
+MISHEARD_PHRASES: dict[str, str] = {
+    # parakeet-mlx, live 2026-07-31: the user's spoken "stop" repeatedly
+    # transcribed as "dot" ("Console dot.").
+    "dot": "stop",
+}
+
+#: Mis-heard prefix variants, same evidence rule as `MISHEARD_PHRASES`.
+#: parakeet-mlx, live 2026-07-31: "console" transcribed as "consoles"
+#: ("Consoles. Stop.").
+MISHEARD_PREFIXES: tuple[str, ...] = ("consoles",)
+
 
 def normalize_spoken(text: str) -> str:
     """Fold recognizer output down to the shape the grammar matches against.
@@ -680,6 +698,12 @@ def classify_segment(text: str) -> "VoiceCommand | VoiceFinal":
     original, unmodified text, since misrecognizing dictated text as a
     command silently discards what the user said.
 
+    Exact matches are tried first. When none hits, the whole segment is
+    retried against `MISHEARD_PHRASES`/`MISHEARD_PREFIXES` -- curated,
+    incident-backed recognizer mis-hearings ("Console dot." for "console
+    stop") -- still whole-segment-only, so ordinary prose can no more match
+    an alias than it could match the real phrase.
+
     Args:
         text: Raw recognizer output for one finalized segment.
 
@@ -688,9 +712,21 @@ def classify_segment(text: str) -> "VoiceCommand | VoiceFinal":
         otherwise a `VoiceFinal` carrying `text` unchanged.
     """
     normalized = normalize_spoken(text)
-    prefix = command_prefix()
-    for phrase, name in COMMAND_PHRASES.items():
-        if normalized == f"{prefix} {phrase}":
+    configured_prefix = command_prefix()
+    prefixes = (configured_prefix, *(
+        alias for alias in MISHEARD_PREFIXES if configured_prefix == DEFAULT_COMMAND_PREFIX
+    ))
+    for prefix in prefixes:
+        marker = f"{prefix} "
+        if not normalized.startswith(marker):
+            continue
+        remainder = normalized[len(marker):]
+        name = COMMAND_PHRASES.get(remainder)
+        if name is None:
+            corrected = MISHEARD_PHRASES.get(remainder)
+            if corrected is not None:
+                name = COMMAND_PHRASES.get(corrected)
+        if name is not None:
             return VoiceCommand(name)
     return VoiceFinal(text)
 

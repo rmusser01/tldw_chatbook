@@ -2406,3 +2406,36 @@ def test_segment_transcribing_with_no_generation_tracking_uses_the_single_arg_em
 
     assert len(events) == 1
     assert isinstance(events[0], cvi.VoiceSegmentTranscribing)
+
+
+def test_the_observed_dot_mishear_fires_stop(monkeypatch):
+    """parakeet-mlx live 2026-07-31: spoken 'stop' transcribed as 'dot'."""
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Console dot.")
+    assert isinstance(result, cvi.VoiceCommand) and result.name == "stop"
+
+
+def test_the_observed_consoles_prefix_mishear_fires_the_command(monkeypatch):
+    """parakeet-mlx live 2026-07-31: 'console' transcribed as 'consoles'."""
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Consoles. Stop.")
+    assert isinstance(result, cvi.VoiceCommand) and result.name == "stop"
+
+
+def test_mishear_aliases_stay_whole_segment_only(monkeypatch):
+    """'dot' inside prose must never fire; the alias is whole-segment like
+    the real grammar."""
+    _stub_settings(monkeypatch, {})
+    assert isinstance(
+        cvi.classify_segment("Console dot the i and cross the t"), cvi.VoiceFinal
+    )
+    assert isinstance(cvi.classify_segment("dot"), cvi.VoiceFinal)
+
+
+def test_mishear_prefix_aliases_do_not_apply_to_a_custom_prefix(monkeypatch):
+    """'consoles' is a mis-hear of the DEFAULT prefix; a user who configured
+    their own prefix gets no silent extra wake words."""
+    _stub_settings(monkeypatch, {"dictation.command_prefix": "jarvis"})
+    assert isinstance(cvi.classify_segment("Consoles. Stop."), cvi.VoiceFinal)
+    result = cvi.classify_segment("Jarvis, dot.")
+    assert isinstance(result, cvi.VoiceCommand) and result.name == "stop"
