@@ -703,6 +703,29 @@ class LazyLiveDictationService:
           silence-finalize until this call returns. Accepted: the
           alternative (transcribing on the shared loop thread) is the
           defect this method exists to fix.
+
+          `segment_audio`'s size is bounded only by however long the
+          in-progress segment runs before something finalizes it -- and
+          without `webrtcvad` (`recording_service.py` forwards every chunk
+          unconditionally in that state, a documented degrade path), or for
+          an utterance that simply never pauses, NOTHING finalizes it until
+          `stop_dictation()`: `last_speech_time` never goes stale, so the
+          silence check above never fires, and the entire capture -- however
+          long -- sits in `segment_audio` and is transcribed as a single
+          call inside the tail-drain, behind `stop_join_timeout_seconds`
+          (30s default). Two different callers, two different outcomes here:
+          the Console (`UI/Screens/chat_screen.py`) passes
+          `max_buffer_bytes=CONSOLE_DICTATION_MAX_BYTES` to the recorder,
+          whose `on_buffer_limit` callback stops the capture once that many
+          bytes have been delivered (`_handle_console_dictation_limit`), so
+          `segment_audio` is bounded there too, indirectly, at the same
+          ~60s/~1.9MB ceiling. `UI/Dictation_Window_Improved.py` builds this
+          service with no `max_buffer_bytes` at all, so for that caller
+          `segment_audio` is genuinely unbounded by anything but the user
+          choosing to stop. Not fixed here -- a max-segment-duration
+          force-finalize would close this cleanly, but is new machinery
+          outside this rework's scope; see
+          `.superpowers/sdd/2026-07-29-console-voice-control-v2/dictation-loop-fix-report.md`.
         """
         streaming = self.streaming_transcriber is not None
         segment_audio = []
@@ -710,7 +733,23 @@ class LazyLiveDictationService:
 
         while not self.stop_processing.is_set():
             try:
-                # Get items from queue with timeout
+                # Get items from queue with timeout, THEN drain whatever else
+                # is already waiting (non-blocking) before doing anything
+                # else this iteration. A single `get(timeout=0.1)` per
+                # iteration was previously enough -- until a whole
+                # multi-second `_transcribe_segment_audio()` call (below) can
+                # block this loop long enough for an entire second utterance
+                # to arrive, finish, and go silent while the loop cannot look
+                # at it. Resuming with only ONE of those queued frames
+                # drained, `last_speech_time` (refreshed by the audio
+                # callback on ITS OWN thread throughout, unaffected by this
+                # loop being blocked) is already stale relative to the
+                # silence check just below -- so it fired on that single
+                # frame alone, stranding the rest of the utterance behind a
+                # just-zeroed `last_speech_time` until the next pause or
+                # stop. Draining to empty first means the silence check
+                # always sees the FULL backlog that arrived while this loop
+                # was away, not an arbitrary one-frame slice of it.
                 try:
                     item_type, data = self.processing_queue.get(timeout=0.1)
 
@@ -719,6 +758,14 @@ class LazyLiveDictationService:
 
                 except queue.Empty:
                     pass
+                else:
+                    while True:
+                        try:
+                            item_type, data = self.processing_queue.get_nowait()
+                        except queue.Empty:
+                            break
+                        if item_type == "audio":
+                            segment_audio.append(data)
 
                 current_time = time.time()
                 buffer_duration_sec = self.buffer_duration_ms / 1000
@@ -835,9 +882,23 @@ class LazyLiveDictationService:
         if not segment_audio:
             return
         audio_data = b"".join(segment_audio)
+        # Snapshot before the call and compare after, rather than reading
+        # `current_transcript` alone post-call: this call is the only writer
+        # while it runs (this thread, sequential with `_finalize_current_
+        # segment()`), so any change is exactly what THIS call produced.
+        # `current_transcript` should always be "" going in -- the prior
+        # segment's own call is always immediately followed by a finalize
+        # that clears it -- but reading only the post-call value would
+        # misreport a genuinely blank result as "produced text" if residue
+        # ever did carry over (e.g. a future change to the streaming ->
+        # buffer-API fallback inside `_process_audio_buffer`), since
+        # `_handle_partial_text` leaves `current_transcript` untouched, not
+        # cleared, when its input is blank.
+        with self.transcript_lock:
+            before = self.current_transcript
         self._process_audio_buffer(audio_data)
         with self.transcript_lock:
-            produced_text = bool(self.current_transcript.strip())
+            produced_text = self.current_transcript != before
         if not produced_text:
             # Whisper-family models routinely return empty or whitespace-only
             # text for room noise or a too-short VAD sliver -- routine, not a
@@ -994,9 +1055,15 @@ class LazyLiveDictationService:
     def _handle_partial_text(self, text: str):
         """Accumulate one chunk's text and publish the segment so far.
 
-        Chunks arrive roughly every ``buffer_duration_ms``; replacing the
-        transcript with each one (as this used to) would leave a segment
-        holding only its last half-second of speech.
+        For the streaming regime, chunks arrive roughly every
+        ``buffer_duration_ms``, and this accumulation is what keeps a
+        segment from holding only its most recent half-second of speech
+        instead of everything said so far. For the non-streaming regime this
+        is called exactly once per segment (see ``_transcribe_segment_audio``),
+        so there is nothing to accumulate onto -- but it is still the same
+        method, since ``current_transcript`` is always empty going in either
+        way (the previous segment's own call is immediately followed by a
+        finalize that clears it).
         """
         chunk = (text or "").strip()
         if not chunk:

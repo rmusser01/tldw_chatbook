@@ -447,6 +447,84 @@ def test_chopping_b_two_windows_of_one_utterance_reach_the_transcriber_together(
 
 
 # --------------------------------------------------------------------------
+# RED C: speech arriving WHILE a segment transcription is already in flight
+# must reach the transcriber as one complete next segment -- not chopped at
+# its first frame by a stale silence check.
+#
+# `_processing_loop` drains exactly ONE item from `processing_queue` per
+# iteration but runs the silence check every iteration. Resuming from a
+# multi-second `_transcribe_segment_audio()` call, `last_speech_time` can
+# already be stale relative to a whole second utterance that was spoken and
+# finished entirely while the first call was in flight: the very first
+# resumed iteration drains a single 20ms frame, finds `last_speech_time`
+# already past threshold, and fires the silence branch on that one frame
+# alone -- stranding the rest of the utterance (still sitting in the queue)
+# behind a JUST-ZEROED `last_speech_time`, so no further silence fire is
+# possible for it until stop. This is the exact contract this architecture
+# exists to satisfy ("speech during a segment transcription queues into the
+# NEXT segment, no loss, no mixing") failing in the one window nothing else
+# in this file exercises: silence firing while ANOTHER segment is already
+# being transcribed.
+# --------------------------------------------------------------------------
+
+
+def test_speech_during_an_in_flight_transcription_completes_as_the_next_segment():
+    """Utterance 2 is spoken and finished entirely while utterance 1's
+    transcription is still running. It must still arrive as ONE final
+    ("w2 w3 w4 w5"), via ONE `transcribe_buffer()` call -- not chopped into
+    a stray first-frame segment plus a stranded remainder.
+    """
+    threshold = 0.2
+    latency = 1.0  # long enough for all of utterance 2 to be spoken and
+    # paused before utterance 1's own transcription returns.
+    transcription = _MarkerTranscriptionService(latency_seconds=latency)
+    service = _mid_capture_service(transcription, silence_threshold=threshold)
+    service.buffer_duration_ms = 20
+
+    sink = _Sink()
+    service.on_final_transcript = sink.final
+    service.on_error = sink.error
+
+    _run_loop(service)
+    try:
+        # Utterance 1: one chunk, then silence -- the silence check fires
+        # and starts transcribing it (blocking the loop for `latency`).
+        service._audio_callback(_marker_chunk(1))
+        assert _wait_until(
+            lambda: len(transcription.buffer_calls) >= 1, timeout=threshold + 1.0
+        ), "utterance 1's transcription never started"
+
+        # Utterance 2, entirely spoken (and then left silent) WHILE that
+        # first call is still in flight: four chunks, gapped well under
+        # `threshold`, all fed before `latency` elapses.
+        for marker in (2, 3, 4, 5):
+            service._audio_callback(_marker_chunk(marker))
+            time.sleep(0.05)
+
+        deadline = 2 * latency + threshold + 1.0
+        assert _wait_until(
+            lambda: len(sink.finals) >= 2, timeout=deadline
+        ), f"utterance 2 never finalized within {deadline}s: finals={sink.finals!r}"
+
+        assert sink.errors == []
+        assert sink.finals == ["w1", "w2 w3 w4 w5"], (
+            f"expected utterance 2 to arrive as one complete final, got "
+            f"{sink.finals!r} -- it was chopped at its first frame by a "
+            "stale silence check resuming from the in-flight transcription"
+        )
+        assert len(transcription.buffer_calls) == 2, (
+            f"expected exactly 2 transcribe_buffer() calls (one per "
+            f"utterance), got {len(transcription.buffer_calls)} -- "
+            "utterance 2 was split across more than one call"
+        )
+        assert transcription.buffer_calls[1]["audio_data"] == (
+            _marker_chunk(2) + _marker_chunk(3) + _marker_chunk(4) + _marker_chunk(5)
+        )
+    finally:
+        _stop_loop(service)
+
+
+# --------------------------------------------------------------------------
 # Segment ordering: two utterances, separated by MORE than the threshold,
 # are two separate finals, in order.
 # --------------------------------------------------------------------------
