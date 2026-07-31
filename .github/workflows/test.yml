@@ -310,3 +310,16 @@ jobs:
             repo: context.repo.repo,
             body: summary
           });
+
+    - name: Propagate required test failures
+      if: ${{ always() }}
+      env:
+        UNIT_TESTS_RESULT: ${{ needs.unit-tests.result }}
+        INTEGRATION_TESTS_RESULT: ${{ needs.integration-tests.result }}
+        UI_TESTS_RESULT: ${{ needs.ui-tests.result }}
+        TEXTUAL_MINIMUM_RESULT: ${{ needs.textual-minimum.result }}
+      run: |
+        if [[ "$UNIT_TESTS_RESULT" != "success" || "$INTEGRATION_TESTS_RESULT" != "success" || "$UI_TESTS_RESULT" != "success" || "$TEXTUAL_MINIMUM_RESULT" != "success" ]]; then
+          echo "One or more required test jobs did not succeed."
+          exit 1
+        fi
