@@ -3739,6 +3739,44 @@ async def test_set_assignment_rejects_stale_selected_profile_revision(
 
 
 @pytest.mark.asyncio
+async def test_set_assignment_rejects_deleted_and_recreated_profile_identity(
+    tmp_path: Path,
+) -> None:
+    character_ref = CharacterRef("local", "authority", "recreated-profile-character")
+
+    async with _opened_repository(
+        tmp_path / "recreated-selected-profile.sqlite3"
+    ) as repository:
+        observed = await repository.create_profile(
+            _draft("Observed Identity"),
+            profile_id=GENERATED_ID,
+        )
+        await repository.delete_profile(
+            GENERATED_ID,
+            expected_generation=observed.generation,
+        )
+        replacement = await repository.create_profile(
+            _draft("Replacement Identity"),
+            profile_id=GENERATED_ID,
+            expected_generation=observed.generation,
+        )
+        assert replacement.value.revision == observed.value.revision
+
+        with pytest.raises(ProfileRepositoryError) as conflict:
+            await repository.set_assignment(
+                character_ref,
+                GENERATED_ID,
+                expected_generation=replacement.generation,
+                expected_profile_revision=observed.value.revision,
+                expected_current_profile_id=None,
+                expected_profile=observed.value,
+            )
+
+        _assert_safe_error(conflict.value, "conflict")
+        assert (await repository.get_assigned_profile(character_ref)).value is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "changed_expectation",
     ["profile_revision", "current_assignment"],
@@ -4980,3 +5018,116 @@ async def test_crud_sql_runs_only_on_repository_worker(
     assert traced_threads
     assert len(set(traced_threads)) == 1
     assert traced_threads[0] != event_loop_thread
+
+
+@pytest.mark.asyncio
+async def test_portable_collision_read_returns_exact_uuid_and_name_matches(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "portable-collisions.sqlite3"
+    uuid_match_id = UUID("30000000-0000-4000-8000-000000000003")
+    name_match_id = UUID("40000000-0000-4000-8000-000000000004")
+
+    async with _opened_repository(database_path) as repository:
+        uuid_match = (
+            await repository.create_profile(
+                _draft("UUID voice"),
+                profile_id=uuid_match_id,
+            )
+        ).value
+        name_match = (
+            await repository.create_profile(
+                _draft("Imported voice"),
+                profile_id=name_match_id,
+            )
+        ).value
+
+        result = await repository.get_profile_collisions(
+            uuid_match_id,
+            _draft("IMPORTED VOICE"),
+        )
+
+    assert result.value.profile_id_match == uuid_match
+    assert result.value.normalized_name_match == name_match
+
+
+@pytest.mark.asyncio
+async def test_create_profile_with_assignment_is_one_atomic_repository_result(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "portable-create-assignment.sqlite3"
+    profile_id = UUID("50000000-0000-4000-8000-000000000005")
+    character_ref = CharacterRef("local", "local-authority", "42")
+    draft = _draft(
+        "Portable voice",
+        provider_id="audio_cpp",
+        model_id="supertonic-3",
+        voice_id="M1",
+        response_format="wav",
+        speed=1.0,
+        options={},
+    )
+
+    async with _opened_repository(database_path) as repository:
+        result = await repository.create_profile_with_assignment(
+            draft,
+            profile_id,
+            character_ref,
+            expected_generation=repository.generation,
+            expected_current_profile_id=None,
+        )
+        persisted = await repository.get_assigned_profile(character_ref)
+
+    assert result.value.profile.profile_id == profile_id
+    assert result.value.assignment.character_ref == character_ref
+    assert result.value.assignment.profile_id == profile_id
+    assert persisted.value == result.value
+
+
+@pytest.mark.asyncio
+async def test_create_profile_with_assignment_rolls_back_both_rows_on_failure(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "portable-create-assignment-rollback.sqlite3"
+    profile_id = UUID("60000000-0000-4000-8000-000000000006")
+    character_ref = CharacterRef("local", "local-authority", "43")
+    draft = _draft(
+        "Rollback voice",
+        provider_id="audio_cpp",
+        model_id="supertonic-3",
+        voice_id="M1",
+        response_format="wav",
+        speed=1.0,
+        options={},
+    )
+
+    async with _opened_repository(database_path) as repository:
+        _external_execute(
+            database_path,
+            """
+            CREATE TRIGGER reject_portable_assignment
+            BEFORE INSERT ON character_tts_assignments
+            BEGIN
+                SELECT RAISE(ABORT, 'secret-portable-assignment-failure');
+            END
+            """,
+        )
+
+        with pytest.raises(ProfileRepositoryError) as failure:
+            await repository.create_profile_with_assignment(
+                draft,
+                profile_id,
+                character_ref,
+                expected_generation=repository.generation,
+                expected_current_profile_id=None,
+            )
+
+        _assert_safe_error(
+            failure.value,
+            "operation_failed",
+            "secret-portable-assignment-failure",
+        )
+        with pytest.raises(ProfileRepositoryError) as missing:
+            await repository.get_profile(profile_id)
+        assert missing.value.code == "missing"
+        assert (await repository.get_assigned_profile(character_ref)).value is None

@@ -149,6 +149,29 @@ def import_character_card(file_path: str) -> Any:
     return import_and_save_character_from_file(_default_character_db(), file_path)
 
 
+def inspect_character_card_tts_attachment(file_input: Any) -> Any:
+    """Read and validate only a local card's transient TTS attachment."""
+
+    from ...Character_Chat.Character_Chat_Lib import (
+        inspect_character_card_tts_attachment as inspect_attachment,
+    )
+
+    return inspect_attachment(file_input)
+
+
+def import_character_card_with_outcome(file_input: Any) -> Any:
+    """Return the structured local import outcome used by Personas."""
+
+    from ...Character_Chat.Character_Chat_Lib import (
+        import_and_save_character_from_file_with_outcome,
+    )
+
+    return import_and_save_character_from_file_with_outcome(
+        _default_character_db(),
+        file_input,
+    )
+
+
 class CCPCharacterHandler:
     """Handles all character-related operations for the Personas screen."""
 

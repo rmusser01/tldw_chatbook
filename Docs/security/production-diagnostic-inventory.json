@@ -110,8 +110,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 204,
-      "diagnostic_digest": "6027ff6aaef79a4e5594",
+      "call_count": 208,
+      "diagnostic_digest": "c1595c126571cc1c3faf",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Character_Chat/Character_Chat_Lib.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -125,7 +125,7 @@
     },
     {
       "call_count": 6,
-      "diagnostic_digest": "bdce30a63b95823e5340",
+      "diagnostic_digest": "5cf76cb863b4a3c0ce42",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Character_Chat/character_card_formats.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -146,7 +146,7 @@
     },
     {
       "call_count": 1,
-      "diagnostic_digest": "8b0a4bf23c7114280d5e",
+      "diagnostic_digest": "832332ee12c25ac07794",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Character_Chat/world_book_import.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1749,7 +1749,7 @@
     },
     {
       "call_count": 63,
-      "diagnostic_digest": "37ab6f1ad51b56996888",
+      "diagnostic_digest": "8b071699011bb9b3e428",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/CCP_Modules/ccp_character_handler.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1987,7 +1987,7 @@
     },
     {
       "call_count": 6,
-      "diagnostic_digest": "753face4b9ef467c6f6b",
+      "diagnostic_digest": "d28a27208156d98520fe",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/evals_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2035,8 +2035,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 148,
-      "diagnostic_digest": "53b46fca922c2017d48a",
+      "call_count": 149,
+      "diagnostic_digest": "64d5d61954faafdbbbe2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/personas_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2441,8 +2441,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 5,
-      "diagnostic_digest": "4f7ee9e58eda1971d2fd",
+      "call_count": 9,
+      "diagnostic_digest": "123bda4c1952d5e07b7c",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Utils/path_validation.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3143,6 +3143,6 @@
     "owner_files": 427,
     "persistent_sink_files": 4,
     "task_492_calls": 1067,
-    "task_494_calls": 6603
+    "task_494_calls": 6612
   }
 }

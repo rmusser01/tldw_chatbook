@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -25,6 +26,10 @@ from tldw_chatbook.TTS import (
     TTSProfileDraft,
     TTSProfilePageSnapshot,
     TTSRequestedSelectionSnapshot,
+)
+from tldw_chatbook.TTS.profile_portability import (
+    PortableTTSProfile,
+    portable_profile_payload,
 )
 from tldw_chatbook.UI import STTS_Window as stts_window_module
 from tldw_chatbook.UI import stts_profile_library as profile_library_module
@@ -2241,3 +2246,103 @@ async def test_unexpected_action_errors_render_only_value_independent_copy(
         assert status == profile_library_module.PROFILE_ACTION_FAILED_COPY
         assert "/Users/private/key" not in status
         assert "upstream.invalid" not in status
+
+
+@pytest.mark.asyncio
+async def test_selected_profile_exports_the_sanitized_standalone_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(profile)
+    app = _ActionHost(service)
+    target = tmp_path / "voice-profile.json"
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        library, selected = await _select_action_profile(app, pilot)
+        export_button = app.query_one("#stts-profile-export-btn", Button)
+        assert export_button.disabled is False
+
+        async def _choose_path() -> Path:
+            return target
+
+        monkeypatch.setattr(library, "_choose_profile_export_path", _choose_path)
+
+        assert await library.export_selected_profile() is True
+
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        expected = portable_profile_payload(
+            PortableTTSProfile(
+                profile_id=selected.profile.profile_id,
+                draft=TTSProfileDraft(
+                    display_name=selected.profile.display_name,
+                    provider_id=selected.profile.provider_id,
+                    model_id=selected.profile.model_id,
+                    voice_id=selected.profile.voice_id,
+                    response_format=selected.profile.response_format,
+                    speed=selected.profile.speed,
+                    options=selected.profile.options,
+                ),
+            )
+        )
+        assert payload == expected
+        assert "revision" not in payload
+        assert "created_at" not in payload
+        assert _status_copy(app) == "Voice profile exported."
+
+
+@pytest.mark.asyncio
+async def test_profile_export_cancellation_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    service = _ActionProfileService(_profile(0))
+    app = _ActionHost(service)
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        library, _selected = await _select_action_profile(app, pilot)
+
+        async def _cancel() -> None:
+            return None
+
+        monkeypatch.setattr(library, "_choose_profile_export_path", _cancel)
+
+        assert await library.export_selected_profile() is False
+        assert list(tmp_path.glob("*.json")) == []
+
+
+@pytest.mark.asyncio
+async def test_profile_export_path_failure_never_logs_sensitive_destination(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from loguru import logger as loguru_logger
+
+    secret = "credential-private-origin-message-text"
+    hidden_parent = tmp_path / f".{secret}"
+    hidden_parent.mkdir()
+    target = hidden_parent / "voice-profile.json"
+    service = _ActionProfileService(_profile(0))
+    app = _ActionHost(service)
+    messages: list[str] = []
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        library, _selected = await _select_action_profile(app, pilot)
+
+        async def _choose_path() -> Path:
+            return target
+
+        monkeypatch.setattr(library, "_choose_profile_export_path", _choose_path)
+        sink = loguru_logger.add(
+            lambda message: messages.append(str(message)),
+            level="DEBUG",
+        )
+        try:
+            assert await library.export_selected_profile() is False
+        finally:
+            loguru_logger.remove(sink)
+
+        status_copy = _status_copy(app)
+
+    assert secret not in "".join(messages)
+    assert status_copy == profile_library_module.PROFILE_ACTION_FAILED_COPY

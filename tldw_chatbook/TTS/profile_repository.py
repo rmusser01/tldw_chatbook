@@ -54,6 +54,7 @@ from tldw_chatbook.TTS.profile_types import (
     ProfileRestoreReceipt,
     ProfileStoreResult,
     TTSGenerationProfile,
+    TTSProfileCollisionSnapshot,
     TTSProfileDraft,
     TTSProfilePage,
 )
@@ -63,6 +64,7 @@ from tldw_chatbook.Utils.path_validation import validate_path_simple
 _T = TypeVar("_T")
 _PATH_TYPE = type(Path())
 _CHARACTER_REF_TYPE = CharacterRef
+_TTS_GENERATION_PROFILE_TYPE = TTSGenerationProfile
 _TTS_PROFILE_DRAFT_TYPE = TTSProfileDraft
 _MAX_SEARCH_CHARACTERS = 128
 _MAX_NORMALIZED_SEARCH_CHARACTERS = 512
@@ -191,6 +193,45 @@ def _validate_optional_profile_id(value: object) -> UUID | None:
     if value is None:
         return None
     return _validate_exact_profile_id(value)
+
+
+def _validate_optional_profile(
+    value: object,
+) -> TTSGenerationProfile | None:
+    """Return an exact canonical profile snapshot or reject the boundary."""
+
+    if value is None:
+        return None
+    if type(value) is not _TTS_GENERATION_PROFILE_TYPE:
+        raise _repository_error("operation_failed")
+    profile = cast(TTSGenerationProfile, value)
+    validation_error: BaseException | None = None
+    validated: TTSGenerationProfile | None = None
+    try:
+        validated = TTSGenerationProfile(
+            profile_id=profile.profile_id,
+            display_name=profile.display_name,
+            normalized_name=profile.normalized_name,
+            provider_id=profile.provider_id,
+            model_id=profile.model_id,
+            voice_id=profile.voice_id,
+            response_format=profile.response_format,
+            speed=profile.speed,
+            options=profile.options,
+            revision=profile.revision,
+            created_at=profile.created_at,
+            updated_at=profile.updated_at,
+        )
+        if validated != profile:
+            raise ValueError
+    except BaseException as error:
+        validation_error = error
+    if validation_error is not None:
+        if not isinstance(validation_error, Exception):
+            raise validation_error
+        raise _repository_error("operation_failed")
+    assert validated is not None
+    return validated
 
 
 def _validate_draft(value: object) -> TTSProfileDraft:
@@ -1240,6 +1281,36 @@ class TTSProfileRepository:
             expected_generation=validated_generation,
         )
 
+    async def create_profile_with_assignment(
+        self,
+        draft: TTSProfileDraft,
+        profile_id: UUID,
+        character_ref: CharacterRef,
+        *,
+        expected_generation: int,
+        expected_current_profile_id: UUID | None,
+    ) -> ProfileStoreResult[AssignedTTSProfileSnapshot]:
+        """Atomically create one profile and set one exact assignment."""
+
+        validated_draft = _validate_draft(draft)
+        validated_profile_id = _validate_exact_profile_id(profile_id)
+        validated_character_ref = _validate_character_ref(character_ref)
+        validated_generation = _validate_expected_generation(expected_generation)
+        validated_current_profile_id = _validate_optional_profile_id(
+            expected_current_profile_id
+        )
+        return await self._submit_operation(
+            lambda connection: self._worker_create_profile_with_assignment(
+                connection,
+                validated_draft,
+                validated_profile_id,
+                validated_character_ref,
+                validated_generation,
+                validated_current_profile_id,
+            ),
+            expected_generation=validated_generation,
+        )
+
     async def get_profile(
         self,
         profile_id: UUID,
@@ -1264,6 +1335,23 @@ class TTSProfileRepository:
             lambda connection: self._worker_get_profile(
                 connection,
                 validated_profile_id,
+            )
+        )
+
+    async def get_profile_collisions(
+        self,
+        profile_id: UUID,
+        draft: TTSProfileDraft,
+    ) -> ProfileStoreResult[TTSProfileCollisionSnapshot]:
+        """Read exact rows matching a portable UUID hint or normalized name."""
+
+        validated_profile_id = _validate_exact_profile_id(profile_id)
+        validated_draft = _validate_draft(draft)
+        return await self._submit_operation(
+            lambda connection: self._worker_get_profile_collisions(
+                connection,
+                validated_profile_id,
+                validated_draft.normalized_name,
             )
         )
 
@@ -1418,6 +1506,7 @@ class TTSProfileRepository:
         expected_generation: int,
         expected_profile_revision: int,
         expected_current_profile_id: UUID | None,
+        expected_profile: TTSGenerationProfile | None = None,
     ) -> ProfileStoreResult[CharacterTTSAssignment]:
         """Create or replace one exact authority-scoped assignment.
 
@@ -1430,6 +1519,9 @@ class TTSProfileRepository:
                 profile.
             expected_current_profile_id: Exact currently assigned profile UUID,
                 or ``None`` when the character was observed as unassigned.
+            expected_profile: Optional exact immutable selected-profile snapshot.
+                When supplied, a delete/recreate with the same UUID and revision
+                is rejected as a conflict.
 
         Returns:
             The active generation and persisted assignment.
@@ -1451,6 +1543,7 @@ class TTSProfileRepository:
         validated_current_profile_id = _validate_optional_profile_id(
             expected_current_profile_id
         )
+        validated_expected_profile = _validate_optional_profile(expected_profile)
         return await self._submit_operation(
             lambda connection: self._worker_set_assignment(
                 connection,
@@ -1459,6 +1552,7 @@ class TTSProfileRepository:
                 validated_generation,
                 validated_profile_revision,
                 validated_current_profile_id,
+                validated_expected_profile,
             ),
             expected_generation=validated_generation,
         )
@@ -2506,75 +2600,121 @@ class TTSProfileRepository:
             profile_id=profile_id,
             normalized_name=draft.normalized_name,
         )
-
-        def create() -> TTSGenerationProfile:
-            persisted_id = (
-                profile_id if profile_id is not None else self._worker_new_uuid()
-            )
-            evidence.profile_id = persisted_id
-            timestamp = self._clock()
-            profile = TTSGenerationProfile(
-                profile_id=persisted_id,
-                display_name=draft.display_name,
-                normalized_name=draft.normalized_name,
-                provider_id=draft.provider_id,
-                model_id=draft.model_id,
-                voice_id=draft.voice_id,
-                response_format=draft.response_format,
-                speed=draft.speed,
-                # TTSProfileDraft.__post_init__ replaces accepted mutable JSON
-                # input with the deeply frozen representation.
-                options=cast(FrozenJsonOptions, draft.options),
-                revision=1,
-                created_at=timestamp,
-                updated_at=timestamp,
-            )
-            parameters = encode_profile(profile)
-            try:
-                connection.execute(
-                    """
-                    INSERT INTO tts_generation_profiles (
-                        profile_id,
-                        display_name,
-                        normalized_name,
-                        provider_id,
-                        model_id,
-                        voice_id,
-                        response_format,
-                        speed,
-                        options_json,
-                        revision,
-                        created_at,
-                        updated_at
-                    ) VALUES (
-                        :profile_id,
-                        :display_name,
-                        :normalized_name,
-                        :provider_id,
-                        :model_id,
-                        :voice_id,
-                        :response_format,
-                        :speed,
-                        :options_json,
-                        :revision,
-                        :created_at,
-                        :updated_at
-                    )
-                    """,
-                    parameters,
-                )
-            except sqlite3.IntegrityError as error:
-                evidence.statement_error = error
-                raise
-            return self._worker_require_round_trip(
+        return self._worker_transaction(
+            connection,
+            lambda: self._worker_insert_profile(
                 connection,
-                persisted_id,
+                draft,
+                profile_id,
+                evidence,
+            ),
+            operation_kind="create",
+            immediate=True,
+            integrity_evidence=evidence,
+        )
+
+    def _worker_insert_profile(
+        self,
+        connection: sqlite3.Connection,
+        draft: TTSProfileDraft,
+        profile_id: UUID | None,
+        evidence: _IntegrityEvidence,
+    ) -> TTSGenerationProfile:
+        persisted_id = profile_id if profile_id is not None else self._worker_new_uuid()
+        evidence.profile_id = persisted_id
+        timestamp = self._clock()
+        profile = TTSGenerationProfile(
+            profile_id=persisted_id,
+            display_name=draft.display_name,
+            normalized_name=draft.normalized_name,
+            provider_id=draft.provider_id,
+            model_id=draft.model_id,
+            voice_id=draft.voice_id,
+            response_format=draft.response_format,
+            speed=draft.speed,
+            options=cast(FrozenJsonOptions, draft.options),
+            revision=1,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        parameters = encode_profile(profile)
+        try:
+            connection.execute(
+                """
+                INSERT INTO tts_generation_profiles (
+                    profile_id,
+                    display_name,
+                    normalized_name,
+                    provider_id,
+                    model_id,
+                    voice_id,
+                    response_format,
+                    speed,
+                    options_json,
+                    revision,
+                    created_at,
+                    updated_at
+                ) VALUES (
+                    :profile_id,
+                    :display_name,
+                    :normalized_name,
+                    :provider_id,
+                    :model_id,
+                    :voice_id,
+                    :response_format,
+                    :speed,
+                    :options_json,
+                    :revision,
+                    :created_at,
+                    :updated_at
+                )
+                """,
+                parameters,
+            )
+        except sqlite3.IntegrityError as error:
+            evidence.statement_error = error
+            raise
+        return self._worker_require_round_trip(connection, persisted_id, profile)
+
+    def _worker_create_profile_with_assignment(
+        self,
+        connection: sqlite3.Connection,
+        draft: TTSProfileDraft,
+        profile_id: UUID,
+        character_ref: CharacterRef,
+        expected_generation: int,
+        expected_current_profile_id: UUID | None,
+    ) -> AssignedTTSProfileSnapshot:
+        evidence = _IntegrityEvidence(
+            profile_id=profile_id,
+            normalized_name=draft.normalized_name,
+        )
+
+        def create_and_assign() -> AssignedTTSProfileSnapshot:
+            self._worker_require_generation(expected_generation)
+            profile = self._worker_insert_profile(
+                connection,
+                draft,
+                profile_id,
+                evidence,
+            )
+            assignment = self._worker_set_assignment_exact(
+                connection,
+                character_ref,
+                profile.profile_id,
+                expected_generation,
+                profile.revision,
+                expected_current_profile_id,
                 profile,
+            )
+            return AssignedTTSProfileSnapshot(
+                assignment=assignment,
+                profile=profile,
             )
 
         return self._worker_transaction(
             connection,
-            create,
+            create_and_assign,
             operation_kind="create",
             immediate=True,
             integrity_evidence=evidence,
@@ -2592,6 +2732,39 @@ class TTSProfileRepository:
         if row is None:
             raise _repository_error("missing")
         return decode_profile(row)
+
+    def _worker_get_profile_collisions(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+        normalized_name: str,
+    ) -> TTSProfileCollisionSnapshot:
+        def read_collisions() -> TTSProfileCollisionSnapshot:
+            profile_id_row = connection.execute(
+                f"{_PROFILE_SELECT} WHERE profile_id = ?",
+                (encode_uuid(profile_id),),
+            ).fetchone()
+            normalized_name_row = connection.execute(
+                f"{_PROFILE_SELECT} WHERE normalized_name = ?",
+                (normalized_name,),
+            ).fetchone()
+            return TTSProfileCollisionSnapshot(
+                profile_id_match=(
+                    None if profile_id_row is None else decode_profile(profile_id_row)
+                ),
+                normalized_name_match=(
+                    None
+                    if normalized_name_row is None
+                    else decode_profile(normalized_name_row)
+                ),
+            )
+
+        return self._worker_transaction(
+            connection,
+            read_collisions,
+            operation_kind="read",
+            immediate=False,
+        )
 
     def _worker_list_profiles(
         self,
@@ -2780,80 +2953,90 @@ class TTSProfileRepository:
         expected_generation: int,
         expected_profile_revision: int,
         expected_current_profile_id: UUID | None,
+        expected_profile: TTSGenerationProfile | None,
     ) -> CharacterTTSAssignment:
-        def set_exact() -> CharacterTTSAssignment:
-            self._worker_require_generation(expected_generation)
-            selected_profile = self._worker_get_profile(connection, profile_id)
-            if selected_profile.revision != expected_profile_revision:
-                raise _repository_error("conflict")
-            existing = self._worker_get_persisted_assignment(
-                connection,
-                character_ref,
-            )
-            current_profile_id = (
-                None if existing is None else existing.assignment.profile_id
-            )
-            if current_profile_id != expected_current_profile_id:
-                raise _repository_error("conflict")
-            assignment = CharacterTTSAssignment(
-                character_ref=character_ref,
-                profile_id=profile_id,
-            )
-            timestamp = self._clock()
-            created_at = timestamp if existing is None else existing.created_at
-            updated_at = (
-                timestamp if existing is None else max(existing.updated_at, timestamp)
-            )
-            expected = _PersistedAssignment(
-                assignment=assignment,
-                created_at=created_at,
-                updated_at=updated_at,
-            )
-            parameters = encode_assignment(
-                assignment,
-                created_at=created_at,
-                updated_at=updated_at,
-            )
-            cursor = connection.execute(
-                """
-                INSERT INTO character_tts_assignments (
-                    source,
-                    authority_id,
-                    character_id,
-                    profile_id,
-                    created_at,
-                    updated_at
-                ) VALUES (
-                    :source,
-                    :authority_id,
-                    :character_id,
-                    :profile_id,
-                    :created_at,
-                    :updated_at
-                )
-                ON CONFLICT(source, authority_id, character_id)
-                DO UPDATE SET
-                    profile_id = excluded.profile_id,
-                    updated_at = excluded.updated_at
-                """,
-                parameters,
-            )
-            if cursor.rowcount != 1:
-                raise _repository_error("corrupt_data")
-            persisted = self._worker_get_persisted_assignment(
-                connection,
-                character_ref,
-            )
-            if persisted != expected:
-                raise _repository_error("corrupt_data")
-            return persisted.assignment
-
         return self._worker_transaction(
             connection,
-            set_exact,
+            lambda: self._worker_set_assignment_exact(
+                connection,
+                character_ref,
+                profile_id,
+                expected_generation,
+                expected_profile_revision,
+                expected_current_profile_id,
+                expected_profile,
+            ),
             operation_kind="assignment_set",
             immediate=True,
         )
+
+    def _worker_set_assignment_exact(
+        self,
+        connection: sqlite3.Connection,
+        character_ref: CharacterRef,
+        profile_id: UUID,
+        expected_generation: int,
+        expected_profile_revision: int,
+        expected_current_profile_id: UUID | None,
+        expected_profile: TTSGenerationProfile | None,
+    ) -> CharacterTTSAssignment:
+        self._worker_require_generation(expected_generation)
+        selected_profile = self._worker_get_profile(connection, profile_id)
+        if selected_profile.revision != expected_profile_revision:
+            raise _repository_error("conflict")
+        if expected_profile is not None and selected_profile != expected_profile:
+            raise _repository_error("conflict")
+        existing = self._worker_get_persisted_assignment(connection, character_ref)
+        current_profile_id = None if existing is None else existing.assignment.profile_id
+        if current_profile_id != expected_current_profile_id:
+            raise _repository_error("conflict")
+        assignment = CharacterTTSAssignment(
+            character_ref=character_ref,
+            profile_id=profile_id,
+        )
+        timestamp = self._clock()
+        created_at = timestamp if existing is None else existing.created_at
+        updated_at = timestamp if existing is None else max(existing.updated_at, timestamp)
+        expected = _PersistedAssignment(
+            assignment=assignment,
+            created_at=created_at,
+            updated_at=updated_at,
+        )
+        parameters = encode_assignment(
+            assignment,
+            created_at=created_at,
+            updated_at=updated_at,
+        )
+        cursor = connection.execute(
+            """
+            INSERT INTO character_tts_assignments (
+                source,
+                authority_id,
+                character_id,
+                profile_id,
+                created_at,
+                updated_at
+            ) VALUES (
+                :source,
+                :authority_id,
+                :character_id,
+                :profile_id,
+                :created_at,
+                :updated_at
+            )
+            ON CONFLICT(source, authority_id, character_id)
+            DO UPDATE SET
+                profile_id = excluded.profile_id,
+                updated_at = excluded.updated_at
+            """,
+            parameters,
+        )
+        if cursor.rowcount != 1:
+            raise _repository_error("corrupt_data")
+        persisted = self._worker_get_persisted_assignment(connection, character_ref)
+        if persisted != expected:
+            raise _repository_error("corrupt_data")
+        return persisted.assignment
 
     def _worker_remove_assignment(
         self,

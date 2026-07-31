@@ -25,6 +25,7 @@ from tldw_chatbook.TTS.playground_types import (
     STTSGeneratedAudio,
     TTSRequestedSelectionSnapshot,
 )
+from tldw_chatbook.TTS.profile_portability import PortableTTSProfile
 from tldw_chatbook.TTS.profile_errors import (
     ProfileRepositoryError,
     ProfileServiceError,
@@ -33,6 +34,8 @@ from tldw_chatbook.TTS.profile_errors import (
 from tldw_chatbook.TTS.profile_service import (
     LoadedCharacterTTSAssignment,
     LoadedTTSProfile,
+    PortableProfileAvailabilityObservation,
+    PortableProfileImportPlan,
     TTSPlaygroundSelectionPreset,
     TTSProfileAvailability,
     TTSProfileAvailabilitySnapshot,
@@ -45,6 +48,7 @@ from tldw_chatbook.TTS.profile_types import (
     CharacterTTSAssignment,
     ProfileStoreResult,
     TTSGenerationProfile,
+    TTSProfileCollisionSnapshot,
     TTSProfileDraft,
     TTSProfilePage,
 )
@@ -52,6 +56,7 @@ from tldw_chatbook.TTS.profile_types import (
 _CREATED_AT = datetime(2026, 7, 27, 12, tzinfo=UTC)
 _PROFILE_ID = UUID("11111111-1111-4111-8111-111111111111")
 _DUPLICATE_ID = UUID("22222222-2222-4222-8222-222222222222")
+_PORTABLE_COPY_ID = UUID("33333333-3333-4333-8333-333333333333")
 _UNSET = object()
 _TaskResult = TypeVar("_TaskResult")
 
@@ -90,6 +95,27 @@ def _profile(
         revision=revision,
         created_at=_CREATED_AT,
         updated_at=_CREATED_AT,
+    )
+
+
+def _portable_profile(
+    *,
+    profile_id: UUID = _PROFILE_ID,
+    display_name: str = "Imported voice",
+    model_id: str = "model-a",
+    voice_id: str | None = None,
+) -> PortableTTSProfile:
+    return PortableTTSProfile(
+        profile_id=profile_id,
+        draft=TTSProfileDraft(
+            display_name=display_name,
+            provider_id="audio_cpp",
+            model_id=model_id,
+            voice_id=voice_id,
+            response_format="wav",
+            speed=1.0,
+            options={},
+        ),
     )
 
 
@@ -434,6 +460,7 @@ class _FakeRepository:
         self.update_error: BaseException | None = None
         self.delete_error: BaseException | None = None
         self.set_error: BaseException | None = None
+        self.create_with_assignment_error: BaseException | None = None
         self.remove_error: BaseException | None = None
         self.get_assignment_error: BaseException | None = None
         self.count_value = 0
@@ -449,8 +476,11 @@ class _FakeRepository:
         self.remove_result: object = _UNSET
         self.get_assignment_result: object = _UNSET
         self.count_result: object = _UNSET
+        self.collision_result = TTSProfileCollisionSnapshot(None, None)
+        self.collision_reads = 0
         self.create_boundary: _AsyncBoundary | None = None
         self.set_boundary: _AsyncBoundary | None = None
+        self.last_expected_profile: TTSGenerationProfile | None = None
         self.remove_boundary: _AsyncBoundary | None = None
         self.advance_generation_after_get_assignment = False
 
@@ -502,6 +532,64 @@ class _FakeRepository:
             options=dict(draft.options),
         )
         return ProfileStoreResult(generation=self.generation, value=persisted)
+
+    async def create_profile_with_assignment(
+        self,
+        draft: TTSProfileDraft,
+        profile_id: UUID,
+        character_ref: CharacterRef,
+        *,
+        expected_generation: int,
+        expected_current_profile_id: UUID | None,
+    ) -> ProfileStoreResult[AssignedTTSProfileSnapshot]:
+        self._record_coordinator_state()
+        self.calls.append(
+            (
+                "create_with_assignment",
+                (
+                    draft,
+                    profile_id,
+                    character_ref,
+                    expected_generation,
+                    expected_current_profile_id,
+                    self.generation,
+                ),
+            )
+        )
+        if self.create_with_assignment_error is not None:
+            raise self.create_with_assignment_error
+        profile = _profile(
+            profile_id=profile_id,
+            display_name=draft.display_name,
+            provider_id=draft.provider_id,
+            model_id=draft.model_id,
+            voice_id=draft.voice_id,
+            response_format=draft.response_format,
+            speed=draft.speed,
+            options=dict(draft.options),
+        )
+        return ProfileStoreResult(
+            generation=self.generation,
+            value=AssignedTTSProfileSnapshot(
+                assignment=CharacterTTSAssignment(character_ref, profile_id),
+                profile=profile,
+            ),
+        )
+
+    async def get_profile_collisions(
+        self,
+        profile_id: UUID,
+        draft: TTSProfileDraft,
+    ) -> ProfileStoreResult[TTSProfileCollisionSnapshot]:
+        self._record_coordinator_state()
+        self.calls.append(("collisions", (profile_id, draft, self.generation)))
+        self.collision_reads += 1
+        value = (
+            self.collision_result
+            if self.collision_reads == 1
+            else TTSProfileCollisionSnapshot(None, None)
+        )
+        return ProfileStoreResult(generation=self.generation, value=value)
 
     async def update_profile(
         self,
@@ -592,8 +680,10 @@ class _FakeRepository:
         expected_generation: int,
         expected_profile_revision: int,
         expected_current_profile_id: UUID | None,
+        expected_profile: TTSGenerationProfile | None = None,
     ) -> ProfileStoreResult[CharacterTTSAssignment]:
         self._record_coordinator_state()
+        self.last_expected_profile = expected_profile
         self.calls.append(
             (
                 "set_assignment",
@@ -4099,3 +4189,279 @@ def test_preview_preset_rejects_availability_for_another_profile() -> None:
         service.preview_preset(loaded, availability)
 
     assert caught.value.code == "profile_id"
+
+
+@pytest.mark.asyncio
+async def test_portable_observation_reports_unavailable_without_writing() -> None:
+    repository = _FakeRepository()
+    tts_service = _FakeTTSService(
+        _capability_snapshot(models=(), health_state="unavailable")
+    )
+    service = TTSProfileService(repository, tts_service)
+
+    observation = await service.observe_portable_profile(_portable_profile())
+
+    assert observation.availability == "unavailable"
+    assert observation.repository_generation == repository.generation
+    assert repository.calls == []
+    assert tts_service.capability_calls == [("audio_cpp", ())]
+
+
+def test_portable_import_plan_rejects_candidate_with_different_generation() -> None:
+    portable = _portable_profile()
+    observation = PortableProfileAvailabilityObservation(
+        repository_generation=7,
+        configuration_revision=3,
+        profile=portable,
+        availability="available",
+    )
+    mismatched = PortableTTSProfile(
+        profile_id=_PORTABLE_COPY_ID,
+        draft=TTSProfileDraft(
+            display_name="Imported voice copy",
+            provider_id="audio_cpp",
+            model_id="another-model",
+            voice_id=portable.draft.voice_id,
+            response_format=portable.draft.response_format,
+            speed=portable.draft.speed,
+            options=portable.draft.options,
+        ),
+    )
+
+    with pytest.raises(ProfileValidationError) as caught:
+        PortableProfileImportPlan(
+            observation=observation,
+            allowed_choices=("copy",),
+            reuse_profile=None,
+            copy_candidate=mismatched,
+        )
+
+    assert caught.value.code == "profiles"
+
+
+@pytest.mark.parametrize(
+    (
+        "collisions",
+        "choices",
+        "reuse_id",
+        "copy_keeps_id",
+        "copy_keeps_name",
+    ),
+    [
+        (TTSProfileCollisionSnapshot(None, None), ("create",), None, True, True),
+        (
+            TTSProfileCollisionSnapshot(
+                _profile(display_name="UUID match"),
+                None,
+            ),
+            ("reuse", "copy"),
+            _PROFILE_ID,
+            False,
+            True,
+        ),
+        (
+            TTSProfileCollisionSnapshot(
+                _profile(display_name="UUID match", model_id="other-model"),
+                None,
+            ),
+            ("copy",),
+            None,
+            False,
+            True,
+        ),
+        (
+            TTSProfileCollisionSnapshot(
+                None,
+                _profile(profile_id=_DUPLICATE_ID, display_name="Imported voice"),
+            ),
+            ("reuse", "copy"),
+            _DUPLICATE_ID,
+            True,
+            False,
+        ),
+        (
+            TTSProfileCollisionSnapshot(
+                None,
+                _profile(
+                    profile_id=_DUPLICATE_ID,
+                    display_name="Imported voice",
+                    model_id="other-model",
+                ),
+            ),
+            ("copy",),
+            None,
+            True,
+            False,
+        ),
+        (
+            TTSProfileCollisionSnapshot(
+                _profile(display_name="Imported voice"),
+                _profile(display_name="Imported voice"),
+            ),
+            ("reuse", "copy"),
+            _PROFILE_ID,
+            False,
+            False,
+        ),
+        (
+            TTSProfileCollisionSnapshot(
+                _profile(display_name="UUID match"),
+                _profile(profile_id=_DUPLICATE_ID, display_name="Imported voice"),
+            ),
+            ("copy",),
+            None,
+            False,
+            False,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_portable_collision_matrix_is_explicit_and_never_mutates(
+    collisions: TTSProfileCollisionSnapshot,
+    choices: tuple[str, ...],
+    reuse_id: UUID | None,
+    copy_keeps_id: bool,
+    copy_keeps_name: bool,
+) -> None:
+    repository = _FakeRepository()
+    repository.collision_result = collisions
+    tts_service = _FakeTTSService(
+        _capability_snapshot(models=(_model("model-a"),))
+    )
+    service = TTSProfileService(
+        repository,
+        tts_service,
+        _uuid_factory=lambda: _PORTABLE_COPY_ID,
+    )
+    portable = _portable_profile()
+    observation = await service.observe_portable_profile(portable)
+
+    plan = await service.inspect_portable_profile_import(observation)
+
+    assert plan.allowed_choices == choices
+    assert (
+        None if plan.reuse_profile is None else plan.reuse_profile.profile_id
+    ) == reuse_id
+    assert (plan.copy_candidate.profile_id == portable.profile_id) is copy_keeps_id
+    assert (
+        plan.copy_candidate.draft.display_name == portable.draft.display_name
+    ) is copy_keeps_name
+    assert all(call[0] == "collisions" for call in repository.calls)
+
+
+@pytest.mark.asyncio
+async def test_portable_commit_revalidates_available_selection_and_assigns_atomically() -> (
+    None
+):
+    repository = _FakeRepository()
+    tts_service = _FakeTTSService(
+        _capability_snapshot(models=(_model("model-a"),))
+    )
+    service = TTSProfileService(repository, tts_service)
+    observation = await service.observe_portable_profile(_portable_profile())
+    plan = await service.inspect_portable_profile_import(observation)
+    character_ref = _character_ref(source="local", authority_id="local-db")
+
+    result = await service.commit_portable_profile_import(
+        plan,
+        "create",
+        character_ref,
+        expected_current=None,
+    )
+
+    assert result.created is True
+    assert result.availability == "available"
+    assert result.assignment is not None
+    assert result.assignment.character_ref == character_ref
+    assert result.loaded.profile.profile_id == _PROFILE_ID
+    assert [call[0] for call in repository.calls] == [
+        "collisions",
+        "create_with_assignment",
+    ]
+    assert tts_service.capability_calls == [
+        ("audio_cpp", ()),
+        ("audio_cpp", ()),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_portable_commit_persists_for_repair_when_availability_changes() -> None:
+    repository = _FakeRepository()
+    tts_service = _FakeTTSService(
+        _capability_snapshot(models=(_model("model-a"),))
+    )
+    service = TTSProfileService(repository, tts_service)
+    observation = await service.observe_portable_profile(_portable_profile())
+    plan = await service.inspect_portable_profile_import(observation)
+    tts_service.snapshot = _capability_snapshot(
+        models=(),
+        health_state="unavailable",
+    )
+
+    result = await service.commit_portable_profile_import(
+        plan,
+        "create",
+        _character_ref(source="local", authority_id="local-db"),
+        expected_current=None,
+    )
+
+    assert result.created is True
+    assert result.availability == "unavailable"
+    assert result.assignment is None
+    assert [call[0] for call in repository.calls] == ["collisions", "create"]
+
+
+@pytest.mark.asyncio
+async def test_reusing_unavailable_profile_never_replaces_existing_assignment() -> None:
+    repository = _FakeRepository()
+    existing = _profile(display_name="Imported voice")
+    repository.collision_result = TTSProfileCollisionSnapshot(existing, existing)
+    tts_service = _FakeTTSService(
+        _capability_snapshot(models=(), health_state="unavailable")
+    )
+    service = TTSProfileService(repository, tts_service)
+    observation = await service.observe_portable_profile(_portable_profile())
+    plan = await service.inspect_portable_profile_import(observation)
+    current = _assignment(profile_id=_DUPLICATE_ID)
+
+    result = await service.commit_portable_profile_import(
+        plan,
+        "reuse",
+        current.character_ref,
+        expected_current=current,
+    )
+
+    assert result.created is False
+    assert result.availability == "unavailable"
+    assert result.assignment is None
+    assert result.loaded.profile == existing
+    assert [call[0] for call in repository.calls] == ["collisions"]
+
+
+@pytest.mark.asyncio
+async def test_reusing_available_profile_assigns_only_the_observed_profile_identity() -> (
+    None
+):
+    repository = _FakeRepository()
+    existing = _profile(display_name="Imported voice")
+    repository.collision_result = TTSProfileCollisionSnapshot(existing, existing)
+    tts_service = _FakeTTSService(
+        _capability_snapshot(models=(_model("model-a"),))
+    )
+    service = TTSProfileService(repository, tts_service)
+    observation = await service.observe_portable_profile(_portable_profile())
+    plan = await service.inspect_portable_profile_import(observation)
+    character_ref = _character_ref(source="local", authority_id="local-db")
+
+    result = await service.commit_portable_profile_import(
+        plan,
+        "reuse",
+        character_ref,
+        expected_current=None,
+    )
+
+    assert result.assignment == CharacterTTSAssignment(
+        character_ref,
+        existing.profile_id,
+    )
+    assert repository.last_expected_profile == existing

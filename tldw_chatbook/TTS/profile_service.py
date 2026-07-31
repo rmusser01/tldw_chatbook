@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import islice
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
@@ -21,6 +21,7 @@ from tldw_chatbook.TTS.playground_types import (
     STTSGeneratedAudio,
     TTSRequestedSelectionSnapshot,
 )
+from tldw_chatbook.TTS.profile_portability import PortableTTSProfile
 from tldw_chatbook.TTS.profile_errors import (
     ProfileRepositoryError,
     ProfileServiceError,
@@ -34,6 +35,7 @@ from tldw_chatbook.TTS.profile_types import (
     CharacterTTSAssignment,
     ProfileStoreResult,
     TTSGenerationProfile,
+    TTSProfileCollisionSnapshot,
     TTSProfileDraft,
     TTSProfilePage,
 )
@@ -44,6 +46,7 @@ ProfileAvailabilityState: TypeAlias = Literal[
     "unverified",
 ]
 ProfileRecoveryAction: TypeAlias = Literal["none", "refresh", "edit"]
+PortableProfileImportChoice: TypeAlias = Literal["create", "reuse", "copy"]
 
 _PROFILE_PROVIDER_ID = "audio_cpp"
 _PROFILE_PAGE_LIMIT = 50
@@ -52,7 +55,12 @@ _CHARACTER_TTS_ASSIGNMENT_TYPE: type[CharacterTTSAssignment] = CharacterTTSAssig
 _ASSIGNED_TTS_PROFILE_SNAPSHOT_TYPE: type[AssignedTTSProfileSnapshot] = (
     AssignedTTSProfileSnapshot
 )
+_TTS_PROFILE_COLLISION_SNAPSHOT_TYPE: type[TTSProfileCollisionSnapshot] = (
+    TTSProfileCollisionSnapshot
+)
 _TTS_GENERATION_PROFILE_TYPE: type[TTSGenerationProfile] = TTSGenerationProfile
+_TTS_PROFILE_DRAFT_TYPE: type[TTSProfileDraft] = TTSProfileDraft
+_PORTABLE_TTS_PROFILE_TYPE: type[PortableTTSProfile] = PortableTTSProfile
 _TTS_NATIVE_CAPABILITY_SNAPSHOT_TYPE: type[TTSNativeCapabilitySnapshot] = (
     TTSNativeCapabilitySnapshot
 )
@@ -118,6 +126,7 @@ class _ProfileRepositoryProtocol(Protocol):
         expected_generation: int,
         expected_profile_revision: int,
         expected_current_profile_id: UUID | None,
+        expected_profile: TTSGenerationProfile | None = None,
     ) -> ProfileStoreResult[CharacterTTSAssignment]: ...
 
     async def remove_assignment(
@@ -132,6 +141,27 @@ class _ProfileRepositoryProtocol(Protocol):
         self,
         character_ref: CharacterRef,
     ) -> ProfileStoreResult[AssignedTTSProfileSnapshot | None]: ...
+
+
+@runtime_checkable
+class _PortableProfileRepositoryProtocol(Protocol):
+    """Repository additions required only by explicit portability workflows."""
+
+    async def create_profile_with_assignment(
+        self,
+        draft: TTSProfileDraft,
+        profile_id: UUID,
+        character_ref: CharacterRef,
+        *,
+        expected_generation: int,
+        expected_current_profile_id: UUID | None,
+    ) -> ProfileStoreResult[AssignedTTSProfileSnapshot]: ...
+
+    async def get_profile_collisions(
+        self,
+        profile_id: UUID,
+        draft: TTSProfileDraft,
+    ) -> ProfileStoreResult[TTSProfileCollisionSnapshot]: ...
 
 
 @runtime_checkable
@@ -361,6 +391,79 @@ def _canonicalize_exact_profile(value: object) -> TTSGenerationProfile:
     if failed or not valid or canonical is None:
         raise ProfileValidationError("profiles")
     return canonical
+
+
+def _canonicalize_exact_draft(value: object) -> TTSProfileDraft:
+    """Return a fresh profile draft only when all source fields are canonical."""
+
+    if type(value) is not _TTS_PROFILE_DRAFT_TYPE:
+        raise ProfileValidationError("profiles")
+    draft = cast(TTSProfileDraft, value)
+    canonical: TTSProfileDraft | None = None
+    valid = False
+    try:
+        canonical = TTSProfileDraft(
+            display_name=draft.display_name,
+            provider_id=draft.provider_id,
+            model_id=draft.model_id,
+            voice_id=draft.voice_id,
+            response_format=draft.response_format,
+            speed=draft.speed,
+            options=draft.options,
+        )
+        valid = all(
+            _matches_exact_canonical_value(source, expected)
+            for source, expected in (
+                (draft.display_name, canonical.display_name),
+                (draft.provider_id, canonical.provider_id),
+                (draft.model_id, canonical.model_id),
+                (draft.voice_id, canonical.voice_id),
+                (draft.response_format, canonical.response_format),
+                (draft.speed, canonical.speed),
+                (draft.options, canonical.options),
+            )
+        )
+    except Exception:  # noqa: BLE001 - hostile typed values fail closed
+        canonical = None
+    if not valid or canonical is None:
+        raise ProfileValidationError("profiles")
+    return canonical
+
+
+def _canonicalize_exact_portable_profile(value: object) -> PortableTTSProfile:
+    """Return a fresh exact portable profile or fail closed."""
+
+    if type(value) is not _PORTABLE_TTS_PROFILE_TYPE:
+        raise ProfileValidationError("profiles")
+    portable = cast(PortableTTSProfile, value)
+    if type(portable.profile_id) is not UUID:
+        raise ProfileValidationError("profile_id")
+    return PortableTTSProfile(
+        profile_id=UUID(int=portable.profile_id.int),
+        draft=_canonicalize_exact_draft(portable.draft),
+    )
+
+
+def _canonicalize_exact_collision_snapshot(
+    value: object,
+) -> TTSProfileCollisionSnapshot:
+    """Copy an exact collision read without trusting collaborator values."""
+
+    if type(value) is not _TTS_PROFILE_COLLISION_SNAPSHOT_TYPE:
+        raise ProfileValidationError("profiles")
+    snapshot = cast(TTSProfileCollisionSnapshot, value)
+    return TTSProfileCollisionSnapshot(
+        profile_id_match=(
+            None
+            if snapshot.profile_id_match is None
+            else _canonicalize_exact_profile(snapshot.profile_id_match)
+        ),
+        normalized_name_match=(
+            None
+            if snapshot.normalized_name_match is None
+            else _canonicalize_exact_profile(snapshot.normalized_name_match)
+        ),
+    )
 
 
 def _canonicalize_exact_assigned_profile(
@@ -723,6 +826,146 @@ class TTSProfileAvailabilitySnapshot:
         object.__setattr__(self, "profiles", profiles)
 
 
+@dataclass(frozen=True, slots=True)
+class PortableProfileAvailabilityObservation:
+    """Current local capability state for one sanitized portable profile."""
+
+    repository_generation: int
+    configuration_revision: int
+    profile: PortableTTSProfile
+    availability: ProfileAvailabilityState
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "repository_generation",
+            _validate_nonnegative_integer(self.repository_generation, "generation"),
+        )
+        object.__setattr__(
+            self,
+            "configuration_revision",
+            _validate_nonnegative_integer(
+                self.configuration_revision,
+                "configuration_revision",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "profile",
+            _canonicalize_exact_portable_profile(self.profile),
+        )
+        object.__setattr__(
+            self,
+            "availability",
+            _validate_availability_state(self.availability),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PortableProfileImportPlan:
+    """Non-mutating collision decision for one observed portable profile."""
+
+    observation: PortableProfileAvailabilityObservation
+    allowed_choices: tuple[PortableProfileImportChoice, ...]
+    reuse_profile: TTSGenerationProfile | None
+    copy_candidate: PortableTTSProfile
+
+    def __post_init__(self) -> None:
+        if type(self.observation) is not PortableProfileAvailabilityObservation:
+            raise ProfileValidationError("profiles")
+        observation = PortableProfileAvailabilityObservation(
+            repository_generation=self.observation.repository_generation,
+            configuration_revision=self.observation.configuration_revision,
+            profile=self.observation.profile,
+            availability=self.observation.availability,
+        )
+        choices = self.allowed_choices
+        if type(choices) is not tuple or choices not in (
+            ("create",),
+            ("copy",),
+            ("reuse", "copy"),
+        ):
+            raise ProfileValidationError("choice")
+        reuse_profile = self.reuse_profile
+        if reuse_profile is not None:
+            reuse_profile = _canonicalize_exact_profile(reuse_profile)
+        if ("reuse" in choices) != (reuse_profile is not None):
+            raise ProfileValidationError("choice")
+        copy_candidate = _canonicalize_exact_portable_profile(self.copy_candidate)
+        source_draft = observation.profile.draft
+        candidate_draft = copy_candidate.draft
+        generation_fields = (
+            "provider_id",
+            "model_id",
+            "voice_id",
+            "response_format",
+            "speed",
+            "options",
+        )
+        if not all(
+            _matches_exact_canonical_value(
+                getattr(candidate_draft, field_name),
+                getattr(source_draft, field_name),
+            )
+            for field_name in generation_fields
+        ):
+            raise ProfileValidationError("profiles")
+        if choices == ("create",):
+            if copy_candidate != observation.profile:
+                raise ProfileValidationError("profiles")
+        elif copy_candidate == observation.profile:
+            raise ProfileValidationError("profiles")
+        if reuse_profile is not None:
+            if not all(
+                _matches_exact_canonical_value(
+                    getattr(reuse_profile, field_name),
+                    getattr(source_draft, field_name),
+                )
+                for field_name in generation_fields
+            ):
+                raise ProfileValidationError("profiles")
+            if (
+                reuse_profile.profile_id != observation.profile.profile_id
+                and reuse_profile.normalized_name != source_draft.normalized_name
+            ):
+                raise ProfileValidationError("profiles")
+        object.__setattr__(self, "observation", observation)
+        object.__setattr__(self, "reuse_profile", reuse_profile)
+        object.__setattr__(self, "copy_candidate", copy_candidate)
+
+
+@dataclass(frozen=True, slots=True)
+class PortableProfileImportResult:
+    """Structured profile persistence and assignment outcome."""
+
+    created: bool
+    availability: ProfileAvailabilityState
+    loaded: LoadedTTSProfile
+    assignment: CharacterTTSAssignment | None
+
+    def __post_init__(self) -> None:
+        if type(self.created) is not bool:
+            raise ProfileValidationError("created")
+        object.__setattr__(
+            self,
+            "availability",
+            _validate_availability_state(self.availability),
+        )
+        if type(self.loaded) is not LoadedTTSProfile:
+            raise ProfileValidationError("profiles")
+        loaded = LoadedTTSProfile(
+            repository_generation=self.loaded.repository_generation,
+            profile=self.loaded.profile,
+        )
+        assignment = self.assignment
+        if assignment is not None:
+            assignment = _canonicalize_exact_assignment(assignment)
+            if assignment.profile_id != loaded.profile.profile_id:
+                raise ProfileValidationError("assignment")
+        object.__setattr__(self, "loaded", loaded)
+        object.__setattr__(self, "assignment", assignment)
+
+
 class TTSProfileService:
     """Manage native audio.cpp profiles over existing app-owned dependencies."""
 
@@ -730,12 +973,15 @@ class TTSProfileService:
         self,
         repository: _ProfileRepositoryProtocol,
         tts_service: _ProfileTTSServiceProtocol,
+        *,
+        _uuid_factory: Callable[[], UUID] | None = None,
     ) -> None:
         validation_failed = False
         try:
-            if not isinstance(repository, _ProfileRepositoryProtocol) or not isinstance(
-                tts_service,
-                _ProfileTTSServiceProtocol,
+            if (
+                not isinstance(repository, _ProfileRepositoryProtocol)
+                or not isinstance(tts_service, _ProfileTTSServiceProtocol)
+                or (_uuid_factory is not None and not callable(_uuid_factory))
             ):
                 validation_failed = True
         except Exception:  # noqa: BLE001 - hostile collaborators fail closed
@@ -744,6 +990,24 @@ class TTSProfileService:
             raise ProfileServiceError("operation_failed")
         self._repository = repository
         self._tts_service = tts_service
+        if _uuid_factory is not None:
+            self._uuid_factory = _uuid_factory
+
+    def _require_portable_repository(self) -> _PortableProfileRepositoryProtocol:
+        """Return portability operations without expanding constructor needs."""
+
+        validation_failed = False
+        try:
+            if not isinstance(
+                self._repository,
+                _PortableProfileRepositoryProtocol,
+            ):
+                validation_failed = True
+        except Exception:  # noqa: BLE001 - hostile collaborators fail closed
+            validation_failed = True
+        if validation_failed:
+            raise ProfileServiceError("operation_failed")
+        return cast(_PortableProfileRepositoryProtocol, self._repository)
 
     async def list_profiles(
         self,
@@ -928,6 +1192,241 @@ class TTSProfileService:
                 None if snapshot.catalog is None else snapshot.catalog.revision
             ),
             profiles=availability,
+        )
+
+    async def observe_portable_profile(
+        self,
+        profile: PortableTTSProfile,
+    ) -> PortableProfileAvailabilityObservation:
+        """Observe current audio.cpp availability without mutating either store."""
+
+        portable = _canonicalize_exact_portable_profile(profile)
+        draft = portable.draft
+        if not _selection_is_profile_safe(
+            draft.provider_id,
+            draft.response_format,
+            draft.speed,
+            draft.options,
+        ):
+            raise ProfileServiceError("unsupported_profile")
+
+        repository_generation = self._current_repository_generation()
+        exact_voice_models = () if draft.voice_id is None else (draft.model_id,)
+        failed = False
+        snapshot = None
+        try:
+            snapshot = await self._tts_service.get_native_capability_snapshot(
+                _PROFILE_PROVIDER_ID,
+                exact_voice_models,
+            )
+        except Exception:  # noqa: BLE001 - capability detail is not public
+            failed = True
+        if failed:
+            raise ProfileServiceError("operation_failed")
+        snapshot = _canonicalize_consumed_capability_snapshot(
+            snapshot,
+            relevant_model_ids=(draft.model_id,),
+        )
+        await self._require_configuration_revision(
+            _PROFILE_PROVIDER_ID,
+            snapshot.configuration_revision,
+        )
+        availability: ProfileAvailabilityState = (
+            "unverified"
+            if snapshot.state != "complete"
+            else self._classify_selection(
+                provider_id=draft.provider_id,
+                model_id=draft.model_id,
+                voice_id=draft.voice_id,
+                response_format=draft.response_format,
+                speed=draft.speed,
+                options=draft.options,
+                snapshot=snapshot,
+            )
+        )
+        self._require_repository_generation(repository_generation)
+        if self._current_configuration_revision() != snapshot.configuration_revision:
+            raise ProfileServiceError("stale_configuration")
+        return PortableProfileAvailabilityObservation(
+            repository_generation=repository_generation,
+            configuration_revision=snapshot.configuration_revision,
+            profile=portable,
+            availability=availability,
+        )
+
+    async def inspect_portable_profile_import(
+        self,
+        observation: PortableProfileAvailabilityObservation,
+    ) -> PortableProfileImportPlan:
+        """Classify local UUID/name collisions without writing profile state."""
+
+        if type(observation) is not PortableProfileAvailabilityObservation:
+            raise ProfileValidationError("profiles")
+        canonical_observation = PortableProfileAvailabilityObservation(
+            repository_generation=observation.repository_generation,
+            configuration_revision=observation.configuration_revision,
+            profile=observation.profile,
+            availability=observation.availability,
+        )
+        expected_generation = canonical_observation.repository_generation
+        self._require_repository_generation(expected_generation)
+        portable = canonical_observation.profile
+        collisions = await self._read_portable_collisions(
+            portable,
+            expected_generation,
+        )
+
+        id_match = collisions.profile_id_match
+        name_match = collisions.normalized_name_match
+        if id_match is not None and id_match.profile_id != portable.profile_id:
+            raise ProfileServiceError("operation_failed")
+        if (
+            name_match is not None
+            and name_match.normalized_name != portable.draft.normalized_name
+        ):
+            raise ProfileServiceError("operation_failed")
+        if (
+            id_match is not None
+            and name_match is not None
+            and id_match.profile_id == name_match.profile_id
+            and id_match != name_match
+        ):
+            raise ProfileServiceError("operation_failed")
+
+        distinct_matches = {
+            match.profile_id: match
+            for match in (id_match, name_match)
+            if match is not None
+        }
+        reuse_profile: TTSGenerationProfile | None = None
+        if len(distinct_matches) == 1:
+            only_match = next(iter(distinct_matches.values()))
+            if self._generation_fields_match(only_match, portable.draft):
+                reuse_profile = only_match
+
+        if not distinct_matches:
+            choices: tuple[PortableProfileImportChoice, ...] = ("create",)
+            copy_candidate = portable
+        else:
+            choices = (
+                ("reuse", "copy") if reuse_profile is not None else ("copy",)
+            )
+            copy_candidate = await self._collision_free_copy_candidate(
+                portable,
+                replace_profile_id=id_match is not None,
+                replace_name=name_match is not None,
+                expected_generation=expected_generation,
+                verify=reuse_profile is None,
+            )
+
+        self._require_repository_generation(expected_generation)
+        return PortableProfileImportPlan(
+            observation=canonical_observation,
+            allowed_choices=choices,
+            reuse_profile=reuse_profile,
+            copy_candidate=copy_candidate,
+        )
+
+    async def commit_portable_profile_import(
+        self,
+        plan: PortableProfileImportPlan,
+        choice: PortableProfileImportChoice,
+        character_ref: CharacterRef,
+        *,
+        expected_current: CharacterTTSAssignment | None,
+    ) -> PortableProfileImportResult:
+        """Commit an inspected choice with current capability and CAS guards."""
+
+        if type(plan) is not PortableProfileImportPlan:
+            raise ProfileValidationError("profiles")
+        canonical_plan = PortableProfileImportPlan(
+            observation=plan.observation,
+            allowed_choices=plan.allowed_choices,
+            reuse_profile=plan.reuse_profile,
+            copy_candidate=plan.copy_candidate,
+        )
+        if type(choice) is not str or choice not in canonical_plan.allowed_choices:
+            raise ProfileValidationError("choice")
+        canonical_choice = cast(PortableProfileImportChoice, choice)
+        canonical_ref = _canonicalize_exact_character_ref(character_ref)
+        expected_assignment = (
+            None
+            if expected_current is None
+            else _canonicalize_exact_assignment(expected_current)
+        )
+        if (
+            expected_assignment is not None
+            and expected_assignment.character_ref != canonical_ref
+        ):
+            raise ProfileValidationError("assignment")
+
+        expected_generation = canonical_plan.observation.repository_generation
+        self._require_repository_generation(expected_generation)
+        current = await self.observe_portable_profile(
+            canonical_plan.observation.profile
+        )
+        if current.repository_generation != expected_generation:
+            raise ProfileRepositoryError("stale")
+        self._require_repository_generation(expected_generation)
+
+        if canonical_choice == "reuse":
+            profile = canonical_plan.reuse_profile
+            if profile is None:
+                raise ProfileValidationError("choice")
+            loaded = LoadedTTSProfile(expected_generation, profile)
+            if current.availability != "available":
+                return PortableProfileImportResult(
+                    created=False,
+                    availability=current.availability,
+                    loaded=loaded,
+                    assignment=None,
+                )
+            assignment = await self._set_assignment_after_observation(
+                canonical_ref,
+                loaded.profile,
+                expected_generation=expected_generation,
+                expected_current=expected_assignment,
+            )
+            return PortableProfileImportResult(
+                created=False,
+                availability="available",
+                loaded=loaded,
+                assignment=assignment,
+            )
+
+        candidate = canonical_plan.copy_candidate
+        if canonical_choice == "copy":
+            candidate = await self._collision_free_copy_candidate(
+                candidate,
+                replace_profile_id=False,
+                replace_name=False,
+                expected_generation=expected_generation,
+                verify=True,
+            )
+        if current.availability == "available":
+            snapshot = await self._create_profile_with_assignment(
+                candidate,
+                canonical_ref,
+                expected_generation=expected_generation,
+                expected_current=expected_assignment,
+            )
+            loaded = LoadedTTSProfile(expected_generation, snapshot.profile)
+            return PortableProfileImportResult(
+                created=True,
+                availability="available",
+                loaded=loaded,
+                assignment=snapshot.assignment,
+            )
+
+        loaded = await self._create_portable_profile_unassigned(
+            candidate,
+            expected_generation=expected_generation,
+        )
+        return PortableProfileImportResult(
+            created=True,
+            availability=current.availability,
+            loaded=loaded,
+            assignment=None,
         )
 
     async def create_from_artifact(
@@ -1188,6 +1687,7 @@ class TTSProfileService:
                     if expected_assignment is None
                     else expected_assignment.profile_id
                 ),
+                expected_profile=profile,
             )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
@@ -1281,6 +1781,240 @@ class TTSProfileService:
         )
         if value is not None:
             raise ProfileServiceError("operation_failed")
+
+    async def _read_portable_collisions(
+        self,
+        portable: PortableTTSProfile,
+        expected_generation: int,
+    ) -> TTSProfileCollisionSnapshot:
+        failed = False
+        result = None
+        repository = self._require_portable_repository()
+        try:
+            result = await repository.get_profile_collisions(
+                portable.profile_id,
+                portable.draft,
+            )
+        except (ProfileRepositoryError, ProfileValidationError):
+            raise
+        except Exception:  # noqa: BLE001 - hide unexpected repository detail
+            failed = True
+        if failed or result is None:
+            raise ProfileServiceError("operation_failed")
+        value = self._require_admitted_store_result(result, expected_generation)
+        try:
+            collisions = _canonicalize_exact_collision_snapshot(value)
+        except ProfileValidationError:
+            raise ProfileServiceError("operation_failed") from None
+        if (
+            collisions.profile_id_match is not None
+            and collisions.profile_id_match.profile_id != portable.profile_id
+        ):
+            raise ProfileServiceError("operation_failed")
+        if (
+            collisions.normalized_name_match is not None
+            and collisions.normalized_name_match.normalized_name
+            != portable.draft.normalized_name
+        ):
+            raise ProfileServiceError("operation_failed")
+        return collisions
+
+    def _next_portable_uuid(self, disallowed: set[UUID]) -> UUID:
+        for _ in range(32):
+            failed = False
+            candidate: object = None
+            try:
+                factory = getattr(self, "_uuid_factory", uuid4)
+                candidate = factory()
+            except Exception:  # noqa: BLE001 - factory detail is not public
+                failed = True
+            if failed:
+                raise ProfileServiceError("operation_failed")
+            if type(candidate) is UUID and candidate not in disallowed:
+                return candidate
+        raise ProfileServiceError("operation_failed")
+
+    @staticmethod
+    def _portable_copy_name(display_name: str, index: int) -> str:
+        suffix = " (imported)" if index == 1 else f" (imported {index})"
+        base = display_name[: 128 - len(suffix)].rstrip()
+        return f"{base}{suffix}"
+
+    async def _collision_free_copy_candidate(
+        self,
+        portable: PortableTTSProfile,
+        *,
+        replace_profile_id: bool,
+        replace_name: bool,
+        expected_generation: int,
+        verify: bool,
+    ) -> PortableTTSProfile:
+        used_ids = {portable.profile_id}
+        profile_id = (
+            self._next_portable_uuid(used_ids)
+            if replace_profile_id
+            else portable.profile_id
+        )
+        used_ids.add(profile_id)
+        name_index = 1
+        display_name = (
+            self._portable_copy_name(portable.draft.display_name, name_index)
+            if replace_name
+            else portable.draft.display_name
+        )
+
+        if not verify:
+            return PortableTTSProfile(
+                profile_id=profile_id,
+                draft=TTSProfileDraft(
+                    display_name=display_name,
+                    provider_id=portable.draft.provider_id,
+                    model_id=portable.draft.model_id,
+                    voice_id=portable.draft.voice_id,
+                    response_format=portable.draft.response_format,
+                    speed=portable.draft.speed,
+                    options=portable.draft.options,
+                ),
+            )
+
+        for _ in range(32):
+            draft = TTSProfileDraft(
+                display_name=display_name,
+                provider_id=portable.draft.provider_id,
+                model_id=portable.draft.model_id,
+                voice_id=portable.draft.voice_id,
+                response_format=portable.draft.response_format,
+                speed=portable.draft.speed,
+                options=portable.draft.options,
+            )
+            candidate = PortableTTSProfile(profile_id=profile_id, draft=draft)
+            collisions = await self._read_portable_collisions(
+                candidate,
+                expected_generation,
+            )
+            if (
+                collisions.profile_id_match is None
+                and collisions.normalized_name_match is None
+            ):
+                return candidate
+            if collisions.profile_id_match is not None:
+                profile_id = self._next_portable_uuid(used_ids)
+                used_ids.add(profile_id)
+            if collisions.normalized_name_match is not None:
+                name_index += 1
+                display_name = self._portable_copy_name(
+                    portable.draft.display_name,
+                    name_index,
+                )
+        raise ProfileServiceError("operation_failed")
+
+    async def _create_portable_profile_unassigned(
+        self,
+        portable: PortableTTSProfile,
+        *,
+        expected_generation: int,
+    ) -> LoadedTTSProfile:
+        failed = False
+        result = None
+        try:
+            result = await self._repository.create_profile(
+                portable.draft,
+                portable.profile_id,
+                expected_generation=expected_generation,
+            )
+        except (ProfileRepositoryError, ProfileValidationError):
+            raise
+        except Exception:  # noqa: BLE001 - hide unexpected repository detail
+            failed = True
+        if failed or result is None:
+            raise ProfileServiceError("operation_failed")
+        value = self._require_admitted_store_result(result, expected_generation)
+        profile = self._require_profile_mutation_result(
+            value,
+            portable.draft,
+            expected_revision=1,
+            required_profile_id=portable.profile_id,
+        )
+        return LoadedTTSProfile(expected_generation, profile)
+
+    async def _create_profile_with_assignment(
+        self,
+        portable: PortableTTSProfile,
+        character_ref: CharacterRef,
+        *,
+        expected_generation: int,
+        expected_current: CharacterTTSAssignment | None,
+    ) -> AssignedTTSProfileSnapshot:
+        failed = False
+        result = None
+        repository = self._require_portable_repository()
+        try:
+            result = await repository.create_profile_with_assignment(
+                portable.draft,
+                portable.profile_id,
+                character_ref,
+                expected_generation=expected_generation,
+                expected_current_profile_id=(
+                    None if expected_current is None else expected_current.profile_id
+                ),
+            )
+        except (ProfileRepositoryError, ProfileValidationError):
+            raise
+        except Exception:  # noqa: BLE001 - hide unexpected repository detail
+            failed = True
+        if failed or result is None:
+            raise ProfileServiceError("operation_failed")
+        value = self._require_admitted_store_result(result, expected_generation)
+        try:
+            snapshot = _canonicalize_exact_assigned_profile(value)
+        except ProfileValidationError:
+            raise ProfileServiceError("operation_failed") from None
+        profile = self._require_profile_mutation_result(
+            snapshot.profile,
+            portable.draft,
+            expected_revision=1,
+            required_profile_id=portable.profile_id,
+        )
+        assignment = self._require_assignment_mutation_result(
+            snapshot.assignment,
+            character_ref,
+            profile.profile_id,
+        )
+        return AssignedTTSProfileSnapshot(assignment=assignment, profile=profile)
+
+    async def _set_assignment_after_observation(
+        self,
+        character_ref: CharacterRef,
+        profile: TTSGenerationProfile,
+        *,
+        expected_generation: int,
+        expected_current: CharacterTTSAssignment | None,
+    ) -> CharacterTTSAssignment:
+        failed = False
+        result = None
+        try:
+            result = await self._repository.set_assignment(
+                character_ref,
+                profile.profile_id,
+                expected_generation=expected_generation,
+                expected_profile_revision=profile.revision,
+                expected_current_profile_id=(
+                    None if expected_current is None else expected_current.profile_id
+                ),
+                expected_profile=profile,
+            )
+        except (ProfileRepositoryError, ProfileValidationError):
+            raise
+        except Exception:  # noqa: BLE001 - hide unexpected repository detail
+            failed = True
+        if failed or result is None:
+            raise ProfileServiceError("operation_failed")
+        value = self._require_admitted_store_result(result, expected_generation)
+        return self._require_assignment_mutation_result(
+            value,
+            character_ref,
+            profile.profile_id,
+        )
 
     def preview_preset(
         self,

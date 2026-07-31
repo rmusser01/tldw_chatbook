@@ -13,6 +13,7 @@ _VALIDATION_CODES = frozenset(
         "byte_count",
         "catalog_revision",
         "character_id",
+        "choice",
         "configuration_revision",
         "created_at",
         "display_name",

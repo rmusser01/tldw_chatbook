@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, Protocol, cast
 from uuid import UUID
 
@@ -39,6 +40,10 @@ from tldw_chatbook.TTS import (
     TTSProfileAvailabilitySnapshot,
     TTSProfileDraft,
     TTSProfilePageSnapshot,
+)
+from tldw_chatbook.TTS.profile_portability import (
+    PortableTTSProfile,
+    portable_profile_json,
 )
 from tldw_chatbook.Utils.input_validation import validate_text_input
 
@@ -103,6 +108,7 @@ _PROFILE_UNVERIFIED_COPY = (
     "The exact profile selection could not be verified. Refresh and retry "
     "without changing persisted values."
 )
+PROFILE_EXPORT_COMPLETE_COPY = "Voice profile exported."
 
 
 class _ProfileService(Protocol):
@@ -787,6 +793,11 @@ class STTSProfileLibrary(Widget):
                 id="stts-profile-duplicate-btn",
                 disabled=True,
             )
+            yield Button(
+                "Export",
+                id="stts-profile-export-btn",
+                disabled=True,
+            )
             yield Button("Refresh", id="stts-profile-refresh-btn")
             yield Button(
                 "Delete",
@@ -1218,6 +1229,7 @@ class STTSProfileLibrary(Widget):
             "#stts-profile-preview-btn",
             "#stts-profile-edit-btn",
             "#stts-profile-duplicate-btn",
+            "#stts-profile-export-btn",
             "#stts-profile-delete-btn",
         ):
             self.query_one(selector, Button).disabled = disabled
@@ -1524,6 +1536,74 @@ class STTSProfileLibrary(Widget):
             self._queue_page_request(self._search, self._offset)
         return True
 
+    async def _choose_profile_export_path(self) -> Path | None:
+        """Choose a destination for one standalone sanitized profile payload."""
+
+        from tldw_chatbook.Third_Party.textual_fspicker import Filters
+        from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileSave
+
+        picker = EnhancedFileSave(
+            title="Export voice profile",
+            default_filename="voice-profile.json",
+            filters=Filters(
+                ("JSON Files", lambda path: path.suffix.lower() == ".json"),
+                ("All Files", lambda _path: True),
+            ),
+            context="tts_profile_export",
+        )
+        selected = await self.app.push_screen_wait(picker)
+        if selected is None:
+            return None
+        return Path(str(selected))
+
+    @staticmethod
+    def _write_profile_export(target: Path, content: str) -> None:
+        from tldw_chatbook.Utils.path_validation import validate_path
+
+        expanded = target.expanduser()
+        if not expanded.parent.exists():
+            raise ValueError("missing_destination")
+        validated = validate_path(
+            expanded,
+            base_directory=expanded.parent,
+            redact_paths=True,
+        )
+        validated.write_text(content, encoding="utf-8")
+
+    async def export_selected_profile(self) -> bool:
+        """Explicitly export the selected profile's sanitized portable JSON."""
+
+        loaded = self._selected_profile
+        if loaded is None or not self._action_target_is_current(loaded):
+            return False
+        profile = loaded.profile
+        try:
+            content = portable_profile_json(
+                PortableTTSProfile(
+                    profile_id=profile.profile_id,
+                    draft=TTSProfileDraft(
+                        display_name=profile.display_name,
+                        provider_id=profile.provider_id,
+                        model_id=profile.model_id,
+                        voice_id=profile.voice_id,
+                        response_format=profile.response_format,
+                        speed=profile.speed,
+                        options=profile.options,
+                    ),
+                )
+            )
+            target = await self._choose_profile_export_path()
+            if target is None or not self._action_target_is_current(loaded):
+                return False
+            await asyncio.to_thread(self._write_profile_export, target, content)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - never render path or profile values
+            self._set_status(PROFILE_ACTION_FAILED_COPY)
+            return False
+        self._set_status(PROFILE_EXPORT_COMPLETE_COPY)
+        return True
+
     @on(Input.Changed, "#stts-profile-search")
     def _handle_search_changed(self, event: Input.Changed) -> None:
         event.stop()
@@ -1613,6 +1693,17 @@ class STTSProfileLibrary(Widget):
         self.run_worker(
             self.duplicate_selected_profile(),
             name="duplicate_voice_profile",
+            group="voice_profile_action",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    @on(Button.Pressed, "#stts-profile-export-btn")
+    def _handle_export(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.run_worker(
+            self.export_selected_profile(),
+            name="export_voice_profile",
             group="voice_profile_action",
             exclusive=True,
             exit_on_error=False,

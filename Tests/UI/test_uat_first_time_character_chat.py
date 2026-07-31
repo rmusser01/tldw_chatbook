@@ -26,15 +26,45 @@ The only mock is the provider network call itself (``chat_api_call``); all
 UI, DB, import, handoff, and send-path code runs for real.
 """
 
+import asyncio
 import base64
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+    export_character_card_to_json,
+)
+from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+    TTSCompleteEvent,
+    TTSEventHandler,
+    TTSMessageSpeechRequestEvent,
+)
+from tldw_chatbook.TTS.adapter_types import (
+    ProviderHealth,
+    TTSAudioResponse,
+    TTSModelInfo,
+    TTSNativeCapabilitySnapshot,
+    TTSProviderCatalog,
+    TTSRequest,
+    TTSVoiceDiscoveryResult,
+)
+from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
+from tldw_chatbook.TTS.profile_portability import (
+    CHARACTER_CARD_TTS_EXTENSION_KEY,
+    PortableTTSProfile,
+)
+from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+from tldw_chatbook.TTS.profile_service import TTSProfileService
+from tldw_chatbook.TTS.profile_types import CharacterRef, TTSProfileDraft
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
@@ -57,6 +87,126 @@ UAT_CARD_ENV_VAR = "TLDW_UAT_CARD_PATH"
 
 UAT_USER_MESSAGE = "Hello! Who are you?"
 UAT_CANNED_REPLY = "I'm Ann, your test character. Lovely to meet you!"
+
+UAT_COMPLETE_WAV = (
+    b"RIFF"
+    b"\x24\x00\x00\x00WAVEfmt "
+    b"\x10\x00\x00\x00\x01\x00\x01\x00"
+    b"\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
+)
+
+
+class _AvailableAudioCppCapabilities:
+    """Stable external-server capability evidence for the portability UAT."""
+
+    revision = 3
+
+    def __init__(self, *, model_id: str, voice_id: str) -> None:
+        catalog_revision = 9
+        self.snapshot = TTSNativeCapabilitySnapshot(
+            provider_id="audio_cpp",
+            configuration_revision=self.revision,
+            state="complete",
+            catalog=TTSProviderCatalog(
+                provider_id="audio_cpp",
+                revision=catalog_revision,
+                health=ProviderHealth(state="available", fresh=True),
+                models=(
+                    TTSModelInfo(
+                        model_id=model_id,
+                        display_name=model_id,
+                        family="uat",
+                        upstream_mode="tts",
+                        formats=("wav",),
+                        voices=(),
+                        supports_speed=False,
+                    ),
+                ),
+            ),
+            voice_results={
+                model_id: TTSVoiceDiscoveryResult(
+                    provider_id="audio_cpp",
+                    model_id=model_id,
+                    catalog_revision=catalog_revision,
+                    voices=(voice_id,),
+                    state="complete",
+                )
+            },
+        )
+
+    async def get_native_capability_snapshot(
+        self,
+        provider_id: str,
+        exact_voice_model_ids,
+    ) -> TTSNativeCapabilitySnapshot:
+        assert provider_id == "audio_cpp"
+        assert tuple(exact_voice_model_ids) in {(), (self.snapshot.catalog.models[0].model_id,)}
+        return self.snapshot
+
+    def configuration_revision(self, provider_id: str) -> int:
+        assert provider_id == "audio_cpp"
+        return self.revision
+
+    async def require_current_configuration_revision(
+        self,
+        provider_id: str,
+        expected_revision: int,
+    ) -> None:
+        assert (provider_id, expected_revision) == ("audio_cpp", self.revision)
+
+
+class _CompleteWAVSpeechService:
+    """External audio.cpp response boundary returning one complete WAV."""
+
+    def __init__(self) -> None:
+        self.exact_requests: list[TTSRequest] = []
+
+    def preferences_snapshot(self) -> SimpleNamespace:
+        return SimpleNamespace(provider_id="audio_cpp")
+
+    async def synthesize_exact(
+        self,
+        request: TTSRequest,
+        progress_sink=None,
+    ) -> tuple[TTSAudioResponse, TTSRequestedSelectionSnapshot]:
+        self.exact_requests.append(request)
+
+        async def complete_wav_stream():
+            yield UAT_COMPLETE_WAV
+
+        return (
+            TTSAudioResponse(
+                provider_id="audio_cpp",
+                model_id=request.model_id,
+                audio_format="wav",
+                content_type="audio/wav",
+                byte_stream=complete_wav_stream(),
+            ),
+            TTSRequestedSelectionSnapshot(
+                provider_id=request.provider_id,
+                model_id=request.model_id,
+                voice_id=request.voice,
+                response_format=request.response_format,
+                speed=request.speed,
+                options=request.options,
+                configuration_revision=3,
+            ),
+        )
+
+    async def synthesize_default(self, **_kwargs):
+        raise AssertionError("assigned character speech must not use global defaults")
+
+
+class _UATTTSEventHandler(TTSEventHandler):
+    def __init__(self, profile_service_loader) -> None:
+        super().__init__(profile_service_loader=profile_service_loader)
+        self.messages: list[object] = []
+        self.completion_posted = asyncio.Event()
+
+    async def post_message(self, message: object) -> None:
+        self.messages.append(message)
+        if isinstance(message, TTSCompleteEvent):
+            self.completion_posted.set()
 
 
 async def _wait_for(pilot, condition, timeout: float = 15.0, interval: float = 0.05):
@@ -451,3 +601,176 @@ async def test_first_time_user_character_chat_journey(
         print(f"provider called {len(provider_calls)} time(s)")
         print(f"reply delivered: {UAT_CANNED_REPLY[:40]}...")
         print(f"new conversations persisted: {sorted(message_counts.items())}")
+
+
+async def test_character_voice_portability_round_trip_to_complete_wav(
+    fresh_profile,
+    tmp_path,
+):
+    """Explicit card portability survives import and drives roleplay speech."""
+
+    app, destination_db, _notifications = fresh_profile
+    model_id = "supertonic-3"
+    voice_id = "M1"
+    profile_id = UUID("00000000-0000-4000-8000-000000000004")
+    portable = PortableTTSProfile(
+        profile_id=profile_id,
+        draft=TTSProfileDraft(
+            display_name="Portable Ann voice",
+            provider_id="audio_cpp",
+            model_id=model_id,
+            voice_id=voice_id,
+            response_format="wav",
+            speed=1.0,
+            options={},
+        ),
+    )
+
+    source_db = CharactersRAGDB(
+        str(tmp_path / "portable_source.db"),
+        "uat-portable-source",
+    )
+    try:
+        source_character_id = source_db.add_character_card(
+            {
+                "name": "Portable Ann",
+                "description": "A roleplay character with an opt-in voice.",
+                "first_message": "Hello from Portable Ann.",
+                "extensions": {"unrelated/uat": {"preserved": True}},
+            }
+        )
+        assert type(source_character_id) is int
+        exported = export_character_card_to_json(
+            source_db,
+            source_character_id,
+            include_image=False,
+            portable_tts_profile=portable,
+        )
+        assert exported is not None
+    finally:
+        source_db.close_connection()
+
+    exported_payload = json.loads(exported)
+    assert (
+        exported_payload["data"]["extensions"][CHARACTER_CARD_TTS_EXTENSION_KEY]
+        == {
+            "schema_version": 1,
+            "profile_id": str(profile_id),
+            "name": "Portable Ann voice",
+            "provider_id": "audio_cpp",
+            "model_id": model_id,
+            "voice_id": voice_id,
+            "response_format": "wav",
+            "speed": 1.0,
+            "options": {},
+        }
+    )
+    card_path = tmp_path / "portable_ann.json"
+    card_path.write_text(exported, encoding="utf-8")
+
+    repository = TTSProfileRepository(tmp_path / "portable_profiles.db")
+    await repository.open()
+    profile_service = TTSProfileService(
+        repository,
+        _AvailableAudioCppCapabilities(model_id=model_id, voice_id=voice_id),
+    )
+    # Use the isolated real repository as the app-owned store. The app closes
+    # it during shutdown exactly as production does.
+    app._tts_profile_repository = repository
+    app._tts_profile_service = profile_service
+
+    handler: _UATTTSEventHandler | None = None
+    artifact: Path | None = None
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for(pilot, lambda: type(app.screen).__name__ != "Screen")
+        app.post_message(NavigateToScreen("personas"))
+        personas = await _wait_for(
+            pilot,
+            lambda: (
+                app.screen
+                if type(app.screen).__name__ == "PersonasScreen"
+                and app.screen.is_mounted
+                else None
+            ),
+        )
+
+        await personas._import_character_from_path(str(card_path))
+        await pilot.pause(0.3)
+        imported = next(
+            card
+            for card in destination_db.list_character_cards()
+            if card.get("name") == "Portable Ann"
+        )
+        imported_character_id = int(imported["id"])
+        stored = destination_db.get_character_card_by_id(imported_character_id)
+        assert CHARACTER_CARD_TTS_EXTENSION_KEY not in stored["extensions"]
+        assert stored["extensions"]["unrelated/uat"] == {"preserved": True}
+
+        character_ref = CharacterRef(
+            source="local",
+            authority_id=destination_db.get_local_authority_id(),
+            character_id=str(imported_character_id),
+        )
+        assigned = await profile_service.get_assigned_profile(character_ref)
+        assert assigned.snapshot is not None
+        assert assigned.snapshot.profile.profile_id == profile_id
+        assert assigned.snapshot.assignment.character_ref == character_ref
+
+        store = ConsoleChatStore()
+        session = store.create_session(
+            runtime_backend="local",
+            assistant_kind="character",
+            assistant_id=str(imported_character_id),
+            assistant_authority_id=character_ref.authority_id,
+            character_id=imported_character_id,
+            character_name="Portable Ann",
+        )
+        response_text = "Portable Ann answers in her dedicated voice."
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=response_text,
+        )
+        snapshot = store.issue_tts_message_speech_snapshot(message.id)
+        assert snapshot.character_ref == character_ref
+
+        async def load_profile_service() -> TTSProfileService:
+            return profile_service
+
+        speech_service = _CompleteWAVSpeechService()
+        handler = _UATTTSEventHandler(load_profile_service)
+        handler._request_cooldown = {}
+        handler._tts_service = speech_service
+        await handler.handle_tts_request(
+            TTSMessageSpeechRequestEvent(
+                snapshot,
+                store.validate_tts_message_speech_snapshot,
+            )
+        )
+        await asyncio.wait_for(handler.completion_posted.wait(), timeout=2.0)
+        completion = next(
+            event for event in handler.messages if isinstance(event, TTSCompleteEvent)
+        )
+        artifact = completion.audio_file
+
+        assert completion.error is None
+        assert speech_service.exact_requests == [
+            TTSRequest(
+                provider_id="audio_cpp",
+                model_id=model_id,
+                text=response_text,
+                voice=voice_id,
+                response_format="wav",
+                speed=1.0,
+                options={},
+            )
+        ]
+        assert artifact is not None
+        assert artifact.suffix == ".wav"
+        assert artifact.read_bytes() == UAT_COMPLETE_WAV
+
+        await handler.cleanup_tts_resources()
+
+    assert handler is not None
+    assert artifact is not None
+    assert not artifact.exists()

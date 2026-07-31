@@ -14,12 +14,16 @@ from uuid import UUID
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Select, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
+from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+    CharacterCardImportOutcome,
+    CharacterCardTTSInspection,
+)
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Constants import (
@@ -35,6 +39,9 @@ from tldw_chatbook.TTS import (
     CharacterTTSAssignment,
     LoadedCharacterTTSAssignment,
     LoadedTTSProfile,
+    PortableProfileAvailabilityObservation,
+    PortableProfileImportPlan,
+    PortableProfileImportResult,
     ProfileRepositoryError,
     TTSGenerationProfile,
     TTSPlaygroundSelectionPreset,
@@ -43,6 +50,7 @@ from tldw_chatbook.TTS import (
     TTSProfileDraft,
     TTSProfilePageSnapshot,
 )
+from tldw_chatbook.TTS.profile_portability import PortableTTSProfile
 from tldw_chatbook.tldw_api.character_persona_schemas import (
     LocalPersonaProfileCreate,
     LocalPersonaProfileUpdate,
@@ -101,6 +109,27 @@ PROFILE = {
     "description": "Preserve and retrieve",
     "system_prompt": "You are a meticulous archivist.",
 }
+
+
+def _portable_tts_profile(
+    profile: TTSGenerationProfile,
+    *,
+    profile_id: UUID | None = None,
+) -> PortableTTSProfile:
+    """Project a stored test profile into the sanitized portable value."""
+
+    return PortableTTSProfile(
+        profile_id=profile.profile_id if profile_id is None else profile_id,
+        draft=TTSProfileDraft(
+            display_name=profile.display_name,
+            provider_id=profile.provider_id,
+            model_id=profile.model_id,
+            voice_id=profile.voice_id,
+            response_format=profile.response_format,
+            speed=profile.speed,
+            options=profile.options,
+        ),
+    )
 
 
 @pytest.fixture
@@ -1654,22 +1683,53 @@ class TestImportExport:
         )
         return captured
 
+    async def test_json_export_path_failure_never_logs_sensitive_destination(
+        self,
+        tmp_path,
+    ):
+        from loguru import logger as loguru_logger
+
+        secret = "credential-private-origin-message-text"
+        hidden_parent = tmp_path / f".{secret}"
+        hidden_parent.mkdir()
+        target = hidden_parent / "character.json"
+        messages: list[str] = []
+        sink = loguru_logger.add(
+            lambda message: messages.append(str(message)),
+            level="DEBUG",
+        )
+        try:
+            with pytest.raises(ValueError):
+                PersonasScreen._write_text_file(str(target), "{}")
+        finally:
+            loguru_logger.remove(sink)
+
+        assert secret not in "".join(messages)
+
     async def test_import_success_refreshes_selects_and_clears_search(
         self, mock_app_instance, stub_characters, monkeypatch, tmp_path
     ):
-        imported_paths: list[str] = []
+        card_bytes = b'{"name":"Imported Hero"}'
+        card_path = tmp_path / "card.json"
+        card_path.write_bytes(card_bytes)
+        imported_sources: list[bytes] = []
 
-        def fake_import(file_path):
-            imported_paths.append(file_path)
-            return 3
+        def fake_import(source_bytes):
+            imported_sources.append(source_bytes)
+            return CharacterCardImportOutcome(3, True, None, None)
 
         monkeypatch.setattr(
-            character_handler_module, "import_character_card", fake_import
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            lambda _source_bytes: CharacterCardTTSInspection(),
+        )
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card_with_outcome", fake_import
         )
 
         def fetch_all_with_imported():
             characters = [dict(c) for c in CHARACTERS]
-            if imported_paths:
+            if imported_sources:
                 characters.append({"id": 3, "name": "Imported Hero", "version": 1})
             return characters
 
@@ -1695,11 +1755,11 @@ class TestImportExport:
             search_input = screen.query_one("#personas-library-search")
             search_input.value = "sam"
             await pilot.pause()
-            await screen._import_character_from_path(str(tmp_path / "card.json"))
+            await screen._import_character_from_path(str(card_path))
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert imported_paths == [str(tmp_path / "card.json")]
+            assert imported_sources == [card_bytes]
             assert screen.state.selected_entity_id == "3"
             assert screen.query_one("#personas-library-search").value == ""
             rows = screen.query(".personas-library-row")
@@ -1712,19 +1772,27 @@ class TestImportExport:
         it fired at the same instant the card view/inspector swapped in,
         against the app's plain 5s default. It must now request an explicit
         timeout longer than that default so it reads at normal pace."""
-        imported_paths: list[str] = []
+        card_bytes = b'{"name":"Imported Hero"}'
+        card_path = tmp_path / "card.json"
+        card_path.write_bytes(card_bytes)
+        imported_sources: list[bytes] = []
 
-        def fake_import(file_path):
-            imported_paths.append(file_path)
-            return 3
+        def fake_import(source_bytes):
+            imported_sources.append(source_bytes)
+            return CharacterCardImportOutcome(3, True, None, None)
 
         monkeypatch.setattr(
-            character_handler_module, "import_character_card", fake_import
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            lambda _source_bytes: CharacterCardTTSInspection(),
+        )
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card_with_outcome", fake_import
         )
 
         def fetch_all_with_imported():
             characters = [dict(c) for c in CHARACTERS]
-            if imported_paths:
+            if imported_sources:
                 characters.append({"id": 3, "name": "Imported Hero", "version": 1})
             return characters
 
@@ -1751,7 +1819,7 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await screen._import_character_from_path(str(tmp_path / "card.json"))
+            await screen._import_character_from_path(str(card_path))
             await pilot.pause()
         matches = [c for c in calls if c[0] == "Character imported."]
         assert matches, f"no 'Character imported.' notify call in {calls}"
@@ -1765,21 +1833,27 @@ class TestImportExport:
     async def test_import_markdown_routes_through_character_import_helper(
         self, mock_app_instance, stub_characters, monkeypatch, tmp_path
     ):
-        imported_paths: list[str] = []
+        imported_sources: list[bytes] = []
         card_path = tmp_path / "card.md"
         card_path.write_text("# Character Card\n", encoding="utf-8")
+        card_bytes = card_path.read_bytes()
 
-        def fake_import(file_path):
-            imported_paths.append(file_path)
-            return 3
+        def fake_import(source_bytes):
+            imported_sources.append(source_bytes)
+            return CharacterCardImportOutcome(3, True, None, None)
 
         monkeypatch.setattr(
-            character_handler_module, "import_character_card", fake_import
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            lambda _source_bytes: CharacterCardTTSInspection(),
+        )
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card_with_outcome", fake_import
         )
 
         def fetch_all_with_imported():
             characters = [dict(c) for c in CHARACTERS]
-            if imported_paths:
+            if imported_sources:
                 characters.append({"id": 3, "name": "Markdown Hero", "version": 1})
             return characters
 
@@ -1806,7 +1880,7 @@ class TestImportExport:
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert imported_paths == [str(card_path)]
+            assert imported_sources == [card_bytes]
             assert screen.state.selected_entity_id == "3"
 
     async def test_import_invalid_markdown_uses_failure_path_without_selection_change(
@@ -1815,7 +1889,14 @@ class TestImportExport:
         bad_path = tmp_path / "bad.md"
         bad_path.write_text("# Not a character card\n", encoding="utf-8")
         monkeypatch.setattr(
-            character_handler_module, "import_character_card", lambda file_path: None
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            lambda _source_bytes: CharacterCardTTSInspection(),
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "import_character_card_with_outcome",
+            lambda _source_bytes: None,
         )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
@@ -1870,15 +1951,24 @@ class TestImportExport:
     ):
         """A name-conflict import returns an existing id; the copy must say so
         honestly (task-429: re-import does not update the existing character)."""
+        card_path = tmp_path / "dupe.json"
+        card_path.write_bytes(b'{"name":"Detective Sam"}')
         monkeypatch.setattr(
-            character_handler_module, "import_character_card", lambda file_path: 1
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            lambda _source_bytes: CharacterCardTTSInspection(),
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "import_character_card_with_outcome",
+            lambda _source_bytes: CharacterCardImportOutcome(1, False, None, None),
         )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await screen._import_character_from_path(str(tmp_path / "dupe.json"))
+            await screen._import_character_from_path(str(card_path))
             await pilot.pause()
             assert screen.state.selected_entity_id == "1"
             assert any(
@@ -1967,19 +2057,26 @@ class TestImportExport:
     ):
         """A freshly imported card carrying an embedded book gets named in
         the success toast, end to end (task-429)."""
-        imported_paths: list[str] = []
+        card_path = tmp_path / "card.json"
+        card_path.write_bytes(b'{"name":"Imported Hero"}')
+        imported_sources: list[bytes] = []
 
-        def fake_import(file_path):
-            imported_paths.append(file_path)
-            return 3
+        def fake_import(source_bytes):
+            imported_sources.append(source_bytes)
+            return CharacterCardImportOutcome(3, True, None, None)
 
         monkeypatch.setattr(
-            character_handler_module, "import_character_card", fake_import
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            lambda _source_bytes: CharacterCardTTSInspection(),
+        )
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card_with_outcome", fake_import
         )
 
         def fetch_all_with_imported():
             characters = [dict(c) for c in CHARACTERS]
-            if imported_paths:
+            if imported_sources:
                 characters.append({"id": 3, "name": "Imported Hero", "version": 1})
             return characters
 
@@ -2012,7 +2109,7 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await screen._import_character_from_path(str(tmp_path / "card.json"))
+            await screen._import_character_from_path(str(card_path))
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -2403,6 +2500,683 @@ class TestImportExport:
                 for message, severity in notifications
             )
 
+    async def test_character_export_includes_voice_only_after_explicit_opt_in(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_db,
+        monkeypatch,
+        tmp_path,
+    ):
+        exported_profiles: list[PortableTTSProfile | None] = []
+
+        def fake_export(
+            db,
+            character_id,
+            include_image=True,
+            portable_tts_profile=None,
+        ):
+            assert db is stub_db
+            assert character_id == 1
+            exported_profiles.append(portable_tts_profile)
+            return '{"spec": "chara_card_v2"}'
+
+        monkeypatch.setattr(
+            personas_screen_module,
+            "export_character_card_to_json",
+            fake_export,
+        )
+        profile = _character_tts_profile(1)
+        portable = PortableTTSProfile(
+            profile_id=profile.profile_id,
+            draft=TTSProfileDraft(
+                display_name=profile.display_name,
+                provider_id=profile.provider_id,
+                model_id=profile.model_id,
+                voice_id=profile.voice_id,
+                response_format=profile.response_format,
+                speed=profile.speed,
+                options=profile.options,
+            ),
+        )
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            monkeypatch.setattr(screen, "_queue_character_tts_refresh", lambda: None)
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            inspector = screen.query_one(PersonasInspectorPane)
+            checkbox = inspector.query_one("#personas-export-include-tts", Checkbox)
+            assert checkbox.value is False
+            assert checkbox.disabled is True
+
+            inspector.set_tts_export_available(True)
+            assert checkbox.disabled is False
+            monkeypatch.setattr(
+                screen,
+                "_portable_tts_profile_for_export",
+                lambda: portable,
+            )
+
+            await screen._export_selected_character(
+                str(tmp_path / "ordinary.json"),
+                fmt="json",
+            )
+            checkbox.value = True
+            await screen._export_selected_character(
+                str(tmp_path / "portable.json"),
+                fmt="json",
+            )
+
+        assert exported_profiles == [None, portable]
+
+    async def test_portable_import_preflights_before_character_write_and_commits(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        tmp_path,
+    ):
+        events: list[str] = []
+        profile = _character_tts_profile(1)
+        portable = PortableTTSProfile(
+            profile_id=profile.profile_id,
+            draft=TTSProfileDraft(
+                display_name=profile.display_name,
+                provider_id=profile.provider_id,
+                model_id=profile.model_id,
+                voice_id=profile.voice_id,
+                response_format=profile.response_format,
+                speed=profile.speed,
+                options=profile.options,
+            ),
+        )
+        observation = PortableProfileAvailabilityObservation(
+            repository_generation=7,
+            configuration_revision=3,
+            profile=portable,
+            availability="available",
+        )
+        plan = PortableProfileImportPlan(
+            observation=observation,
+            allowed_choices=("create",),
+            reuse_profile=None,
+            copy_candidate=portable,
+        )
+        character_ref = CharacterRef(
+            source="local",
+            authority_id="local-test-authority",
+            character_id="1",
+        )
+
+        class _Service:
+            async def observe_portable_profile(self, candidate):
+                events.append("observe")
+                assert candidate == portable
+                return observation
+
+            async def inspect_portable_profile_import(self, candidate):
+                events.append("collisions")
+                assert candidate == observation
+                return plan
+
+            async def get_assigned_profile(self, candidate):
+                events.append("assignment")
+                assert candidate == character_ref
+                return LoadedCharacterTTSAssignment(7, None)
+
+            async def commit_portable_profile_import(
+                self,
+                candidate_plan,
+                choice,
+                candidate_ref,
+                *,
+                expected_current,
+            ):
+                events.append("commit")
+                assert (candidate_plan, choice, candidate_ref, expected_current) == (
+                    plan,
+                    "create",
+                    character_ref,
+                    None,
+                )
+                return PortableProfileImportResult(
+                    created=True,
+                    availability="available",
+                    loaded=LoadedTTSProfile(7, profile),
+                    assignment=CharacterTTSAssignment(character_ref, profile.profile_id),
+                )
+
+        source = tmp_path / "portable-card.json"
+        source.write_bytes(b"same immutable card bytes")
+        monkeypatch.setattr(
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            lambda source_bytes: events.append("inspect")
+            or CharacterCardTTSInspection(portable),
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "import_character_card_with_outcome",
+            lambda source_bytes: events.append("character_write")
+            or CharacterCardImportOutcome(1, True, portable, None),
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            monkeypatch.setattr(screen, "_queue_character_tts_refresh", lambda: None)
+            monkeypatch.setattr(
+                screen,
+                "_character_tts_profile_service",
+                AsyncMock(return_value=_Service()),
+            )
+            monkeypatch.setattr(
+                screen,
+                "_local_character_ref_for_import",
+                AsyncMock(return_value=character_ref),
+            )
+
+            await screen._import_character_from_path(str(source))
+            await pilot.pause()
+
+        assert events == [
+            "inspect",
+            "observe",
+            "character_write",
+            "collisions",
+            "assignment",
+            "commit",
+        ]
+        assert any(
+            "voice profile applied" in message.casefold()
+            for message, _severity in notifications
+        )
+
+    async def test_portable_collision_cancellation_writes_no_profile_or_assignment(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        tmp_path,
+    ):
+        profile = _character_tts_profile(1)
+        portable = PortableTTSProfile(
+            profile.profile_id,
+            TTSProfileDraft(
+                display_name=profile.display_name,
+                provider_id=profile.provider_id,
+                model_id=profile.model_id,
+                voice_id=profile.voice_id,
+                response_format=profile.response_format,
+                speed=profile.speed,
+                options=profile.options,
+            ),
+        )
+        observation = PortableProfileAvailabilityObservation(
+            7,
+            3,
+            portable,
+            "available",
+        )
+        plan = PortableProfileImportPlan(
+            observation,
+            ("reuse", "copy"),
+            profile,
+            PortableTTSProfile(
+                UUID("33333333-3333-4333-8333-333333333333"),
+                portable.draft,
+            ),
+        )
+        events: list[str] = []
+        commits: list[object] = []
+        character_ref = CharacterRef(
+            source="local",
+            authority_id="local-test-authority",
+            character_id="1",
+        )
+
+        class _Service:
+            async def observe_portable_profile(self, _profile):
+                return observation
+
+            async def inspect_portable_profile_import(self, _observation):
+                return plan
+
+            async def get_assigned_profile(self, _character_ref):
+                events.append("assignment_snapshot")
+                return LoadedCharacterTTSAssignment(7, None)
+
+            async def commit_portable_profile_import(self, *args, **kwargs):
+                commits.append((args, kwargs))
+
+        source = tmp_path / "collision.json"
+        source.write_bytes(b"immutable collision card")
+        monkeypatch.setattr(
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            lambda _bytes: CharacterCardTTSInspection(portable),
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "import_character_card_with_outcome",
+            lambda _bytes: CharacterCardImportOutcome(1, True, portable, None),
+        )
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            monkeypatch.setattr(screen, "_queue_character_tts_refresh", lambda: None)
+            monkeypatch.setattr(
+                screen,
+                "_character_tts_profile_service",
+                AsyncMock(return_value=_Service()),
+            )
+            monkeypatch.setattr(
+                screen,
+                "_local_character_ref_for_import",
+                AsyncMock(return_value=character_ref),
+            )
+            monkeypatch.setattr(
+                screen,
+                "_resolve_import_collision_choice",
+                AsyncMock(
+                    side_effect=lambda _plan: events.append("collision_choice")
+                    or None
+                ),
+            )
+
+            await screen._import_character_from_path(str(source))
+
+        assert events == ["assignment_snapshot", "collision_choice"]
+        assert commits == []
+
+    async def test_reused_character_requires_confirmation_before_profile_work(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        tmp_path,
+    ):
+        profile = _character_tts_profile(1)
+        portable = PortableTTSProfile(
+            profile.profile_id,
+            TTSProfileDraft(
+                display_name=profile.display_name,
+                provider_id=profile.provider_id,
+                model_id=profile.model_id,
+                voice_id=profile.voice_id,
+                response_format=profile.response_format,
+                speed=profile.speed,
+                options=profile.options,
+            ),
+        )
+        observation = PortableProfileAvailabilityObservation(7, 3, portable, "available")
+
+        class _Service:
+            async def observe_portable_profile(self, _profile):
+                return observation
+
+            async def inspect_portable_profile_import(self, _observation):
+                raise AssertionError(
+                    "declined apply must stop before profile collision reads"
+                )
+
+            async def get_assigned_profile(self, _character_ref):
+                raise AssertionError("declined apply must preserve current assignment")
+
+            async def commit_portable_profile_import(self, *args, **kwargs):
+                raise AssertionError("declined apply must not commit")
+
+        source = tmp_path / "reused.json"
+        source.write_bytes(b"immutable reused card")
+        monkeypatch.setattr(
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            lambda _bytes: CharacterCardTTSInspection(portable),
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "import_character_card_with_outcome",
+            lambda _bytes: CharacterCardImportOutcome(1, False, portable, None),
+        )
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            monkeypatch.setattr(screen, "_queue_character_tts_refresh", lambda: None)
+            monkeypatch.setattr(
+                screen,
+                "_character_tts_profile_service",
+                AsyncMock(return_value=_Service()),
+            )
+            confirmation = AsyncMock(return_value=False)
+            monkeypatch.setattr(
+                screen,
+                "_confirm_reused_character_tts_apply",
+                confirmation,
+            )
+
+            await screen._import_character_from_path(str(source))
+
+        confirmation.assert_awaited_once()
+
+    async def test_unavailable_imported_voice_is_saved_for_repair_not_assigned(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        tmp_path,
+    ):
+        profile = _character_tts_profile(1)
+        portable = _portable_tts_profile(profile)
+        observation = PortableProfileAvailabilityObservation(
+            7,
+            3,
+            portable,
+            "unavailable",
+        )
+        plan = PortableProfileImportPlan(
+            observation,
+            ("create",),
+            None,
+            portable,
+        )
+        character_ref = CharacterRef(
+            source="local",
+            authority_id="local-test-authority",
+            character_id="1",
+        )
+        commit_calls: list[tuple[object, ...]] = []
+
+        class _Service:
+            async def observe_portable_profile(self, _profile):
+                return observation
+
+            async def inspect_portable_profile_import(self, _observation):
+                return plan
+
+            async def get_assigned_profile(self, _character_ref):
+                return LoadedCharacterTTSAssignment(7, None)
+
+            async def commit_portable_profile_import(
+                self,
+                candidate_plan,
+                choice,
+                candidate_ref,
+                *,
+                expected_current,
+            ):
+                commit_calls.append(
+                    (candidate_plan, choice, candidate_ref, expected_current)
+                )
+                return PortableProfileImportResult(
+                    created=True,
+                    availability="unavailable",
+                    loaded=LoadedTTSProfile(7, profile),
+                    assignment=None,
+                )
+
+        source = tmp_path / "unavailable.json"
+        source.write_bytes(b"one immutable character card")
+        monkeypatch.setattr(
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            lambda _bytes: CharacterCardTTSInspection(portable),
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "import_character_card_with_outcome",
+            lambda _bytes: CharacterCardImportOutcome(1, True, portable, None),
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            monkeypatch.setattr(screen, "_queue_character_tts_refresh", lambda: None)
+            monkeypatch.setattr(
+                screen,
+                "_character_tts_profile_service",
+                AsyncMock(return_value=_Service()),
+            )
+            monkeypatch.setattr(
+                screen,
+                "_local_character_ref_for_import",
+                AsyncMock(return_value=character_ref),
+            )
+
+            await screen._import_character_from_path(str(source))
+
+        assert commit_calls == [(plan, "create", character_ref, None)]
+        assert any(
+            "saved for repair" in message.casefold()
+            and "not assigned" in message.casefold()
+            and severity == "information"
+            for message, severity in notifications
+        )
+
+    async def test_unavailable_reused_voice_reports_new_character_is_unassigned(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        tmp_path,
+    ):
+        profile = _character_tts_profile(1)
+        portable = _portable_tts_profile(profile)
+        observation = PortableProfileAvailabilityObservation(
+            7,
+            3,
+            portable,
+            "unavailable",
+        )
+        plan = PortableProfileImportPlan(
+            observation,
+            ("reuse", "copy"),
+            profile,
+            _portable_tts_profile(
+                profile,
+                profile_id=UUID("33333333-3333-4333-8333-333333333333"),
+            ),
+        )
+        character_ref = CharacterRef(
+            source="local",
+            authority_id="local-test-authority",
+            character_id="1",
+        )
+
+        class _Service:
+            async def observe_portable_profile(self, _profile):
+                return observation
+
+            async def inspect_portable_profile_import(self, _observation):
+                return plan
+
+            async def get_assigned_profile(self, _character_ref):
+                return LoadedCharacterTTSAssignment(7, None)
+
+            async def commit_portable_profile_import(self, *args, **kwargs):
+                del args, kwargs
+                return PortableProfileImportResult(
+                    created=False,
+                    availability="unavailable",
+                    loaded=LoadedTTSProfile(7, profile),
+                    assignment=None,
+                )
+
+        source = tmp_path / "unavailable-reuse.json"
+        source.write_bytes(b"one immutable character card")
+        monkeypatch.setattr(
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            lambda _bytes: CharacterCardTTSInspection(portable),
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "import_character_card_with_outcome",
+            lambda _bytes: CharacterCardImportOutcome(1, True, portable, None),
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            monkeypatch.setattr(screen, "_queue_character_tts_refresh", lambda: None)
+            monkeypatch.setattr(
+                screen,
+                "_character_tts_profile_service",
+                AsyncMock(return_value=_Service()),
+            )
+            monkeypatch.setattr(
+                screen,
+                "_local_character_ref_for_import",
+                AsyncMock(return_value=character_ref),
+            )
+            monkeypatch.setattr(
+                screen,
+                "_resolve_import_collision_choice",
+                AsyncMock(return_value="reuse"),
+            )
+
+            await screen._import_character_from_path(str(source))
+
+        matching = [
+            message.casefold()
+            for message, _severity in notifications
+            if "voice" in message.casefold()
+        ]
+        assert any("remains unassigned" in message for message in matching)
+        assert all("existing voice assignment was preserved" not in message for message in matching)
+
+    async def test_profile_commit_failure_keeps_character_and_hides_sensitive_detail(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        tmp_path,
+    ):
+        from loguru import logger as loguru_logger
+
+        secret = "credential-private-origin-message-text"
+        profile = _character_tts_profile(1)
+        portable = _portable_tts_profile(profile)
+        observation = PortableProfileAvailabilityObservation(
+            7,
+            3,
+            portable,
+            "available",
+        )
+        plan = PortableProfileImportPlan(
+            observation,
+            ("create",),
+            None,
+            portable,
+        )
+        character_writes: list[bytes] = []
+
+        class _Service:
+            async def observe_portable_profile(self, _profile):
+                return observation
+
+            async def inspect_portable_profile_import(self, _observation):
+                return plan
+
+            async def get_assigned_profile(self, _character_ref):
+                return LoadedCharacterTTSAssignment(7, None)
+
+            async def commit_portable_profile_import(self, *args, **kwargs):
+                del args, kwargs
+                raise RuntimeError(secret)
+
+        private_dir = tmp_path / secret
+        private_dir.mkdir()
+        source = private_dir / "card.json"
+        source.write_bytes(b"immutable card with private roleplay text")
+        monkeypatch.setattr(
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            lambda _bytes: CharacterCardTTSInspection(portable),
+        )
+
+        def persist_character(source_bytes):
+            character_writes.append(source_bytes)
+            return CharacterCardImportOutcome(1, True, portable, None)
+
+        monkeypatch.setattr(
+            character_handler_module,
+            "import_character_card_with_outcome",
+            persist_character,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        log_messages: list[str] = []
+        sink = loguru_logger.add(
+            lambda message: log_messages.append(str(message)),
+            level="DEBUG",
+        )
+        try:
+            async with app.run_test() as pilot:
+                screen = await _mounted(pilot)
+                fetch_calls = 0
+
+                def fetch_after_import(character_id):
+                    nonlocal fetch_calls
+                    fetch_calls += 1
+                    if fetch_calls == 1:
+                        raise RuntimeError(secret)
+                    return next(
+                        dict(character)
+                        for character in CHARACTERS
+                        if str(character["id"]) == str(character_id)
+                    )
+
+                monkeypatch.setattr(
+                    character_handler_module,
+                    "fetch_character_by_id",
+                    fetch_after_import,
+                )
+                monkeypatch.setattr(
+                    screen,
+                    "_queue_character_tts_refresh",
+                    lambda: None,
+                )
+                monkeypatch.setattr(
+                    screen,
+                    "_character_tts_profile_service",
+                    AsyncMock(return_value=_Service()),
+                )
+                monkeypatch.setattr(
+                    screen,
+                    "_local_character_ref_for_import",
+                    AsyncMock(
+                        return_value=CharacterRef(
+                            source="local",
+                            authority_id="local-test-authority",
+                            character_id="1",
+                        )
+                    ),
+                )
+
+                await screen._import_character_from_path(str(source))
+        finally:
+            loguru_logger.remove(sink)
+
+        assert character_writes == [source.read_bytes()]
+        assert any(
+            "character was kept" in message.casefold()
+            and "could not be saved or assigned" in message.casefold()
+            and severity == "warning"
+            for message, severity in notifications
+        )
+        observable_copy = " ".join(
+            [*(message for message, _severity in notifications), *log_messages]
+        )
+        assert secret not in observable_copy
+        assert str(source) not in observable_copy
+
     async def test_export_json_rejects_hidden_directory_destination(
         self, mock_app_instance, stub_characters, stub_db, monkeypatch, tmp_path
     ):
@@ -2481,11 +3255,11 @@ class TestImportExport:
     async def test_import_requires_characters_mode(
         self, mock_app_instance, stub_characters, stub_scope_service, monkeypatch
     ):
-        import_calls: list[str] = []
+        import_card = Mock()
         monkeypatch.setattr(
             character_handler_module,
-            "import_character_card",
-            lambda file_path: import_calls.append(file_path) or 3,
+            "import_character_card_with_outcome",
+            import_card,
         )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
@@ -2500,7 +3274,7 @@ class TestImportExport:
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert import_calls == []
+            import_card.assert_not_called()
             assert not any(severity == "error" for _, severity in notifications)
 
 
@@ -3957,7 +4731,10 @@ class TestServerCharacterSourceIsolation:
         local_fetch = Mock(return_value=dict(CHARACTERS[0]))
         local_create = Mock(return_value=99)
         local_update = Mock(return_value=True)
-        local_import = Mock(return_value=99)
+        local_inspect = Mock(return_value=CharacterCardTTSInspection())
+        local_import = Mock(
+            return_value=CharacterCardImportOutcome(99, True, None, None)
+        )
         local_delete = Mock(return_value=True)
         monkeypatch.setattr(
             character_handler_module, "fetch_character_by_id", local_fetch
@@ -3965,7 +4742,14 @@ class TestServerCharacterSourceIsolation:
         monkeypatch.setattr(character_handler_module, "create_character", local_create)
         monkeypatch.setattr(character_handler_module, "update_character", local_update)
         monkeypatch.setattr(
-            character_handler_module, "import_character_card", local_import
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            local_inspect,
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "import_character_card_with_outcome",
+            local_import,
         )
         monkeypatch.setattr(character_handler_module, "delete_character", local_delete)
 
@@ -4029,6 +4813,7 @@ class TestServerCharacterSourceIsolation:
         local_fetch.assert_not_called()
         local_create.assert_not_called()
         local_update.assert_not_called()
+        local_inspect.assert_not_called()
         local_import.assert_not_called()
         local_delete.assert_not_called()
 
@@ -8110,11 +8895,25 @@ class TestDirtyTracking:
             assert not screen.query(".personas-library-row.is-unsaved")
 
     async def test_import_refreshes_attach_action(
-        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+        tmp_path,
     ):
         """UX-E2 carryover: import-selection must enable the attach action."""
+        source = tmp_path / "card.json"
+        source.write_bytes(b'{"name":"Detective Sam"}')
         monkeypatch.setattr(
-            character_handler_module, "import_character_card", lambda path: 1
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            lambda _source_bytes: CharacterCardTTSInspection(),
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "import_character_card_with_outcome",
+            lambda _source_bytes: CharacterCardImportOutcome(1, False, None, None),
         )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
@@ -8131,11 +8930,93 @@ class TestDirtyTracking:
             # task-445: unavailable hints are dropped entirely rather than
             # rendered with a literal "unavailable" suffix.
             assert "ctrl+enter attach" not in footer.shortcut_text
-            await screen._import_character_from_path("/tmp/card.json")
+            await screen._import_character_from_path(str(source))
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             assert screen._console_action_allowed() is True
+
+
+class TestCharacterTTSPortabilityDialogs:
+    """Mounted contracts for the two explicit imported-voice decisions."""
+
+    @staticmethod
+    def _collision_plan(
+        allowed_choices: tuple[str, ...],
+    ) -> PortableProfileImportPlan:
+        profile = _character_tts_profile(1)
+        portable = _portable_tts_profile(profile)
+        return PortableProfileImportPlan(
+            observation=PortableProfileAvailabilityObservation(
+                7,
+                3,
+                portable,
+                "available",
+            ),
+            allowed_choices=allowed_choices,
+            reuse_profile=profile if "reuse" in allowed_choices else None,
+            copy_candidate=_portable_tts_profile(
+                profile,
+                profile_id=UUID("33333333-3333-4333-8333-333333333333"),
+            ),
+        )
+
+    async def test_collision_dialog_returns_explicit_reuse_choice(self):
+        from tldw_chatbook.Widgets.Persona_Widgets.character_tts_portability_dialogs import (
+            CharacterTTSProfileCollisionDialog,
+        )
+
+        app = App()
+        results: list[str | None] = []
+        plan = self._collision_plan(("reuse", "copy"))
+        async with app.run_test(size=(100, 35)) as pilot:
+            dialog = CharacterTTSProfileCollisionDialog(plan)
+            await app.push_screen(dialog, callback=results.append)
+            await pilot.pause()
+
+            assert dialog.query_one("#character-tts-collision-reuse", Button)
+            assert dialog.query_one("#character-tts-collision-copy-profile", Button)
+            await pilot.click("#character-tts-collision-reuse")
+            await pilot.pause()
+
+        assert results == ["reuse"]
+
+    async def test_collision_dialog_returns_copy_when_reuse_is_unsafe(self):
+        from tldw_chatbook.Widgets.Persona_Widgets.character_tts_portability_dialogs import (
+            CharacterTTSProfileCollisionDialog,
+        )
+
+        app = App()
+        results: list[str | None] = []
+        plan = self._collision_plan(("copy",))
+        async with app.run_test(size=(100, 35)) as pilot:
+            dialog = CharacterTTSProfileCollisionDialog(plan)
+            await app.push_screen(dialog, callback=results.append)
+            await pilot.pause()
+
+            assert not dialog.query("#character-tts-collision-reuse")
+            await pilot.click("#character-tts-collision-copy-profile")
+            await pilot.pause()
+
+        assert results == ["copy"]
+
+    async def test_existing_character_dialog_requires_explicit_apply(self):
+        from tldw_chatbook.Widgets.Persona_Widgets.character_tts_portability_dialogs import (
+            CharacterTTSExistingAssignmentDialog,
+        )
+
+        app = App()
+        results: list[bool] = []
+        async with app.run_test(size=(100, 35)) as pilot:
+            dialog = CharacterTTSExistingAssignmentDialog()
+            await app.push_screen(dialog, callback=results.append)
+            await pilot.pause()
+
+            assert dialog.query_one("#character-tts-existing-cancel", Button)
+            await pilot.click("#character-tts-existing-confirm")
+            await pilot.pause()
+
+        assert results == [True]
 
 
 class TestConfirmationDialogEscape:

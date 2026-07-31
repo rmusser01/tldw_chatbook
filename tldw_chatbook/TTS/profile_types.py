@@ -455,6 +455,24 @@ class TTSProfilePage:
 
 
 @dataclass(frozen=True, slots=True)
+class TTSProfileCollisionSnapshot:
+    """Exact existing rows matching a portable UUID hint or normalized name."""
+
+    profile_id_match: TTSGenerationProfile | None
+    normalized_name_match: TTSGenerationProfile | None
+
+    def __post_init__(self) -> None:
+        if self.profile_id_match is not None and type(
+            self.profile_id_match
+        ) is not TTSGenerationProfile:
+            raise ProfileValidationError("profiles")
+        if self.normalized_name_match is not None and type(
+            self.normalized_name_match
+        ) is not TTSGenerationProfile:
+            raise ProfileValidationError("profiles")
+
+
+@dataclass(frozen=True, slots=True)
 class ProfileStoreResult(Generic[_T]):
     """A repository result paired with the lifecycle generation that produced it."""
 
