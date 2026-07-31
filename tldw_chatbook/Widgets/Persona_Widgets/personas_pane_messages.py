@@ -6,7 +6,8 @@ the foundation PR until it merges.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Literal
+from uuid import UUID
 
 from textual.message import Message
 
@@ -27,6 +28,30 @@ class EditCharacterRequested(Message):
 
     def __init__(self, character_id: str) -> None:
         self.character_id = character_id
+        super().__init__()
+
+
+CharacterTTSAction = Literal["assign", "preview", "create", "edit", "remove"]
+
+
+class CharacterTTSActionRequested(Message):
+    """Request one profile action without carrying character authority."""
+
+    def __init__(
+        self,
+        action: CharacterTTSAction,
+        profile_id: UUID | None,
+    ) -> None:
+        if action not in {"assign", "preview", "create", "edit", "remove"}:
+            raise ValueError("invalid character TTS action")
+        if profile_id is not None and type(profile_id) is not UUID:
+            raise TypeError("profile_id must be a UUID")
+        if action in {"preview", "edit", "remove"} and profile_id is None:
+            raise ValueError("profile action requires profile_id")
+        if action == "create" and profile_id is not None:
+            raise ValueError("create does not accept profile_id")
+        self.action = action
+        self.profile_id = profile_id
         super().__init__()
 
 

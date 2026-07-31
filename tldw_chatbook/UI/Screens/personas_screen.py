@@ -10,6 +10,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from uuid import UUID
 
 from loguru import logger
 from textual import on, work
@@ -38,11 +39,23 @@ from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
+from ...Constants import TAB_STTS
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...Image_Generation.config import get_image_generation_config
 from ...Image_Generation.listing import list_image_models_for_catalog
 from ...Image_Generation.worker import build_request, run_generation
 from ...Media_Creation.generation_templates import GenerationTemplate, get_template
+from ...TTS import (
+    AssignedTTSProfileSnapshot,
+    CharacterRef,
+    LoadedCharacterTTSAssignment,
+    LoadedTTSProfile,
+    ProfileRepositoryError,
+    TTSProfileAvailability,
+    TTSProfileAvailabilitySnapshot,
+    TTSProfileDraft,
+    TTSProfilePageSnapshot,
+)
 from ...tldw_api.character_persona_schemas import (
     LocalPersonaProfileCreate,
     LocalPersonaProfileUpdate,
@@ -70,6 +83,11 @@ from ...Widgets.Persona_Widgets.personas_character_card_widget import (
 )
 from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
+)
+from ...Widgets.Persona_Widgets.personas_character_tts_widget import (
+    CharacterTTSProfileOption,
+    CharacterTTSPresentationState,
+    PersonasCharacterTTSWidget,
 )
 from ...Widgets.Persona_Widgets.personas_character_dictionaries import (
     PersonasCharacterDictionariesWidget,
@@ -113,6 +131,7 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterImageRemoveRequested,
     CharacterImageUploadRequested,
     CharacterSaveRequested,
+    CharacterTTSActionRequested,
     ConversationRowSelected,
     EditCharacterRequested,
     EditorContentChanged,
@@ -124,6 +143,10 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
     PreviewOpenInConsoleRequested,
     PreviewReplyRequested,
     PreviewResetRequested,
+)
+from ..stts_profile_library import (
+    TTSProfileEditorModal,
+    profile_action_error_copy,
 )
 from ...Widgets.Persona_Widgets.personas_dictionary_detail import (
     DictionaryAttachRequested,
@@ -178,6 +201,7 @@ from ..CCP_Modules.ccp_messages import CharacterMessage
 from ..CCP_Modules.ccp_persona_handler import CCPPersonaHandler
 from .destination_recovery import DestinationRecoveryState
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.shortcut_context import ShortcutAction, ShortcutContext
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Workbench.workbench_widgets import DestinationHeader
@@ -254,6 +278,40 @@ PERSONAS_AVATAR_MAX_SIZE_COPY = "5 MB"
 PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 _PERSONAS_CHARACTER_IMPORT_WORKER_GROUP = "personas-character-import"
+_CHARACTER_TTS_WORKER_GROUP = "personas-character-tts"
+_CHARACTER_TTS_LOADING_COPY = "Loading voice profiles…"
+_CHARACTER_TTS_DISABLED_COPY = "Save/reopen before assigning."
+_CHARACTER_TTS_CHANGED_COPY = "Voice profiles changed; reselect to retry."
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _CharacterTTSControlSnapshot:
+    """Exact service and authority tokens behind one rendered control state."""
+
+    request_generation: int
+    runtime_source: str
+    character_id: str
+    character_ref: CharacterRef
+    repository_generation: int
+    loaded_profiles: tuple[LoadedTTSProfile, ...]
+    availability: tuple[TTSProfileAvailability, ...]
+    current: AssignedTTSProfileSnapshot | None
+    assignment_count: int | None
+    configuration_revision: int
+    catalog_revision: int | None
+    expected_server_id: str | None
+    server_context_capture: object | None = dataclasses.field(
+        repr=False,
+        compare=False,
+    )
+
+
+class _CharacterTTSAuthorityUnavailable(RuntimeError):
+    """Stable character authority could not be proved."""
+
+
+class _CharacterTTSMixedSnapshot(RuntimeError):
+    """Repository or capability observations did not form one snapshot."""
 
 # Character editor avatar thumbnail box, in character cells. Must stay in
 # sync with #personas-char-editor-avatar-thumb's CSS max-width/max-height in
@@ -674,6 +732,9 @@ class PersonasScreen(BaseAppScreen):
         self._selected_lore_book_version: int | None = None
         self._profile_lookup_recovery_state: DestinationRecoveryState | None = None
         self._search_debounce_timer: Timer | None = None
+        self._character_tts_request_generation = 0
+        self._character_tts_snapshot: _CharacterTTSControlSnapshot | None = None
+        self._character_tts_presentation = CharacterTTSPresentationState.disabled()
         # Serializes library renders: the pane's update_rows has two
         # suspension points, so interleaved renders could double-mount rows.
         self._render_lock = asyncio.Lock()
@@ -1022,6 +1083,7 @@ class PersonasScreen(BaseAppScreen):
         self.character_handler.current_character_id = None
         self.character_handler.current_character_data = {}
         self.state.reset_for_runtime_source_change(normalized)
+        self._invalidate_character_tts_controls()
         self._set_persona_editor_runtime_source(normalized)
         self._count_cache_key = None
         self._characters = []
@@ -1043,6 +1105,8 @@ class PersonasScreen(BaseAppScreen):
             self._sync_title_and_console_actions()
 
     async def on_unmount(self) -> None:
+        self._character_tts_request_generation += 1
+        self._character_tts_snapshot = None
         super().on_unmount()
         self._cancel_search_debounce()
         await self.preview.close_gateway()
@@ -1218,6 +1282,751 @@ class PersonasScreen(BaseAppScreen):
         if type(value) is str and value and value == value.strip():
             return value
         return None
+
+    def _publish_character_tts_presentation(
+        self,
+        state: CharacterTTSPresentationState,
+    ) -> None:
+        """Apply one immutable state to the card and editor controls."""
+
+        self._character_tts_presentation = state
+        if not self.is_mounted:
+            return
+        for control in self.query(PersonasCharacterTTSWidget):
+            control.apply_state(state)
+
+    def _disable_character_tts_controls(
+        self,
+        status: str = _CHARACTER_TTS_DISABLED_COPY,
+    ) -> None:
+        self._character_tts_snapshot = None
+        self._publish_character_tts_presentation(
+            CharacterTTSPresentationState.disabled(status)
+        )
+
+    def _invalidate_character_tts_controls(
+        self,
+        status: str = _CHARACTER_TTS_DISABLED_COPY,
+    ) -> None:
+        self._character_tts_request_generation += 1
+        self._disable_character_tts_controls(status)
+
+    def _character_tts_request_is_current(
+        self,
+        request_generation: int,
+        character_id: str,
+        runtime_source: str,
+    ) -> bool:
+        """Return whether one population request still owns the visible character."""
+
+        return (
+            self.is_mounted
+            and request_generation == self._character_tts_request_generation
+            and self.state.active_mode == "characters"
+            and self.state.selected_entity_kind == "character"
+            and self.state.selected_entity_id == character_id
+            and self.state.runtime_source == runtime_source
+        )
+
+    async def _resolve_character_tts_authority(
+        self,
+        request_generation: int,
+        character_id: str,
+        runtime_source: str,
+    ) -> tuple[CharacterRef, str | None, object | None]:
+        """Resolve exact local/server authority without guessing identity."""
+
+        if not self._character_tts_request_is_current(
+            request_generation,
+            character_id,
+            runtime_source,
+        ):
+            raise _CharacterTTSAuthorityUnavailable
+        if runtime_source == "local":
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            get_local_authority_id = getattr(db, "get_local_authority_id", None)
+            if not callable(get_local_authority_id):
+                raise _CharacterTTSAuthorityUnavailable
+            try:
+                authority_id = await asyncio.to_thread(get_local_authority_id)
+                character_ref = CharacterRef(
+                    source="local",
+                    authority_id=authority_id,
+                    character_id=character_id,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                raise _CharacterTTSAuthorityUnavailable from None
+            if not self._character_tts_request_is_current(
+                request_generation,
+                character_id,
+                runtime_source,
+            ):
+                raise _CharacterTTSAuthorityUnavailable
+            return character_ref, None, None
+
+        if runtime_source != "server":
+            raise _CharacterTTSAuthorityUnavailable
+        expected_server_id = self._active_server_target()
+        selected = self._selected_server_character
+        if (
+            expected_server_id is None
+            or selected is None
+            or selected[0] != expected_server_id
+            or str(selected[1].get("id")) != character_id
+        ):
+            raise _CharacterTTSAuthorityUnavailable
+        provider = getattr(self.app_instance, "server_context_provider", None)
+        capture_context = getattr(
+            provider,
+            "capture_character_authority_context",
+            None,
+        )
+        context_is_current = getattr(
+            provider,
+            "is_character_authority_context_current",
+            None,
+        )
+        resolver = getattr(provider, "resolve_character_authority_id", None)
+        if (
+            not callable(capture_context)
+            or not callable(context_is_current)
+            or not callable(resolver)
+        ):
+            raise _CharacterTTSAuthorityUnavailable
+        try:
+            capture = capture_context(expected_server_id=expected_server_id)
+            if context_is_current(capture) is not True:
+                raise _CharacterTTSAuthorityUnavailable
+            authority_id = await resolver(
+                expected_server_id=expected_server_id,
+                context_capture=capture,
+            )
+            character_ref = CharacterRef(
+                source="server",
+                authority_id=authority_id,
+                character_id=character_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            raise _CharacterTTSAuthorityUnavailable from None
+        if (
+            not self._character_tts_request_is_current(
+                request_generation,
+                character_id,
+                runtime_source,
+            )
+            or self._active_server_target() != expected_server_id
+        ):
+            raise _CharacterTTSAuthorityUnavailable
+        try:
+            context_still_current = context_is_current(capture) is True
+        except Exception:
+            raise _CharacterTTSAuthorityUnavailable from None
+        if not context_still_current:
+            raise _CharacterTTSAuthorityUnavailable
+        return character_ref, expected_server_id, capture
+
+    def _character_tts_snapshot_context_is_current(
+        self,
+        snapshot: _CharacterTTSControlSnapshot,
+    ) -> bool:
+        if not self._character_tts_request_is_current(
+            snapshot.request_generation,
+            snapshot.character_id,
+            snapshot.runtime_source,
+        ):
+            return False
+        if snapshot.runtime_source == "local":
+            return snapshot.expected_server_id is None
+        if (
+            snapshot.runtime_source != "server"
+            or self._active_server_target() != snapshot.expected_server_id
+            or snapshot.server_context_capture is None
+        ):
+            return False
+        provider = getattr(self.app_instance, "server_context_provider", None)
+        context_is_current = getattr(
+            provider,
+            "is_character_authority_context_current",
+            None,
+        )
+        try:
+            return (
+                callable(context_is_current)
+                and context_is_current(snapshot.server_context_capture) is True
+            )
+        except Exception:
+            return False
+
+    async def _character_tts_mutation_context_is_current(
+        self,
+        snapshot: _CharacterTTSControlSnapshot,
+    ) -> bool:
+        """Revalidate exact authority immediately before a mutation."""
+
+        if not self._character_tts_snapshot_context_is_current(snapshot):
+            return False
+        if snapshot.runtime_source == "server":
+            return True
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        get_local_authority_id = getattr(db, "get_local_authority_id", None)
+        if not callable(get_local_authority_id):
+            return False
+        try:
+            authority_id = await asyncio.to_thread(get_local_authority_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return False
+        return (
+            self._character_tts_snapshot_context_is_current(snapshot)
+            and type(authority_id) is str
+            and authority_id == snapshot.character_ref.authority_id
+        )
+
+    async def _character_tts_profile_service(self) -> Any:
+        loader = getattr(
+            self.app_instance,
+            "_ensure_tts_profile_service",
+            None,
+        )
+        if not callable(loader):
+            raise RuntimeError("profile service unavailable")
+        service = await loader()
+        if service is None:
+            raise RuntimeError("profile service unavailable")
+        return service
+
+    @staticmethod
+    def _character_tts_availability_map(
+        page: TTSProfilePageSnapshot,
+        availability: TTSProfileAvailabilitySnapshot,
+    ) -> dict[UUID, TTSProfileAvailability]:
+        if (
+            availability.repository_generation != page.repository_generation
+            or {profile.profile_id for profile in page.profiles}
+            != {item.profile_id for item in availability.profiles}
+        ):
+            raise _CharacterTTSMixedSnapshot
+        return {item.profile_id: item for item in availability.profiles}
+
+    async def _load_character_tts_snapshot(
+        self,
+        request_generation: int,
+        character_id: str,
+        runtime_source: str,
+    ) -> _CharacterTTSControlSnapshot | None:
+        character_ref, expected_server_id, capture = (
+            await self._resolve_character_tts_authority(
+                request_generation,
+                character_id,
+                runtime_source,
+            )
+        )
+        service = await self._character_tts_profile_service()
+        if not self._character_tts_request_is_current(
+            request_generation,
+            character_id,
+            runtime_source,
+        ):
+            return None
+
+        assigned = await service.get_assigned_profile(character_ref)
+        page = await service.list_profiles(search=None, offset=0)
+        if (
+            type(assigned) is not LoadedCharacterTTSAssignment
+            or type(page) is not TTSProfilePageSnapshot
+            or assigned.repository_generation != page.repository_generation
+        ):
+            raise _CharacterTTSMixedSnapshot
+        if not self._character_tts_request_is_current(
+            request_generation,
+            character_id,
+            runtime_source,
+        ):
+            return None
+
+        page_availability = await service.observe_availability(page)
+        if type(page_availability) is not TTSProfileAvailabilitySnapshot:
+            raise _CharacterTTSMixedSnapshot
+        availability_by_id = self._character_tts_availability_map(
+            page,
+            page_availability,
+        )
+        loaded_profiles = [
+            LoadedTTSProfile(
+                repository_generation=page.repository_generation,
+                profile=profile,
+            )
+            for profile in page.profiles
+        ]
+
+        current = assigned.snapshot
+        assignment_count: int | None = None
+        if current is not None:
+            if current.assignment.character_ref != character_ref:
+                raise _CharacterTTSMixedSnapshot
+            matching = next(
+                (
+                    loaded
+                    for loaded in loaded_profiles
+                    if loaded.profile.profile_id == current.profile.profile_id
+                ),
+                None,
+            )
+            if matching is not None and matching.profile != current.profile:
+                raise _CharacterTTSMixedSnapshot
+            if matching is None:
+                matching = LoadedTTSProfile(
+                    repository_generation=page.repository_generation,
+                    profile=current.profile,
+                )
+                assigned_page = TTSProfilePageSnapshot(
+                    repository_generation=page.repository_generation,
+                    profiles=(current.profile,),
+                    total=1,
+                )
+                assigned_availability = await service.observe_availability(
+                    assigned_page
+                )
+                if type(assigned_availability) is not TTSProfileAvailabilitySnapshot:
+                    raise _CharacterTTSMixedSnapshot
+                if (
+                    assigned_availability.configuration_revision
+                    != page_availability.configuration_revision
+                    or assigned_availability.catalog_revision
+                    != page_availability.catalog_revision
+                ):
+                    raise _CharacterTTSMixedSnapshot
+                availability_by_id.update(
+                    self._character_tts_availability_map(
+                        assigned_page,
+                        assigned_availability,
+                    )
+                )
+                loaded_profiles.append(matching)
+            assignment_count = await service.assignment_count(matching)
+            if type(assignment_count) is not int or assignment_count < 0:
+                raise _CharacterTTSMixedSnapshot
+
+        if (
+            assigned.repository_generation != page.repository_generation
+            or page_availability.repository_generation
+            != page.repository_generation
+            or len(availability_by_id) != len(loaded_profiles)
+            or not self._character_tts_request_is_current(
+                request_generation,
+                character_id,
+                runtime_source,
+            )
+        ):
+            if not self._character_tts_request_is_current(
+                request_generation,
+                character_id,
+                runtime_source,
+            ):
+                return None
+            raise _CharacterTTSMixedSnapshot
+        availability = tuple(
+            availability_by_id[loaded.profile.profile_id]
+            for loaded in loaded_profiles
+        )
+        return _CharacterTTSControlSnapshot(
+            request_generation=request_generation,
+            runtime_source=runtime_source,
+            character_id=character_id,
+            character_ref=character_ref,
+            repository_generation=page.repository_generation,
+            loaded_profiles=tuple(loaded_profiles),
+            availability=availability,
+            current=current,
+            assignment_count=assignment_count,
+            configuration_revision=page_availability.configuration_revision,
+            catalog_revision=page_availability.catalog_revision,
+            expected_server_id=expected_server_id,
+            server_context_capture=capture,
+        )
+
+    @staticmethod
+    def _character_tts_presentation_from_snapshot(
+        snapshot: _CharacterTTSControlSnapshot,
+    ) -> CharacterTTSPresentationState:
+        availability_by_id = {
+            item.profile_id: item for item in snapshot.availability
+        }
+        profiles = tuple(
+            CharacterTTSProfileOption(
+                profile_id=loaded.profile.profile_id,
+                display_name=loaded.profile.display_name,
+                availability=availability_by_id[loaded.profile.profile_id].state,
+            )
+            for loaded in snapshot.loaded_profiles
+        )
+        current = snapshot.current
+        if current is None:
+            return CharacterTTSPresentationState(
+                profiles=profiles,
+                selected_profile_id=None,
+                status="Using the global speech default.",
+                controls_enabled=True,
+            )
+
+        current_availability = availability_by_id[current.profile.profile_id]
+        count = snapshot.assignment_count
+        count_copy = (
+            "Assignment count unavailable"
+            if count is None
+            else f"Used by {count} character{'s' if count != 1 else ''}"
+        )
+        if current_availability.state == "available":
+            status = f"{current.profile.display_name} · Available · {count_copy}."
+        elif current_availability.state == "unavailable":
+            status = (
+                f"{current.profile.display_name} · Unavailable · {count_copy}. "
+                "Repair the profile or remove this assignment."
+            )
+        else:
+            status = (
+                f"{current.profile.display_name} · Unverified · {count_copy}. "
+                "Refresh or repair the profile; the assignment is preserved."
+            )
+        return CharacterTTSPresentationState(
+            profiles=profiles,
+            selected_profile_id=current.profile.profile_id,
+            status=status,
+            controls_enabled=True,
+            assignment_count=count,
+        )
+
+    async def _character_tts_refresh_worker(
+        self,
+        request_generation: int,
+        character_id: str,
+        runtime_source: str,
+    ) -> None:
+        """Build and publish one coherent character profile snapshot."""
+
+        for attempt in range(2):
+            try:
+                snapshot = await self._load_character_tts_snapshot(
+                    request_generation,
+                    character_id,
+                    runtime_source,
+                )
+            except asyncio.CancelledError:
+                raise
+            except _CharacterTTSAuthorityUnavailable:
+                if self._character_tts_request_is_current(
+                    request_generation,
+                    character_id,
+                    runtime_source,
+                ):
+                    self._disable_character_tts_controls()
+                return
+            except _CharacterTTSMixedSnapshot:
+                if attempt == 0:
+                    continue
+                if self._character_tts_request_is_current(
+                    request_generation,
+                    character_id,
+                    runtime_source,
+                ):
+                    self._disable_character_tts_controls(
+                        _CHARACTER_TTS_CHANGED_COPY
+                    )
+                return
+            except Exception as error:
+                if self._character_tts_request_is_current(
+                    request_generation,
+                    character_id,
+                    runtime_source,
+                ):
+                    self._disable_character_tts_controls(
+                        profile_action_error_copy(error)
+                    )
+                return
+            if snapshot is None:
+                return
+            if self._character_tts_snapshot_context_is_current(snapshot):
+                self._character_tts_snapshot = snapshot
+                self._publish_character_tts_presentation(
+                    self._character_tts_presentation_from_snapshot(snapshot)
+                )
+            return
+
+    def _queue_character_tts_refresh(self) -> None:
+        """Invalidate prior work and load the selected saved character."""
+
+        self._character_tts_request_generation += 1
+        request_generation = self._character_tts_request_generation
+        self._character_tts_snapshot = None
+        character_id = self.state.selected_entity_id
+        runtime_source = self.state.runtime_source
+        if (
+            not self.is_mounted
+            or self.state.active_mode != "characters"
+            or self.state.selected_entity_kind != "character"
+            or type(character_id) is not str
+            or not character_id
+            or runtime_source not in {"local", "server"}
+        ):
+            self._publish_character_tts_presentation(
+                CharacterTTSPresentationState.disabled()
+            )
+            return
+        self._publish_character_tts_presentation(
+            CharacterTTSPresentationState.disabled(_CHARACTER_TTS_LOADING_COPY)
+        )
+        self.run_worker(
+            self._character_tts_refresh_worker(
+                request_generation,
+                character_id,
+                runtime_source,
+            ),
+            group=_CHARACTER_TTS_WORKER_GROUP,
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    @staticmethod
+    def _character_tts_profile_tokens(
+        snapshot: _CharacterTTSControlSnapshot,
+        profile_id: UUID,
+    ) -> tuple[LoadedTTSProfile, TTSProfileAvailability] | None:
+        loaded = next(
+            (
+                item
+                for item in snapshot.loaded_profiles
+                if item.profile.profile_id == profile_id
+            ),
+            None,
+        )
+        availability = next(
+            (
+                item
+                for item in snapshot.availability
+                if item.profile_id == profile_id
+            ),
+            None,
+        )
+        if loaded is None or availability is None:
+            return None
+        return loaded, availability
+
+    def _publish_character_tts_action_error(
+        self,
+        snapshot: _CharacterTTSControlSnapshot,
+        error: BaseException,
+    ) -> None:
+        if not self._character_tts_snapshot_context_is_current(snapshot):
+            return
+        self._publish_character_tts_presentation(
+            dataclasses.replace(
+                self._character_tts_presentation,
+                status=profile_action_error_copy(error),
+            )
+        )
+
+    def _navigate_to_speech(
+        self,
+        *,
+        preset: object | None = None,
+    ) -> None:
+        context: dict[str, object] = {"view": "playground"}
+        if preset is not None:
+            context["profile_preset"] = preset
+        self.app.post_message(NavigateToScreen(TAB_STTS, context))
+
+    async def _character_tts_assignment_worker(
+        self,
+        action: str,
+        profile_id: UUID | None,
+        snapshot: _CharacterTTSControlSnapshot,
+    ) -> None:
+        if not await self._character_tts_mutation_context_is_current(snapshot):
+            return
+        current_assignment = (
+            None if snapshot.current is None else snapshot.current.assignment
+        )
+        try:
+            service = await self._character_tts_profile_service()
+            if not await self._character_tts_mutation_context_is_current(snapshot):
+                return
+            if action == "assign" and profile_id is not None:
+                tokens = self._character_tts_profile_tokens(snapshot, profile_id)
+                if tokens is None or tokens[1].state != "available":
+                    return
+                loaded, _availability = tokens
+                await service.set_assignment(
+                    snapshot.character_ref,
+                    loaded,
+                    current_assignment,
+                )
+            else:
+                if (
+                    current_assignment is None
+                    or (
+                        profile_id is not None
+                        and profile_id != current_assignment.profile_id
+                    )
+                ):
+                    return
+                await service.detach_assignment(
+                    current_assignment,
+                    snapshot.repository_generation,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            if (
+                isinstance(error, ProfileRepositoryError)
+                and error.code in {"conflict", "stale"}
+            ):
+                if self._character_tts_snapshot_context_is_current(snapshot):
+                    self._notify(
+                        "Voice assignment changed; refreshed current state.",
+                        "warning",
+                    )
+                    self._queue_character_tts_refresh()
+                return
+            self._publish_character_tts_action_error(snapshot, error)
+            return
+        if self._character_tts_snapshot_context_is_current(snapshot):
+            self._queue_character_tts_refresh()
+
+    async def _character_tts_preview_worker(
+        self,
+        profile_id: UUID,
+        snapshot: _CharacterTTSControlSnapshot,
+    ) -> None:
+        tokens = self._character_tts_profile_tokens(snapshot, profile_id)
+        if tokens is None or not self._character_tts_snapshot_context_is_current(
+            snapshot
+        ):
+            return
+        try:
+            service = await self._character_tts_profile_service()
+            if not self._character_tts_snapshot_context_is_current(snapshot):
+                return
+            preset = service.preview_preset(*tokens)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self._publish_character_tts_action_error(snapshot, error)
+            return
+        if self._character_tts_snapshot_context_is_current(snapshot):
+            self._navigate_to_speech(preset=preset)
+
+    async def _character_tts_edit_worker(
+        self,
+        profile_id: UUID,
+        snapshot: _CharacterTTSControlSnapshot,
+    ) -> None:
+        tokens = self._character_tts_profile_tokens(snapshot, profile_id)
+        if tokens is None or not await self._character_tts_mutation_context_is_current(
+            snapshot
+        ):
+            return
+        loaded, _availability = tokens
+        try:
+            service = await self._character_tts_profile_service()
+            count = snapshot.assignment_count
+            if count is None:
+                count = await service.assignment_count(loaded)
+            if (
+                type(count) is not int
+                or count < 0
+                or not await self._character_tts_mutation_context_is_current(
+                    snapshot
+                )
+            ):
+                return
+            draft = await self.app.push_screen_wait(
+                TTSProfileEditorModal(
+                    loaded,
+                    assignment_count=count,
+                    mode="edit",
+                )
+            )
+            if (
+                draft is None
+                or type(draft) is not TTSProfileDraft
+                or not await self._character_tts_mutation_context_is_current(
+                    snapshot
+                )
+            ):
+                return
+            await service.update_profile(loaded, draft)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            if (
+                isinstance(error, ProfileRepositoryError)
+                and error.code in {"conflict", "stale"}
+            ):
+                if self._character_tts_snapshot_context_is_current(snapshot):
+                    self._notify(
+                        "Voice profile changed; refreshed current state.",
+                        "warning",
+                    )
+                    self._queue_character_tts_refresh()
+                return
+            self._publish_character_tts_action_error(snapshot, error)
+            return
+        if self._character_tts_snapshot_context_is_current(snapshot):
+            self._queue_character_tts_refresh()
+
+    @on(CharacterTTSActionRequested)
+    def _handle_character_tts_action_requested(
+        self,
+        message: CharacterTTSActionRequested,
+    ) -> None:
+        message.stop()
+        snapshot = self._character_tts_snapshot
+        if snapshot is None or not self._character_tts_snapshot_context_is_current(
+            snapshot
+        ):
+            return
+        if message.action == "create":
+            self._navigate_to_speech()
+            return
+        if message.action in {"assign", "remove"}:
+            self.run_worker(
+                self._character_tts_assignment_worker(
+                    message.action,
+                    message.profile_id,
+                    snapshot,
+                ),
+                group=_CHARACTER_TTS_WORKER_GROUP,
+                exclusive=True,
+                exit_on_error=False,
+            )
+            return
+        if message.profile_id is None:
+            return
+        if message.action == "preview":
+            self.run_worker(
+                self._character_tts_preview_worker(
+                    message.profile_id,
+                    snapshot,
+                ),
+                group=_CHARACTER_TTS_WORKER_GROUP,
+                exclusive=True,
+                exit_on_error=False,
+            )
+        elif message.action == "edit":
+            self.run_worker(
+                self._character_tts_edit_worker(
+                    message.profile_id,
+                    snapshot,
+                ),
+                group=_CHARACTER_TTS_WORKER_GROUP,
+                exclusive=True,
+                exit_on_error=False,
+            )
 
     def _local_character_actions_allowed(self) -> bool:
         """Return whether local character editor/DB seams still own this screen."""
@@ -2171,6 +2980,7 @@ class PersonasScreen(BaseAppScreen):
         self._selected_server_character = None
         # switch_mode resets sort_key/tag_filter/page_offset for a fresh window.
         self.state.switch_mode(mode)
+        self._invalidate_character_tts_controls()
         self._set_persona_editor_runtime_source(self.persona_handler.current_mode())
         # switch_mode does not reset search_query; clear it explicitly and
         # reset the Input widget so the library starts unfiltered in the new mode.
@@ -2426,6 +3236,7 @@ class PersonasScreen(BaseAppScreen):
             await self.character_handler.load_character(entity_id)
         else:
             self.query_one(PersonasCharacterCardWidget).load_character(server_record)
+        self._queue_character_tts_refresh()
         self._show_center("#ccp-character-card-view")
         inspector = self.query_one(PersonasInspectorPane)
         inspector.show_selection(name=entity_name, kind="character")
@@ -4410,6 +5221,7 @@ class PersonasScreen(BaseAppScreen):
         self._reset_expression_generate_style()
         self._edit_mode = "create"
         self.state.clear_selection()
+        self._invalidate_character_tts_controls()
         # A new session starts unclaimed - re-arms the save-in-place dedup
         # guard (see _handle_save_requested) even if the previous session
         # ended on a successful save.
@@ -7610,6 +8422,7 @@ class PersonasScreen(BaseAppScreen):
             # _full_character_record cannot serve stale data.
             self.character_handler.current_character_id = None
             self.character_handler.current_character_data = {}
+            self._invalidate_character_tts_controls()
         expected_mode = "characters" if kind == "character" else "personas"
         stale = not self.is_mounted or self.state.active_mode != expected_mode
         if not stale:
@@ -7793,6 +8606,7 @@ class PersonasScreen(BaseAppScreen):
         self._sync_inspector_console_actions()
         self.query_one(PersonasLibraryPane).mark_active_row("character", saved_id)
         await self.character_handler.load_character(saved_id)
+        self._queue_character_tts_refresh()
         editor = self.query_one(PersonasCharacterEditorWidget)
         if saved_record is None:
             # Could not re-read -> fall back to today's flip-to-card so we
