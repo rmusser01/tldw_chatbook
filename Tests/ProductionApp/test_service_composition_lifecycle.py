@@ -153,6 +153,7 @@ def _assert_service_graph(app: TldwCli) -> None:
     assert app.local_first_sync_service.state_repository is app.sync_state_repository
     assert app.local_first_sync_service.local_store is None
     assert app.local_first_sync_service.dataset_keys is app.sync_v2_dataset_keys
+    assert app.sync_v2_dataset_keys == {}
     assert (
         app.manual_sync_control_service.local_first_sync_service
         is app.local_first_sync_service

@@ -60,6 +60,24 @@ import sys
 import time
 import tomllib
 
+
+def is_sensitive_environment_name(name):
+    normalized = name.upper()
+    return "PROXY" in normalized or any(
+        marker in normalized
+        for marker in (
+            "API_KEY",
+            "APIKEY",
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "CREDENTIAL",
+        )
+    )
+
+
+assert not any(is_sensitive_environment_name(name) for name in os.environ)
+
 expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
 excluded_source_roots = (
     Path(os.environ["CHECKOUT_ROOT"]).resolve(strict=True),
@@ -111,6 +129,15 @@ from tldw_chatbook.Chunking.chunking_templates import ChunkingTemplateManager
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
 from tldw_chatbook.Evals.config_loader import EvalConfigLoader
 from tldw_chatbook.RAG_Search.pipeline_loader import PipelineLoader
+from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider
+
+
+def deny_server_client_construction(_self):
+    raise AssertionError("installed probe attempted server client construction")
+
+
+RuntimeServerContextProvider.build_client = deny_server_client_construction
+
 from tldw_chatbook.app import TldwCli, get_app
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -515,6 +542,7 @@ def assert_service_graph(app):
     assert app.local_first_sync_service.state_repository is app.sync_state_repository
     assert app.local_first_sync_service.local_store is None
     assert app.local_first_sync_service.dataset_keys is app.sync_v2_dataset_keys
+    assert app.sync_v2_dataset_keys == {}
     assert (
         app.manual_sync_control_service.local_first_sync_service
         is app.local_first_sync_service
@@ -575,6 +603,7 @@ asyncio.run(exercise_production_app())
 assert wiring_calls == expected_wiring_calls
 assert_service_identities(app, initial_service_identities)
 assert_service_graph(app)
+assert app.server_context_provider._cached_client is None
 
 loaded_package_paths = []
 for module_name, module in tuple(sys.modules.items()):
@@ -769,37 +798,55 @@ def _private_child_env(
     config_path.write_text(
         '[general]\ndefault_tab = "home"\n\n'
         "[first_run]\nsetup_completed = true\n\n"
-        "[splash_screen]\nenabled = false\n",
+        "[splash_screen]\nenabled = false\n\n"
+        "[model_catalog]\nauto_refresh_enabled = false\n",
         encoding="utf-8",
     )
     config_path.chmod(0o600)
 
-    env = os.environ.copy()
-    for name in ("TLDW_TEST_CONFIG_ROOT", "TLDW_TEST_CONFIG_ROOT_OWNER"):
-        env.pop(name, None)
-    env.update(
-        {
-            "HOME": str(state_root),
-            "USERPROFILE": str(state_root),
-            "APPDATA": str(data_root),
-            "LOCALAPPDATA": str(data_root),
-            "XDG_CONFIG_HOME": str(config_root),
-            "XDG_DATA_HOME": str(data_root),
-            "TLDW_CONFIG_PATH": str(config_path),
-            "TMPDIR": str(temp_root),
-            "TEMP": str(temp_root),
-            "TMP": str(temp_root),
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "PYTHONPATH": str(target),
-            "EXPECTED_TARGET": str(target),
-            "CHECKOUT_ROOT": str(checkout_root),
-            "BUILD_SOURCE_ROOT": str(build_source_root),
-            "EXPECTED_REACTIVES": json.dumps(sorted(RETAINED_TLDW_REACTIVES)),
-            "RETIRED_REACTIVES": json.dumps(sorted(RETIRED_TLDW_REACTIVES)),
-            "EXPECTED_TEMPLATES": json.dumps(sorted(TEMPLATE_NAMES)),
-        }
-    )
+    env = {
+        "HOME": str(state_root),
+        "USERPROFILE": str(state_root),
+        "APPDATA": str(data_root),
+        "LOCALAPPDATA": str(data_root),
+        "XDG_CONFIG_HOME": str(config_root),
+        "XDG_DATA_HOME": str(data_root),
+        "TLDW_CONFIG_PATH": str(config_path),
+        "TMPDIR": str(temp_root),
+        "TEMP": str(temp_root),
+        "TMP": str(temp_root),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+        "PYTHONPATH": str(target),
+        "EXPECTED_TARGET": str(target),
+        "CHECKOUT_ROOT": str(checkout_root),
+        "BUILD_SOURCE_ROOT": str(build_source_root),
+        "EXPECTED_REACTIVES": json.dumps(sorted(RETAINED_TLDW_REACTIVES)),
+        "RETIRED_REACTIVES": json.dumps(sorted(RETIRED_TLDW_REACTIVES)),
+        "EXPECTED_TEMPLATES": json.dumps(sorted(TEMPLATE_NAMES)),
+    }
     return env
+
+
+def test_private_child_env_excludes_host_credentials_and_proxy_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state_root = tmp_path / "state"
+    target = tmp_path / "target"
+    build_source_root = tmp_path / "build-source"
+    for path in (state_root, target, build_source_root):
+        path.mkdir()
+    credential_name = "TASK1601_TEST_API_KEY"
+    proxy_name = "HTTPS_PROXY"
+    monkeypatch.setenv(credential_name, "test-only-value")
+    monkeypatch.setenv(proxy_name, "http://127.0.0.1:9")
+
+    env = _private_child_env(state_root, target, build_source_root)
+
+    assert credential_name not in env
+    assert proxy_name not in env
+    assert env["PYTHON_KEYRING_BACKEND"] == "keyring.backends.null.Keyring"
 
 
 def _run_child(
