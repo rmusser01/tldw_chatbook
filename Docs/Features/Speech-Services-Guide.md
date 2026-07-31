@@ -701,23 +701,32 @@ silence_threshold_seconds = 2.0
 # Lower values admit more ambient noise as speech and can prevent
 # pause-finalization entirely.
 vad_aggressiveness = 3
-# Speech-to-text model dictation uses, independent of `[transcription]
-# default_model`. Unset (the default) and a faster-whisper provider means
-# dictation picks "base" rather than inheriting whatever model
-# `[transcription] default_model` names -- measured on real hardware,
-# faster-whisper's own default (distil-large-v3) took 11.5s to transcribe a
-# short spoken command under load, against 1.4s for "base"; a spoken command
-# only fires once its segment finalizes (see "Choreography and latency"
-# above), so that difference is the whole gap between commands feeling
-# instant and feeling dead. Set this to use any other model for dictation
-# specifically -- including distil-large-v3, on purpose, if accuracy matters
-# more than latency for your captures. Blank/whitespace is treated as unset;
-# a non-string value is ignored with a warning. Providers other than
-# faster-whisper are unaffected either way and keep reading
-# `[transcription] default_model`. The Console shows a one-time notice (once
-# per app run) when the fast default actually displaces a differing
-# `[transcription] default_model` you configured, so it never happens
-# silently.
+# Speech-to-text model dictation uses. Model resolution is PROVIDER-SCOPED
+# and, when unset, never inherits `[transcription] default_model` -- that
+# key is not scoped to any particular provider, so it may well name a model
+# that belongs to a different provider than the one dictation resolved to
+# (e.g. a faster-whisper model name handed to parakeet-mlx, which tries to
+# load it as a HuggingFace repo and 404s -- this used to kill the capture
+# outright). Concretely:
+#   - Unset (the default) and the resolved provider is faster-whisper:
+#     dictation picks "base" rather than inheriting `[transcription]
+#     default_model` -- measured on real hardware, faster-whisper's own
+#     default (distil-large-v3) took 11.5s to transcribe a short spoken
+#     command under load, against 1.4s for "base"; a spoken command only
+#     fires once its segment finalizes (see "Choreography and latency"
+#     above), so that difference is the whole gap between commands feeling
+#     instant and feeling dead.
+#   - Unset and the resolved provider is anything else (parakeet-mlx,
+#     parakeet-onnx, lightning-whisper-mlx, ...): dictation passes no model
+#     at all, letting that provider's own transcription path load its own
+#     default (parakeet-mlx: `mlx-community/parakeet-tdt-0.6b-v2`).
+#   - Set (any provider): this value always wins, including setting it to
+#     distil-large-v3 on purpose if accuracy matters more than latency.
+# Blank/whitespace is treated as unset; a non-string value is ignored with a
+# warning. The Console shows a one-time notice (once per app run) when the
+# faster-whisper fast default actually displaces a differing
+# `[transcription] default_model` you configured, so that specific case
+# never happens silently.
 #
 # NOT a Console-only key: the standalone Dictation window (Speech >
 # Dictation) already reads and writes this same `dictation.model` value, so
