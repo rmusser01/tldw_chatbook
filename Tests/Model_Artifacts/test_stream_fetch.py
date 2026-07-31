@@ -166,6 +166,36 @@ async def test_changed_last_modified_raises_restart_without_append(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_changed_last_modified_non_compliant_server_raises_restart(tmp_path):
+    """A server that IGNORES If-Range entirely (still answers 206 even on a
+    stale conditional) is a real, and for date-based conditionals especially
+    under-implemented, failure mode -- distinct from the compliant-200 path
+    covered by ``test_changed_last_modified_raises_restart_without_append``.
+    The post-response Last-Modified comparison (not the status-code check)
+    is what must catch this one."""
+    with FixtureArtifactServer() as srv:
+        srv.serve(
+            "/f.bin", BODY, etag=None,
+            last_modified="Thu, 22 Oct 2015 07:28:00 GMT",
+            ignore_if_range=True,
+        )
+        dest = tmp_path / "f.bin"
+        seed = BODY[:100]
+        dest.write_bytes(seed)
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(FetchRestartRequired):
+                await stream_fetch(
+                    srv.url("/f.bin"), dest, client=client, max_bytes=len(BODY),
+                    resume_from=100,
+                    validators=FetchValidators(
+                        etag=None, last_modified="Wed, 21 Oct 2015 07:28:00 GMT"
+                    ),
+                    trusted_origins=_trusted(srv),
+                )
+    assert dest.read_bytes() == seed
+
+
+@pytest.mark.asyncio
 async def test_max_bytes_bounds_final_size(tmp_path):
     with FixtureArtifactServer() as srv:
         srv.serve("/f.bin", BODY)

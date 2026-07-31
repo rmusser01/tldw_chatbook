@@ -163,6 +163,24 @@ async def stream_fetch(
                 if resume_from and validators and validators.etag and got.etag:
                     if got.etag != validators.etag:
                         raise FetchRestartRequired("validators changed upstream")
+                if (
+                    resume_from
+                    and validators
+                    and not validators.etag
+                    and validators.last_modified
+                    and got.last_modified
+                    and got.last_modified != validators.last_modified
+                ):
+                    # Symmetric to the ETag check above, and NOT redundant
+                    # with the earlier status-code check: that check only
+                    # catches a server that answers a stale If-Range with a
+                    # full 200. A server that IGNORES If-Range entirely (a
+                    # real and, for date-based conditionals specifically,
+                    # under-implemented failure mode -- If-Range is far more
+                    # commonly wired up for ETags than for Last-Modified)
+                    # still answers 206, and would otherwise have its
+                    # mismatched bytes appended with no detection at all.
+                    raise FetchRestartRequired("validators changed upstream")
                 mode = "ab" if resume_from else "wb"
                 with open(destination, mode) as fh:
                     async for chunk in response.aiter_bytes(_CHUNK_BYTES):

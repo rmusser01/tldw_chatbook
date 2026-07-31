@@ -17,6 +17,7 @@ class _Route:
     disconnect_after: int | None
     require_token: str | None
     last_modified: str | None = None
+    ignore_if_range: bool = False
 
 
 class FixtureArtifactServer:
@@ -67,7 +68,7 @@ class FixtureArtifactServer:
                 range_header = self.headers.get("Range")
                 if_range = self.headers.get("If-Range")
                 honor_range = bool(range_header) and route.support_range
-                if honor_range and if_range is not None:
+                if honor_range and if_range is not None and not route.ignore_if_range:
                     # Real servers refuse a stale If-Range by falling back to
                     # a full 200 -- the behavior fetch.py's resume-mismatch
                     # detection depends on. Match against whichever validator
@@ -77,6 +78,10 @@ class FixtureArtifactServer:
                     current_validator = route.etag or route.last_modified
                     if if_range != current_validator:
                         honor_range = False
+                # ignore_if_range=True simulates a non-compliant server that
+                # honors Range unconditionally, ignoring any If-Range
+                # mismatch -- the failure mode fetch.py's post-response
+                # validator check (not the status-code check) exists for.
                 if honor_range:
                     start = int(range_header.split("=")[1].split("-")[0])
                     body = body[start:]
@@ -114,6 +119,7 @@ class FixtureArtifactServer:
         support_range: bool = True,
         disconnect_after: int | None = None,
         require_token: str | None = None,
+        ignore_if_range: bool = False,
     ) -> None:
         """Register (or replace) a route this server responds to.
 
@@ -130,6 +136,10 @@ class FixtureArtifactServer:
             disconnect_after: If set, write only this many bytes then close
                 the connection mid-body (simulates a dropped transfer).
             require_token: If set, require ``Authorization: Bearer <token>``.
+            ignore_if_range: Simulate a non-compliant server: honor ``Range``
+                (206) unconditionally even when ``If-Range`` doesn't match
+                the route's current validator, instead of falling back to a
+                full 200.
         """
         if etag and weak_etag:
             etag = f"W/{etag}"
@@ -140,6 +150,7 @@ class FixtureArtifactServer:
             disconnect_after=disconnect_after,
             require_token=require_token,
             last_modified=last_modified,
+            ignore_if_range=ignore_if_range,
         )
 
     def url(self, path: str) -> str:
