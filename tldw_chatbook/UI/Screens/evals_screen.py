@@ -223,11 +223,34 @@ class EvalsScreen(LabScreen):
 
         Any other selection means the user navigated somewhere unrelated
         while the worker was running -- once the bench editor holds
-        unsaved form state (this task's own motivation), forcing a
+        unsaved form state (task-1482 Task 2's own motivation), forcing a
         recompose there would destroy it. The completing worker must
         degrade to a toast-only notification instead of calling
         ``select()`` (task-1482 Task 2).
+
+        A THIRD, independent check overrides both branches above (task-1610):
+        if the currently mounted detail pane holds a ``BenchEditor`` whose
+        ``is_dirty()`` is ``True``, this returns ``False`` regardless of
+        selection identity -- a recompose would destroy that unsaved state
+        even when the selection itself never moved. This is deliberately
+        NOT limited to ``bench_task_id``'s own editor: the sample-bench
+        worker's sharpest case is a user parked on some OTHER bench's
+        editor (unrelated to the sample bench just created elsewhere) with
+        unsaved edits -- ``self._selection`` reads "unmoved" there (it never
+        pointed at the sample bench to begin with), but the mounted editor
+        is still real, unsaved, user state a recompose must not touch.
+        Queried defensively (``QueryError`` -> not dirty, nothing to
+        protect): most selections never mount a ``BenchEditor`` at all.
         """
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            editor = self.query_one("#evals-bench-editor", BenchEditor)
+        except QueryError:
+            editor = None
+        if editor is not None and editor.is_dirty():
+            return False
+
         if self._selection == launch_selection:
             return True
         if bench_task_id and self._selection.kind == "run_group" and self._selection.id:

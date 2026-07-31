@@ -1596,6 +1596,154 @@ async def test_sample_bench_completion_selects_the_run_group_when_selection_is_u
 
 
 # ---------------------------------------------------------------------------
+# task-1610: a run completing must not destroy a DIRTY bench editor, even
+# when the selection never moved -- `_selection_unmoved_since_launch`'s own
+# selection-identity branches alone would call this case "safe" and
+# recompose, discarding unsaved form state. See `BenchEditor.is_dirty()`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bench_run_completion_does_not_yank_a_dirty_bench_editor(
+    evals_app, runnable_bench
+):
+    """Unlike ``test_bench_run_completion_does_not_yank_a_selection_moved_
+    away_mid_flight`` above, the user here never moves the selection at
+    all -- they stay parked on ``runnable_bench``'s own editor and type an
+    unsaved name edit WHILE the run they started is still in flight.
+    Without a dirty check, the guard's "selection == launch_selection"
+    branch alone would call this safe and ``select()`` would recompose the
+    whole screen, discarding the typed value. This pins the fix: the
+    completion degrades to the same toast the moved-away case gets, and
+    the typed ``Input`` (the same widget instance) survives untouched --
+    proof this is a skipped recompose, not merely a value that happens to
+    match after a rebuild.
+    """
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        await pilot.pause()
+
+        name_input = screen.query_one("#evals-bench-name", Input)
+        name_input.value = "typed-while-running"
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+        assert screen._selection.kind == "bench"
+        assert screen._selection.id == runnable_bench
+        assert screen.query_one("#evals-bench-name", Input) is name_input
+        assert screen.query_one("#evals-bench-name", Input).value == "typed-while-running"
+        message, severity = evals_app.app_instance.notifications[-1]
+        assert severity == "information"
+        assert message == "Bench run finished — see the Runs section."
+        # The run itself is real -- the DB write is not lost, only the
+        # auto-navigate is skipped.
+        assert len(screen._view_model.run_groups()) == 1
+
+
+@pytest.mark.asyncio
+async def test_sample_bench_completion_does_not_yank_a_dirty_bench_editor(
+    sample_bench_app, runnable_bench
+):
+    """task-1610's sharpest case (per the task description): "Create
+    sample bench" is a persistent rail affordance, always available
+    regardless of the current selection -- its completion yanks to a run
+    group belonging to a bench entirely DIFFERENT from whatever the user
+    happens to be editing. Parks on ``runnable_bench``'s own editor (never
+    navigating away at all, so the plain selection-identity branch alone
+    would call this "unmoved" and safe), types an unsaved edit, then
+    presses Create sample bench -- the sample run's completion must not
+    yank this dirty, unrelated bench editor either.
+    """
+    async with sample_bench_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = sample_bench_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        name_input = screen.query_one("#evals-bench-name", Input)
+        name_input.value = "typed-while-sample-running"
+
+        await pilot.click("#evals-create-sample-bench")
+        await _wait_until(pilot, lambda: screen._sample_bench_running)
+        await pilot.pause()
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._sample_bench_running)
+        await pilot.pause()
+
+        assert screen._selection.kind == "bench"
+        assert screen._selection.id == runnable_bench
+        assert screen.query_one("#evals-bench-name", Input) is name_input
+        assert (
+            screen.query_one("#evals-bench-name", Input).value
+            == "typed-while-sample-running"
+        )
+        message, severity = sample_bench_app.app_instance.notifications[-1]
+        assert severity == "information"
+        assert message == "Sample bench created and run — see the Runs section."
+        # The sample bench itself is real -- a second, distinct bench now
+        # exists alongside `runnable_bench`.
+        assert len(screen._view_model.benches()) == 2
+
+
+@pytest.mark.asyncio
+async def test_sample_bench_completion_selects_the_run_group_when_parked_on_a_clean_unrelated_bench_editor(
+    sample_bench_app, runnable_bench
+):
+    """Pins the unchanged-behavior half of task-1610's fix: parked on
+    ``runnable_bench``'s own editor with NO edits (clean), the sample
+    worker's completion still auto-navigates away to the freshly created
+    run group -- exactly the pre-existing "selection unmoved" behavior,
+    proving the new dirty check only ever blocks on genuine unsaved state,
+    never merely on a `BenchEditor` being mounted at all. Complements
+    (does not duplicate) ``test_sample_bench_completion_selects_the_run_
+    group_when_selection_is_unchanged`` above, which starts from no
+    selection at all rather than a clean, unrelated bench's editor."""
+    async with sample_bench_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = sample_bench_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-create-sample-bench")
+        await _wait_until(pilot, lambda: screen._sample_bench_running)
+        await pilot.pause()
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._sample_bench_running)
+        await pilot.pause()
+
+        assert screen._selection.kind == "run_group"
+        run_groups = screen._view_model.run_groups()
+        assert screen._selection.id == run_groups[0]["id"]
+        message, severity = sample_bench_app.app_instance.notifications[-1]
+        assert message == "Sample bench created and run."
+
+
+# ---------------------------------------------------------------------------
 # Task 7 (task-1482): Duplicate and Delete.
 # ---------------------------------------------------------------------------
 
