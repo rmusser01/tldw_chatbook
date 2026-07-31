@@ -1414,58 +1414,91 @@ class TTSProfileRepository:
         self,
         character_ref: CharacterRef,
         profile_id: UUID,
+        *,
+        expected_generation: int,
+        expected_profile_revision: int,
+        expected_current_profile_id: UUID | None,
     ) -> ProfileStoreResult[CharacterTTSAssignment]:
         """Create or replace one exact authority-scoped assignment.
 
         Args:
             character_ref: Exact validated source, authority, and character.
             profile_id: Exact existing profile UUID.
+            expected_generation: Exact nonnegative lifecycle generation loaded
+                with the selected profile and current assignment.
+            expected_profile_revision: Exact positive revision of the selected
+                profile.
+            expected_current_profile_id: Exact currently assigned profile UUID,
+                or ``None`` when the character was observed as unassigned.
 
         Returns:
             The active generation and persisted assignment.
 
         Raises:
-            ProfileRepositoryError: If inputs, state, persistence, foreign-key
-                checks, row decoding, or SQLite access fail safely.
+            ProfileRepositoryError: If inputs, state, optimistic expectations,
+                persistence, foreign-key checks, row decoding, or SQLite
+                access fail safely.
             BaseException: A caller control-flow signal preserved by the
                 serialized operation lane.
         """
 
         validated_character_ref = _validate_character_ref(character_ref)
         validated_profile_id = _validate_exact_profile_id(profile_id)
+        validated_generation = _validate_expected_generation(expected_generation)
+        validated_profile_revision = _validate_expected_revision(
+            expected_profile_revision
+        )
+        validated_current_profile_id = _validate_optional_profile_id(
+            expected_current_profile_id
+        )
         return await self._submit_operation(
             lambda connection: self._worker_set_assignment(
                 connection,
                 validated_character_ref,
                 validated_profile_id,
-            )
+                validated_generation,
+                validated_profile_revision,
+                validated_current_profile_id,
+            ),
+            expected_generation=validated_generation,
         )
 
     async def remove_assignment(
         self,
         character_ref: CharacterRef,
+        *,
+        expected_generation: int,
+        expected_profile_id: UUID,
     ) -> ProfileStoreResult[None]:
         """Remove one exact authority-scoped assignment idempotently.
 
         Args:
             character_ref: Exact validated source, authority, and character.
+            expected_generation: Exact nonnegative lifecycle generation loaded
+                with the assignment.
+            expected_profile_id: Exact profile UUID observed on the assignment.
 
         Returns:
             The active generation paired with ``None``.
 
         Raises:
-            ProfileRepositoryError: If the input, state, persistence, or
-                SQLite access fails safely.
+            ProfileRepositoryError: If an input, state, optimistic expectation,
+                persistence, or SQLite access fails safely.
             BaseException: A caller control-flow signal preserved by the
                 serialized operation lane.
         """
 
         validated_character_ref = _validate_character_ref(character_ref)
+        validated_generation = _validate_expected_generation(expected_generation)
+        validated_profile_id = _validate_exact_profile_id(expected_profile_id)
         return await self._submit_operation(
             lambda connection: self._worker_remove_assignment(
                 connection,
                 validated_character_ref,
-            )
+                validated_generation,
+                validated_profile_id,
+            ),
+            expected_generation=validated_generation,
         )
 
     async def get_assigned_profile(
@@ -2733,18 +2766,35 @@ class TTSProfileRepository:
             immediate=False,
         )
 
+    def _worker_require_generation(self, expected_generation: int) -> None:
+        with self._state_lock:
+            state_error = self._worker_state_error_locked(expected_generation)
+        if state_error is not None:
+            raise _repository_error(state_error)
+
     def _worker_set_assignment(
         self,
         connection: sqlite3.Connection,
         character_ref: CharacterRef,
         profile_id: UUID,
+        expected_generation: int,
+        expected_profile_revision: int,
+        expected_current_profile_id: UUID | None,
     ) -> CharacterTTSAssignment:
         def set_exact() -> CharacterTTSAssignment:
-            self._worker_get_profile(connection, profile_id)
+            self._worker_require_generation(expected_generation)
+            selected_profile = self._worker_get_profile(connection, profile_id)
+            if selected_profile.revision != expected_profile_revision:
+                raise _repository_error("conflict")
             existing = self._worker_get_persisted_assignment(
                 connection,
                 character_ref,
             )
+            current_profile_id = (
+                None if existing is None else existing.assignment.profile_id
+            )
+            if current_profile_id != expected_current_profile_id:
+                raise _repository_error("conflict")
             assignment = CharacterTTSAssignment(
                 character_ref=character_ref,
                 profile_id=profile_id,
@@ -2809,20 +2859,40 @@ class TTSProfileRepository:
         self,
         connection: sqlite3.Connection,
         character_ref: CharacterRef,
+        expected_generation: int,
+        expected_profile_id: UUID,
     ) -> None:
         def remove_exact() -> None:
+            self._worker_require_generation(expected_generation)
+            existing = self._worker_get_persisted_assignment(
+                connection,
+                character_ref,
+            )
+            if existing is None:
+                return
+            if existing.assignment.profile_id != expected_profile_id:
+                raise _repository_error("conflict")
             cursor = connection.execute(
                 """
                 DELETE FROM character_tts_assignments
-                WHERE source = ? AND authority_id = ? AND character_id = ?
+                WHERE source = ?
+                    AND authority_id = ?
+                    AND character_id = ?
+                    AND profile_id = ?
                 """,
                 (
                     character_ref.source,
                     character_ref.authority_id,
                     character_ref.character_id,
+                    encode_uuid(expected_profile_id),
                 ),
             )
-            if cursor.rowcount not in (0, 1):
+            if cursor.rowcount != 1:
+                raise _repository_error("corrupt_data")
+            if (
+                self._worker_get_persisted_assignment(connection, character_ref)
+                is not None
+            ):
                 raise _repository_error("corrupt_data")
 
         self._worker_transaction(
