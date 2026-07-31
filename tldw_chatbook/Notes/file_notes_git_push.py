@@ -590,7 +590,7 @@ class _AdmittedPushTransport:
 
     configured_identity: str
     destination: PushDestinationProjection
-    endpoint: _FrozenPushEndpoint | None
+    endpoint: _FrozenPushEndpoint
     test_local_bare: bool = False
 
 
@@ -636,6 +636,25 @@ def _local_bare_transport_admission_for_tests() -> TransportAdmission:
     return admission
 
 
+def _canonical_test_local_bare_path(effective_endpoint: str) -> str:
+    """Return one canonical absolute test-only path or refuse it."""
+    if type(effective_endpoint) is not str:
+        raise PushContractError("invalid_endpoint")
+    local_path = effective_endpoint
+    if local_path.startswith("file://"):
+        local_path = local_path.removeprefix("file://")
+    if (
+        not local_path.startswith("/")
+        or local_path.startswith("//")
+        or local_path != os.path.normpath(local_path)
+        or local_path != os.path.abspath(local_path)
+        or _contains_unsafe_text(local_path)
+        or any(character in local_path for character in ("\0", "?", "#"))
+    ):
+        raise PushContractError("invalid_endpoint")
+    return local_path
+
+
 def _admit_push_transport(
     admission: TransportAdmission,
     effective_endpoint: str,
@@ -649,21 +668,14 @@ def _admit_push_transport(
     except AttributeError:
         raise PushContractError("invalid_endpoint") from None
 
-    local_path = effective_endpoint
-    if isinstance(effective_endpoint, str) and effective_endpoint.startswith(
-        "file://"
-    ):
-        local_path = effective_endpoint.removeprefix("file://")
-    if (
-        allow_local_bare
-        and isinstance(local_path, str)
-        and local_path.startswith("/")
-        and local_path == os.path.normpath(local_path)
-        and "\0" not in local_path
-        and "?" not in local_path
-        and "#" not in local_path
-    ):
-        validate_destination_ref(destination_ref)
+    if allow_local_bare:
+        local_path = _canonical_test_local_bare_path(effective_endpoint)
+        endpoint = _freeze_test_local_bare_endpoint(
+            admission,
+            local_path,
+            destination_ref,
+        )
+        _value, destination = _read_frozen_endpoint(endpoint)
         configured_identity = hashlib.sha256(
             (
                 "test-local-bare\0"
@@ -674,14 +686,8 @@ def _admit_push_transport(
         ).hexdigest()
         return _AdmittedPushTransport(
             configured_identity=configured_identity,
-            destination=PushDestinationProjection(
-                scheme="https",
-                host="local-test.invalid",
-                port=443,
-                repository_path="/test-only",
-                destination_ref=destination_ref,
-            ),
-            endpoint=None,
+            destination=destination,
+            endpoint=endpoint,
             test_local_bare=True,
         )
 
@@ -966,6 +972,29 @@ _register_frozen_endpoint, _lookup_frozen_endpoint = _make_endpoint_registry()
 del _make_endpoint_registry
 
 
+def _make_test_local_endpoint_registry() -> tuple[
+    Callable[[_FrozenPushEndpoint, str], None],
+    Callable[[_FrozenPushEndpoint], str | None],
+]:
+    """Create the private possession registry for test-local endpoints."""
+    values: WeakKeyDictionary[_FrozenPushEndpoint, str] = WeakKeyDictionary()
+
+    def register(endpoint: _FrozenPushEndpoint, value: str) -> None:
+        values[endpoint] = value
+
+    def lookup(endpoint: _FrozenPushEndpoint) -> str | None:
+        return values.get(endpoint)
+
+    return register, lookup
+
+
+(
+    _register_test_local_endpoint,
+    _lookup_test_local_endpoint,
+) = _make_test_local_endpoint_registry()
+del _make_test_local_endpoint_registry
+
+
 def _issue_push_authorization_handle() -> PushAuthorizationHandle:
     """Issue one private identity-only authorization capability."""
     return object.__new__(PushAuthorizationHandle)
@@ -1062,6 +1091,36 @@ def _freeze_push_endpoint(
     frozen = object.__new__(_FrozenPushEndpoint)
     object.__setattr__(frozen, "projection", projection)
     _register_frozen_endpoint(frozen, normalized)
+    return frozen
+
+
+def _freeze_test_local_bare_endpoint(
+    admission: TransportAdmission,
+    local_path: str,
+    destination_ref: str,
+) -> _FrozenPushEndpoint:
+    """Issue an opaque local endpoint only from the private test capability."""
+    try:
+        allowed = (
+            type(admission) is TransportAdmission
+            and admission._test_local_bare is True
+        )
+    except AttributeError:
+        allowed = False
+    if not allowed:
+        raise PushContractError("invalid_endpoint")
+    canonical_path = _canonical_test_local_bare_path(local_path)
+    validated_ref = validate_destination_ref(destination_ref)
+    projection = PushDestinationProjection(
+        scheme="https",
+        host="local-test.invalid",
+        port=443,
+        repository_path="/test-only",
+        destination_ref=validated_ref,
+    )
+    frozen = object.__new__(_FrozenPushEndpoint)
+    object.__setattr__(frozen, "projection", projection)
+    _register_test_local_endpoint(frozen, canonical_path)
     return frozen
 
 
@@ -1602,7 +1661,28 @@ def _read_frozen_endpoint(
         raise PushContractError("invalid_endpoint")
     value = _lookup_frozen_endpoint(endpoint)
     if value is None:
-        raise PushContractError("invalid_endpoint")
+        local_path = _lookup_test_local_endpoint(endpoint)
+        try:
+            projection = endpoint.projection
+            valid_test_projection = (
+                type(projection) is PushDestinationProjection
+                and projection.scheme == "https"
+                and projection.host == "local-test.invalid"
+                and projection.port == 443
+                and projection.repository_path == "/test-only"
+                and projection.ssh_user is None
+                and validate_destination_ref(projection.destination_ref)
+                == projection.destination_ref
+            )
+        except (AttributeError, PushContractError):
+            valid_test_projection = False
+        if (
+            local_path is None
+            or not valid_test_projection
+            or _canonical_test_local_bare_path(local_path) != local_path
+        ):
+            raise PushContractError("invalid_endpoint")
+        return local_path, projection
     try:
         normalized, projection = _parse_push_endpoint(
             value,

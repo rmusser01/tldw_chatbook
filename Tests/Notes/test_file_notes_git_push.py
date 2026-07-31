@@ -173,17 +173,46 @@ def test_production_transport_admission_rejects_local_and_file_endpoints() -> No
 def test_private_local_bare_transport_admission_is_explicit_and_nonproduction() -> None:
     """Deleting the private issuer must leave no way to test local proof safely."""
     admission = push_contracts._local_bare_transport_admission_for_tests()
+    local_path = "/tmp/disposable-remote.git"
 
     admitted = push_contracts._admit_push_transport(
         admission,
-        "/tmp/disposable-remote.git",
+        local_path,
         _DESTINATION_REF,
     )
 
     assert admitted.test_local_bare is True
     assert admitted.configured_identity
-    assert admitted.endpoint is None
+    assert admitted.endpoint is not None
     assert admitted.destination.host == "local-test.invalid"
+    assert push_contracts._read_frozen_endpoint(admitted.endpoint) == (
+        local_path,
+        admitted.destination,
+    )
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    (
+        "relative/remote.git",
+        "/tmp/../tmp/disposable-remote.git",
+        "/tmp/disposable\nremote.git",
+        "file://example.test/tmp/disposable-remote.git",
+    ),
+)
+def test_private_local_bare_admission_rejects_noncanonical_paths(
+    endpoint: str,
+) -> None:
+    admission = push_contracts._local_bare_transport_admission_for_tests()
+
+    with pytest.raises(PushContractError) as error:
+        push_contracts._admit_push_transport(
+            admission,
+            endpoint,
+            _DESTINATION_REF,
+        )
+
+    assert error.value.code == "invalid_endpoint"
 
 
 @pytest.mark.parametrize(

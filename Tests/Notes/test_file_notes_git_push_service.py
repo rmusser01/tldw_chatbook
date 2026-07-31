@@ -38,6 +38,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     RepositoryIdentity,
     SessionBinding,
     SessionChange,
+    SessionGitStatus,
     StagingOwnership,
 )
 
@@ -2794,6 +2795,85 @@ class _ControlledPushPreflightRunner(_ControlledLocalProofRunner):
         return self.observation
 
 
+class _ControlledExactPushRunner(_ControlledLocalProofRunner):
+    """Interpret the fixed preflight, push, and postflight network sequence."""
+
+    def __init__(
+        self,
+        repository: RepositoryIdentity,
+        *,
+        observations: tuple[GitCommandResult, ...],
+        push_result: GitCommandResult,
+        launch_error: bool = False,
+    ) -> None:
+        super().__init__(repository)
+        self.observations = list(observations)
+        self.push_result = push_result
+        self.launch_error = launch_error
+        self.network_calls: list[
+            tuple[tuple[str | bytes, ...], dict[str, object]]
+        ] = []
+
+    async def run(self, argv, **kwargs) -> GitCommandResult:
+        command = tuple(os.fsdecode(argument) for argument in argv)
+        if not {"ls-remote", "push"}.intersection(command):
+            return await super().run(argv, **kwargs)
+        self.network_calls.append((tuple(argv), dict(kwargs)))
+        if "ls-remote" in command:
+            assert self.observations
+            return self.observations.pop(0)
+        if self.launch_error:
+            raise OSError("controlled launch refusal")
+        on_spawn = kwargs.get("on_spawn")
+        assert callable(on_spawn)
+        on_spawn()
+        return self.push_result
+
+
+class _PushSpawnBarrier:
+    """Deterministically pause after final proof and before push admission."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self) -> None:
+        self.entered.set()
+        await self.release.wait()
+
+
+class _BlockingExactPushRunner(_ControlledExactPushRunner):
+    """Pause only after publishing the runner's actual child-start signal."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.push_started = asyncio.Event()
+        self.release_push = asyncio.Event()
+
+    async def run(self, argv, **kwargs) -> GitCommandResult:
+        command = tuple(os.fsdecode(argument) for argument in argv)
+        if "push" not in command:
+            return await super().run(argv, **kwargs)
+        self.network_calls.append((tuple(argv), dict(kwargs)))
+        on_spawn = kwargs.get("on_spawn")
+        assert callable(on_spawn)
+        on_spawn()
+        self.push_started.set()
+        await self.release_push.wait()
+        return self.push_result
+
+
+class _NoSpawnCallbackExactPushRunner(_ControlledExactPushRunner):
+    """Return a settled push result without claiming actual child admission."""
+
+    async def run(self, argv, **kwargs) -> GitCommandResult:
+        command = tuple(os.fsdecode(argument) for argument in argv)
+        if "push" not in command:
+            return await super().run(argv, **kwargs)
+        self.network_calls.append((tuple(argv), dict(kwargs)))
+        return self.push_result
+
+
 class _BlockingPushPreflightRunner(_ControlledPushPreflightRunner):
     """Pause one exact query while its public waiter may disappear."""
 
@@ -2895,6 +2975,68 @@ class _RetainedCancelledPushPreflightRunner(_ControlledLocalProofRunner):
 
     def shutdown(self) -> None:
         self.shutdown_called.set()
+
+
+class _RetainedCancelledConfirmQueryRunner(
+    _RetainedCancelledPushPreflightRunner
+):
+    """Settle cancellation of Confirm's retained final query child."""
+
+    def __init__(self, repository: RepositoryIdentity) -> None:
+        super().__init__(repository)
+        self.query_count = 0
+        self.network_calls: list[
+            tuple[tuple[str | bytes, ...], dict[str, object]]
+        ] = []
+
+    async def run(self, argv, **kwargs) -> GitCommandResult:
+        command = tuple(os.fsdecode(argument) for argument in argv)
+        if "ls-remote" not in command:
+            return await _ControlledLocalProofRunner.run(
+                self,
+                argv,
+                **kwargs,
+            )
+        self.network_calls.append((tuple(argv), dict(kwargs)))
+        self.query_count += 1
+        if self.query_count == 1:
+            return _remote_observation("b" * 40)
+        return await super().run(argv, **kwargs)
+
+
+class _RetainedCancelledPostflightRunner(
+    _RetainedCancelledPushPreflightRunner
+):
+    """Expose a retained child when the exact postflight is cancelled."""
+
+    def __init__(self, repository: RepositoryIdentity) -> None:
+        super().__init__(repository)
+        self.query_count = 0
+        self.network_calls: list[
+            tuple[tuple[str | bytes, ...], dict[str, object]]
+        ] = []
+
+    async def run(self, argv, **kwargs) -> GitCommandResult:
+        command = tuple(os.fsdecode(argument) for argument in argv)
+        if not {"ls-remote", "push"}.intersection(command):
+            return await _ControlledLocalProofRunner.run(
+                self,
+                argv,
+                **kwargs,
+            )
+        self.network_calls.append((tuple(argv), dict(kwargs)))
+        if "push" in command:
+            on_spawn = kwargs.get("on_spawn")
+            assert callable(on_spawn)
+            on_spawn()
+            return _accepted_push_result()
+        self.query_count += 1
+        if self.query_count <= 2:
+            return _remote_observation("b" * 40)
+        self.started.set()
+        raise git_service.GitRunCancelled(
+            retained_child=self.token
+        ) from None
 
 
 class _NormallyReturnedRetainedPushPreflightRunner(
@@ -5354,3 +5496,495 @@ async def test_repository_executable_configuration_blocks_without_invocation(
         for command, _result in runner.calls
     )
     await service.shutdown()
+
+
+def _settled_network_result(
+    returncode: int,
+    stdout: bytes,
+    *,
+    timed_out: bool = False,
+    termination_uncertain: bool = False,
+    output_overflow: bool = False,
+    containment_proved: bool = True,
+) -> GitCommandResult:
+    return GitCommandResult(
+        returncode,
+        stdout,
+        b"REMOTE_SECRET_CANARY",
+        timed_out=timed_out,
+        termination_uncertain=termination_uncertain,
+        output_overflow=output_overflow,
+        owned_process_tree=True,
+        containment_proved=containment_proved,
+    )
+
+
+def _remote_observation(oid: str) -> GitCommandResult:
+    return _settled_network_result(
+        0,
+        oid.encode("ascii") + b"\t" + BRANCH_REF.encode("ascii") + b"\n",
+    )
+
+
+def _accepted_push_result() -> GitCommandResult:
+    return _settled_network_result(
+        0,
+        b" \t"
+        + b"d" * 40
+        + b":"
+        + BRANCH_REF.encode("ascii")
+        + b"\tb..d\n",
+    )
+
+
+async def _prepare_exact_push_review(
+    service: FileNotesGitService,
+    binding: SessionBinding,
+) -> git_service.PushPreflightResult:
+    assert (await service.start_push_review(binding)).state == "ready"
+    reviewed = await _authorize_current_push(service, binding)
+    assert reviewed.state == "review"
+    assert reviewed.handle is not None
+    return reviewed
+
+
+@pytest.mark.asyncio
+async def test_confirm_consumes_review_once_and_exact_push_postflight_succeeds(
+    tmp_path: Path,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    runner = _ControlledExactPushRunner(
+        repository,
+        observations=(
+            _remote_observation("b" * 40),
+            _remote_observation("b" * 40),
+            _remote_observation("d" * 40),
+        ),
+        push_result=_accepted_push_result(),
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+        network_context_factory=_network_factory(tmp_path),
+    )
+    reviewed = await _prepare_exact_push_review(service, binding)
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "later-local-note.md"),
+    )
+
+    waiter = service.start_push(binding, reviewed.handle)
+    operation = _current_push_operation(service, binding)
+    result = await waiter
+
+    assert operation.kind == "push"
+    assert operation.child_started
+    assert result.state == "succeeded"
+    assert result.outcome is not None
+    assert result.outcome.state == "succeeded"
+    assert owner.snapshot(binding).push_candidate is None
+    assert not owner.mutation_active(binding)
+    network_commands = [
+        tuple(os.fsdecode(argument) for argument in argv)
+        for argv, _kwargs in runner.network_calls
+    ]
+    assert [
+        "push" if "push" in command else "ls-remote"
+        for command in network_commands
+    ] == ["ls-remote", "ls-remote", "push", "ls-remote"]
+    assert network_commands[2][-2:] == (
+        "https://push.example.test/team/notes.git",
+        f"{'d' * 40}:{BRANCH_REF}",
+    )
+    assert f"--force-with-lease={BRANCH_REF}:{'b' * 40}" in network_commands[2]
+    assert [call[1]["timeout"] for call in runner.network_calls] == [
+        30.0,
+        30.0,
+        60.0,
+        30.0,
+    ]
+    assert "REMOTE_SECRET_CANARY" not in repr(result)
+    with pytest.raises(
+        git_service.GitMutationAdmissionError,
+        match="invalid or already consumed",
+    ):
+        service.start_push(binding, reviewed.handle)
+
+
+@pytest.mark.asyncio
+async def test_confirm_cancel_before_actual_push_spawn_sends_no_update(
+    tmp_path: Path,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    runner = _ControlledExactPushRunner(
+        repository,
+        observations=(
+            _remote_observation("b" * 40),
+            _remote_observation("b" * 40),
+        ),
+        push_result=_accepted_push_result(),
+    )
+    barrier = _PushSpawnBarrier()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+        network_context_factory=_network_factory(tmp_path),
+        before_push_spawn=barrier,
+    )
+    reviewed = await _prepare_exact_push_review(service, binding)
+    waiter = service.start_push(binding, reviewed.handle)
+    operation = _current_push_operation(service, binding)
+    await asyncio.wait_for(barrier.entered.wait(), timeout=1)
+
+    assert not operation.child_started
+    assert service.cancel_push(binding, operation)
+    result = await asyncio.wait_for(waiter, timeout=1)
+
+    assert result.state == "cancelled"
+    assert owner.snapshot(binding).push_candidate is not None
+    assert not owner.mutation_active(binding)
+    assert not any(
+        "push" in tuple(os.fsdecode(argument) for argument in argv)
+        for argv, _kwargs in runner.network_calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_confirm_cancel_settles_retained_final_query_before_release(
+    tmp_path: Path,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    runner = _RetainedCancelledConfirmQueryRunner(repository)
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+        network_context_factory=_network_factory(tmp_path),
+    )
+    reviewed = await _prepare_exact_push_review(service, binding)
+    waiter = service.start_push(binding, reviewed.handle)
+    operation = _current_push_operation(service, binding)
+    await asyncio.wait_for(runner.started.wait(), timeout=1)
+
+    assert service.cancel_push(binding, operation)
+    await asyncio.wait_for(runner.claimed.wait(), timeout=1)
+
+    assert owner.mutation_active(binding)
+    assert not waiter.done()
+    assert not runner.released
+    runner.tree_settled.set()
+    result = await asyncio.wait_for(waiter, timeout=1)
+
+    assert result.state == "cancelled"
+    assert runner.released
+    assert not owner.mutation_active(binding)
+    assert owner.snapshot(binding).push_candidate is not None
+    assert len(runner.network_calls) == 2
+    assert not any(
+        "push" in tuple(os.fsdecode(argument) for argument in argv)
+        for argv, _kwargs in runner.network_calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_exact_push_postflight_cancel_settles_retained_child_before_uncertain(
+    tmp_path: Path,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    runner = _RetainedCancelledPostflightRunner(repository)
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+        network_context_factory=_network_factory(tmp_path),
+    )
+    reviewed = await _prepare_exact_push_review(service, binding)
+
+    waiter = service.start_push(binding, reviewed.handle)
+    await asyncio.wait_for(runner.started.wait(), timeout=1)
+    await asyncio.wait_for(runner.claimed.wait(), timeout=1)
+
+    assert owner.mutation_active(binding)
+    assert not waiter.done()
+    assert not runner.released
+    runner.tree_settled.set()
+    result = await asyncio.wait_for(waiter, timeout=1)
+
+    assert result.state == "uncertain"
+    assert result.outcome is not None
+    assert result.outcome.state == "uncertain"
+    assert runner.released
+    assert not owner.mutation_active(binding)
+    assert owner.snapshot(binding).push_candidate is not None
+    assert len(runner.network_calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_exact_push_cancel_is_rejected_after_actual_child_spawn(
+    tmp_path: Path,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    runner = _BlockingExactPushRunner(
+        repository,
+        observations=(
+            _remote_observation("b" * 40),
+            _remote_observation("b" * 40),
+            _remote_observation("d" * 40),
+        ),
+        push_result=_accepted_push_result(),
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+        network_context_factory=_network_factory(tmp_path),
+    )
+    reviewed = await _prepare_exact_push_review(service, binding)
+    waiter = service.start_push(binding, reviewed.handle)
+    operation = _current_push_operation(service, binding)
+    await asyncio.wait_for(runner.push_started.wait(), timeout=1)
+
+    assert operation.child_started
+    assert service.cancel_push(binding, operation) is False
+    assert owner.mutation_active(binding)
+    runner.release_push.set()
+    result = await asyncio.wait_for(waiter, timeout=1)
+
+    assert result.state == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_exact_push_post_spawn_head_drift_preserves_result_and_newer_owner_state(
+    tmp_path: Path,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    runner = _BlockingExactPushRunner(
+        repository,
+        observations=(
+            _remote_observation("b" * 40),
+            _remote_observation("b" * 40),
+            _remote_observation("d" * 40),
+        ),
+        push_result=_accepted_push_result(),
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+        network_context_factory=_network_factory(tmp_path),
+    )
+    reviewed = await _prepare_exact_push_review(service, binding)
+    waiter = service.start_push(binding, reviewed.handle)
+    operation = _current_push_operation(service, binding)
+    await asyncio.wait_for(runner.push_started.wait(), timeout=1)
+    before_drift = owner.snapshot(binding)
+    availability = before_drift.push_candidate
+    assert availability is not None
+
+    (Path(repository.git_dir) / "HEAD").write_text(
+        "ref: refs/heads/other\n",
+        encoding="utf-8",
+    )
+    assert (
+        owner._capture_push_candidate_after_fresh_proof(
+            binding,
+            candidate_generation=availability.generation,
+            repository=repository,
+            head=HeadIdentity.attached("refs/heads/other", "f" * 40),
+            sole_parent_oid="b" * 40,
+        )
+        is None
+    )
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "after-spawn.md"),
+    )
+    drifted = owner.snapshot(binding)
+    assert drifted.push_candidate is None
+    assert drifted.push_candidate_generation > availability.generation
+    status_generation = owner.next_status_generation(binding)
+    assert status_generation is not None
+    newer_status = SessionGitStatus(
+        binding_generation=binding.generation,
+        status_generation=status_generation,
+        state="ready",
+        repository=repository,
+        head=HeadIdentity.attached("refs/heads/other", "f" * 40),
+    )
+    assert not owner.publish_status(binding, newer_status)
+
+    runner.release_push.set()
+    result = await asyncio.wait_for(waiter, timeout=1)
+
+    assert result.state == "succeeded"
+    assert await operation.wait() == result
+    settled = owner.snapshot(binding)
+    assert settled.push_candidate is None
+    assert settled.push_candidate_generation == drifted.push_candidate_generation
+    assert tuple(change.change.relative_path for change in settled.changes) == (
+        "after-spawn.md",
+    )
+    assert owner.publish_status(binding, newer_status)
+    published = owner.snapshot(binding)
+    assert published.git_status == newer_status
+    assert published.push_candidate_generation == drifted.push_candidate_generation
+    assert await operation.wait() == result
+
+
+@pytest.mark.asyncio
+async def test_exact_push_launch_failure_is_blocked_not_uncertain(
+    tmp_path: Path,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    runner = _ControlledExactPushRunner(
+        repository,
+        observations=(
+            _remote_observation("b" * 40),
+            _remote_observation("b" * 40),
+        ),
+        push_result=_accepted_push_result(),
+        launch_error=True,
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+        network_context_factory=_network_factory(tmp_path),
+    )
+    reviewed = await _prepare_exact_push_review(service, binding)
+
+    result = await service.start_push(binding, reviewed.handle)
+
+    assert result.state == "blocked"
+    assert result.outcome is None
+    assert owner.snapshot(binding).push_candidate is not None
+    assert not owner.mutation_active(binding)
+
+
+@pytest.mark.asyncio
+async def test_exact_push_settled_result_without_spawn_callback_is_blocked(
+    tmp_path: Path,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    runner = _NoSpawnCallbackExactPushRunner(
+        repository,
+        observations=(
+            _remote_observation("b" * 40),
+            _remote_observation("b" * 40),
+            _remote_observation("d" * 40),
+        ),
+        push_result=_accepted_push_result(),
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+        network_context_factory=_network_factory(tmp_path),
+    )
+    reviewed = await _prepare_exact_push_review(service, binding)
+
+    result = await service.start_push(binding, reviewed.handle)
+
+    assert result.state == "blocked"
+    assert result.outcome is None
+    assert owner.snapshot(binding).push_candidate is not None
+    assert not owner.mutation_active(binding)
+    assert len(runner.network_calls) == 3
+    assert len(runner.observations) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("push_result", "postflight", "expected"),
+    [
+        (_accepted_push_result(), _remote_observation("d" * 40), "succeeded"),
+        (
+            _settled_network_result(
+                1,
+                b"!\t" + b"d" * 40 + b":" + BRANCH_REF.encode() + b"\t[rejected]\n",
+            ),
+            _remote_observation("b" * 40),
+            "failed_no_update_observed",
+        ),
+        (
+            _settled_network_result(1, b"", timed_out=True),
+            _remote_observation("b" * 40),
+            "uncertain",
+        ),
+        (_accepted_push_result(), _remote_observation("b" * 40), "uncertain"),
+        (
+            _settled_network_result(1, b"", containment_proved=False),
+            _remote_observation("b" * 40),
+            "uncertain",
+        ),
+        (
+            _accepted_push_result(),
+            _settled_network_result(1, b""),
+            "uncertain",
+        ),
+        (
+            _accepted_push_result(),
+            _settled_network_result(0, b""),
+            "uncertain",
+        ),
+        (
+            _accepted_push_result(),
+            _remote_observation("e" * 40),
+            "uncertain",
+        ),
+    ],
+    ids=[
+        "accepted-candidate",
+        "rejected-parent",
+        "timeout-parent",
+        "accepted-parent-contradiction",
+        "unproved-descendants",
+        "postflight-query-failure",
+        "postflight-missing",
+        "postflight-other",
+    ],
+)
+async def test_exact_push_classifies_machine_result_and_postflight(
+    tmp_path: Path,
+    push_result: GitCommandResult,
+    postflight: GitCommandResult,
+    expected: str,
+) -> None:
+    owner, binding, repository = _candidate_owner(tmp_path)
+    runner = _ControlledExactPushRunner(
+        repository,
+        observations=(
+            _remote_observation("b" * 40),
+            _remote_observation("b" * 40),
+            postflight,
+        ),
+        push_result=push_result,
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+        network_context_factory=_network_factory(tmp_path),
+    )
+    reviewed = await _prepare_exact_push_review(service, binding)
+
+    result = await service.start_push(binding, reviewed.handle)
+
+    assert result.state == expected
+    assert result.outcome is not None
+    assert result.outcome.state == expected
+    assert (owner.snapshot(binding).push_candidate is None) is (
+        expected == "succeeded"
+    )
+    assert "REMOTE_SECRET_CANARY" not in repr(result)
