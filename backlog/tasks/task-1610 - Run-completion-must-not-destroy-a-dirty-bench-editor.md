@@ -2,7 +2,7 @@
 id: TASK-1610
 title: >-
   Run completion must not destroy a dirty bench editor
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-31 15:10'
 labels:
