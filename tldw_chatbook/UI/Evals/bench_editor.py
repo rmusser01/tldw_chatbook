@@ -355,11 +355,20 @@ class BenchEditor(Vertical):
 
         # One probe per line, whitespace preserved exactly -- see the
         # module docstring and `render_snippet_cell`'s own callers below.
-        # An entirely empty TextArea (`""`) means zero probes, not one
-        # empty-string probe; `TextArea.text` never carries an implicit
-        # trailing newline of its own (confirmed directly against
-        # Textual), so every other split is a 1:1 line-to-probe mapping.
-        probes = tuple(probes_text.split("\n")) if probes_text else ()
+        # Splitting on "\n" alone is not enough: a user who presses Enter
+        # after the last probe (or leaves a blank line anywhere) produces
+        # a genuine zero-length line -- `BenchConfig` accepts it happily,
+        # and `analysis.resolve_probe` would then carry a meaningless
+        # empty-string probe column all the way through a run. Only a
+        # ZERO-LENGTH line is dropped here; a WHITESPACE-ONLY line (e.g. a
+        # lone " ") is kept byte-exact -- "whitespace preserved exactly"
+        # is a claim about a token's CONTENT, and a single space is a
+        # legitimate (if unusual) exact token, not an empty one. Note this
+        # is a real distinction from `compose()`'s own `"\n".join(config.
+        # probes)`, which never appends a trailing newline of its own --
+        # `TextArea.text` reflects exactly what the user TYPED, trailing
+        # Enter-press included, and that is a different guarantee.
+        probes = tuple(line for line in probes_text.split("\n") if line != "")
 
         try:
             config = BenchConfig(

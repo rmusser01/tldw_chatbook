@@ -1011,6 +1011,84 @@ async def test_save_persists_every_field_and_reselects_the_bench(
 
 
 @pytest.mark.asyncio
+async def test_trailing_newline_after_the_last_probe_does_not_persist_an_empty_probe(
+    evals_app, evals_db, bench_with_mixed_readiness
+):
+    """Fix round 1 (reviewer Important, bench_editor.py:362): a user who
+    presses Enter after typing the last probe leaves a genuine zero-length
+    line in `TextArea.text` -- `BenchConfig` accepts an empty-string probe
+    happily, and `analysis.resolve_probe` would then carry a meaningless
+    probe column all the way through a run. Only the trailing empty line
+    must be dropped; the two real probes must still round-trip byte-exact."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        screen.query_one("#evals-bench-probes", TextArea).text = " Sure\n No way\n"
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        assert not screen.query_one("#evals-bench-form-error").display
+        saved = load_bench(evals_db, task_id)
+        assert saved.probes == (" Sure", " No way")
+        assert "" not in saved.probes
+
+
+@pytest.mark.asyncio
+async def test_empty_probes_textarea_saves_zero_probes(
+    evals_app, evals_db, bench_with_mixed_readiness
+):
+    """An entirely empty TextArea means zero probes, not one empty-string
+    probe."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        screen.query_one("#evals-bench-probes", TextArea).text = ""
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        assert not screen.query_one("#evals-bench-form-error").display
+        saved = load_bench(evals_db, task_id)
+        assert saved.probes == ()
+
+
+@pytest.mark.asyncio
+async def test_whitespace_only_probe_line_is_kept_byte_exact(
+    evals_app, evals_db, bench_with_mixed_readiness
+):
+    """A lone space is a legitimate exact token, not an empty one --
+    "whitespace preserved exactly" is a claim about a token's CONTENT, and
+    only a genuinely ZERO-LENGTH line is dropped (see the trailing-newline
+    test above), never a whitespace-only one.
+
+    Mutation check (pinned by the controller): changing this handler's
+    filter to also drop whitespace-only lines (e.g. `if line.strip()`
+    instead of `if line != ""`) makes this exact test fail -- confirmed by
+    hand, then reverted; see task-5-report.md's "Fix round 1" section."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        screen.query_one("#evals-bench-probes", TextArea).text = " Sure\n \n No way"
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        assert not screen.query_one("#evals-bench-form-error").display
+        saved = load_bench(evals_db, task_id)
+        assert saved.probes == (" Sure", " ", " No way")
+
+
+@pytest.mark.asyncio
 async def test_top_k_parse_failure_renders_the_pinned_callout_and_keeps_typed_state(
     evals_app, bench_with_mixed_readiness
 ):
