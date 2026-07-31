@@ -156,7 +156,13 @@ class PushContractError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class PushIncludedNote:
-    """Sanitized provenance for one note included by the guarded commit."""
+    """Control-safe literal provenance for one included note.
+
+    Attributes:
+        group_id: Process-local session group identity.
+        display_text: Exact literal note label. This value is not pre-escaped
+            Rich markup and MUST be rendered with ``markup=False``.
+    """
 
     group_id: int
     display_text: str
@@ -174,7 +180,14 @@ class PushIncludedNote:
 
 @dataclass(frozen=True, slots=True)
 class PushCandidateProjection:
-    """Sanitized immutable projection of one exact guarded-push candidate."""
+    """Sanitized immutable projection of one exact guarded-push candidate.
+
+    Attributes:
+        subject: Exact control-safe literal commit subject. This value is not
+            pre-escaped Rich markup and MUST be rendered with ``markup=False``.
+        included_notes: Literal note labels governed by
+            :class:`PushIncludedNote`.
+    """
 
     local_branch_ref: str
     parent_oid: str
@@ -1065,6 +1078,8 @@ def _normalize_host(host: str) -> str:
         ):
             raise PushContractError("invalid_endpoint")
         return normalized
+    if isinstance(address, ipaddress.IPv6Address) and address.scope_id is not None:
+        raise PushContractError("invalid_endpoint")
     return address.compressed.lower()
 
 

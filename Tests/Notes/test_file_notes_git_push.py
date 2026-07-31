@@ -88,6 +88,25 @@ def test_candidate_projection_is_an_immutable_sanitized_snapshot() -> None:
         candidate.subject = "changed"  # type: ignore[misc]
 
 
+def test_candidate_markup_looking_text_is_preserved_for_literal_rendering() -> None:
+    subject = "[WIP] publish [bold]literal[/bold] notes"
+    note_labels = ("[WIP] note", "notes/[draft].md")
+
+    candidate = PushCandidateProjection(
+        local_branch_ref=_DESTINATION_REF,
+        parent_oid=_PARENT_OID,
+        candidate_oid=_CANDIDATE_OID,
+        subject=subject,
+        included_notes=tuple(
+            PushIncludedNote(group_id, label)
+            for group_id, label in enumerate(note_labels, start=1)
+        ),
+    )
+
+    assert candidate.subject == subject
+    assert tuple(note.display_text for note in candidate.included_notes) == note_labels
+
+
 def test_destination_projection_exposes_only_selectable_safe_details() -> None:
     destination = parse_push_endpoint(
         "ssh://git@例え.テスト:2222/srv/notes.git",
@@ -420,6 +439,27 @@ def test_destination_ref_rejects_default_ignorable_format_characters(
                 "git",
             ),
         ),
+        (
+            "https://[2001:db8::2]/team/notes.git",
+            PushDestinationProjection(
+                "https",
+                "2001:db8::2",
+                443,
+                "/team/notes.git",
+                _DESTINATION_REF,
+            ),
+        ),
+        (
+            "ssh://git@[2001:db8::3]/srv/notes.git",
+            PushDestinationProjection(
+                "ssh",
+                "2001:db8::3",
+                22,
+                "/srv/notes.git",
+                _DESTINATION_REF,
+                "git",
+            ),
+        ),
     ],
 )
 def test_endpoint_parser_accepts_only_verified_https_and_literal_ssh_forms(
@@ -433,6 +473,24 @@ def test_endpoint_parser_accepts_only_verified_https_and_literal_ssh_forms(
         destination.scheme == "https"
     )
     assert destination.host_key_verification_required is (destination.scheme == "ssh")
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://[fe80::1%ETH0]/team/notes.git",
+        "https://[fe80::1%25ETH0]/team/notes.git",
+        "ssh://git@[fe80::1%Scope With Space]/srv/notes.git",
+        "ssh://git@[fe80::1%25En0]/srv/notes.git",
+        "git@[fe80::1%en0]:team/notes.git",
+        "git@[fe80::1%25ETH0]:team/notes.git",
+    ],
+)
+def test_endpoint_parser_rejects_scoped_ipv6_hosts(endpoint: str) -> None:
+    with pytest.raises(PushContractError) as error:
+        parse_push_endpoint(endpoint, _DESTINATION_REF)
+
+    assert error.value.code == "invalid_endpoint"
 
 
 @pytest.mark.parametrize(
