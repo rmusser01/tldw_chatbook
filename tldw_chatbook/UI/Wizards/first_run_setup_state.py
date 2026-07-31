@@ -569,13 +569,41 @@ class WizardPrefill:
     """
 
 
+ROW_CONFIGURED = "configured"
+ROW_DEFAULT = "default"
+ROW_ATTENTION = "attention"
+
+_TEMPLATE_DEFAULT_THEME = "textual-dark"
+
+
 @dataclass(frozen=True)
 class SummaryRow:
-    """One ✓/✗ line of the final summary matrix."""
+    """One line of the final summary matrix.
+
+    TASK-1504: three states instead of a boolean --
+    ``configured`` (✓, the user set this up), ``default`` (–, untouched and
+    fine), ``attention`` (✗, worth acting on). ``ok`` survives as a derived
+    convenience so older callers/tests keep working.
+
+    Args:
+        label: Row heading shown in the matrix.
+        state: One of ROW_CONFIGURED / ROW_DEFAULT / ROW_ATTENTION.
+        detail: Optional human explanation rendered after the label.
+    """
 
     label: str
-    ok: bool
+    state: str
     detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        """True only for user-configured rows (legacy boolean view)."""
+        return self.state == ROW_CONFIGURED
+
+    @property
+    def glyph(self) -> str:
+        """Matrix glyph: ✓ configured, – default, ✗ attention."""
+        return {ROW_CONFIGURED: "✓", ROW_DEFAULT: "–"}.get(self.state, "✗")
 
 
 def _section(app_config: Mapping[str, object], name: str) -> Mapping[str, object]:
@@ -641,7 +669,21 @@ def build_summary_rows(
     *,
     rag_deps_installed: bool,
 ) -> tuple[SummaryRow, ...]:
-    """Build the ✓/✗ matrix strictly from persisted config (never step memory)."""
+    """Build the summary matrix strictly from persisted config.
+
+    TASK-1504 semantics: a row only earns ✓ when the USER configured the
+    thing; untouched-but-fine defaults render as – so the matrix never
+    claims credit for template values; ✗ marks what deserves action
+    (no provider, provider-without-model, plaintext keys).
+
+    Args:
+        app_config: The persisted (re-loaded) config mapping.
+        environ: Process environment, for env-var key detection.
+        rag_deps_installed: Whether the embeddings extras are importable.
+
+    Returns:
+        Ordered tuple of SummaryRow for the Summary step to render.
+    """
     prefill = read_wizard_prefill(app_config)
     # F2 fix: this row uses provider_summary_configured, NOT
     # any_provider_configured (the auto-offer gate) -- see that function's
@@ -652,34 +694,57 @@ def build_summary_rows(
     notes_on = prefill.auto_sync_enabled and bool(prefill.sync_directory)
     encryption_on = coerce_wizard_flag(_section(app_config, "encryption").get("enabled"))
     rag_model = str(_section(app_config, "embedding_config").get("default_model_id") or "")
+
     if not rag_deps_installed:
-        rag_row = SummaryRow("RAG", False, "embeddings deps not installed")
+        rag_row = SummaryRow("RAG", ROW_DEFAULT, "optional — embeddings deps not installed")
     elif rag_model:
-        rag_row = SummaryRow("RAG", True, f"embedding model: {rag_model}")
+        rag_row = SummaryRow("RAG", ROW_CONFIGURED, f"embedding model: {rag_model}")
     else:
-        rag_row = SummaryRow("RAG", False, "no embedding model selected")
+        rag_row = SummaryRow("RAG", ROW_DEFAULT, "no embedding model selected")
+
+    if prefill.model_id:
+        model_row = SummaryRow("Default model", ROW_CONFIGURED, prefill.model_id)
+    elif provider_ok:
+        # A provider without a model is half-finished — worth flagging.
+        model_row = SummaryRow("Default model", ROW_ATTENTION, "not selected")
+    else:
+        model_row = SummaryRow("Default model", ROW_DEFAULT, "not selected")
+
+    theme_is_custom = bool(
+        prefill.default_theme and prefill.default_theme != _TEMPLATE_DEFAULT_THEME
+    )
+
+    if encryption_on:
+        encryption_row = SummaryRow("Key encryption", ROW_CONFIGURED, "")
+    elif stored_plaintext_key_present(app_config):
+        encryption_row = SummaryRow(
+            "Key encryption", ROW_ATTENTION, "API keys are stored as plain text"
+        )
+    else:
+        encryption_row = SummaryRow("Key encryption", ROW_DEFAULT, "off")
+
     return (
-        SummaryRow("Provider", provider_ok, "" if provider_ok else "no credentials or saved endpoint"),
         SummaryRow(
-            "Default model",
-            bool(prefill.model_id),
-            prefill.model_id or "not selected",
+            "Provider",
+            ROW_CONFIGURED if provider_ok else ROW_ATTENTION,
+            "" if provider_ok else "no credentials or saved endpoint",
         ),
+        model_row,
         rag_row,
         SummaryRow(
             "Tools",
-            bool(tools_on),
+            ROW_CONFIGURED if tools_on else ROW_DEFAULT,
             f"{len(tools_on)} enabled" if tools_on else "all off (default)",
         ),
         SummaryRow(
             "Notes sync",
-            notes_on,
+            ROW_CONFIGURED if notes_on else ROW_DEFAULT,
             prefill.sync_directory if notes_on else "off",
         ),
         SummaryRow(
-            "Theme", bool(prefill.default_theme), prefill.default_theme or "default"
+            "Theme",
+            ROW_CONFIGURED if theme_is_custom else ROW_DEFAULT,
+            prefill.default_theme or "default",
         ),
-        SummaryRow(
-            "Key encryption", encryption_on, "" if encryption_on else "off"
-        ),
+        encryption_row,
     )

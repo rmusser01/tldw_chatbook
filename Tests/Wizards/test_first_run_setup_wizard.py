@@ -331,11 +331,15 @@ def test_provider_grouping_orders_cloud_then_local_then_custom():
             display_name="Anthropic", requires_api_key=True,
         ),
     )
-    grouped = ProviderStep._grouped(entries)
-    # Cloud (alpha) -> Local (alpha) -> Custom/legacy alias keys, last.
-    assert [entry.readiness_key for entry in grouped] == [
-        "anthropic", "openai", "ollama", "local_llamacpp",
-    ]
+    # TASK-1498: flat _grouped was replaced by sectioned _grouped_sections —
+    # Popular (fixed order) first, then Cloud/Local alphabetical, custom/
+    # legacy alias keys under Other, empty sections dropped.
+    sections = ProviderStep._grouped_sections(entries)
+    titles = [title for title, _ in sections]
+    assert titles == ["Popular", "Other"]
+    popular_keys = [e.readiness_key for e in dict(sections)["Popular"]]
+    assert popular_keys == ["openai", "anthropic", "ollama"]
+    assert [e.readiness_key for e in dict(sections)["Other"]] == ["local_llamacpp"]
 
 
 @pytest.mark.asyncio
@@ -381,6 +385,55 @@ async def test_provider_step_one_click_connect_adopts_discovered_server():
             "chat_defaults": {"provider": "llama_cpp", "model": ""},
         }
         wizard.note_key_entered.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_provider_step_tab_from_radio_reaches_key_input_before_detected_button():
+    """TASK-1496: with a discovered local server (the "Use this server"
+    Button unhidden), Tab from the provider RadioSet must reach the API-key
+    Input BEFORE that Button. Textual's focus chain follows DOM/compose()
+    order, and before this fix the detected-server banner+Button sat ahead
+    of the key Input in that order (unhidden the instant discovery
+    resolved) -- so Tab from the radio list landed on the Button instead. A
+    typed key then silently went nowhere (a Button does not accept text
+    input) and note_key_entered() never fired, so Protect-keys could never
+    activate (the exact live-UAT symptom TASK-1496 describes).
+    ProviderStep.compose() now yields the key Input (and its Keep/Replace/
+    Clear affordances) BEFORE the detected-server banner and Button, so Tab
+    order matches the intended radio-list -> key-input ->
+    Keep/Replace/Clear -> detected-server-button sequence exactly, and a
+    typed key lands where the user is actually looking.
+    """
+    from unittest.mock import AsyncMock
+
+    server = DiscoveredLocalServer(
+        provider_key="llama_cpp", base_url="http://127.0.0.1:8080", model_ids=("m1",)
+    )
+    step = _provider_step(discover=AsyncMock(return_value=(server,)))
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        use_button = step.query_one("#setup-provider-use-detected", Button)
+        assert "hidden" not in use_button.classes  # sanity: discovery landed
+
+        radio_set = step.query_one("#setup-provider-choice", RadioSet)
+        radio_set.focus()
+        await pilot.pause(0.1)
+        assert app.focused is radio_set  # sanity: focus starts on the radio list
+
+        await pilot.press("tab")
+        await pilot.pause(0.1)
+        key_input = step.query_one("#setup-provider-key-input", Input)
+        assert app.focused is key_input, (
+            f"Tab from the radio list landed on {app.focused!r}, not the key "
+            "Input -- a discovered server must not steal focus ahead of it"
+        )
+
+        await pilot.press("s", "k", "-", "t", "e", "s", "t")
+        assert key_input.value == "sk-test", (
+            "typed characters after Tab must land in the key Input, not be "
+            "silently swallowed by a focused Button"
+        )
 
 
 @pytest.mark.asyncio
@@ -872,8 +925,11 @@ async def test_model_step_provider_switch_does_not_resurrect_stale_pressed_radio
         }
         step.on_show()
         await pilot.pause(0.1)
-        labels = [str(b.label) for b in radio_set.query(RadioButton)]
-        assert labels == ["model-b"]  # the re-render itself landed correctly
+        ids = [
+            str(getattr(b, "_model_id", b.label))
+            for b in radio_set.query(RadioButton)
+        ]
+        assert ids == ["model-b"]  # the re-render itself landed correctly
 
         ok, error = await step.commit()
         assert ok, error
@@ -940,8 +996,11 @@ async def test_model_step_curated_fallback_bridges_raw_provider_key(monkeypatch)
         step.on_show()
         await pilot.pause(0.1)
         radio_set = step.query_one("#setup-model-choice", RadioSet)
-        labels = [str(button.label) for button in radio_set.query(RadioButton)]
-        assert labels == ["gpt-curated-1", "gpt-curated-2"]
+        ids = [
+            str(getattr(button, "_model_id", button.label))
+            for button in radio_set.query(RadioButton)
+        ]
+        assert ids == ["gpt-curated-1", "gpt-curated-2"]
 
 
 @pytest.mark.asyncio
@@ -982,8 +1041,11 @@ async def test_model_step_uses_scope_service_when_available():
             "mode": "local", "provider": "openai", "staged_settings": None
         }
         radio_set = step.query_one("#setup-model-choice", RadioSet)
-        labels = [str(button.label) for button in radio_set.query(RadioButton)]
-        assert labels == ["svc-model-a", "svc-model-b"]
+        ids = [
+            str(getattr(button, "_model_id", button.label))
+            for button in radio_set.query(RadioButton)
+        ]
+        assert ids == ["svc-model-a", "svc-model-b"]
 
 
 @pytest.mark.asyncio
@@ -1021,8 +1083,11 @@ async def test_model_step_discovery_timeout_falls_back_to_curated(monkeypatch):
         step.on_show()
         await pilot.pause(0.3)
         radio_set = step.query_one("#setup-model-choice", RadioSet)
-        labels = [str(button.label) for button in radio_set.query(RadioButton)]
-        assert labels == ["fallback-model"]
+        ids = [
+            str(getattr(button, "_model_id", button.label))
+            for button in radio_set.query(RadioButton)
+        ]
+        assert ids == ["fallback-model"]
 
 
 def test_model_step_worker_group_is_not_wizard_advance():
@@ -1620,7 +1685,15 @@ async def test_ctrl_n_still_works_after_focus_was_on_a_now_hidden_widget():
         await pilot.pause(0.1)
 
         def _first_focusable(step):
-            return next((w for w in step.walk_children(Widget) if w.focusable), None)
+            # Mirrors production: hidden (display:none / .hidden) widgets must
+            # never be focus targets (TASK-1496/1498).
+            return next(
+                (
+                    w for w in step.walk_children(Widget)
+                    if w.focusable and w.display and not w.has_class("hidden")
+                ),
+                None,
+            )
 
         def _assert_focus_on_current_step_content() -> None:
             current = container.steps[container.current_step]
@@ -1807,7 +1880,10 @@ async def test_appearance_step_rerun_preselects_configured_theme():
         radio_set = step.query_one("#setup-theme-choice", RadioSet)
         pressed = radio_set.pressed_button
         assert pressed is not None
-        assert str(pressed.label) == "nord"
+        # TASK-1500: the label carries "(current)" decoration; the clean
+        # theme name rides on the button as _theme_name.
+        assert getattr(pressed, "_theme_name", str(pressed.label)) == "nord"
+        assert "(current)" in str(pressed.label)
 
 
 @pytest.mark.asyncio
@@ -2099,3 +2175,356 @@ class TestCommandPaletteReentry:
         provider.handle_setup_wizard_action("something_else")
 
         screen.app.push_screen.assert_not_called()
+
+
+class TestSetupRadioButtonStructuralState:
+    """TASK-1497: selection must be distinguishable without color."""
+
+    @pytest.mark.asyncio
+    async def test_selected_and_unselected_glyphs_differ_structurally(self):
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupRadioButton
+
+        class _Host(App):
+            def compose(self) -> ComposeResult:
+                yield SetupRadioButton("On option", value=True, id="on-btn")
+                yield SetupRadioButton("Off option", id="off-btn")
+
+        app = _Host()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            on_btn = app.query_one("#on-btn", SetupRadioButton)
+            off_btn = app.query_one("#off-btn", SetupRadioButton)
+            on_glyph = str(on_btn._button)
+            off_glyph = str(off_btn._button)
+            assert on_glyph != off_glyph, (
+                "selected and unselected radios render identical button text "
+                f"({on_glyph!r}) — state is color-only"
+            )
+            assert "●" in on_glyph and "○" in off_glyph
+
+    @pytest.mark.asyncio
+    async def test_wizard_choice_lists_use_structural_radio(self):
+        """Every wizard RadioSet renders SetupRadioButton, incl. dynamic lists."""
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            SetupRadioButton,
+            SetupWizardContainer,
+        )
+
+        wizard = _make_wizard()
+        app = _HostApp(wizard)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            plain = [
+                rb
+                for rb in container.query(RadioButton)
+                if not isinstance(rb, SetupRadioButton)
+            ]
+            assert not plain, f"plain RadioButtons in wizard: {[rb.id or str(rb.label) for rb in plain]}"
+
+
+@pytest.mark.asyncio
+async def test_rag_step_missing_deps_hides_model_list_and_copy_has_no_backticks():
+    """TASK-1502: no disabled model wall under the not-installed message."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import RagStep
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = RagStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="rag", title="RAG", step_number=4),
+        deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        radio_set = step.query_one(RadioSet)
+        assert not radio_set.display, "disabled model list must be hidden entirely"
+        copy = str(step.query_one("#setup-rag-status", Static).render())
+        assert "`" not in copy
+
+
+@pytest.mark.asyncio
+async def test_model_step_subtitle_display_cases_provider_and_marks_recommended():
+    """TASK-1503: no raw provider keys in copy; first curated model marked."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ModelStep, SetupRadioButton
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={"provider": {"provider_key": "anthropic", "provider_value": "anthropic"}},
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = ModelStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="model", title="Model", step_number=3),
+        discover_models=AsyncMock(return_value=["model-alpha", "model-beta"]),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.3)
+        subtitle = str(step.query_one("#setup-model-provider-line", Static).render())
+        assert "anthropic" not in subtitle and "Anthropic" in subtitle
+        buttons = list(step.query(SetupRadioButton))
+        assert "recommended" in str(buttons[0].label)
+        assert "recommended" not in str(buttons[1].label)
+        # selecting the recommended row must commit the CLEAN model id
+        step.set_selected_model_from_button(buttons[0])
+        assert step.selected_model_id == "model-alpha"
+
+
+@pytest.mark.asyncio
+async def test_tools_step_rows_are_described_and_do_not_overlap():
+    """TASK-1501: aligned rows with plain-language descriptions."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ToolsStep
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = ToolsStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="tools", title="Tools", step_number=5),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        switches = list(step.query(Switch))
+        assert switches, "tools step must render switches"
+        # Every row carries a human description (not just the raw tool name).
+        descs = [str(s.render()) for s in step.query(".setup-tool-desc")]
+        assert len(descs) == len(switches)
+        assert all(d.strip() for d in descs)
+        # The original defect: switch borders collided into following rows.
+        regions = sorted((sw.region.y, sw.region.bottom) for sw in switches)
+        for (y1, b1), (y2, _b2) in zip(regions, regions[1:]):
+            assert b1 <= y2, f"tool rows overlap: row ending {b1} vs row starting {y2}"
+        # Mutating tools carry a visible warning in their description.
+        write_desc = str(
+            step.query_one("#setup-tool-desc-write_file", Static).render()
+        )
+        assert "⚠" in write_desc
+
+
+@pytest.mark.asyncio
+async def test_progress_defaults_to_quick_track_and_titles_fit():
+    """TASK-1499: Welcome anchors at the recommended 4-step count, and no
+    step title exceeds the ~8-char budget the progress row can render."""
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import TRACK_QUICK
+
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        assert container.track == TRACK_QUICK
+        assert len(container.active_ids) == 4  # welcome, provider, model, summary
+        for step in container.steps:
+            title = step.config.title
+            assert len(title) <= 8, f"step title too long for progress row: {title!r}"
+
+
+class TestThemePickerShortlist:
+    """TASK-1500: curated shortlist, current marker, preview + revert."""
+
+    def _appearance_step(self, app_config=None):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import AppearanceStep
+        from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+
+        wizard = SimpleNamespace(
+            app_instance=MagicMock(app_config=app_config or {}),
+            commit_config=AsyncMock(return_value=True), rerun=False,
+        )
+        return AppearanceStep(
+            wizard=wizard,
+            config=WizardStepConfig(id="appearance", title="Style", step_number=7),
+        )
+
+    @pytest.mark.asyncio
+    async def test_shortlist_then_show_all_expands(self):
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupRadioButton
+
+        step = self._appearance_step()
+        app = _StepHost(step)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            radio_set = step.query_one("#setup-theme-choice", RadioSet)
+            short = list(radio_set.query(SetupRadioButton))
+            assert len(short) <= 6, "shortlist must be curated, not the full wall"
+            names = [getattr(b, "_theme_name", str(b.label)) for b in short]
+            assert "textual-dark" in names and "textual-light" in names
+            await pilot.pause()
+            step.query_one("#setup-theme-show-all", Button).press()
+            await pilot.pause(0.2)
+            full = list(radio_set.query(SetupRadioButton))
+            assert len(full) >= len(step._theme_names())
+            assert not step.query_one("#setup-theme-show-all", Button).display
+
+    @pytest.mark.asyncio
+    async def test_current_theme_marked_and_clean_value_selected(self):
+        step = self._appearance_step(
+            app_config={"general": {"default_theme": "textual-light"}}
+        )
+        app = _StepHost(step)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            radio_set = step.query_one("#setup-theme-choice", RadioSet)
+            current = [
+                b for b in radio_set.query(RadioButton)
+                if "(current)" in str(b.label)
+            ]
+            assert len(current) == 1
+            assert getattr(current[0], "_theme_name") == "textual-light"
+            assert step.selected_theme == "textual-light"
+
+    @pytest.mark.asyncio
+    async def test_selection_previews_and_revert_restores(self):
+        step = self._appearance_step()
+        app = _StepHost(step)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            original = str(app.theme)
+            target = next(
+                b for b in step.query_one("#setup-theme-choice", RadioSet).query(RadioButton)
+                if getattr(b, "_theme_name", "") not in ("", original)
+            )
+            target.value = True
+            await pilot.pause()
+            assert str(app.theme) == getattr(target, "_theme_name")
+            step.revert_preview()
+            assert str(app.theme) == original
+
+
+@pytest.mark.asyncio
+async def test_provider_list_grouped_popular_first_with_pinned_discovery():
+    """TASK-1498: section headers, popular-first order, banner above list."""
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupRadioButton
+
+    step = _provider_step()
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        radio_set = step.query_one("#setup-provider-choice", RadioSet)
+        headers = [str(h.render()) for h in radio_set.query(".setup-choice-header")]
+        assert headers[0] == "Popular"
+        assert "Cloud" in headers and "Local" in headers
+        first_keys = [
+            (b.id or "").removeprefix("setup-provider-")
+            for b in radio_set.query(SetupRadioButton)
+        ][:4]
+        assert first_keys[0] == "openai"
+        assert "anthropic" in first_keys
+        # Radios still function with headers interleaved.
+        target = radio_set.query_one("#setup-provider-anthropic", SetupRadioButton)
+        target.value = True
+        await pilot.pause()
+        assert step.selected_provider_key == "anthropic"
+        # The discovery banner sits ABOVE the list in DOM order.
+        banner = step.query_one("#setup-provider-detected")
+        siblings = list(banner.parent.children)
+        assert siblings.index(banner) < siblings.index(radio_set)
+
+
+@pytest.mark.asyncio
+async def test_key_hints_footer_and_test_button_probe():
+    """TASK-1505/1506: hints line renders; Test fires the injected probe."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ProviderStep
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+
+    # Footer: rendered by the real wizard screen.
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        hints = wizard.query_one("#setup-key-hints", Static)
+        text = str(hints.render())
+        assert "Ctrl+N" in text and "Esc" in text
+        assert hints in app.screen._compositor.visible_widgets
+        # The docked hints line must not push the nav bar's buttons off
+        # screen (container yields a row via height:1fr).
+        next_button = wizard.query_one("#wizard-next", Button)
+        assert next_button in app.screen._compositor.visible_widgets
+        # TASK-1499: the INITIAL progress render honors the quick default.
+        from tldw_chatbook.UI.Wizards.BaseWizard import WizardProgress
+        progress = wizard.query_one(WizardProgress)
+        assert progress.total_steps == 4
+
+    # Test button: fires the probe with the typed key.
+    probe = AsyncMock()
+    step_wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = ProviderStep(
+        wizard=step_wizard,
+        config=WizardStepConfig(id="provider", title="Provider", step_number=2),
+        discover=AsyncMock(return_value=()),
+        probe=probe,
+        environ={},
+    )
+    host = _StepHost(step)
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        step.query_one("#setup-provider-key-input", Input).value = "wizard-test-key-x"
+        step.query_one("#setup-provider-test", Button).press()
+        await pilot.pause(0.3)
+        assert probe.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_provider_reentry_with_visible_discovery_button_focuses_list():
+    """Review finding: after discovery unhides the pinned button, re-entering
+    Provider must still focus the RadioSet, not the earlier-in-DOM button."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        SetupWizardContainer,
+    )
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import TRACK_QUICK
+
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        await pilot.pause(0.1)
+        await pilot.press("ctrl+n")  # Welcome -> Provider
+        await pilot.pause(0.2)
+        provider_step = container.steps[container.current_step]
+        # Simulate discovery having found a server: banner + button visible.
+        provider_step.query_one("#setup-provider-detected").remove_class("hidden")
+        provider_step.query_one("#setup-provider-use-detected", Button).remove_class("hidden")
+        await pilot.pause(0.1)
+        await pilot.press("ctrl+n")  # Provider -> Model
+        await pilot.pause(0.2)
+        await pilot.press("ctrl+b")  # back to Provider (re-entry)
+        await pilot.pause(0.2)
+        radio_set = provider_step.query_one("#setup-provider-choice", RadioSet)
+        assert app.focused is radio_set, f"focus stole by {app.focused!r}"
