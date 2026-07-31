@@ -1018,7 +1018,10 @@ class ConsoleTranscript(VerticalScroll):
         self._select_relative(-1)
 
     def action_confirm_selection(self) -> None:
-        if self.selected_message_id is None and self._messages:
+        if self.selected_message_id is not None:
+            self.toggle_message_selection(self.selected_message_id)
+            return
+        if self._messages:
             self.select_message(self._messages[0].id)
 
     def action_clear_selection(self) -> None:
