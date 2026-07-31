@@ -3993,6 +3993,51 @@ the complete File Notes workspace module passed 27/27. Ruff lint and
 elsewhere in the module; the tightened remount predicate is absent from those
 findings.
 
+### Task 4cs: Mount the running export canvas before worker dispatch
+
+**Files:**
+- Modify: `tldw_chatbook/UI/Screens/library_screen.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This fixes a local UI refresh-order bug within the existing
+Library export boundary; it does not change storage, service contracts, or
+application architecture.
+
+- [x] **Step 1: Identify fast completion targeting stale DOM**
+
+Full-gate attempt 35 fails after 18,147 passes because the export succeeds,
+both notifications fire, and screen state clears, but the visible Submit
+button remains disabled for the full 15-second guard. The submit handler
+requests a running-state recompose and starts the worker immediately; a fast
+worker can complete and target the old canvas before that recompose mounts its
+new disabled button, which then has no later update.
+
+- [x] **Step 2: Dispatch after the running-state refresh**
+
+Use Textual's existing `call_after_refresh` to invoke
+`_start_library_export_worker` with the same captured run payload after the
+running-state recompose has refreshed. Preserve single-flight guards,
+threaded export execution, progress/cancel behavior, targeted completion
+updates, and typed-field identity.
+
+- [x] **Step 3: Verify Library export and shell coverage**
+
+Run the immediate registry-failure journey repeatedly under current
+contention, focused export success/failure/cancellation coverage, the complete
+Library shell module, Ruff/format, and `git diff --check`.
+
+The immediate registry-failure journey passed three concurrent repetitions,
+six focused export success/failure/staleness paths passed, and the complete
+Library shell module passed 267/267. Ruff lint and `git diff --check` pass.
+Ruff format reports inherited formatting drift elsewhere in
+`library_screen.py`; the deferred dispatch and its docstring are absent from
+those findings.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

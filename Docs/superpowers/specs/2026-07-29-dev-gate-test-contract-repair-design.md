@@ -980,6 +980,11 @@ Update the tests to describe current behavior:
      Keep the retained workspace identity, dirty/conflict veto, flush,
      hidden-file refresh, and replica-lifetime assertions unchanged; do not
      add production remount guards for a root-before-subtree test race.
+101. Schedule Library export worker dispatch after the requested running-state
+     recompose has refreshed. Keep the same run payload, worker boundary,
+     single-flight/cancellation guards, and targeted completion update so a
+     fast completion cannot update the old canvas before the running canvas
+     mounts; do not add a retry loop or recompose on completion.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
