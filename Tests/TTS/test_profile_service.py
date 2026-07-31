@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import traceback
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
 from dataclasses import FrozenInstanceError, fields
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 from uuid import UUID
 
 import pytest
@@ -38,6 +39,8 @@ from tldw_chatbook.TTS.profile_service import (
     TTSProfileService,
 )
 from tldw_chatbook.TTS.profile_types import (
+    CharacterRef,
+    CharacterTTSAssignment,
     ProfileStoreResult,
     TTSGenerationProfile,
     TTSProfileDraft,
@@ -48,6 +51,7 @@ _CREATED_AT = datetime(2026, 7, 27, 12, tzinfo=UTC)
 _PROFILE_ID = UUID("11111111-1111-4111-8111-111111111111")
 _DUPLICATE_ID = UUID("22222222-2222-4222-8222-222222222222")
 _UNSET = object()
+_TaskResult = TypeVar("_TaskResult")
 
 
 def _profile(
@@ -116,6 +120,68 @@ def _forged_loaded_profile(
     return forged
 
 
+def _character_ref(
+    *,
+    source: str = "server",
+    authority_id: str = "server-user-v1:authority",
+    character_id: str = "character-a",
+) -> CharacterRef:
+    return CharacterRef(
+        source=source,  # type: ignore[arg-type]
+        authority_id=authority_id,
+        character_id=character_id,
+    )
+
+
+def _assignment(
+    *,
+    character_ref: CharacterRef | None = None,
+    profile_id: UUID = _PROFILE_ID,
+) -> CharacterTTSAssignment:
+    return CharacterTTSAssignment(
+        character_ref=_character_ref() if character_ref is None else character_ref,
+        profile_id=profile_id,
+    )
+
+
+def _forged_character_ref(
+    character_ref: CharacterRef,
+    **updates: object,
+) -> CharacterRef:
+    """Build an adversarial exact character reference without revalidation."""
+
+    forged = object.__new__(CharacterRef)
+    for reference_field in fields(CharacterRef):
+        object.__setattr__(
+            forged,
+            reference_field.name,
+            updates.get(
+                reference_field.name,
+                getattr(character_ref, reference_field.name),
+            ),
+        )
+    return forged
+
+
+def _forged_assignment(
+    assignment: CharacterTTSAssignment,
+    **updates: object,
+) -> CharacterTTSAssignment:
+    """Build an adversarial exact assignment without revalidation."""
+
+    forged = object.__new__(CharacterTTSAssignment)
+    for assignment_field in fields(CharacterTTSAssignment):
+        object.__setattr__(
+            forged,
+            assignment_field.name,
+            updates.get(
+                assignment_field.name,
+                getattr(assignment, assignment_field.name),
+            ),
+        )
+    return forged
+
+
 def _forged_page_snapshot(
     *,
     repository_generation: object,
@@ -169,6 +235,34 @@ class _AlwaysEqualStr(str):
         return False
 
     __hash__ = str.__hash__
+
+
+def _manufactured_equal_character_ref(
+    character_ref: CharacterRef,
+) -> CharacterRef:
+    hostile_ref = _forged_character_ref(
+        character_ref,
+        authority_id=_AlwaysEqualStr("different-authority"),
+        character_id=_AlwaysEqualStr("different-character"),
+    )
+    assert type(hostile_ref) is CharacterRef
+    assert hostile_ref == character_ref
+    assert str(hostile_ref.authority_id) == "different-authority"
+    assert str(hostile_ref.character_id) == "different-character"
+    return hostile_ref
+
+
+def _manufactured_equal_assignment(
+    assignment: CharacterTTSAssignment,
+) -> CharacterTTSAssignment:
+    hostile_assignment = _forged_assignment(
+        assignment,
+        character_ref=_manufactured_equal_character_ref(assignment.character_ref),
+    )
+    assert type(hostile_assignment) is CharacterTTSAssignment
+    assert type(hostile_assignment.character_ref) is CharacterRef
+    assert hostile_assignment == assignment
+    return hostile_assignment
 
 
 class _GenerationAdvancingMapping(dict[str, Any]):
@@ -318,6 +412,8 @@ class _FakeRepository:
         self.create_error: BaseException | None = None
         self.update_error: BaseException | None = None
         self.delete_error: BaseException | None = None
+        self.set_error: BaseException | None = None
+        self.remove_error: BaseException | None = None
         self.count_value = 0
         self.count_generation: int | None = None
         self.advance_generation_during_count = False
@@ -327,8 +423,12 @@ class _FakeRepository:
         self.create_result: object = _UNSET
         self.update_result: object = _UNSET
         self.delete_result: object = _UNSET
+        self.set_result: object = _UNSET
+        self.remove_result: object = _UNSET
         self.count_result: object = _UNSET
         self.create_boundary: _AsyncBoundary | None = None
+        self.set_boundary: _AsyncBoundary | None = None
+        self.remove_boundary: _AsyncBoundary | None = None
 
     def _record_coordinator_state(self) -> None:
         self.coordinator_active_at_repository_calls.append(
@@ -460,6 +560,73 @@ class _FakeRepository:
             self.generation += 1
         return result
 
+    async def set_assignment(
+        self,
+        character_ref: CharacterRef,
+        profile_id: UUID,
+        *,
+        expected_generation: int,
+        expected_profile_revision: int,
+        expected_current_profile_id: UUID | None,
+    ) -> ProfileStoreResult[CharacterTTSAssignment]:
+        self._record_coordinator_state()
+        self.calls.append(
+            (
+                "set_assignment",
+                (
+                    character_ref,
+                    profile_id,
+                    expected_generation,
+                    expected_profile_revision,
+                    expected_current_profile_id,
+                    self.generation,
+                ),
+            )
+        )
+        if self.set_boundary is not None:
+            await self.set_boundary.wait()
+        if self.set_error is not None:
+            raise self.set_error
+        if self.set_result is not _UNSET:
+            return cast(
+                ProfileStoreResult[CharacterTTSAssignment],
+                self.set_result,
+            )
+        return ProfileStoreResult(
+            generation=self.generation,
+            value=CharacterTTSAssignment(
+                character_ref=character_ref,
+                profile_id=profile_id,
+            ),
+        )
+
+    async def remove_assignment(
+        self,
+        character_ref: CharacterRef,
+        *,
+        expected_generation: int,
+        expected_profile_id: UUID,
+    ) -> ProfileStoreResult[None]:
+        self._record_coordinator_state()
+        self.calls.append(
+            (
+                "remove_assignment",
+                (
+                    character_ref,
+                    expected_generation,
+                    expected_profile_id,
+                    self.generation,
+                ),
+            )
+        )
+        if self.remove_boundary is not None:
+            await self.remove_boundary.wait()
+        if self.remove_error is not None:
+            raise self.remove_error
+        if self.remove_result is not _UNSET:
+            return cast(ProfileStoreResult[None], self.remove_result)
+        return ProfileStoreResult(generation=self.generation, value=None)
+
 
 class _AsyncBoundary:
     def __init__(self) -> None:
@@ -473,6 +640,52 @@ class _AsyncBoundary:
             await self.release.wait()
         finally:
             self.settled.set()
+
+
+async def _wait_for_boundary_or_task_failure(
+    boundary: _AsyncBoundary,
+    operation: asyncio.Task[Any],
+) -> None:
+    entered = asyncio.create_task(boundary.entered.wait())
+    try:
+        done, _pending = await asyncio.wait(
+            (entered, operation),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if operation in done:
+            await operation
+        await entered
+    finally:
+        if not entered.done():
+            entered.cancel()
+        await asyncio.gather(entered, return_exceptions=True)
+
+
+async def _start_at_boundary(
+    operation: Coroutine[Any, Any, _TaskResult],
+    boundary: _AsyncBoundary,
+) -> asyncio.Task[_TaskResult]:
+    task = asyncio.create_task(operation)
+    try:
+        async with asyncio.timeout(1):
+            await _wait_for_boundary_or_task_failure(boundary, task)
+    except BaseException:
+        boundary.release.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        raise
+    return task
+
+
+async def _settle_boundary_task(
+    boundary: _AsyncBoundary,
+    task: asyncio.Task[Any],
+) -> None:
+    boundary.release.set()
+    if not task.done():
+        task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
 
 
 class _HostileResult:
@@ -2486,6 +2699,763 @@ async def test_delete_rejects_stale_loaded_generation_before_repository_work() -
 
     assert caught.value.code == "stale"
     assert repository.calls == []
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+
+
+@pytest.mark.parametrize(
+    ("method_name", "required_sections"),
+    (
+        ("set_assignment", ("Args:", "Returns:", "Raises:")),
+        ("detach_assignment", ("Args:", "Raises:")),
+    ),
+)
+def test_assignment_mutation_methods_document_their_public_contract(
+    method_name: str,
+    required_sections: tuple[str, ...],
+) -> None:
+    method = getattr(TTSProfileService, method_name)
+    docstring = inspect.getdoc(method)
+
+    assert docstring is not None
+    for parameter_name in inspect.signature(method).parameters:
+        if parameter_name != "self":
+            assert f"{parameter_name}:" in docstring
+    for section in required_sections:
+        assert section in docstring
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "expected_current_profile_id",
+    (None, _DUPLICATE_ID),
+    ids=("unassigned", "replacement"),
+)
+async def test_set_assignment_uses_fresh_loaded_authority_and_exact_expected_state(
+    expected_current_profile_id: UUID | None,
+) -> None:
+    voice = TTSVoiceDiscoveryResult(
+        provider_id="audio_cpp",
+        model_id="model-a",
+        catalog_revision=9,
+        voices=("voice-a",),
+        state="complete",
+    )
+    repository = _FakeRepository()
+    tts_service = _FakeTTSService(
+        _capability_snapshot(
+            models=(_model("model-a"),),
+            voice_results={"model-a": voice},
+        )
+    )
+    service, repository, tts_service = _service(
+        repository=repository,
+        tts_service=tts_service,
+    )
+    character_ref = _character_ref()
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(voice_id="voice-a", revision=4),
+    )
+    persisted = _assignment(
+        character_ref=character_ref,
+        profile_id=loaded.profile.profile_id,
+    )
+    repository.set_result = ProfileStoreResult(
+        generation=loaded.repository_generation,
+        value=persisted,
+    )
+    page = TTSProfilePageSnapshot(
+        repository_generation=loaded.repository_generation,
+        profiles=(loaded.profile,),
+        total=1,
+    )
+    observed = await service.observe_availability(page)
+    assert observed.profiles[0].state == "available"
+
+    expected_current = (
+        None
+        if expected_current_profile_id is None
+        else _assignment(
+            character_ref=character_ref,
+            profile_id=expected_current_profile_id,
+        )
+    )
+
+    assigned = await service.set_assignment(
+        character_ref,
+        loaded,
+        expected_current,
+    )
+
+    assert assigned == persisted
+    assert type(assigned) is CharacterTTSAssignment
+    assert assigned is not persisted
+    assert assigned.character_ref is not persisted.character_ref
+    assert len(repository.calls) == 1
+    call_name, call_value = repository.calls[0]
+    assert call_name == "set_assignment"
+    (
+        forwarded_ref,
+        forwarded_profile_id,
+        forwarded_generation,
+        forwarded_revision,
+        forwarded_current_profile_id,
+        generation_at_call,
+    ) = call_value  # type: ignore[misc]
+    assert type(forwarded_ref) is CharacterRef
+    assert forwarded_ref == character_ref
+    assert forwarded_ref is not character_ref
+    assert forwarded_profile_id == loaded.profile.profile_id
+    assert forwarded_generation == loaded.repository_generation
+    assert forwarded_revision == loaded.profile.revision
+    assert forwarded_current_profile_id == expected_current_profile_id
+    assert generation_at_call == loaded.repository_generation
+    assert repository.coordinator_active_at_repository_calls == [False]
+
+    assert tts_service.capability_calls == [
+        ("audio_cpp", ("model-a",)),
+        ("audio_cpp", ("model-a",)),
+    ]
+    assert tts_service.revision_decisions == [("audio_cpp", 3)] * 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    (
+        "character-ref-subclass",
+        "character-ref-exploding-field",
+        "character-ref-impostor",
+        "character-ref-manufactured-equality",
+        "loaded-subclass",
+        "loaded-malformed-profile",
+        "loaded-impostor",
+        "expected-current-subclass",
+        "expected-current-malformed-profile-id",
+        "expected-current-impostor",
+        "expected-current-other-character",
+        "expected-current-manufactured-equality",
+    ),
+)
+async def test_set_assignment_rejects_nonexact_domain_inputs_before_work(
+    case: str,
+) -> None:
+    class CharacterRefSubclass(CharacterRef):
+        pass
+
+    class LoadedProfileSubclass(LoadedTTSProfile):
+        pass
+
+    class AssignmentSubclass(CharacterTTSAssignment):
+        pass
+
+    service, repository, tts_service = _service()
+    character_ref = _character_ref()
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(),
+    )
+    expected_current = _assignment(
+        character_ref=character_ref,
+        profile_id=_DUPLICATE_ID,
+    )
+    secret = "https://user:credential@example.test/private/path"
+    candidate_ref: object = character_ref
+    candidate_loaded: object = loaded
+    candidate_current: object = expected_current
+
+    if case == "character-ref-subclass":
+        candidate_ref = CharacterRefSubclass(
+            source="server",
+            authority_id="server-user-v1:authority",
+            character_id="character-a",
+        )
+    elif case == "character-ref-exploding-field":
+        candidate_ref = _forged_character_ref(
+            character_ref,
+            authority_id=_ExplodingStr(secret),
+        )
+    elif case == "character-ref-impostor":
+        candidate_ref = object()
+    elif case == "character-ref-manufactured-equality":
+        candidate_ref = _manufactured_equal_character_ref(character_ref)
+    elif case == "loaded-subclass":
+        candidate_loaded = LoadedProfileSubclass(
+            repository_generation=repository.generation,
+            profile=_profile(),
+        )
+    elif case == "loaded-malformed-profile":
+        candidate_loaded = _forged_loaded_profile(
+            _forged_profile(
+                _profile(),
+                model_id=_ExplodingStr(secret),
+            ),
+            repository_generation=repository.generation,
+        )
+    elif case == "loaded-impostor":
+        candidate_loaded = object()
+    elif case == "expected-current-subclass":
+        candidate_current = AssignmentSubclass(
+            character_ref=character_ref,
+            profile_id=_DUPLICATE_ID,
+        )
+    elif case == "expected-current-malformed-profile-id":
+        candidate_current = _forged_assignment(expected_current, profile_id=secret)
+    elif case == "expected-current-impostor":
+        candidate_current = object()
+    elif case == "expected-current-other-character":
+        candidate_current = _assignment(
+            character_ref=_character_ref(character_id="different-character"),
+            profile_id=_DUPLICATE_ID,
+        )
+    else:
+        assert case == "expected-current-manufactured-equality"
+        candidate_current = _manufactured_equal_assignment(expected_current)
+
+    with pytest.raises(ProfileValidationError) as caught:
+        await service.set_assignment(
+            cast(CharacterRef, candidate_ref),
+            cast(LoadedTTSProfile, candidate_loaded),
+            cast(CharacterTTSAssignment, candidate_current),
+        )
+
+    expected_code = "profiles" if case.startswith("loaded-") else "assignment"
+    assert caught.value.code == expected_code
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert repository.calls == []
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("snapshot", "stale_configuration", "expected_code"),
+    (
+        (_capability_snapshot(models=()), False, "profile_unavailable"),
+        (
+            _capability_snapshot(
+                state="unverified",
+                models=(_model("model-a"),),
+            ),
+            False,
+            "profile_unverified",
+        ),
+        (
+            TTSNativeCapabilitySnapshot(
+                provider_id="audio_cpp",
+                configuration_revision=3,
+                state="unverified",
+                catalog=None,
+                voice_results={},
+            ),
+            False,
+            "profile_unverified",
+        ),
+        (_HostileResult(), False, "operation_failed"),
+        (
+            _capability_snapshot(models=(_model("model-a"),)),
+            True,
+            "stale_configuration",
+        ),
+    ),
+    ids=(
+        "model-unavailable",
+        "catalog-unverified",
+        "missing-catalog-authority",
+        "malformed-capability-success",
+        "stale-configuration",
+    ),
+)
+async def test_set_assignment_rejects_non_authoritative_capability_outcomes(
+    snapshot: object,
+    stale_configuration: bool,
+    expected_code: str,
+) -> None:
+    tts_service = _FakeTTSService(
+        cast(TTSNativeCapabilitySnapshot, snapshot),
+    )
+    tts_service.stale_decision = stale_configuration
+    service, repository, tts_service = _service(tts_service=tts_service)
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(revision=5),
+    )
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.set_assignment(_character_ref(), loaded, None)
+
+    _assert_safe_service_error(
+        caught.value,
+        expected_code,
+        "credential",
+        "example.test",
+        "/private/path",
+        "submitted text",
+    )
+    assert tts_service.capability_calls == [("audio_cpp", ())]
+    assert repository.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("race", "expected_code"),
+    (
+        ("configuration", "stale_configuration"),
+        ("catalog", "profile_unverified"),
+    ),
+)
+async def test_set_assignment_fails_closed_at_capability_authority_barriers(
+    race: str,
+    expected_code: str,
+) -> None:
+    boundary = _AsyncBoundary()
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
+    if race == "configuration":
+        tts_service.revision_boundary = boundary
+    else:
+        tts_service.capability_boundary = boundary
+    service, repository, tts_service = _service(tts_service=tts_service)
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(),
+    )
+    operation = await _start_at_boundary(
+        service.set_assignment(_character_ref(), loaded, None),
+        boundary,
+    )
+    try:
+        if race == "configuration":
+            tts_service.revision += 1
+        else:
+            tts_service.snapshot = _capability_snapshot(
+                state="unverified",
+                models=(_model("model-a"),),
+                catalog_revision=10,
+            )
+        boundary.release.set()
+
+        with pytest.raises(ProfileServiceError) as caught:
+            await operation
+    finally:
+        await _settle_boundary_task(boundary, operation)
+
+    _assert_safe_service_error(caught.value, expected_code)
+    assert boundary.settled.is_set()
+    assert repository.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("race_stage", ("before", "capability", "repository"))
+async def test_set_assignment_rechecks_generation_across_lifecycle_barriers(
+    race_stage: str,
+) -> None:
+    boundary = _AsyncBoundary()
+    repository = _FakeRepository()
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
+    character_ref = _character_ref()
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(),
+    )
+    repository.set_result = ProfileStoreResult(
+        generation=loaded.repository_generation,
+        value=_assignment(
+            character_ref=character_ref,
+            profile_id=loaded.profile.profile_id,
+        ),
+    )
+    if race_stage == "capability":
+        tts_service.capability_boundary = boundary
+    elif race_stage == "repository":
+        repository.set_boundary = boundary
+    service, repository, tts_service = _service(
+        repository=repository,
+        tts_service=tts_service,
+    )
+    if race_stage == "before":
+        repository.generation += 1
+
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await service.set_assignment(character_ref, loaded, None)
+
+        assert caught.value.code == "stale"
+        assert repository.calls == []
+        assert tts_service.capability_calls == []
+        return
+
+    operation = await _start_at_boundary(
+        service.set_assignment(character_ref, loaded, None),
+        boundary,
+    )
+    try:
+        repository.generation += 1
+        boundary.release.set()
+
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await operation
+    finally:
+        await _settle_boundary_task(boundary, operation)
+
+    assert type(caught.value) is ProfileRepositoryError
+    assert caught.value.code == "stale"
+    assert boundary.settled.is_set()
+    expected_calls = [] if race_stage == "capability" else ["set_assignment"]
+    assert [name for name, _value in repository.calls] == expected_calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_code", ("conflict", "stale"))
+async def test_set_assignment_preserves_bounded_repository_race_errors(
+    error_code: str,
+) -> None:
+    boundary = _AsyncBoundary()
+    repository = _FakeRepository()
+    repository.set_boundary = boundary
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
+    service, repository, _tts_service = _service(
+        repository=repository,
+        tts_service=tts_service,
+    )
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(),
+    )
+    operation = await _start_at_boundary(
+        service.set_assignment(_character_ref(), loaded, None),
+        boundary,
+    )
+    try:
+        repository.set_error = ProfileRepositoryError(error_code)
+        boundary.release.set()
+
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await operation
+    finally:
+        await _settle_boundary_task(boundary, operation)
+
+    assert type(caught.value) is ProfileRepositoryError
+    assert caught.value.code == error_code
+    assert str(caught.value) == f"TTS profile repository failed: {error_code}"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert boundary.settled.is_set()
+    assert [name for name, _value in repository.calls] == ["set_assignment"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result_case",
+    (
+        "hostile-envelope",
+        "wrong-generation",
+        "assignment-subclass",
+        "assignment-exploding-nested-ref",
+        "assignment-other-character",
+        "assignment-other-profile",
+        "assignment-manufactured-equality",
+    ),
+)
+async def test_set_assignment_rejects_nonexact_repository_success(
+    result_case: str,
+) -> None:
+    class AssignmentSubclass(CharacterTTSAssignment):
+        pass
+
+    repository = _FakeRepository()
+    character_ref = _character_ref()
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(),
+    )
+    persisted: object = _assignment(
+        character_ref=character_ref,
+        profile_id=loaded.profile.profile_id,
+    )
+    if result_case == "hostile-envelope":
+        invalid_result: object = _HostileResult()
+    elif result_case == "wrong-generation":
+        invalid_result = ProfileStoreResult(
+            generation=repository.generation + 1,
+            value=persisted,
+        )
+    elif result_case == "assignment-subclass":
+        invalid_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=AssignmentSubclass(
+                character_ref=character_ref,
+                profile_id=loaded.profile.profile_id,
+            ),
+        )
+    elif result_case == "assignment-exploding-nested-ref":
+        invalid_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_assignment(
+                cast(CharacterTTSAssignment, persisted),
+                character_ref=_forged_character_ref(
+                    character_ref,
+                    authority_id=_ExplodingStr(
+                        "https://user:credential@example.test/private/path"
+                    ),
+                ),
+            ),
+        )
+    elif result_case == "assignment-other-character":
+        invalid_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_assignment(
+                character_ref=_character_ref(character_id="different-character"),
+                profile_id=loaded.profile.profile_id,
+            ),
+        )
+    elif result_case == "assignment-other-profile":
+        invalid_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_assignment(
+                character_ref=character_ref,
+                profile_id=_DUPLICATE_ID,
+            ),
+        )
+    else:
+        assert result_case == "assignment-manufactured-equality"
+        hostile_assignment = _manufactured_equal_assignment(
+            cast(CharacterTTSAssignment, persisted),
+        )
+        invalid_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=hostile_assignment,
+        )
+    service, repository, _tts_service = _service(
+        repository=repository,
+        tts_service=_FakeTTSService(_capability_snapshot(models=(_model("model-a"),))),
+    )
+    repository.set_result = invalid_result
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.set_assignment(character_ref, loaded, None)
+
+    _assert_safe_service_error(
+        caught.value,
+        "operation_failed",
+        "credential",
+        "example.test",
+        "/private/path",
+        "submitted text",
+        character_ref.authority_id,
+        character_ref.character_id,
+        "different-authority",
+        "different-character",
+    )
+    assert [name for name, _value in repository.calls] == ["set_assignment"]
+
+
+@pytest.mark.asyncio
+async def test_detach_assignment_forwards_exact_state_without_capability_work() -> None:
+    service, repository, tts_service = _service()
+    assignment = _assignment(profile_id=_DUPLICATE_ID)
+
+    result = await service.detach_assignment(
+        assignment,
+        repository.generation,
+    )
+
+    assert result is None
+    assert len(repository.calls) == 1
+    call_name, call_value = repository.calls[0]
+    assert call_name == "remove_assignment"
+    forwarded_ref, forwarded_generation, forwarded_profile_id, generation_at_call = (
+        call_value  # type: ignore[misc]
+    )
+    assert type(forwarded_ref) is CharacterRef
+    assert forwarded_ref == assignment.character_ref
+    assert forwarded_ref is not assignment.character_ref
+    assert forwarded_generation == repository.generation
+    assert forwarded_profile_id == assignment.profile_id
+    assert generation_at_call == repository.generation
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+    assert tts_service.revision_reads == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    (
+        "assignment-subclass",
+        "assignment-exploding-nested-ref",
+        "assignment-impostor",
+        "generation-bool",
+        "generation-negative",
+        "generation-subclass",
+        "generation-stale",
+    ),
+)
+async def test_detach_assignment_rejects_nonexact_or_stale_caller_state(
+    case: str,
+) -> None:
+    class AssignmentSubclass(CharacterTTSAssignment):
+        pass
+
+    class GenerationSubclass(int):
+        pass
+
+    service, repository, tts_service = _service()
+    assignment = _assignment()
+    secret = "https://user:credential@example.test/private/path"
+    candidate: object = assignment
+    generation: object = repository.generation
+    if case == "assignment-subclass":
+        candidate = AssignmentSubclass(
+            character_ref=assignment.character_ref,
+            profile_id=assignment.profile_id,
+        )
+    elif case == "assignment-exploding-nested-ref":
+        candidate = _forged_assignment(
+            assignment,
+            character_ref=_forged_character_ref(
+                assignment.character_ref,
+                character_id=_ExplodingStr(secret),
+            ),
+        )
+    elif case == "assignment-impostor":
+        candidate = object()
+    elif case == "generation-bool":
+        generation = True
+    elif case == "generation-negative":
+        generation = -1
+    elif case == "generation-subclass":
+        generation = GenerationSubclass(repository.generation)
+    else:
+        assert case == "generation-stale"
+        generation = repository.generation - 1
+
+    expected_error = (
+        ProfileRepositoryError if case == "generation-stale" else ProfileValidationError
+    )
+    with pytest.raises(expected_error) as caught:
+        await service.detach_assignment(
+            cast(CharacterTTSAssignment, candidate),
+            cast(int, generation),
+        )
+
+    expected_code = (
+        "stale"
+        if case == "generation-stale"
+        else "generation"
+        if case.startswith("generation-")
+        else "assignment"
+    )
+    assert caught.value.code == expected_code  # type: ignore[attr-defined]
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert repository.calls == []
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error_code",
+    ("conflict", "stale"),
+)
+async def test_detach_assignment_preserves_bounded_repository_errors(
+    error_code: str,
+) -> None:
+    repository = _FakeRepository()
+    service, repository, tts_service = _service(repository=repository)
+    repository.remove_error = ProfileRepositoryError(error_code)
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await service.detach_assignment(
+            _assignment(),
+            repository.generation,
+        )
+
+    assert type(caught.value) is ProfileRepositoryError
+    assert caught.value.code == error_code
+    assert str(caught.value) == f"TTS profile repository failed: {error_code}"
+    assert [name for name, _value in repository.calls] == ["remove_assignment"]
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result_case",
+    ("hostile-envelope", "wrong-generation", "unexpected-value"),
+)
+async def test_detach_assignment_rejects_nonexact_repository_success(
+    result_case: str,
+) -> None:
+    repository = _FakeRepository()
+    service, repository, tts_service = _service(repository=repository)
+    assignment = _assignment()
+    if result_case == "hostile-envelope":
+        invalid_result: object = _HostileResult()
+    elif result_case == "wrong-generation":
+        invalid_result = ProfileStoreResult(
+            generation=repository.generation + 1,
+            value=None,
+        )
+    else:
+        assert result_case == "unexpected-value"
+        invalid_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_HostileResult(),
+        )
+    repository.remove_result = invalid_result
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.detach_assignment(
+            assignment,
+            repository.generation,
+        )
+
+    _assert_safe_service_error(
+        caught.value,
+        "operation_failed",
+        "credential",
+        "example.test",
+        "/private/path",
+        "submitted text",
+        assignment.character_ref.authority_id,
+        assignment.character_ref.character_id,
+    )
+    assert [name for name, _value in repository.calls] == ["remove_assignment"]
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+
+
+@pytest.mark.asyncio
+async def test_detach_assignment_rechecks_generation_after_repository_result() -> None:
+    boundary = _AsyncBoundary()
+    repository = _FakeRepository()
+    repository.remove_boundary = boundary
+    repository.remove_result = ProfileStoreResult(
+        generation=repository.generation,
+        value=None,
+    )
+    service, repository, tts_service = _service(repository=repository)
+    operation = await _start_at_boundary(
+        service.detach_assignment(
+            _assignment(),
+            repository.generation,
+        ),
+        boundary,
+    )
+    try:
+        repository.generation += 1
+        boundary.release.set()
+
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await operation
+    finally:
+        await _settle_boundary_task(boundary, operation)
+
+    assert caught.value.code == "stale"
+    assert boundary.settled.is_set()
+    assert [name for name, _value in repository.calls] == ["remove_assignment"]
     assert tts_service.capability_calls == []
     assert tts_service.revision_decisions == []
 

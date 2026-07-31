@@ -188,6 +188,21 @@ profile execution, provider connection details, or managed audio.cpp process
 behavior. See
 [ADR-028](../../../backlog/decisions/028-character-tts-generation-profile-ownership.md).
 
+### Slice 3A assignment mutation service
+
+Character assignment identity is the exact
+`(source, authority_id, character_id)` tuple. Set or replace requires the
+caller-held repository generation, selected profile revision, expected current
+assignment (including explicitly unassigned), and a fresh authoritative
+capability check. Detach is idempotent when the assignment is already absent,
+but refuses to remove a different replacement. The repository's final
+transaction checks remain authoritative.
+
+This slice adds no assignment UI, speech resolver, automatic speech, Persona
+inheritance, profile portability, Sync behavior, or managed audio.cpp behavior.
+See
+[ADR-037](../../../backlog/decisions/037-roleplay-assistant-identity-and-persona-user-profile-separation.md).
+
 ### Global defaults and Console request admission
 
 TASK-710 represents global TTS defaults as one immutable

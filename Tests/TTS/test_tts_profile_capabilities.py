@@ -40,6 +40,9 @@ from tldw_chatbook.TTS.profile_service import (
     TTSProfileService,
 )
 from tldw_chatbook.TTS.profile_types import (
+    CharacterRef,
+    CharacterTTSAssignment,
+    ProfileStoreResult,
     TTSGenerationProfile,
     TTSProfileDraft,
 )
@@ -321,6 +324,34 @@ class _AvailabilityRepository:
 
     async def assignment_count(self, *_args: Any, **_kwargs: Any) -> Any:
         raise AssertionError("availability must not count assignments")
+
+    async def set_assignment(
+        self,
+        character_ref: CharacterRef,
+        profile_id: UUID,
+        *,
+        expected_generation: int,
+        expected_profile_revision: int,
+        expected_current_profile_id: UUID | None,
+    ) -> ProfileStoreResult[CharacterTTSAssignment]:
+        del (
+            character_ref,
+            profile_id,
+            expected_generation,
+            expected_profile_revision,
+            expected_current_profile_id,
+        )
+        raise AssertionError("not used")
+
+    async def remove_assignment(
+        self,
+        character_ref: CharacterRef,
+        *,
+        expected_generation: int,
+        expected_profile_id: UUID,
+    ) -> ProfileStoreResult[None]:
+        del character_ref, expected_generation, expected_profile_id
+        raise AssertionError("not used")
 
 
 def _availability_page(repository_generation: int) -> TTSProfilePageSnapshot:
