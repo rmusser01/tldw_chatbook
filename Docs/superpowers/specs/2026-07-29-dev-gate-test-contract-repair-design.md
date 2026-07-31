@@ -945,6 +945,11 @@ Update the tests to describe current behavior:
     ten-second settlement guard. Keep its one-second controlled-start signal,
     exact `Path.rmdir` observation, and production implementation unchanged.
     The wider completion guard is a deadlock bound, not a performance target.
+94. Replace the File Notes Git commit-integration module's one- and two-second
+     `asyncio.wait_for` literals with one ten-second settlement constant. These
+     waits coordinate controlled test events, shutdown, and retained cycles;
+     none is a product performance contract. Keep every wait bounded and leave
+     production Git code unchanged.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library

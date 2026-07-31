@@ -3719,6 +3719,44 @@ repository load. Ruff lint and `git diff --check` pass. Ruff format reports the
 same inherited whole-file drift on both the changed file and its untouched
 `HEAD` version.
 
+### Task 4cl: Share File Notes Git integration settle bounds
+
+**Files:**
+- Modify: `Tests/Notes/test_file_notes_git_commit_integration.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This consolidates test-only deadlock guards; it does not change Git
+behavior or define an application performance contract.
+
+- [x] **Step 1: Confirm the repeated root cause**
+
+Full-gate attempt 25 fails after 9,011 passes at the sibling
+`test_commit_confirmation_cancel_refuses_after_child_begins` post-release
+waiter. Like attempt 23's hook-cleanup failure, a one-second timeout cancels
+the retained commit waiter and leaves pytest stuck in teardown.
+
+- [x] **Step 2: Use one bounded module timeout**
+
+Replace the module's explicit one- and two-second `asyncio.wait_for` literals
+with one ten-second constant. These waits cover controlled runner signals,
+retained task settlement, and shutdown—not performance.
+
+- [x] **Step 3: Verify File Notes Git integration coverage**
+
+Run both full-gate failure regressions repeatedly under current contention, the
+complete commit-integration module, Ruff/format, and `git diff --check`.
+
+Both regressions passed 6/6 across three runs, including two concurrent runs
+where their commit cycles took 1.12–1.26 seconds. The complete integration
+module passed 124/124. Ruff lint and `git diff --check` pass. Ruff format
+reports only the same inherited whole-file drift present in `HEAD`; changed
+wait expressions match Ruff's proposed formatting.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

@@ -123,6 +123,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #93 ProductionApp file-notes owner lifecycle synchronization uses a bounded timeout that tolerates concurrent repository test load without turning the guards into performance assertions.
 - [ ] #94 Skeletal destination Console-action coverage waits for the final recovery copy instead of assuming a background Workflows load and recompose finish within a fixed sleep.
 - [ ] #95 File Notes Git hook-cleanup coverage gives the released commit cycle a bounded, contention-tolerant settlement guard instead of treating one second as a performance requirement.
+- [ ] #96 File Notes Git commit-integration synchronization uses one shared, bounded timeout for controlled signals and cycle settlement, so repository load does not turn one- or two-second literals into accidental performance gates.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -223,6 +224,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 87. Replace one-second file-notes lifecycle deadlock guards with a shared contention-tolerant settlement timeout.
 88. Replace the skeletal Console-action test's fixed precondition sleep with a bounded wait for its exact recovery copy.
 89. Give the released File Notes Git hook-cleanup commit cycle a bounded, contention-tolerant settlement timeout.
-90. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-91. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+90. Apply one shared contention-tolerant timeout to the File Notes Git commit-integration module's controlled asynchronous guards.
+91. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+92. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
