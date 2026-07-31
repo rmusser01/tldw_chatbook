@@ -2,7 +2,7 @@
 id: TASK-1611
 title: >-
   Target steering and second-target authoring
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-31 15:10'
 labels:
@@ -25,3 +25,11 @@ Whole-branch review of task-1482, Important 2 (scope boundary). The UI can creat
 - [ ] Prompt-mode switching revalidates steered targets with user-readable copy
 - [ ] Multi-target Δ column baseline is reachable end-to-end through the UI
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Engine/storage: steering persists on eval_models.config (prefix/system_prompt); target resolution builds steered Targets; capture client already consumes them (write side only)
+2. UI: "+ New target" in the editor's targets section works when models exist (name + mode-appropriate steering field); revalidation copy reworded to name real UI
+3. E2E: two targets (base + prefix-steered) through the UI -> column-mode Δ baseline renders real spread; live verification against the real server
+<!-- SECTION:PLAN:END -->
