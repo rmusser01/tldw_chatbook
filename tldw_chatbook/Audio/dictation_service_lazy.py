@@ -611,13 +611,30 @@ class LazyLiveDictationService:
                 self.transcription_provider = fallback
 
         try:
-            self.streaming_transcriber = (
-                self.transcription_service.create_streaming_transcriber(
-                    provider=self.transcription_provider,
-                    model=self.transcription_model,
-                    language=self.language,
-                )
+            candidate = self.transcription_service.create_streaming_transcriber(
+                provider=self.transcription_provider,
+                model=self.transcription_model,
+                language=self.language,
             )
+
+            # The processing loop's streaming regime calls `process_audio()`
+            # per chunk. `ParakeetMLXStreamingTranscriber` exposes
+            # `add_audio`/`finalize` instead, so engaging it meant every
+            # cadence tick raised AttributeError and fell back to per-window
+            # buffer transcription -- the chopped-segment architecture the
+            # segment-at-silence rework removed ("console stop" transcribed
+            # as 'Consoles.' + 'Stop.', which no command can match, plus
+            # per-window noise hallucinations; observed live 2026-07-31).
+            # A transcriber that does not speak the loop's protocol is worse
+            # than none: refuse it and take the working segment path.
+            if candidate is not None and not hasattr(candidate, "process_audio"):
+                logger.info(
+                    "Streaming transcriber for '{}' lacks process_audio; "
+                    "using segment transcription instead",
+                    self.transcription_provider,
+                )
+                candidate = None
+            self.streaming_transcriber = candidate
 
             if self.streaming_transcriber:
                 logger.info("Streaming transcriber initialized")
