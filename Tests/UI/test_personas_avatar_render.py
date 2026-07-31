@@ -7,7 +7,9 @@ the graphics path silently painted blanks under tmux (renderable != painted).
 
 import io
 
-from PIL import Image as PILImage
+import pytest
+
+PILImage = pytest.importorskip("PIL.Image")
 from rich.console import Console
 
 
@@ -18,6 +20,7 @@ def _png_bytes(color: tuple[int, int, int]) -> bytes:
 
 
 def test_avatar_pixels_fallback_renders_visible_half_block_cells():
+    """The personas fallback paints visible colored cells for a solid image."""
     from tldw_chatbook.Chat.console_image_view import ConsoleImageRenderCache
     from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 

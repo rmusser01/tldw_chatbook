@@ -90,6 +90,7 @@ def test_system_and_tool_messages_are_left_verbatim():
 
 
 def test_flavor_quoted_speech_gets_speech_style():
+    """Straight double-quoted speech styles as one speech-colored span."""
     from tldw_chatbook.Widgets.Console.console_transcript import _SPEECH_STYLE
 
     assert _markdown_body_spans('She said "hello there" softly') == [
@@ -100,6 +101,7 @@ def test_flavor_quoted_speech_gets_speech_style():
 
 
 def test_flavor_curly_quoted_speech_gets_speech_style():
+    """Curly-quoted speech styles as one speech-colored span."""
     from tldw_chatbook.Widgets.Console.console_transcript import _SPEECH_STYLE
 
     assert _markdown_body_spans("“hello” she offered") == [
@@ -109,6 +111,7 @@ def test_flavor_curly_quoted_speech_gets_speech_style():
 
 
 def test_flavor_single_asterisk_action_gets_action_style():
+    """*action* text styles with the action style, markers stripped."""
     from tldw_chatbook.Widgets.Console.console_transcript import _ACTION_STYLE
 
     assert _markdown_body_spans("*leans forward* Tell me more") == [
@@ -118,6 +121,7 @@ def test_flavor_single_asterisk_action_gets_action_style():
 
 
 def test_flavor_bold_action_speech_are_mutually_distinct():
+    """Bold, action, and speech spans use three distinct styles."""
     from tldw_chatbook.Widgets.Console.console_transcript import (
         _ACTION_STYLE,
         _BOLD_STYLE,
@@ -131,11 +135,13 @@ def test_flavor_bold_action_speech_are_mutually_distinct():
 
 
 def test_flavor_unclosed_quote_and_asterisk_stay_literal():
+    """Unclosed quote/asterisk markers stay literal (mid-stream safety)."""
     assert _markdown_body_spans('He said "wait') == ['He said "wait']
     assert _markdown_body_spans("*unfinished action") == ["*unfinished action"]
 
 
 def test_flavor_quote_containing_action_marker_styles_as_speech():
+    """A quote swallows markers inside it and styles wholly as speech."""
     from tldw_chatbook.Widgets.Console.console_transcript import _SPEECH_STYLE
 
     assert _markdown_body_spans('"I *mean* it"') == [

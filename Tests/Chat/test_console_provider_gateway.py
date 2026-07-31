@@ -2612,3 +2612,63 @@ async def test_tools_run_real_answer_equal_to_fallback_copy_survives() -> None:
     items = await _collect(gateway, resolution, tools=TOOLS)
 
     assert items == [NO_PROVIDER_CONTENT_COPY]  # it IS the model's answer here
+
+
+# ---- system-row extraction (PR #1112 Qodo finding 3) ----
+
+
+def _bare_resolution() -> ConsoleProviderResolution:
+    """Minimal ready resolution for direct `_chat_api_kwargs` calls."""
+    return ConsoleProviderResolution(
+        provider="anthropic",
+        base_url="",
+        model="claude-x",
+        ready=True,
+        execution_key="anthropic",
+        api_key="k",
+        streaming=False,
+    )
+
+
+def test_chat_api_kwargs_extracts_leading_system_rows_to_system_message() -> None:
+    """Leading system rows leave the payload and ride `system_message`.
+
+    Anthropic/Gemini adapters only accept system content via their dedicated
+    parameter and reject (or drop) `role="system"` rows in the message
+    array, so the Console's system prompt / folded greeting must be
+    extracted here or those providers never see it.
+    """
+    messages = [
+        {"role": "system", "content": "Stay in character."},
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+    ]
+
+    kwargs = ConsoleProviderGateway._chat_api_kwargs(_bare_resolution(), messages)
+
+    assert kwargs["system_message"] == "Stay in character."
+    assert [m["role"] for m in kwargs["messages_payload"]] == ["user", "assistant"]
+
+
+def test_chat_api_kwargs_joins_multiple_leading_system_rows() -> None:
+    """Contiguous leading system rows concatenate into one system_message."""
+    messages = [
+        {"role": "system", "content": "A."},
+        {"role": "system", "content": "B."},
+        {"role": "user", "content": "hi"},
+    ]
+
+    kwargs = ConsoleProviderGateway._chat_api_kwargs(_bare_resolution(), messages)
+
+    assert kwargs["system_message"] == "A.\n\nB."
+    assert [m["role"] for m in kwargs["messages_payload"]] == ["user"]
+
+
+def test_chat_api_kwargs_without_system_rows_omits_system_message() -> None:
+    """No leading system rows: payload passes through, no system_message key."""
+    messages = [{"role": "user", "content": "hi"}]
+
+    kwargs = ConsoleProviderGateway._chat_api_kwargs(_bare_resolution(), messages)
+
+    assert "system_message" not in kwargs
+    assert kwargs["messages_payload"] == messages

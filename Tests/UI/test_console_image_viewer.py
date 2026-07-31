@@ -1,7 +1,7 @@
 """Full-size image viewer modal + clickable avatar box (task-1534)."""
 
 import pytest
-from PIL import Image as PILImage
+PILImage = pytest.importorskip("PIL.Image")
 from textual.app import App, ComposeResult
 
 from tldw_chatbook.Widgets.Console.console_image_viewer_modal import (
@@ -25,6 +25,7 @@ class _BoxApp(App):
 
 @pytest.mark.asyncio
 async def test_clickable_box_posts_view_request_on_click():
+    """Clicking the avatar box posts AvatarViewRequested to the app."""
     app = _BoxApp()
     async with app.run_test() as pilot:
         await pilot.click("#avatar-box")
@@ -38,6 +39,7 @@ class _ViewerApp(App):
 
 @pytest.mark.asyncio
 async def test_viewer_modal_renders_image_and_escape_dismisses():
+    """The viewer paints a real-sized image region and Escape closes it."""
     image = PILImage.new("RGB", (64, 64), (0, 119, 226))
     app = _ViewerApp()
     async with app.run_test(size=(100, 40)) as pilot:
@@ -61,6 +63,7 @@ async def test_viewer_modal_renders_image_and_escape_dismisses():
 
 @pytest.mark.asyncio
 async def test_viewer_modal_click_dismisses():
+    """Clicking anywhere in the open viewer dismisses it."""
     image = PILImage.new("RGB", (32, 32), (200, 30, 30))
     app = _ViewerApp()
     async with app.run_test(size=(100, 40)) as pilot:

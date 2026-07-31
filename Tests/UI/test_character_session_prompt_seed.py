@@ -10,6 +10,7 @@ from tldw_chatbook.UI.Screens.chat_screen import _character_session_prompt_seed
 
 
 def test_macros_resolved_in_system_prompt_and_greeting():
+    """Card fields with {{char}}/{{user}} macros resolve in prompt and greeting."""
     card = {
         "name": "Elara",
         "system_prompt": "Play {{char}} faithfully.",
@@ -30,6 +31,7 @@ def test_macros_resolved_in_system_prompt_and_greeting():
 
 
 def test_character_alias_macros_resolve_to_character_name():
+    """{{character}}/{{persona}} aliases resolve to the character's name."""
     card = {
         "name": "Elara",
         "description": "{{character}} and {{persona}} both mean the AI.",
@@ -43,6 +45,7 @@ def test_character_alias_macros_resolve_to_character_name():
 
 
 def test_empty_card_falls_back_to_defaults():
+    """An empty card yields the name hint, default prompt, and no greeting."""
     name, system_prompt, greeting = _character_session_prompt_seed(
         {}, name_hint="Hinted"
     )

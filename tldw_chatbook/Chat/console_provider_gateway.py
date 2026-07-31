@@ -1314,9 +1314,27 @@ class ConsoleProviderGateway:
         messages: list[Mapping[str, Any]],
         tools: list | None = None,
     ) -> dict[str, Any]:
+        # Extract the contiguous LEADING system rows into chat_api_call's
+        # `system_message` parameter (PR #1112 Qodo finding 3): Anthropic and
+        # Gemini adapters accept system content only via their dedicated
+        # parameter and do not honor `role="system"` rows in the message
+        # array, so a payload-only system prompt (and the task-1531 folded
+        # greeting riding it) would never reach those providers. The
+        # OpenAI-compatible adapters prepend `system_message` as a system row
+        # themselves when the payload has none, so the extraction is
+        # provider-neutral. Mid-array system rows never occur on this path
+        # (`_provider_message_payloads` emits user/assistant only).
+        payload = list(messages)
+        system_parts: list[str] = []
+        while payload and payload[0].get("role") == "system":
+            content = str(payload[0].get("content") or "").strip()
+            if content:
+                system_parts.append(content)
+            payload = payload[1:]
         kwargs = {
             "api_endpoint": resolution.execution_key,
-            "messages_payload": list(messages),
+            "system_message": "\n\n".join(system_parts) or None,
+            "messages_payload": payload,
             "api_key": resolution.api_key,
             "model": resolution.model,
             "streaming": resolution.streaming,

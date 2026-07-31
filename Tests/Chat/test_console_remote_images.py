@@ -12,21 +12,25 @@ from tldw_chatbook.Chat.console_image_view import (
 
 
 def test_remote_images_default_off():
+    """render_remote_images defaults to off for absent/empty config."""
     assert resolve_render_remote_images({}) is False
     assert resolve_render_remote_images({"chat": {"images": {}}}) is False
 
 
 def test_remote_images_enabled_by_setting():
+    """render_remote_images=true in [chat.images] enables the feature."""
     config = {"chat": {"images": {"render_remote_images": True}}}
     assert resolve_render_remote_images(config) is True
 
 
 def test_extract_markdown_image_links():
+    """Markdown ![alt](url) image links extract their http(s) URL."""
     text = "Here you go ![map](https://example.com/city.png) and more"
     assert extract_image_urls(text) == ["https://example.com/city.png"]
 
 
 def test_extract_bare_image_extension_urls():
+    """Bare URLs with image extensions (plus query strings) extract."""
     text = "portrait: https://example.com/a/b/portrait.jpg?size=big done"
     assert extract_image_urls(text) == [
         "https://example.com/a/b/portrait.jpg?size=big"
@@ -34,15 +38,18 @@ def test_extract_bare_image_extension_urls():
 
 
 def test_non_image_bare_urls_ignored():
+    """Bare URLs without an image extension are not treated as images."""
     assert extract_image_urls("see https://example.com/page.html") == []
 
 
 def test_non_http_schemes_ignored():
+    """data:/file: and other non-http(s) schemes never extract."""
     text = "![x](data:image/png;base64,AAAA) ![y](file:///etc/passwd)"
     assert extract_image_urls(text) == []
 
 
 def test_dedupe_and_cap():
+    """Extraction dedupes repeated URLs and honors the limit cap."""
     url = "https://example.com/i.png"
     text = " ".join(
         [f"![a]({url})", f"![b]({url})"]
@@ -57,9 +64,11 @@ def test_dedupe_and_cap():
 # ---- ChatScreen spec wiring ----
 
 import io
+
+import pytest
 from types import SimpleNamespace
 
-from PIL import Image as PILImage
+PILImage = pytest.importorskip("PIL.Image")
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -90,6 +99,7 @@ def _png_bytes() -> bytes:
 
 
 def test_remote_spec_built_for_cached_link_when_enabled():
+    """An enabled setting plus a cached link yields an image-row spec."""
     screen = _bare_screen(enabled=True)
     message = _assistant("map: ![map](https://example.com/pic.png)")
     _state, cache = screen._ensure_console_image_view()
@@ -101,6 +111,7 @@ def test_remote_spec_built_for_cached_link_when_enabled():
 
 
 def test_remote_spec_ignored_when_setting_off():
+    """With the setting off no spec is built and no fetch dispatches."""
     screen = _bare_screen(enabled=False)
     message = _assistant("map: ![map](https://example.com/pic.png)")
     _state, cache = screen._ensure_console_image_view()
@@ -115,6 +126,7 @@ def test_remote_spec_ignored_when_setting_off():
 
 
 def test_uncached_link_dispatches_fetch_once():
+    """An uncached link dispatches exactly one fetch across rebuilds."""
     screen = _bare_screen(enabled=True)
     message = _assistant("see https://example.com/photo.jpg now")
     dispatched: list = []

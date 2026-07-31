@@ -7,8 +7,10 @@ pin the glyph vocabulary, the resolution gain a half-block renderer cannot
 express (a left/right split inside ONE cell), and box-fit dimensions.
 """
 
-from PIL import Image as PILImage
+import pytest
 from rich.console import Console
+
+PILImage = pytest.importorskip("PIL.Image")
 
 from tldw_chatbook.Utils.mosaic_render import QUADRANT_GLYPHS, mosaic_from_image
 
@@ -20,6 +22,7 @@ def _render_text(renderable, width: int = 80) -> str:
 
 
 def test_left_right_split_resolves_inside_one_cell():
+    """A left/right color split renders inside ONE cell via quadrant glyphs."""
     image = PILImage.new("RGB", (2, 2))
     image.putpixel((0, 0), (0, 0, 0))
     image.putpixel((0, 1), (0, 0, 0))
@@ -32,6 +35,7 @@ def test_left_right_split_resolves_inside_one_cell():
 
 
 def test_solid_image_renders_uniform_cells():
+    """A solid-color image bakes to uniform full/space cells only."""
     image = PILImage.new("RGB", (16, 16), (200, 30, 30))
 
     rendered = _render_text(mosaic_from_image(image, 4, 2)).rstrip("\n")
@@ -41,6 +45,7 @@ def test_solid_image_renders_uniform_cells():
 
 
 def test_output_fits_requested_cell_box():
+    """Rendered lines and columns never exceed the requested cell box."""
     image = PILImage.effect_noise((400, 100), 90).convert("RGB")
 
     rendered = _render_text(mosaic_from_image(image, 10, 5))
@@ -51,6 +56,7 @@ def test_output_fits_requested_cell_box():
 
 
 def test_glyphs_stay_within_block_elements():
+    """Output glyphs stay within the universal Block Elements set."""
     image = PILImage.open_from = None  # guard against accidental reuse
     image = PILImage.effect_noise((32, 32), 64).convert("RGB")
 
@@ -61,6 +67,7 @@ def test_glyphs_stay_within_block_elements():
 
 
 def test_rgba_input_is_composited_over_black():
+    """RGBA input composites over black instead of crashing or blanking."""
     image = PILImage.new("RGBA", (8, 8), (255, 0, 0, 128))
 
     console = Console(width=20, record=True, force_terminal=True)
@@ -101,6 +108,7 @@ def test_cover_fit_fills_entire_box_with_center_crop():
 
 
 def test_contain_stays_default():
+    """Default contain fit letterboxes a wide image below the full box height."""
     text = mosaic_from_image(PILImage.new("RGB", (400, 100), (10, 200, 60)), 10, 5)
 
     lines = text.plain.split("\n")

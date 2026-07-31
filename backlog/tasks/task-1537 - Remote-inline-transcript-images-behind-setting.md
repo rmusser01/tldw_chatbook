@@ -53,3 +53,14 @@ Also: the viewer modal needed explicit inline cell sizes -- the app-tier CSS
 bundle outranks a modal's DEFAULT_CSS and a Container's default 100% height
 collapses to zero inside the auto-sized modal (caught live, pinned by a
 region-size assertion; harness CSS does NOT reproduce bundle interference).
+
+### Settings UI (user request, 2026-07-30)
+
+The toggle is surfaced in Settings > Console Behavior > "Chat images" as an
+ADR-020-style immediate-write button (no category draft): pressing it
+persists `[chat.images] render_remote_images` via the dotted-section config
+writer AND pokes the live `app_config` raw tree in place, since the App
+captures `app_config` once at startup and the transcript gate reads it.
+Help copy states the privacy trade-off; the tooltip names the egress policy.
+Live-verified: press flips Enabled/Disabled, writes the TOML, and shows a
+confirmation toast.

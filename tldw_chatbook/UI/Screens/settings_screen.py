@@ -2804,6 +2804,47 @@ class SettingsScreen(BaseAppScreen):
     def _collapse_large_pastes_button_label(self) -> str:
         return "Enabled" if self._collapse_large_pastes_enabled() else "Disabled"
 
+    def _remote_images_enabled(self) -> bool:
+        """Return the live [chat.images].render_remote_images value."""
+        from ...Chat.console_image_view import resolve_render_remote_images
+
+        return resolve_render_remote_images(
+            getattr(self.app_instance, "app_config", {}) or {}
+        )
+
+    def _remote_images_button_label(self) -> str:
+        return "Enabled" if self._remote_images_enabled() else "Disabled"
+
+    def _toggle_remote_images(self) -> bool:
+        """Flip render_remote_images: persist it AND poke the live config.
+
+        ADR-020-style immediate write (no category draft): the toggle is a
+        single security-relevant boolean. The App captures ``app_config``
+        once at startup, so persisting alone would not take effect until
+        restart -- the raw in-memory tree the transcript gate reads is
+        updated in place too.
+
+        Returns:
+            The new (post-toggle) enabled value.
+        """
+        next_value = not self._remote_images_enabled()
+        save_settings_to_cli_config(
+            {"chat.images": {"render_remote_images": next_value}}
+        )
+        app_config = getattr(self.app_instance, "app_config", None)
+        if isinstance(app_config, dict):
+            raw = app_config.get("COMPREHENSIVE_CONFIG_RAW")
+            if isinstance(raw, dict):
+                raw.setdefault("chat", {}).setdefault("images", {})[
+                    "render_remote_images"
+                ] = next_value
+            chat_section = app_config.get("chat")
+            if isinstance(chat_section, dict) and isinstance(
+                chat_section.get("images"), dict
+            ):
+                chat_section["images"]["render_remote_images"] = next_value
+        return next_value
+
     def _paste_collapse_threshold_value(self) -> int | str:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
         if draft is not None and "paste_collapse_threshold" in draft.values:
@@ -8889,6 +8930,25 @@ class SettingsScreen(BaseAppScreen):
                 "Normal typing stays literal. The canonical message payload is preserved.",
                 id="settings-console-collapse-large-pastes-help",
             )
+            yield Static("Chat images", classes="destination-section")
+            yield Static(
+                "Render images linked in assistant replies (remote fetch).",
+                id="settings-console-remote-images-label",
+            )
+            yield Button(
+                self._remote_images_button_label(),
+                id="settings-console-remote-images-toggle",
+                tooltip=(
+                    "Fetch and render http(s) image links found in replies. "
+                    "Applies immediately; fetches go through the egress SSRF "
+                    "policy with size caps."
+                ),
+            )
+            yield Static(
+                "Off by default: fetching a model-suggested link reveals your "
+                "IP address to that host.",
+                id="settings-console-remote-images-help",
+            )
             yield Static("Parallel agent runs", classes="destination-section")
             with Horizontal(classes="settings-input-row"):
                 yield Static(
@@ -12364,6 +12424,19 @@ class SettingsScreen(BaseAppScreen):
         event.button.label = self._collapse_large_pastes_button_label()
         self._update_console_paste_summary()
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Button.Pressed, "#settings-console-remote-images-toggle")
+    def handle_console_remote_images_toggle(self, event: Button.Pressed) -> None:
+        """Flip the remote-images toggle: immediate write, no category draft."""
+        event.stop()
+        enabled = self._toggle_remote_images()
+        event.button.label = self._remote_images_button_label()
+        self.app.notify(
+            "Linked images in replies will now render."
+            if enabled
+            else "Linked images in replies will stay ignored.",
+            severity="information",
+        )
 
     @on(Input.Changed, "#settings-console-paste-collapse-threshold")
     def handle_console_paste_threshold_changed(self, event: Input.Changed) -> None:
