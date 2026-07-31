@@ -12,11 +12,11 @@ import pytest
 from rich.text import Text
 from textual.widgets import Button, Static
 
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
     StaticLibraryNotesScopeService,
-    _build_test_app,
     _visible_text,
     _wait_for_selector,
 )
@@ -400,9 +400,7 @@ async def test_library_flashcards_handoff_supports_keyboard_activation_with_sour
 async def test_study_displays_library_material_context_without_changing_service_scope() -> (
     None
 ):
-    app = TldwCli()
-    app.app_config["_first_run"] = False
-    app._initial_tab_value = "home"
+    app = _build_test_app(configured_default="home")
     study_service = DashboardStudyScopeService()
     quiz_service = DashboardQuizScopeService()
     app.study_scope_service = study_service

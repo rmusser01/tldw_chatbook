@@ -4336,6 +4336,9 @@ async def test_real_journey_settings_save_unblocks_console_without_restart(
     # Prime the sandbox template config and keep the boot fast/deterministic.
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
     assert config_module.save_setting_to_cli_config("splash_screen", "enabled", False)
+    assert config_module.save_setting_to_cli_config(
+        "first_run", "setup_completed", True
+    )
     config_module.load_settings(force_reload=True)
 
     app = _build_live_config_test_app()

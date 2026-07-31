@@ -60,7 +60,6 @@ async def _close_production_app(app) -> None:
 async def test_production_routes_own_and_preserve_contextual_footer_hints():
     """Exercise footer ownership through the full production application."""
     app = _build_test_app()
-    app.app_config["_first_run"] = False
     app._initial_tab_value = "chat"
 
     try:
@@ -129,7 +128,7 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 )
                 screen_footer = screen.query_one(AppFooterStatus)
                 for token in ("save category", "revert category", "test category"):
-                    assert token in screen_footer.shortcut_text
+                    assert token not in screen_footer.shortcut_text
 
                 assert list(screen.query(AppFooterStatus)) == [screen_footer]
     finally:

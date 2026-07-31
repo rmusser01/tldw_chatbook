@@ -73,7 +73,7 @@ def _configure_full_app_media_startup(
     app: TldwCli,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app._initial_tab_value = "media"
     real_get_cli_setting = app_module.get_cli_setting
 

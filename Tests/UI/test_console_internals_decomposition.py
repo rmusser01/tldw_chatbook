@@ -3473,7 +3473,7 @@ def test_console_provider_selection_normalizes_display_provider_key():
 @pytest.mark.asyncio
 async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_source():
     app = _build_test_app()
-    app.app_config = {"chat_defaults": {}}
+    app.app_config["chat_defaults"] = {}
     app.console_provider_ready = False
     app.pending_handoffs.stage(
         HandoffChannel.CONSOLE_LIVE_WORK,

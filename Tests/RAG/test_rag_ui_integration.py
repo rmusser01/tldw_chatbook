@@ -10,6 +10,7 @@ This tests:
 """
 
 import asyncio
+from importlib.util import find_spec
 import sys
 from pathlib import Path
 from typing import Dict, Any
@@ -23,6 +24,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from loguru import logger
 
 logger.add(sys.stderr, level="INFO")
+
+_RAG_DEPENDENCIES = ("chromadb", "sentence_transformers", "torch")
+pytestmark = pytest.mark.skipif(
+    not all(find_spec(name) is not None for name in _RAG_DEPENDENCIES),
+    reason="RAG dependencies not available",
+)
 
 
 class MockCheckbox:
@@ -126,7 +133,6 @@ class MockApp:
         logger.info(f"[{severity.upper()}] {message}")
 
 
-@pytest.mark.requires_rag_deps
 @pytest.mark.asyncio
 async def test_get_rag_context_basic():
     """Test basic get_rag_context_for_chat functionality."""
@@ -181,7 +187,6 @@ async def test_get_rag_context_basic():
     return True
 
 
-@pytest.mark.requires_rag_deps
 @pytest.mark.asyncio
 async def test_source_selection():
     """Test different source selection combinations."""
@@ -235,7 +240,6 @@ async def test_source_selection():
             logger.info(f"   No results found for sources: {', '.join(active)}")
 
 
-@pytest.mark.requires_rag_deps
 @pytest.mark.asyncio
 async def test_ui_settings_parsing():
     """Test parsing of UI settings."""
@@ -292,7 +296,6 @@ async def test_ui_settings_parsing():
             logger.error("❌ Failed to get context with test settings")
 
 
-@pytest.mark.requires_rag_deps
 @pytest.mark.asyncio
 async def test_error_handling():
     """Test error handling in UI integration."""
@@ -346,7 +349,6 @@ async def test_error_handling():
             logger.error("❌ Should handle search errors gracefully")
 
 
-@pytest.mark.requires_rag_deps
 @pytest.mark.asyncio
 async def test_context_formatting():
     """Test context formatting for chat integration."""

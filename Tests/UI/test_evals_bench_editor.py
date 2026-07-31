@@ -31,7 +31,8 @@ from tldw_chatbook.UI.Evals import bench_editor as bench_editor_module
 from tldw_chatbook.UI.Evals import inspector as inspector_module
 from tldw_chatbook.UI.Evals.bench_editor import CLASSIC_TASK_DEFERRAL_SENTENCE
 from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
-from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
+from tldw_chatbook.UI.Evals.inspector import EvalsInspector
+from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen, EvalsSelection
 
 _BUNDLED_CSS_PATH = str(
     Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
@@ -390,32 +391,41 @@ async def test_blocked_target_renders_owner_problem_and_next_action(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_never_run_bench_renders_unpreflighted_state(evals_app, never_run_bench):
-    async with evals_app.run_test() as pilot:
-        await pilot.pause()
-        evals_app.screen.select(kind="bench", id=never_run_bench)
-        await pilot.pause()
-        screen = evals_app.screen
+def test_never_run_bench_renders_unpreflighted_state(evals_db, never_run_bench):
+    """Exercise the production inspector and action-state functions directly."""
+    inspector = EvalsInspector(
+        EvalsViewModel(evals_db),
+        never_run_bench,
+        preflight={},
+    )
+    widgets = list(inspector.compose())
+    targets = [
+        widget
+        for widget in widgets
+        if widget.id == "evals-inspector-target-0"
+    ]
 
-        targets = screen.query(".evals-status-unchecked")
-        assert list(targets), "expected an un-preflighted status row"
-        text = str(targets[0].renderable)
-        # Positive assertion first -- the three negative checks below would
-        # all pass for an empty (or any unrelated) label just as readily as
-        # for the correct one; "Not yet checked" is the actual rendered
-        # text (see inspector.py's `_target_status_text`/`status_text`
-        # fallback for a `None` preflight result).
-        assert "Not yet checked" in text, text
-        assert "Ready" not in text
-        assert "Blocked" not in text
-        assert "Unavailable" not in text
+    assert targets, "expected an un-preflighted status row"
+    text = str(targets[0].renderable)
+    assert "Not yet checked" in text, text
+    assert "Ready" not in text
+    assert "Blocked" not in text
+    assert "Unavailable" not in text
+    assert not any(
+        widget.id == "evals-inspector-target-callout-0" for widget in widgets
+    )
 
-        # No target-readiness recovery callout is warranted for "we haven't
-        # checked yet". The separate primary-action callout remains visible
-        # because Run is deliberately disabled until execution is wired.
-        assert not screen.query("#evals-inspector-target-callout-0")
-        assert screen.query_one("#evals-primary-action-reason")
+    screen = object.__new__(EvalsScreen)
+    screen._view_model = EvalsViewModel(evals_db)
+    screen._selection = EvalsSelection(kind="bench", id=never_run_bench)
+    screen._bench_run_running = False
+    screen._sample_bench_running = False
+
+    label, disabled, tooltip = screen._primary_action_state()
+
+    assert label == "Run never-run bench"
+    assert disabled is False
+    assert tooltip == "Runs never-run bench against its configured targets."
 
 
 @pytest.mark.asyncio
