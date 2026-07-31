@@ -509,3 +509,64 @@ def test_noop_down_breaks_typed_run_coalescing_like_every_other_cursor_key():
     assert composer.undo() is True
     assert composer.draft_text() == ""
     assert composer.undo() is False
+
+
+# ---------------------------------------------------------------------------
+# Fix round 3 (re-review): LOW-A -- clamping to a soft-wrap-CONTIGUOUS target
+# row's own full length lands the offset on the NEXT row's column 0 (the two
+# rows share that exact source offset with no separator between them), which
+# `_row_index_for_canonical_offset` -- and the painted glyph -- both resolve
+# to the next row, not the intended target. Zero on explicit-newline drafts,
+# where a row's own separator gives "end of row" a distinct offset.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_clamp_into_a_soft_wrap_contiguous_row_stays_on_that_row_not_the_next():
+    """Reviewer's live reproduction (re-review), reproduced generically: a
+    column near the end of row 1 -- at or past the length of BOTH
+    neighboring rows -- used to make Up read as a no-op-that-still-consumes
+    (painted row unchanged, stuck at the boundary's column 0 instead of
+    ascending to row 0) and Down skip row 2 entirely and land on row 3's
+    column 0. Both directions must instead land on the LAST valid column
+    of the actual target row (length - 1), painted there, not bumped past
+    it onto the next row.
+    """
+    app, _ = _ready_host()
+    host = _CssTrueConsoleHarness(app)
+    async with host.run_test(size=APP_SIZE) as pilot:
+        text = "the quick brown fox jumps over the lazy dog by the winding river " * 3
+        composer = await _focused_composer(host, pilot, text)
+        width = composer._draft_render_width()
+        slices = ConsoleComposerBar._wrap_draft_line_slices(text, width)
+        assert len(slices) >= 4
+        row0, row1, row2, row3 = slices[:4]
+        # All soft-wrap contiguous -- this prose has no explicit `\n` at all.
+        assert row0.end == row1.start
+        assert row1.end == row2.start
+        assert row2.end == row3.start
+
+        # A column near row1's own end, at or past BOTH neighboring rows'
+        # lengths -- the shape the reviewer's live reproduction used (row1
+        # columns 51-53 of a 54-char row, flanked by two 51-char rows).
+        column = len(row1.text) - 1
+        assert column >= len(row0.text)
+        assert column >= len(row2.text)
+
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+
+        composer.position_cursor_from_display_index(row1.start + column)
+        await pilot.pause()
+        moved_up = composer.move_cursor_up()
+        await pilot.pause()
+        assert moved_up is True
+        assert _painted_caret_rowcol(visible_draft)[0] == 0
+        assert composer.cursor_index == row0.start + len(row0.text) - 1
+
+        composer.position_cursor_from_display_index(row1.start + column)
+        await pilot.pause()
+        moved_down = composer.move_cursor_down()
+        await pilot.pause()
+        assert moved_down is True
+        assert _painted_caret_rowcol(visible_draft)[0] == 2
+        assert composer.cursor_index == row2.start + len(row2.text) - 1
