@@ -159,9 +159,10 @@ class TestDatabaseInitialization(BaseTestCase):
 
 class TestCrudOperations(BaseTestCase):
     def test_add_keyword(self):
-        kw_id, kw_uuid = self.db.add_keyword("  Test Keyword 1 ")
+        # add_keyword() returns the keyword id (API changed while this file
+        # was dormant under its uncollectable tests_* name — task-1463).
+        kw_id = self.db.add_keyword("  Test Keyword 1 ")
         self.assertIsNotNone(kw_id)
-        self.assertIsNotNone(kw_uuid)
 
         # Verify it was added correctly and normalized
         kw_data = self.db.get_active_keyword_by_text("test keyword 1")
@@ -174,7 +175,7 @@ class TestCrudOperations(BaseTestCase):
         self.assertEqual(len(sync_logs), 1)
         log_entry = sync_logs[0]
         self.assertEqual(log_entry["entity"], "PromptKeywordsTable")
-        self.assertEqual(log_entry["entity_uuid"], kw_uuid)
+        self.assertEqual(log_entry["entity_uuid"], kw_data["uuid"])
         self.assertEqual(log_entry["operation"], "create")
         self.assertEqual(log_entry["version"], 1)
 
@@ -187,10 +188,9 @@ class TestCrudOperations(BaseTestCase):
         self.assertEqual(res["rowid"], kw_id)
 
     def test_add_existing_keyword(self):
-        kw_id1, kw_uuid1 = self.db.add_keyword("duplicate")
-        kw_id2, kw_uuid2 = self.db.add_keyword("duplicate")
+        kw_id1 = self.db.add_keyword("duplicate")
+        kw_id2 = self.db.add_keyword("duplicate")
         self.assertEqual(kw_id1, kw_id2)
-        self.assertEqual(kw_uuid1, kw_uuid2)
         sync_logs = self.db.get_sync_log_entries()
         self.assertEqual(len(sync_logs), 1)  # Should only log the creation once
 
@@ -288,7 +288,7 @@ class TestCrudOperations(BaseTestCase):
         self.assertIn(puuid, unlink_log["entity_uuid"])
 
     def test_soft_delete_keyword(self):
-        kw_id, kw_uuid = self.db.add_keyword("ephemeral")
+        kw_id = self.db.add_keyword("ephemeral")
         self.db.add_prompt(
             "Test Prompt", "Author", "Some details", keywords=["ephemeral"]
         )
@@ -662,9 +662,20 @@ class TestAdvancedBehaviorsAndEdgeCases(BaseTestCase):
         self.assertIsNotNone(conn1)
         conn1.close()
 
+        # task-261 gates the liveness ping behind a 30s idle window: a
+        # recently-used thread-local connection is returned without a ping, so
+        # closing the RAW connection out from under the pool is only detected
+        # once the connection is idle. Simulate idleness so the ping+reopen
+        # path (this test's actual subject) runs.
+        import time as _time
+
+        file_db._local.conn_last_used = (
+            _time.monotonic() - file_db._LIVENESS_PING_IDLE_SECONDS - 1
+        )
+
         conn2 = file_db.get_connection()
         self.assertIsNotNone(conn2)
-        self.assertNotEqual(id(conn1), id(conn2))
+        self.assertIsNot(conn1, conn2)
 
         file_db.add_keyword("test_after_reopen")
         self.assertIsNotNone(file_db.get_active_keyword_by_text("test_after_reopen"))
@@ -678,7 +689,7 @@ class TestAdvancedBehaviorsAndEdgeCases(BaseTestCase):
         )
 
         # Now, add it again
-        kw_id, kw_uuid = self.db.add_keyword("to be deleted and restored")
+        kw_id = self.db.add_keyword("to be deleted and restored")
 
         # Verify it's active again
         restored_kw = self.db.get_active_keyword_by_text("to be deleted and restored")
