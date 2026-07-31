@@ -4073,13 +4073,18 @@ Button.settings-category-button.settings-secondary-search-match {
     min-height: 1;
     margin: 0;
     padding: 0 1;
+    /* task-1586 control convention: the one-column left edge marks "this
+       row is editable" at rest; full borders stay off because they cost
+       a row above and below on these one-row fields. */
     border: none;
+    border-left: solid $ds-control-edge;
     background: $ds-surface-inspector;
     color: $ds-text-primary;
 }
 
 .settings-compact-input:focus {
     border: none;
+    border-left: thick $ds-action-focus;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
     /* No underline: it made placeholder copy read as a link (task-185). */

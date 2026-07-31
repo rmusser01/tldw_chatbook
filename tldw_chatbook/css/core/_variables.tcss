@@ -24,8 +24,18 @@ $ds-focus-fg: $ds-text-primary;
 $ds-focus-bg: #51677e;
 $ds-focus-accent: $primary;
 $ds-input-focus-border: $primary;
-$ds-input-focus-bg: $ds-surface-raised;
+/* task-1586: this token still aliased $ds-surface-raised (= $surface),
+   re-creating the exact nullified-focus failure the comment above
+   documents — settings fields' focus bg swap was a no-op. Point it at
+   the corrected focus surface. */
+$ds-input-focus-bg: $ds-focus-bg;
 $ds-input-focus-accent: $primary;
+/* task-1586 control convention: editable fields carry a one-column left
+   edge at rest — presence of the edge (a structural marker), not its
+   color, distinguishes controls from prose. Muted at rest (cozy), the
+   edge flips to thick $ds-action-focus on focus. Left borders cost a
+   column, never a row, so dense one-row forms keep their height. */
+$ds-control-edge: $surface-lighten-2;
 $ds-status-ready: $success;
 $ds-status-running: $primary;
 $ds-status-info: $accent;

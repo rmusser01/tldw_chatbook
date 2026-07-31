@@ -209,6 +209,26 @@ This system does not use shadow elevation as a primary depth cue. Depth is conve
 - **Focus:** border or outline shifts to `$accent`; background may use `$accent 10%` for focus visibility.
 - **Error / Disabled:** errors use `$error` border plus `$error 10%` background. Disabled controls use lowered opacity, `$surface-darken-1`, and `$text-disabled`.
 
+### Dense-form control convention (one-row fields)
+
+Dense workbench forms (Settings and its widgets) cannot afford full
+borders: a Textual border costs a row above and below, tripling a
+one-row field. The convention for those fields (task-1586):
+
+- **Rest:** every editable field carries a one-column left edge
+  (`border-left: solid $ds-control-edge`). The edge's *presence* is the
+  carrier — a structural marker separating controls from prose — so
+  color is reinforcement, never the sole signal. Muted at rest.
+- **Focus:** the edge flips to `thick $ds-action-focus` and the
+  background swaps to `$ds-focus-bg` (the task-345 focus surface) with
+  bold text. Three concurrent signals: edge weight, background, weight.
+- **Toggles and switches:** always paired with a text-state word
+  ("On"/"Off", "Enabled"/"Disabled") — the word is the state.
+- **Inert actions:** disabled buttons carry a text annotation for *why*
+  ("— no changes"), never dimming alone.
+- **No underline on fields:** underlined placeholders read as links
+  (task-185).
+
 ### Navigation
 
 - **Style:** top navigation and tab links are compact, theme-aware, and text-labeled. Home and Console remain reachable at supported widths.
