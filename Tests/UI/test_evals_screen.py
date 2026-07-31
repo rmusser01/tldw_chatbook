@@ -24,6 +24,7 @@ from tldw_chatbook.Evals.word_bench.models import (
 )
 from tldw_chatbook.Evals.word_bench.storage import create_run_group, save_bench
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
+from tldw_chatbook.UI.Evals.library_rail import LibraryRail
 from tldw_chatbook.UI.Evals.snippet_editor import import_snippets_into_dataset
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 
@@ -1232,3 +1233,106 @@ async def test_blocked_primary_action_badge_and_callout_paint_inside_the_inspect
         release.set()
         await _wait_until(pilot, lambda: not screen._bench_run_running)
         await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_pressing_the_primary_action_while_a_sample_bench_run_is_in_flight_is_a_no_op(
+    evals_app, runnable_bench
+):
+    """PR #1113 review (Qodo, seconding whole-branch review Note 6): the
+    two workers were only guarded against THEMSELVES --
+    ``_on_sample_bench_requested`` checked only ``_sample_bench_running``,
+    ``_on_primary_action_pressed`` checked only ``_bench_run_running`` --
+    so a press of one while the OTHER was in flight started two genuinely
+    overlapping workers (separate ``exclusive`` groups, so neither
+    cancelled the other), producing interleaved toasts and a last-wins
+    completion ``select()``. The recompose-time UI already disables BOTH
+    controls while EITHER flag is set (whole-branch review Finding 1), so
+    this posts ``Button.Pressed`` directly against
+    ``#evals-primary-action`` -- simulating whatever might reach the
+    handler despite that disabled state (a stale render, a race), exactly
+    like the existing same-flag "second press" tests already do -- rather
+    than relying on the disabled attribute alone to prove the handler
+    itself now cross-checks.
+    """
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-create-sample-bench")
+        await _wait_until(pilot, lambda: screen._sample_bench_running)
+        await pilot.pause()
+        # WordBenchRunner.run() creates its run group (status "running")
+        # BEFORE capturing a single cell -- see runner.py, right after
+        # `create_run_group` -- so one already exists here, from the
+        # sample-bench worker itself.
+        assert len(screen._view_model.run_groups()) == 1
+
+        button = screen.query_one("#evals-primary-action", Button)
+        screen.post_message(Button.Pressed(button))
+        await pilot.pause()
+
+        # The assertions that discriminate: dropping the cross-guard (while
+        # keeping each flag's own-worker guard) would leave both of these
+        # true -- a SECOND, overlapping worker genuinely started.
+        assert screen._bench_run_running is False
+        assert screen._bench_run_task_id is None
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._sample_bench_running)
+        await pilot.pause()
+
+        # Only the sample-bench worker's own run group exists -- never a
+        # second one from a bench-run worker that should never have
+        # started.
+        assert len(screen._view_model.run_groups()) == 1
+
+
+@pytest.mark.asyncio
+async def test_sample_bench_request_while_a_bench_run_is_in_flight_is_a_no_op(
+    evals_app, runnable_bench
+):
+    """Mirror of the test above: a bench run started from the primary
+    action, then a directly-posted ``SampleBenchRequested`` (mirroring
+    ``test_a_second_click_while_running_does_not_start_a_second_run``'s own
+    technique in ``test_evals_empty_states.py``) must not start an
+    overlapping sample-bench worker."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        await pilot.pause()
+        assert len(screen._view_model.benches()) == 1
+
+        screen.post_message(LibraryRail.SampleBenchRequested())
+        await pilot.pause()
+
+        # Discriminates: dropping the cross-guard would leave this True --
+        # a second, overlapping sample-bench worker genuinely started (and
+        # would go on to mint its own "loaded-nouns" bench).
+        assert screen._sample_bench_running is False
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+        # Only the pre-existing `runnable_bench` -- never a second,
+        # sample-bench-minted one.
+        assert len(screen._view_model.benches()) == 1
+        assert len(screen._view_model.run_groups()) == 1

@@ -236,6 +236,22 @@ class EvalsScreen(LabScreen):
         ``sample_bench._mark_orphaned_runs_cancelled`` for the cleanup that
         path needs).
 
+        A THIRD check, ``_bench_run_running``, closes a different race: PR
+        #1113 review (Qodo, seconding whole-branch review Note 6) found the
+        sample-bench worker and the bench-run worker (``_run_bench_worker``,
+        started from ``_on_primary_action_pressed``) were only ever guarded
+        against THEMSELVES -- each lived in its own ``exclusive`` group, so
+        neither worker's ``exclusive=True`` cancelled the other, and a press
+        of one while the other was genuinely in flight started two REAL,
+        overlapping runs (interleaved toasts, last-wins completion
+        ``select()``). The recompose-time UI already disables both controls
+        while EITHER flag is set (see ``_primary_action_state``'s and
+        ``LibraryRail.sample_bench_running``'s own in-flight branches), but
+        that alone does not stop a stale-render/queued-press race from
+        reaching this handler -- this cross-check is the same belt this
+        function's OTHER two guards already provide for the same-worker
+        case, just against the other worker.
+
         The worker is handed as a CALLABLE, not a pre-built coroutine:
         ``exclusive=True`` cancels the superseded worker's Task before its
         first step, and a coroutine object constructed at the call site is
@@ -245,7 +261,7 @@ class EvalsScreen(LabScreen):
         orphan coroutine is created.
         """
         event.stop()
-        if self._sample_bench_running:
+        if self._sample_bench_running or self._bench_run_running:
             return
         self.run_worker(
             self._create_sample_bench_worker,
@@ -371,9 +387,11 @@ class EvalsScreen(LabScreen):
     def _on_primary_action_pressed(self, event: Button.Pressed) -> None:
         """Runs the selected bench (see ``sample_bench.run_existing_bench``).
 
-        Mirrors ``_on_sample_bench_requested``'s double-guard rationale
-        exactly. If two presses are already queued before either dispatches,
-        both see ``_bench_run_running`` as ``False`` and both reach
+        Mirrors ``_on_sample_bench_requested``'s guard rationale exactly --
+        see that method's own docstring for the full three-part
+        explanation, repeated here only in brief. If two presses are
+        already queued before either dispatches, both see
+        ``_bench_run_running`` as ``False`` and both reach
         ``run_worker(exclusive=True, ...)``; it is ``exclusive=True`` that
         protects there, cancelling the second worker's Task before it takes
         its first step, so only one worker body (and one flag-set) ever
@@ -383,7 +401,12 @@ class EvalsScreen(LabScreen):
         the same ``exclusive`` group after it has done real work,
         abandoning its in-flight DB rows (see
         ``sample_bench._mark_orphaned_runs_cancelled`` for the cleanup that
-        path needs).
+        path needs). A THIRD check, ``_sample_bench_running``, closes the
+        cross-worker race PR #1113 review found: this button and
+        ``#evals-create-sample-bench`` live in separate ``exclusive``
+        groups, so without this cross-check a press here while the SAMPLE
+        bench worker is in flight would start a second, genuinely
+        overlapping run.
 
         The selected bench id is resolved and stored on the instance HERE,
         not re-read from ``self._selection`` inside the worker -- selection
@@ -392,7 +415,7 @@ class EvalsScreen(LabScreen):
         against.
         """
         event.stop()
-        if self._bench_run_running:
+        if self._bench_run_running or self._sample_bench_running:
             return
         selection = self._selection
         if selection.kind != "bench" or not selection.id:
