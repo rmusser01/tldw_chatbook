@@ -2303,6 +2303,9 @@ class LibraryFileNotesWorkspace(Vertical):
     ) -> bool:
         return (
             not self._active
+            or not self.is_mounted
+            or not self.query("#file-notes-root-status")
+            or not self.query("#file-notes-editor")
             or generation != self._root_generation
             or service is not self._service
         )
@@ -2521,13 +2524,8 @@ class LibraryFileNotesWorkspace(Vertical):
             except Exception as error:
                 self._set_action_status(f"Refresh failed: {error}")
                 return False
-            if (
-                not self._active
-                or not self.is_mounted
-                or not self.children
-                or self._path_transitioning
-                or generation != self._root_generation
-                or service is not self._service
+            if self._path_result_is_stale(service, generation) or (
+                not self.children or self._path_transitioning
             ):
                 return False
             if not self._apply_reconcile(result, deleted):

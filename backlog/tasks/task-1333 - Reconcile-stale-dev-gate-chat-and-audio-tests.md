@@ -134,6 +134,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #104 Focused Study scope-load regressions await the current deferred initial-load seam instead of the now-synchronous `on_mount`, while preserving scope precedence, validation, controller reset, initialization ordering, and runtime-backend recomputation coverage.
 - [ ] #105 File Notes repository-trust retries wait for each exact Cancel or Confirm control to mount before pressing it, while preserving decline/retry, identity-revalidation, fresh-status, and disabled-mutation coverage.
 - [ ] #106 The MCP profile-form cancellation regression waits boundedly for the newly recomposed Cancel control to render before clicking it, while preserving form dismissal, overview restoration, and zero-save coverage.
+- [ ] #107 A File Notes poll that completes while the workspace subtree is being detached exits without raising `NoMatches`, while normal polling still reconciles entries and retains the editor.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -245,6 +246,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 98. Retarget direct Study scope-load tests from the intentionally synchronous mount hook to its deferred initial-load seam.
 99. Require the exact Session Git trust-dialog action control before each direct test press.
 100. Wait for the MCP profile-form Cancel control to render before its coordinate click.
-101. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-102. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+101. Stop a completed File Notes poll before it projects results into a partially detached workspace subtree.
+102. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+103. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

@@ -2015,6 +2015,53 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
 
 
 @pytest.mark.asyncio
+async def test_poll_completion_ignores_partially_detached_surface(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "open.md").write_text("first", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace scan did not finish",
+        )
+        service = workspace._service
+        assert service is not None
+        delayed_reconcile, reconcile_started, release_reconcile = _delayed_call(
+            service.reconcile
+        )
+        monkeypatch.setattr(service, "reconcile", delayed_reconcile)
+        refresh = asyncio.create_task(workspace.refresh_files())
+        await _wait_until(
+            pilot,
+            reconcile_started.is_set,
+            "workspace refresh did not start",
+        )
+        (root / "created.md").write_text("new", encoding="utf-8")
+        try:
+            await workspace.query_one("#file-notes-root-row").remove()
+        finally:
+            release_reconcile.set()
+
+        assert not await refresh
+        assert set(workspace.entries) == {"open.md"}
+        assert "created.md" not in _tree_labels(
+            workspace.query_one("#file-notes-tree", Tree)
+        )
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_library_database_files_switch_retains_workspace_and_database_canvas(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

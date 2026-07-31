@@ -1002,6 +1002,11 @@ Update the tests to describe current behavior:
      have a nonzero rendered region before the coordinate click. Keep form
      dismissal, overview restoration, and zero-save assertions unchanged; do
      not change production recomposition or add a shared test abstraction.
+105. Treat a missing retained File Notes surface during poll-result projection
+     as lifecycle detachment and return before updating retained model or widget
+     state. Keep the reconciled service behavior, retained editor identity, and
+     normal poll outcomes unchanged; do not add sleeps or swallow projection
+     exceptions.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1396,6 +1401,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   wait for the exact control and rendered geometry required by `Pilot.click`
   states the cancellation test's real readiness boundary without introducing a
   module-wide helper for one failing journey.
+- Delaying harness shutdown or widening the poll interval would only reduce the
+  chance of the File Notes race. Textual can detach descendants before the
+  parent receives `on_unmount`, so a completed background poll must recheck its
+  retained root-status and editor surfaces after I/O and before stateful
+  projection.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

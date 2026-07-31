@@ -4161,6 +4161,57 @@ module passed 196/196. `git diff --check` passes. Ruff reports the same four
 inherited lint errors and whole-file format drift; the bounded Cancel wait is
 absent from the format diff and introduces no lint finding.
 
+### Task 4cw: Stop File Notes poll projection after subtree detachment
+
+**Files:**
+- Modify: `tldw_chatbook/Widgets/Library/library_file_notes_workspace.py`
+- Modify: `Tests/UI/test_library_file_notes_workspace.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This closes a Textual worker lifecycle race inside the existing
+File Notes widget boundary; it does not change storage, service, or ownership
+architecture.
+
+- [x] **Step 1: Identify the partial-detachment worker race**
+
+Full-gate attempt 40 fails after 17,719 passes when a periodic File Notes poll
+finishes during harness shutdown. The workspace still reports mounted children
+before its own `on_unmount`, but `#file-notes-root-status` has already detached,
+so result projection raises `NoMatches` and the worker fails. The focused test
+passes alone, confirming an interleaving-dependent lifecycle race rather than a
+functional reconciliation failure.
+
+- [x] **Step 2: Add a deterministic failing lifecycle regression**
+
+Block the real service reconcile call after refresh starts, detach the retained
+root-status row, release reconciliation, and require a clean `False` result
+without installing the newly reconciled entry into retained model or tree
+state. Keep the existing normal poll assertions that prove create/modify/delete
+reconciliation and retained editor identity.
+
+- [x] **Step 3: Recheck retained surfaces before stateful projection**
+
+Extend the existing async-result stale check to require the retained root-status
+and editor surfaces, then use it after reconciliation and before projection.
+Do not catch projection errors, add delays, or change the poll interval.
+
+- [x] **Step 4: Verify File Notes polling and workspace coverage**
+
+Run the deterministic regression and the original failing journey repeatedly,
+the complete File Notes workspace module, Ruff/format, and `git diff --check`.
+
+The controlled-interleaving regression and original failing journey passed
+three independent repetitions (6/6), and the complete File Notes workspace
+module passed 28/28. Ruff lint and `git diff --check` pass. Ruff format reports
+inherited whole-file drift in the two edited Python files; neither changed block
+appears in its diff. Independent review approved the post-I/O liveness guard
+and state-coherence coverage with no remaining findings.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
