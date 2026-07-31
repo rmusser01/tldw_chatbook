@@ -29,6 +29,7 @@ from tldw_chatbook.TTS.profile_errors import (
 )
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_service import (
+    LoadedCharacterTTSAssignment,
     LoadedTTSProfile,
     ProfileAvailabilityState,
     TTSPlaygroundSelectionPreset,
@@ -63,6 +64,7 @@ __all__ = [
     "CapabilitySnapshotState",
     "CharacterRef",
     "CharacterTTSAssignment",
+    "LoadedCharacterTTSAssignment",
     "LoadedTTSProfile",
     "NormalizationOptions",
     "OpenAISpeechRequest",

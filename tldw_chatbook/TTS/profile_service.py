@@ -29,6 +29,7 @@ from tldw_chatbook.TTS.profile_errors import (
 from tldw_chatbook.TTS.profile_types import (
     AUDIO_CPP_PROFILE_RESPONSE_FORMAT,
     AUDIO_CPP_PROFILE_SPEED,
+    AssignedTTSProfileSnapshot,
     CharacterRef,
     CharacterTTSAssignment,
     ProfileStoreResult,
@@ -48,6 +49,9 @@ _PROFILE_PROVIDER_ID = "audio_cpp"
 _PROFILE_PAGE_LIMIT = 50
 _CHARACTER_REF_TYPE: type[CharacterRef] = CharacterRef
 _CHARACTER_TTS_ASSIGNMENT_TYPE: type[CharacterTTSAssignment] = CharacterTTSAssignment
+_ASSIGNED_TTS_PROFILE_SNAPSHOT_TYPE: type[AssignedTTSProfileSnapshot] = (
+    AssignedTTSProfileSnapshot
+)
 _TTS_GENERATION_PROFILE_TYPE: type[TTSGenerationProfile] = TTSGenerationProfile
 _TTS_NATIVE_CAPABILITY_SNAPSHOT_TYPE: type[TTSNativeCapabilitySnapshot] = (
     TTSNativeCapabilitySnapshot
@@ -123,6 +127,11 @@ class _ProfileRepositoryProtocol(Protocol):
         expected_generation: int,
         expected_profile_id: UUID,
     ) -> ProfileStoreResult[None]: ...
+
+    async def get_assigned_profile(
+        self,
+        character_ref: CharacterRef,
+    ) -> ProfileStoreResult[AssignedTTSProfileSnapshot | None]: ...
 
 
 @runtime_checkable
@@ -351,6 +360,28 @@ def _canonicalize_exact_profile(value: object) -> TTSGenerationProfile:
         failed = True
     if failed or not valid or canonical is None:
         raise ProfileValidationError("profiles")
+    return canonical
+
+
+def _canonicalize_exact_assigned_profile(
+    value: object,
+) -> AssignedTTSProfileSnapshot:
+    """Return a fresh exact joined assignment/profile value or fail closed."""
+
+    if type(value) is not _ASSIGNED_TTS_PROFILE_SNAPSHOT_TYPE:
+        raise ProfileValidationError("assignment")
+    snapshot = cast(AssignedTTSProfileSnapshot, value)
+    canonical: AssignedTTSProfileSnapshot | None = None
+    failed = False
+    try:
+        canonical = AssignedTTSProfileSnapshot(
+            assignment=_canonicalize_exact_assignment(snapshot.assignment),
+            profile=_canonicalize_exact_profile(snapshot.profile),
+        )
+    except Exception:  # noqa: BLE001 - hostile joined values fail closed
+        failed = True
+    if failed or canonical is None:
+        raise ProfileValidationError("assignment")
     return canonical
 
 
@@ -613,6 +644,25 @@ class LoadedTTSProfile:
 
 
 @dataclass(frozen=True, slots=True)
+class LoadedCharacterTTSAssignment:
+    """One exact joined assignment read paired with its store generation."""
+
+    repository_generation: int
+    snapshot: AssignedTTSProfileSnapshot | None
+
+    def __post_init__(self) -> None:
+        generation = _validate_nonnegative_integer(
+            self.repository_generation,
+            "generation",
+        )
+        snapshot = self.snapshot
+        if snapshot is not None:
+            snapshot = _canonicalize_exact_assigned_profile(snapshot)
+        object.__setattr__(self, "repository_generation", generation)
+        object.__setattr__(self, "snapshot", snapshot)
+
+
+@dataclass(frozen=True, slots=True)
 class TTSProfileAvailability:
     """The current bounded availability state for one exact profile UUID."""
 
@@ -739,6 +789,58 @@ class TTSProfileService:
             raise ProfileServiceError("operation_failed")
         self._require_repository_generation(generation)
         return snapshot
+
+    async def get_assigned_profile(
+        self,
+        character_ref: CharacterRef,
+    ) -> LoadedCharacterTTSAssignment:
+        """Read one exact character assignment and immutable profile revision.
+
+        Args:
+            character_ref: Exact source, authority, and character identity.
+
+        Returns:
+            The joined assignment/profile snapshot, or unassigned state, paired
+            with the repository generation that produced it.
+
+        Raises:
+            ProfileValidationError: If the character reference is noncanonical.
+            ProfileRepositoryError: If repository state changes or the read
+                fails with a bounded repository error.
+            ProfileServiceError: If the repository returns malformed state or
+                an unexpected collaborator failure occurs.
+        """
+
+        canonical_ref = _canonicalize_exact_character_ref(character_ref)
+        failed = False
+        result = None
+        try:
+            result = await self._repository.get_assigned_profile(canonical_ref)
+        except (ProfileRepositoryError, ProfileValidationError):
+            raise
+        except Exception:  # noqa: BLE001 - hide unexpected repository detail
+            failed = True
+        if failed or result is None:
+            raise ProfileServiceError("operation_failed")
+
+        generation, value = self._extract_store_result(result)
+        self._require_repository_generation(generation)
+        snapshot: AssignedTTSProfileSnapshot | None = None
+        validation_failed = False
+        try:
+            if value is not None:
+                snapshot = _canonicalize_exact_assigned_profile(value)
+                if snapshot.assignment.character_ref != canonical_ref:
+                    raise ValueError
+        except Exception:  # noqa: BLE001 - hostile joined values fail closed
+            validation_failed = True
+        if validation_failed:
+            raise ProfileServiceError("operation_failed")
+        self._require_repository_generation(generation)
+        return LoadedCharacterTTSAssignment(
+            repository_generation=generation,
+            snapshot=snapshot,
+        )
 
     async def observe_availability(
         self,
