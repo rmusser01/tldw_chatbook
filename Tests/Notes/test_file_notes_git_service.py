@@ -55,6 +55,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     HeadIdentity,
     IndexBaseline,
     IndexEntry,
+    PushIncludedNote,
     RepositoryIdentity,
     SequencedSessionChange,
     SessionBinding,
@@ -5045,13 +5046,16 @@ def _commit_lifecycle_service(
     owner_snapshot = owner.snapshot(binding)
     admission = owner.admit_mutation(binding)
     assert admission.lease is not None
-    capture = owner.capture_commit_authority(
+    capture = owner._capture_commit_authority_after_review(
         admission.lease,
         binding=binding,
         authority_generation=owner_snapshot.git_authority_generation,
         repository=repository,
         head=head,
         group_sequence_ids={1: (1,)},
+        subject="Guarded commit",
+        included_notes=(PushIncludedNote(1, "note.md"),),
+        change_types=("Modified",),
     )
     admission.lease.release()
     assert capture is not None
@@ -5075,6 +5079,7 @@ def _commit_lifecycle_service(
         message=b"Guarded commit\n",
         author=GitIdentity("Author", "author@example.test"),
         committer=GitIdentity("Committer", "committer@example.test"),
+        candidate_seed=capture._candidate_seed,
     )
     return owner, binding, service, handle
 
@@ -5099,14 +5104,10 @@ def _install_commit_lifecycle_stubs(
             revalidation_started.set()
         if release_revalidation is not None:
             await release_revalidation.wait()
-        current = owner.snapshot(binding)
-        capture = owner.capture_commit_authority(
+        assert requested_binding == binding
+        capture = owner._recapture_commit_authority(
             lease,
-            binding=requested_binding,
-            authority_generation=current.git_authority_generation,
-            repository=snapshot.capture.repository,
-            head=snapshot.capture.head,
-            group_sequence_ids=snapshot.capture.group_sequence_ids,
+            prior_capture=snapshot.capture,
         )
         assert capture is not None
         return git_service._CommitConfirmation(capture)
