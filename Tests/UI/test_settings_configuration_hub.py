@@ -2737,7 +2737,8 @@ async def test_settings_active_category_uses_explicit_nav_marker():
         inactive = screen.query_one("#settings-category-diagnostics")
 
         assert str(active.label) == "> Advanced Config"
-        assert str(inactive.label) == "  Diagnostics"
+        # task-1563: view-only categories carry a "(view)" badge in the rail.
+        assert str(inactive.label) == "  Diagnostics (view)"
         assert active.has_class("settings-active-section")
 
 
@@ -6505,9 +6506,9 @@ async def test_settings_storage_privacy_diagnostics_label_unsupported_mutations_
         for button_id, expected in (
             (
                 "#settings-category-privacy-security",
-                "Credential mutation: unavailable/WIP",
+                "Credential mutation: not available yet",
             ),
-            ("#settings-category-diagnostics", "Diagnostics writes: unavailable/WIP"),
+            ("#settings-category-diagnostics", "Diagnostics writes: not available yet"),
         ):
             # Scroll the target into view before clicking: the category
             # rail is taller than the fixed pilot viewport, and Settings >
@@ -6559,7 +6560,7 @@ async def test_settings_privacy_security_renders_guided_redacted_posture(monkeyp
         assert "Provider config secrets: 1 present" in text
         assert "Preferred source: environment variables" in text
         assert (
-            "Credential mutation: unavailable/WIP - password-gated flow required"
+            "Credential mutation: not available yet - password-gated flow required"
             in text
         )
         assert "Open Providers & Models" in text
@@ -7539,4 +7540,48 @@ def test_remote_images_toggle_persists_and_pokes_live_config(monkeypatch):
             "render_remote_images"
         ]
         is True
+    )
+
+
+# ---- task-1564: footer bindings match reality ----
+
+
+def test_footer_entries_drop_test_hint_where_no_test_action_exists():
+    """Categories without a test action must not advertise "t test category"
+    (the static footer used to over-promise; Image Gen answers the key with
+    a "No test action" toast)."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.ARTIFACTS.value
+
+    entries = screen._footer_shortcut_entries()
+
+    keys = [key for key, _ in entries]
+    assert "s" in keys and "r" in keys
+    assert "t" not in keys
+
+
+def test_footer_entries_advertise_test_where_it_acts():
+    """Categories with a real test action keep the t hint."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.PROVIDERS_MODELS.value
+
+    entries = screen._footer_shortcut_entries()
+
+    assert ("t", "test category") in entries
+
+
+def test_filter_matches_owned_config_keys():
+    """The "/" filter indexes each category's owned TOML keys: searching a
+    setting name surfaces the category that owns it (task-1564 -- the
+    Owns: data existed but was unsearchable, forcing a 22-category scan)."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    matches = screen._filtered_category_summaries("paste_collapse_threshold")
+
+    assert any(
+        summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR
+        for summary in matches
     )

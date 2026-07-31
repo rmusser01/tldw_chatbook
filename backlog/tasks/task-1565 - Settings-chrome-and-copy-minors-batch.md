@@ -1,7 +1,7 @@
 ---
 id: TASK-1565
 title: 'Settings: chrome and copy minors batch'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-31 02:00'
 labels: [settings, ux, P3]
@@ -25,7 +25,27 @@ Grouped P3 findings from the 2026-07-31 critique, each small but shipped:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each listed item fixed or explicitly declined with a reason in notes.
-- [ ] #2 No footer chrome renders dangling separators.
-- [ ] #3 Category names are referenced identically everywhere they appear.
+- [x] #1 Each listed item fixed or explicitly declined with a reason in notes.
+- [x] #2 No footer chrome renders dangling separators.
+- [x] #3 Category names are referenced identically everywhere they appear.
 <!-- AC:END -->
+
+## Implementation Notes
+
+Fixed: idle footer token placeholder "Tokens: -- |" -> "Tokens: --" (live
+format never had the pipe); breadcrumb + docstring drop the nonexistent
+"accounts"; rail auto-scrolls the selected category into view
+(`scroll_visible` after refresh); splash "Duration (s)" / "Animation speed
+(x)" units; RAG read-only guidance comma cadence ("Clone it, then press Set
+active to edit the clone."); Advanced Config guided chips renamed to match
+the sidebar exactly ("Providers & Models", "Console Behavior", "Privacy &
+Security"); duplicate filter-help line removed (the live status line
+carries the same guidance); user-facing "WIP" phrasing replaced
+("read-only here", "not available yet", "Read-only" label) with pinned
+tests updated.
+
+Declined with reasons: splash gallery casing/raw ids (display names are the
+cards' own metadata; normalizing would misrepresent card identity);
+RAG description-flyout overlap and the red Delete on a read-only built-in
+profile (both need RAG-pane layout/state work better scoped with task-1345's
+RAG follow-ups than this chrome batch).

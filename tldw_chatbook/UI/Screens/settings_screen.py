@@ -380,10 +380,12 @@ CONSOLE_BEHAVIOR_SAVE_ORDER = (
     *CONSOLE_BACKGROUND_EFFECT_SAVE_ORDER,
 )
 ADVANCED_CONFIG_GUIDED_PATHS = (
-    (SettingsCategoryId.PROVIDERS_MODELS, "Providers"),
-    (SettingsCategoryId.CONSOLE_BEHAVIOR, "Console"),
+    # task-1565: labels mirror the sidebar's category names exactly so the
+    # guided chips and the rail never disagree about what a place is called.
+    (SettingsCategoryId.PROVIDERS_MODELS, "Providers & Models"),
+    (SettingsCategoryId.CONSOLE_BEHAVIOR, "Console Behavior"),
     (SettingsCategoryId.STORAGE, "Storage"),
-    (SettingsCategoryId.PRIVACY_SECURITY, "Privacy"),
+    (SettingsCategoryId.PRIVACY_SECURITY, "Privacy & Security"),
     (SettingsCategoryId.DIAGNOSTICS, "Diagnostics"),
 )
 ADVANCED_CONFIG_GUIDED_PATH_BUTTONS = {
@@ -537,7 +539,7 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
                 "show defaults/status only; do not move artifact operations here",
             ),
         ),
-        follow_up="Follow-up: add artifact export/default controls only after Artifacts exposes a persisted preference contract.",
+        follow_up="add artifact export/default controls only after Artifacts exposes a persisted preference contract.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.PERSONAS,
@@ -577,7 +579,7 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
                 "future defaults can cover trust/display preferences only",
             ),
         ),
-        follow_up="Follow-up: add Skills defaults after import/attach policy has a persisted source contract.",
+        follow_up="add Skills defaults after import/attach policy has a persisted source contract.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.SCHEDULES,
@@ -594,7 +596,7 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
                 "future defaults may cover timezone/notification preferences only",
             ),
         ),
-        follow_up="Follow-up: add schedule defaults after Schedules exposes a dedicated settings adapter.",
+        follow_up="add schedule defaults after Schedules exposes a dedicated settings adapter.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.WATCHLISTS,
@@ -608,7 +610,7 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
                 "future defaults may cover polling and notification preferences only",
             ),
         ),
-        follow_up="Follow-up: add watchlist defaults after Watchlists exposes persisted polling/notification settings.",
+        follow_up="add watchlist defaults after Watchlists exposes persisted polling/notification settings.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.WORKFLOWS,
@@ -628,7 +630,7 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
                 "future defaults may cover execution safety preferences only",
             ),
         ),
-        follow_up="Follow-up: add workflow defaults after Workflows exposes a persisted execution-safety contract.",
+        follow_up="add workflow defaults after Workflows exposes a persisted execution-safety contract.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.MCP_DEFAULTS,
@@ -645,7 +647,7 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
                 "show global defaults/status only; server operations stay in MCP",
             ),
         ),
-        follow_up="Follow-up: add MCP defaults only after server-first settings are exposed without flattening tools into Settings.",
+        follow_up="add MCP defaults only after server-first settings are exposed without flattening tools into Settings.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.ACP_DEFAULTS,
@@ -662,7 +664,7 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
             ),
             ("Settings role", "show defaults/status only; ACP setup stays in ACP"),
         ),
-        follow_up="Follow-up: add ACP defaults after ACP exposes a persisted runtime/session preference contract.",
+        follow_up="add ACP defaults after ACP exposes a persisted runtime/session preference contract.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.IMAGE_GENERATION,
@@ -1439,7 +1441,7 @@ class RagProfileSwitchConfirmModal(ModalScreen[str]):
 
 
 class SettingsScreen(BaseAppScreen):
-    """Global preferences, appearance, accounts, storage, and app behavior."""
+    """Global preferences, appearance, storage, and app behavior."""
 
     BINDINGS = [
         ("s", "settings_save_category", "Save Settings category"),
@@ -1463,6 +1465,20 @@ class SettingsScreen(BaseAppScreen):
         ("s", "save category"),
         ("r", "revert category"),
         ("t", "test category"),
+    )
+
+    #: task-1564: categories whose `t` binding performs a real test action --
+    #: everywhere else action_settings_test_category answers with the "No
+    #: test action is available" toast, so the footer must not advertise it.
+    TESTABLE_SETTINGS_CATEGORIES = frozenset(
+        {
+            SettingsCategoryId.PROVIDERS_MODELS,
+            SettingsCategoryId.DIAGNOSTICS,
+            SettingsCategoryId.STORAGE,
+            SettingsCategoryId.PRIVACY_SECURITY,
+            SettingsCategoryId.APPEARANCE,
+            SettingsCategoryId.LIBRARY_RAG,
+        }
     )
 
     #: Task 6 (541 AC6): RAG-only accelerator hints, appended to
@@ -1809,7 +1825,22 @@ class SettingsScreen(BaseAppScreen):
         this after a category switch (see `_select_category`) keeps the
         footer in sync without waiting for a recompose.
         """
+        shortcuts = self._footer_shortcut_entries()
+        self.register_footer_shortcuts(source="settings", shortcuts=shortcuts)
+
+    def _footer_shortcut_entries(self) -> tuple[tuple[str, str], ...]:
+        """Category- and focus-aware footer hints (task-1564/1560).
+
+        Drops the ``t`` hint for categories whose test action is the "No
+        test action is available" toast, appends the RAG accelerators only
+        where they act, and prefixes keys with "Esc, " while a text-entry
+        widget owns focus (printable keys feed the field until Esc).
+        """
         shortcuts = self.SETTINGS_SHORTCUTS
+        if self._active_category_id() not in self.TESTABLE_SETTINGS_CATEGORIES:
+            shortcuts = tuple(
+                entry for entry in shortcuts if entry[0] != "t"
+            )
         if self._text_entry_focused():
             # task-1560: s/r/t are real bindings and therefore inert while an
             # Input/TextArea consumes printable keys -- advertising the bare
@@ -1820,11 +1851,15 @@ class SettingsScreen(BaseAppScreen):
             )
         if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
             shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
-        self.register_footer_shortcuts(source="settings", shortcuts=shortcuts)
+        return shortcuts
 
     def _text_entry_focused(self) -> bool:
         """Whether a printable-key-consuming widget owns focus right now."""
-        focused = getattr(self.app, "focused", None)
+        try:
+            focused = getattr(self.app, "focused", None)
+        except Exception:
+            # No active app (bare-screen tests / teardown) -- nothing focused.
+            return False
         return isinstance(focused, (Input, TextArea))
 
     def on_descendant_focus(self, event) -> None:
@@ -3656,7 +3691,7 @@ class SettingsScreen(BaseAppScreen):
         }
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
             contract = self._domain_category_contract(category)
-            return f"Guided edits: read-only/WIP; open {contract.owner_destination}."
+            return f"Guided edits: read-only here; open {contract.owner_destination}."
         return messages.get(category, "Guided edits: read-only.")
 
     def _guided_actions_enabled(self, category: SettingsCategoryId) -> bool:
@@ -3704,7 +3739,16 @@ class SettingsScreen(BaseAppScreen):
             dirty_marker = " *"
         elif summary.category == SettingsCategoryId.THEME and self.theme_editor_modified:
             dirty_marker = " *"
-        return f"{'> ' if active else '  '}{summary.title}{dirty_marker}"
+        # task-1563: view-only stub categories are full nav peers whose whole
+        # page says "edit elsewhere" -- badge them in the rail so a third of
+        # the navigation stops masquerading as editable surface.
+        view_marker = ""
+        try:
+            if not self._ownership_record(summary.category).writes_allowed:
+                view_marker = " (view)"
+        except Exception:
+            view_marker = ""
+        return f"{'> ' if active else '  '}{summary.title}{view_marker}{dirty_marker}"
 
     def _refresh_category_button_label(self, category: SettingsCategoryId) -> None:
         try:
@@ -3805,6 +3849,17 @@ class SettingsScreen(BaseAppScreen):
         ).lower()
         if query in secondary_haystack:
             return 1
+        # task-1564: rank 2 -- the category's owned config keys. The Scope
+        # Inspector already publishes them; indexing them lets "/" find the
+        # category that OWNS a setting instead of forcing a 22-item scan.
+        try:
+            owned = " ".join(
+                self._ownership_record(summary.category).owns_config_sections
+            ).lower()
+        except Exception:
+            owned = ""
+        if owned and query in owned:
+            return 2
         return None
 
     def _category_matches_search(
@@ -9737,7 +9792,7 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-library-rag-profile-delete-button",
             )
         readonly_banner = Static(
-            "Built-in profile — read-only. Clone it, then Set active, to edit.",
+            "Built-in profile — read-only. Clone it, then press Set active to edit the clone.",
             id="settings-library-rag-profile-readonly-banner",
             classes="settings-status-row settings-library-rag-readonly-banner",
         )
@@ -10992,7 +11047,7 @@ class SettingsScreen(BaseAppScreen):
                 yield self._detail_row("Server tokens", posture.server_boundary)
                 yield self._detail_row(
                     "Credential mutation",
-                    "unavailable/WIP - password-gated flow required",
+                    "not available yet - password-gated flow required",
                 )
                 yield Static(
                     self._privacy_check_text(),
@@ -11019,7 +11074,7 @@ class SettingsScreen(BaseAppScreen):
                 yield self._detail_row("Write safety", "validation is read-only")
                 yield self._detail_row(
                     "Diagnostics writes",
-                    "unavailable/WIP - raw edits remain gated in Advanced Config",
+                    "not available yet - raw edits remain gated in Advanced Config",
                 )
                 with Horizontal(
                     id="settings-diagnostics-actions", classes="settings-action-row"
@@ -11385,7 +11440,7 @@ class SettingsScreen(BaseAppScreen):
                 "\n".join(ownership.owns_config_sections),
             )
         if ownership.read_only_reason:
-            yield self._detail_row("Read-only/WIP", ownership.read_only_reason)
+            yield self._detail_row("Read-only", ownership.read_only_reason)
         for label, value in self._inspector_guidance(summary.category):
             yield self._detail_row(
                 label,
@@ -11410,7 +11465,7 @@ class SettingsScreen(BaseAppScreen):
         active_summary = self._active_summary()
         with Vertical(id="settings-shell"):
             yield Static(
-                "Settings | Global preferences, appearance, accounts, storage | Local",
+                "Settings | Global preferences, appearance, storage | Local",
                 id="settings-title",
                 classes="ds-destination-header",
             )
@@ -11437,11 +11492,6 @@ class SettingsScreen(BaseAppScreen):
                         placeholder="Filter settings (/)",
                         id="settings-category-search",
                         classes="settings-category-search",
-                    )
-                    yield Static(
-                        "/ filter | Enter open | Esc clear",
-                        id="settings-category-search-help",
-                        classes="settings-category-search-help",
                     )
                     yield Static(
                         self._category_search_status_text(),
@@ -11728,6 +11778,19 @@ class SettingsScreen(BaseAppScreen):
             # not even show (e.g. after an archive elsewhere).
             self._settings_selected_workspace_id = None
         self.active_category = category_value
+        # task-1565: keep the selection visible -- the rail does not follow
+        # the active category on its own, so deep categories (Schedules,
+        # Image Gen) could be selected while entirely off-viewport.
+        def _reveal_active_button() -> None:
+            try:
+                self.query_one(
+                    f"#settings-category-{category_value}", Button
+                ).scroll_visible(animate=False)
+            except Exception:
+                pass
+
+        if getattr(self, "is_mounted", False):
+            self.call_after_refresh(_reveal_active_button)
         # Task 6 (541 AC6): keep the footer's a/c/b hint in sync with a
         # live in-session category switch (on_mount's call alone only
         # covers the initial/restored-state paint -- see

@@ -138,12 +138,12 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             await _wait_until(
                 pilot,
                 lambda: (
-                    "Global preferences, appearance, accounts, storage"
+                    "Global preferences, appearance, storage"
                     in _screen_text(app)
                 ),
             )
             settings_text = _screen_text(app)
             assert (
-                "Settings | Global preferences, appearance, accounts, storage | Local"
+                "Settings | Global preferences, appearance, storage | Local"
                 in settings_text
             )

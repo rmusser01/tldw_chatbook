@@ -3829,12 +3829,12 @@ async def test_settings_destination_uses_three_column_workbench_contract():
         await _wait_for_visible_text(
             screen,
             pilot,
-            "Settings | Global preferences, appearance, accounts, storage | Local",
+            "Settings | Global preferences, appearance, storage | Local",
         )
         text = _visible_text(screen)
 
         assert (
-            "Settings | Global preferences, appearance, accounts, storage | Local"
+            "Settings | Global preferences, appearance, storage | Local"
             in text
         )
         assert "Mode: Overview | Runtime controls stay in MCP and ACP" in text
