@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 from tldw_chatbook.Utils.path_validation import validate_path_simple
+from . import leases as _leases
 from .leases import (
     ArtifactLeaseError,
     ArtifactLeaseKey,
@@ -110,8 +111,51 @@ _READINESS_KEYS = frozenset(
 _ACTIVE_SCHEMA_VERSION = 1
 _ACTIVE_KEYS = frozenset({"schema_version", "root"})
 _LIFECYCLE_LEASE_KEY = ArtifactLeaseKey("!lifecycle", "1", "writer")
+
+# TASK-595: reserved lease identity for the single global managed-acquisition
+# session. Defined once here (not in the not-yet-written acquisition module,
+# to avoid a circular import) so both reconcile()'s staging GC and the future
+# acquisition runtime (Task 6+) key off the exact same ArtifactLeaseKey.
+# "#managed-acquisition" can never collide with a real ArtifactRef.artifact_id
+# because canonical artifact identifiers are validated against
+# _CANONICAL_COMPONENT, which forbids a leading "#".
+ACQUISITION_SESSION_LEASE_KEY = ArtifactLeaseKey(
+    "#managed-acquisition", "session", "global"
+)
+
+# Naming convention for install()'s ephemeral staging tempdirs (see install()
+# and tempfile.mkdtemp below). reconcile() uses this same prefix to recognize
+# candidate orphans among staging's top-level entries.
+_INSTALL_STAGING_PREFIX = "install-"
 _PathSnapshot = tuple[int, int, int, int, int, int]
 _NodeIdentity = tuple[int, int, int]
+
+
+def _install_staging_lease_key(staging_name: str) -> ArtifactLeaseKey:
+    """Return the lease key one in-flight ``install()`` call holds.
+
+    ``install()`` acquires this key, non-reentrantly, for the full lifetime
+    of one staging tempdir -- from directory creation until its final
+    cleanup (success or failure). ``reconcile()`` tries the same key
+    non-blocking before deleting a candidate ``install-*`` orphan: if it is
+    still held, a live install owns that directory and it must survive;
+    if it is free, the directory was abandoned (e.g. by a crashed process,
+    whose OS-level lock is released automatically) and is safe to remove.
+
+    Reserved under the "#install-staging" namespace, which -- like
+    ``ACQUISITION_SESSION_LEASE_KEY``'s "#managed-acquisition" -- can never
+    collide with a real ``ArtifactRef.lease_key()``, since canonical
+    artifact identifiers never start with "#".
+
+    Args:
+        staging_name: Basename of the ``install-*`` staging tempdir (unique
+            per call, from ``tempfile.mkdtemp``).
+
+    Returns:
+        The reserved lease key scoped to that one staging directory.
+    """
+
+    return ArtifactLeaseKey("#install-staging", staging_name, "lock")
 
 
 def _path_snapshot(info: os.stat_result) -> _PathSnapshot:
@@ -791,6 +835,7 @@ class ReconcileReport:
     state_removed: int
     corrupt_artifacts: tuple[Path, ...]
     staging_entries: tuple[Path, ...]
+    staging_removed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1218,6 +1263,8 @@ class ModelArtifactService:
                 )
                 state_removed += 1
 
+        staging_removed = self._gc_staging(staging_entries)
+
         return ReconcileReport(
             readiness_created=readiness_created,
             state_removed=state_removed,
@@ -1225,6 +1272,7 @@ class ModelArtifactService:
                 sorted(corrupt_paths, key=lambda path: path.as_posix())
             ),
             staging_entries=staging_entries,
+            staging_removed=staging_removed,
         )
 
     def _delete_under_leases(self, reference: ArtifactRef) -> None:
@@ -1353,6 +1401,177 @@ class ModelArtifactService:
         if _path_snapshot(self._staging_path.stat(follow_symlinks=False)) != before:
             raise ArtifactPathError("staging changed during reconciliation scan")
         return entries
+
+    def _gc_staging(self, staging_entries: tuple[Path, ...]) -> tuple[str, ...]:
+        """Garbage-collect staging orphans, preserving resumable managed state.
+
+        Two independent categories of staging content are reclaimed here;
+        everything else (unrecognized top-level names) is left alone,
+        matching reconcile()'s historical report-only behavior for
+        arbitrary staging content:
+
+        * ``install-*`` tempdirs abandoned by a crashed :meth:`install`
+          call. A live in-flight call on any process still holds
+          ``_install_staging_lease_key(name)``, so this is safe to attempt
+          under the exclusive lifecycle lease this method's caller already
+          holds -- no additional lease is required for this category.
+        * ``managed/<id>/<rev>/<variant>`` download-staging directories
+          that lack a parseable ``fetch-state.json`` sidecar. Only removed
+          when ``ACQUISITION_SESSION_LEASE_KEY`` is free (non-blocking);
+          when busy, the entire ``managed`` subtree is left untouched for
+          this reconcile pass so an in-progress acquisition's resumable
+          state is never disturbed.
+
+        Args:
+            staging_entries: Immediate children of the staging root, as
+                returned by :meth:`_staging_entries`.
+
+        Returns:
+            Staging-relative POSIX paths of every entry removed.
+        """
+
+        removed: list[str] = []
+        managed_root: Path | None = None
+        for entry in staging_entries:
+            if entry.name == "managed":
+                try:
+                    mode = entry.stat(follow_symlinks=False).st_mode
+                except FileNotFoundError:
+                    continue
+                except OSError as error:
+                    raise ArtifactPathError(
+                        "failed to inspect staging entry"
+                    ) from error
+                if stat.S_ISDIR(mode) and not stat.S_ISLNK(mode):
+                    managed_root = entry
+                continue
+            if not entry.name.startswith(_INSTALL_STAGING_PREFIX):
+                continue
+            name = self._gc_install_staging_orphan(entry)
+            if name is not None:
+                removed.append(name)
+
+        if managed_root is not None:
+            removed.extend(self._gc_managed_staging(managed_root))
+
+        return tuple(sorted(removed))
+
+    def _gc_install_staging_orphan(self, entry: Path) -> str | None:
+        """Remove one ``install-*`` staging directory if it is abandoned.
+
+        Tries ``_install_staging_lease_key(entry.name)`` non-blocking: a
+        live :meth:`install` call already holds this key for its whole
+        staging lifetime, so a busy lease means the directory is still in
+        use and must survive; a free lease means the directory was
+        abandoned (its owner is gone, and the OS released the lease when
+        that process or handle closed) and is safe to remove.
+
+        Args:
+            entry: Top-level staging directory matching the ``install-*``
+                tempdir prefix used by :meth:`install`.
+
+        Returns:
+            The removed entry's staging-relative POSIX path, or None when
+            an in-flight install still owns it.
+        """
+
+        self._assert_managed_path(self._locks_path)
+        try:
+            lease = ArtifactOperationLease(
+                self._locks_path,
+                _install_staging_lease_key(entry.name),
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=0.1,
+            )
+            lease.acquire()
+        except ArtifactLeaseTimeoutError:
+            return None
+        try:
+            self._remove_state_path(entry, "failed to remove staging orphan")
+        finally:
+            lease.release()
+        return entry.relative_to(self._staging_path).as_posix()
+
+    def _gc_managed_staging(self, managed_root: Path) -> tuple[str, ...]:
+        """GC orphaned managed-download staging entries.
+
+        Requires ``ACQUISITION_SESSION_LEASE_KEY`` non-blocking; when busy
+        (a managed acquisition may still be writing into this subtree),
+        the whole managed staging tree is left untouched for this
+        reconcile pass.
+
+        Args:
+            managed_root: The ``staging/managed`` directory (already
+                confirmed to be a real, non-symlink directory).
+
+        Returns:
+            Staging-relative POSIX paths of every orphan entry removed.
+        """
+
+        self._assert_managed_path(self._locks_path)
+        try:
+            lease = ArtifactOperationLease(
+                self._locks_path,
+                ACQUISITION_SESSION_LEASE_KEY,
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=0.1,
+            )
+            lease.acquire()
+        except ArtifactLeaseTimeoutError:
+            return ()
+        try:
+            removed: list[str] = []
+            for candidate in self._state_files(managed_root, 3):
+                if self._is_valid_managed_staging_entry(managed_root, candidate):
+                    continue
+                self._remove_state_path(
+                    candidate, "failed to remove staging orphan"
+                )
+                removed.append(candidate.relative_to(self._staging_path).as_posix())
+            return tuple(removed)
+        finally:
+            lease.release()
+
+    def _is_valid_managed_staging_entry(
+        self,
+        managed_root: Path,
+        candidate: Path,
+    ) -> bool:
+        """Return whether ``candidate`` is a live managed download directory.
+
+        A live entry is a ``managed/<id>/<rev>/<variant>`` directory --
+        exactly three path components below ``managed_root`` -- containing
+        a ``fetch-state.json`` sidecar that parses as JSON. Anything
+        shallower, deeper, symlinked, or with a missing or corrupt sidecar
+        is an orphan. ``_assert_managed_path`` on the sidecar rejects a
+        symlink anywhere in the chain up to and including ``candidate``
+        itself, so a symlinked ``candidate`` is correctly treated as an
+        orphan without ever being followed.
+
+        Args:
+            managed_root: The ``staging/managed`` directory.
+            candidate: One entry surfaced by scanning ``managed_root`` to a
+                fixed depth of three (see :meth:`_state_files`).
+
+        Returns:
+            True when the entry's resumable download state should survive
+            garbage collection.
+        """
+
+        if len(candidate.relative_to(managed_root).parts) != 3:
+            return False
+        sidecar = candidate / "fetch-state.json"
+        try:
+            self._assert_managed_path(
+                sidecar,
+                allow_missing=True,
+                target_must_be_directory=False,
+            )
+            payload = sidecar.read_text(encoding="utf-8")
+            json.loads(payload)
+        except (ArtifactPathError, OSError, ValueError):
+            return False
+        return True
 
     def _readiness_ref_from_path(self, path: Path) -> ArtifactRef | None:
         try:
@@ -1725,15 +1944,32 @@ class ModelArtifactService:
         )
 
         staging: Path | None = None
+        staging_lease: ArtifactOperationLease | None = None
         try:
             self._assert_managed_path(self._staging_path)
             staging = Path(
                 tempfile.mkdtemp(
-                    prefix="install-",
+                    prefix=_INSTALL_STAGING_PREFIX,
                     dir=self._staging_path,
                 )
             )
             self._assert_managed_path(staging)
+            self._assert_managed_path(self._locks_path)
+            # Held for this call's whole staging lifetime so reconcile()'s
+            # staging GC can tell this directory apart from one abandoned by
+            # a crashed install (see _install_staging_lease_key). Built via
+            # the leases submodule rather than the plain ArtifactOperationLease
+            # import: this is an orphan-detection lock, not one of the writer
+            # leases tests intentionally intercept via that name (see
+            # test_install_acquires_exact_writer_leases_in_fixed_order), and
+            # must keep working even when those tests replace that symbol.
+            staging_lease = _leases.ArtifactOperationLease(
+                self._locks_path,
+                _install_staging_lease_key(staging.name),
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=self._lease_timeout_seconds,
+            )
+            staging_lease.acquire()
             # Only pass consume_source if True to maintain backward compatibility
             # with tests that monkeypatch _copy_payload
             if consume_source:
@@ -1802,20 +2038,33 @@ class ModelArtifactService:
         except OSError as error:
             raise ArtifactStateError("artifact installation I/O failed") from error
         finally:
-            if staging is not None:
-                primary_error = sys.exception()
-                try:
-                    shutil.rmtree(staging)
-                except FileNotFoundError:
-                    pass
-                except OSError as cleanup_error:
-                    if primary_error is None:
-                        raise ArtifactStateError(
-                            "failed to clean operation-owned artifact staging"
-                        ) from cleanup_error
-                    primary_error.add_note(
-                        f"operation staging cleanup failed: {cleanup_error!r}"
-                    )
+            primary_error = sys.exception()
+            try:
+                if staging is not None:
+                    try:
+                        shutil.rmtree(staging)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as cleanup_error:
+                        if primary_error is None:
+                            raise ArtifactStateError(
+                                "failed to clean operation-owned artifact staging"
+                            ) from cleanup_error
+                        primary_error.add_note(
+                            f"operation staging cleanup failed: {cleanup_error!r}"
+                        )
+            finally:
+                if staging_lease is not None:
+                    try:
+                        staging_lease.release()
+                    except BaseException as release_error:
+                        if primary_error is None:
+                            raise ArtifactStateError(
+                                "failed to release staging operation lease"
+                            ) from release_error
+                        primary_error.add_note(
+                            f"staging operation lease release failed: {release_error!r}"
+                        )
 
     def _resolve_closure(
         self,
