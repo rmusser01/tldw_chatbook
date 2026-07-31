@@ -478,11 +478,16 @@ def test_server_sync_service_direct_client_takes_precedence_over_provider():
 def test_server_sync_service_from_server_context_provider_is_lazy():
     client = object()
     provider = FakeClientProvider(client)
-    service = ServerSyncService.from_server_context_provider(provider)
+    state_repository = object()
+    service = ServerSyncService.from_server_context_provider(
+        provider,
+        state_repository=state_repository,
+    )
 
     assert isinstance(service, ServerSyncService)
     assert service.client is None
     assert service.client_provider is provider
+    assert service.state_repository is state_repository
     assert provider.build_calls == 0
     assert service._require_client() is client
     assert service.client is None
@@ -504,20 +509,24 @@ def test_server_sync_service_re_resolves_provider_without_service_local_client_c
         assert all(value is not built_client for value in vars(service).values())
 
 
-def test_server_sync_service_from_config_returns_provider_backed_service():
+@pytest.mark.asyncio
+async def test_server_sync_service_from_config_returns_provider_backed_service():
     service = ServerSyncService.from_config(
         {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
     )
 
-    assert isinstance(service, ServerSyncService)
-    assert service.client is None
-    assert service.client_provider is not None
+    try:
+        assert isinstance(service, ServerSyncService)
+        assert service.client is None
+        assert service.client_provider is not None
 
-    client = service.client_provider.build_client()
+        client = service.client_provider.build_client()
 
-    assert service.client is None
-    assert client.base_url == "https://example.com"
-    assert service.client_provider.build_client() is client
+        assert service.client is None
+        assert client.base_url == "https://example.com"
+        assert service.client_provider.build_client() is client
+    finally:
+        await service.client_provider.close_cached_client()
 
 
 @pytest.mark.asyncio
