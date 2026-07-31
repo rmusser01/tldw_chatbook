@@ -63,6 +63,7 @@ def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
     _disable_splash(monkeypatch)
     app = TldwCli()
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     return app
 
 

@@ -456,9 +456,15 @@ class TestMLXParakeetUnit:
 
     def test_soundfile_not_available(self, transcription_service):
         """Test error handling when soundfile is not available."""
-        with patch(
-            "tldw_chatbook.Local_Ingestion.transcription_service.SOUNDFILE_AVAILABLE",
-            False,
+        with (
+            patch(
+                "tldw_chatbook.Local_Ingestion.transcription_service.SOUNDFILE_AVAILABLE",
+                False,
+            ),
+            patch(
+                "tldw_chatbook.Local_Ingestion.transcription_service.sf",
+                None,
+            ),
         ):
             with pytest.raises(TranscriptionError) as exc_info:
                 transcription_service._transcribe_with_parakeet_mlx(
@@ -725,13 +731,18 @@ class TestMLXParakeetIntegration:
 
     @pytest.mark.integration
     def test_real_transcription_invalid_file(self, real_transcription_service):
-        """Test transcription with invalid audio file."""
-        with pytest.raises(TranscriptionError):
-            real_transcription_service.transcribe(
-                audio_path="non_existent_file.wav", provider="parakeet-mlx"
-            )
+        """Reject an invalid audio file before acquiring a model."""
+        with patch(
+            "tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained"
+        ) as model_loader:
+            with pytest.raises(TranscriptionError):
+                real_transcription_service.transcribe(
+                    audio_path="non_existent_file.wav", provider="parakeet-mlx"
+                )
+        model_loader.assert_not_called()
 
     @pytest.mark.integration
+    @pytest.mark.slow
     def test_real_transcription_empty_file(self, real_transcription_service):
         """Test transcription with empty audio file."""
         # Create an empty WAV file
@@ -757,6 +768,7 @@ class TestMLXParakeetIntegration:
                 os.unlink(tmp_file.name)
 
     @pytest.mark.integration
+    @pytest.mark.slow
     @pytest.mark.parametrize("attention_type", ["flash", "sdpa", "native"])
     def test_real_transcription_attention_types(
         self, real_transcription_service, test_audio_file, attention_type
@@ -773,6 +785,7 @@ class TestMLXParakeetIntegration:
         assert "text" in result
 
     @pytest.mark.integration
+    @pytest.mark.slow
     def test_real_transcription_progress_tracking(
         self, real_transcription_service, test_audio_file
     ):
@@ -803,6 +816,7 @@ class TestMLXParakeetIntegration:
         )
 
     @pytest.mark.integration
+    @pytest.mark.slow
     def test_real_transcription_multichannel_audio(self, real_transcription_service):
         """Test transcription of stereo/multichannel audio."""
         # Create stereo audio file
@@ -844,7 +858,7 @@ class TestMLXParakeetIntegration:
 class TestMLXParakeetPerformance:
     """Performance benchmarking tests for MLX Parakeet."""
 
-    @pytest.mark.benchmark
+    @pytest.mark.performance
     @pytest.mark.slow
     def test_transcription_speed(self, real_transcription_service, test_audio_file):
         """Benchmark transcription speed with different configurations."""
@@ -895,7 +909,7 @@ class TestMLXParakeetPerformance:
             "Transcription took too long"
         )
 
-    @pytest.mark.benchmark
+    @pytest.mark.performance
     @pytest.mark.slow
     def test_real_time_factor(self, real_transcription_service):
         """Test real-time factor (RTF) of Parakeet transcription."""

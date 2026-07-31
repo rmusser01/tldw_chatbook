@@ -1,5 +1,5 @@
 ---
-id: task-1586
+id: TASK-1586
 title: 'Settings: screen-wide interactive-control convention (design)'
 status: To Do
 assignee: []

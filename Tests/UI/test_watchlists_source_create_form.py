@@ -30,17 +30,17 @@ What the UAT saw, established in code:
 
 from __future__ import annotations
 
+import time
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Select
 
-from Tests.UI.test_destination_shells import (
+from Tests.UI.full_app_destination_context import (
     StaticWatchlistsScopeService,
-    _active_destination_screen,
-)
-from Tests.UI.test_destination_visual_parity_correction import (
-    _visual_destination_harness,
+    active_destination_screen as _active_destination_screen,
+    full_app_destination_context as _visual_destination_harness,
+    wait_for_selector as _wait_for_selector,
 )
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
@@ -79,11 +79,32 @@ async def _open_sources_create_form(pilot, host):
     """Open the form exactly as a user does: click through `New Source`."""
     screen = _active_destination_screen(host)
     screen.active_section = "sources"
-    await pilot.pause(0.2)
+    await _wait_for_selector(
+        screen,
+        pilot,
+        "#watchlists-sources-pane",
+        timeout=5.0,
+    )
     pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
     screen.query_one("#sources-new-button", Button).press()
-    await pilot.pause(0.3)
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        focused = screen.focused
+        selects = list(pane.query(Select))
+        if (
+            pane.query("#sources-create-form")
+            and focused is not None
+            and focused.id == "sources-create-name"
+            and selects
+            and all(bool(select.query("#label")) for select in selects)
+        ):
+            break
+        await pilot.pause(0.02)
     assert pane.query("#sources-create-form"), "the create form never opened"
+    assert screen.focused is not None and (
+        screen.focused.id == "sources-create-name"
+    ), "the create form mounted but did not focus its Name field"
+    await pilot.pause()
     return screen, pane
 
 

@@ -23,10 +23,9 @@ import asyncio
 
 import pytest
 
-from Tests.UI.test_destination_shells import (
-    DestinationHarness,
-    _active_destination_screen,
-    _wait_for_selector,
+from Tests.UI.full_app_destination_context import (
+    FullAppDestinationContext as DestinationHarness,
+    active_destination_screen as _active_destination_screen,
 )
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane

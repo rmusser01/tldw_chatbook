@@ -75,6 +75,7 @@ def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
     monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
     app = TldwCli()
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     return app
 
 
@@ -98,9 +99,13 @@ async def _wait_for_library_screen(
 async def _wait_for_selector(screen: LibraryScreen, pilot, selector: str):
     for _ in range(400):
         try:
-            return screen.query_one(selector)
+            widget = screen.query_one(selector)
         except NoMatches:
-            await pilot.pause(0.01)
+            pass
+        else:
+            if widget.region.width > 0 and widget.region.height > 0:
+                return widget
+        await pilot.pause(0.01)
     raise AssertionError(f"production LibraryScreen did not render {selector}")
 
 

@@ -134,10 +134,12 @@ class TestDatabaseInitialization(BaseTestCase):
         """Verify that different threads get different connection objects."""
         connections = {}
         db_instance = self._get_file_db()
+        both_connected = threading.Barrier(2)
 
         def get_conn(thread_id):
             conn = db_instance.get_connection()
-            connections[thread_id] = id(conn)
+            connections[thread_id] = conn
+            both_connected.wait()
             db_instance.close_connection()
 
         thread1 = threading.Thread(target=get_conn, args=(1,))
@@ -150,7 +152,7 @@ class TestDatabaseInitialization(BaseTestCase):
 
         self.assertIn(1, connections)
         self.assertIn(2, connections)
-        self.assertNotEqual(
+        self.assertIsNot(
             connections[1],
             connections[2],
             "Connections for different threads should be different objects",
@@ -288,7 +290,7 @@ class TestCrudOperations(BaseTestCase):
         self.assertIn(puuid, unlink_log["entity_uuid"])
 
     def test_soft_delete_keyword(self):
-        kw_id = self.db.add_keyword("ephemeral")
+        self.db.add_keyword("ephemeral")
         self.db.add_prompt(
             "Test Prompt", "Author", "Some details", keywords=["ephemeral"]
         )

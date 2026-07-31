@@ -1198,12 +1198,18 @@ class LibraryFileNotesGitPanel(Vertical):
                 )
 
     def on_mount(self) -> None:
-        self._sync_action_layout(self.size.width)
         self._sync_commit_footer_layout(self.size.width)
+        self.call_after_refresh(self._finish_mount)
+
+    def _finish_mount(self) -> None:
+        """Project child-dependent state after the composed rows are mounted."""
+        if not self.is_mounted:
+            return
+        self._sync_action_layout(self.size.width)
         self._show_commit_phase(self._commit_phase)
-        self.call_after_refresh(self._sync_commit_availability)
+        self._sync_commit_availability()
         self._update_actions()
-        self.call_after_refresh(self._fit_fixed_regions)
+        self._fit_fixed_regions()
 
     def on_resize(self, event: Resize) -> None:
         """Recompute mounted copy and actions from real available geometry."""
@@ -1215,15 +1221,18 @@ class LibraryFileNotesGitPanel(Vertical):
         """Stack only when a visible action row's real labels do not fit."""
         if not self.is_mounted:
             return
+        selectors = (
+            "#file-notes-git-header",
+            "#file-notes-git-selected-actions",
+            "#file-notes-git-bulk-actions",
+            "#file-notes-git-commit-actions",
+        )
+        if any(not list(self.query(selector)) for selector in selectors):
+            return
         needs_stack = any(
             self._visible_action_cells(selector)
             > self._action_row_width(selector, width)
-            for selector in (
-                "#file-notes-git-header",
-                "#file-notes-git-selected-actions",
-                "#file-notes-git-bulk-actions",
-                "#file-notes-git-commit-actions",
-            )
+            for selector in selectors
         )
         self.set_class(needs_stack, "-stack-actions")
 

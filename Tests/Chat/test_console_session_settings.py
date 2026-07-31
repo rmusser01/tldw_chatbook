@@ -18,9 +18,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 
 
-def test_console_settings_and_native_session_schemas_do_not_store_persona_presentation() -> (
-    None
-):
+def test_console_settings_exclude_presentation_while_session_owns_identity() -> None:
     settings_fields = set(ConsoleSessionSettings.__dataclass_fields__)
     session_fields = set(ConsoleChatSession.__dataclass_fields__)
 
@@ -29,9 +27,15 @@ def test_console_settings_and_native_session_schemas_do_not_store_persona_presen
     assert {"assistant_kind", "assistant_name", "assistant_id"}.isdisjoint(
         settings_fields
     )
-    assert {"assistant_kind", "assistant_name", "assistant_id"}.isdisjoint(
-        session_fields
-    )
+    assert "assistant_name" not in session_fields
+    assert {
+        "runtime_backend",
+        "assistant_kind",
+        "assistant_id",
+        "assistant_authority_id",
+        "character_id",
+        "character_name",
+    } <= session_fields
 
 
 def test_session_settings_keeps_gateway_runtime_dependencies_out() -> None:
@@ -921,6 +925,7 @@ def test_pinned_prefill_defaults_none_and_replaces():
     pinned = replace(settings, pinned_prefill="*She pauses*")
     assert pinned.pinned_prefill == "*She pauses*"
     assert settings.pinned_prefill is None
+
 
 def test_provider_scoped_defaults_beat_chat_defaults_for_sampling_fields():
     """TASK-342: Save-as-default persists sampling values under

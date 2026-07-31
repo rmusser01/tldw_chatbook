@@ -12,6 +12,8 @@ recursive-include tldw_chatbook/Config_Files *.json *.md rag_pipelines.toml
 recursive-include tldw_chatbook/Chunking/templates *.json
 recursive-include tldw_chatbook/Evals/config *.yaml
 recursive-include tldw_chatbook/css *.tcss *.css
+include tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql
+include tldw_chatbook/DB/migrations/chachanotes_v27_to_v28_character_authority.sql
 include tldw_chatbook/Third_Party/aider/LICENSE.txt
 include tldw_chatbook/Third_Party/textual_fspicker/LICENSE
 

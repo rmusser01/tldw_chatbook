@@ -41,6 +41,8 @@ REQUIRED_SDIST_PATHS = {
     "tldw_chatbook/css/tldw_cli_modular.tcss",
     "tldw_chatbook/css/components/stats_screen.css",
     "tldw_chatbook/Config_Files/rag_pipelines.toml",
+    "tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql",
+    "tldw_chatbook/DB/migrations/chachanotes_v27_to_v28_character_authority.sql",
     "tldw_chatbook/Evals/config/eval_config.yaml",
     "tldw_chatbook/Third_Party/aider/LICENSE.txt",
     "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
@@ -51,6 +53,8 @@ REQUIRED_WHEEL_PATHS = {
     "tldw_chatbook/app.py",
     "tldw_chatbook/css/tldw_cli_modular.tcss",
     "tldw_chatbook/Config_Files/rag_pipelines.toml",
+    "tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql",
+    "tldw_chatbook/DB/migrations/chachanotes_v27_to_v28_character_authority.sql",
     "tldw_chatbook/Evals/config/eval_config.yaml",
     "tldw_chatbook/Third_Party/aider/LICENSE.txt",
     "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
@@ -184,18 +188,12 @@ def _validate_metadata(
         name for name in wheel_members if name.endswith(".dist-info/METADATA")
     )
     wheel_entry_point_names = sorted(
-        name
-        for name in wheel_members
-        if name.endswith(".dist-info/entry_points.txt")
+        name for name in wheel_members if name.endswith(".dist-info/entry_points.txt")
     )
     wheel_license_names = sorted(
-        name
-        for name in wheel_members
-        if name.endswith(".dist-info/licenses/LICENSE")
+        name for name in wheel_members if name.endswith(".dist-info/licenses/LICENSE")
     )
-    sdist_metadata_names = sorted(
-        name for name in sdist_members if name == "PKG-INFO"
-    )
+    sdist_metadata_names = sorted(name for name in sdist_members if name == "PKG-INFO")
 
     for label, names in (
         ("wheel METADATA", wheel_metadata_names),

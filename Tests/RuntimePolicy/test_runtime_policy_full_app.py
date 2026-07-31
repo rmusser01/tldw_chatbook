@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 import logging
 from datetime import datetime, timezone
@@ -72,7 +73,7 @@ def _configure_full_app_media_startup(
     app: TldwCli,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app._initial_tab_value = "media"
     real_get_cli_setting = app_module.get_cli_setting
 
@@ -89,7 +90,8 @@ def _configure_full_app_media_startup(
 
 
 async def _wait_for_mounted_media_screen(app: TldwCli, pilot) -> MediaScreen:
-    for _ in range(100):
+    deadline = asyncio.get_running_loop().time() + 5.0
+    while asyncio.get_running_loop().time() < deadline:
         if getattr(app, "_initial_screen_pushed", False) and isinstance(
             app.screen,
             MediaScreen,

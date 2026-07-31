@@ -293,7 +293,12 @@ class EvalsScreen(LabScreen):
             logger.info("Sample bench worker was cancelled.")
             raise
         except Exception as exc:
-            logger.opt(exception=True).warning("Sample bench creation failed.")
+            # Type only: persistent exception diagnostics can serialize frame
+            # locals, which here include app config and user-authored datasets.
+            logger.warning(
+                "Sample bench creation failed (exception_category={}).",
+                type(exc).__name__,
+            )
             # markup=False: `exc` can carry user-controlled text (e.g. a
             # dataset name derived from an imported filename stem) and
             # `notify()` defaults to markup=True -- unbalanced markup in
@@ -462,7 +467,12 @@ class EvalsScreen(LabScreen):
             logger.info("Bench run worker was cancelled.")
             raise
         except Exception as exc:
-            logger.opt(exception=True).warning("Bench run failed.")
+            # Type only: persistent exception diagnostics can serialize frame
+            # locals, including the selected dataset id and current app config.
+            logger.warning(
+                "Bench run failed (exception_category={}).",
+                type(exc).__name__,
+            )
             # markup=False: `exc` can carry user-controlled text -- e.g.
             # `sample_bench._load_snippets` raises `RuntimeError(f"Dataset
             # {name!r} has no snippets to run.")`, and an imported dataset's

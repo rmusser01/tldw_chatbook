@@ -64,6 +64,7 @@ def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
     )
     app = TldwCli()
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     return app
 
 
@@ -391,7 +392,11 @@ async def test_real_metadata_ordering_survives_media_window_replacement(
 
             app.post_message(NavigateToScreen("settings"))
             await _wait_for_screen(app, pilot, SettingsScreen)
-            assert first_window._closed
+            await _wait_until(
+                pilot,
+                lambda: first_window._closed and first_window._parent is None,
+                "the replaced Media owner did not finish teardown",
+            )
 
             app.post_message(NavigateToScreen("media"))
             second_screen = await _wait_for_media_screen(app, pilot)
@@ -699,8 +704,11 @@ async def test_real_metadata_mutation_survives_media_screen_teardown(
 
             app.post_message(NavigateToScreen("settings"))
             await _wait_for_screen(app, pilot, SettingsScreen)
-            assert window._closed
-            assert window._parent is None
+            await _wait_until(
+                pilot,
+                lambda: window._closed and window._parent is None,
+                "the stale Media owner did not finish teardown",
+            )
 
             release_update.set()
             await _wait_until(

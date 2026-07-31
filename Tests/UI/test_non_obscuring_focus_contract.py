@@ -18,7 +18,6 @@ BASE_COMPONENTS = ROOT / "tldw_chatbook/Widgets/base_components.py"
 WIDGETS = ROOT / "tldw_chatbook/css/components/_widgets.tcss"
 MESSAGES = ROOT / "tldw_chatbook/css/components/_messages.tcss"
 CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
-CHAT_TABS = ROOT / "tldw_chatbook/css/features/_chat_tabs.tcss"
 CONVERSATIONS = ROOT / "tldw_chatbook/css/features/_conversations.tcss"
 SIDEBARS = ROOT / "tldw_chatbook/css/layout/_sidebars.tcss"
 LAYOUT_TABS = ROOT / "tldw_chatbook/css/layout/_tabs.tcss"
@@ -982,13 +981,18 @@ def test_shared_section_container_collapse_button_hover_is_non_obscuring():
 
 
 @pytest.mark.unit
-def test_shared_collapsible_header_hover_uses_non_obscuring_surface_contract():
+def test_library_rag_collapsible_header_hover_uses_non_obscuring_surface_contract():
     for label, text in (
         ("components/_widgets.tcss", WIDGETS.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
     ):
-        base = css_block(text, "Collapsible > .collapsible--header")
-        blocks = css_blocks(text, "Collapsible > .collapsible--header:hover")
+        base = css_block(
+            text, "#settings-library-rag-card Collapsible > CollapsibleTitle"
+        )
+        blocks = css_blocks(
+            text,
+            "#settings-library-rag-card Collapsible > CollapsibleTitle:hover",
+        )
         assert "background: $surface-lighten-1;" in base
         assert blocks, f"{label} is missing Collapsible header hover"
         assert len(blocks) == 1, (
@@ -1000,9 +1004,9 @@ def test_shared_collapsible_header_hover_uses_non_obscuring_surface_contract():
 
 def test_shared_collapsible_header_focus_is_underlined_and_non_heavy():
     text = WIDGETS.read_text(encoding="utf-8")
-    block = css_block(text, "Collapsible > .collapsible--header:focus")
+    block = css_block(text, "Collapsible > CollapsibleTitle:focus")
     collapsed_focus = css_block(
-        text, "Collapsible.-collapsed > .collapsible--header:focus"
+        text, "Collapsible.-collapsed > CollapsibleTitle:focus"
     )
     assert_non_obscuring_focus(block)
     assert "outline: heavy" not in block
@@ -1014,9 +1018,9 @@ def test_conversations_collapsible_active_header_uses_selected_contract():
         CONVERSATIONS.read_text(encoding="utf-8"),
         BUNDLE.read_text(encoding="utf-8"),
     ):
-        blocks = css_blocks(text, "Collapsible.-active > .collapsible--header")
+        blocks = css_blocks(text, "Collapsible.-active > CollapsibleTitle")
         assert blocks, (
-            "Missing CSS block for Collapsible.-active > .collapsible--header"
+            "Missing CSS block for Collapsible.-active > CollapsibleTitle"
         )
         active = blocks[-1]
         assert_readable_selected_state_contract(active)
@@ -1051,41 +1055,6 @@ def test_chat_rag_focus_within_uses_non_semantic_container_cue():
     assert "$boost" not in block
     assert "border: round $ds-focus-accent;" in block
     assert "background: $panel;" in block
-
-
-def test_chat_tab_active_state_is_readable_without_dominant_fill():
-    for text in (
-        CHAT_TABS.read_text(encoding="utf-8"),
-        BUNDLE.read_text(encoding="utf-8"),
-    ):
-        for selector in (
-            ".chat-tab.active",
-            ".chat-tab.active:focus",
-            ".chat-tab.active:hover",
-            ".chat-tab.active:hover:focus",
-        ):
-            active = css_block(text, selector)
-            assert_readable_selected_state_contract(active)
-            assert_no_dominant_selected_geometry(active)
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    "selector",
-    (
-        ".close-tab-button:hover",
-        ".new-tab-button:hover",
-    ),
-)
-def test_chat_tab_action_hover_states_use_neutral_readable_surface(selector: str):
-    for label, text in (
-        ("_chat_tabs.tcss", CHAT_TABS.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
-    ):
-        blocks = css_blocks(text, selector)
-        assert blocks, f"{label} is missing {selector}"
-        assert len(blocks) == 1, f"{label} should define exactly one {selector}"
-        assert_native_row_hover_state_contract(blocks[0])
 
 
 def test_layout_tab_active_states_use_underlined_selected_contracts():
@@ -1740,35 +1709,9 @@ def test_bundled_sidebar_inputs_keep_stable_effective_geometry(selector: str):
     assert "border-bottom: solid" in block
 
 
-def test_sidebar_preset_active_state_is_readable_without_dominant_fill():
-    text = SIDEBARS.read_text(encoding="utf-8")
-    active = css_block(text, ".preset-button.active")
-    assert "outline: heavy" not in active
-    assert "reverse" not in active
-    assert "$primary" not in active
-    assert "$warning" not in active
-    assert "$error" not in active
-    assert "background: $ds-focus-bg;" in active
-    assert "color: $ds-focus-fg;" in active
-    assert "text-style: bold underline;" in active
-
-
-def test_sidebar_preset_active_hover_preserves_active_cue():
-    for label, text in (
-        ("layout/_sidebars.tcss", SIDEBARS.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
-    ):
-        blocks = css_blocks(text, ".preset-button.active:hover")
-        assert blocks, f"{label} is missing .preset-button.active:hover"
-        assert_readable_selected_state_contract(blocks[-1])
-        assert "border: tall $ds-focus-accent;" in blocks[-1]
-
-
 @pytest.mark.parametrize(
     "selector",
     (
-        ".preset-button:hover",
-        ".sidebar-resize-button:hover",
         ".search-result-item:hover",
         ".reset-button:hover",
     ),

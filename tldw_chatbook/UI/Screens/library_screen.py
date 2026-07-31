@@ -2207,9 +2207,9 @@ class LibraryScreen(BaseAppScreen):
                 # Runs via asyncio.to_thread: this thread has no event loop,
                 # and the awaitable must complete here so blocking async
                 # services stay off the UI loop.
-                return asyncio.run(
+                return asyncio.run(  # policy-exception: worker-thread loop
                     await_result()
-                )  # policy-exception: worker-thread loop
+                )
             return result
 
         if isolate_in_worker:
@@ -10151,11 +10151,7 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(self._arm_library_prompt_editor)
 
     def _arm_library_prompt_editor(self) -> None:
-        """Enable dirty-tracking once the prompt editor's mount-time
-        ``Input.Changed``/``TextArea.Changed`` (fired for the non-empty
-        initial values) has already been delivered, so it is never mistaken
-        for a real edit.
-        """
+        """Enable dirty-tracking once the prompt editor is mounted."""
         self._library_prompt_editor_armed = True
 
     def _enter_library_prompt_create_editor(self) -> None:
@@ -10208,9 +10204,12 @@ class LibraryScreen(BaseAppScreen):
     def _mark_library_prompt_dirty(self) -> None:
         """Record an in-progress prompt edit.
 
-        Ignored until ``_library_prompt_editor_armed`` is set (see that
-        flag's docstring). Unlike the notes editor, this never arms an
-        autosave timer -- the prompt editor is explicit-Save-only.
+        Ignored until ``_library_prompt_editor_armed`` is set and while the
+        live fields still equal their backing state. Textual can deliver a
+        recomposed field's mount-time ``Changed`` event after the post-refresh
+        arm callback, so value equality—not callback timing—is the reliable
+        discriminator. Unlike the notes editor, this never arms an autosave
+        timer because the prompt editor is explicit-Save-only.
 
         Task 8c U6: the dirty flag was previously invisible until the
         ``flush_pending_work`` veto fired on nav-away. On the False->True
@@ -10224,6 +10223,8 @@ class LibraryScreen(BaseAppScreen):
         flag/marker do not change again until Save or navigation.
         """
         if not self._library_prompt_editor_armed:
+            return
+        if self._library_prompt_text_fields_match_state():
             return
         was_dirty = self._library_prompt_dirty
         self._library_prompt_dirty = True
@@ -10274,6 +10275,24 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return None
         return name, author, details, system_prompt, user_prompt, keywords_text
+
+    def _library_prompt_text_fields_match_state(self) -> bool:
+        """Return whether mounted prompt fields equal their backing detail."""
+        detail = self._library_prompt_detail
+        if not isinstance(detail, Mapping):
+            return False
+        fields = self._read_library_prompt_editor_fields()
+        if fields is None:
+            return False
+        state = build_prompt_editor_state(detail)
+        return fields == (
+            state.name,
+            state.author,
+            state.details,
+            state.system_prompt,
+            state.user_prompt,
+            state.keywords_csv,
+        )
 
     def _update_library_prompt_status_static(self, text: str) -> None:
         """Targeted update of ``#library-prompt-save-status``, no recompose.

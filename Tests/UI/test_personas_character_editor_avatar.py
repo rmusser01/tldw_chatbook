@@ -8,7 +8,6 @@ feed the same id back into the stubbed ``ccp_character_handler`` module
 functions, then drive the editor through the real screen).
 """
 
-import rich_pixels
 import pytest
 from PIL import Image
 from rich_pixels import Pixels
@@ -387,54 +386,47 @@ class TestCharacterEditorAvatarRemoveGenerationBump:
 
 
 class TestCharacterEditorAvatarThumbnailFit:
-    @pytest.mark.asyncio
-    async def test_wide_avatar_pixels_thumbnail_fits_box_not_clipped(
+    def test_wide_avatar_pixels_thumbnail_fits_box_not_clipped(
         self,
         monkeypatch,
-        mock_app_instance,
-        avatar_db,
-        seeded_character_with_wide_avatar,
-        stub_character_with_wide_avatar,
+        wide_avatar_image_bytes,
     ):
-        mock_app_instance.chachanotes_db = avatar_db
-        mock_app_instance.chat_dictionary_scope_service = None
-        # Force pixels mode regardless of terminal auto-detection so this
-        # test is deterministic in CI.
-        mock_app_instance.app_config = {
-            "chat": {"images": {"default_render_mode": "pixels"}}
-        }
-        char_id = seeded_character_with_wide_avatar["char_id"]
+        """The production pixel builder fits the full source into its box."""
+        from tldw_chatbook.Chat.console_image_view import ConsoleImageRenderCache
 
         from tldw_chatbook.Utils import mosaic_render
 
-        captured: list[tuple[Image.Image, int, int]] = []
+        captured: list[tuple[Image.Image, int, int, str]] = []
         original_mosaic = mosaic_render.mosaic_from_image
 
-        def _spy_mosaic(image, box_cols, box_lines):
-            captured.append((image.copy(), box_cols, box_lines))
-            return original_mosaic(image, box_cols, box_lines)
+        def _spy_mosaic(image, box_cols, box_lines, *, fit):
+            captured.append((image.copy(), box_cols, box_lines, fit))
+            return original_mosaic(
+                image,
+                box_cols,
+                box_lines,
+                fit=fit,
+            )
 
         monkeypatch.setattr(mosaic_render, "mosaic_from_image", _spy_mosaic)
 
-        app = PersonasTestApp(mock_app_instance)
-        async with app.run_test(size=(200, 60)) as pilot:
-            screen = await _select_character(pilot, char_id)
-            await _open_editor_for(pilot, screen, char_id)
-
-            editor = screen.query_one(PersonasCharacterEditorWidget)
-            assert editor.current_avatar_bytes() is not None
-            assert len(editor.query("#personas-char-editor-avatar-thumb > *")) == 1
+        cache = ConsoleImageRenderCache()
+        cache_key = "wide-avatar"
+        assert cache.prepare(cache_key, wide_avatar_image_bytes)
+        renderable = PersonasScreen._build_avatar_pixels(cache, cache_key)
+        assert renderable is not None
 
         assert len(captured) == 1, (
             "mosaic_from_image should be called exactly once building the "
             "avatar thumbnail"
         )
-        source, box_cols, box_lines = captured[0]
+        source, box_cols, box_lines, fit = captured[0]
         # Baked at the avatar box - NOT the 80x40 chat-transcript box that
         # get_pixels() thumbnails to (the old bug's symptom was a clipped
         # top-left sliver). Box-fit and aspect preservation inside the box
         # are the mosaic module's own tested contract.
         assert (box_cols, box_lines) == (AVATAR_THUMB_COLS, AVATAR_THUMB_LINES)
+        assert fit == "cover"
         # The full-resolution source reaches the mosaic (no pre-shrink that
         # would throw away detail before baking).
         assert source.width == 200 and source.height == 100

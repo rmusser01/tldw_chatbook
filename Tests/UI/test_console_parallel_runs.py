@@ -1740,7 +1740,12 @@ async def test_navigating_away_with_busy_fleet_confirms_and_records_teardown() -
     notifications: list[str] = []
     app.notify = lambda message, **kwargs: notifications.append(str(message))
 
-    async def _wait_for_screen(screen_type_name: str, *, attempts: int = 300):
+    async def _wait_for_screen(
+        screen_type_name: str,
+        *,
+        control: str | None = None,
+        attempts: int = 300,
+    ):
         # Plain `asyncio.sleep` polling, NOT `pilot.pause()`: while the
         # confirm-on-navigate dialog is open, `TldwCli.handle_screen_
         # navigation` -- the App's OWN message-pump handler -- is
@@ -1754,7 +1759,9 @@ async def test_navigating_away_with_busy_fleet_confirms_and_records_teardown() -
         # full 30s timeout. Plain `asyncio.sleep` just yields the event
         # loop, which is all polling `app.screen`'s type needs here.
         for _ in range(attempts):
-            if type(app.screen).__name__ == screen_type_name:
+            if type(app.screen).__name__ == screen_type_name and (
+                control is None or bool(app.screen.query(control))
+            ):
                 return app.screen
             await asyncio.sleep(0.02)
         raise AssertionError(
@@ -1797,7 +1804,10 @@ async def test_navigating_away_with_busy_fleet_confirms_and_records_teardown() -
 
         # -- (a) busy fleet: dialog shown; Stay keeps the screen + run alive. --
         app.post_message(NavigateToScreen("home"))
-        dialog = await _wait_for_screen("ConfirmationDialog")
+        dialog = await _wait_for_screen(
+            "ConfirmationDialog",
+            control="#cancel-button",
+        )
         assert isinstance(dialog, ConfirmationDialog)
         assert "1 agent run" in dialog.message
         assert "Console" in dialog.message
@@ -1809,7 +1819,10 @@ async def test_navigating_away_with_busy_fleet_confirms_and_records_teardown() -
 
         # -- (a continued) busy fleet: Leave proceeds and tears the fleet down. --
         app.post_message(NavigateToScreen("home"))
-        dialog = await _wait_for_screen("ConfirmationDialog")
+        dialog = await _wait_for_screen(
+            "ConfirmationDialog",
+            control="#confirm-button",
+        )
         dialog.query_one("#confirm-button", Button).press()  # Leave
         await _wait_for_screen("HomeScreen")
         # `switch_screen` updates `app.screen` SYNCHRONOUSLY (the screen

@@ -195,8 +195,10 @@ def scoped_local_stack(tmp_path):
     `db_path_str`, which would be a blank database for `:memory:`)."""
     chachanotes_db = CharactersRAGDB(tmp_path / "chacha.db", client_id="scope-stack")
     media_db = MediaDatabase(tmp_path / "media.db", client_id="scope-stack")
+    notes_base = tmp_path / "notes_base"
+    notes_base.mkdir()
     notes_interop = NotesInteropService(
-        base_db_directory=tmp_path / "notes_base",
+        base_db_directory=notes_base,
         api_client_id="scope-stack",
         global_db_to_use=chachanotes_db,
     )
@@ -341,8 +343,10 @@ async def test_media_reading_scope_service_id_allowlist_restricts_real_query(
 @pytest.fixture
 def real_notes_stack(tmp_path):
     chachanotes_db = CharactersRAGDB(tmp_path / "notes_scope.db", client_id="scope-notes")
+    notes_base = tmp_path / "notes_base"
+    notes_base.mkdir()
     interop = NotesInteropService(
-        base_db_directory=tmp_path / "notes_base",
+        base_db_directory=notes_base,
         api_client_id="scope-notes",
         global_db_to_use=chachanotes_db,
     )

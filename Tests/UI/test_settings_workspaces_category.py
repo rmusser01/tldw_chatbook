@@ -12,7 +12,22 @@ from Tests.UI.test_settings_configuration_hub import (
     _open_settings_category,
     _settle_settings_mount_storm,
     _visible_text,
+    _wait_for_selector,
 )
+
+
+def _settings_without_splash(section, key=None, default=None):
+    if section == "splash_screen" and key == "enabled":
+        return False
+    return default
+
+
+async def _wait_for_settings_screen(app, pilot) -> SettingsScreen:
+    for _ in range(200):
+        if isinstance(app.screen, SettingsScreen):
+            return app.screen
+        await pilot.pause(0.01)
+    raise AssertionError("production app did not mount Settings")
 
 
 @pytest.mark.asyncio
@@ -33,62 +48,165 @@ async def test_workspaces_category_registered_and_immediate() -> None:
 
 @pytest.mark.asyncio
 async def test_create_rename_archive_unarchive_flow() -> None:
+    from unittest.mock import patch
+
     from textual.widgets import Button, Checkbox, Input
 
-    app = _build_test_app()
+    app = _build_test_app(configured_default="settings")
     registry = app.workspace_registry_service
-    host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)) as pilot:
-        screen = _active_destination_screen(host)
-        await _open_settings_category(pilot, "#settings-category-workspaces")
+    with patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=_settings_without_splash,
+    ):
+        async with app.run_test(size=(180, 50)) as pilot:
+            screen = await _wait_for_settings_screen(app, pilot)
+            await _wait_for_selector(
+                screen,
+                pilot,
+                "#settings-category-workspaces",
+            )
+            category = screen.query_one("#settings-category-workspaces", Button)
+            category.scroll_visible(animate=False)
+            category.press()
+            await _wait_for_selector(
+                screen,
+                pilot,
+                "#settings-workspace-create-name",
+            )
 
-        # Create with a free-form name.
-        screen.query_one("#settings-workspace-create-name", Input).value = "Client X"
-        screen.query_one("#settings-workspace-create", Button).press()
-        await pilot.pause(0.3)
-        created = [w for w in registry.list_workspaces() if w.name == "Client X"]
-        assert len(created) == 1
-        workspace_id = created[0].workspace_id
+            # Create with a free-form name.
+            screen.query_one("#settings-workspace-create-name", Input).value = "Client X"
+            screen.query_one("#settings-workspace-create", Button).press()
+            created = []
+            for _ in range(200):
+                created = [
+                    w for w in registry.list_workspaces() if w.name == "Client X"
+                ]
+                if created:
+                    break
+                await pilot.pause(0.01)
+            assert len(created) == 1
+            workspace_id = created[0].workspace_id
+            await _wait_for_selector(
+                screen,
+                pilot,
+                f"#settings-workspace-row-{workspace_id}",
+            )
 
-        # Select, rename.
-        screen.query_one(f"#settings-workspace-row-{workspace_id}", Button).press()
-        await pilot.pause(0.2)
-        screen.query_one("#settings-workspace-rename-input", Input).value = "Client Y"
-        screen.query_one("#settings-workspace-rename-apply", Button).press()
-        await pilot.pause(0.3)
-        assert registry.get_workspace(workspace_id).name == "Client Y"
+            # Select, rename.
+            screen.query_one(f"#settings-workspace-row-{workspace_id}", Button).press()
+            await _wait_for_selector(
+                screen,
+                pilot,
+                "#settings-workspace-rename-input",
+            )
+            screen.query_one(
+                "#settings-workspace-rename-input", Input
+            ).value = "Client Y"
+            screen.query_one("#settings-workspace-rename-apply", Button).press()
+            await _wait_for_selector(
+                screen,
+                pilot,
+                "#settings-workspace-set-active",
+            )
+            assert registry.get_workspace(workspace_id).name == "Client Y"
 
-        # Duplicate rename surfaces inline, not as a crash.
-        screen.query_one("#settings-workspace-rename-input", Input).value = "Default"
-        screen.query_one("#settings-workspace-rename-apply", Button).press()
-        await pilot.pause(0.3)
-        assert "already exists" in _visible_text(screen)
+            # Duplicate rename surfaces inline, not as a crash.
+            screen.query_one("#settings-workspace-rename-input", Input).value = "Default"
+            screen.query_one("#settings-workspace-rename-apply", Button).press()
+            for _ in range(200):
+                if "already exists" in _visible_text(screen):
+                    break
+                await pilot.pause(0.01)
+            assert "already exists" in _visible_text(screen)
 
-        # Set active.
-        screen.query_one("#settings-workspace-set-active", Button).press()
-        await pilot.pause(0.3)
-        assert registry.get_active_workspace().workspace_id == workspace_id
+            # Set active.
+            screen.query_one("#settings-workspace-set-active", Button).press()
+            await _wait_for_selector(
+                screen,
+                pilot,
+                "#settings-workspace-archive",
+            )
+            assert registry.get_active_workspace().workspace_id == workspace_id
 
-        # Archive (confirm dialog), falls back to Default.
-        screen.query_one("#settings-workspace-archive", Button).press()
-        await pilot.pause(0.3)
-        confirm = host.screen_stack[-1]
-        confirm.query_one("#confirm-button", Button).press()
-        await pilot.pause(0.4)
-        assert registry.get_workspace(workspace_id).archived is True
-        assert registry.get_active_workspace().workspace_id == "workspace-default"
+            # Archive (confirm dialog), falls back to Default.
+            screen.query_one("#settings-workspace-archive", Button).press()
+            for _ in range(200):
+                if app.screen is not screen and app.screen.query("#confirm-button"):
+                    break
+                await pilot.pause(0.01)
+            assert app.screen is not screen and bool(
+                app.screen.query("#confirm-button")
+            )
+            confirm = app.screen
+            confirm.query_one("#confirm-button", Button).press()
+            for _ in range(200):
+                if (
+                    registry.get_workspace(workspace_id).archived
+                    and registry.get_active_workspace().workspace_id
+                    == "workspace-default"
+                ):
+                    break
+                await pilot.pause(0.01)
+            assert registry.get_workspace(workspace_id).archived is True
+            assert registry.get_active_workspace().workspace_id == "workspace-default"
 
-        # Hidden until Show archived; then unarchive (no auto-activate).
-        assert not screen.query(f"#settings-workspace-row-{workspace_id}")
-        screen.query_one("#settings-workspaces-show-archived", Checkbox).value = True
-        await pilot.pause(0.3)
-        screen.query_one(f"#settings-workspace-row-{workspace_id}", Button).press()
-        await pilot.pause(0.2)
-        screen.query_one("#settings-workspace-unarchive", Button).press()
-        await pilot.pause(0.3)
-        record = registry.get_workspace(workspace_id)
-        assert record.archived is False and record.active is False
+            # Hidden until Show archived; then unarchive (no auto-activate).
+            await _wait_for_selector(
+                screen,
+                pilot,
+                "#settings-workspaces-show-archived",
+            )
+            assert not screen.query(f"#settings-workspace-row-{workspace_id}")
+            screen.query_one("#settings-workspaces-show-archived", Checkbox).value = True
+            await _wait_for_selector(
+                screen,
+                pilot,
+                f"#settings-workspace-row-{workspace_id}",
+            )
+            screen.query_one(f"#settings-workspace-row-{workspace_id}", Button).press()
+            await _wait_for_selector(
+                screen,
+                pilot,
+                "#settings-workspace-unarchive",
+            )
+            screen.query_one("#settings-workspace-unarchive", Button).press()
+            for _ in range(200):
+                record = registry.get_workspace(workspace_id)
+                if not record.archived:
+                    break
+                await pilot.pause(0.01)
+            record = registry.get_workspace(workspace_id)
+            assert record.archived is False and record.active is False
+
+
+@pytest.mark.asyncio
+async def test_compact_overview_keeps_a_painted_recovery_action() -> None:
+    """The full Settings app keeps one real action above the compact fold."""
+    from unittest.mock import patch
+
+    from textual.widgets import Button
+
+    app = _build_test_app(configured_default="settings")
+    with patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=_settings_without_splash,
+    ):
+        async with app.run_test(size=(100, 32)) as pilot:
+            screen = await _wait_for_settings_screen(app, pilot)
+            await _wait_for_selector(
+                screen,
+                pilot,
+                "#settings-open-appearance",
+            )
+            action = screen.query_one("#settings-open-appearance", Button)
+            assert 0 <= action.region.y < action.region.bottom <= 32
+            painted_row = "".join(
+                segment.text
+                for segment in screen._compositor.render_strips()[action.region.y]
+            )
+            assert "Theme" in painted_row
 
 
 @pytest.mark.asyncio

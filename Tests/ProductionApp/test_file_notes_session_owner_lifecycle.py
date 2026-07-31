@@ -102,6 +102,7 @@ async def test_file_notes_owner_settles_before_mounted_library_replica() -> None
     workspace = _ReplicaWorkspaceProbe(events)
     app = _build_test_app(configured_default="library")
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app.file_notes_session_owner = owner
 
     async with app.run_test(size=(140, 40)) as pilot:
@@ -120,6 +121,7 @@ async def test_file_notes_owner_settles_when_library_never_mounted() -> None:
     owner = _OwnerProbe(events)
     app = _build_test_app(configured_default="chat")
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app.file_notes_session_owner = owner
 
     async with app.run_test(size=(140, 40)) as pilot:
@@ -202,9 +204,7 @@ async def test_app_shutdown_cancellation_preserves_non_cancellation_failure(
     owner = _BlockingOwnerProbe(
         events,
         failure=(
-            RuntimeError("forced owner failure")
-            if failure_phase == "owner"
-            else None
+            RuntimeError("forced owner failure") if failure_phase == "owner" else None
         ),
     )
     app = _build_test_app(configured_default="chat")
@@ -298,6 +298,7 @@ async def test_app_shutdown_settles_retained_child_after_forced_workspace_unmoun
     )
     app = _build_test_app(configured_default="library")
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app.file_notes_session_owner = owner
     status_waiter = None
 
@@ -344,6 +345,7 @@ async def test_app_owner_first_retained_commit_shutdown_precedes_replica_teardow
     workspace = _ReplicaWorkspaceProbe(events)
     app = _build_test_app(configured_default="library")
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app.file_notes_session_owner = owner
     waiter = None
 
@@ -373,11 +375,9 @@ async def test_retained_commit_shutdown_joins_cancelled_recovery_before_owner_cl
 ) -> None:
     """Owner-first shutdown joins recovery after its mounted waiter disappears."""
     repository = _init_repository(tmp_path)
-    service, binding, _review, runner = (
-        await _prepare_uncertain_commit_recovery(
-            repository,
-            mode="zero_without_commit",
-        )
+    service, binding, _review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode="zero_without_commit",
     )
     owner = service._owner
     owner.attach_git_service(service)

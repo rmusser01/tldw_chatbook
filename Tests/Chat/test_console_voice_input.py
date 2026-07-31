@@ -119,11 +119,15 @@ def test_probe_ok_when_both_present(monkeypatch):
 def test_probe_does_not_import_transcription_service():
     """Probing must stay cheap: no faster-whisper, no NeMo, no torch."""
     heavy = "tldw_chatbook.Local_Ingestion.transcription_service"
-    sys.modules.pop(heavy, None)
+    original_module = sys.modules.pop(heavy, None)
 
-    cvi.probe()
-
-    assert heavy not in sys.modules
+    try:
+        cvi.probe()
+        assert heavy not in sys.modules
+    finally:
+        sys.modules.pop(heavy, None)
+        if original_module is not None:
+            sys.modules[heavy] = original_module
 
 
 def test_capture_available_true_with_only_one_backend_installed(monkeypatch):

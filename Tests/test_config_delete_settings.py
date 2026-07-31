@@ -198,7 +198,7 @@ def test_structured_mutation_sets_and_deletes_with_one_atomic_replace(
     )
     os.chmod(config_path, 0o600)
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    atomic_write = config_module.atomic_write_text
+    atomic_write = config_module.atomic_private_write_text
     load_settings = config_module.load_settings
     write_calls = 0
     reload_calls = 0
@@ -213,7 +213,11 @@ def test_structured_mutation_sets_and_deletes_with_one_atomic_replace(
         reload_calls += 1
         return load_settings(*args, **kwargs)
 
-    monkeypatch.setattr(config_module, "atomic_write_text", counted_atomic_write)
+    monkeypatch.setattr(
+        config_module,
+        "atomic_private_write_text",
+        counted_atomic_write,
+    )
     monkeypatch.setattr(config_module, "load_settings", counted_load_settings)
 
     result = config_module.apply_settings_mutation_to_cli_config(
@@ -275,7 +279,11 @@ def test_structured_mutation_rejects_set_delete_overlap_before_write(
         write_calls += 1
         raise AssertionError("overlap must fail before writing")
 
-    monkeypatch.setattr(config_module, "atomic_write_text", unexpected_write)
+    monkeypatch.setattr(
+        config_module,
+        "atomic_private_write_text",
+        unexpected_write,
+    )
 
     result = config_module.apply_settings_mutation_to_cli_config(
         {"app_tts": {"default_model": "new"}},
@@ -369,7 +377,11 @@ def test_structured_mutation_reports_write_failure_before_replace(
     def fail_atomic_write(*args, **kwargs):
         raise OSError("injected pre-replacement failure")
 
-    monkeypatch.setattr(config_module, "atomic_write_text", fail_atomic_write)
+    monkeypatch.setattr(
+        config_module,
+        "atomic_private_write_text",
+        fail_atomic_write,
+    )
     messages: list[str] = []
     sink_id = config_module.logger.add(
         messages.append,
@@ -413,7 +425,7 @@ def test_batch_save_delete_keys_delegates_to_one_structured_mutation(
         },
     )
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    atomic_write = config_module.atomic_write_text
+    atomic_write = config_module.atomic_private_write_text
     write_calls = 0
 
     def counted_atomic_write(*args, **kwargs):
@@ -421,7 +433,11 @@ def test_batch_save_delete_keys_delegates_to_one_structured_mutation(
         write_calls += 1
         return atomic_write(*args, **kwargs)
 
-    monkeypatch.setattr(config_module, "atomic_write_text", counted_atomic_write)
+    monkeypatch.setattr(
+        config_module,
+        "atomic_private_write_text",
+        counted_atomic_write,
+    )
 
     assert config_module.save_settings_to_cli_config(
         {
@@ -490,7 +506,7 @@ def test_shared_lock_prevents_lost_concurrent_set_and_delete_updates(
         },
     )
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    real_atomic_write = config_module.atomic_write_text
+    real_atomic_write = config_module.atomic_private_write_text
     set_at_write = threading.Event()
     release_set_write = threading.Event()
     delete_attempting_lock = threading.Event()
@@ -537,7 +553,7 @@ def test_shared_lock_prevents_lost_concurrent_set_and_delete_updates(
 
     monkeypatch.setattr(
         config_module,
-        "atomic_write_text",
+        "atomic_private_write_text",
         controlled_atomic_write,
     )
     results: dict[str, config_module.ConfigMutationResult] = {}
@@ -593,7 +609,7 @@ def test_delete_wrapper_performs_one_atomic_write_for_actual_mutation(
     config_path = tmp_path / "config.toml"
     _write_config(config_path, {"app_tts": {"default_model": "stale"}})
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    atomic_write = config_module.atomic_write_text
+    atomic_write = config_module.atomic_private_write_text
     write_calls = 0
 
     def counted_atomic_write(*args, **kwargs):
@@ -601,7 +617,11 @@ def test_delete_wrapper_performs_one_atomic_write_for_actual_mutation(
         write_calls += 1
         return atomic_write(*args, **kwargs)
 
-    monkeypatch.setattr(config_module, "atomic_write_text", counted_atomic_write)
+    monkeypatch.setattr(
+        config_module,
+        "atomic_private_write_text",
+        counted_atomic_write,
+    )
 
     assert config_module.delete_settings_from_cli_config(
         "app_tts",

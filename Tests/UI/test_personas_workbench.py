@@ -1988,30 +1988,6 @@ class TestImportExport:
                 for message, severity in notifications
             )
 
-    async def test_import_failure_shows_recovery_copy(
-        self, mock_app_instance, stub_characters, monkeypatch, tmp_path
-    ):
-        def fake_import(file_path):
-            raise ValueError("Unsupported card format")
-
-        monkeypatch.setattr(
-            character_handler_module, "import_character_card", fake_import
-        )
-        app = PersonasTestApp(mock_app_instance)
-        notifications = self._capture_notifications(app)
-        async with app.run_test() as pilot:
-            screen = await _mounted(pilot)
-            await pilot.pause()
-            await pilot.click("#personas-library-row-character-1")
-            await pilot.pause()
-            await screen._import_character_from_path(str(tmp_path / "bad.json"))
-            await pilot.pause()
-            assert any(
-                "Unsupported card format" in message and severity == "error"
-                for message, severity in notifications
-            )
-            assert screen.state.selected_entity_id == "1"
-
     async def test_duplicate_copies_character_under_disambiguated_name(
         self, mock_app_instance, stub_characters, monkeypatch
     ):

@@ -1,5 +1,7 @@
 """Integration tests for the Library ingest flow."""
 
+from types import SimpleNamespace
+
 import pytest
 import pytest_asyncio
 
@@ -122,35 +124,55 @@ async def test_guardrail_modal_shows_when_pdf_deps_missing(library_screen, tmp_p
     assert any("Install pdf support" in t for t in texts)
 
 
-@pytest.mark.asyncio
-async def test_options_persist_to_config(library_screen, tmp_path, monkeypatch):
-    """Change option, start ingest, verify config updated."""
-    screen, pilot = library_screen
-    pdf = tmp_path / "doc.pdf"
-    pdf.write_text("%PDF-1.4 dummy")
+def test_options_persist_to_config(monkeypatch):
+    """Submitting ingest options persists one atomic configuration batch."""
+    saved_batches = []
 
-    saved_calls = []
-
-    def fake_save(section, key, value):
-        saved_calls.append((section, key, value))
+    def fake_save(section_values):
+        saved_batches.append(section_values)
         return True
 
-    monkeypatch.setattr(library_screen_module, "save_setting_to_cli_config", fake_save)
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_settings_to_cli_config",
+        fake_save,
+    )
 
-    form = screen._library_ingest_form
-    form.path = str(pdf)
-    form.type_options = {"pdf": {"pdf_engine": "pymupdf"}}
-    form.chunk = True
-    form.chunk_size = "1024"
-    form.preflight = _preflight_result(type_groups={"pdf": [str(pdf)]})
+    submitted_jobs = []
+    screen = library_screen_module.LibraryScreen.__new__(
+        library_screen_module.LibraryScreen
+    )
+    screen.app_instance = SimpleNamespace(
+        submit_library_ingest_job=lambda **kwargs: submitted_jobs.append(kwargs)
+    )
+    screen._library_ingest_form = SimpleNamespace(
+        type_options={"pdf": {"pdf_engine": "pymupdf"}},
+        analyze=False,
+        chunk=True,
+        chunk_size="1024",
+        title="",
+        author="",
+        keywords="",
+        path="doc.pdf",
+        preflight=_preflight_result(type_groups={"pdf": ["doc.pdf"]}),
+        preflight_checking=False,
+    )
+    screen._cancel_library_ingest_preflight = lambda: None
+    screen.refresh = lambda **_kwargs: None
 
-    screen._submit_library_ingest_form()
-    await pilot.pause()
-    await pilot.pause()
+    library_screen_module.LibraryScreen._do_submit_ingest(screen, "doc.pdf")
 
-    assert ("library.ingest_options.pdf", "pdf_engine", "pymupdf") in saved_calls
-    assert ("library.ingest_options.generic", "chunk", True) in saved_calls
-    assert ("library.ingest_options.generic", "chunk_size", 1024) in saved_calls
+    assert len(submitted_jobs) == 1
+    assert saved_batches == [
+        {
+            "library.ingest_options.pdf": {"pdf_engine": "pymupdf"},
+            "library.ingest_options.generic": {
+                "analyze": False,
+                "chunk": True,
+                "chunk_size": 1024,
+            },
+        }
+    ]
 
 
 @pytest.mark.asyncio

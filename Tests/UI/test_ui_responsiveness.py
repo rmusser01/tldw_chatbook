@@ -238,14 +238,7 @@ def test_console_transcript_sync_timer_updates_responsiveness_monitor():
     assert stopped == [True]
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="task-1469: dormant while pytest-asyncio strict mode skipped its "
-    "unmarked coroutine from the repo root (task-1457 activated it); the "
-    "hand-built ChatScreen skeleton stubs 12 delegation stages but "
-    "_sync_native_console_chat_ui now has ~25 — needs a rewrite at the "
-    "worker-recording seam, not more stubs",
-)
+@pytest.mark.asyncio
 async def test_console_sync_records_worker_lifecycle():
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -254,10 +247,12 @@ async def test_console_sync_records_worker_lifecycle():
     screen.app_instance = SimpleNamespace(ui_responsiveness_monitor=monitor)
     screen._console_sync_in_progress = False
     screen._console_sync_requested = False
-    screen._last_console_rail_state = None
     screen.run_worker = lambda *_args, **_kwargs: None
+    observed_active_worker = False
 
     def assert_worker_active():
+        nonlocal observed_active_worker
+        observed_active_worker = True
         assert monitor.snapshot().active_workers == 1
 
     async def async_noop():
@@ -265,52 +260,40 @@ async def test_console_sync_records_worker_lifecycle():
 
     screen._sync_console_chat_core_state = assert_worker_active
     screen._sync_console_session_draft = lambda: None
+    screen._warm_console_effective_scope_cache_if_stale = async_noop
     screen._refresh_active_dictionaries_summary_if_scope_changed = async_noop
+    screen._refresh_active_world_books_summary_if_scope_changed = async_noop
+    screen._refresh_active_character_avatar_if_scope_changed = async_noop
+    screen._current_console_rail_state = lambda: object()
     screen._sync_console_control_bar = lambda _rail_state: None
     screen._sync_console_settings_summary = lambda: None
     screen._sync_console_mode_bar = lambda: None
     screen._sync_console_native_session_tabs = async_noop
     screen._sync_console_workspace_context = lambda: None
-    screen._sync_native_console_transcript_to_legacy_surface = async_noop
-    screen._sync_console_rail_visibility = lambda _state: None
-    screen._current_console_rail_state = lambda: object()
+    screen._sync_native_console_transcript = async_noop
+    screen._sync_console_rail_visibility_if_changed = lambda _state: None
     screen._dispatch_console_rail_preference_prune = lambda: None
 
     await ChatScreen._sync_native_console_chat_ui(screen)
 
+    assert observed_active_worker
     assert monitor.snapshot().active_workers == 0
 
 
-async def test_console_session_surface_records_tab_mount_churn():
+def test_console_session_surface_records_tab_mount_churn():
     from tldw_chatbook.Widgets.Console.console_session_surface import (
         ConsoleSessionSurface,
     )
 
     monitor = UIResponsivenessMonitor(enabled=True)
 
-    class FakeChild:
-        id = "console-new-chat-tab"
-
-        async def remove(self):
-            return None
-
-    class FakeTabStrip:
-        def __init__(self):
-            self.children = [FakeChild()]
-
-        async def mount(self, widget):
-            self.children.append(widget)
-
     surface = ConsoleSessionSurface.__new__(ConsoleSessionSurface)
     surface.app_instance = SimpleNamespace(ui_responsiveness_monitor=monitor)
-    surface._session_sync_lock = __import__("asyncio").Lock()
-    tab_strip = FakeTabStrip()
-    surface.query_one = lambda _selector, _expect_type=None: tab_strip
 
-    await ConsoleSessionSurface.sync_sessions(
+    ConsoleSessionSurface._record_mount_churn(
         surface,
-        sessions=[SimpleNamespace(id="session-1", title="Console")],
-        active_session_id="session-1",
+        mounted=3,
+        removed=1,
     )
 
     snapshot = monitor.snapshot()

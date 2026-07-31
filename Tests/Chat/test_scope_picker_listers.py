@@ -36,8 +36,10 @@ def lister_stack(tmp_path):
     everything (plan-time verification #6 / V6)."""
     chachanotes_db = CharactersRAGDB(tmp_path / "chacha.db", client_id="scope-lister")
     media_db = MediaDatabase(tmp_path / "media.db", client_id="scope-lister")
+    notes_base = tmp_path / "notes_base"
+    notes_base.mkdir()
     notes_interop = NotesInteropService(
-        base_db_directory=tmp_path / "notes_base",
+        base_db_directory=notes_base,
         api_client_id="scope-lister",
         global_db_to_use=chachanotes_db,
     )

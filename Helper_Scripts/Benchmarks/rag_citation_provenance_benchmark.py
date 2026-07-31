@@ -321,14 +321,15 @@ def isolated_benchmark_host_state(root: Path) -> Iterator[None]:
     root = root.resolve()
     home = root / "home"
     config_root = root / "config"
+    config_directory = config_root / "tldw_cli"
     data_root = root / "data"
-    for path in (home, config_root, data_root):
+    for path in (home, config_directory, data_root):
         path.mkdir(parents=True, exist_ok=True)
     overrides = {
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(config_root),
         "XDG_DATA_HOME": str(data_root),
-        "TLDW_CONFIG_PATH": str(config_root / "tldw_cli" / "config.toml"),
+        "TLDW_CONFIG_PATH": str(config_directory / "config.toml"),
         "TLDW_TEST_CONFIG_ROOT": str(config_root),
         "TLDW_TEST_MODE": "1",
     }

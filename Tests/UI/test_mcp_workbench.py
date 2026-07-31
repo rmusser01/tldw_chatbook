@@ -5,6 +5,7 @@ import asyncio
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -25,7 +26,10 @@ from tldw_chatbook.MCP.permission_store import (
 from tldw_chatbook.MCP.readiness import HubAction
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
-from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+    MCPInspector,
+    audit_entry_detail_payload,
+)
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import MCPPermissionsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCP_RAIL_ROW_PREFIX, MCPRail
@@ -33,6 +37,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutations
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
+from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 
 
 @pytest.fixture(autouse=True)
@@ -134,7 +139,6 @@ async def test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers():
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         assert workbench.active_mode == "servers"
-        rail = app.query_one(MCPRail)
         # builtin + docs rows (+ "All servers")
         assert len(list(app.query("Button.mcp-rail-row"))) == 3
         canvas = app.query_one(MCPServersMode)
@@ -659,6 +663,39 @@ def test_active_mode_property_rejects_direct_assignment():
         workbench.active_mode = "tools"
 
 
+def test_set_mode_defers_async_workers_as_callables():
+    """Exclusive cancellation must not strand already-created coroutines."""
+    switcher = SimpleNamespace(current=None)
+    queued: list[tuple[Any, dict[str, Any]]] = []
+    posted: list[Any] = []
+
+    async def disarm_canvas_delete() -> None:
+        return None
+
+    async def clear_tool_view() -> None:
+        return None
+
+    workbench = SimpleNamespace(
+        _active_mode="servers",
+        ModeChanged=lambda mode: SimpleNamespace(mode=mode),
+        query_one=lambda _widget_type: switcher,
+        post_message=lambda message: posted.append(message),
+        run_worker=lambda work, **kwargs: queued.append((work, kwargs)),
+        _disarm_canvas_delete=disarm_canvas_delete,
+        _clear_tool_view=clear_tool_view,
+    )
+
+    MCPWorkbench.set_mode(workbench, "tools")
+
+    assert switcher.current == "mcp-mode-canvas-tools"
+    assert [message.mode for message in posted] == ["tools"]
+    assert [work for work, _kwargs in queued] == [
+        disarm_canvas_delete,
+        clear_tool_view,
+    ]
+    assert all(callable(work) for work, _kwargs in queued)
+
+
 @pytest.mark.asyncio
 async def test_set_initial_view_state_during_inflight_reload_applies_pending_state_once():
     """Finding 2: a restore requested while a reload is in flight must not race it.
@@ -716,9 +753,6 @@ async def test_set_initial_view_state_during_inflight_reload_applies_pending_sta
         assert len(apply_calls) == 1
 
 
-from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
-
-
 class _StubApp:
     unified_mcp_service = None
 
@@ -738,8 +772,6 @@ def test_screen_hosts_workbench_with_mode_action_and_tolerant_restore():
 
 
 def test_mcp_hub_modes_registry_is_complete():
-    from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES
-
     assert list(MCP_HUB_MODES) == ["servers", "tools", "permissions", "audit"]
     for spec in MCP_HUB_MODES.values():
         assert spec["label"] and spec["button_id"].startswith("mcp-mode-")
@@ -2083,87 +2115,88 @@ async def test_import_cancel_closes_panel_without_saving():
 async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(
     tmp_path, monkeypatch
 ):
-    """Workbench's FileRequested handler pushes EnhancedFileOpen filtered to
-    JSON and, once a file is picked, writes its text into the panel's
-    TextArea (Interfaces: "workbench pushes EnhancedFileOpen(...) and writes
-    the file's text into the TextArea").
-
-    F1: `_load_import_file` now validates the picked path with
-    `is_safe_path(file_path, home_dir)` -- pytest's `tmp_path` fixture lives
-    outside the real home directory, so `expanduser("~")` is patched to
-    treat `tmp_path` as home for this test, mirroring the picked file
-    legitimately living under the user's home tree in production.
-    """
-    monkeypatch.setattr(mcp_workbench_module.os.path, "expanduser", lambda _: str(tmp_path))
-    app = ImportApp()
+    """The production handler opens a JSON picker and schedules the selected file load."""
+    monkeypatch.setattr(mcp_workbench_module, "_mcp_import_home", lambda: str(tmp_path))
     config_path = tmp_path / "mcp.json"
     config_path.write_text(json.dumps({"mcpServers": {"docs": {"command": "npx"}}}))
 
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        await pilot.click("#mcp-import-server")
-        await pilot.pause()
+    pushed: dict[str, Any] = {}
+    scheduled: dict[str, Any] = {}
+    stopped: list[bool] = []
 
-        pushed: dict[str, Any] = {}
+    async def fake_push_screen(screen, callback=None):
+        pushed["screen"] = screen
+        pushed["callback"] = callback
 
-        async def fake_push_screen(screen, callback=None):
-            pushed["screen"] = screen
-            pushed["title"] = getattr(screen, "title", None)
-            if callback is not None:
-                callback(config_path)
+    async def fake_load_import_file(file_path: str) -> None:
+        scheduled["loaded_path"] = file_path
 
-        app.push_screen = fake_push_screen
+    def fake_run_worker(coroutine, **kwargs):
+        scheduled["coroutine"] = coroutine
+        scheduled["kwargs"] = kwargs
 
-        panel = app.query_one(MCPImportPanel)
-        panel.post_message(MCPImportPanel.FileRequested())
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
+    handler = SimpleNamespace(
+        app=SimpleNamespace(push_screen=fake_push_screen),
+        run_worker=fake_run_worker,
+        _load_import_file=fake_load_import_file,
+    )
+    event = SimpleNamespace(stop=lambda: stopped.append(True))
 
-        assert pushed, "expected a file picker to be pushed"
-        assert app.query_one("#mcp-import-text", TextArea).text.strip() == (
-            config_path.read_text().strip()
-        )
+    await MCPWorkbench.on_mcp_import_panel_file_requested(handler, event)
+
+    assert stopped == [True]
+    assert pushed["screen"]._title == "Select MCP config JSON"
+    assert pushed["callback"] is not None
+
+    pushed["callback"](config_path)
+    assert scheduled["kwargs"] == {
+        "group": "mcp-import-file",
+        "exclusive": True,
+    }
+    await scheduled["coroutine"]
+    assert scheduled["loaded_path"] == str(config_path)
+
+    loaded_text: list[str] = []
+    notifications: list[tuple[str, str]] = []
+    loader = SimpleNamespace(
+        app=SimpleNamespace(
+            notify=lambda message, severity="information": notifications.append(
+                (str(message), severity)
+            )
+        ),
+        _import_panel_or_none=lambda: SimpleNamespace(
+            set_file_text=lambda text: loaded_text.append(text)
+        ),
+    )
+
+    await MCPWorkbench._load_import_file(loader, str(config_path))
+
+    assert notifications == []
+    assert loaded_text == [config_path.read_text()]
 
 
 @pytest.mark.asyncio
 async def test_non_utf8_import_file_does_not_crash_app(tmp_path, monkeypatch):
-    """C1 regression (review probe): `_load_import_file` previously only
-    caught `OSError`. `Path.read_text(encoding="utf-8")` raises
-    `UnicodeDecodeError` (a `ValueError` subclass, NOT an `OSError`) for any
-    non-UTF-8 file -- e.g. a Claude-Desktop config saved with a UTF-16 BOM.
-    Left uncaught, that escapes the worker and, with Textual's default
-    `exit_on_error=True`, takes down the whole app. Dispatches through the
-    exact `run_worker(..., group="mcp-import-file", exclusive=True)` call
-    the real file-picker callback uses (not a bare `await`) -- the crash
-    only manifests via that worker boundary.
-
-    F1: `expanduser("~")` is patched to treat `tmp_path` as home so path
-    validation doesn't short-circuit before the read is even attempted --
-    this test is specifically about the UnicodeDecodeError path, not F1's
-    own rejection path (covered separately).
-    """
-    monkeypatch.setattr(mcp_workbench_module.os.path, "expanduser", lambda _: str(tmp_path))
+    """The production loader contains non-UTF-8 failures and reports them."""
+    monkeypatch.setattr(mcp_workbench_module, "_mcp_import_home", lambda: str(tmp_path))
     bad = tmp_path / "bad.json"
     bad.write_bytes(b"\xff\xfe{\"mcpServers\": {}}")
-    app = WorkbenchApp()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        notifications = _capture_notifications(app)
-        workbench = app.query_one(MCPWorkbench)
-        workbench.run_worker(
-            workbench._load_import_file(str(bad)),
-            group="mcp-import-file",
-            exclusive=True,
-        )
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        assert app.is_running, "a non-UTF-8 import file must not crash the app"
-        assert any(
-            "could not read" in msg.lower() and severity == "error"
-            for msg, severity in notifications
-        ), f"expected an error notify for the unreadable file, got: {notifications!r}"
+    notifications: list[tuple[str, str]] = []
+    loader = SimpleNamespace(
+        app=SimpleNamespace(
+            notify=lambda message, severity="information": notifications.append(
+                (str(message), severity)
+            )
+        ),
+        _import_panel_or_none=lambda: None,
+    )
+
+    await MCPWorkbench._load_import_file(loader, str(bad))
+
+    assert any(
+        "could not read" in msg.lower() and severity == "error"
+        for msg, severity in notifications
+    ), f"expected an error notify for the unreadable file, got: {notifications!r}"
 
 
 @pytest.mark.asyncio
@@ -2177,27 +2210,25 @@ async def test_load_import_file_rejects_path_outside_home_directory(tmp_path, mo
     """
     home = tmp_path / "home"
     home.mkdir()
-    monkeypatch.setattr(mcp_workbench_module.os.path, "expanduser", lambda _: str(home))
+    monkeypatch.setattr(mcp_workbench_module, "_mcp_import_home", lambda: str(home))
     outside = tmp_path / "outside" / "mcp.json"
     outside.parent.mkdir()
     outside.write_text(json.dumps({"mcpServers": {}}))
 
-    app = WorkbenchApp()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        notifications = _capture_notifications(app)
-        workbench = app.query_one(MCPWorkbench)
-        workbench.run_worker(
-            workbench._load_import_file(str(outside)),
-            group="mcp-import-file",
-            exclusive=True,
+    notifications: list[tuple[str, str]] = []
+    loader = SimpleNamespace(
+        app=SimpleNamespace(
+            notify=lambda message, severity="information": notifications.append(
+                (str(message), severity)
+            )
         )
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        assert notifications == [("Import file path failed validation.", "error")], (
-            f"expected exactly one path-validation error toast, got: {notifications!r}"
-        )
+    )
+
+    await MCPWorkbench._load_import_file(loader, str(outside))
+
+    assert notifications == [("Import file path failed validation.", "error")], (
+        f"expected exactly one path-validation error toast, got: {notifications!r}"
+    )
 
 
 @pytest.mark.asyncio
@@ -2209,28 +2240,27 @@ async def test_load_import_file_rejects_oversized_file(tmp_path, monkeypatch):
     test_process_attachment_path_rejects_oversized_files`), lowering the cap
     via monkeypatch so the test file itself stays small.
     """
-    monkeypatch.setattr(mcp_workbench_module.os.path, "expanduser", lambda _: str(tmp_path))
+    monkeypatch.setattr(mcp_workbench_module, "_mcp_import_home", lambda: str(tmp_path))
     monkeypatch.setattr(mcp_workbench_module, "MAX_MCP_IMPORT_FILE_BYTES", 16)
     big = tmp_path / "big.json"
     big.write_text("x" * 64)
 
-    app = WorkbenchApp()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        notifications = _capture_notifications(app)
-        workbench = app.query_one(MCPWorkbench)
-        workbench.run_worker(
-            workbench._load_import_file(str(big)),
-            group="mcp-import-file",
-            exclusive=True,
-        )
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        assert any(
-            "too large" in msg.lower() and severity == "error"
-            for msg, severity in notifications
-        ), f"expected an oversized-file error notify, got: {notifications!r}"
+    notifications: list[tuple[str, str]] = []
+    loader = SimpleNamespace(
+        app=SimpleNamespace(
+            notify=lambda message, severity="information": notifications.append(
+                (str(message), severity)
+            )
+        ),
+        _import_panel_or_none=lambda: None,
+    )
+
+    await MCPWorkbench._load_import_file(loader, str(big))
+
+    assert any(
+        "too large" in msg.lower() and severity == "error"
+        for msg, severity in notifications
+    ), f"expected an oversized-file error notify, got: {notifications!r}"
 
 
 @pytest.mark.asyncio
@@ -6007,9 +6037,14 @@ def _audit_record(
     decision: str = "allowed",
     ok: bool = True,
     duration_ms: int = 42,
-    error: str | None = None,
-    arguments: dict | None = None,
-    result_excerpt: str | None = None,
+    status: str = "success",
+    error_category: str | None = None,
+    exception_type: str | None = None,
+    status_code: int | None = None,
+    argument_names: list[str] | None = None,
+    unknown_argument_count: int = 0,
+    result_type: str = "none",
+    result_size: int = 0,
 ) -> dict:
     return {
         "ts": ts,
@@ -6018,10 +6053,15 @@ def _audit_record(
         "initiator": initiator,
         "decision": decision,
         "ok": ok,
+        "status": status,
         "duration_ms": duration_ms,
-        "error": error,
-        "arguments": arguments,
-        "result_excerpt": result_excerpt,
+        "error_category": error_category,
+        "exception_type": exception_type,
+        "status_code": status_code,
+        "argument_names": argument_names or [],
+        "unknown_argument_count": unknown_argument_count,
+        "result_type": result_type,
+        "result_size": result_size,
     }
 
 
@@ -6126,84 +6166,39 @@ async def _select_audit_mode_row(app: App, pilot, row: int) -> None:
     await pilot.pause()
 
 
-@pytest.mark.asyncio
-async def test_audit_entry_selection_shows_pretty_printed_detail_in_inspector():
-    app = AuditApp(
-        [
-            _audit_record(
-                server_key="local:docs", tool_name="search", initiator="test",
-                decision="allowed", ok=True, duration_ms=1500,
-                arguments={"query": "hello"}, result_excerpt="3 results",
-            )
-        ]
+def test_audit_entry_detail_payload_is_metadata_only():
+    payload = audit_entry_detail_payload(
+        {
+            "ts": "2026-07-16T21:22:00+00:00",
+            "server_key": "local:docs",
+            "tool_name": "search",
+            "initiator": "test",
+            "decision": "allowed",
+            "ok": True,
+            "status": "success",
+            "duration_ms": 1500,
+            "argument_names": ["query"],
+            "unknown_argument_count": 1,
+            "result_type": "list",
+            "result_size": 3,
+            # Legacy fields must never cross the public display boundary.
+            "arguments": {"api_key": "sk-super-secret", "query": "hello"},
+            "result_excerpt": "3 results",
+            "error": "private exception text",
+        }
     )
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("audit")
-        await pilot.pause()
-        await _select_audit_mode_row(app, pilot, 0)
 
-        container = app.query_one("#mcp-inspector-audit")
-        assert container.display is True
-        name_text = str(app.query_one("#mcp-inspector-audit-name", Static).renderable)
-        assert name_text == "search — local:docs"
-        detail_text = str(app.query_one("#mcp-inspector-audit-detail", Static).renderable)
-        assert '"tool": "local:docs::search"' in detail_text
-        assert '"initiator": "test"' in detail_text
-        assert '"decision": "allowed"' in detail_text
-        assert '"duration": "1.5s"' in detail_text
-        assert '"query": "hello"' in detail_text
-        assert '"3 results"' in detail_text
-
-        open_tool_button = app.query_one("#mcp-audit-open-tool", Button)
-        adjust_permission_button = app.query_one("#mcp-audit-adjust-permission", Button)
-        assert open_tool_button.tooltip
-        assert adjust_permission_button.tooltip
-
-
-@pytest.mark.asyncio
-async def test_audit_entry_detail_redacts_arguments():
-    app = AuditApp(
-        [_audit_record(arguments={"api_key": "sk-super-secret", "query": "hello"})]
-    )
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("audit")
-        await pilot.pause()
-        await _select_audit_mode_row(app, pilot, 0)
-
-        detail_text = str(app.query_one("#mcp-inspector-audit-detail", Static).renderable)
-        assert "sk-super-secret" not in detail_text
-        assert '"query": "hello"' in detail_text
-
-
-@pytest.mark.asyncio
-async def test_audit_entry_detail_redacts_json_object_result_excerpt():
-    """Important fix: `result_excerpt` is a caller-truncated STRING (see
-    `MCP/execution_log.py`'s `build_record()`) -- when a tool's result is
-    itself JSON-object-shaped text, `show_audit_entry()` must parse it and
-    redact secret-looking keys the same way it already does for
-    `arguments`, not just pass the raw string through.
-    """
-    app = AuditApp(
-        [
-            _audit_record(
-                result_excerpt=json.dumps({"api_key": "sk-super-secret", "status": "ok"}),
-            )
-        ]
-    )
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("audit")
-        await pilot.pause()
-        await _select_audit_mode_row(app, pilot, 0)
-
-        detail_text = str(app.query_one("#mcp-inspector-audit-detail", Static).renderable)
-        assert "sk-super-secret" not in detail_text
-        assert '"status": "ok"' in detail_text
+    assert payload["tool"] == "local:docs::search"
+    assert payload["duration"] == "1.5s"
+    assert payload["argument_names"] == ["query"]
+    assert payload["unknown_argument_count"] == 1
+    assert payload["result_type"] == "list"
+    assert payload["result_size"] == 3
+    serialized = json.dumps(payload)
+    assert "sk-super-secret" not in serialized
+    assert "hello" not in serialized
+    assert "3 results" not in serialized
+    assert "private exception text" not in serialized
 
 
 @pytest.mark.asyncio

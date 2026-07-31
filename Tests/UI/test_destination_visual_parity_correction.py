@@ -36,12 +36,17 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem
-from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
-from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    MainNavigationBar,
+    NavigateToScreen,
+)
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens import (
     artifacts_screen as artifacts_screen_module,
     library_screen as library_screen_module,
     skills_screen as skills_screen_module,
+    watchlists_collections_screen as wc_screen_module,
     workflows_screen as workflows_screen_module,
 )
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
@@ -53,7 +58,10 @@ from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
 from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
-from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+    TreeScope,
+    TreeScopeChanged,
+)
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_tab_strip import SECTIONS
 from tldw_chatbook.Widgets.destination_workbench import (
     DestinationWorkbench,
@@ -113,6 +121,46 @@ def _default_advanced_open(monkeypatch):
 def _region(widget):
     region = widget.region
     return region.x, region.y, region.width, region.height
+
+
+async def _wait_for_production_screen(
+    app,
+    pilot,
+    screen_type,
+    *,
+    timeout: float = 6.0,
+):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if isinstance(screen, screen_type) and screen.region.width > 0:
+            await pilot.pause()
+            return screen
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Timed out waiting for {screen_type.__name__}; "
+        f"active={type(app.screen).__name__}"
+    )
+
+
+async def _wait_for_loading_cover(
+    screen,
+    pilot,
+    container_selector: str,
+    *,
+    timeout: float = 6.0,
+) -> object:
+    """Return Textual's rendered loading cover for a production container."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        container = screen.query_one(container_selector)
+        cover = container._cover_widget
+        if cover is not None and cover.region.width > 0 and cover.region.height > 0:
+            return cover
+        await pilot.pause()
+    raise AssertionError(
+        f"{container_selector} did not render its loading cover before timeout"
+    )
 
 
 def _assert_no_horizontal_overlap(left, right, *, context: str) -> None:
@@ -1289,6 +1337,7 @@ def _seed_overflow_sources(app, count: int = 40) -> None:
             source=f"https://feed-{index:02d}.example/rss",
         )
 
+
 _ROUND_CORNERS = "╭╮╰╯"
 _SQUARE_CORNERS = "┌┐└┘"
 
@@ -1580,8 +1629,7 @@ async def test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds(
             f"pinned at its cap: feeds={feeds.region} items={items.region}"
         )
         assert (
-            feeds.region.height + items.region.height + content.region.height
-            == budget
+            feeds.region.height + items.region.height + content.region.height == budget
         ), (
             f"the centre budget moved; the cap's derivation needs redoing: "
             f"feeds={feeds.region} items={items.region} content={content.region}"
@@ -1837,9 +1885,7 @@ async def test_personas_workbench_exposes_approved_three_column_ia():
         assert "Column 1:" not in visible_text
         assert "Column 2:" not in visible_text
         assert "Column 3:" not in visible_text
-        assert {"Characters", "Personas", "New", "Attach to Console"}.issubset(
-            buttons
-        )
+        assert {"Characters", "Personas", "New", "Attach to Console"}.issubset(buttons)
 
 
 @pytest.mark.asyncio
@@ -1974,9 +2020,7 @@ async def test_source_prep_loading_states_preserve_workbench_geometry(
     contract,
     loading_container,
 ):
-    monkeypatch.setattr(
-        screen_cls, refresh_method, lambda self, *_a, **_k: None
-    )
+    monkeypatch.setattr(screen_cls, refresh_method, lambda self, *_a, **_k: None)
     app = _build_test_app()
     host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
@@ -2168,9 +2212,7 @@ async def test_operational_loading_states_preserve_workbench_geometry(
 
         monkeypatch.setattr(screen_cls, refresh_method, hold_initial_load)
     else:
-        monkeypatch.setattr(
-            screen_cls, refresh_method, lambda self, *_a, **_k: None
-        )
+        monkeypatch.setattr(screen_cls, refresh_method, lambda self, *_a, **_k: None)
     app = _build_test_app()
     host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
@@ -2304,43 +2346,52 @@ async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry()
 
 @pytest.mark.asyncio
 async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
-    """Realigned from the retired `UnifiedMCPPanel.load_context` monkeypatch.
-
-    `UnifiedMCPPanel` is no longer mounted anywhere in the MCP screen's
-    component chain (Task 8 replaced it with `MCPWorkbench`), so forcing
-    *its* `load_context()` to hang no longer has any effect. Same product
-    intent -- force the surface to sit in a still-loading state and verify
-    nothing overflows its pane geometry -- reproduced by no-op'ing
-    `MCPWorkbench.reload()`, which pins the rail/canvas/inspector to their
-    just-mounted, pre-reload compose shape (empty rail besides "All servers";
-    inspector's default "Select a server" prompt) for the whole test. A no-op
-    rather than a hung await: `MCPWorkbench.on_mount` awaits `reload()`
-    inline, so an await that never resolves would deadlock app teardown.
-    """
-
-    async def keep_loading(self):
-        return None
-
-    monkeypatch.setattr(MCPWorkbench, "reload", keep_loading)
+    """A blocked production service load keeps the real workbench usable."""
     app = _build_test_app()
-    host = DestinationHarness(app, "mcp")
-    async with host.run_test(size=(140, 42)) as pilot:
-        screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#mcp-hub-inspector")
-        _assert_ascii_workbench_contract(
-            screen,
-            workbench="#mcp-hub-workbench",
-            strip="#mcp-mode-strip",
-            panes=("#mcp-hub-rail", "#mcp-hub-canvas", "#mcp-hub-inspector"),
-            actions=("#mcp-adv-run",),
-            height=42,
-        )
-        _assert_marker_inside_container(
-            screen,
-            "#mcp-inspector-state",
-            "#mcp-hub-inspector",
-            context="MCP forced loading state escaped inspector pane",
-        )
+    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    service = app.unified_mcp_service
+    real_load_context = service.load_context
+    load_started = asyncio.Event()
+    release_load = asyncio.Event()
+
+    async def keep_loading():
+        load_started.set()
+        await release_load.wait()
+        return await real_load_context()
+
+    monkeypatch.setattr(service, "load_context", keep_loading)
+    async with app.run_test(size=(140, 42)) as pilot:
+        try:
+            await _wait_for_production_screen(app, pilot, ChatScreen)
+            await app.handle_screen_navigation(NavigateToScreen("mcp"))
+            screen = await _wait_for_production_screen(app, pilot, MCPScreen)
+            await asyncio.wait_for(load_started.wait(), timeout=6.0)
+            await _wait_for_selector(screen, pilot, "#mcp-hub-inspector")
+            rail = screen.query_one("#mcp-hub-rail")
+            loading = await _wait_for_loading_cover(
+                screen,
+                pilot,
+                "#mcp-hub-canvas",
+            )
+            inspector = screen.query_one("#mcp-hub-inspector")
+            _assert_strip_compact(screen, "#mcp-mode-strip", max_height=2)
+            assert rail.region.x < loading.region.x < inspector.region.x
+            assert len({rail.region.y, loading.region.y, inspector.region.y}) == 1
+            for widget, context in (
+                (rail, "MCP rail"),
+                (loading, "MCP loading canvas"),
+                (inspector, "MCP inspector"),
+            ):
+                _assert_visible_in_viewport(widget, height=42, context=context)
+            _assert_marker_inside_container(
+                screen,
+                "#mcp-inspector-state",
+                "#mcp-hub-inspector",
+                context="MCP forced loading state escaped inspector pane",
+            )
+        finally:
+            release_load.set()
 
 
 @pytest.mark.parametrize(
@@ -2876,7 +2927,9 @@ async def test_watchlists_feed_source_row_stays_one_row_however_long_the_name():
     app.watchlist_scope_service = StaticWatchlistsScopeService([])
     service = app.watchlist_bundle_service
     watchlist = service.create("Morning AI Brief")
-    long_name = " ".join(["A remote feed title that runs on well past the feeds column"] * 6)
+    long_name = " ".join(
+        ["A remote feed title that runs on well past the feeds column"] * 6
+    )
     source_id = service._db.add_subscription(
         name=long_name, type="rss", source="https://long.example/f"
     )
@@ -3207,7 +3260,6 @@ async def test_watchlists_sources_toolbar_does_not_starve_its_table(size):
         )
 
 
-
 @pytest.mark.asyncio
 async def test_watchlists_tree_action_labels_fit_the_rail_intact():
     """TASK-895: the tree's five write verbs must be readable in the real
@@ -3287,7 +3339,11 @@ async def test_watchlists_tree_blocked_verbs_render_as_disabled_under_the_bundle
             out = []
             for segment in strips[row]:
                 for char in segment.text:
-                    if button.region.x <= column < button.region.x + button.region.width:
+                    if (
+                        button.region.x
+                        <= column
+                        < button.region.x + button.region.width
+                    ):
                         out.append((char, segment.style))
                     column += 1
             return out
@@ -3348,9 +3404,7 @@ async def test_watchlists_sources_toolbar_controls_are_actually_visible(size):
             assert widget.region.height >= 1, (
                 f"{selector} is clipped to nothing: {widget.region}"
             )
-            assert widget.region.width > 0, (
-                f"{selector} has no width: {widget.region}"
-            )
+            assert widget.region.width > 0, f"{selector} has no width: {widget.region}"
             # Clipping was only half of it. Nothing sized these controls, so
             # `Input`'s `width: 100%` default and the global
             # `Select { width: 100% }` each claimed the whole strip and
@@ -3533,9 +3587,14 @@ async def test_watchlists_tree_chevron_shares_a_row_with_its_watchlist(size):
     )
     service.add_source(watchlist["id"], arxiv)
 
-    host = _visual_destination_harness(app, "watchlists_collections")
-    async with host.run_test(size=size) as pilot:
-        screen = _active_destination_screen(host)
+    async with app.run_test(size=size) as pilot:
+        await _wait_for_production_screen(app, pilot, ChatScreen)
+        await app.handle_screen_navigation(NavigateToScreen("watchlists_collections"))
+        screen = await _wait_for_production_screen(
+            app,
+            pilot,
+            wc_screen_module.WatchlistsCollectionsScreen,
+        )
         await _wait_for_selector(
             screen, pilot, f"#wl-tree-node-watchlist-{watchlist['id']}"
         )
@@ -3545,9 +3604,7 @@ async def test_watchlists_tree_chevron_shares_a_row_with_its_watchlist(size):
             return ["".join(seg.text for seg in row) for row in strips]
 
         chevron = screen.query_one(f"#wl-tree-expand-{watchlist['id']}", Button)
-        node = screen.query_one(
-            f"#wl-tree-node-watchlist-{watchlist['id']}", Button
-        )
+        node = screen.query_one(f"#wl-tree-node-watchlist-{watchlist['id']}", Button)
 
         # AC#1: same row, and the chevron to the LEFT of the name.
         assert chevron.region.y == node.region.y, (
@@ -3589,19 +3646,16 @@ async def test_watchlists_tree_chevron_shares_a_row_with_its_watchlist(size):
         await pilot.pause(0.2)
 
         source = screen.query_one(f"#wl-tree-node-source-1-{arxiv}", Button)
-        node = screen.query_one(
-            f"#wl-tree-node-watchlist-{watchlist['id']}", Button
-        )
+        node = screen.query_one(f"#wl-tree-node-watchlist-{watchlist['id']}", Button)
         chevron = screen.query_one(f"#wl-tree-expand-{watchlist['id']}", Button)
         assert chevron.region.y == node.region.y, (
             "the open chevron must still share the watchlist's row"
         )
         assert source.region.y > node.region.y, (
-            f"the source row {source.region} must sit below its watchlist "
-            f"{node.region}"
+            f"the source row {source.region} must sit below its watchlist {node.region}"
         )
         rows = painted_rows()
-        # The source's indent is textual (its label is prefixed with two
+        # The source's indent is textual (its label is prefixed with four
         # spaces), not a region offset, so assert on what is painted.
         assert rows[source.region.y].index("ArXiv") > rows[node.region.y].index(
             "Morning AI Brief"
@@ -3676,7 +3730,10 @@ async def test_watchlists_first_run_replaces_empty_cards_with_guidance():
             inspector_text
         ), "the dead-end guidance is still shown on a profile with nothing in it"
 
-        for label, selector in (("New", "#wl-tree-new"), ("Sources", "#wl-tab-sources")):
+        for label, selector in (
+            ("New", "#wl-tree-new"),
+            ("Sources", "#wl-tab-sources"),
+        ):
             control = screen.query_one(selector, Button)
             assert not control.disabled, (
                 f"{selector} is named in the first-run guidance but is disabled"

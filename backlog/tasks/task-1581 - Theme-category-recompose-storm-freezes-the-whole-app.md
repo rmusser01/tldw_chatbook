@@ -1,5 +1,5 @@
 ---
-id: task-1581
+id: TASK-1581
 title: 'Theme category recompose storm freezes the whole app'
 status: Done
 assignee:

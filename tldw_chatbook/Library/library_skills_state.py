@@ -58,6 +58,13 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # The run_skill_script runtime tool (same drift-guard rationale as
         # skill_file/install_skill above).
         "run_skill_script",
+        # The agent run-log search runtime tool must not be shadowed by an
+        # installed skill with the same invocation name.
+        "search_run_log",
+        # The primary-agent run-log aggregation and contiguous-range tools
+        # share the same reserved runtime namespace.
+        "run_log_stats",
+        "run_log_slice",
         # task-580: console commands from the /rewind and image-generation
         # features. These were added to the command registry without updating
         # this set, so the drift guard below failed and was carried as an
@@ -287,9 +294,7 @@ def save_marks_needs_review(trust_status: str, trust_blocked: bool) -> bool:
     return trust_status == "trusted" and not trust_blocked
 
 
-def skill_trust_header_line(
-    posture: str, blocked_count: int
-) -> tuple[str, str] | None:
+def skill_trust_header_line(posture: str, blocked_count: int) -> tuple[str, str] | None:
     """Return (copy, action_id) for the Skills-list trust header, or None to hide.
 
     Args:
@@ -313,7 +318,10 @@ def skill_trust_header_line(
         action), or ``None`` to hide the header entirely.
     """
     if posture == "needs_setup":
-        return ("Skill trust isn't set up — set it up to review and use skills.", "setup")
+        return (
+            "Skill trust isn't set up — set it up to review and use skills.",
+            "setup",
+        )
     if posture == "needs_resetup":
         return ("Skill trust needs to be set up again after an update.", "resetup")
     if posture == "unavailable":

@@ -17,7 +17,7 @@ import asyncio
 import threading
 import time
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from textual import on
@@ -30,7 +30,10 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+
+from Tests.UI.app_factory import _build_test_app
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
 _AGENTIC_TERMINAL_TCSS = _CSS_ROOT / "components" / "_agentic_terminal.tcss"
@@ -796,17 +799,51 @@ async def test_new_batch_reenables_submit_after_a_prior_round_disabled_it():
 # ---------------------------------------------------------------------------
 
 
-class _CardHarnessAppWithBundledCSS(App[None]):
-    """Mirrors `_CardHarnessApp` but loads the real generated bundle as
-    CSS_PATH, so a batch row's header/args/decision-Select contest their
-    actual CSS priority battle exactly as they do in the live Console
-    screen -- mirrors `AuditModeAppWithBundledCSS` (test_mcp_audit_mode.py)
-    / `ToolsModeAppWithBundledCSS` (test_mcp_tools_mode.py)."""
+def _settings_without_splash(section, key=None, default=None):
+    """Disable only the splash while retaining the production application."""
+    if section == "splash_screen" and key == "enabled":
+        return False
+    return default
 
-    CSS_PATH = str(_BUNDLED_STYLESHEET)
 
-    def compose(self) -> ComposeResult:
-        yield ChatApprovalCard()
+async def _show_production_approval_batch(
+    app,
+    pilot,
+    calls: list[dict],
+) -> ChatApprovalCard:
+    """Render an approval batch through the mounted production Console."""
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if (
+            isinstance(screen, ChatScreen)
+            and screen.is_mounted
+            and screen.query("#console-task-surface")
+        ):
+            break
+        await pilot.pause(0.05)
+    else:
+        raise AssertionError("Production Console did not finish mounting")
+
+    screen.set_task_resume_state(
+        TaskResumeState(
+            pending_approval={
+                "calls": calls,
+                "timeout_seconds": 45.0,
+            }
+        )
+    )
+    expected_rows = len({str(call.get("llm_name") or "") for call in calls})
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        cards = screen.query("#chat-approval-card")
+        if cards:
+            card = cards.first()
+            if card.display and len(card.query(".approval-row")) == expected_rows:
+                await pilot.pause()
+                return card
+        await pilot.pause(0.05)
+    raise AssertionError("Production approval batch did not finish rendering")
 
 
 @pytest.mark.asyncio
@@ -825,78 +862,77 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
     `#approval-batch-actions` bar sits close after the rows (region.y within
     a few rows of the last row's bottom), matching the audit-mode geometry
     tests' discipline so all Horizontals/Verticals in the bundle stay compact."""
-    app = _CardHarnessAppWithBundledCSS()
-    async with app.run_test(size=(120, 40)) as pilot:
-        card = app.query_one(ChatApprovalCard)
-        card.set_batch(_sample_calls(), timeout_seconds=45.0)
-        await pilot.pause()
+    app = _build_test_app()
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash):
+        async with app.run_test(size=(200, 40)) as pilot:
+            card = await _show_production_approval_batch(app, pilot, _sample_calls())
 
-        rows = list(app.query(".approval-row"))
-        assert len(rows) == 2
-        for row in rows:
-            header = row.query_one(".approval-row-header", Static)
-            args = row.query_one(".approval-row-args", Static)
-            select = row.query_one(".approval-row-decision", Select)
+            rows = list(card.query(".approval-row"))
+            assert len(rows) == 2
+            for row in rows:
+                header = row.query_one(".approval-row-header", Static)
+                args = row.query_one(".approval-row-args", Static)
+                select = row.query_one(".approval-row-decision", Select)
 
-            assert header.size.width > 0 and header.size.height > 0, (
-                "approval row header collapsed to zero size under bundled CSS"
-            )
-            assert args.size.width > 0 and args.size.height > 0, (
-                "approval row args summary collapsed to zero size under bundled CSS"
-            )
-            assert select.size.width > 0 and select.size.height > 0, (
-                "approval row decision Select collapsed to zero size under bundled CSS"
-            )
-            # The decision Select must not claim the row's FULL width (the
-            # actual bug this CSS fixes) -- it gets a definite, bounded
-            # share instead.
-            assert select.size.width < row.size.width, (
-                f"decision Select width {select.size.width} claimed the "
-                f"entire row width {row.size.width} under bundled CSS"
-            )
-            assert select.size.width == 26, (
-                f"decision Select width {select.size.width} != pinned 26"
-            )
-            # Left-to-right order, no overlap: header, then args, then the
-            # decision Select, each starting no earlier than the previous
-            # widget's right edge, and the Select stays inside the row.
-            assert header.region.x <= args.region.x
-            assert args.region.x >= header.region.right
-            assert select.region.x >= args.region.right
-            assert select.region.right <= row.region.right
+                assert header.size.width > 0 and header.size.height > 0, (
+                    "approval row header collapsed to zero size under bundled CSS"
+                )
+                assert args.size.width > 0 and args.size.height > 0, (
+                    "approval row args summary collapsed to zero size under bundled CSS"
+                )
+                assert select.size.width > 0 and select.size.height > 0, (
+                    "approval row decision Select collapsed to zero size under bundled CSS"
+                )
+                # The decision Select must not claim the row's FULL width (the
+                # actual bug this CSS fixes) -- it gets a definite, bounded
+                # share instead.
+                assert select.size.width < row.size.width, (
+                    f"decision Select width {select.size.width} claimed the "
+                    f"entire row width {row.size.width} under bundled CSS"
+                )
+                assert select.size.width == 26, (
+                    f"decision Select width {select.size.width} != pinned 26"
+                )
+                # Left-to-right order, no overlap: header, then args, then the
+                # decision Select, each starting no earlier than the previous
+                # widget's right edge, and the Select stays inside the row.
+                assert header.region.x <= args.region.x
+                assert args.region.x >= header.region.right
+                assert select.region.x >= args.region.right
+                assert select.region.right <= row.region.right
 
-            # T9: height bounds -- each row must stay compact (height: auto;
-            # min-height: 1) instead of ballooning to 1fr (which would balloon
-            # to fill the card height and push the actions bar far down).
-            # Empirically measured before this fix: rows ballooning to height 9-10.
-            assert row.size.height <= 4, (
-                f"approval row ballooned to height {row.size.height} under "
-                "bundled CSS -- height: auto; min-height: 1; is not winning"
+                # T9: height bounds -- each row must stay compact (height: auto;
+                # min-height: 1) instead of ballooning to 1fr (which would balloon
+                # to fill the card height and push the actions bar far down).
+                # Empirically measured before this fix: rows ballooning to height 9-10.
+                assert row.size.height <= 4, (
+                    f"approval row ballooned to height {row.size.height} under "
+                    "bundled CSS -- height: auto; min-height: 1; is not winning"
+                )
+
+            # T9: container height bound -- the Vertical wrapping all rows must
+            # also stay compact (height: auto; min-height: 0) instead of balloning
+            # to 1fr and claiming the full card height, which would push the
+            # #approval-batch-actions bar far down. Empirically measured before
+            # this fix: container ballooning to height 19, actions pushed to y=20.
+            batch_rows = card.query_one("#approval-batch-rows")
+            assert batch_rows.size.height <= len(rows) * 3 + 2, (
+                f"approval-batch-rows container ballooned to height "
+                f"{batch_rows.size.height} (with {len(rows)} rows) under bundled CSS "
+                "-- height: auto; min-height: 0; is not winning"
             )
 
-        # T9: container height bound -- the Vertical wrapping all rows must
-        # also stay compact (height: auto; min-height: 0) instead of balloning
-        # to 1fr and claiming the full card height, which would push the
-        # #approval-batch-actions bar far down. Empirically measured before
-        # this fix: container ballooning to height 19, actions pushed to y=20.
-        batch_rows = app.query_one("#approval-batch-rows")
-        assert batch_rows.size.height <= len(rows) * 3 + 2, (
-            f"approval-batch-rows container ballooned to height "
-            f"{batch_rows.size.height} (with {len(rows)} rows) under bundled CSS "
-            "-- height: auto; min-height: 0; is not winning"
-        )
-
-        # T9: action bar positioning -- must sit close after the rows,
-        # not far below due to container ballooning. Within a few rows'
-        # worth of lines from the last row's bottom edge.
-        batch_actions = app.query_one("#approval-batch-actions")
-        last_row = rows[-1]
-        max_y_gap = 3  # generous slack: a few rows worth of lines
-        assert batch_actions.region.y <= last_row.region.bottom + max_y_gap, (
-            f"approval-batch-actions bar at y={batch_actions.region.y} is too far "
-            f"below last row's bottom ({last_row.region.bottom}) -- should be "
-            f"within {max_y_gap} lines"
-        )
+            # T9: action bar positioning -- must sit close after the rows,
+            # not far below due to container ballooning. Within a few rows'
+            # worth of lines from the last row's bottom edge.
+            batch_actions = card.query_one("#approval-batch-actions")
+            last_row = rows[-1]
+            max_y_gap = 3  # generous slack: a few rows worth of lines
+            assert batch_actions.region.y <= last_row.region.bottom + max_y_gap, (
+                f"approval-batch-actions bar at y={batch_actions.region.y} is too far "
+                f"below last row's bottom ({last_row.region.bottom}) -- should be "
+                f"within {max_y_gap} lines"
+            )
 
 
 @pytest.mark.asyncio
@@ -911,56 +947,45 @@ async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_
     100%; }`-style cascade surprise the sibling test guards against, now
     for the two new buttons.
 
-    An explicit `pilot.pause()` before `set_batch` (absent from the
-    sibling test above, which is why it currently fails independent of
-    this task -- confirmed via stash-diff against dev tip) lets
-    `ChatApprovalCard.on_mount`'s deferred `_hide_batch_body` callback run
-    BEFORE `set_batch` sets `#approval-batch-body.display = True`;
-    otherwise that deferred callback fires AFTER and silently reverts the
-    card to display:none, collapsing every child to zero size. Calling
-    `set_batch` this early (before the widget's first refresh) does not
-    happen in the real app (the pending-approval round trip always lands
-    well after the screen has settled), so this is purely a test-harness
-    ordering fix, not a production behavior change."""
-    app = _CardHarnessAppWithBundledCSS()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        card = app.query_one(ChatApprovalCard)
-        card.set_batch(_single_call(), timeout_seconds=45.0)
-        await pilot.pause()
+    The production Console is allowed to mount and settle before the pending
+    approval state is delivered, matching the real worker-to-UI round trip."""
+    app = _build_test_app()
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash):
+        async with app.run_test(size=(200, 40)) as pilot:
+            card = await _show_production_approval_batch(app, pilot, _single_call())
 
-        rows = list(app.query(".approval-row"))
-        assert len(rows) == 1
-        row = rows[0]
-        select = row.query_one(".approval-row-decision", Select)
-        fast_approve = row.query_one(".approval-row-fast-approve", Button)
-        fast_deny = row.query_one(".approval-row-fast-deny", Button)
+            rows = list(card.query(".approval-row"))
+            assert len(rows) == 1
+            row = rows[0]
+            select = row.query_one(".approval-row-decision", Select)
+            fast_approve = row.query_one(".approval-row-fast-approve", Button)
+            fast_deny = row.query_one(".approval-row-fast-deny", Button)
 
-        for widget, label in (
-            (fast_approve, "fast-approve"),
-            (fast_deny, "fast-deny"),
-        ):
-            assert widget.size.width > 0 and widget.size.height > 0, (
-                f"approval row {label} button collapsed to zero size under "
-                "bundled CSS"
+            for widget, label in (
+                (fast_approve, "fast-approve"),
+                (fast_deny, "fast-deny"),
+            ):
+                assert widget.size.width > 0 and widget.size.height > 0, (
+                    f"approval row {label} button collapsed to zero size under "
+                    "bundled CSS"
+                )
+                assert widget.size.width == 14, (
+                    f"{label} button width {widget.size.width} != pinned 14"
+                )
+
+            # Left-to-right order, no overlap: Select, then fast-approve, then
+            # fast-deny, each starting no earlier than the previous widget's
+            # right edge, and both fast buttons stay inside the row.
+            assert fast_approve.region.x >= select.region.right
+            assert fast_deny.region.x >= fast_approve.region.right
+            assert fast_approve.region.right <= row.region.right
+            assert fast_deny.region.right <= row.region.right
+
+            # Compact, one-line-tall row (same discipline as the sibling test).
+            assert row.size.height <= 4, (
+                f"single-row approval row ballooned to height {row.size.height} "
+                "under bundled CSS"
             )
-            assert widget.size.width == 14, (
-                f"{label} button width {widget.size.width} != pinned 14"
-            )
-
-        # Left-to-right order, no overlap: Select, then fast-approve, then
-        # fast-deny, each starting no earlier than the previous widget's
-        # right edge, and both fast buttons stay inside the row.
-        assert fast_approve.region.x >= select.region.right
-        assert fast_deny.region.x >= fast_approve.region.right
-        assert fast_approve.region.right <= row.region.right
-        assert fast_deny.region.right <= row.region.right
-
-        # Compact, one-line-tall row (same discipline as the sibling test).
-        assert row.size.height <= 4, (
-            f"single-row approval row ballooned to height {row.size.height} "
-            "under bundled CSS"
-        )
 
 
 def test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle() -> (
@@ -1279,7 +1304,9 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
     assert records[0]["tool_name"] == "search"
     assert records[0]["decision"] == "denied"
     assert records[0]["ok"] is False
-    assert "run stopped while approval pending" in (records[0].get("error") or "")
+    assert records[0]["error_category"] == "approval_cancelled"
+    assert "error" not in records[0]
+    assert "run stopped while approval pending" not in str(records[0])
 
 
 def test_switch_session_parks_rather_than_denies_a_pending_approval_round():

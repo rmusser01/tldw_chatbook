@@ -43,7 +43,7 @@ from textual.app import App, ComposeResult, ScreenStackError
 from textual.widgets import RichLog, Markdown
 from textual.containers import Container
 from textual.reactive import reactive
-from textual.worker import Worker, WorkerState
+from textual.worker import Worker, WorkerCancelled, WorkerState
 from textual.binding import Binding
 from textual.message import Message
 from textual.timer import Timer
@@ -2190,9 +2190,7 @@ class LibraryIngestQueueMixin:
             "title": job.title or None,
             "author": job.author or None,
             "keywords": list(job.keywords) or None,
-            "perform_analysis": flat_opts.get(
-                "analyze", job.perform_analysis
-            ),
+            "perform_analysis": flat_opts.get("analyze", job.perform_analysis),
             "chunk_options": (
                 {
                     "method": "sentences",
@@ -2205,14 +2203,11 @@ class LibraryIngestQueueMixin:
         }
 
         if group == "pdf":
-            options["pdf_engine"] = (
-                flat_opts.get("engine")
-                or flat_opts.get("pdf_engine")
+            options["pdf_engine"] = flat_opts.get("engine") or flat_opts.get(
+                "pdf_engine"
             )
             options["page_range"] = flat_opts.get("pages")
-            options["ocr"] = flat_opts.get(
-                "ocr", flat_opts.get("enable_ocr", False)
-            )
+            options["ocr"] = flat_opts.get("ocr", flat_opts.get("enable_ocr", False))
             options["extract_images"] = flat_opts.get("extract_images", False)
         elif group == "audio_video":
             provider = flat_opts.get("transcription_provider")
@@ -2674,12 +2669,12 @@ class LibraryIngestQueueMixin:
         # a local ingest -- the file stays put and the canvas explains how to
         # enable server imports -- rather than a job that fails with "requires
         # server mode" (seen live against a real server).
-        runtime_state = getattr(
-            getattr(self, "runtime_policy", None), "state", None
+        runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
+        active_source = (
+            str(getattr(runtime_state, "active_source", "local") or "local")
+            .strip()
+            .lower()
         )
-        active_source = str(
-            getattr(runtime_state, "active_source", "local") or "local"
-        ).strip().lower()
         return "server" if active_source == "server" else "local"
 
     def _submit_server_ingest_job(
@@ -2825,9 +2820,7 @@ class LibraryIngestQueueMixin:
         try:
             response = await clip(**kwargs)
         except Exception as exc:
-            logger.opt(exception=True).warning(
-                f"Web clip failed for job {job_id}."
-            )
+            logger.opt(exception=True).warning(f"Web clip failed for job {job_id}.")
             self.library_ingest_jobs.mark_failed(
                 job_id, error=f"The server could not clip the page: {exc}"
             )
@@ -3390,6 +3383,7 @@ class TldwCli(
     _default_rag_expansion_provider = APP_CONFIG.get("chat_defaults", {}).get(
         "provider", "OpenAI"
     )
+
     def query_one(self, selector, expect_type=None):
         """Resolve legacy app-level queries against the active pushed screen when needed."""
         try:
@@ -3634,15 +3628,16 @@ class TldwCli(
                 policy_enforcer=self.service_policy_enforcer,
             )
         )
-        self.media_reading_scope_service = MediaReadingScopeService(
-            local_service=self.local_media_reading_service,
-            server_service=self.server_media_reading_service,
-            policy_enforcer=self.service_policy_enforcer,
-        )
         self._wire_library_collections_services()
         self._wire_workspace_registry_services()
         self._wire_prompt_chatbook_services()
         self._wire_watchlists_and_notifications_services()
+        self.media_reading_scope_service = MediaReadingScopeService(
+            local_service=self.local_media_reading_service,
+            server_service=self.server_media_reading_service,
+            policy_enforcer=self.service_policy_enforcer,
+            sync_scope_service=self.sync_scope_service,
+        )
         self._wire_writing_services()
 
         self.loguru_logger.debug(
@@ -3731,10 +3726,8 @@ class TldwCli(
         self._rag_admin_services_lock = threading.Lock()
         self._wire_evaluation_services()
         self._wire_study_services()
-        self._wire_writing_services()
         self._wire_research_services()
         self._wire_character_persona_services()
-        self._wire_chat_conversation_services()
 
         # --- Initialize worker handler registry ---
         self._init_worker_handlers()
@@ -4304,9 +4297,7 @@ class TldwCli(
 
     def _wire_chat_conversation_services(self) -> None:
         trace_db = getattr(self, "chachanotes_db", None)
-        sidecar_path = (
-            get_user_data_dir() / "tldw_chatbook_chat_rag_context.json"
-        )
+        sidecar_path = get_user_data_dir() / "tldw_chatbook_chat_rag_context.json"
         existing_service = getattr(
             self,
             "local_chat_conversation_service",
@@ -4359,9 +4350,7 @@ class TldwCli(
         self.citation_trace_repository = repository
         self.citation_legacy_migration_service = migration
         self.conversation_local_marks_service = (
-            ConversationLocalMarksService(trace_db)
-            if trace_db is not None
-            else None
+            ConversationLocalMarksService(trace_db) if trace_db is not None else None
         )
         self.server_chat_conversation_service = (
             ServerChatConversationService.from_server_context_provider(
@@ -4373,6 +4362,7 @@ class TldwCli(
             local_service=self.local_chat_conversation_service,
             server_service=self.server_chat_conversation_service,
             policy_enforcer=self.service_policy_enforcer,
+            sync_scope_service=self.sync_scope_service,
         )
         self._wire_citation_artifact_ownership()
 
@@ -4384,16 +4374,10 @@ class TldwCli(
                 "Local writing service unavailable during app wiring"
             )
             self.local_writing_service = None
-        try:
-            self.server_writing_service = ServerWritingService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_writing_service = ServerWritingService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
+        self.server_writing_service = ServerWritingService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         self.writing_scope_service = WritingScopeService(
             local_service=self.local_writing_service,
             server_service=self.server_writing_service,
@@ -5379,8 +5363,7 @@ class TldwCli(
                     db.close()
                 except Exception:
                     logger.opt(exception=True).warning(
-                        "Failed to close SubscriptionsDB {} after FTS "
-                        "backfill.",
+                        "Failed to close SubscriptionsDB {} after FTS backfill.",
                         db_path,
                     )
 
@@ -5471,9 +5454,7 @@ class TldwCli(
                 state = policy_enforcer.current_state()
         if not isinstance(state, RuntimeSourceState):
             runtime_policy = getattr(self, "runtime_policy", None)
-            runtime_state = (
-                runtime_policy.state if runtime_policy is not None else None
-            )
+            runtime_state = runtime_policy.state if runtime_policy is not None else None
             if isinstance(runtime_state, RuntimeSourceState):
                 state = runtime_state
 
@@ -5517,9 +5498,7 @@ class TldwCli(
 
         previous_server_id = self.runtime_policy.state.active_server_id
         candidate_config = (
-            app_config_override
-            if app_config_override is not None
-            else self.app_config
+            app_config_override if app_config_override is not None else self.app_config
         )
         try:
             updated_state = set_authoritative_runtime_source(
@@ -5529,8 +5508,7 @@ class TldwCli(
             )
         except Exception as exc:
             logger.warning(
-                "Runtime source change was not committed "
-                "(exception_category={}).",
+                "Runtime source change was not committed (exception_category={}).",
                 type(exc).__name__,
             )
             self.notify(
@@ -5553,9 +5531,11 @@ class TldwCli(
                 updated_state.active_server_id,
             )
 
-        resolved_backend = str(
-            self.runtime_policy.state.active_source or normalized_backend
-        ).strip().lower()
+        resolved_backend = (
+            str(self.runtime_policy.state.active_source or normalized_backend)
+            .strip()
+            .lower()
+        )
         active_screen = self.screen
         callback = getattr(active_screen, "handle_runtime_backend_changed", None)
         if callable(callback):
@@ -6174,9 +6154,7 @@ class TldwCli(
         async with self._screen_navigation_lock():
             await self._handle_screen_navigation_locked(message)
 
-    async def _handle_screen_navigation_locked(
-        self, message: NavigateToScreen
-    ) -> None:
+    async def _handle_screen_navigation_locked(self, message: NavigateToScreen) -> None:
         """Body of `handle_screen_navigation`, run under its FIFO lock."""
         requested_screen = message.screen_name
         screen_name, current_tab_value, screen_class = (
@@ -6444,8 +6422,7 @@ class TldwCli(
                 # AttributeError escaped this handler and Textual exited the
                 # whole app rather than the user simply failing to reach MCP.
                 logger.opt(exception=True).error(
-                    "Screen construction failed "
-                    "(route={}, exception_category={}).",
+                    "Screen construction failed (route={}, exception_category={}).",
                     screen_name,
                     type(exc).__name__,
                 )
@@ -6514,7 +6491,6 @@ class TldwCli(
             logger.info(f"Successfully switched to {screen_name} screen")
         else:
             logger.error(f"Unknown screen requested: {requested_screen}")
-
 
     @on(TTSRequestEvent)
     async def handle_tts_request_event(self, event: TTSRequestEvent) -> None:
@@ -6630,9 +6606,7 @@ class TldwCli(
                         # there is nothing for the user to click - play the
                         # generated audio immediately instead of going silent.
                         self.post_message(
-                            TTSPlaybackEvent(
-                                action="play", message_id=event.message_id
-                            )
+                            TTSPlaybackEvent(action="play", message_id=event.message_id)
                         )
                 except Exception as e:
                     self.loguru_logger.error(f"Error playing audio: {e}")
@@ -7152,8 +7126,7 @@ class TldwCli(
         # under ~/.local, which validate_path's hidden-component rule rejects.
         if get_safe_relative_path(cache_path, user_data_dir) is None:
             logger.warning(
-                "Ignoring model catalog cache outside the user data dir: "
-                f"{cache_path}"
+                f"Ignoring model catalog cache outside the user data dir: {cache_path}"
             )
             return None
         try:
@@ -7179,6 +7152,7 @@ class TldwCli(
                 AUTO_REFRESH_PROVIDER_LIST_KEYS,
                 load_model_catalog_settings,
             )
+
             if self.model_catalog_disk_store is None:
                 return
             catalog_settings = load_model_catalog_settings(load_settings())
@@ -7223,6 +7197,7 @@ class TldwCli(
         from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
             forward_model_catalog_refreshed,
         )
+
         await forward_model_catalog_refreshed(self, event)
 
     def _maybe_offer_first_run_wizard(self) -> None:
@@ -7249,7 +7224,9 @@ class TldwCli(
     def _push_first_run_wizard(self) -> None:
         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
 
-        self.push_screen(FirstRunSetupWizard(self), self._handle_first_run_wizard_result)
+        self.push_screen(
+            FirstRunSetupWizard(self), self._handle_first_run_wizard_result
+        )
 
     def _handle_first_run_wizard_result(self, result: dict | None) -> None:
         if not isinstance(result, dict):
@@ -7912,9 +7889,7 @@ class TldwCli(
                 await self._shutdown_file_notes_session_owner()
             except asyncio.CancelledError as error:
                 next_cancellation_requests = (
-                    shutdown_task.cancelling()
-                    if shutdown_task is not None
-                    else 0
+                    shutdown_task.cancelling() if shutdown_task is not None else 0
                 )
                 if next_cancellation_requests > cancellation_requests:
                     cancellation = cancellation or error
@@ -7976,7 +7951,9 @@ class TldwCli(
         """
         from textual.worker import WorkerFailed
 
-        underlying = getattr(error, "error", None) if isinstance(error, WorkerFailed) else None
+        underlying = (
+            getattr(error, "error", None) if isinstance(error, WorkerFailed) else None
+        )
         try:
             persist_event(
                 _DIAGNOSTICS_COMPONENT_APP,
@@ -8112,9 +8089,16 @@ class TldwCli(
                 scheduler_loop.stop()
             if scheduler_worker is not None:
                 try:
-                    await scheduler_worker.wait(timeout=5)
                     if not scheduler_worker.is_finished:
+                        # Textual's public cancellation contract cancels the
+                        # underlying asyncio task. Worker.wait() has no timeout
+                        # parameter, so request cancellation before observing it.
                         scheduler_worker.cancel()
+                    await scheduler_worker.wait()
+                except WorkerCancelled:
+                    # Cancellation is the expected public Textual shutdown
+                    # contract for a loop that may be sleeping between polls.
+                    pass
                 except Exception as e:
                     self.loguru_logger.error(f"Error stopping scheduler worker: {e}")
 

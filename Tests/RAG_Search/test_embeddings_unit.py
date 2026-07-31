@@ -87,6 +87,17 @@ class TestEmbeddingsServiceWrapper:
             assert service.model_name == "sentence-transformers/all-MiniLM-L6-v2"
             assert service._cache_size == 2
 
+    def test_clear_cache_reinitializes_mock_backend_without_optional_factory(self):
+        """The explicit mock backend never depends on EmbeddingFactory."""
+        service = EmbeddingsServiceWrapper(model_name="mock", device="cpu")
+        original_factory = service.factory
+
+        service.clear_cache()
+
+        assert service.factory is not None
+        assert service.factory is not original_factory
+        assert service.create_embeddings(["after clear"]).shape == (1, 384)
+
 
 class TestBareHfModelIdNormalization:
     """task-640 AC#7: EmbeddingsServiceWrapper._build_config() must map
@@ -155,7 +166,9 @@ class TestBareHfModelIdNormalization:
         ):
             service = EmbeddingsServiceWrapper(model_name="bert-base-uncased")
             config = service._build_config("bert-base-uncased", None, None, None, None)
-            assert config["models"]["default"]["model_name_or_path"] == "bert-base-uncased"
+            assert (
+                config["models"]["default"]["model_name_or_path"] == "bert-base-uncased"
+            )
 
 
 class TestVectorStores:

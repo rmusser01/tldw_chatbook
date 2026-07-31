@@ -4,16 +4,20 @@ import asyncio
 import io
 import json
 import logging
+from pathlib import Path
 import threading
 
 import pytest
 from loguru import logger
+from textual.widgets import Input
 
 import tldw_chatbook.app as app_module
 from tldw_chatbook.app import TldwCli
-from tldw_chatbook.Constants import TAB_LIBRARY, TAB_PERSONAS
+from tldw_chatbook.Constants import TAB_CHAT, TAB_LIBRARY, TAB_PERSONAS
 from tldw_chatbook.UI.CCP_Modules import ccp_character_handler
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.library_screen import (
     LIBRARY_ROW_BROWSE_PROMPTS,
     LibraryScreen,
@@ -60,6 +64,7 @@ def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
     _disable_splash(monkeypatch)
     app = TldwCli()
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     return app
 
 
@@ -178,11 +183,28 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
             assert personas.state.selected_entity_kind == "character"
             assert personas.state.selected_entity_name == character_name
 
+            selected_character_id = personas.state.selected_entity_id
+            character_notifications: list[tuple[str, str]] = []
             with monkeypatch.context() as character_failure:
+                original_notify = app.notify
+
+                def capture_character_notification(
+                    message: str,
+                    *,
+                    severity: str = "information",
+                    **kwargs,
+                ):
+                    character_notifications.append((str(message), severity))
+                    return original_notify(message, severity=severity, **kwargs)
 
                 def fail_character_import(_path: str):
                     raise RuntimeError(private_character_error)
 
+                character_failure.setattr(
+                    app,
+                    "notify",
+                    capture_character_notification,
+                )
                 character_failure.setattr(
                     ccp_character_handler,
                     "import_character_card",
@@ -193,6 +215,16 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
                 )
                 assert failed_character_worker.node is app
                 await failed_character_worker.wait()
+
+            assert character_notifications == [
+                (
+                    "Character import failed; verify the file and retry.",
+                    "error",
+                )
+            ]
+            assert private_character_error not in character_notifications[0][0]
+            assert personas.state.selected_entity_id == selected_character_id
+            assert personas.state.selected_entity_name == character_name
 
             app.post_message(NavigateToScreen("prompts"))
             library = await _wait_for_screen(app, pilot, LibraryScreen, TAB_LIBRARY)
@@ -205,8 +237,101 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
             assert prompt_worker.node is app
             await prompt_worker.wait()
             await pilot.pause()
-            assert library._library_prompts_import_status.startswith("1 imported")
+            assert library._library_prompts_import_status == (
+                "1 imported · 0 skipped (duplicate name)"
+            )
+            persisted_prompt = await app.prompt_scope_service.get_prompt(
+                mode="local",
+                prompt_identifier=prompt_name,
+                include_deleted=True,
+            )
+            assert persisted_prompt["author"] == "TASK-651"
+            assert persisted_prompt["system_prompt"] == private_system_body
+            assert persisted_prompt["user_prompt"] == private_user_body
             assert all(not hasattr(app, name) for name in REMOVED_ROOT_NAMES)
+
+            # Duplicate names are skipped without overwriting the existing
+            # record, even when the second file carries different content.
+            prompt_path.write_text(
+                json.dumps(
+                    {
+                        "name": prompt_name,
+                        "author": "SHOULD NOT REPLACE",
+                        "system_prompt": "SHOULD NOT REPLACE",
+                        "user_prompt": "SHOULD NOT REPLACE",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            library._library_prompts_import_path = str(prompt_path)
+            duplicate_worker = library._start_library_prompts_import()
+            assert duplicate_worker is not None
+            assert duplicate_worker.node is app
+            await duplicate_worker.wait()
+            assert library._library_prompts_import_status == (
+                "0 imported · 1 skipped (duplicate name)"
+            )
+            persisted_prompt = await app.prompt_scope_service.get_prompt(
+                mode="local",
+                prompt_identifier=prompt_name,
+                include_deleted=True,
+            )
+            assert persisted_prompt["author"] == "TASK-651"
+            assert persisted_prompt["system_prompt"] == private_system_body
+
+            prompt_folder = tmp_path / "task-651-prompt-folder"
+            prompt_folder.mkdir()
+            folder_prompt_names = (
+                "TASK-651 folder prompt one",
+                "TASK-651 folder prompt two",
+            )
+            for index, folder_prompt_name in enumerate(folder_prompt_names):
+                (prompt_folder / f"{index}.json").write_text(
+                    json.dumps(
+                        {
+                            "name": folder_prompt_name,
+                            "system_prompt": f"system {index}",
+                            "user_prompt": f"user {index}",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            (prompt_folder / "ignored.dat").write_text("unsupported", encoding="utf-8")
+            library._library_prompts_import_path = str(prompt_folder)
+            folder_worker = library._start_library_prompts_import()
+            assert folder_worker is not None
+            assert folder_worker.node is app
+            await folder_worker.wait()
+            assert library._library_prompts_import_status == (
+                "2 imported · 0 skipped (duplicate name)"
+            )
+
+            library._library_prompts_import_path = str(tmp_path / "does-not-exist.json")
+            invalid_path_worker = library._start_library_prompts_import()
+            assert invalid_path_worker is not None
+            assert invalid_path_worker.node is app
+            await invalid_path_worker.wait()
+            assert library._library_prompts_import_status == (
+                "Could not find that file or folder."
+            )
+
+            real_iterdir = Path.iterdir
+
+            def fail_prompt_folder_enumeration(path: Path):
+                if path == prompt_folder:
+                    raise PermissionError("private path detail")
+                return real_iterdir(path)
+
+            with monkeypatch.context() as folder_failure:
+                folder_failure.setattr(Path, "iterdir", fail_prompt_folder_enumeration)
+                library._library_prompts_import_path = str(prompt_folder)
+                permission_worker = library._start_library_prompts_import()
+                assert permission_worker is not None
+                assert permission_worker.node is app
+                await permission_worker.wait()
+            assert library._library_prompts_import_status == (
+                "Could not read that folder."
+            )
 
             async def fail_prompt_save(**kwargs):
                 raise RuntimeError(
@@ -302,6 +427,63 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
                 logger.remove(diagnostic_sink)
             except ValueError:
                 pass
+        await _close_production_app(app)
+
+
+@pytest.mark.asyncio
+async def test_real_library_prompt_insert_reaches_console_composer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _production_app(monkeypatch)
+    prompt_body = "Summarize this production handoff."
+    monkeypatch.setattr(ChatScreen, "_console_setup_blocked_reason", lambda self: "")
+
+    try:
+        async with app.run_test(size=(150, 48)) as pilot:
+            saved = await app.prompt_scope_service.save_prompt(
+                mode="local",
+                name="TASK-1538 production Console handoff",
+                user_prompt=prompt_body,
+            )
+            prompt_id = saved["local_id"]
+
+            app.post_message(NavigateToScreen("prompts"))
+            library = await _wait_for_screen(app, pilot, LibraryScreen, TAB_LIBRARY)
+            for _ in range(300):
+                prompt_rows = library.query(f"#library-prompt-row-{prompt_id}")
+                if prompt_rows:
+                    break
+                await pilot.pause(0.01)
+            else:
+                raise AssertionError("production Library did not render the prompt row")
+
+            prompt_rows.first().press()
+            for _ in range(300):
+                insert_buttons = library.query("#library-prompt-insert-console")
+                if insert_buttons:
+                    break
+                await pilot.pause(0.01)
+            else:
+                raise AssertionError(
+                    "production Library did not open the prompt editor"
+                )
+
+            insert_buttons.first().press()
+            chat = await _wait_for_screen(app, pilot, ChatScreen, TAB_CHAT)
+            for _ in range(300):
+                composer = chat.query_one("#console-command-input", Input)
+                if composer.value == prompt_body:
+                    break
+                await pilot.pause(0.01)
+            else:
+                raise AssertionError(
+                    "production Console did not consume the prompt handoff"
+                )
+
+            assert not app.pending_handoffs.has_pending(
+                HandoffChannel.CONSOLE_PROMPT_INSERT
+            )
+    finally:
         await _close_production_app(app)
 
 

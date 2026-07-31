@@ -2,19 +2,15 @@
 
 import asyncio
 import itertools
+from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from textual.app import App
-from textual.widgets import Button, Input, Select, TextArea
+from textual.widgets import Button, DataTable, Input, Select, TextArea
 
-from textual.widgets import DataTable
-
-from tldw_chatbook.Subscriptions.noise_defaults import default_ignore_selectors_text
-
-from Tests.UI.test_destination_shells import DestinationHarness
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.Subscriptions.noise_defaults import default_ignore_selectors_text
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
@@ -27,13 +23,84 @@ from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 
 
-class WatchlistsContextHarness(App):
+def _settings_without_splash(section, key=None, default=None):
+    if section == "splash_screen" and key == "enabled":
+        return False
+    return default
+
+
+class _ScreenWorkerView:
+    """Wait only for workers owned by one production screen."""
+
+    def __init__(self, app, screen) -> None:
+        self._app = app
+        self._screen = screen
+
+    def _owned_workers(self):
+        return [
+            worker
+            for worker in self._app.workers
+            if self._screen in worker.node.ancestors_with_self
+        ]
+
+    def __iter__(self):
+        return iter(self._owned_workers())
+
+    async def wait_for_complete(self) -> None:
+        owned_workers = [
+            worker
+            for worker in self._owned_workers()
+            if not worker.is_finished
+        ]
+        if owned_workers:
+            await self._app.workers.wait_for_complete(owned_workers)
+
+
+class DestinationHarness:
+    """Mount the production destination screen inside the full production app."""
+
+    def __init__(self, app, destination: str) -> None:
+        assert destination == "watchlists_collections"
+        self.app = app
+        self.context_screen = WatchlistsCollectionsScreen(app)
+
+    @property
+    def screen_stack(self):
+        return self.app.screen_stack
+
+    @property
+    def workers(self):
+        return _ScreenWorkerView(self.app, self.context_screen)
+
+    @asynccontextmanager
+    async def run_test(self, **kwargs):
+        with patch(
+            "tldw_chatbook.app.get_cli_setting",
+            side_effect=_settings_without_splash,
+        ):
+            async with self.app.run_test(**kwargs) as pilot:
+                await self.app.push_screen(self.context_screen)
+                await pilot.pause()
+                yield pilot
+
+
+class WatchlistsContextHarness:
+    """Mount a configured production screen inside its full production app."""
+
     def __init__(self, screen: WatchlistsCollectionsScreen) -> None:
-        super().__init__()
+        self.app = screen.app_instance
         self.context_screen = screen
 
-    async def on_mount(self) -> None:
-        await self.push_screen(self.context_screen)
+    @asynccontextmanager
+    async def run_test(self, **kwargs):
+        with patch(
+            "tldw_chatbook.app.get_cli_setting",
+            side_effect=_settings_without_splash,
+        ):
+            async with self.app.run_test(**kwargs) as pilot:
+                await self.app.push_screen(self.context_screen)
+                await pilot.pause()
+                yield pilot
 
 
 @pytest.mark.asyncio
@@ -1697,25 +1764,28 @@ async def test_seeded_tree_expansion_takes_effect_on_the_first_render():
             composes.append(1)
             yield from super().compose()
 
-    class TreeHarness(App):
-        def compose(self):
-            yield CountingTree(
-                watchlists=[{"id": 1, "name": "Morning AI Brief", "tags": ["ai"]}],
-                counts={1: {"unread": 2}},
-                source_rows_loader=lambda _wl: [{"id": 5, "name": "ArXiv"}],
-                expanded=frozenset({1}),
-                active_tag="ai",
-                id="wl-tree",
-            )
+    app = _build_test_app()
+    tree = CountingTree(
+        watchlists=[{"id": 1, "name": "Morning AI Brief", "tags": ["ai"]}],
+        counts={1: {"unread": 2}},
+        source_rows_loader=lambda _wl: [{"id": 5, "name": "ArXiv"}],
+        expanded=frozenset({1}),
+        active_tag="ai",
+        id="wl-tree",
+    )
 
-    async with TreeHarness().run_test(size=(60, 30)) as pilot:
-        await pilot.pause()
-        tree = pilot.app.query_one("#wl-tree", CountingTree)
-        assert tree.expanded == frozenset({1})
-        assert tree.active_tag == "ai"
-        assert pilot.app.query("#wl-tree-node-source-1-5"), (
-            "the seeded expansion must be visible on the first render"
-        )
-        assert composes == [1], (
-            f"seeding queued an extra recompose ({len(composes)} composes)"
-        )
+    with patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=_settings_without_splash,
+    ):
+        async with app.run_test(size=(60, 30)) as pilot:
+            await app.screen.mount(tree)
+            await pilot.pause()
+            assert tree.expanded == frozenset({1})
+            assert tree.active_tag == "ai"
+            assert tree.query("#wl-tree-node-source-1-5"), (
+                "the seeded expansion must be visible on the first render"
+            )
+            assert composes == [1], (
+                f"seeding queued an extra recompose ({len(composes)} composes)"
+            )

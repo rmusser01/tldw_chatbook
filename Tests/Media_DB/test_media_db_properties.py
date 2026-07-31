@@ -13,7 +13,7 @@ from pathlib import Path
 
 #
 # Third-Party Imports
-from hypothesis import given, strategies as st, settings, HealthCheck, assume
+from hypothesis import HealthCheck, assume, given, settings, strategies as st
 
 #
 # Local Imports
@@ -23,27 +23,13 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import (
     fetch_keywords_for_media,
     empty_trash,
 )
-#
-#######################################################################################################################
-#
-# --- Hypothesis Settings ---
-
-# Child of the central 'tldw' profile (Tests/conftest.py, task-1452): inherits
-# deadline=None and the env-scaled max_examples, adds the health-check
-# suppressions these I/O-heavy tests need. The central profile is restored at
-# the END of this module — Hypothesis binds settings at decoration time, so an
-# unrestored load_profile leaks into every module imported after this one.
-settings.register_profile(
-    "db_test_suite",
-    parent=settings.default,
+MEDIA_DB_SETTINGS = settings(
     suppress_health_check=[
         HealthCheck.too_slow,
         HealthCheck.function_scoped_fixture,
         HealthCheck.data_too_large,
     ],
 )
-settings.load_profile("db_test_suite")
-
 
 # --- Pytest Fixtures ---
 
@@ -131,6 +117,7 @@ def st_media_data(draw):
 class TestMediaItemProperties:
     """Property-based tests for the core Media item lifecycle."""
 
+    @MEDIA_DB_SETTINGS
     @given(media_data=st_media_data())
     def test_media_item_roundtrip(self, db_instance: MediaDatabase, media_data: dict):
         """
@@ -170,6 +157,7 @@ class TestMediaItemProperties:
         assert doc_versions[0]["content"] == media_data["content"]
 
     # ... other tests in this class are correct ...
+    @MEDIA_DB_SETTINGS
     @given(initial_media=st_media_data(), update_media=st_media_data())
     def test_update_increments_version_and_changes_data(
         self, db_instance: MediaDatabase, initial_media: dict, update_media: dict
@@ -250,6 +238,7 @@ class TestMediaItemProperties:
             "Latest document version has incorrect content"
         )
 
+    @MEDIA_DB_SETTINGS
     @given(media_data=st_media_data())
     def test_soft_delete_makes_item_unfindable_by_default(
         self, db_instance: MediaDatabase, media_data: dict
@@ -296,6 +285,7 @@ class TestSearchProperties:
         assert total == 1
         assert results[0]["id"] == media_id
 
+    @MEDIA_DB_SETTINGS
     @given(media_data=st_media_data())
     def test_search_finds_item_by_its_properties(
         self, db_instance: MediaDatabase, media_data: dict
@@ -324,6 +314,7 @@ class TestSearchProperties:
         assert total == 1
         assert results[0]["id"] == media_id
 
+    @MEDIA_DB_SETTINGS
     @given(item1=st_media_data(), item2=st_media_data())
     def test_search_isolates_results_correctly(
         self, db_instance: MediaDatabase, item1: dict, item2: dict
@@ -344,6 +335,7 @@ class TestSearchProperties:
         assert total == 1
         assert results[0]["id"] == id1
 
+    @MEDIA_DB_SETTINGS
     @given(media_data=st_media_data())
     def test_soft_deleted_item_is_not_in_fts_search(
         self, db_instance: MediaDatabase, media_data: dict
@@ -363,7 +355,7 @@ class TestSearchProperties:
 class TestIdempotencyAndConstraints:
     """Tests for idempotency of operations and enforcement of DB constraints."""
 
-    @settings(deadline=None)
+    @MEDIA_DB_SETTINGS
     @given(media_data=st_media_data())
     def test_mark_as_trash_is_idempotent(
         self, db_instance: MediaDatabase, media_data: dict
@@ -383,6 +375,7 @@ class TestIdempotencyAndConstraints:
         item_still_v2 = db_instance.get_media_by_id(media_id, include_trash=True)
         assert item_still_v2["version"] == 2
 
+    @MEDIA_DB_SETTINGS
     @given(
         media1=st_media_data(),
         media2=st_media_data(),
@@ -457,6 +450,7 @@ class TestIdempotencyAndConstraints:
 class TestTimeBasedAndSearchQueries:
     # ... other tests in this class are correct ...
 
+    @MEDIA_DB_SETTINGS
     @given(days=st.integers(min_value=1, max_value=365))
     def test_empty_trash_respects_time_threshold(
         self, db_instance: MediaDatabase, days: int
@@ -619,11 +613,5 @@ class TestLargeMediaIdsFilterUsesJsonEach:
         assert all("json_each" not in q for q in captured_sql)
 
 
-# Restore the central profile: everything above bound "db_test_suite" at
-# decoration time; without this, every module imported after this one binds
-# "db_test_suite" too (task-1452).
-settings.load_profile("tldw")
-
-#
 # End of test_media_db_properties.py
 #######################################################################################################################

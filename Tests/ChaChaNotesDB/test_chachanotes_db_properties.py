@@ -32,24 +32,6 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
 # Functions:
 # --- Hypothesis Tests ---
 
-# Child of the central 'tldw' profile (Tests/conftest.py, task-1452): inherits
-# deadline=None and the env-scaled max_examples, adds the fixture suppression
-# these DB tests need. This module previously registered "db_friendly" TWICE —
-# the second registration silently dropped the function_scoped_fixture
-# suppression this comment called "THE FIX"; consolidated to one.
-# The central profile is restored at the END of this module — Hypothesis binds
-# settings at decoration time, so an unrestored load_profile leaks into every
-# module imported after this one.
-settings.register_profile(
-    "db_friendly",
-    parent=settings.default,
-    suppress_health_check=[
-        HealthCheck.too_slow,
-        HealthCheck.function_scoped_fixture,  # <--- THIS IS THE FIX
-    ],
-)
-settings.load_profile("db_friendly")
-
 # Strategy for generating a valid character card dictionary
 # The `.map(lambda t: ...)` part is to assemble the parts into a dictionary
 st_character_card_data = st.tuples(
@@ -76,7 +58,6 @@ st_character_card_data = st.tuples(
 
 # Define a strategy for a non-zero integer to add to the version
 st_version_offset = st.integers().filter(lambda x: x != 0)
-
 
 # --- Fixtures (Copied from your existing test file for a self-contained example) ---
 
@@ -1235,11 +1216,5 @@ class TestDBOperations:
         backup_db.close_connection()
 
 
-# Restore the central profile: everything above bound "db_friendly" at
-# decoration time; without this, every module imported after this one binds
-# "db_friendly" too (task-1452).
-settings.load_profile("tldw")
-
-#
 # End of test_chachanotes_db_properties.py
 ########################################################################################################################

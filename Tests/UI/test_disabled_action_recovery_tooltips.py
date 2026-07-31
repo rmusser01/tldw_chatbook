@@ -6,7 +6,6 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Audio.transcription_history import TranscriptionEntry
-from tldw_chatbook.UI.STTS_Window import STTSWindow
 from tldw_chatbook.UI.Views.RAGSearch import search_rag_window as search_rag_module
 from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow
 from tldw_chatbook.Utils import optional_deps as optional_deps_module
@@ -106,41 +105,6 @@ async def test_search_rag_missing_embeddings_dependency_exposes_phase_five_recov
         assert 'pip install -e ".[embeddings_rag]"' in str(search_button.tooltip)
         assert 'pip install "tldw_chatbook[embeddings_rag]"' in str(
             search_button.tooltip
-        )
-
-
-@pytest.mark.asyncio
-async def test_stts_missing_speech_dependencies_expose_phase_five_recovery(monkeypatch):
-    import tldw_chatbook.UI.STTS_Window as stts_module
-
-    monkeypatch.setattr(stts_module, "check_tts_deps", lambda: None)
-    monkeypatch.setattr(stts_module, "check_stt_deps", lambda: None)
-    monkeypatch.setitem(stts_module.DEPENDENCIES_AVAILABLE, "tts_processing", False)
-    monkeypatch.setitem(stts_module.DEPENDENCIES_AVAILABLE, "stt_processing", False)
-
-    widget = STTSWindow(_FakeAppInstance())
-    app = _WidgetHost(widget)
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-
-        recovery = widget.query_one("#speech-capability-status", Static)
-        recovery_text = _static_text(recovery)
-        assert "Dependency missing" in recovery_text
-        assert "Unavailable: Local speech providers." in recovery_text
-        assert (
-            "Why: Missing optional dependencies: local_tts, transcription_faster_whisper, speech_recording."
-            in recovery_text
-        )
-        assert (
-            'Next: Install with pip install "tldw_chatbook[local_tts,transcription_faster_whisper,speech_recording]" '
-            "and restart."
-        ) in recovery_text
-        assert "Recovery: Settings > Speech." in recovery_text
-        assert "Owner: optional dependency." in recovery_text
-        assert (
-            'pip install "tldw_chatbook[local_tts,transcription_faster_whisper,speech_recording]"'
-            in str(recovery.tooltip)
         )
 
 

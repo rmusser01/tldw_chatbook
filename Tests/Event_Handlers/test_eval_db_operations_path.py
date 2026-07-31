@@ -30,6 +30,7 @@ def test_default_db_path_tracks_a_retargeted_profile(monkeypatch, tmp_path):
     from tldw_chatbook.config import get_evals_db_path
 
     retargeted = tmp_path / "profile-two" / "config.toml"
+    retargeted.parent.mkdir()
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(retargeted))
 
     ops = EvalDBOperations()

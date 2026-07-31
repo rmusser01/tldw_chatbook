@@ -97,10 +97,10 @@ try:  # pragma: no cover - hypothesis is a test-only dependency
     # 'thorough' so the reduced dev depth has a compensating control.
     # Hypothesis binds settings.default at DECORATION time, so this profile
     # must be active whenever a test module is imported. Property modules that
-    # need extra health-check suppressions register a child profile with
-    # parent=settings.default and MUST restore this one at end of module —
-    # a leaked load_profile() silently reconfigures every later-imported
-    # module's unannotated @given tests (the pre-task-1452 state).
+    # need extra health-check suppressions use local @settings decorators;
+    # they must not register or load process-wide profiles. An import-time
+    # load_profile() silently reconfigures every later-imported module's
+    # unannotated @given tests (the pre-task-1452 state).
     _HYPOTHESIS_SCALES = {
         "dev": {"max_examples": 25, "stateful_step_count": 20},
         "ci": {"max_examples": 50, "stateful_step_count": 30},
@@ -873,9 +873,7 @@ def trust_service_with_skill(make_trust_service):
     (skill_dir / "SKILL.md").write_text(
         "---\nname: demo-skill\ndescription: demo\n---\nbody\n", encoding="utf-8"
     )
-    (skill_dir / "scripts" / "hello.py").write_text(
-        "print('hello')", encoding="utf-8"
-    )
+    (skill_dir / "scripts" / "hello.py").write_text("print('hello')", encoding="utf-8")
     return service, name
 
 

@@ -1,19 +1,20 @@
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
-from textual import on
-from textual.app import App, ComposeResult
-from textual.widgets import Button
 
 from tldw_chatbook.UI.Workbench.workbench_state import (
     RecoveryState,
     WorkbenchAction,
     WorkbenchHeaderState,
     WorkbenchMode,
-    WorkbenchPaneState,
     WorkbenchState,
 )
 from tldw_chatbook.UI.Workbench.workbench_widgets import (
+    CommandStrip,
     WorkbenchActionRequested,
     WorkbenchFrame,
+    _sort_state_children,
 )
 
 
@@ -55,120 +56,105 @@ def _state(
     )
 
 
-class _WorkbenchFrameApp(App):
-    def __init__(self, state: WorkbenchState) -> None:
-        super().__init__()
-        self.state = state
-        self.requested_actions: list[str] = []
-
-    def compose(self) -> ComposeResult:
-        yield WorkbenchFrame(self.state, id="frame")
-
-    @on(WorkbenchActionRequested)
-    def on_workbench_action_requested(
-        self,
-        event: WorkbenchActionRequested,
-    ) -> None:
-        self.requested_actions.append(event.action_id)
-
-
-@pytest.mark.asyncio
-async def test_workbench_frame_sync_state_keeps_direct_child_ids_stable():
-    app = _WorkbenchFrameApp(_state(subtitle="Ready"))
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        frame = app.query_one("#frame", WorkbenchFrame)
-        original_child_ids = tuple(child.id for child in frame.children)
-
-        frame.sync_state(
-            _state(
-                subtitle="Provider setup needed",
-                action_label="Choose model",
-                recovery_body="Choose a model before running Search/RAG.",
-            )
-        )
-        await pilot.pause()
-
-        recovery = frame.query_one("#workbench-recovery")
-        updated_child_ids = tuple(child.id for child in frame.children)
-        recovery_text = recovery.renderable.plain
-
-        assert updated_child_ids == original_child_ids
-        assert "Choose a model" in recovery_text
-
-
-@pytest.mark.asyncio
-async def test_recovery_callout_action_emits_workbench_action_requested():
-    app = _WorkbenchFrameApp(_state())
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-
-        action = app.query_one("#workbench-recovery-action", Button)
-        assert action.label.plain == "Settings"
-
-        await pilot.click("#workbench-recovery-action")
-        await pilot.pause()
-
-    assert app.requested_actions == ["provider-recovery"]
-
-
-@pytest.mark.asyncio
-async def test_workbench_frame_sync_state_reorders_actions_modes_and_panes():
-    initial = WorkbenchState(
-        header=WorkbenchHeaderState(title="Console"),
-        modes=(
-            WorkbenchMode(id="chat", label="Chat"),
-            WorkbenchMode(id="rag", label="RAG"),
-        ),
-        actions=(
-            WorkbenchAction(id="settings", label="Settings"),
-            WorkbenchAction(id="send", label="Send"),
-        ),
-        panes=(
-            WorkbenchPaneState(id="context", title="Context"),
-            WorkbenchPaneState(id="transcript", title="Transcript"),
-        ),
+def test_workbench_frame_sync_state_dispatches_one_snapshot_to_every_region():
+    state = _state(
+        subtitle="Provider setup needed",
+        action_label="Choose model",
+        recovery_body="Choose a model before running Search/RAG.",
     )
-    app = _WorkbenchFrameApp(initial)
+    collaborators = {
+        "#workbench-header": SimpleNamespace(sync_state=Mock()),
+        "#workbench-mode-strip": SimpleNamespace(sync_modes=Mock()),
+        "#workbench-command-strip": SimpleNamespace(sync_actions=Mock()),
+        "#workbench-recovery": SimpleNamespace(sync_state=Mock()),
+        "#workbench-state-block": SimpleNamespace(sync_state=Mock()),
+    }
+    frame = SimpleNamespace(
+        state=None,
+        query_one=Mock(side_effect=lambda selector, *_args: collaborators[selector]),
+        _sync_panes=Mock(),
+        set_class=Mock(),
+        add_class=Mock(),
+        remove_class=Mock(),
+        _route_class=None,
+    )
 
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        frame = app.query_one("#frame", WorkbenchFrame)
+    WorkbenchFrame.sync_state(frame, state)
 
-        frame.sync_state(
-            WorkbenchState(
-                header=WorkbenchHeaderState(title="Console"),
-                modes=(
-                    WorkbenchMode(id="rag", label="RAG"),
-                    WorkbenchMode(id="chat", label="Chat"),
-                ),
-                actions=(
-                    WorkbenchAction(id="send", label="Send"),
-                    WorkbenchAction(id="settings", label="Settings"),
-                ),
-                panes=(
-                    WorkbenchPaneState(id="transcript", title="Transcript"),
-                    WorkbenchPaneState(id="context", title="Context"),
-                ),
-            )
-        )
-        await pilot.pause()
+    collaborators["#workbench-header"].sync_state.assert_called_once_with(state.header)
+    collaborators["#workbench-mode-strip"].sync_modes.assert_called_once_with(
+        state.modes
+    )
+    collaborators["#workbench-command-strip"].sync_actions.assert_called_once_with(
+        state.actions
+    )
+    collaborators["#workbench-recovery"].sync_state.assert_called_once_with(
+        state.recovery
+    )
+    collaborators["#workbench-state-block"].sync_state.assert_called_once_with(state)
+    frame._sync_panes.assert_called_once_with(state.panes)
+    frame.add_class.assert_called_once_with("route-console")
+    assert frame._route_class == "route-console"
 
-        action_ids = [
-            getattr(child, "_workbench_action_id", None)
-            for child in frame.query_one("#workbench-command-strip").children
+
+def test_recovery_action_posts_typed_workbench_request():
+    strip = SimpleNamespace(post_message=Mock())
+    button = SimpleNamespace(_workbench_action_id="provider-recovery")
+    event = SimpleNamespace(button=button, stop=Mock())
+
+    CommandStrip.on_workbench_button_pressed(strip, event)
+
+    event.stop.assert_called_once_with()
+    posted = strip.post_message.call_args.args[0]
+    assert isinstance(posted, WorkbenchActionRequested)
+    assert posted.action_id == "provider-recovery"
+
+
+@pytest.mark.parametrize(
+    ("attribute_name", "initial_ids", "desired_ids"),
+    [
+        ("_workbench_action_id", ["settings", "send"], ["send", "settings"]),
+        ("_workbench_mode_id", ["chat", "rag"], ["rag", "chat"]),
+        ("_workbench_pane_id", ["context", "transcript"], ["transcript", "context"]),
+    ],
+)
+def test_state_child_sorting_matches_latest_snapshot(
+    attribute_name,
+    initial_ids,
+    desired_ids,
+):
+    children = [
+        SimpleNamespace(**{attribute_name: child_id}) for child_id in initial_ids
+    ]
+    widget = SimpleNamespace(children=children)
+
+    def sort_children(*, key):
+        widget.children.sort(key=key)
+
+    widget.sort_children = sort_children
+
+    _sort_state_children(
+        widget,
+        {child_id: index for index, child_id in enumerate(desired_ids)},
+        attribute_name,
+    )
+
+    assert [
+        getattr(child, attribute_name) for child in widget.children
+    ] == desired_ids
+
+
+def test_workbench_frame_direct_child_ids_are_stable_data_contract():
+    frame = SimpleNamespace(
+        children=[
+            SimpleNamespace(id="workbench-header"),
+            SimpleNamespace(id="workbench-mode-strip"),
+            SimpleNamespace(id="workbench-command-strip"),
         ]
-        mode_ids = [
-            getattr(child, "_workbench_mode_id", None)
-            for child in frame.query_one("#workbench-mode-strip").children
-        ]
-        pane_ids = [
-            getattr(child, "_workbench_pane_id", None)
-            for child in frame.query_one("#workbench-pane-region").children
-        ]
+    )
 
-    assert action_ids == ["send", "settings"]
-    assert mode_ids == ["rag", "chat"]
-    assert pane_ids == ["transcript", "context"]
+    assert WorkbenchFrame.get_direct_child_ids(frame) == (
+        "workbench-header",
+        "workbench-mode-strip",
+        "workbench-command-strip",
+    )

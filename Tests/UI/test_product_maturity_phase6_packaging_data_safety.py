@@ -140,7 +140,9 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
     assert "TLDW_CONFIG_PATH" in config
     assert "_get_effective_config_path" in config
     assert "_CONFIG_CACHE_SOURCE == config_path" in config
-    assert "atomic_write_text(DEFAULT_CONFIG_PATH" in config
+    assert "create_private_text(" in config
+    assert "atomic_private_write_text(" in config
+    assert "application_owned_directory=application_directory" in config
     assert "Do not use machine-specific absolute paths" in recovery_doc
 
     for required_migration_signal in (

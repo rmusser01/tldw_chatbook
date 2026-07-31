@@ -22,7 +22,7 @@ from unittest.mock import Mock
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Static
+from textual.widgets import Static
 
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
@@ -392,21 +392,21 @@ def mock_chat_host():
 
 def test_set_console_pending_skill_script_preserves_other_resume_fields(mock_chat_host):
     screen = ChatScreen(mock_chat_host)
-    screen.chat_state.task_resume_state = TaskResumeState(
+    screen._task_resume_state = TaskResumeState(
         summary="Keep me", last_step="Also keep"
     )
 
     payload = {"skill_name": "demo", "script_path": "s.py", "request_id": "r1"}
     screen._set_console_pending_skill_script(payload)
 
-    state = screen.chat_state.task_resume_state
+    state = screen._task_resume_state
     assert state.summary == "Keep me"
     assert state.last_step == "Also keep"
     assert state.pending_skill_script == payload
 
     screen._set_console_pending_skill_script(None)
-    assert screen.chat_state.task_resume_state.pending_skill_script is None
-    assert screen.chat_state.task_resume_state.summary == "Keep me"
+    assert screen._task_resume_state.pending_skill_script is None
+    assert screen._task_resume_state.summary == "Keep me"
 
 
 def test_chat_screen_forwards_script_decided_to_controller_with_request_id(

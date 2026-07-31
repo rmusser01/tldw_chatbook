@@ -12,29 +12,33 @@ import time
 
 # Third-Party Imports
 from hypothesis import given, strategies as st, settings, HealthCheck
-from hypothesis.stateful import RuleBasedStateMachine, rule, Bundle
+from hypothesis.stateful import (
+    Bundle,
+    RuleBasedStateMachine,
+    precondition,
+    rule,
+    run_state_machine_as_test,
+)
 
 # Local Imports
 # Assuming Prompts_DB_v2.py is in a location Python can find.
 # For example, in the same directory or in a package.
-from tldw_chatbook.DB.Prompts_DB import PromptsDatabase, DatabaseError, ConflictError
+from tldw_chatbook.DB.Prompts_DB import PromptsDatabase, ConflictError
 
 ########################################################################################################################
 #
 # Hypothesis Setup:
 
-# Child of the central 'tldw' profile (Tests/conftest.py, task-1452): inherits
-# deadline=None and the env-scaled max_examples, adds the fixture suppression
-# these DB tests need. NOTE: this file is currently named tests_* and is never
-# collected (task-1463 tracks enabling it); the profile hygiene is applied now
-# so enabling it does not reintroduce a profile leak. The central profile is
-# restored at the end of the module.
-settings.register_profile(
-    "db_friendly",
-    parent=settings.default,
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
-)
-settings.load_profile("db_friendly")
+
+def _db_settings(**kwargs):
+    """Return local settings without mutating the suite-wide profile."""
+    return settings(
+        suppress_health_check=[
+            HealthCheck.too_slow,
+            HealthCheck.function_scoped_fixture,
+        ],
+        **kwargs,
+    )
 
 
 # --- Fixtures ---
@@ -138,6 +142,7 @@ st_bad_version_offset = st.integers(min_value=-1000, max_value=1000).filter(
 class TestPromptProperties:
     """Property-based tests for core Prompt operations."""
 
+    @_db_settings()
     @given(prompt_data=st_prompt_data())
     def test_prompt_roundtrip(self, db_instance: PromptsDatabase, prompt_data: dict):
         """
@@ -174,6 +179,7 @@ class TestPromptProperties:
         retrieved_keywords = sorted(retrieved_prompt["keywords"])
         assert retrieved_keywords == expected_keywords
 
+    @_db_settings()
     @given(initial_prompt=st_prompt_data(), update_payload=st_prompt_data())
     def test_update_increments_version_and_changes_data(
         self, db_instance: PromptsDatabase, initial_prompt: dict, update_payload: dict
@@ -210,6 +216,7 @@ class TestPromptProperties:
         )
         assert sorted(updated_prompt["keywords"]) == expected_keywords
 
+    @_db_settings()
     @given(prompt_data=st_prompt_data())
     def test_soft_delete_makes_item_unfindable(
         self, tmp_path: Path, prompt_data: dict
@@ -241,6 +248,7 @@ class TestPromptProperties:
         assert deleted_record["deleted"] == 1
         assert deleted_record["version"] == 2  # 1=create, 2=delete
 
+    @_db_settings()
     @given(
         initial_prompt=st_prompt_data(),
         update_name=st_required_text,
@@ -282,6 +290,7 @@ class TestPromptProperties:
 class TestKeywordAndLinkingProperties:
     """Property-based tests for Keywords and their linking to Prompts."""
 
+    @_db_settings()
     @given(keyword_text=st_required_text)
     def test_keyword_normalization_and_roundtrip(
         self, tmp_path: Path, keyword_text: str
@@ -301,6 +310,7 @@ class TestKeywordAndLinkingProperties:
         assert retrieved_kw is not None
         assert retrieved_kw["keyword"] == db_instance._normalize_keyword(keyword_text)
 
+    @_db_settings()
     @given(keyword=st_required_text)
     def test_add_keyword_is_idempotent_on_undelete(
         self, tmp_path: Path, keyword: str
@@ -348,6 +358,7 @@ class TestKeywordAndLinkingProperties:
         # The version should be 3 (1=create, 2=delete, 3=undelete/update)
         assert kw_v3["version"] == 3
 
+    @_db_settings()
     @given(
         prompt_data=st_prompt_data(),
         new_keywords=st.lists(
@@ -391,6 +402,7 @@ class TestKeywordAndLinkingProperties:
 class TestAdvancedProperties:
     """Tests for FTS, Sync Log, and other complex interactions."""
 
+    @_db_settings()
     @given(prompt_data=st_prompt_data())
     def test_soft_deleted_item_is_not_in_fts(
         self, tmp_path: Path, prompt_data: dict
@@ -423,6 +435,7 @@ class TestAdvancedProperties:
         results_after, total_after = db_instance.search_prompts(unique_term)
         assert total_after == 0
 
+    @_db_settings()
     @given(prompt_data=st_prompt_data())
     def test_add_creates_correct_sync_log_entries(
         self, tmp_path: Path, prompt_data: dict
@@ -473,6 +486,7 @@ class TestAdvancedProperties:
             assert log["payload"]["prompt_uuid"] == prompt_uuid
             assert log["entity_uuid"].startswith(prompt_uuid)
 
+    @_db_settings()
     @given(prompt_data=st_prompt_data())
     def test_delete_creates_correct_sync_log_entries(
         self, tmp_path: Path, prompt_data: dict
@@ -653,17 +667,12 @@ class PromptLifecycleMachine(RuleBasedStateMachine):
 
     prompts = Bundle("prompts")
 
+    @precondition(lambda self: self.prompt_id is None)
     @rule(target=prompts, data=st_prompt_data())
     def create_prompt(self, data):
-        # We only want to test the lifecycle of one prompt per machine run for simplicity.
-        if self.prompt_id is not None:
-            return
-
-        try:
-            new_id, _, _ = self.db.add_prompt(**data, overwrite=False)
-        except ConflictError:
-            # Hypothesis might generate a duplicate name. We treat this as "no action taken".
-            return
+        # Model one prompt per machine run. The precondition matters because
+        # returning None from a target rule would add None to the prompt bundle.
+        new_id, _, _ = self.db.add_prompt(**data, overwrite=False)
 
         self.prompt_id = new_id
         self.prompt_name = data["name"].strip()
@@ -722,17 +731,15 @@ class PromptLifecycleMachine(RuleBasedStateMachine):
         assert raw_record["version"] == original_version + 1
 
 
-# This is the actual test class that pytest discovers and runs.
-# It inherits the rules and provides the `db_instance` fixture.
-@settings(max_examples=50, stateful_step_count=20)
-class TestPromptLifecycleAsTest(PromptLifecycleMachine):
-    @pytest.fixture(autouse=True)
-    def inject_db(self, db_instance):
-        """Injects the clean db_instance fixture into the state machine."""
-        self.db = db_instance
+def test_prompt_lifecycle_state_machine(tmp_path: Path) -> None:
+    """Run each state-machine example against its own real database."""
 
+    def build_machine() -> PromptLifecycleMachine:
+        machine = PromptLifecycleMachine()
+        machine.db = _fresh_example_db(tmp_path)
+        return machine
 
-# Restore the central profile: everything above bound "db_friendly" at
-# decoration time; without this, every module imported after this one binds
-# "db_friendly" too (task-1452).
-settings.load_profile("tldw")
+    run_state_machine_as_test(
+        build_machine,
+        settings=_db_settings(max_examples=50, stateful_step_count=20),
+    )

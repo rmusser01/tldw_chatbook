@@ -87,16 +87,13 @@ class TestEndToEndDictation:
                 mock_stream.read.side_effect = chunks + [Exception("Stop")]
 
                 # Create service and record
-                service = AudioRecordingService()
+                service = AudioRecordingService(backend="pyaudio", use_vad=False)
 
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                    service.start_recording(save_to_file=tmp.name)
+                    service.save_file = tmp.name
+                    service.is_recording = True
 
-                    # Process some chunks
-                    try:
-                        service._pyaudio_recording_loop()
-                    except Exception:
-                        pass  # Expected when chunks run out
+                    service._pyaudio_recording_loop()
 
                     # Stop and get audio
                     service.stop_recording()
@@ -296,8 +293,8 @@ class TestEndToEndDictation:
 class TestErrorRecovery:
     """Test error handling and recovery scenarios."""
 
-    def test_recording_recovery_from_stream_error(self):
-        """Test recovery from audio stream errors."""
+    def test_recording_preserves_chunks_before_stream_error(self):
+        """Test that a stream error stops capture without losing prior chunks."""
         with patch("tldw_chatbook.Audio.recording_service.PYAUDIO_AVAILABLE", True):
             with patch(
                 "tldw_chatbook.Audio.recording_service.pyaudio.PyAudio"
@@ -312,24 +309,17 @@ class TestErrorRecovery:
                     b"\x00\x01" * 512,
                     b"\x00\x01" * 512,
                     Exception("Stream error"),
-                    b"\x00\x01" * 512,  # Recovery
                 ]
 
-                service = AudioRecordingService()
+                service = AudioRecordingService(backend="pyaudio", use_vad=False)
                 chunks = []
                 service.callback = chunks.append
+                service.is_recording = True
 
-                service.start_recording()
+                service._pyaudio_recording_loop()
 
-                # Process with error
-                try:
-                    for _ in range(4):
-                        service._pyaudio_recording_loop()
-                except Exception:
-                    pass
-
-                # Should have captured some chunks despite error
-                assert len(chunks) >= 2
+                assert chunks == [b"\x00\x01" * 512, b"\x00\x01" * 512]
+                assert service.is_recording is False
 
     def test_transcription_service_fallback(self):
         """Test fallback when primary transcription service fails."""
@@ -440,11 +430,13 @@ class TestPerformance:
         # Create service with a mocked backend so cleanup behavior is not
         # dependent on host audio libraries.
         with patch("tldw_chatbook.Audio.recording_service.PYAUDIO_AVAILABLE", True):
-            service = AudioRecordingService()
+            service = AudioRecordingService(backend="pyaudio", use_vad=False)
         service_ref = weakref.ref(service)
 
-        # Use it
-        service.start_recording()
+        # Exercise the in-memory recording lifecycle without opening a native
+        # audio device or starting a background thread.
+        service.is_recording = True
+        service._handle_audio_chunk(b"\x00\x01" * 512)
         service.stop_recording()
 
         # Delete and collect

@@ -1542,7 +1542,10 @@ async def test_mark_unread_refuses_an_ingest_that_sits_beyond_a_lookup_page():
     """
     from textual.widgets import Button
 
-    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.full_app_destination_context import (
+        full_app_destination_context,
+        wait_for_selector,
+    )
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
     from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import IngestRequested
@@ -1596,7 +1599,7 @@ async def test_mark_unread_refuses_an_ingest_that_sits_beyond_a_lookup_page():
         > _LEGACY_STATUS_LOOKUP_LIMIT
     ), "the fixture must be deeper than the page the old lookup could see"
 
-    host = DestinationHarness(app, "watchlists_collections")
+    host = full_app_destination_context(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         screen, pane = await _mount_items_screen(pilot, host, expected_count=1)
         item = screen._loaded_items[0]
@@ -1625,6 +1628,12 @@ async def test_mark_unread_refuses_an_ingest_that_sits_beyond_a_lookup_page():
             "this test proves nothing about the truncation bug"
         )
 
+        await wait_for_selector(
+            screen,
+            pilot,
+            "#content-mark-unread-button",
+            timeout=4.0,
+        )
         screen.query_one("#content-mark-unread-button", Button).press()
         await pilot.pause(0.8)
 

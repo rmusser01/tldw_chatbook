@@ -25,8 +25,10 @@ from loguru import logger
 from rich.text import Text
 from textual.widgets import Button, DataTable
 
-from Tests.UI.test_destination_shells import DestinationHarness
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.full_app_destination_context import (
+    FullAppDestinationContext as DestinationHarness,
+)
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 
 
@@ -123,7 +125,7 @@ async def test_the_sources_status_column_shows_the_failure_after_the_toast_has_g
     read `-` even straight after a successful check.
     """
     app = _build_test_app()
-    source_id = _seed_source(app)
+    _seed_source(app)
     app.notify = Notified()
 
     async def dead_host(subscription):
@@ -168,19 +170,21 @@ async def test_an_unexpected_exception_in_the_fetch_path_logs_above_debug():
     app.notify = Notified()
 
     records: list[tuple[str, str]] = []
-    sink_id = logger.add(
-        lambda message: records.append(
-            (message.record["level"].name, message.record["message"])
-        ),
-        level="DEBUG",
-    )
-
     host = DestinationHarness(app, "watchlists_collections")
-    try:
-        async with host.run_test(size=(180, 50)) as pilot:
-            await pilot.pause(0.2)
-            screen, pane = await _open_sources(pilot, host)
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen, pane = await _open_sources(pilot, host)
 
+        # The production app configures Loguru during startup. Observe the
+        # boundary only after that lifecycle step, and remove the sink before
+        # teardown, so the test neither races nor replaces production startup.
+        sink_id = logger.add(
+            lambda message: records.append(
+                (message.record["level"].name, message.record["message"])
+            ),
+            level="DEBUG",
+        )
+        try:
             async def boom(**kwargs):
                 raise ValueError("invalid literal for int() with base 10")
 
@@ -193,8 +197,8 @@ async def test_an_unexpected_exception_in_the_fetch_path_logs_above_debug():
                 await pilot.pause()
                 if any("check" in message.lower() for _, message in records):
                     break
-    finally:
-        logger.remove(sink_id)
+        finally:
+            logger.remove(sink_id)
 
     check_records = [
         (level, message)

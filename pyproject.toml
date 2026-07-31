@@ -452,6 +452,10 @@ exclude = [
 # Include runtime chunking templates and evaluator defaults
 "tldw_chatbook.Chunking" = ["templates/*.json"]
 "tldw_chatbook.Evals" = ["config/*.yaml"]
+"tldw_chatbook.DB" = [
+    "migrations/chachanotes_v26_to_v27_citation_provenance.sql",
+    "migrations/chachanotes_v27_to_v28_character_authority.sql",
+]
 # Preserve the licenses for vendored packages
 "tldw_chatbook.Third_Party.aider" = ["LICENSE.txt"]
 "tldw_chatbook.Third_Party.textual_fspicker" = ["LICENSE"]

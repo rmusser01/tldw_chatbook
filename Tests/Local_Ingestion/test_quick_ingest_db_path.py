@@ -15,6 +15,8 @@ and ``ingest_local_file`` *are* module-level names in
 patching them on the ``lfi`` module works as expected.
 """
 
+from pathlib import Path
+
 
 def test_configured_media_db_path_is_honored(tmp_path, monkeypatch):
     import tldw_chatbook.Local_Ingestion.local_file_ingestion as lfi
@@ -67,11 +69,7 @@ def test_fallback_applies_only_when_the_key_is_absent(tmp_path, monkeypatch):
     )
 
     lfi.quick_ingest(tmp_path / "some_file.txt")
-    assert "tldw_cli_media_v2.db" in seen["db_path"]
-    # The default is a literal "~/..." string, and validate_path_simple counts
-    # "~/" among its traversal patterns. If validation ever runs BEFORE
-    # expanduser(), this assertion fails for every user on a default config.
-    assert "~" not in seen["db_path"]
+    assert Path(seen["db_path"]) == config_module.get_media_db_path()
 
 
 def test_a_traversal_path_in_config_is_rejected(tmp_path, monkeypatch):

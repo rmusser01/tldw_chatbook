@@ -38,10 +38,21 @@ TEMPLATE_NAMES = {
     "words",
     "xml",
 }
+CITATION_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql"
+)
+CHARACTER_AUTHORITY_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v27_to_v28_character_authority.sql"
+)
+RUNTIME_MIGRATION_PATHS = {
+    CITATION_MIGRATION_PATH,
+    CHARACTER_AUTHORITY_MIGRATION_PATH,
+}
 INSTALLED_PROBE = r"""
 from pathlib import Path
 import ast
 import asyncio
+from collections import Counter
 import json
 import math
 import os
@@ -388,8 +399,119 @@ for source_path in sorted(package_root.rglob("*.py")):
     )
 assert installed_root_accesses == []
 
+wiring_methods = (
+    "_wire_writing_services",
+    "_wire_chat_conversation_services",
+)
+expected_wiring_calls = Counter({name: 1 for name in wiring_methods})
+wiring_calls = Counter()
+for method_name in wiring_methods:
+    original = getattr(TldwCli, method_name)
+
+    def counted(
+        self,
+        _original=original,
+        _method_name=method_name,
+    ):
+        wiring_calls[_method_name] += 1
+        _original(self)
+
+    setattr(TldwCli, method_name, counted)
+
+sync_consumer_classes = (
+    sys.modules[TldwCli.__module__].ChatConversationScopeService,
+    sys.modules[TldwCli.__module__].MediaReadingScopeService,
+)
+initial_sync_arguments = {
+    consumer.__name__: [] for consumer in sync_consumer_classes
+}
+for consumer in sync_consumer_classes:
+    original_init = consumer.__init__
+
+    def captured_init(
+        self,
+        *args,
+        _original=original_init,
+        _consumer_name=consumer.__name__,
+        **kwargs,
+    ):
+        initial_sync_arguments[_consumer_name].append(
+            kwargs.get("sync_scope_service")
+        )
+        _original(self, *args, **kwargs)
+
+    consumer.__init__ = captured_init
+
+
+def service_identities(app):
+    return tuple(
+        getattr(app, name)
+        for name in (
+            "local_writing_service",
+            "server_writing_service",
+            "writing_scope_service",
+            "local_chat_conversation_service",
+            "conversation_local_marks_service",
+            "server_chat_conversation_service",
+            "chat_conversation_scope_service",
+            "citation_trace_repository",
+            "citation_legacy_migration_service",
+            "citation_artifact_ownership_coordinator",
+            "media_reading_scope_service",
+            "sync_scope_service",
+        )
+    )
+
+
+def assert_service_identities(app, expected):
+    current = service_identities(app)
+    assert len(current) == len(expected)
+    assert all(
+        actual is original
+        for actual, original in zip(current, expected, strict=True)
+    )
+
+
+def assert_service_graph(app):
+    assert app.writing_scope_service.local_service is app.local_writing_service
+    assert app.writing_scope_service.server_service is app.server_writing_service
+    assert app.server_writing_service.client_provider is app.server_context_provider
+    assert (
+        app.chat_conversation_scope_service.local_service
+        is app.local_chat_conversation_service
+    )
+    assert (
+        app.chat_conversation_scope_service.server_service
+        is app.server_chat_conversation_service
+    )
+    assert (
+        app.chat_conversation_scope_service.sync_scope_service
+        is app.sync_scope_service
+    )
+    assert app.media_reading_scope_service.sync_scope_service is app.sync_scope_service
+    assert (
+        app.local_chat_conversation_service.citation_legacy_migration
+        is app.citation_legacy_migration_service
+    )
+    assert (
+        app.citation_artifact_ownership_coordinator.trace_repository
+        is app.citation_trace_repository
+    )
+    assert (
+        app.citation_artifact_ownership_coordinator.artifact_store
+        is app.local_chatbook_service
+    )
+
+
 app = get_app()
 assert isinstance(app, TldwCli)
+assert wiring_calls == expected_wiring_calls
+assert initial_sync_arguments == {
+    consumer.__name__: [app.sync_scope_service]
+    for consumer in sync_consumer_classes
+}
+assert_service_graph(app)
+initial_service_identities = service_identities(app)
 assert all(not hasattr(app, name) for name in retired_reactives)
 
 
@@ -413,7 +535,7 @@ async def exercise_production_app():
             ),
             "installed production app did not mount registered Home",
         )
-        app.post_message(NavigateToScreen(TAB_CHAT))
+        await app.handle_screen_navigation(NavigateToScreen(TAB_CHAT))
         await wait_for(
             pilot,
             lambda: (
@@ -424,9 +546,15 @@ async def exercise_production_app():
             "installed production app did not navigate to registered Chat",
         )
         assert all(not hasattr(app, name) for name in retired_reactives)
+        assert wiring_calls == expected_wiring_calls
+        assert_service_identities(app, initial_service_identities)
+        assert_service_graph(app)
 
 
 asyncio.run(exercise_production_app())
+assert wiring_calls == expected_wiring_calls
+assert_service_identities(app, initial_service_identities)
+assert_service_graph(app)
 
 loaded_package_paths = []
 for module_name, module in tuple(sys.modules.items()):
@@ -524,8 +652,7 @@ def built_distributions(tmp_path_factory: pytest.TempPathFactory) -> BuiltDistri
         timeout=300,
     )
     assert completed.returncode == 0, (
-        f"command: {command}\nstdout:\n{completed.stdout}\n"
-        f"stderr:\n{completed.stderr}"
+        f"command: {command}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
     )
     assert "`project.license` as a TOML table is deprecated" not in (
         completed.stdout + completed.stderr
@@ -590,8 +717,7 @@ def _install_wheel(
         timeout=300,
     )
     assert completed.returncode == 0, (
-        f"command: {command}\nstdout:\n{completed.stdout}\n"
-        f"stderr:\n{completed.stderr}"
+        f"command: {command}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
     )
 
 
@@ -621,7 +747,9 @@ def _private_child_env(
         path.mkdir(parents=True, mode=0o700, exist_ok=True)
     config_path = config_root / "config.toml"
     config_path.write_text(
-        '[general]\ndefault_tab = "home"\n\n[splash_screen]\nenabled = false\n',
+        '[general]\ndefault_tab = "home"\n\n'
+        "[first_run]\nsetup_completed = true\n\n"
+        "[splash_screen]\nenabled = false\n",
         encoding="utf-8",
     )
     config_path.chmod(0o600)
@@ -668,8 +796,7 @@ def _run_child(
         timeout=180,
     )
     assert completed.returncode == 0, (
-        f"command: {command}\nstdout:\n{completed.stdout}\n"
-        f"stderr:\n{completed.stderr}"
+        f"command: {command}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
     )
     return completed
 
@@ -694,14 +821,14 @@ def test_built_artifacts_match_distribution_contract(
         "tldw_chatbook/Evals/config/eval_config.yaml",
         "tldw_chatbook/Third_Party/aider/LICENSE.txt",
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-    }
+    } | RUNTIME_MIGRATION_PATHS
     required_wheel = {
         "tldw_chatbook/css/tldw_cli_modular.tcss",
         "tldw_chatbook/Config_Files/rag_pipelines.toml",
         "tldw_chatbook/Evals/config/eval_config.yaml",
         "tldw_chatbook/Third_Party/aider/LICENSE.txt",
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-    }
+    } | RUNTIME_MIGRATION_PATHS
     assert not required_sdist - sdist_members
     assert not required_wheel - wheel_members
 
@@ -751,9 +878,7 @@ def test_built_artifacts_match_distribution_contract(
         )
         pkg_info_stream = archive.extractfile(pkg_info)
         assert pkg_info_stream is not None
-        sdist_metadata = Parser().parsestr(
-            pkg_info_stream.read().decode("utf-8")
-        )
+        sdist_metadata = Parser().parsestr(pkg_info_stream.read().decode("utf-8"))
 
     assert metadata["Metadata-Version"] == "2.4"
     assert metadata["License-Expression"] == "AGPL-3.0-or-later"
@@ -761,9 +886,7 @@ def test_built_artifacts_match_distribution_contract(
     assert sdist_metadata["Metadata-Version"] == "2.4"
     assert sdist_metadata["License-Expression"] == "AGPL-3.0-or-later"
     assert "LICENSE" in (sdist_metadata.get_all("License-File") or [])
-    assert any(
-        name.endswith(".dist-info/licenses/LICENSE") for name in wheel_members
-    )
+    assert any(name.endswith(".dist-info/licenses/LICENSE") for name in wheel_members)
     assert dict(entry_points["console_scripts"]) == {
         "tldw-cli": "tldw_chatbook.cli:main_cli_runner",
         "tldw-serve": "tldw_chatbook.Web_Server.serve:main",
@@ -842,6 +965,58 @@ def test_release_checker_rejects_missing_runtime_data(
     assert missing in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("missing", sorted(RUNTIME_MIGRATION_PATHS))
+def test_release_checker_rejects_missing_database_migration(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    missing: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    wheel = next(dist_dir.glob("*.whl"))
+    rewritten = wheel.with_suffix(".rewritten")
+    with (
+        zipfile.ZipFile(wheel) as source,
+        zipfile.ZipFile(rewritten, "w") as destination,
+    ):
+        for member in source.infolist():
+            if member.filename != missing:
+                destination.writestr(member, source.read(member.filename))
+    rewritten.replace(wheel)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert missing in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("missing", sorted(RUNTIME_MIGRATION_PATHS))
+def test_release_checker_rejects_missing_database_migration_from_sdist(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    missing: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    sdist = next(dist_dir.glob("*.tar.gz"))
+    rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+    with (
+        tarfile.open(sdist, "r:gz") as source,
+        tarfile.open(rewritten, "w:gz") as destination,
+    ):
+        for member in source.getmembers():
+            if member.name.endswith(f"/{missing}"):
+                continue
+            stream = source.extractfile(member) if member.isfile() else None
+            destination.addfile(member, stream)
+    rewritten.replace(sdist)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert missing in result.stdout + result.stderr
+
+
 def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
     built_distributions: BuiltDistributions,
     tmp_path: Path,
@@ -858,9 +1033,7 @@ def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
         built_distributions.source_root,
     )
     before = _target_hashes(target)
-    results = [
-        _run_child([sys.executable, "-c", INSTALLED_PROBE], run_root, env)
-    ]
+    results = [_run_child([sys.executable, "-c", INSTALLED_PROBE], run_root, env)]
 
     script_path = os.pathsep.join(
         str(path) for path in (target / "bin", target / "Scripts")
@@ -874,9 +1047,7 @@ def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
         results.append(_run_child([script, "--help"], run_root, env))
 
     after = _target_hashes(target)
-    process_text = "\n".join(
-        result.stdout + "\n" + result.stderr for result in results
-    )
+    process_text = "\n".join(result.stdout + "\n" + result.stderr for result in results)
     log_text = "\n".join(
         path.read_text(encoding="utf-8", errors="replace")
         for path in state_root.rglob("*.log*")

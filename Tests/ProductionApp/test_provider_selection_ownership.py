@@ -64,6 +64,7 @@ def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
     app = TldwCli()
     app.app_config = load_settings(force_reload=True)
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app.providers_models = dict(PROVIDERS_MODELS)
     app._initial_tab_value = TAB_CHAT
     return app
@@ -82,11 +83,55 @@ async def _wait_for_widget(screen, pilot, selector: str, widget_type):
         try:
             widget = screen.query_one(selector)
             assert isinstance(widget, widget_type)
-            return widget
+            if widget.region.width > 0 and widget.region.height > 0:
+                return widget
         except NoMatches:
             pass
         await pilot.pause(0.01)
-    raise AssertionError(f"production screen did not mount {selector}")
+    raise AssertionError(f"production screen did not render {selector}")
+
+
+async def _wait_for_stable_provider_select(
+    settings: SettingsScreen,
+    pilot,
+) -> Select:
+    for _ in range(300):
+        settings_workers = tuple(
+            worker for worker in settings.app.workers if worker.node is settings
+        )
+        if settings_workers:
+            await settings.app.workers.wait_for_complete(settings_workers)
+            await pilot.pause()
+            continue
+        try:
+            provider_select = settings.query_one("#settings-provider-value", Select)
+            overlay = provider_select.query_one("SelectOverlay")
+        except NoMatches:
+            await pilot.pause(0.01)
+            continue
+        if (
+            provider_select.is_mounted
+            and overlay.is_mounted
+            and provider_select.region.width > 0
+            and provider_select.region.height > 0
+        ):
+            await pilot.pause()
+            if settings.query_one(
+                "#settings-provider-value", Select
+            ) is provider_select and not any(
+                worker.node is settings for worker in settings.app.workers
+            ):
+                return provider_select
+        await pilot.pause(0.01)
+    raise AssertionError("production Settings provider control did not stabilize")
+
+
+async def _wait_until(pilot, predicate, failure: str) -> None:
+    for _ in range(300):
+        if predicate():
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(failure)
 
 
 async def _close_production_app(app: TldwCli) -> None:
@@ -253,19 +298,51 @@ async def test_settings_save_preserves_user_session_then_away_command_hands_off(
                 await pilot.pause(0.01)
             assert settings.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
 
-            provider_select = settings.query_one("#settings-provider-value", Select)
+            provider_select = await _wait_for_stable_provider_select(settings, pilot)
             await _wait_for_widget(provider_select, pilot, "#label", Widget)
-            provider_select.value = settings._provider_select_value_for_provider(
+            selected_provider = settings._provider_select_value_for_provider(
                 "Anthropic"
             )
-            await pilot.pause()
-            settings.query_one(
+            provider_select.value = selected_provider
+            settings.handle_provider_value_changed(
+                Select.Changed(provider_select, selected_provider)
+            )
+            await _wait_until(
+                pilot,
+                lambda: (
+                    settings._provider_setting_values_mapping().get("provider")
+                    == "anthropic"
+                ),
+                "the rendered provider control did not stage Anthropic",
+            )
+            model_input = await _wait_for_widget(
+                settings,
+                pilot,
                 "#settings-model-value",
                 Input,
-            ).value = "claude-task-648"
-            await pilot.pause()
+            )
+            model_input.value = "claude-task-648"
+            settings.handle_model_value_changed(
+                Input.Changed(model_input, model_input.value)
+            )
+            await _wait_until(
+                pilot,
+                lambda: (
+                    settings._provider_setting_values_mapping().get("model")
+                    == "claude-task-648"
+                ),
+                "the rendered model control did not stage claude-task-648",
+            )
             settings.action_settings_save_category(allow_text_entry_focus=True)
-            await pilot.pause()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    app.app_config["chat_defaults"].get("provider") == "anthropic"
+                    and app.app_config["chat_defaults"].get("model")
+                    == "claude-task-648"
+                ),
+                "the production Settings save did not update provider/model defaults",
+            )
             assert app.app_config["chat_defaults"]["provider"] == "anthropic"
             assert app.app_config["chat_defaults"]["model"] == "claude-task-648"
 

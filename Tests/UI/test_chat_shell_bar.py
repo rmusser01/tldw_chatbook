@@ -90,21 +90,12 @@ def test_chat_shell_context_defaults_from_none() -> None:
     assert context.session_label == "Session: New chat"
 
 
-def test_chat_shell_context_supports_session_fixture_and_chat_session_data() -> None:
+def test_chat_shell_context_supports_chat_session_data() -> None:
     resolver = ChatShellLabelResolver(
         workspace_name="Research Lab",
         character_label="Vox",
     )
 
-    tab_state = _SessionFixture(
-        title="A Very Long Session Name",
-        runtime_backend="server",
-        scope_type="workspace",
-        workspace_id="ws-123",
-        assistant_kind="persona",
-        assistant_name="Guide",
-        assistant_id="persona-9",
-    )
     session_data = ChatSessionData(
         tab_id="tab-b",
         title="Chat Session",
@@ -116,15 +107,9 @@ def test_chat_shell_context_supports_session_fixture_and_chat_session_data() -> 
         character_name="Ignored Name",
     )
 
-    tab_context = ChatShellContext.from_tab_state(tab_state, resolver=resolver)
     session_context = ChatShellContext.from_session_data(
         session_data, resolver=resolver
     )
-
-    assert tab_context.backend_label == "Server"
-    assert tab_context.scope_label == "Workspace: Research Lab"
-    assert tab_context.assistant_label == "Character: Vox"
-    assert tab_context.session_label == "Session: A Very Long Session Name"
 
     assert session_context.backend_label == "Server"
     assert session_context.scope_label == "Workspace: Research Lab"

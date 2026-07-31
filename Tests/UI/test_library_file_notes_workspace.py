@@ -8,11 +8,14 @@ import sys
 import threading
 import types
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
+from textual.css.query import NoMatches
 from textual.widgets import Button, Input, TextArea, Tree
 
 # Avoid importing the unrelated optional MLX stack during focused UI tests.
@@ -31,6 +34,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
 from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
     FileNotesService,
     OperationResult,
+    ReconcileResult,
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen  # noqa: E402
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (  # noqa: E402
@@ -113,6 +117,42 @@ def test_workspace_transition_admission_is_exact_binding_and_idempotent(
     mutation.release()
 
 
+def test_reconcile_tolerates_projection_disappearing_during_unmount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = LibraryFileNotesWorkspace(root=None, replica=None)
+    workspace._active = True
+    projection_attempts: list[bool | None] = []
+
+    def missing_root_surface(*, offline: bool | None = None) -> None:
+        projection_attempts.append(offline)
+        raise NoMatches("root surface was removed during unmount")
+
+    # Reproduce the teardown window itself: the initial lifecycle guard has
+    # passed, but descendants disappear before the first projection query.
+    monkeypatch.setattr(
+        LibraryFileNotesWorkspace,
+        "is_mounted",
+        property(lambda _workspace: True),
+    )
+    monkeypatch.setattr(
+        LibraryFileNotesWorkspace,
+        "children",
+        property(lambda _workspace: (object(),)),
+    )
+    monkeypatch.setattr(workspace, "_update_root_surface", missing_root_surface)
+
+    applied = workspace._apply_reconcile(
+        ReconcileResult(status="ok"),
+        ("deleted.md",),
+    )
+
+    assert applied is False
+    assert projection_attempts == [False]
+    assert workspace.entries == {}
+    assert workspace._deleted_paths == ("deleted.md",)
+
+
 async def _wait_until(
     pilot,
     predicate: Callable[[], bool],
@@ -125,6 +165,53 @@ async def _wait_until(
             return
         await pilot.pause(0.02)
     raise AssertionError(message)
+
+
+@asynccontextmanager
+async def _production_workspace_context(
+    workspace: LibraryFileNotesWorkspace,
+    *,
+    size: tuple[int, int],
+):
+    """Mount File Notes through the production TldwCli and Library screen."""
+    app = _build_test_app(configured_default="library")
+
+    def settings_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return default
+
+    with patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=settings_without_splash,
+    ):
+        async with app.run_test(size=size) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, LibraryScreen),
+                "production app did not mount Library",
+            )
+            screen = app.screen
+            assert isinstance(screen, LibraryScreen)
+            screen._library_file_notes_workspace_factory = lambda: workspace
+            await _wait_for_library_shell(screen, pilot)
+            await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+            await _wait_until(
+                pilot,
+                lambda: bool(screen.query("#library-notes-source-files")),
+                "Library Notes source selector did not mount",
+            )
+            screen.query_one("#library-notes-source-files", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.initialized
+                    and workspace.is_mounted
+                    and screen._library_file_notes_workspace is workspace
+                ),
+                "production Library did not mount File Notes",
+            )
+            yield pilot
 
 
 def _static_text(workspace: LibraryFileNotesWorkspace, selector: str) -> str:
@@ -1275,7 +1362,10 @@ async def test_create_move_delete_protect_and_restore_use_real_service(
         poll_interval=10,
     )
 
-    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+    async with _production_workspace_context(
+        workspace,
+        size=(120, 40),
+    ) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("start.md")
 
@@ -1356,8 +1446,12 @@ async def test_create_move_delete_protect_and_restore_use_real_service(
         workspace.query_one("#file-notes-delete", Button).press()
         await _wait_until(
             pilot,
-            lambda: not (root / "moved.md").exists(),
-            "confirmed delete did not remove the file",
+            lambda: (
+                not (root / "moved.md").exists()
+                and "Recently deleted"
+                in _tree_labels(workspace.query_one("#file-notes-tree", Tree))
+            ),
+            "confirmed delete did not finish updating the tree",
         )
         assert "Recently deleted" in _tree_labels(
             workspace.query_one("#file-notes-tree", Tree)

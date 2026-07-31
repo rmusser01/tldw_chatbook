@@ -23,6 +23,9 @@ from tldw_chatbook.Home.dashboard_state import (
     HomeDashboardInput,
 )
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    HandoffChannel,
+)
 from tldw_chatbook.UI.Screens import home_screen as home_screen_module
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
@@ -1112,10 +1115,10 @@ async def test_home_flashcards_due_row_and_control_route_one_hop_to_study():
         await pilot.click("#home-review-flashcards")
         await pilot.pause(HOME_MOUNT_PAUSE)
 
-    # open_home_flashcards_review() calls app.open_study_screen(initial_section=...),
-    # which is verified directly (app_instance is not the running harness App, so
-    # its own post_message() does not bubble into host.on_navigate_to_screen here).
-    assert app.pending_study_initial_section == "flashcards"
+    # The app instance is not the running harness App, so its navigation message
+    # does not bubble into host.on_navigate_to_screen. The one-hop action must
+    # still stage the memory-only Study section handoff for the real consumer.
+    assert app.pending_handoffs.has_pending(HandoffChannel.STUDY_INITIAL_SECTION)
 
 
 @pytest.mark.asyncio

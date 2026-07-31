@@ -683,9 +683,9 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
 
     def _report_invalid_selector(self, selector: str) -> None:
         """Refuse the save and name the line, in the log and on screen."""
-        logger.warning(
-            f"Ignore-rule save refused: unparseable CSS selector {selector!r}."
-        )
+        # The selector is user-authored and may contain private page content.
+        # Name it in the transient toast below, but never in persistent logs.
+        logger.warning("Ignore-rule save refused: unparseable CSS selector.")
         try:
             notify = getattr(self.app, "notify", None)
         except Exception:

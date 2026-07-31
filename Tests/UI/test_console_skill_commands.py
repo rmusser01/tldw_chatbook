@@ -13,6 +13,7 @@ store.
 
 from __future__ import annotations
 
+import time
 from typing import Any, Mapping
 from unittest.mock import AsyncMock
 
@@ -30,9 +31,11 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_command_grammar import default_console_registry
 from tldw_chatbook.Chat.console_skill_resolver import SKILLS_EMPTY_LIST_ROW
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE,
+    ChatScreen,
 )
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
@@ -105,6 +108,21 @@ def _console_message_contents(console, role: ConsoleMessageRole) -> list[str]:
         return []
     messages = store.messages_for_session(store.active_session_id)
     return [message.content for message in messages if message.role is role]
+
+
+async def _wait_for_production_chat_screen(
+    app, pilot, *, timeout: float = 6.0
+) -> ChatScreen:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if isinstance(screen, ChatScreen) and screen.region.width > 0:
+            await pilot.pause()
+            return screen
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Timed out waiting for production ChatScreen; active={type(app.screen).__name__}"
+    )
 
 
 @pytest.mark.asyncio
@@ -268,22 +286,26 @@ async def test_leading_dollar_skill_mention_executes_through_normal_send():
     app.skills_scope_service = skills
     gateway = CapturingGateway(chunks=("accepted",))
     app.console_provider_gateway_factory = lambda: gateway
-    host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(160, 48)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-native-composer")
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("$code-review fix it")
         submit_spy = await _spy_submit_draft(console)
+        session_id = console._ensure_console_chat_store().active_session_id
+        assert session_id is not None
 
         console.query_one("#console-send-message", Button).press()
         await _wait_for_text(console, pilot, "accepted")
 
         # The raw `$`-prefixed draft is submitted verbatim -- no composer
         # command dispatch ever intercepts it.
-        submit_spy.assert_called_once_with("$code-review fix it")
+        submit_spy.assert_awaited_once_with(
+            "$code-review fix it",
+            session_id=session_id,
+        )
         # The skill actually ran (controller-side substitution).
         assert skills.executions == [("code-review", "fix it")]
         # The stored transcript keeps the raw mention -- only the ephemeral
@@ -315,10 +337,9 @@ async def test_bare_slash_skill_name_no_longer_auto_runs_shows_unknown_command_h
         available_skills=[_skill("code-review", "Reviews a diff.")]
     )
     app.skills_scope_service = skills
-    host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(160, 48)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/code-review fix it")
@@ -328,9 +349,12 @@ async def test_bare_slash_skill_name_no_longer_auto_runs_shows_unknown_command_h
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
 
+        available_commands = ", ".join(
+            f"/{name}" for name in default_console_registry().available_names()
+        )
         expected = (
-            "Unknown command /code-review — available: "
-            "/prompt, /system, /skills, /prefill. Press Enter again to send as text."
+            f"Unknown command /code-review — available: {available_commands}. "
+            "Press Enter again to send as text."
         )
         assert expected in _console_message_contents(console, ConsoleMessageRole.SYSTEM)
         submit_spy.assert_not_called()
@@ -348,26 +372,19 @@ async def test_run_resolved_console_skill_composes_dollar_command():
     input (both were hard-removed above)."""
     app = _build_test_app()
     _configure_native_ready_console(app)
-    app.skills_scope_service = FakeSkillsScopeService(
-        available_skills=[_skill("code-review", "Reviews a diff.")]
-    )
-    gateway = CapturingGateway(chunks=("accepted",))
-    app.console_provider_gateway_factory = lambda: gateway
-    host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(160, 48)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        submit_spy = await _spy_submit_draft(console)
+        dispatch_spy = AsyncMock(return_value=True)
+        console._dispatch_console_draft_send = dispatch_spy
 
         await console._run_resolved_console_skill("code-review", "fix it")
-        await _wait_for_text(console, pilot, "accepted")
-        submit_spy.assert_called_once_with("$code-review fix it")
+        dispatch_spy.assert_awaited_once_with("$code-review fix it")
 
-        submit_spy.reset_mock()
+        dispatch_spy.reset_mock()
         await console._run_resolved_console_skill("code-review", "")
-        await pilot.pause(0.2)
-        submit_spy.assert_called_once_with("$code-review")
+        dispatch_spy.assert_awaited_once_with("$code-review")
 
 
 @pytest.mark.asyncio

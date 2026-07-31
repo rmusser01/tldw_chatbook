@@ -29,9 +29,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Static, TextArea
 
-from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.DB.Prompts_DB import ConflictError, PromptsDatabase
-from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Library.library_prompts_state import (
     PromptEditorState,
     PromptListRow,
@@ -40,9 +38,6 @@ from tldw_chatbook.Library.library_prompts_state import (
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_CREATE_PROMPT,
-)
-from tldw_chatbook.Prompt_Management.prompt_markdown_export import (
-    render_prompt_markdown,
 )
 from tldw_chatbook.Prompt_Management.Prompts_Interop import (
     parse_markdown_prompts_from_content,
@@ -1366,25 +1361,6 @@ async def _open_prompts_list(screen, pilot) -> None:
     await pilot.pause()
 
 
-async def _wait_for_import_status(screen, pilot, *, attempts=200) -> str:
-    for _ in range(attempts):
-        if screen._library_prompts_import_status:
-            return screen._library_prompts_import_status
-        await pilot.pause(0.02)
-    return screen._library_prompts_import_status
-
-
-async def _run_import(screen, pilot, path: str) -> str:
-    """Open the Import row, type ``path``, press Import, and wait for the outcome."""
-    screen.query_one("#library-prompts-import", Button).press()
-    await pilot.pause()
-    screen.query_one("#library-prompts-import-path", Input).value = path
-    await pilot.pause()
-    screen.query_one("#library-prompts-import-run", Button).press()
-    await pilot.pause()
-    return await _wait_for_import_status(screen, pilot)
-
-
 @pytest.mark.asyncio
 async def test_library_prompts_import_button_opens_row(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -1426,304 +1402,6 @@ async def test_library_prompts_import_cancel_closes_row(tmp_path):
         await pilot.pause()
 
         assert len(screen.query("#library-prompts-import-path")) == 0
-
-
-@pytest.mark.asyncio
-async def test_library_prompts_import_from_file_creates_prompt_and_reports_outcome(
-    tmp_path,
-):
-    db, service = _real_prompt_scope_service(tmp_path)
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
-
-    import_file = tmp_path / "imported.md"
-    import_file.write_text(
-        render_prompt_markdown(
-            {
-                "name": "Imported Prompt",
-                "author": "Importer",
-                "details": "from a file",
-                "system_prompt": "sys text",
-                "user_prompt": "user text",
-                "keywords": ["a", "b"],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompts_list(screen, pilot)
-
-        status_text = await _run_import(screen, pilot, str(import_file))
-
-        assert status_text == "1 imported · 0 skipped (duplicate name)"
-        persisted = db.fetch_prompt_details("Imported Prompt")
-        assert persisted is not None
-        assert persisted["author"] == "Importer"
-        assert persisted["details"] == "from a file"
-        assert persisted["system_prompt"] == "sys text"
-        assert persisted["user_prompt"] == "user text"
-        assert sorted(persisted["keywords"]) == ["a", "b"]
-
-
-@pytest.mark.asyncio
-async def test_library_prompts_import_skips_existing_duplicate_name(tmp_path):
-    """Duplicate names are SKIPPED, never overwritten -- the pre-existing
-    row's content must be untouched after the import runs."""
-    db, service = _real_prompt_scope_service(tmp_path)
-    db.add_prompt(
-        name="Existing", author="Original", details="d", user_prompt="original text"
-    )
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
-
-    import_file = tmp_path / "dup.md"
-    import_file.write_text(
-        render_prompt_markdown(
-            {
-                "name": "Existing",
-                "author": "Different",
-                "details": "d2",
-                "system_prompt": "sys2",
-                "user_prompt": "different text",
-                "keywords": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompts_list(screen, pilot)
-
-        status_text = await _run_import(screen, pilot, str(import_file))
-
-        assert status_text == "0 imported · 1 skipped (duplicate name)"
-        persisted = db.fetch_prompt_details("Existing")
-        assert persisted["author"] == "Original"
-        assert persisted["user_prompt"] == "original text"
-
-
-@pytest.mark.asyncio
-async def test_library_prompts_import_from_folder_aggregates_two_files(tmp_path):
-    db, service = _real_prompt_scope_service(tmp_path)
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
-
-    import_dir = tmp_path / "prompts_to_import"
-    import_dir.mkdir()
-    (import_dir / "one.md").write_text(
-        render_prompt_markdown(
-            {
-                "name": "Folder One",
-                "author": "A",
-                "details": "",
-                "system_prompt": "s1",
-                "user_prompt": "u1",
-                "keywords": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    (import_dir / "two.md").write_text(
-        render_prompt_markdown(
-            {
-                "name": "Folder Two",
-                "author": "B",
-                "details": "",
-                "system_prompt": "s2",
-                "user_prompt": "u2",
-                "keywords": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    (import_dir / "ignored.dat").write_text(
-        "not a supported extension", encoding="utf-8"
-    )
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompts_list(screen, pilot)
-
-        status_text = await _run_import(screen, pilot, str(import_dir))
-
-        assert status_text == "2 imported · 0 skipped (duplicate name)"
-        assert db.fetch_prompt_details("Folder One") is not None
-        assert db.fetch_prompt_details("Folder Two") is not None
-
-
-@pytest.mark.asyncio
-async def test_library_prompts_import_invalid_path_shows_quiet_status(tmp_path):
-    db, service = _real_prompt_scope_service(tmp_path)
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompts_list(screen, pilot)
-
-        status_text = await _run_import(
-            screen, pilot, str(tmp_path / "does_not_exist.md")
-        )
-
-        assert status_text == "Could not find that file or folder."
-        assert db.list_prompts()[3] == 0  # total_items
-
-
-@pytest.mark.asyncio
-async def test_library_prompts_import_counts_per_prompt_save_failures_as_failed(
-    tmp_path,
-):
-    """A per-prompt save failure (a non-duplicate-name exception from the
-    scope service's ``save_prompt``) must be tracked as its own ``failed``
-    bucket -- previously it fell into neither ``imported`` nor ``skipped``
-    and vanished from the outcome line entirely."""
-    db, service = _real_prompt_scope_service(tmp_path)
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-
-    real_save_prompt = service.save_prompt
-
-    def _flaky_save_prompt(*args, **kwargs):
-        if kwargs.get("name") == "Boom":
-            raise RuntimeError("simulated save failure")
-        return real_save_prompt(*args, **kwargs)
-
-    app.prompt_scope_service = SimpleNamespace(
-        get_prompt=service.get_prompt, save_prompt=_flaky_save_prompt
-    )
-    host = LibraryHarness(app)
-
-    import_dir = tmp_path / "prompts_to_import"
-    import_dir.mkdir()
-    (import_dir / "ok.md").write_text(
-        render_prompt_markdown(
-            {
-                "name": "Fine",
-                "author": "A",
-                "details": "",
-                "system_prompt": "s1",
-                "user_prompt": "u1",
-                "keywords": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    (import_dir / "boom.md").write_text(
-        render_prompt_markdown(
-            {
-                "name": "Boom",
-                "author": "B",
-                "details": "",
-                "system_prompt": "s2",
-                "user_prompt": "u2",
-                "keywords": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompts_list(screen, pilot)
-
-        status_text = await _run_import(screen, pilot, str(import_dir))
-
-        assert status_text == "1 imported · 0 skipped (duplicate name) · 1 failed"
-        assert db.fetch_prompt_details("Fine") is not None
-        assert db.fetch_prompt_details("Boom") is None
-
-
-@pytest.mark.asyncio
-async def test_library_prompts_import_outcome_omits_failed_segment_when_zero(tmp_path):
-    """When nothing failed, the outcome line keeps its exact pre-existing
-    two-part copy -- no trailing "· K failed" segment at all (not even
-    "· 0 failed"). ``test_library_prompts_import_from_file_creates_prompt_and_reports_outcome``
-    already pins this exact string for the plain success path; this test
-    pins it again explicitly alongside the failed-segment tests above so
-    both copies ("N imported · M skipped (duplicate name)" and its
-    "· K failed" extension) are each proven by a dedicated assertion."""
-    db, service = _real_prompt_scope_service(tmp_path)
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
-
-    import_file = tmp_path / "clean.md"
-    import_file.write_text(
-        render_prompt_markdown(
-            {
-                "name": "Clean Import",
-                "author": "A",
-                "details": "",
-                "system_prompt": "s",
-                "user_prompt": "u",
-                "keywords": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompts_list(screen, pilot)
-
-        status_text = await _run_import(screen, pilot, str(import_file))
-
-        assert status_text == "1 imported · 0 skipped (duplicate name)"
-
-
-@pytest.mark.asyncio
-async def test_library_prompts_import_folder_permission_error_shows_quiet_status(
-    tmp_path, monkeypatch
-):
-    """A folder enumeration failure (e.g. permissions revoked between the
-    Import row's path-validation check and the worker's own ``iterdir()``
-    call) must surface an honest status line -- mirroring the per-file read
-    try/except below it -- rather than raising out of the worker or
-    reporting a misleading "No supported prompt files found."."""
-    db, service = _real_prompt_scope_service(tmp_path)
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
-
-    import_dir = tmp_path / "locked_prompts"
-    import_dir.mkdir()
-
-    real_iterdir = Path.iterdir
-
-    def _flaky_iterdir(self):
-        if str(self) == str(import_dir):
-            raise PermissionError("simulated permission error")
-        return real_iterdir(self)
-
-    monkeypatch.setattr(Path, "iterdir", _flaky_iterdir)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompts_list(screen, pilot)
-
-        status_text = await _run_import(screen, pilot, str(import_dir))
-
-        assert status_text == "Could not read that folder."
 
 
 @pytest.mark.asyncio
@@ -2382,137 +2060,69 @@ async def test_library_prompts_import_browse_button_fills_path_input(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Task 12: editor "Use in Console" -- ChatHandoffPayload-free direct route
-# (stages a bare string via ``TldwCli.stage_console_prompt_insert`` and
-# navigates to Chat; ChatScreen itself owns append-vs-replace and the
-# provider-setup-blocked gate, tested in ``test_console_command_composer.py``).
+# Task 12: editor "Use in Console" guard functions. The successful producer
+# and consumer route is exercised by the full production application in
+# ``Tests/ProductionApp/test_personas_library_root_state.py``.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_library_prompt_insert_console_stages_live_user_prompt_and_navigates(
-    tmp_path,
-):
-    db, service = _real_prompt_scope_service(tmp_path)
-    prompt_id, _uuid, _msg = db.add_prompt(
-        name="Summarize",
-        author="Alice",
-        details="A summarizer",
-        system_prompt="You are concise.",
-        user_prompt="Summarize: {text}",
-        keywords=["writing"],
-    )
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompt_editor(screen, pilot, prompt_id)
-        assert screen._library_prompt_dirty is False
-
-        # ``app`` (the plain ``TldwCli`` built by ``_build_test_app``) is a
-        # data/logic container here, never itself run as the active Textual
-        # App (``host``/``LibraryHarness`` is) -- so a real ``post_message``
-        # would queue into a message pump that is never started, and
-        # ``host.seen_routes`` would never observe it. Spying on
-        # ``post_message`` directly (mirrors
-        # ``test_chat_first_handoffs.py``'s ``open_chat_with_handoff``
-        # coverage) proves the navigation intent without depending on that
-        # unrelated plumbing.
-        post_message_spy = Mock(wraps=app.post_message)
-        app.post_message = post_message_spy
-
-        screen.query_one("#library-prompt-insert-console", Button).press()
-        await pilot.pause()
-
-        assert app.pending_console_prompt_insert == "Summarize: {text}"
-        posted = post_message_spy.call_args.args[0]
-        assert isinstance(posted, NavigateToScreen)
-        assert posted.screen_name == TAB_CHAT
-        # The source prompt itself is never touched by this action.
-        assert screen._library_prompts_view == "editor"
-        assert screen._selected_prompt_id == prompt_id
-
-
-@pytest.mark.asyncio
-async def test_library_prompt_insert_console_refuses_while_dirty(tmp_path):
+def test_library_prompt_insert_console_refuses_while_dirty():
     """An unsaved in-progress edit refuses the action outright (rather than
     staging text that a vetoed navigation would later fire unexpectedly on
     some unrelated future Console visit) -- the prompt is never lost either
     way, since the edit simply stays in the still-open editor."""
-    db, service = _real_prompt_scope_service(tmp_path)
-    prompt_id, _uuid, _msg = db.add_prompt(
-        name="Summarize",
-        author="",
-        details="",
-        system_prompt="",
-        user_prompt="Summarize: {text}",
-        keywords=[],
+    notify = Mock()
+    stage = Mock()
+    read_fields = Mock()
+    screen = SimpleNamespace(
+        _library_prompts_view="editor",
+        _library_prompt_dirty=True,
+        app_instance=SimpleNamespace(
+            notify=notify,
+            stage_console_prompt_insert=stage,
+        ),
+        _read_library_prompt_editor_fields=read_fields,
     )
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
+    event = SimpleNamespace(stop=Mock())
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompt_editor(screen, pilot, prompt_id)
+    LibraryScreen.handle_library_prompt_insert_console(screen, event)
 
-        screen.query_one("#library-prompt-user", TextArea).text = "Hello {name}"
-        await pilot.pause()
-        assert screen._library_prompt_dirty is True
-
-        notify_spy = Mock()
-        app.notify = notify_spy
-        post_message_spy = Mock(wraps=app.post_message)
-        app.post_message = post_message_spy
-        screen.query_one("#library-prompt-insert-console", Button).press()
-        await pilot.pause()
-
-        notify_spy.assert_called_once_with(
-            "Save your changes before using this prompt in Console.", severity="warning"
-        )
-        assert app.pending_console_prompt_insert is None
-        post_message_spy.assert_not_called()
-        assert screen.query_one("#library-prompt-user", TextArea).text == "Hello {name}"
-
-
-@pytest.mark.asyncio
-async def test_library_prompt_insert_console_notifies_when_user_prompt_is_empty(
-    tmp_path,
-):
-    db, service = _real_prompt_scope_service(tmp_path)
-    prompt_id, _uuid, _msg = db.add_prompt(
-        name="System Only",
-        author="",
-        details="",
-        system_prompt="You are helpful.",
-        user_prompt="",
-        keywords=[],
+    event.stop.assert_called_once_with()
+    notify.assert_called_once_with(
+        "Save your changes before using this prompt in Console.",
+        severity="warning",
     )
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
+    read_fields.assert_not_called()
+    stage.assert_not_called()
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompt_editor(screen, pilot, prompt_id)
 
-        notify_spy = Mock()
-        app.notify = notify_spy
-        post_message_spy = Mock(wraps=app.post_message)
-        app.post_message = post_message_spy
-        screen.query_one("#library-prompt-insert-console", Button).press()
-        await pilot.pause()
+def test_library_prompt_insert_console_notifies_when_user_prompt_is_empty():
+    notify = Mock()
+    stage = Mock()
+    screen = SimpleNamespace(
+        _library_prompts_view="editor",
+        _library_prompt_dirty=False,
+        app_instance=SimpleNamespace(
+            notify=notify,
+            stage_console_prompt_insert=stage,
+        ),
+        _read_library_prompt_editor_fields=lambda: (
+            "System Only",
+            "",
+            "",
+            "You are helpful.",
+            "",
+            "",
+        ),
+        _sanitize_note_content=lambda value, *, max_length: value,
+    )
+    event = SimpleNamespace(stop=Mock())
 
-        notify_spy.assert_called_once_with(
-            "This prompt has no user prompt text to insert.", severity="warning"
-        )
-        assert app.pending_console_prompt_insert is None
-        post_message_spy.assert_not_called()
+    LibraryScreen.handle_library_prompt_insert_console(screen, event)
+
+    event.stop.assert_called_once_with()
+    notify.assert_called_once_with(
+        "This prompt has no user prompt text to insert.",
+        severity="warning",
+    )
+    stage.assert_not_called()

@@ -15,12 +15,14 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat.console_command_grammar import default_console_registry
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService as ScopeLocalPromptService,
     PromptScopeService,
 )
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
     FILTER_INPUT_ID,
@@ -46,14 +48,19 @@ async def _wait_for_picker_search(pilot) -> None:
     await pilot.pause()
 
 
-UNKNOWN_NOPE_HINT = (
-    "Unknown command /nope — available: /prompt, /system, /skills, /prefill. "
-    "Press Enter again to send as text."
-)
-UNKNOWN_NADA_HINT = (
-    "Unknown command /nada — available: /prompt, /system, /skills, /prefill. "
-    "Press Enter again to send as text."
-)
+def _unknown_command_hint(name: str) -> str:
+    available = ", ".join(
+        f"/{command_name}"
+        for command_name in default_console_registry().available_names()
+    )
+    return (
+        f"Unknown command /{name} — available: {available}. "
+        "Press Enter again to send as text."
+    )
+
+
+UNKNOWN_NOPE_HINT = _unknown_command_hint("nope")
+UNKNOWN_NADA_HINT = _unknown_command_hint("nada")
 
 
 def _system_message_contents(console) -> list[str]:
@@ -120,7 +127,10 @@ async def test_console_unknown_command_second_unmodified_enter_sends_as_text():
         send_button.press()
         await _wait_for_text(console, pilot, "accepted")
 
-        submit_spy.assert_called_once_with("/nope x")
+        submit_spy.assert_awaited_once_with(
+            "/nope x",
+            session_id=console._ensure_console_chat_store().active_session_id,
+        )
         assert gateway.sent_messages[-1][-1]["content"] == "/nope x"
         assert console._console_unknown_send_armed is None
 
@@ -244,7 +254,10 @@ async def test_console_collapsed_paste_starting_with_slash_sends_normally():
         console.query_one("#console-send-message", Button).press()
         await _wait_for_text(console, pilot, "accepted")
 
-        submit_spy.assert_called_once_with(pasted_text)
+        submit_spy.assert_awaited_once_with(
+            pasted_text,
+            session_id=console._ensure_console_chat_store().active_session_id,
+        )
         assert gateway.sent_messages[-1][-1]["content"] == pasted_text
         assert console._console_unknown_send_armed is None
         assert composer.draft_text() == ""
@@ -648,12 +661,12 @@ async def test_console_prompt_command_picker_escape_leaves_draft_untouched(tmp_p
 
 @pytest.mark.asyncio
 async def test_console_pending_prompt_insert_is_consumed_automatically_on_mount():
-    """The staged field is consumed by the real ``on_mount`` wiring itself
+    """The staged handoff is consumed by the real ``on_mount`` wiring itself
     (not just the private method called directly) -- proves the Library
     hand-off actually lands without any test-only shortcut."""
     app = _build_test_app()
     _configure_native_ready_console(app)
-    app.pending_console_prompt_insert = "staged on mount"
+    app.pending_handoffs.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, "staged on mount")
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -667,7 +680,9 @@ async def test_console_pending_prompt_insert_is_consumed_automatically_on_mount(
             await pilot.pause(0.05)
 
         assert composer.draft_text() == "staged on mount"
-        assert app.pending_console_prompt_insert is None
+        assert not app.pending_handoffs.has_pending(
+            HandoffChannel.CONSOLE_PROMPT_INSERT
+        )
 
 
 @pytest.mark.asyncio
@@ -686,7 +701,9 @@ async def test_console_pending_prompt_insert_is_consumed_automatically_on_resume
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
-        app.pending_console_prompt_insert = "staged on resume"
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT, "staged on resume"
+        )
         console.on_screen_resume()
 
         for _ in range(40):
@@ -695,7 +712,9 @@ async def test_console_pending_prompt_insert_is_consumed_automatically_on_resume
             await pilot.pause(0.05)
 
         assert composer.draft_text() == "staged on resume"
-        assert app.pending_console_prompt_insert is None
+        assert not app.pending_handoffs.has_pending(
+            HandoffChannel.CONSOLE_PROMPT_INSERT
+        )
 
 
 @pytest.mark.asyncio
@@ -708,10 +727,10 @@ async def test_console_resume_triggered_prompt_insert_survives_stale_session_swi
     the periodic transcript poller or any other action routed through
     ``_sync_native_console_chat_ui``) would then unconditionally reload the
     composer from the newly-active session's stale stored draft, silently
-    discarding the insert -- with no retry, since the pending field is
-    already cleared once the insert lands. This must not happen: the insert
-    consumption itself has to settle the draft tracker before inserting, so
-    a later sync pass is a no-op instead of a clobber."""
+    discarding the insert -- with no retry, since the handoff is already
+    acknowledged once the insert lands. This must not happen: the insert
+    consumption itself has to settle the draft tracker before inserting, so a
+    later sync pass is a no-op instead of a clobber."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -736,11 +755,15 @@ async def test_console_resume_triggered_prompt_insert_survives_stale_session_swi
         # exact staleness the finding describes.
         assert console._console_visible_draft_session_id == first_session.id
 
-        app.pending_console_prompt_insert = "resume-triggered insert"
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT, "resume-triggered insert"
+        )
         console.on_screen_resume()
         await pilot.pause(0.25)  # past the 0.15s consumption timer
 
-        assert app.pending_console_prompt_insert is None
+        assert not app.pending_handoffs.has_pending(
+            HandoffChannel.CONSOLE_PROMPT_INSERT
+        )
         assert "resume-triggered insert" in composer.draft_text()
 
         # Simulate a later, unrelated sync pass -- any of several real call
@@ -766,11 +789,15 @@ async def test_console_consumes_pending_prompt_insert_empty_draft_is_clean_inser
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         assert composer.draft_text() == ""
 
-        app.pending_console_prompt_insert = "inserted body"
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT, "inserted body"
+        )
         await console._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == "inserted body"
-        assert app.pending_console_prompt_insert is None
+        assert not app.pending_handoffs.has_pending(
+            HandoffChannel.CONSOLE_PROMPT_INSERT
+        )
 
 
 @pytest.mark.asyncio
@@ -788,14 +815,18 @@ async def test_console_consumes_pending_prompt_insert_appends_to_existing_draft(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("abc")
 
-        app.pending_console_prompt_insert = "inserted body"
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT, "inserted body"
+        )
         await console._consume_pending_console_prompt_insert()
 
         draft = composer.draft_text()
         assert draft.startswith("abc")
         assert "inserted body" in draft
         assert draft == "abc\ninserted body"
-        assert app.pending_console_prompt_insert is None
+        assert not app.pending_handoffs.has_pending(
+            HandoffChannel.CONSOLE_PROMPT_INSERT
+        )
 
 
 @pytest.mark.asyncio
@@ -814,7 +845,7 @@ async def test_console_consumes_pending_prompt_insert_large_body_appends_as_coll
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("abc")
 
-        app.pending_console_prompt_insert = large_body
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, large_body)
         await console._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == f"abc\n{large_body}"
@@ -826,7 +857,7 @@ async def test_console_consumes_pending_prompt_insert_large_body_appends_as_coll
 async def test_console_consumes_pending_prompt_insert_blocked_shows_exact_toast():
     """First-run setup blocked (no provider/model configured): the insert
     shows the exact toast copy, leaves the draft completely untouched, and
-    still clears the pending field (no stale re-fire on a later mount)."""
+    still acknowledges the handoff (no stale re-fire on a later mount)."""
     app = _build_test_app()  # deliberately NOT _configure_native_ready_console
     host = ConsoleHarness(app)
 
@@ -839,14 +870,18 @@ async def test_console_consumes_pending_prompt_insert_blocked_shows_exact_toast(
         notify_spy = Mock()
         app.notify = notify_spy
 
-        app.pending_console_prompt_insert = "inserted body"
+        app.pending_handoffs.stage(
+            HandoffChannel.CONSOLE_PROMPT_INSERT, "inserted body"
+        )
         await console._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == "abc"
         notify_spy.assert_called_once_with(
             "Finish provider setup to insert prompts.", severity="warning"
         )
-        assert app.pending_console_prompt_insert is None
+        assert not app.pending_handoffs.has_pending(
+            HandoffChannel.CONSOLE_PROMPT_INSERT
+        )
 
 
 @pytest.mark.asyncio
@@ -865,7 +900,9 @@ async def test_console_consumes_pending_prompt_insert_noop_when_nothing_pending(
         notify_spy = Mock()
         app.notify = notify_spy
 
-        assert app.pending_console_prompt_insert is None
+        assert not app.pending_handoffs.has_pending(
+            HandoffChannel.CONSOLE_PROMPT_INSERT
+        )
         await console._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == "abc"

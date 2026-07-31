@@ -774,6 +774,15 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 }
             )
         )
+        # ``show_create_form`` is ``recompose=True``. Closing it immediately
+        # can tear this pane down before the queued CreateSourceRequested
+        # reaches the owning screen, silently dropping a valid submission.
+        # Queue the destructive UI reset behind the request instead.
+        if not self.call_later(self._finish_create_submit):
+            self._finish_create_submit()
+
+    def _finish_create_submit(self) -> None:
+        """Close and clear the form after its submit request has propagated."""
         self.show_create_form = False
         self._clear_create_draft()
 

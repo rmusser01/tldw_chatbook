@@ -11377,6 +11377,12 @@ class SettingsScreen(BaseAppScreen):
             )
             revert_button.disabled = not self._guided_actions_enabled(summary.category)
             yield revert_button
+        elif summary.category is SettingsCategoryId.OVERVIEW:
+            yield Button(
+                "Theme",
+                id="settings-open-appearance",
+                tooltip="Open the dedicated Theme editor.",
+            )
         # task-181 copy, task-1583 placement: this reassurance line used to
         # close the SCROLLABLE body, where 8 of 20 critique captures cut it
         # mid-sentence ("Nothing is sent to" reads ominous truncated).
@@ -11602,12 +11608,6 @@ class SettingsScreen(BaseAppScreen):
                 label,
                 value,
                 identifier="settings-boundary-note" if label == "Boundary" else None,
-            )
-        if summary.category is SettingsCategoryId.OVERVIEW:
-            yield Button(
-                "Open Theme",
-                id="settings-open-appearance",
-                tooltip="Open the dedicated Theme editor.",
             )
 
     def compose_content(self) -> ComposeResult:

@@ -37,6 +37,7 @@ from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Library import library_local_rag_search_service
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
@@ -181,6 +182,36 @@ async def _wait_for_console_library_rag_button_state(
         "Timed out waiting for Console Library RAG run button "
         f"disabled={disabled!r} tooltip={tooltip_contains!r}"
     )
+
+
+async def _wait_for_production_chat_screen(
+    app, pilot, *, timeout: float = 4.0
+) -> ChatScreen:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if isinstance(screen, ChatScreen) and screen.region.width > 0:
+            await pilot.pause()
+            return screen
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Timed out waiting for production ChatScreen; active={type(app.screen).__name__}"
+    )
+
+
+async def _wait_for_enabled_button(
+    screen, pilot, selector: str, *, timeout: float = 4.0
+) -> Button:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        buttons = list(screen.query(selector))
+        if buttons:
+            button = buttons[0]
+            if button.region.width > 0 and not button.disabled:
+                await pilot.pause()
+                return button
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for enabled button {selector}")
 
 
 async def _open_console_inspector(console, pilot) -> None:
@@ -330,31 +361,20 @@ async def test_console_hidden_workbench_strips_do_not_reserve_rows():
         assert workbench.region.y > command_strip.region.y + command_strip.region.height
 
 
-@pytest.mark.asyncio
-async def test_console_mode_bar_groups_location_mode_and_readiness():
-    app = _build_test_app()
-    host = ConsoleHarness(app)
+def test_console_mode_bar_groups_location_mode_and_readiness():
+    control_state = ConsoleControlState.from_values(
+        provider="OpenAI",
+        model="gpt-4.1",
+    )
 
-    async with host.run_test(size=(212, 64)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-mode-bar")
-
-        title = console.query_one("#console-title", Static)
-        mode_bar = console.query_one("#console-mode-bar", Static)
-
-        title_plain = getattr(title.render(), "plain", str(title.render()))
-        mode_plain = getattr(mode_bar.render(), "plain", str(mode_bar.render()))
-
-        assert title_plain == "Console"
-        # Fleet-UX expert review F7 (task-1234): the Tools segment now
-        # reads "Tools —" at a fresh app -- `ConsoleControlState.tools_
-        # label` reads "Tools: not loaded" (a neutral placeholder) rather
-        # than "Tools: 0 ready", and `_console_mode_summary`'s readiness_
-        # count falls back to the same dash for any non-numeric label.
-        assert (
-            mode_plain
-            == "Chat/RAG/Follow | Assistant: General | Sources 0 | Tools — | Approvals 0"
-        )
+    # The mode segment is derived from the assistant identity contract, not
+    # from a human user profile. With no character or assistant selected, the
+    # production fallback is General; the neutral unloaded-tools label reduces
+    # to a dash.
+    assert (
+        ChatScreen._console_mode_summary(control_state)
+        == "Chat/RAG/Follow | Assistant: General | Sources 0 | Tools — | Approvals 0"
+    )
 
 
 def test_console_mode_bar_treats_assistant_label_as_literal_text():
@@ -888,27 +908,29 @@ async def test_console_composer_actions_remain_visible_inside_composer_bounds():
 async def test_console_composer_save_chatbook_routes_available_artifact_action():
     app = _build_test_app()
     handled_launches = []
-    app.pending_console_launch = {
-        "source": "artifacts",
-        "title": "Grounded Answer Chatbook",
-        "status": "ready",
-        "payload": {"target_id": "local:chatbook:77", "chatbook_id": 77},
-        "action_label": "Open Chatbook artifact",
-    }
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "artifacts",
+            "title": "Grounded Answer Chatbook",
+            "status": "ready",
+            "payload": {"target_id": "local:chatbook:77", "chatbook_id": 77},
+            "action_label": "Open Chatbook artifact",
+        },
+    )
     app.open_console_live_work_primary_action = lambda launch: (
         handled_launches.append(launch) or True
     )
-    host = ConsoleHarness(app)
 
-    async with host.run_test(size=(140, 42)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-
-        save_button = console.query_one("#console-save-chatbook", Button)
-
-        assert save_button.disabled is False
+    async with app.run_test(size=(140, 42)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
+        save_button = await _wait_for_enabled_button(
+            console, pilot, "#console-save-chatbook"
+        )
         save_button.press()
-        await pilot.pause(0.1)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not handled_launches:
+            await pilot.pause(0.01)
 
     assert len(handled_launches) == 1
     assert handled_launches[0].payload["target_id"] == "local:chatbook:77"
@@ -3012,21 +3034,23 @@ async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
 @pytest.mark.asyncio
 async def test_console_staged_context_tray_stays_quiet_when_populated():
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "Library Search/RAG",
-        "title": "Incident Review",
-        "status": "ready",
-        "recovery": "Review citations before sending.",
-        "payload": {
-            "source_id": "note-42",
-            "chunk_id": "chunk-7",
-            "runtime_backend": "local-fts",
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "Library Search/RAG",
+            "title": "Incident Review",
+            "status": "ready",
+            "recovery": "Review citations before sending.",
+            "payload": {
+                "source_id": "note-42",
+                "chunk_id": "chunk-7",
+                "runtime_backend": "local-fts",
+            },
         },
-    }
-    host = ConsoleHarness(app)
+    )
 
-    async with host.run_test(size=(212, 64)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(212, 64)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-staged-context-row-0")
 
         # Confirm the tray genuinely has content, so the quiet-border
@@ -3167,21 +3191,23 @@ async def test_console_staged_context_empty_state_renders_summary_when_provided(
 @pytest.mark.asyncio
 async def test_console_non_empty_staged_context_keeps_room_for_source_details():
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "Library Search/RAG",
-        "title": "Incident Review",
-        "status": "ready",
-        "recovery": "Review citations before sending.",
-        "payload": {
-            "source_id": "note-42",
-            "chunk_id": "chunk-7",
-            "runtime_backend": "local-fts",
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "Library Search/RAG",
+            "title": "Incident Review",
+            "status": "ready",
+            "recovery": "Review citations before sending.",
+            "payload": {
+                "source_id": "note-42",
+                "chunk_id": "chunk-7",
+                "runtime_backend": "local-fts",
+            },
         },
-    }
-    host = ConsoleHarness(app)
+    )
 
-    async with host.run_test(size=(120, 40)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(120, 40)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-staged-context-row-0")
 
         staged_context = console.query_one("#console-staged-context-tray")
@@ -3200,10 +3226,9 @@ async def test_console_non_empty_staged_context_keeps_room_for_source_details():
 @pytest.mark.asyncio
 async def test_console_control_bar_renders_readable_summary_line():
     app = _build_test_app()
-    host = ConsoleHarness(app)
 
-    async with host.run_test(size=(140, 42)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(140, 42)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-control-bar")
 
         summary = console.query_one("#console-control-status-line", Static)
@@ -3212,6 +3237,7 @@ async def test_console_control_bar_renders_readable_summary_line():
         assert "Provider:" in plain
         assert " | Model:" in plain
         assert " | Assistant:" in plain
+        assert " | RAG:" in plain
         assert " | Sources:" in plain
 
 
@@ -3250,22 +3276,24 @@ async def test_console_composer_status_renders_session_metadata_as_plain_text():
 @pytest.mark.asyncio
 async def test_console_native_control_bar_and_staged_context_reflect_pending_handoff():
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "Library Search/RAG",
-        "title": "Transformer notes",
-        "status": "ready",
-        "recovery": "Review citations before sending.",
-        "payload": {"source_id": "note-1", "citation_count": 2},
-    }
-    host = ConsoleHarness(app)
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "Library Search/RAG",
+            "title": "Transformer notes",
+            "status": "ready",
+            "recovery": "Review citations before sending.",
+            "payload": {"source_id": "note-1", "citation_count": 2},
+        },
+    )
 
     # Task-400: staged context renders in the Inspector rail. The pending
     # launch auto-open is suppressed while the rail is force-collapsed
     # (widths under 150 columns OUTSIDE the 118-128 standard-width contract,
     # which auto-opens a fresh Inspector on its own); 170 columns keeps the
     # auto-open effective so the staged text is measurable here.
-    async with host.run_test(size=(170, 42)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(170, 42)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-control-bar")
         await _open_console_inspector(console, pilot)
 
@@ -3445,19 +3473,21 @@ def test_console_provider_selection_normalizes_display_provider_key():
 @pytest.mark.asyncio
 async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_source():
     app = _build_test_app()
-    app.app_config = {"chat_defaults": {}}
+    app.app_config["chat_defaults"] = {}
     app.console_provider_ready = False
-    app.pending_console_launch = {
-        "source": "Library Search/RAG",
-        "title": "Grounded answer",
-        "status": "ready",
-        "recovery": "Attach a source before asking the model.",
-        "payload": {},
-    }
-    host = ConsoleHarness(app)
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "Library Search/RAG",
+            "title": "Grounded answer",
+            "status": "ready",
+            "recovery": "Attach a source before asking the model.",
+            "payload": {},
+        },
+    )
 
-    async with host.run_test(size=(196, 48)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(196, 48)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-provider")
 
@@ -3487,18 +3517,22 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
     app = _build_test_app()
     app.console_pending_approval_count = 1
     app.console_tool_count = 1
-    app.pending_console_launch = {
-        "source": "artifacts",
-        "title": "Grounded Answer Chatbook",
-        "status": "ready",
-        "recovery": "Review this Chatbook artifact in Console or return to Artifacts.",
-        "payload": {"target_id": "local:chatbook:77", "chatbook_id": 77},
-        "action_label": "Open Chatbook artifact",
-    }
-    host = ConsoleHarness(app)
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "artifacts",
+            "title": "Grounded Answer Chatbook",
+            "status": "ready",
+            "recovery": (
+                "Review this Chatbook artifact in Console or return to Artifacts."
+            ),
+            "payload": {"target_id": "local:chatbook:77", "chatbook_id": 77},
+            "action_label": "Open Chatbook artifact",
+        },
+    )
 
-    async with host.run_test(size=(196, 48)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(196, 48)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-review-approval")
 

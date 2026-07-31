@@ -1,5 +1,5 @@
 ---
-id: task-1584
+id: TASK-1584
 title: 'Settings filter correctness: ranking, refocus, placeholder'
 status: Done
 assignee:
