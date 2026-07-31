@@ -10,6 +10,13 @@ from tldw_chatbook.UI.Watchlists_Modules.items_pane import (
     RefreshItemsRequested,
 )
 
+# Marked so CI actually runs this file (whole-branch review fix 5): the unit
+# job selects `pytest -m unit`, and an unmarked file in `Tests/Watchlists`
+# is invisible to it. Matches the convention sibling files in this
+# directory already use (`test_watchlist_name_and_copy.py`,
+# `test_region_layout_store.py`, `test_watchlist_dialogs_escape.py`).
+pytestmark = pytest.mark.unit
+
 
 class ItemsPaneHarness(App):
     def __init__(self):
@@ -109,3 +116,53 @@ async def test_items_pane_selects_item_and_posts_message(sample_items):
 
         assert pane.selected_item == sample_items[0]
         assert app.captured_messages == [("item_selected", sample_items[0])]
+
+
+# --- Spec #2 phase 1, task 5: the queued-for-briefing indicator column ----
+
+
+@pytest.mark.asyncio
+async def test_queued_indicator_renders_from_the_normalized_flag_on_load(sample_items):
+    """Requirement 5: a pre-queued item shows the glyph after a plain load --
+    pinning the read path (Task 1's `queued_for_briefing`) end to end, with
+    no button press involved."""
+    items = [dict(sample_items[0], queued_for_briefing=True), dict(sample_items[1])]
+    app = ItemsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ItemsPane)
+        pane.items = items
+        await pilot.pause()
+
+        table = pane.query_one("#items-table", DataTable)
+        assert table.get_row(str(items[0]["id"]))[4] == ItemsPane._QUEUED_GLYPH, (
+            "a queued item must show the glyph as soon as it is loaded"
+        )
+        assert table.get_row(str(items[1]["id"]))[4] == "", (
+            "an item the flag was never set on must show nothing"
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_item_queued_cell_repaints_in_place_without_recompose(sample_items):
+    """Mirrors `update_item_status_cell`'s own contract: the same instances
+    (pane AND table) must survive the repaint -- the Phase D pattern this
+    stream keeps re-verifying (a recompose once destroyed the live table)."""
+    app = ItemsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ItemsPane)
+        pane.items = [dict(item) for item in sample_items]
+        await pilot.pause()
+        table = pane.query_one("#items-table", DataTable)
+        row_key = str(sample_items[0]["id"])
+
+        pane.update_item_queued_cell(row_key, True)
+        await pilot.pause()
+
+        assert pane.query_one("#items-table", DataTable) is table, (
+            "repainting a cell must not recompose the pane"
+        )
+        assert table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH
+
+        pane.update_item_queued_cell(row_key, False)
+        await pilot.pause()
+        assert table.get_row(row_key)[4] == "", "toggling back must clear the glyph"

@@ -280,6 +280,11 @@ def normalize_watchlist_item(source: str, row: Mapping[str, Any]) -> dict[str, A
         "change_percentage": row.get("change_percentage"),
         "change_type": row.get("change_type"),
         "diff_summary": row.get("diff_summary"),
+        # Spec #2 phase 1 read-path lesson (Phase D's shape, repeated):
+        # `get_new_items` is `SELECT i.*`, so the DB already returns this
+        # column -- coerce SQLite's 0/1 to an actual bool, or every
+        # downstream consumer sees a truthy int instead of a real flag.
+        "queued_for_briefing": bool(row.get("queued_for_briefing")),
         # `canonical_url` is deliberately NOT re-exported as its own key: it
         # is already folded into `url` two lines above (`row.get("url") or
         # row.get("canonical_url")`), and a second copy under a second name

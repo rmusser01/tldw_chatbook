@@ -24,7 +24,15 @@ class _StripApp(App):
 async def test_every_section_has_a_tab():
     app = _StripApp()
     async with app.run_test():
-        for section in ("overview", "sources", "items", "runs", "rules", "notifications"):
+        for section in (
+            "overview",
+            "sources",
+            "items",
+            "runs",
+            "rules",
+            "notifications",
+            "artifacts",
+        ):
             assert app.query(f"#wl-tab-{section}"), f"missing tab for {section}"
 
 

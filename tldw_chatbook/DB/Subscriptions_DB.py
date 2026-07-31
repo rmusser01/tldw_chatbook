@@ -37,6 +37,7 @@ from loguru import logger
 # Local Imports
 from .private_sqlite import connect_private_sqlite
 from .base_db import BaseDB
+from .sql_validation import validate_identifier
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
@@ -663,6 +664,20 @@ class SubscriptionsDB(BaseDB):
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Briefings (spec #2 phase 1): per-watchlist selection mode + optional
+        # default preset. Column-presence idiom, same pattern as content_kind
+        # above -- additive only, no data migration (nothing to migrate; see
+        # Docs/superpowers/specs/2026-07-30-watchlists-briefings-design.md).
+        wcols = {row[1] for row in cursor.execute("PRAGMA table_info(watchlists)")}
+        if "briefing_selection_mode" not in wcols:
+            cursor.execute(
+                "ALTER TABLE watchlists ADD COLUMN briefing_selection_mode "
+                "TEXT DEFAULT 'auto_featured'"
+            )
+        if "default_briefing_preset_id" not in wcols:
+            cursor.execute(
+                "ALTER TABLE watchlists ADD COLUMN default_briefing_preset_id INTEGER"
+            )
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS watchlist_sources (
                 watchlist_id    INTEGER NOT NULL REFERENCES watchlists(id)     ON DELETE CASCADE,
@@ -686,6 +701,49 @@ class SubscriptionsDB(BaseDB):
                 UPDATE watchlists SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
             END
         """)
+
+        # Briefings (spec #2 phase 1): the on-demand text digest for a
+        # watchlist, and the items it covered. Additive CREATE TABLE IF NOT
+        # EXISTS -- no data migration exists in this design, so the
+        # TASK-1362 BEGIN IMMEDIATE machinery above is deliberately not
+        # cargo-culted in here (see
+        # Docs/superpowers/specs/2026-07-30-watchlists-briefings-design.md).
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS briefings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                watchlist_id INTEGER NOT NULL REFERENCES watchlists(id) ON DELETE CASCADE,
+                status TEXT NOT NULL DEFAULT 'generating',
+                error TEXT,
+                covers_through_item_id INTEGER,
+                covers_from_ts DATETIME,
+                selection_mode TEXT,
+                preset_id INTEGER,
+                model_used TEXT,
+                body_markdown TEXT,
+                item_count INTEGER DEFAULT 0,
+                featured_count INTEGER DEFAULT 0,
+                overflow_count INTEGER DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS briefing_items (
+                briefing_id INTEGER NOT NULL REFERENCES briefings(id) ON DELETE CASCADE,
+                item_id     INTEGER NOT NULL REFERENCES subscription_items(id) ON DELETE CASCADE,
+                featured BOOLEAN DEFAULT 0,
+                PRIMARY KEY (briefing_id, item_id)
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_briefings_watchlist_status "
+            "ON briefings(watchlist_id, status)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_briefing_items_item "
+            "ON briefing_items(item_id)"
+        )
+
         # local_watchlist_runs is guaranteed to exist: BaseDB.__init__ runs
         # _initialize_schema (base_db.py:76), which creates it and then calls
         # this method. Only the column needs checking, for databases created
@@ -1531,6 +1589,169 @@ class SubscriptionsDB(BaseDB):
             )
 
             return cursor.rowcount > 0
+
+    # --- Briefings (spec #2 phase 1) ---
+
+    def set_item_briefing_queued(self, item_id: int, queued: bool) -> None:
+        """Set or clear the global "queued for briefing" flag on one item.
+
+        The flag is global (ADR-018): the same source item can sit in
+        several watchlists, and generation never auto-clears it -- see
+        Docs/superpowers/specs/2026-07-30-watchlists-briefings-design.md,
+        "The queue flag is global, and never auto-cleared". Only the user
+        (or this explicit call) empties it.
+
+        Args:
+            item_id: `subscription_items.id` to update.
+            queued: `True` to mark the item queued for the next briefing,
+                `False` to clear the flag.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE subscription_items SET queued_for_briefing = ? WHERE id = ?",
+                (1 if queued else 0, item_id),
+            )
+
+    def insert_briefing(self, watchlist_id: int, status: str = "generating") -> int:
+        """Create a new `briefings` row for a watchlist.
+
+        Args:
+            watchlist_id: The watchlist this briefing belongs to.
+            status: Initial status. Defaults to `"generating"`, matching
+                every real caller's use -- the row exists before the LLM
+                call is even made, so a crash before the first write still
+                leaves a `generating` row for zombie recovery to find.
+
+        Returns:
+            The new row's `id`.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "INSERT INTO briefings (watchlist_id, status) VALUES (?, ?)",
+                (watchlist_id, status),
+            )
+            return cursor.lastrowid
+
+    def update_briefing(self, briefing_id: int, **fields: Any) -> None:
+        """Update named columns on a `briefings` row by id.
+
+        Matches the sibling `update_subscription`'s pattern: keys are
+        validated against an explicit allowlist of real `briefings` columns
+        rather than trusted blindly, so a typo'd or renamed field raises
+        immediately instead of silently building a SET clause for a column
+        that was never meant to be settable this way. Each key surviving
+        the allowlist is additionally run through
+        `sql_validation.validate_identifier` before it reaches the SQL
+        text -- belt-and-suspenders against the allowlist itself being
+        edited to something unsafe later, since `validate_column_name`'s
+        table-scoped form fails closed for any table (like `briefings`)
+        outside its own `VALID_COLUMNS` map and would reject every field
+        unconditionally.
+
+        Args:
+            briefing_id: `briefings.id` of the row to update.
+            **fields: Column/value pairs to set. A no-op (returns
+                immediately) when empty. `updated_at` is bumped to
+                `CURRENT_TIMESTAMP` automatically unless the caller passes
+                it explicitly.
+
+        Raises:
+            ValueError: If any key in `fields` is not an allowed column, or
+                fails `validate_identifier`.
+        """
+        allowed_fields = (
+            "status",
+            "error",
+            "covers_through_item_id",
+            "covers_from_ts",
+            "selection_mode",
+            "preset_id",
+            "model_used",
+            "body_markdown",
+            "item_count",
+            "featured_count",
+            "overflow_count",
+            "updated_at",
+        )
+        if not fields:
+            return
+        for key in fields:
+            if key not in allowed_fields:
+                raise ValueError(f"update_briefing: unknown field {key!r}")
+            if not validate_identifier(key, "column name"):
+                raise ValueError(f"update_briefing: invalid field {key!r}")
+
+        set_clause = ", ".join(f"{key} = ?" for key in fields)
+        values = list(fields.values())
+        # Only append the automatic timestamp bump when the caller didn't
+        # already supply `updated_at` explicitly -- otherwise the column
+        # would appear twice in the same SET clause.
+        extra = "" if "updated_at" in fields else ", updated_at = CURRENT_TIMESTAMP"
+        values.append(briefing_id)
+        with self.transaction() as conn:
+            conn.execute(
+                f"UPDATE briefings SET {set_clause}{extra} WHERE id = ?",
+                values,
+            )
+
+    def get_briefing(self, briefing_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch one `briefings` row by id.
+
+        Args:
+            briefing_id: `briefings.id` to look up.
+
+        Returns:
+            The row as a dict, or `None` if no row has that id.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM briefings WHERE id = ?", (briefing_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_briefings(self, watchlist_id: int) -> List[Dict[str, Any]]:
+        """List a watchlist's briefings, newest first.
+
+        Args:
+            watchlist_id: The watchlist to list briefings for.
+
+        Returns:
+            Every `briefings` row for `watchlist_id`, newest first by
+            `created_at` then `id` (the tiebreaker for rows created within
+            the same timestamp resolution).
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM briefings WHERE watchlist_id = ? "
+                "ORDER BY created_at DESC, id DESC",
+                (watchlist_id,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def latest_completed_watermark(self, watchlist_id: int) -> Optional[int]:
+        """Max `covers_through_item_id` over this watchlist's complete/empty briefings.
+
+        THE coverage invariant's DB half: a `failed` briefing must never
+        advance the window (failure never loses items -- the next attempt
+        re-covers the same window), so 'failed' is deliberately excluded
+        from this status set. Do not add it here.
+
+        Args:
+            watchlist_id: The watchlist to compute the watermark for.
+
+        Returns:
+            The max `covers_through_item_id` among this watchlist's
+            `complete`/`empty` briefings, or `None` if it has none -- read
+            by callers as "there is no watermark yet" (the first-briefing
+            case).
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT MAX(covers_through_item_id) FROM briefings "
+                "WHERE watchlist_id = ? AND status IN ('complete', 'empty')",
+                (watchlist_id,),
+            ).fetchone()
+        return row[0] if row is not None else None
 
     def find_duplicate_items(
         self, item_url: str, item_hash: str

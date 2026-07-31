@@ -1,7 +1,9 @@
 """Tests for the Watchlists inspector pane wiring."""
 
+import threading
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from typing import Any
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.geometry import Region
@@ -30,6 +32,8 @@ from Tests.UI.test_destination_visual_parity_correction import (
     _visual_destination_harness,
 )
 from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.test_watchlists_item_actions import OTHER_ENTITIES, REAL_ITEM
+from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.Subscriptions.noise_defaults import DEFAULT_IGNORE_SELECTORS
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
@@ -37,7 +41,7 @@ from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     InspectorPane,
     SaveNoiseSelectorsRequested,
 )
-from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
+from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected, ItemsPane
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import (
     NotificationSelected,
     RefreshNotificationsRequested,
@@ -1232,4 +1236,375 @@ async def test_the_inspector_still_saves_every_shipped_default_selector():
         )
         assert not [t for t in toasts if t[1].get("severity") == "error"], (
             f"the shipped defaults produced an error toast: {toasts!r}"
+        )
+
+
+# --- Task 5: the "Queue for briefing" affordance (spec #2 phase 1) ---------
+#
+# The button, the row indicator, and the honest-failure path all reuse the
+# same rules Task 1362's noise-selectors save proved out on this stream: no
+# full-screen recompose, an in-place patch, and a targeted repaint instead of
+# a rebuild.
+
+
+def _seed_new_item(app, *, content_hash: str) -> tuple[Any, int, int]:
+    """Seed one subscription with one "new" item through the real database.
+
+    Seeded through `app.local_watchlists_service._db()` -- the connection
+    the Items pane's own real load path resolves to (`_load_items` -> the
+    controller -> `LocalWatchlistsService`) -- and NOT
+    `app.watchlist_bundle_service.db`, even though the latter is what
+    `WatchlistsCollectionsScreen._briefings_db()` (the queue-toggle write
+    path) reaches. In the running app both resolve to the identical on-disk
+    file, but in THIS harness they do not:
+    `_build_test_app()`'s `get_subscriptions_db_path` patch only lives for
+    the duration of `TldwCli.__init__`, so `watchlist_bundle_service`'s
+    connection (built EAGERLY, inside that init, while the patch is live)
+    and `local_watchlists_service`'s connection (built LAZILY, per call, once
+    the patch has already exited) resolve to two DIFFERENT temp files here.
+    `_open_items_with_seeded_item` below points `watchlist_bundle_service`
+    at THIS connection once the screen's initial load has settled, so
+    `_briefings_db()` agrees with what the Items pane reads.
+
+    Returns:
+        `(db, source_id, item_id)` -- `db` is the connection to read the
+        written flag back from.
+    """
+    db = app.local_watchlists_service._db()
+    source_id = db.add_subscription(
+        name="Summit Route", type="rss", source="https://summitroute.com/blog/feed.xml"
+    )
+    with db.transaction() as conn:
+        item_id = persist_subscription_item(
+            conn,
+            source_id,
+            {
+                "url": f"https://summitroute.com/blog/2024/{content_hash}/",
+                "title": "Lightsail object storage concerns - Part 2",
+                "content_hash": content_hash,
+                "status": "new",
+            },
+            run_id=None,
+            now="2026-07-30T09:00:00+00:00",
+        )
+    return db, source_id, item_id
+
+
+def _queued_flag(db, item_id: int, *, status: str = "reviewed") -> bool | None:
+    """A fresh read of one item's stored flag -- never the widget's state."""
+    for row in db.get_new_items(status=status, limit=50):
+        if row["id"] == item_id:
+            return bool(row["queued_for_briefing"])
+    return None
+
+
+async def _open_items_with_seeded_item(pilot, screen, app, db):
+    """Open Items, wait for the real load, then align the queue-write path.
+
+    `app.watchlist_bundle_service._db` is pointed at `db` only AFTER the
+    initial mount's background loads have settled (`pane.items` populated),
+    never before: mounting the screen fires several CONCURRENT background
+    loads that each construct a fresh `SubscriptionsDB(...)` against this
+    same brand-new file, and reassigning earlier lets those races hit the
+    one-time schema-migration gate on this connection's cached schema view.
+    Observed directly: an early reassignment intermittently made the very
+    next write on `db` raise `OperationalError: no such table:
+    subscription_items`, which then self-healed on an immediate retry --
+    proof it was a startup race, not a real absence of the table. Waiting
+    for the settle removes the race instead of papering over it with a
+    retry loop.
+    """
+    screen.active_section = "items"
+    await pilot.pause(0.3)
+    pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+    for _ in range(40):
+        await pilot.pause()
+        if pane.items:
+            break
+    assert pane.items, "the seeded item must reach the Items pane"
+    table = pane.query_one("#items-table", DataTable)
+    app.watchlist_bundle_service._db = db
+    return pane, table
+
+
+@pytest.mark.asyncio
+async def test_pressing_queue_for_briefing_writes_the_flag_and_repaints_the_row():
+    """Step 1: press the REAL button and follow the write all the way
+    through -- the database flag, the Items-table indicator, and instance
+    survival (the same `ItemsPane` -- Phase D pattern).
+
+    Mutation (a): stub the handler into a no-op and this reddens on the
+    database assertion, since nothing was ever written.
+    """
+    app = _build_test_app()
+    db, _source_id, item_id = _seed_new_item(app, content_hash="queue-write")
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        pane, table = await _open_items_with_seeded_item(pilot, screen, app, db)
+
+        row_key = str(pane.items[0]["id"])
+        assert table.get_row(row_key)[4] == "", (
+            "precondition: a freshly seeded item is not queued"
+        )
+
+        pane.select_item_by_id(row_key)
+        for _ in range(20):
+            await pilot.pause()
+
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        button = inspector.query_one("#inspector-queue-briefing-button", Button)
+        assert str(button.label) == "Queue for briefing", (
+            "precondition: a not-yet-queued item's button names the action "
+            "it is about to take"
+        )
+        button.press()
+        # Fix round 1: the write now happens in a worker (`asyncio.to_thread`
+        # then the in-place patch + repaint), so settle on the LAST
+        # observable effect of that sequence -- the repainted cell -- rather
+        # than the DB flag alone. The repaint only ever runs after the write
+        # has already been awaited, so waiting on it also guarantees the DB
+        # assertion below is no longer racing the worker.
+        for _ in range(40):
+            await pilot.pause()
+            if table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH:
+                break
+
+        assert _queued_flag(db, item_id) is True, (
+            "the press must reach SubscriptionsDB.set_item_briefing_queued"
+        )
+        assert table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH, (
+            "the row indicator must repaint in place once the write succeeds"
+        )
+        assert str(button.label) == "Unqueue from briefing", (
+            "the button's own label must flip too -- it is the only control "
+            "and states the CURRENT value"
+        )
+
+        # Phase D pattern: no full-screen recompose. The very instances the
+        # user was looking at must still be the ones mounted.
+        assert screen.query_one("#watchlists-items-pane", ItemsPane) is pane
+        assert pane.query_one("#items-table", DataTable) is table
+        assert screen.query_one("#watchlists-entity-inspector", InspectorPane) is inspector
+
+
+@pytest.mark.asyncio
+async def test_the_queue_write_runs_off_the_event_loop_thread():
+    """Fix round 1: pin the load-bearing part of moving the write off the
+    UI thread. `run_worker` alone only *schedules* a coroutine back onto the
+    SAME event loop -- it is `asyncio.to_thread` inside `_toggle_briefing_queue`
+    that actually gets `set_item_briefing_queued` off it. A mutation that
+    drops `to_thread` and calls the DB method directly (still correctly,
+    still successfully) passes every other Task 5 test unchanged, since the
+    end state -- flag set, cell repainted -- is identical either way; only
+    watching WHICH thread executes the call can tell the two apart.
+    """
+    app = _build_test_app()
+    db, _source_id, item_id = _seed_new_item(app, content_hash="queue-thread-ident")
+
+    loop_thread_id = threading.get_ident()
+    write_thread_ids: list[int] = []
+    real_write = db.set_item_briefing_queued
+
+    def _spy(item_id_arg, queued_arg):
+        write_thread_ids.append(threading.get_ident())
+        return real_write(item_id_arg, queued_arg)
+
+    db.set_item_briefing_queued = _spy
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        pane, table = await _open_items_with_seeded_item(pilot, screen, app, db)
+        row_key = str(pane.items[0]["id"])
+
+        pane.select_item_by_id(row_key)
+        for _ in range(20):
+            await pilot.pause()
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        button = inspector.query_one("#inspector-queue-briefing-button", Button)
+        button.press()
+        for _ in range(40):
+            await pilot.pause()
+            if write_thread_ids:
+                break
+
+        assert write_thread_ids, "the write must have run at all"
+        assert write_thread_ids[0] != loop_thread_id, (
+            "set_item_briefing_queued must run off the event-loop thread "
+            "(asyncio.to_thread), not synchronously inside the worker on "
+            "the same thread that runs the event loop"
+        )
+
+
+@pytest.mark.asyncio
+async def test_pressing_queue_for_briefing_again_unqueues_and_relabels():
+    """Step 1's other half: toggling back clears the flag, the indicator,
+    and restores the button's original label -- not a one-way ratchet."""
+    app = _build_test_app()
+    db, _source_id, item_id = _seed_new_item(app, content_hash="queue-toggle")
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        pane, table = await _open_items_with_seeded_item(pilot, screen, app, db)
+        row_key = str(pane.items[0]["id"])
+
+        pane.select_item_by_id(row_key)
+        for _ in range(20):
+            await pilot.pause()
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        button = inspector.query_one("#inspector-queue-briefing-button", Button)
+
+        # Fix round 1: settle on the repainted cell, the LAST effect of the
+        # worker's write-then-patch sequence -- see the comment in
+        # `test_pressing_queue_for_briefing_writes_the_flag_and_repaints_the_row`.
+        button.press()
+        for _ in range(40):
+            await pilot.pause()
+            if table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH:
+                break
+        assert _queued_flag(db, item_id) is True, "precondition: first press queued it"
+        assert table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH
+
+        button.press()
+        for _ in range(40):
+            await pilot.pause()
+            if table.get_row(row_key)[4] == "":
+                break
+
+        assert _queued_flag(db, item_id) is False, (
+            "the second press must clear the flag, not queue it again"
+        )
+        assert table.get_row(row_key)[4] == "", (
+            "the indicator must clear along with the flag"
+        )
+        assert str(button.label) == "Queue for briefing", (
+            "the label must read exactly as it did before either press"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_queue_button_only_renders_for_item_selections():
+    """AC#3 / mutation (c): a discriminator that always answers "item" (or
+    that renders the button unconditionally) would leak "Queue for
+    briefing" onto sources, runs, rules and notifications -- entities
+    `set_item_briefing_queued` has no meaning for at all. Mirrors
+    `test_the_editor_renders_only_for_url_family_sources`'s shape: real
+    entities of every OTHER selectable kind (`OTHER_ENTITIES`, shared with
+    `test_watchlists_item_actions.py` so this cannot be fixed for items by
+    breaking one of those fixtures) are the negative control, and a real
+    item (`REAL_ITEM`) is the positive one.
+    """
+    app = _app_with_watchlists([])
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+
+        for _kind, entity in OTHER_ENTITIES:
+            screen.selected_entity = entity
+            await pilot.pause()
+            assert not inspector.query("#inspector-queue-briefing-button"), (
+                f"a {_kind} selection must not offer the briefing queue toggle"
+            )
+
+        screen.selected_entity = REAL_ITEM
+        await pilot.pause()
+        assert inspector.query_one("#inspector-queue-briefing-button", Button), (
+            "precondition: an item selection DOES offer it -- otherwise the "
+            "loop above would pass even with the button deleted entirely"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_queue_write_leaves_the_flag_and_indicator_unchanged():
+    """Honest failure: a DB error must not move the flag, must not repaint
+    the indicator, and must say so -- and nothing may escape the handler.
+
+    The mock replaces `set_item_briefing_queued` itself with a `Mock` that
+    raises, so the write never reaches the real database at all; `_queued_flag`
+    here confirms the stored flag stayed exactly as seeded, and the failure
+    toast plus `screen.is_attached` confirm nothing escaped the worker.
+    """
+    app = _build_test_app()
+    db, _source_id, item_id = _seed_new_item(app, content_hash="queue-fail")
+    # Patches the INSTANCE method on `db` itself, so it stays in effect once
+    # `_open_items_with_seeded_item` below points `_briefings_db()` -- the
+    # screen handler's write path -- at this exact object.
+    db.set_item_briefing_queued = Mock(side_effect=RuntimeError("disk full"))
+
+    host = DestinationHarness(app, "watchlists_collections")
+    toasts: list[tuple[str, dict]] = []
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        pane, table = await _open_items_with_seeded_item(pilot, screen, app, db)
+        row_key = str(pane.items[0]["id"])
+
+        pane.select_item_by_id(row_key)
+        for _ in range(20):
+            await pilot.pause()
+        app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        button = inspector.query_one("#inspector-queue-briefing-button", Button)
+        button.press()
+        # Fix round 1: the write now happens in a worker (`asyncio.to_thread`),
+        # so settle on the observable outcome -- the error toast the failure
+        # path fires -- rather than a fixed count of no-op pauses.
+        for _ in range(60):
+            await pilot.pause()
+            if toasts:
+                break
+
+        assert _queued_flag(db, item_id) is False, (
+            "a failed write must leave the stored flag exactly as it was"
+        )
+        assert table.get_row(row_key)[4] == "", (
+            "a failed write must not repaint the indicator"
+        )
+        assert str(button.label) == "Queue for briefing", (
+            "a failed write must not relabel the button either"
+        )
+        assert toasts, "the failure must be visible, not a silent no-op"
+        message, kwargs = toasts[-1]
+        assert kwargs.get("severity") == "error"
+        assert "queue" in message.lower() or "briefing" in message.lower()
+        # Nothing escaped the handler and crashed the app: reaching this
+        # line at all, with the screen still mounted, is the proof.
+        assert screen.is_attached
+
+
+@pytest.mark.asyncio
+async def test_the_queued_indicator_renders_from_the_normalized_flag_on_load():
+    """Requirement 5: an item already queued (via a prior session, say)
+    shows the glyph on a plain (first) load -- pinning Task 1's read path
+    (`queued_for_briefing` surviving `get_new_items` ->
+    `normalize_watchlist_item`) end to end, through the real controller,
+    with no button press anywhere in this test. (This test never navigates
+    away and back, so "load" rather than "reload" is the accurate word for
+    what it exercises.)"""
+    app = _build_test_app()
+    db, _source_id, item_id = _seed_new_item(app, content_hash="queue-preloaded")
+    db.set_item_briefing_queued(item_id, True)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        pane, table = await _open_items_with_seeded_item(pilot, screen, app, db)
+
+        assert pane.items[0].get("queued_for_briefing") is True, (
+            "the normalized item handed to the pane must already carry the "
+            "flag -- the read path, not a write this test performs"
+        )
+        row_key = str(pane.items[0]["id"])
+        assert table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH, (
+            "a pre-queued item must show the glyph as soon as it loads"
         )
