@@ -8,7 +8,9 @@ import sys
 import threading
 import types
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from textual.app import App, ComposeResult
@@ -163,6 +165,53 @@ async def _wait_until(
             return
         await pilot.pause(0.02)
     raise AssertionError(message)
+
+
+@asynccontextmanager
+async def _production_workspace_context(
+    workspace: LibraryFileNotesWorkspace,
+    *,
+    size: tuple[int, int],
+):
+    """Mount File Notes through the production TldwCli and Library screen."""
+    app = _build_test_app(configured_default="library")
+
+    def settings_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return default
+
+    with patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=settings_without_splash,
+    ):
+        async with app.run_test(size=size) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, LibraryScreen),
+                "production app did not mount Library",
+            )
+            screen = app.screen
+            assert isinstance(screen, LibraryScreen)
+            screen._library_file_notes_workspace_factory = lambda: workspace
+            await _wait_for_library_shell(screen, pilot)
+            await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+            await _wait_until(
+                pilot,
+                lambda: bool(screen.query("#library-notes-source-files")),
+                "Library Notes source selector did not mount",
+            )
+            screen.query_one("#library-notes-source-files", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.initialized
+                    and workspace.is_mounted
+                    and screen._library_file_notes_workspace is workspace
+                ),
+                "production Library did not mount File Notes",
+            )
+            yield pilot
 
 
 def _static_text(workspace: LibraryFileNotesWorkspace, selector: str) -> str:
@@ -1313,7 +1362,10 @@ async def test_create_move_delete_protect_and_restore_use_real_service(
         poll_interval=10,
     )
 
-    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+    async with _production_workspace_context(
+        workspace,
+        size=(120, 40),
+    ) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("start.md")
 
@@ -1394,8 +1446,12 @@ async def test_create_move_delete_protect_and_restore_use_real_service(
         workspace.query_one("#file-notes-delete", Button).press()
         await _wait_until(
             pilot,
-            lambda: not (root / "moved.md").exists(),
-            "confirmed delete did not remove the file",
+            lambda: (
+                not (root / "moved.md").exists()
+                and "Recently deleted"
+                in _tree_labels(workspace.query_one("#file-notes-tree", Tree))
+            ),
+            "confirmed delete did not finish updating the tree",
         )
         assert "Recently deleted" in _tree_labels(
             workspace.query_one("#file-notes-tree", Tree)

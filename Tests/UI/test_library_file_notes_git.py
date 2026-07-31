@@ -72,6 +72,20 @@ from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (  # noqa
 from Tests.UI.app_factory import _build_test_app  # noqa: E402
 
 
+def test_action_layout_tolerates_rows_not_yet_mounted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mount/teardown race must not query action rows before they exist."""
+    panel = LibraryFileNotesGitPanel()
+    monkeypatch.setattr(
+        LibraryFileNotesGitPanel,
+        "is_mounted",
+        property(lambda _panel: True),
+    )
+
+    panel._sync_action_layout(80)
+
+
 class _PanelHarness(App[None]):
     """Mount one panel and record its typed presentation messages."""
 

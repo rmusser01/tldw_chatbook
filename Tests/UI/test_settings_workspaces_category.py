@@ -16,6 +16,20 @@ from Tests.UI.test_settings_configuration_hub import (
 )
 
 
+def _settings_without_splash(section, key=None, default=None):
+    if section == "splash_screen" and key == "enabled":
+        return False
+    return default
+
+
+async def _wait_for_settings_screen(app, pilot) -> SettingsScreen:
+    for _ in range(200):
+        if isinstance(app.screen, SettingsScreen):
+            return app.screen
+        await pilot.pause(0.01)
+    raise AssertionError("production app did not mount Settings")
+
+
 @pytest.mark.asyncio
 async def test_workspaces_category_registered_and_immediate() -> None:
     app = _build_test_app()
@@ -41,22 +55,12 @@ async def test_create_rename_archive_unarchive_flow() -> None:
     app = _build_test_app(configured_default="settings")
     registry = app.workspace_registry_service
 
-    def settings_without_splash(section, key=None, default=None):
-        if section == "splash_screen" and key == "enabled":
-            return False
-        return default
-
     with patch(
         "tldw_chatbook.app.get_cli_setting",
-        side_effect=settings_without_splash,
+        side_effect=_settings_without_splash,
     ):
         async with app.run_test(size=(180, 50)) as pilot:
-            for _ in range(200):
-                if isinstance(app.screen, SettingsScreen):
-                    break
-                await pilot.pause(0.01)
-            assert isinstance(app.screen, SettingsScreen)
-            screen = app.screen
+            screen = await _wait_for_settings_screen(app, pilot)
             await _wait_for_selector(
                 screen,
                 pilot,
@@ -175,6 +179,34 @@ async def test_create_rename_archive_unarchive_flow() -> None:
                 await pilot.pause(0.01)
             record = registry.get_workspace(workspace_id)
             assert record.archived is False and record.active is False
+
+
+@pytest.mark.asyncio
+async def test_compact_overview_keeps_a_painted_recovery_action() -> None:
+    """The full Settings app keeps one real action above the compact fold."""
+    from unittest.mock import patch
+
+    from textual.widgets import Button
+
+    app = _build_test_app(configured_default="settings")
+    with patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=_settings_without_splash,
+    ):
+        async with app.run_test(size=(100, 32)) as pilot:
+            screen = await _wait_for_settings_screen(app, pilot)
+            await _wait_for_selector(
+                screen,
+                pilot,
+                "#settings-open-appearance",
+            )
+            action = screen.query_one("#settings-open-appearance", Button)
+            assert 0 <= action.region.y < action.region.bottom <= 32
+            painted_row = "".join(
+                segment.text
+                for segment in screen._compositor.render_strips()[action.region.y]
+            )
+            assert "Theme" in painted_row
 
 
 @pytest.mark.asyncio

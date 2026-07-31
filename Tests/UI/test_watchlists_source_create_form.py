@@ -34,7 +34,7 @@ import time
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Select
 
 from Tests.UI.full_app_destination_context import (
     StaticWatchlistsScopeService,
@@ -90,10 +90,13 @@ async def _open_sources_create_form(pilot, host):
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         focused = screen.focused
+        selects = list(pane.query(Select))
         if (
             pane.query("#sources-create-form")
             and focused is not None
             and focused.id == "sources-create-name"
+            and selects
+            and all(bool(select.query("#label")) for select in selects)
         ):
             break
         await pilot.pause(0.02)
@@ -101,6 +104,7 @@ async def _open_sources_create_form(pilot, host):
     assert screen.focused is not None and (
         screen.focused.id == "sources-create-name"
     ), "the create form mounted but did not focus its Name field"
+    await pilot.pause()
     return screen, pane
 
 

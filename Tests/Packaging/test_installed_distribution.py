@@ -535,7 +535,7 @@ async def exercise_production_app():
             ),
             "installed production app did not mount registered Home",
         )
-        app.post_message(NavigateToScreen(TAB_CHAT))
+        await app.handle_screen_navigation(NavigateToScreen(TAB_CHAT))
         await wait_for(
             pilot,
             lambda: (
@@ -747,7 +747,9 @@ def _private_child_env(
         path.mkdir(parents=True, mode=0o700, exist_ok=True)
     config_path = config_root / "config.toml"
     config_path.write_text(
-        '[general]\ndefault_tab = "home"\n\n[splash_screen]\nenabled = false\n',
+        '[general]\ndefault_tab = "home"\n\n'
+        "[first_run]\nsetup_completed = true\n\n"
+        "[splash_screen]\nenabled = false\n",
         encoding="utf-8",
     )
     config_path.chmod(0o600)
