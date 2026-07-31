@@ -15,7 +15,8 @@
 - Backlog task: [`TASK-1538`](../../../backlog/tasks/task-1538%20-%20Enforce-single-pass-service-composition-and-runtime-dependency-binding.md)
 - Approved design: [`2026-07-28-application-service-composition-lifecycle-design.md`](../specs/2026-07-28-application-service-composition-lifecycle-design.md)
 - Governing decision: [`ADR-036`](../../../backlog/decisions/036-application-service-composition-lifecycle.md)
-- Reviewed baseline: `origin/dev` at `61960f436`
+- Initial reviewed baseline: `origin/dev` at `61960f436`
+- Final verified baseline before closeout: `origin/dev` at `3d7a34f76`
 - Tests must use the real production `TldwCli` or an app-independent pure function. No test `App`, simplified app, `SimpleNamespace`, `MagicMock`, `object.__new__(TldwCli)`, or unbound `TldwCli` method is acceptable as application integration evidence.
 - Preserve the existing post-construction Sync reassignment loop in `_wire_watchlists_and_notifications_services()`. The separate server-context provider helper remains non-reentrant.
 - Keep public `from_config(...)` compatibility constructors importable.
@@ -705,7 +706,7 @@ Each failure must first reproduce on a detached worktree at current
 `origin/dev`. Do not weaken production path validation, restore retired worker
 state, or retain an obsolete app-shaped streaming suite.
 
-- [ ] **Step 6: Run the repository test suite for regression safety**
+- [x] **Step 6: Run the repository test suite for regression safety**
 
 Run:
 
@@ -751,7 +752,7 @@ Expected after the repair: `32` executable calls and no
 inventory only; do not claim that the remaining services share Writing's
 provider or shutdown semantics.
 
-- [ ] **Step 8: Run compile and scoped Ruff checks**
+- [x] **Step 8: Run compile and scoped Ruff checks**
 
 Run:
 
@@ -773,7 +774,7 @@ git diff --check
 
 Expected: every command exits `0`.
 
-- [ ] **Step 9: Self-review the complete diff**
+- [x] **Step 9: Self-review the complete diff**
 
 Run:
 
@@ -809,7 +810,7 @@ Confirm:
 - Modify: `Docs/superpowers/plans/2026-07-28-application-service-composition-lifecycle.md`
 - Modify: `backlog/tasks/task-1538 - Enforce-single-pass-service-composition-and-runtime-dependency-binding.md`
 
-- [ ] **Step 1: Record implementation evidence**
+- [x] **Step 1: Record implementation evidence**
 
 Append a concise implementation-evidence section to the design and this plan
 containing:
@@ -824,11 +825,11 @@ containing:
 - the explicit statement that the remaining provider inventory and private
   provider-wiring reentrancy are follow-up work.
 
-- [ ] **Step 2: Complete the Backlog task without overstating scope**
+- [x] **Step 2: Complete the Backlog task without overstating scope**
 
 Use the Backlog CLI to:
 
-1. check all six acceptance criteria;
+1. check all eight acceptance criteria;
 2. add `## Implementation Notes` summarizing the single-pass repair, provider
    and Sync binding, production/installed tests, and ADR-036;
 3. record the verification commands/results and the 32-call remaining
@@ -838,7 +839,7 @@ Use the Backlog CLI to:
 Do not hand-edit generated Backlog front matter and do not mark Done before
 the Definition of Done is actually satisfied.
 
-- [ ] **Step 3: Commit closeout documentation**
+- [x] **Step 3: Commit closeout documentation**
 
 ```bash
 git add \
@@ -923,3 +924,31 @@ required checks, force-push with lease if the rebase changed commits, wait for
 required CI/reviews to be green, then merge the PR into `dev`. Confirm the
 merge commit is reachable from the latest remote `dev` and report the merged
 PR URL and commit.
+
+## Implementation Evidence
+
+Implementation and current-`dev` reconciliation are recorded through
+`9c8254250`, with sdist review follow-up `f8e04945f`, based on `origin/dev` at
+`3d7a34f76`.
+
+- Focused provider/Sync/Chat/Media/citation matrix: `10 passed`.
+- Production application and packaging suites: `65 passed`.
+- Installed-wheel production probe: passed outside the checkout and copied
+  build source while preserving every installed target hash.
+- Full suite:
+  `24334 passed, 170 skipped in 1520.76s`
+  with `pytest -q -n 8 --dist loadscope --timeout=300`.
+- Affected-module xdist stress: `392 passed`.
+- Compileall, Ruff check, Ruff format check, `git diff --check`, and the
+  persistent-diagnostic inventory verification: passed.
+- Both exact ChaChaNotes runtime migrations are enforced in sdist and wheel;
+  positive artifact checks and negative removal regressions pass for both
+  artifact types.
+- Executable app inventory: `32`
+  `Server*Service.from_config(...)` calls, with no Writing entry.
+- Independent bounded review: no Critical code defect; mandatory closeout
+  hygiene was the only Important finding.
+
+The remaining legacy-provider inventory and private provider-wiring
+reentrancy are follow-up work. This plan does not claim a generic lifecycle
+manager, service container, or application-wide provider migration.

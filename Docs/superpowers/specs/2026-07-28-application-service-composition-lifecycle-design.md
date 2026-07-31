@@ -1,10 +1,11 @@
 # Application Service Composition Lifecycle Design
 
 **Date:** 2026-07-28
-**Status:** Approved; implementation plan written
+**Status:** Implemented and verified; PR closeout in progress
 **Task:** TASK-1538
 **Decision:** [ADR-036](../../../backlog/decisions/036-application-service-composition-lifecycle.md)
-**Reviewed baseline:** `origin/dev` at `61960f436`
+**Initial reviewed baseline:** `origin/dev` at `61960f436`
+**Final verified baseline:** `origin/dev` at `3d7a34f76`
 
 ## Purpose
 
@@ -331,3 +332,33 @@ ADR path:
 `backlog/decisions/036-application-service-composition-lifecycle.md`
 Reason: The task changes application service construction, provider ownership,
 Sync dependency binding, and the rejected future container boundary.
+
+## Implementation Evidence
+
+The bounded lifecycle implementation and current-`dev` reconciliation are
+recorded through commit `9c8254250`; review follow-up `f8e04945f` adds the
+sdist migration-removal regression. The final source graph has one executable
+constructor call to each guarded Writing and Chat composition helper. The
+production `TldwCli` and installed-wheel probes prove stable object identities,
+initial Chat/Media Sync injection, and Writing's exact
+`server_context_provider` identity.
+
+Verification on `origin/dev` at `3d7a34f76` produced:
+
+- `10 passed` for the focused provider, Sync, Chat, Media, and citation matrix;
+- `65 passed` for `Tests/ProductionApp Tests/Packaging`, including the
+  installed production application outside the checkout;
+- `24334 passed, 170 skipped` for the full repository suite under
+  `pytest -q -n 8 --dist loadscope --timeout=300`;
+- successful compileall, Ruff lint, Ruff format, and diff-hygiene checks;
+- successful artifact and release-checker coverage for the exact
+  `chachanotes_v26_to_v27_citation_provenance.sql` and
+  `chachanotes_v27_to_v28_character_authority.sql` files in both sdist and
+  wheel, including negative removal cases for each artifact;
+- `32` remaining executable `Server*Service.from_config(...)` calls in
+  `app.py`, with no `ServerWritingService.from_config(...)` entry.
+
+An independent bounded review found no Critical implementation defect. The
+remaining 32-provider inventory and any decision to make private provider
+wiring reentrant remain explicit follow-up work; this implementation does not
+claim application-wide provider or lifecycle closure.

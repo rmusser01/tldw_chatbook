@@ -1,11 +1,11 @@
 ---
 id: TASK-1538
 title: Enforce single-pass service composition and runtime dependency binding
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-28 14:27'
-updated_date: '2026-07-28 16:09'
+updated_date: '2026-07-31 08:48'
 labels:
   - architecture
   - lifecycle
@@ -29,14 +29,14 @@ Prevent TldwCli startup from replacing live service graphs or attaching long-liv
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 TldwCli composes the Writing and Chat conversation service graphs exactly once, and their scope services retain the exact local and server service identities created for the application lifetime.
-- [ ] #2 The app-composed ServerWritingService resolves through TldwCli's long-lived server_context_provider rather than a private legacy config provider.
-- [ ] #3 ChatConversationScopeService and MediaReadingScopeService receive the current sync_scope_service during initial production-app composition without altering the existing post-construction Sync reassignment behavior or claiming provider-wiring reentrancy.
-- [ ] #4 Focused source and full production-app tests prove single-pass calls and dependency identities without surrogate or simplified application classes.
-- [ ] #5 The clean installed-wheel production-app probe completes the fresh ChaChaNotes migrations and proves the same composition contract outside the checkout; the exact v26-to-v27 citation-provenance and v27-to-v28 character-authority SQL assets are present in both sdist and wheel and enforced by the release checker.
-- [ ] #6 Affected tests, the full repository suite, static checks, formatting, and diff hygiene pass, and the separate remaining legacy-provider inventory is documented without claiming global closure.
-- [ ] #7 The two verified current-dev collection blockers are reconciled with the surviving worker and chat-shell APIs, without restoring retired StreamDone or TabState state and without adding a test application.
-- [ ] #8 Current-dev tests use the surviving public runtime-config and trusted-directory contracts, production-app interaction tests wait for rendered controls, the reviewed diagnostic inventory matches current source and persistent-sink topology, and newly introduced diagnostic paths do not persist user-authored selector or eval-dataset content.
+- [x] #1 TldwCli composes the Writing and Chat conversation service graphs exactly once, and their scope services retain the exact local and server service identities created for the application lifetime.
+- [x] #2 The app-composed ServerWritingService resolves through TldwCli's long-lived server_context_provider rather than a private legacy config provider.
+- [x] #3 ChatConversationScopeService and MediaReadingScopeService receive the current sync_scope_service during initial production-app composition without altering the existing post-construction Sync reassignment behavior or claiming provider-wiring reentrancy.
+- [x] #4 Focused source and full production-app tests prove single-pass calls and dependency identities without surrogate or simplified application classes.
+- [x] #5 The clean installed-wheel production-app probe completes the fresh ChaChaNotes migrations and proves the same composition contract outside the checkout; the exact v26-to-v27 citation-provenance and v27-to-v28 character-authority SQL assets are present in both sdist and wheel and enforced by the release checker.
+- [x] #6 Affected tests, the full repository suite, static checks, formatting, and diff hygiene pass, and the separate remaining legacy-provider inventory is documented without claiming global closure.
+- [x] #7 The two verified current-dev collection blockers are reconciled with the surviving worker and chat-shell APIs, without restoring retired StreamDone or TabState state and without adding a test application.
+- [x] #8 Current-dev tests use the surviving public runtime-config and trusted-directory contracts, production-app interaction tests wait for rendered controls, the reviewed diagnostic inventory matches current source and persistent-sink topology, and newly introduced diagnostic paths do not persist user-authored selector or eval-dataset content.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,3 +56,13 @@ Reason: This task changes application service construction, runtime provider own
 
 Detailed executable plan: Docs/superpowers/plans/2026-07-28-application-service-composition-lifecycle.md
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented the ADR-036 single-pass composition repair: TldwCli now constructs Writing and Chat once, binds app-composed Writing to the long-lived server_context_provider, and injects the current Sync scope into Media and Chat at initial construction while retaining the existing reconciliation loop. Added exact-identity tests against the production TldwCli and installed wheel, and applied ADR-032 to package and release-check the two exact ChaChaNotes runtime SQL migrations in both sdist and wheel. Reconciled current-dev worker, runtime-config, trusted-directory, render-readiness, diagnostic-inventory, and suite-isolation drift without restoring retired state or introducing a test App.
+
+Verification: focused provider/Sync/Chat/Media/citation matrix 10 passed; Tests/ProductionApp plus Tests/Packaging 65 passed; full suite 24334 passed and 170 skipped; affected-module xdist stress 392 passed; installed-wheel probe and sdist/wheel migration-removal checks passed; compileall, Ruff lint/format, diff hygiene, and diagnostic inventory passed. Independent bounded review found no Critical defect. The remaining executable Server*Service.from_config inventory is 32 calls with no ServerWritingService entry; provider-wide migration and private provider-wiring reentrancy remain follow-up work.
+
+ADR required: yes. ADRs: backlog/decisions/036-application-service-composition-lifecycle.md and backlog/decisions/032-immutable-installed-distribution-assets.md.
+<!-- SECTION:NOTES:END -->
