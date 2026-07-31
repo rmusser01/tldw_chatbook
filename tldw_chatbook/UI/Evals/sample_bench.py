@@ -81,11 +81,17 @@ SAMPLE_BENCH_NAME = "loaded-nouns (sample)"
 SAMPLE_DATASET_NAME = "loaded-nouns (sample)"
 SAMPLE_TARGET_NAME = "Sample target (llama.cpp)"
 
-#: task-1482 Task 6: the base name for a row created via bench_editor.py's
-#: "Create target" button (an authored bench's own target, never part of
-#: the one-click sample flow above) -- passed as `resolve_sample_target`'s
-#: `name` override so that flow's row does not read as though it came from
-#: SAMPLE_TARGET_NAME's unrelated demo.
+#: task-1482 Task 6 / task-1611 T2: the base name auto-generated for a
+#: blank Name field in bench_editor.py's "+ New target" create-target
+#: mini-form (an authored bench's own target, never part of the one-click
+#: sample flow above) -- so a row minted that way does not read as though
+#: it came from SAMPLE_TARGET_NAME's unrelated demo. Passed straight to
+#: `storage._unique_name` by `evals_screen.py`'s own create-target handler,
+#: never through `resolve_sample_target` (task-1611 T2: that handler now
+#: calls `EvalsDB.create_model` directly -- see its own docstring for why
+#: `resolve_sample_target`'s reuse-an-existing-row-first behavior is wrong
+#: for a control whose whole point is minting an ADDITIONAL, possibly
+#: differently-steered target even when one already exists).
 BENCH_EDITOR_TARGET_NAME = "llama.cpp target"
 
 #: The word bench's own preflight canary already answers "is this endpoint
@@ -178,7 +184,18 @@ def configured_llama_cpp_url(app_config: Optional[Mapping[str, Any]]) -> Optiona
     return normalized or None
 
 
-def _configured_llama_cpp_model_id(app_config: Optional[Mapping[str, Any]]) -> str:
+def configured_llama_cpp_model_id(app_config: Optional[Mapping[str, Any]]) -> str:
+    """The model id a configured llama.cpp endpoint's config declares, or
+    ``""`` if unset -- the sibling of ``configured_llama_cpp_url`` above,
+    read the same config-only, no-network way. Public (task-1611 T2):
+    originally private and used only by ``resolve_sample_target``'s own
+    creation branch below, but ``evals_screen.py``'s "+ New target"
+    create-target handler needs the identical resolution WITHOUT going
+    through ``resolve_sample_target`` itself (see ``BENCH_EDITOR_TARGET_
+    NAME``'s own comment for why: that function reuses an already-
+    registered row first, which is exactly wrong for a control whose job
+    is minting an ADDITIONAL target).
+    """
     model = _llama_cpp_settings(app_config).get("model")
     return model.strip() if isinstance(model, str) else ""
 
@@ -246,13 +263,18 @@ def resolve_sample_target(
         name: The base name for a newly CREATED row (irrelevant when an
             existing row is reused instead -- see above). Defaults to
             ``SAMPLE_TARGET_NAME``, the one-click sample bench's own
-            wording; ``bench_editor.py``'s Task 6 "Create target" button
-            (via ``evals_screen.py``, this module's other caller of the
-            ``create=True`` path) passes ``BENCH_EDITOR_TARGET_NAME``
-            instead, so a target created from an authored bench does not
-            read as though it came from the unrelated one-click flow.
-            Always passed through ``storage._unique_name`` before the
-            write, exactly like the default.
+            wording. This function's only caller with ``create=True`` today
+            is ``create_and_run_sample_bench``, using the default; task-
+            1611 T2 moved ``bench_editor.py``'s "+ New target" create-
+            target handler off this function entirely (it calls
+            ``EvalsDB.create_model`` directly, via ``evals_screen.py`` --
+            see ``BENCH_EDITOR_TARGET_NAME``'s own comment for why this
+            function's reuse-an-existing-row-first behavior is wrong for
+            that control). ``name`` stays a parameter here regardless,
+            for any future caller minting a differently-named row through
+            this SAME reuse-or-create resolution. Always passed through
+            ``storage._unique_name`` before the write, exactly like the
+            default.
 
     Returns:
         The resolved ``eval_models`` row (a real, DB-backed dict), or
@@ -277,7 +299,7 @@ def resolve_sample_target(
     # either way, per capture_client.py's own payload). "default" here is a
     # placeholder a real server discards, never a claim about a specific
     # model that exists.
-    model_id = _configured_llama_cpp_model_id(app_config) or "default"
+    model_id = configured_llama_cpp_model_id(app_config) or "default"
     new_id = db.create_model(
         name=_unique_name(name), provider="llama_cpp", model_id=model_id
     )

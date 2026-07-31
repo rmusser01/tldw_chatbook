@@ -35,11 +35,11 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Static
 
-from ...DB.Evals_DB import EvalsDB
+from ...DB.Evals_DB import ConflictError, EvalsDB
 from ...Evals.word_bench.models import PreflightResult
 from ...Evals.word_bench.models import Target as WordBenchTarget
 from ...Evals.word_bench.runner import CancelToken, CaptureClientLike
-from ...Evals.word_bench.storage import duplicate_bench
+from ...Evals.word_bench.storage import _unique_name, duplicate_bench
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ..Evals import sample_bench
 from ..Evals.bench_editor import BenchEditor, ClassicTaskDetail
@@ -308,43 +308,76 @@ class EvalsScreen(LabScreen):
     async def _on_bench_create_target_requested(
         self, event: BenchEditor.CreateTargetRequested
     ) -> None:
-        """Creates a real `eval_models` row for the zero-`llama_cpp`-
-        models "Create target" button, and stages it on the mounted
-        `BenchEditor` -- see that message class's own docstring for why
-        `bench_editor.py` cannot make this call itself (the source-scan
-        pin against `capture_client`/`WordBenchRunner` imports).
+        """Creates a real `eval_models` row for `bench_editor.py`'s
+        "+ New target" mini-form -- ALWAYS rendered there (task-1611 T2),
+        not only in the zero-`llama_cpp`-models state -- and stages it on
+        the mounted `BenchEditor`. See that message class's own docstring
+        for why `bench_editor.py` cannot make this call itself (the
+        source-scan pin against the provider client/runner imports).
 
-        Reuses `sample_bench.resolve_sample_target(..., create=True)`
-        (the SAME function `create_and_run_sample_bench` uses) rather than
-        duplicating its configured-endpoint/model-id resolution logic --
-        `name=BENCH_EDITOR_TARGET_NAME` only changes the base name a freshly
-        CREATED row gets; an already-registered `llama_cpp` row (there
-        should be none, since this button only renders when `llama_
-        targets()` is empty, but a race is not worth guarding against
-        specially) is still reused as-is.
+        Calls `EvalsDB.create_model` DIRECTLY (task-1611 T2) rather than
+        `sample_bench.resolve_sample_target`, which this handler used
+        exclusively before this task: that function reuses an already-
+        registered `llama_cpp` row FIRST, before ever minting a new one --
+        exactly wrong once this control's whole point is minting an
+        ADDITIONAL, possibly differently-steered target even when one (or
+        several) already exist. `configured_llama_cpp_url`/
+        `configured_llama_cpp_model_id` (the same config-only, no-network
+        reads `resolve_sample_target` itself uses internally) resolve the
+        endpoint and model id instead.
 
-        A plain DB read/write, not a network call (`resolve_sample_target`
-        never touches `capture_client`) -- run inline, no worker, mirroring
-        `BenchEditor._on_save_pressed`'s own synchronous `save_bench` call
-        just one pane over.
+        A blank/whitespace-only `event.name` auto-names via
+        `storage._unique_name(sample_bench.BENCH_EDITOR_TARGET_NAME)` --
+        the SAME base name/convention the old zero-models-only flow always
+        used for its one auto-created row. A NON-blank name is used
+        VERBATIM (never uniqued) so an intentional collision surfaces as
+        the `ConflictError` it is, rather than being silently suffixed
+        into a different row than the one the user asked to create.
+
+        `event.prefix`/`event.system_prompt` are already mutually
+        exclusive and already blank-normalized to `None` by
+        `bench_editor.py`'s own `_on_create_target_pressed` (only one
+        steering `Input` is ever mounted at a time) -- this handler only
+        decides which non-`None` one becomes a `config` key; an empty
+        `config` (`{}`) is what an unsteered target's row already gets
+        everywhere else in this codebase (`EvalsDB.create_model`'s own
+        `config or {}` default).
+
+        A plain DB read/write, not a network call -- run inline, no
+        worker, mirroring `BenchEditor._on_save_pressed`'s own synchronous
+        `save_bench` call just one pane over.
         """
         event.stop()
         db = self._view_model.db
         if db is None:
             return
-        model_row = sample_bench.resolve_sample_target(
-            self._view_model,
-            self._current_app_config(),
-            create=True,
-            name=sample_bench.BENCH_EDITOR_TARGET_NAME,
-        )
-        if model_row is None:
+        app_config = self._current_app_config()
+        if sample_bench.configured_llama_cpp_url(app_config) is None:
             self.app_instance.notify(
                 "No llama.cpp server is configured; set one in Settings "
                 "first.",
                 severity="error",
                 markup=False,
             )
+            return
+        model_id = sample_bench.configured_llama_cpp_model_id(app_config) or "default"
+        typed_name = event.name.strip() if event.name else ""
+        name = event.name if typed_name else _unique_name(sample_bench.BENCH_EDITOR_TARGET_NAME)
+        config: dict[str, str] = {}
+        if event.prefix:
+            config["prefix"] = event.prefix
+        if event.system_prompt:
+            config["system_prompt"] = event.system_prompt
+        try:
+            new_id = db.create_model(
+                name=name, provider="llama_cpp", model_id=model_id, config=config
+            )
+        except ConflictError as exc:
+            self.app_instance.notify(str(exc), severity="error", markup=False)
+            return
+        model_row = db.get_model(new_id)
+        if model_row is None:
+            # Defensive only: create_model just returned this id.
             return
         from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
 

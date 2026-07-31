@@ -96,10 +96,10 @@ def evals_db() -> EvalsDB:
 @pytest.fixture
 def authoring_app(evals_db: EvalsDB) -> EvalsHarness:
     """A configured llama.cpp endpoint (needed for the bench editor's
-    zero-models "Create target" affordance -- ``sample_bench.
-    resolve_sample_target(..., create=True)`` needs a real configured
-    endpoint to mint a row from) and zero pre-existing benches/targets --
-    mirrors ``test_evals_empty_states.py``'s own ``configured_app``."""
+    "+ New target" create-target mini-form -- ``evals_screen.py``'s own
+    handler gates on ``sample_bench.configured_llama_cpp_url`` before it
+    will write a row) and zero pre-existing benches/targets -- mirrors
+    ``test_evals_empty_states.py``'s own ``configured_app``."""
     app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
     return EvalsHarness(_FakeAppInstance(evals_db, app_config=app_config))
 
@@ -183,12 +183,15 @@ async def test_authoring_loop_lights_up_both_cross_target_lenses(
 
         # A second, genuinely different `llama_cpp` target -- simulates
         # one already configured/created elsewhere (e.g. an earlier
-        # session). This can only ever be a direct DB write in this test:
-        # the "Create target" button reuses an existing row rather than
-        # minting a second one the moment ANY `llama_cpp` row exists (see
-        # `sample_bench.resolve_sample_target`'s own reuse-first docstring)
-        # -- so a second click here would just re-stage `first_target_id`,
-        # never reach the Add picker at all.
+        # session). A direct DB write here, not a second "Create target"
+        # click: task-1611 T2 made the create-target handler mint a fresh
+        # row every press (never reuse one, unlike `sample_bench.
+        # resolve_sample_target`'s own reuse-first behavior -- see that
+        # handler's own docstring), but a second click's auto-generated
+        # name is an opaque, `_unique_name`-suffixed string this test
+        # cannot pin `_TwoTargetFakeCaptureClient`'s distribution to --
+        # `second_target_id` needs the EXACT, known `_SECOND_TARGET_NAME`
+        # that fake keys off instead.
         second_target_id = evals_db.create_model(
             name=_SECOND_TARGET_NAME, provider="llama_cpp", model_id="m2"
         )
