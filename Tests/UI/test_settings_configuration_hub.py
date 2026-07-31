@@ -7658,3 +7658,36 @@ def test_footer_entries_testable_view_category_keeps_t_without_save_revert():
     assert "t" in keys
     assert "s" not in keys
     assert "r" not in keys
+
+
+@pytest.mark.asyncio
+async def test_theme_user_edit_does_not_remount_editor():
+    """A real color edit must keep the SAME editor instance mounted.
+
+    Qodo review of PR #1125: with theme_editor_modified as a recompose=True
+    reactive, the FIRST user edit posted ThemeModifiedStatus(True), the
+    screen recomposed, and the freshly-mounted editor discarded the
+    in-progress input -- then, storm-fix in place, the dirty flag stuck at
+    True with a clean editor. The dirty state must surface through targeted
+    refreshes instead (the InternalPromptsPanel.Modified idiom).
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        for _ in range(6):
+            await pilot.pause()
+        editor = screen.query_one("#settings-theme-editor")
+        target = editor.query_one("#settings-theme-color-primary", Input)
+        target.value = "#123456"
+        for _ in range(6):
+            await pilot.pause()
+        assert screen.query_one("#settings-theme-editor") is editor, (
+            "user edit recomposed the screen and replaced the editor"
+        )
+        assert target.value == "#123456"
+        assert screen.theme_editor_modified is True
+        note = screen.query_one("#settings-theme-unsaved-note", Static)
+        assert "Yes" in str(note.renderable)

@@ -65,6 +65,19 @@ cosmetic lie where merely opening Theme could report unsaved theme changes.
 Live-verified: CPU 0.0% with Theme open (was 56-62%), Theme → Storage →
 Theme → Console Behavior round-trips via the filter, all input responsive.
 The screen-level regression test pins editor identity across 12 settle
-pauses. Files: `tldw_chatbook/Widgets/settings_theme_editor.py`,
+pauses.
+
+Qodo review follow-up (confirmed real, TDD RED-first): with the editor
+posts honest, the screen's `theme_editor_modified` recompose=True reactive
+became the next defect — the FIRST real user edit remounted the editor,
+discarding the in-progress input and leaving the flag stale-True. Dropped
+recompose on that reactive; the two dependents (rail dirty marker,
+inspector "Unsaved theme changes" row, now id'd) refresh in place via
+`_refresh_theme_modified_widgets`, mirroring the InternalPromptsPanel
+targeted-refresh idiom. Live-verified: typed #123456 survives, inspector
+flips to Yes, rail shows `Theme *`, CPU idle.
+
+Files: `tldw_chatbook/Widgets/settings_theme_editor.py`,
+`tldw_chatbook/UI/Screens/settings_screen.py`,
 `Tests/UI/test_settings_theme_editor.py`,
 `Tests/UI/test_settings_configuration_hub.py`.

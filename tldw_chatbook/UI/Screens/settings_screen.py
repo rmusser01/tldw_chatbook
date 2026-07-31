@@ -1509,7 +1509,13 @@ class SettingsScreen(BaseAppScreen):
     category_search_query = reactive("")
     server_sync_workspace_handoff_rows = reactive((), recompose=True)
     manual_sync_rows = reactive((), recompose=True)
-    theme_editor_modified = reactive(False, recompose=True)
+    # Deliberately NOT recompose=True (Qodo review of PR #1125): a recompose
+    # here remounts the theme editor on the FIRST real user edit, discarding
+    # the in-progress input and leaving the flag stale-True against a clean
+    # editor. The two displays that read it (rail dirty marker, inspector
+    # row) refresh in place via _refresh_theme_modified_widgets, mirroring
+    # the InternalPromptsPanel.Modified idiom.
+    theme_editor_modified = reactive(False)
 
     #: TASK-366: sentinel copies for the provider Test result row.
     _PROVIDER_TEST_NOT_RUN_COPY = "Provider test has not run."
@@ -11391,7 +11397,11 @@ class SettingsScreen(BaseAppScreen):
             yield self._detail_row("Save target", "~/.config/tldw_cli/themes/")
             yield self._detail_row("Note", "Use the editor's own Apply/Save/Reset buttons.")
             modified = "Yes" if self.theme_editor_modified else "No"
-            yield self._detail_row("Unsaved theme changes", modified)
+            yield self._detail_row(
+                "Unsaved theme changes",
+                modified,
+                identifier="settings-theme-unsaved-note",
+            )
         elif summary.category is SettingsCategoryId.SPLASH_SCREEN:
             yield Static("Affects startup splash screen behavior.", classes="destination-section")
             yield Static("Focused field guide", classes="destination-section")
@@ -12037,7 +12047,26 @@ class SettingsScreen(BaseAppScreen):
     def handle_theme_modified_status(
         self, event: SettingsThemeEditor.ThemeModifiedStatus
     ) -> None:
+        if self.theme_editor_modified == event.is_modified:
+            return
         self.theme_editor_modified = event.is_modified
+        self._refresh_theme_modified_widgets()
+
+    def _refresh_theme_modified_widgets(self) -> None:
+        """In-place refresh of the Theme dirty displays (rail marker, inspector row).
+
+        Targeted updates, never a recompose -- a recompose would remount the
+        theme editor and wipe the very in-progress edit that raised this
+        notification (see the theme_editor_modified reactive's comment).
+        """
+        self._refresh_category_button_label(SettingsCategoryId.THEME)
+        try:
+            row = self.query_one("#settings-theme-unsaved-note", Static)
+        except QueryError:
+            pass
+        else:
+            modified = "Yes" if self.theme_editor_modified else "No"
+            row.update(f"Unsaved theme changes: {modified}")
 
     @on(InternalPromptsPanel.Modified)
     def _on_internal_prompts_modified(self, event: InternalPromptsPanel.Modified) -> None:

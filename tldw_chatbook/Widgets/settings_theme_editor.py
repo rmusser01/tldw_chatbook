@@ -415,7 +415,13 @@ class SettingsThemeEditor(Vertical):
 
     @on(Input.Changed)
     def on_color_input_changed(self, event: Input.Changed) -> None:
-        """Handle color input changes."""
+        """Handle color input changes.
+
+        Args:
+            event: The Input.Changed event from a color field; events whose
+                value matches the stored theme data are programmatic reloads
+                and do not mark the editor modified.
+        """
         if event.input.id and event.input.id.startswith("settings-theme-color-"):
             color_name = event.input.id[len("settings-theme-color-") :]
             color_value = event.value.strip()
@@ -437,7 +443,13 @@ class SettingsThemeEditor(Vertical):
 
     @on(Switch.Changed, "#settings-theme-dark-mode")
     def on_dark_mode_changed(self, event: Switch.Changed) -> None:
-        """Handle dark mode switch changes."""
+        """Handle dark mode switch changes.
+
+        Args:
+            event: The Switch.Changed event; an event whose value already
+                matches the loaded theme's dark flag is a programmatic sync
+                and does not mark the editor modified.
+        """
         if event.value == self.is_dark_theme:
             # _update_dark_mode_switch syncing the widget to the loaded
             # theme -- not a user edit.
