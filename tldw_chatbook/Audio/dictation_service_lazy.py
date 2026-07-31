@@ -147,7 +147,7 @@ class LazyLiveDictationService:
     #: `_transcribe_segment_audio` reads this unconditionally, so a service
     #: built via `__new__` without going through `start_dictation()` needs
     #: this class-level default too.
-    on_segment_transcribing: Optional[Callable[[], None]] = None
+    on_segment_transcribing: Optional[Callable[[bool], None]] = None
 
     # Privacy settings keys
     PRIVACY_KEY_PREFIX = "dictation.privacy"
@@ -471,7 +471,7 @@ class LazyLiveDictationService:
         on_state_change: Optional[Callable[[str], None]] = None,
         on_error: Optional[Callable[[Exception], None]] = None,
         on_command: Optional[Callable[[str], None]] = None,
-        on_segment_transcribing: Optional[Callable[[], None]] = None,
+        on_segment_transcribing: Optional[Callable[[bool], None]] = None,
         save_audio: bool = False,
     ) -> bool:
         """
@@ -479,14 +479,26 @@ class LazyLiveDictationService:
 
         Args:
             on_segment_transcribing: Fired from `_transcribe_segment_audio`,
-                on the processing thread, right when a (potentially
-                seconds-long) whole-segment transcription starts -- both at
-                the mid-capture silence gate and at the stop-path tail-fold.
-                Takes no arguments; see `on_segment_transcribing`'s use in
-                `_transcribe_segment_audio` for why there is nothing to say
-                yet. Never invoked for the streaming-transcriber regime,
-                whose `process_audio()` calls are cheap incremental pushes,
-                not a from-scratch transcription.
+                on the processing thread, TWICE per segment, symmetrically --
+                both at the mid-capture silence gate and at the stop-path
+                tail-fold -- with a single `bool` argument:
+
+                * `False` right when a (potentially seconds-long)
+                  whole-segment transcription starts.
+                * `True` right after that transcription call returns, on
+                  EVERY segment completion, including one that transcribes to
+                  blank/whitespace (routine for room noise or a too-short VAD
+                  sliver -- see `_transcribe_segment_audio`'s `if not
+                  produced_text:` branch). A blank result fires neither
+                  `on_partial_transcript` nor `on_final_transcript`, so
+                  without this second, unconditional signal a consumer that
+                  shows a "transcribing" indicator on `False` and hides it on
+                  the next partial/final would have nothing to hide it on --
+                  it would stay shown for the rest of the capture.
+
+                Never invoked for the streaming-transcriber regime, whose
+                `process_audio()` calls are cheap incremental pushes, not a
+                from-scratch transcription.
         """
         with self.state_lock:
             if self.state != DictationState.IDLE:
@@ -908,7 +920,7 @@ class LazyLiveDictationService:
         # gap under the segment-at-silence architecture -- no live partial
         # text, nothing -- so a multi-second transcription looks identical to
         # a dead capture without it.
-        self._notify_segment_transcribing()
+        self._notify_segment_transcribing(done=False)
         audio_data = b"".join(segment_audio)
         # Snapshot before the call and compare after, rather than reading
         # `current_transcript` alone post-call: this call is the only writer
@@ -927,6 +939,20 @@ class LazyLiveDictationService:
         self._process_audio_buffer(audio_data)
         with self.transcript_lock:
             produced_text = self.current_transcript != before
+        # Unconditional, and always the LAST thing this method does: a
+        # blank/whitespace-only result (routine -- see the log line below)
+        # fires neither `on_partial_transcript` nor `on_final_transcript`,
+        # since `_handle_partial_text` no-ops on blank input and
+        # `_finalize_current_segment()` no-ops on empty text. Without an
+        # unconditional completion signal here, a consumer that shows a
+        # "transcribing" indicator on the `done=False` call above and hides
+        # it on the next partial/final has nothing to hide it on for a blank
+        # segment -- it would stay shown for the rest of the capture (review
+        # finding M1). `_process_audio_buffer` never raises (it catches and
+        # reports through `on_error` internally), so this always runs
+        # immediately after it, symmetric with the `done=False` call above:
+        # exactly one of each per segment.
+        self._notify_segment_transcribing(done=True)
         if not produced_text:
             # Whisper-family models routinely return empty or whitespace-only
             # text for room noise or a too-short VAD sliver -- routine, not a
@@ -1327,17 +1353,24 @@ class LazyLiveDictationService:
             except Exception as e:
                 logger.error(f"Error callback error: {e}")
 
-    def _notify_segment_transcribing(self):
-        """Tell the caller a whole-segment transcription is starting.
+    def _notify_segment_transcribing(self, done: bool):
+        """Tell the caller a whole-segment transcription is starting or has ended.
 
-        Called only from `_transcribe_segment_audio`, on this thread, right
-        before the call that can take seconds. Advisory, like every other
+        Called only from `_transcribe_segment_audio`, on this thread: once
+        with `done=False` right before the call that can take seconds, once
+        with `done=True` right after it returns -- unconditionally, including
+        a blank/whitespace-only result (see that method for why the second
+        call must be unconditional). Advisory, like every other
         `_notify_*`/callback invocation in this class: never lets a raising
         callback escape into the processing loop.
+
+        Args:
+            done: False for the "started" signal, True for the "completed"
+                signal.
         """
         if self.on_segment_transcribing:
             try:
-                self.on_segment_transcribing()
+                self.on_segment_transcribing(done)
             except Exception as e:
                 logger.error(f"Segment-transcribing callback error: {e}")
 

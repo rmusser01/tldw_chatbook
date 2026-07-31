@@ -359,28 +359,46 @@ class VoiceFinal:
 
 @dataclass(frozen=True)
 class VoiceSegmentTranscribing:
-    """The silence gate closed a segment; its transcription is starting.
+    """The silence gate closed a segment; its transcription is starting or done.
 
     Recognizer-driven, exactly like `VoicePartial`: fired from
     `LazyLiveDictationService._transcribe_segment_audio`, on the processing
-    thread, right before the call that can take seconds
+    thread, TWICE per segment -- `done=False` right before the call that can
+    take seconds, `done=True` right after it returns, unconditionally
     (`dictation_service_lazy.py`'s module docstring has the measured
-    latencies). Under the segment-at-silence architecture there is otherwise
-    no signal at all in that gap -- no live partial text, nothing -- so
-    without this a multi-second pause between the silence pause and the next
-    `VoiceFinal`/`VoiceCommand` looks identical to a dead capture.
+    latencies, and `_transcribe_segment_audio`'s docstring has the
+    unconditional-completion rationale). Under the segment-at-silence
+    architecture there is otherwise no signal at all in that gap -- no live
+    partial text, nothing -- so without the `done=False` half a multi-second
+    pause between the silence pause and the next `VoiceFinal`/`VoiceCommand`
+    looks identical to a dead capture.
 
-    Carries no payload -- there is nothing to say yet, only that work has
-    started. Consumers show a transcribing indication until the next event
-    (a final, a command, or a state change) supersedes it; see
-    `ConsoleComposerBar.set_voice_segment_transcribing`.
+    The `done=True` half exists for a narrower but load-bearing reason
+    (review finding M1): a segment that transcribes to blank/whitespace --
+    routine for room noise or a too-short VAD sliver -- fires neither
+    `VoicePartial` nor `VoiceFinal`, so without an unconditional completion
+    signal a consumer that shows a transcribing indication on `done=False`
+    and clears it on the next final/command/state-change would have nothing
+    to clear it on; the indication would stick for the rest of the capture,
+    claiming work is in flight when it is not. Consumers therefore clear the
+    indication on `done=True` OR on the next final/command/state-change,
+    whichever comes first; see `ConsoleComposerBar.set_voice_segment_transcribing`.
+
+    Carries no payload beyond `done` -- there is nothing else to say.
 
     Not proof the recognizer produced anything: it only proves the silence
-    gate fired. `ConsoleStreamingDictationSession._handle_event` deliberately
-    does NOT set `_heard_recognizer_output` for this event -- see that
+    gate fired (and, for `done=True`, that the transcription call returned).
+    `ConsoleStreamingDictationSession._handle_event` deliberately does NOT
+    set `_heard_recognizer_output` for either half of this event -- see that
     method's docstring for why the distinction matters for the silent-capture
     messaging in `stop_and_transcribe()`.
+
+    Attributes:
+        done: False for the "started" signal, True for the "completed"
+            signal (fired unconditionally, blank result or not).
     """
+
+    done: bool = False
 
 
 @dataclass(frozen=True)
@@ -1018,8 +1036,8 @@ class ConsoleVoiceInputController:
                 on_final_transcript=lambda text, _gen=capture_generation: (
                     self._emit_capture_event(classify_segment(text), _gen)
                 ),
-                on_segment_transcribing=lambda _gen=capture_generation: (
-                    self._emit_capture_event(VoiceSegmentTranscribing(), _gen)
+                on_segment_transcribing=lambda done, _gen=capture_generation: (
+                    self._emit_capture_event(VoiceSegmentTranscribing(done=done), _gen)
                 ),
                 on_state_change=lambda _state: None,  # our state machine is authoritative
                 on_error=lambda error, _gen=capture_generation: self._report_service_error(

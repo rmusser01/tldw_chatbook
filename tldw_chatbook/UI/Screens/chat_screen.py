@@ -5165,17 +5165,21 @@ class ChatScreen(BaseAppScreen):
             return
         if isinstance(event, VoiceSegmentTranscribing):
             # The silence gate closed a segment and its (potentially
-            # seconds-long) transcription just started -- otherwise zero
-            # signal under the segment-at-silence architecture. Same staleness
+            # seconds-long) transcription just started (`event.done` False)
+            # or just ended (`event.done` True) -- otherwise zero signal
+            # under the segment-at-silence architecture. Same staleness
             # guard as `VoicePartial` just above: only while THIS capture is
-            # still actually recording. It reverts on the next event that
-            # lands, whichever comes first -- `set_voice_partial` (called by
-            # both the `VoiceFinal` and `VoiceCommand` branches below) clears
-            # it, and so does any `sync_dictation_state` lifecycle transition.
+            # still actually recording. The indication reverts on whichever
+            # comes first: this event's own `done=True` (review finding M1 --
+            # a segment that transcribes to blank fires neither a final nor a
+            # command, so this is sometimes the ONLY revert signal a capture
+            # ever gets), `set_voice_partial` (called by both the
+            # `VoiceFinal` and `VoiceCommand` branches below), or any
+            # `sync_dictation_state` lifecycle transition.
             if self._console_dictation_state == "recording":
                 composer = self._console_composer_or_none()
                 if composer is not None:
-                    composer.set_voice_segment_transcribing(True)
+                    composer.set_voice_segment_transcribing(not event.done)
             return
         if isinstance(event, VoiceFinal):
             # The segment is committed; the partial that previewed it is spent.
