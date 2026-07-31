@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-28
 **Status:** Approved; implementation plan written
-**Task:** TASK-1214
+**Task:** TASK-1538
 **Decision:** [ADR-036](../../../backlog/decisions/036-application-service-composition-lifecycle.md)
 **Reviewed baseline:** `origin/dev` at `61960f436`
 
@@ -91,8 +91,9 @@ pytest
 - Leave the existing post-construction Sync reassignment behavior unchanged.
 - Prove source and installed-distribution behavior with the production
   `TldwCli`.
-- Ensure the exact ChaChaNotes citation-provenance migration required by that
-  installed production path is explicit sdist and wheel runtime data.
+- Ensure the exact ChaChaNotes citation-provenance and character-authority
+  migrations required by that installed production path are explicit sdist
+  and wheel runtime data.
 - Keep the change small enough for one independently reviewable PR.
 
 ## Non-Goals
@@ -184,7 +185,7 @@ app.chat_conversation_scope_service.sync_scope_service
 
 The existing reassignment loop in
 `_wire_watchlists_and_notifications_services()` stays unchanged. It is not the
-mechanism used to make initial composition correct. TASK-1214 also does not
+mechanism used to make initial composition correct. TASK-1538 also does not
 claim that reinvoking the separate server-context provider helper preserves
 every service-provider identity.
 
@@ -243,11 +244,13 @@ The first RED execution of this probe exposed an additional prerequisite: the
 installed app reached the v26-to-v27 ChaChaNotes migration, but the wheel did
 not contain
 `tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql`.
-That file is read at runtime by `ChaChaNotes_DB.py`; the earlier packaging
-contract predated the migration and therefore did not require it. TASK-1214
-will add this exact file—not a recursive data catch-all—to the root manifest,
-setuptools package-data table, release checker, artifact tests, and packaging
-checklist under existing ADR-032.
+Current `dev` subsequently added the
+`tldw_chatbook/DB/migrations/chachanotes_v27_to_v28_character_authority.sql`
+runtime dependency. Both files are read at runtime by `ChaChaNotes_DB.py`; the
+earlier packaging contract predated them and therefore did not require them.
+TASK-1538 adds these two exact files—not a recursive data catch-all—to the root
+manifest, setuptools package-data table, release checker, artifact tests, and
+packaging checklist under existing ADR-032.
 
 #### Regression matrix
 
@@ -260,7 +263,7 @@ The implementation plan must include at least:
 - citation repository, migration, and coordinator identities in the new
   production-app test;
 - explicit sdist/wheel and release-checker coverage for the runtime
-  citation-provenance migration;
+  citation-provenance and character-authority migrations;
 - the installed-distribution suite;
 - compile, scoped Ruff lint/format, and `git diff --check`.
 
@@ -271,12 +274,12 @@ No `Tests/UI` surrogate application collection is used as evidence.
 ### Remaining legacy config providers
 
 The reviewed `app.py` AST contains 33 executable
-`Server*Service.from_config(...)` calls before TASK-1214. Writing accounts for
+`Server*Service.from_config(...)` calls before TASK-1538. Writing accounts for
 one, so the expected post-change executable inventory is 32. A separate
 docstring also names the RAG-admin compatibility constructor but is not an
 executable call. The remaining inventory requires a separate semantic audit
 because each service can expose different provider and shutdown behavior.
-TASK-1214 will record the post-change count but will not claim those providers
+TASK-1538 will record the post-change count but will not claim those providers
 are closed, rebound, or migrated.
 
 ### Broader service lifecycle
@@ -295,7 +298,7 @@ unavailable credential-store branch, but it does not exercise every retained
 domain service afterward. That helper is separate from the broad
 watchlist/notification composition helper that owns Sync. Determining whether
 provider wiring should be made reentrant, split into a pure builder, or
-replaced by narrow rebinding is separate from TASK-1214.
+replaced by narrow rebinding is separate from TASK-1538.
 
 ### Query fallback
 
@@ -312,7 +315,7 @@ regression explicit.
 
 ## Acceptance Mapping
 
-| TASK-1214 criterion | Design evidence |
+| TASK-1538 criterion | Design evidence |
 | --- | --- |
 | Single-pass stable Writing and Chat graphs | Sections 1 and 5 |
 | Writing uses the long-lived provider | Sections 2 and 4 |

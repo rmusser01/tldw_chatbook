@@ -12,7 +12,7 @@
 
 ## Inputs and constraints
 
-- Backlog task: [`TASK-1214`](../../../backlog/tasks/task-1214%20-%20Enforce-single-pass-service-composition-and-runtime-dependency-binding.md)
+- Backlog task: [`TASK-1538`](../../../backlog/tasks/task-1538%20-%20Enforce-single-pass-service-composition-and-runtime-dependency-binding.md)
 - Approved design: [`2026-07-28-application-service-composition-lifecycle-design.md`](../specs/2026-07-28-application-service-composition-lifecycle-design.md)
 - Governing decision: [`ADR-036`](../../../backlog/decisions/036-application-service-composition-lifecycle.md)
 - Reviewed baseline: `origin/dev` at `61960f436`
@@ -20,7 +20,7 @@
 - Preserve the existing post-construction Sync reassignment loop in `_wire_watchlists_and_notifications_services()`. The separate server-context provider helper remains non-reentrant.
 - Keep public `from_config(...)` compatibility constructors importable.
 - Do not use `Tests/Performance/test_app_startup_performance.py::test_conversation_wiring_attaches_migration_before_existing_artifact_coordinator` as evidence; it is a surrogate/unbound-method test. Replace its relevant citation-ordering evidence with identities observed on a full production app.
-- The installed RED run verified that `ChaChaNotes_DB.py` reads `tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql` at runtime while the current wheel omits it. Add that exact runtime file under ADR-032; do not broaden package data to a recursive catch-all.
+- The installed RED run verified that `ChaChaNotes_DB.py` reads `tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql` at runtime while the current wheel omits it. Current `dev` subsequently added the exact `tldw_chatbook/DB/migrations/chachanotes_v27_to_v28_character_authority.sql` runtime dependency. Package and enforce both exact assets under ADR-032; do not broaden package data to a recursive catch-all.
 - Do not commit the intentionally red state. Commit tests and the minimal implementation together after green verification.
 
 ## ADR check
@@ -35,12 +35,12 @@ Reason: The change defines application service construction, runtime provider ow
 
 - Create `Tests/ProductionApp/test_service_composition_lifecycle.py`: narrow AST sentinel plus full `TldwCli` construction/mount/unmount identity proof.
 - Modify `Tests/Packaging/test_installed_distribution.py`: extend the existing isolated installed-wheel child probe with the same call-count and identity contract.
-- Modify `MANIFEST.in`, `pyproject.toml`, and `Packaging/check_manifest.py`: declare and enforce the exact runtime citation-provenance migration in both artifacts.
+- Modify `MANIFEST.in`, `pyproject.toml`, and `Packaging/check_manifest.py`: declare and enforce the exact runtime citation-provenance and character-authority migrations in both artifacts.
 - Modify `Packaging/PACKAGING_CHECKLIST.md`: document the database migration runtime-data obligation.
 - Modify `tldw_chatbook/app.py`: remove the two duplicate calls, use `server_context_provider` for Writing, and inject Sync into Chat and Media scopes.
 - Modify `Docs/superpowers/specs/2026-07-28-application-service-composition-lifecycle-design.md`: record final implementation status and verification evidence.
 - Modify `Docs/superpowers/plans/2026-07-28-application-service-composition-lifecycle.md`: check completed steps and record exact command evidence.
-- Modify `backlog/tasks/task-1214 - Enforce-single-pass-service-composition-and-runtime-dependency-binding.md`: check acceptance criteria, add concise implementation notes, and set Done only after every required check succeeds.
+- Modify `backlog/tasks/task-1538 - Enforce-single-pass-service-composition-and-runtime-dependency-binding.md`: check acceptance criteria, add concise implementation notes, and set Done only after every required check succeeds.
 
 ### Task 1: Add red source, production-app, and installed-wheel contracts
 
@@ -379,7 +379,7 @@ assertion. The child also logs a deterministic missing-file failure for
 `chachanotes_v26_to_v27_citation_provenance.sql`; Task 2 repairs that verified
 installed-runtime prerequisite before the application wiring change.
 
-### Task 2: Repair the installed migration-asset contract
+### Task 2: Repair the installed migration-asset contracts
 
 **Files:**
 
@@ -389,7 +389,7 @@ installed-runtime prerequisite before the application wiring change.
 - Modify: `Packaging/check_manifest.py`
 - Modify: `Packaging/PACKAGING_CHECKLIST.md`
 
-- [x] **Step 1: Add the exact migration to artifact expectations**
+- [x] **Step 1: Add the exact migrations to artifact expectations**
 
 Define this test constant:
 
@@ -398,18 +398,26 @@ CITATION_MIGRATION_PATH = (
     "tldw_chatbook/DB/migrations/"
     "chachanotes_v26_to_v27_citation_provenance.sql"
 )
+CHARACTER_AUTHORITY_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/"
+    "chachanotes_v27_to_v28_character_authority.sql"
+)
+RUNTIME_MIGRATION_PATHS = {
+    CITATION_MIGRATION_PATH,
+    CHARACTER_AUTHORITY_MIGRATION_PATH,
+}
 ```
 
-Add `CITATION_MIGRATION_PATH` to both `required_sdist` and `required_wheel` in
+Add `RUNTIME_MIGRATION_PATHS` to both `required_sdist` and `required_wheel` in
 `test_built_artifacts_match_distribution_contract`.
 
 - [x] **Step 2: Add a release-checker removal regression**
 
-Add a focused test that copies the built distributions, rewrites the wheel
-without `CITATION_MIGRATION_PATH`, runs `Packaging/check_manifest.py`, and
-asserts return code `1` plus the exact missing path in output. Use the same
-standard-library archive rewrite pattern as
-`test_release_checker_rejects_missing_runtime_data`.
+Add a focused parameterized test that copies the built distributions, rewrites
+the wheel without each member of `RUNTIME_MIGRATION_PATHS`, runs
+`Packaging/check_manifest.py`, and asserts return code `1` plus the exact
+missing path in output. Use the same standard-library archive rewrite pattern
+as `test_release_checker_rejects_missing_runtime_data`.
 
 - [x] **Step 3: Verify the artifact expectation is RED**
 
@@ -419,15 +427,16 @@ Run:
 ../../.venv/bin/python -m pytest Tests/Packaging/test_installed_distribution.py::test_built_artifacts_match_distribution_contract -q
 ```
 
-Expected: FAIL because the exact migration is absent from both freshly built
+Expected: FAIL because the exact migrations are absent from both freshly built
 artifacts.
 
-- [x] **Step 4: Declare the exact runtime file**
+- [x] **Step 4: Declare the exact runtime files**
 
 Add this exact root-manifest entry:
 
 ```text
 include tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql
+include tldw_chatbook/DB/migrations/chachanotes_v27_to_v28_character_authority.sql
 ```
 
 Add this exact setuptools package-data owner:
@@ -435,13 +444,14 @@ Add this exact setuptools package-data owner:
 ```toml
 "tldw_chatbook.DB" = [
     "migrations/chachanotes_v26_to_v27_citation_provenance.sql",
+    "migrations/chachanotes_v27_to_v28_character_authority.sql",
 ]
 ```
 
 Do not enable `include-package-data` and do not package every SQL or migration
 file.
 
-- [x] **Step 5: Verify the fresh artifacts now contain the migration**
+- [x] **Step 5: Verify the fresh artifacts now contain the migrations**
 
 Run the Step 3 command again.
 
@@ -455,13 +465,13 @@ Run:
 ../../.venv/bin/python -m pytest Tests/Packaging/test_installed_distribution.py::test_release_checker_rejects_missing_database_migration -q
 ```
 
-Expected: FAIL because the checker does not yet require the removed file.
+Expected: FAIL because the checker does not yet require the removed files.
 
-- [x] **Step 7: Enforce the migration in the reusable checker**
+- [x] **Step 7: Enforce the migrations in the reusable checker**
 
-Add the exact migration path to `REQUIRED_SDIST_PATHS` and
+Add both exact migration paths to `REQUIRED_SDIST_PATHS` and
 `REQUIRED_WHEEL_PATHS` in `Packaging/check_manifest.py`. Update
-`Packaging/PACKAGING_CHECKLIST.md` to name the packaged runtime migration.
+`Packaging/PACKAGING_CHECKLIST.md` to name the packaged runtime migrations.
 
 - [x] **Step 8: Verify the packaging contracts**
 
@@ -486,7 +496,7 @@ Run:
 ```
 
 Expected: FAIL only on the guarded helper count; the installed ChaChaNotes
-migration completes and no missing migration path appears in child output.
+migrations complete and no missing migration path appears in child output.
 
 ### Task 3: Apply the minimal composition-root repair
 
@@ -776,7 +786,7 @@ git diff origin/dev...HEAD -- \
   Docs/superpowers/specs/2026-07-28-application-service-composition-lifecycle-design.md \
   Docs/superpowers/plans/2026-07-28-application-service-composition-lifecycle.md \
   backlog/decisions/036-application-service-composition-lifecycle.md \
-  "backlog/tasks/task-1214 - Enforce-single-pass-service-composition-and-runtime-dependency-binding.md"
+  "backlog/tasks/task-1538 - Enforce-single-pass-service-composition-and-runtime-dependency-binding.md"
 ```
 
 Confirm:
@@ -797,7 +807,7 @@ Confirm:
 
 - Modify: `Docs/superpowers/specs/2026-07-28-application-service-composition-lifecycle-design.md`
 - Modify: `Docs/superpowers/plans/2026-07-28-application-service-composition-lifecycle.md`
-- Modify: `backlog/tasks/task-1214 - Enforce-single-pass-service-composition-and-runtime-dependency-binding.md`
+- Modify: `backlog/tasks/task-1538 - Enforce-single-pass-service-composition-and-runtime-dependency-binding.md`
 
 - [ ] **Step 1: Record implementation evidence**
 
@@ -807,7 +817,7 @@ containing:
 - the implementation commit;
 - the exact focused and aggregate pytest results;
 - the explicit sdist/wheel/runtime-checker result for the packaged
-  citation-provenance migration;
+  citation-provenance and character-authority migrations;
 - compile/Ruff/diff-check results;
 - the post-change count of 32 executable
   `Server*Service.from_config(...)` app calls;
@@ -823,7 +833,7 @@ Use the Backlog CLI to:
    and Sync binding, production/installed tests, and ADR-036;
 3. record the verification commands/results and the 32-call remaining
    inventory;
-4. set TASK-1214 to Done only after all tests and static checks are green.
+4. set TASK-1538 to Done only after all tests and static checks are green.
 
 Do not hand-edit generated Backlog front matter and do not mark Done before
 the Definition of Done is actually satisfied.
@@ -834,8 +844,8 @@ the Definition of Done is actually satisfied.
 git add \
   Docs/superpowers/specs/2026-07-28-application-service-composition-lifecycle-design.md \
   Docs/superpowers/plans/2026-07-28-application-service-composition-lifecycle.md \
-  "backlog/tasks/task-1214 - Enforce-single-pass-service-composition-and-runtime-dependency-binding.md"
-git commit -m "docs: close TASK-1214 service composition lifecycle"
+  "backlog/tasks/task-1538 - Enforce-single-pass-service-composition-and-runtime-dependency-binding.md"
+git commit -m "docs: close TASK-1538 service composition lifecycle"
 ```
 
 ### Task 6: Rebase, review the PR, and merge
@@ -843,7 +853,7 @@ git commit -m "docs: close TASK-1214 service composition lifecycle"
 **Files:**
 
 - No planned source changes; any review-driven change must remain within
-  TASK-1214 acceptance criteria or update the task before implementation.
+  TASK-1538 acceptance criteria or update the task before implementation.
 
 - [ ] **Step 1: Rebase onto the latest remote development branch**
 
@@ -886,8 +896,8 @@ Expected: all commands exit `0`.
 
 - [ ] **Step 3: Push and open a ready PR**
 
-Push `codex/task-1214-service-composition` and create a non-draft pull request
-against `dev`. The PR body must link TASK-1214 and ADR-036, summarize the
+Push `codex/task-1538-service-composition` and create a non-draft pull request
+against `dev`. The PR body must link TASK-1538 and ADR-036, summarize the
 verified defect and bounded repair, list the real-production-app and
 installed-wheel evidence, and state the 32-call legacy-provider follow-up
 inventory.
@@ -903,7 +913,7 @@ required CI checks. For each comment:
 4. reply with the exact commit/evidence;
 5. resolve the thread only after the pushed fix is visible.
 
-If a requested change expands TASK-1214, update its acceptance criteria before
+If a requested change expands TASK-1538, update its acceptance criteria before
 implementation or create a separate Backlog task.
 
 - [ ] **Step 5: Rebase once more and merge**

@@ -72,6 +72,7 @@ def _build_full_study_app(app_instance):
     """Build the production application with deterministic Study collaborators."""
     app = _build_test_app()
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app._initial_tab_value = "study"
     app.study_scope_service = DashboardStudyScopeService()
     app.study_quiz_scope_service = DashboardQuizScopeService()
@@ -216,7 +217,7 @@ async def test_pending_scope_context_overrides_restored_state_for_activation():
     window = _build_window()
     screen.query_one = Mock(return_value=window)  # type: ignore[method-assign]
 
-    await screen.on_mount()
+    await screen._load_after_mount_inner()
 
     assert screen.current_scope.scope_type == StudyScopeType.WORKSPACE
     assert screen.current_scope.workspace_id == "workspace-9"
@@ -254,7 +255,7 @@ async def test_workspace_scope_missing_workspace_id_is_scoped_error_not_global_f
     screen = StudyScreen(app_instance=app_instance)
     screen.query_one = Mock(return_value=_build_window())  # type: ignore[method-assign]
 
-    await screen.on_mount()
+    await screen._load_after_mount_inner()
 
     assert screen.current_scope.scope_type == StudyScopeType.WORKSPACE
     assert screen.current_scope.workspace_id is None
@@ -281,7 +282,7 @@ async def test_workspace_scope_derives_unavailable_in_local_mode():
     screen = StudyScreen(app_instance=app_instance)
     screen.query_one = Mock(return_value=_build_window())  # type: ignore[method-assign]
 
-    await screen.on_mount()
+    await screen._load_after_mount_inner()
 
     assert screen.current_scope.scope_type == StudyScopeType.WORKSPACE
     assert screen.current_scope.workspace_scope_available is False
@@ -329,7 +330,7 @@ async def test_pending_scope_is_applied_before_initialize_on_mount():
     )
     screen.query_one = Mock(return_value=window)  # type: ignore[method-assign]
 
-    await screen.on_mount()
+    await screen._load_after_mount_inner()
 
     assert call_order.index("flashcards_scope_changed") < call_order.index("initialize")
     assert call_order.index("quizzes_scope_changed") < call_order.index("initialize")
@@ -384,7 +385,7 @@ async def test_scope_change_path_attaches_and_invokes_controller_seams():
 
     screen.query_one = Mock(return_value=window)  # type: ignore[method-assign]
 
-    await screen.on_mount()
+    await screen._load_after_mount_inner()
 
     assert callable(window.flashcards_controller.handle_scope_changed)
     assert callable(window.quizzes_controller.handle_scope_changed)
@@ -485,7 +486,7 @@ async def test_scope_change_awaits_end_review_session_before_reset():
     )
     screen.query_one = Mock(return_value=window)  # type: ignore[method-assign]
 
-    await screen.on_mount()
+    await screen._load_after_mount_inner()
     call_order.clear()
 
     await screen.handle_runtime_backend_changed("local")
@@ -527,7 +528,7 @@ async def test_handle_runtime_backend_changed_recomputes_workspace_scope_state()
     )
     screen.query_one = Mock(return_value=window)  # type: ignore[method-assign]
 
-    await screen.on_mount()
+    await screen._load_after_mount_inner()
     call_order.clear()
 
     await screen.handle_runtime_backend_changed("local")
@@ -545,7 +546,9 @@ async def test_handle_runtime_backend_changed_recomputes_workspace_scope_state()
 
 
 @pytest.mark.asyncio
-async def test_app_level_runtime_backend_callback_updates_backend_and_forwards(tmp_path):
+async def test_app_level_runtime_backend_callback_updates_backend_and_forwards(
+    tmp_path,
+):
     app_instance = SimpleNamespace(
         current_runtime_backend="local",
         runtime_backend="local",

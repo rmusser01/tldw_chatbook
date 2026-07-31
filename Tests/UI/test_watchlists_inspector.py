@@ -30,7 +30,9 @@ from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_watchlists_item_actions import OTHER_ENTITIES, REAL_ITEM
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.Subscriptions.noise_defaults import DEFAULT_IGNORE_SELECTORS
-from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
+from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+    WatchlistsCollectionsScreen,
+)
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     BreadcrumbScopeSelected,
     InspectorPane,
@@ -43,7 +45,10 @@ from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import (
 )
 from tldw_chatbook.UI.Watchlists_Modules.rules_pane import RuleSelected
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
-from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+    TreeScope,
+    TreeScopeChanged,
+)
 
 # Whole-branch review (Important): without this, CI's `pytest -m unit` run
 # DESELECTS this entire module. See the identical note in
@@ -144,6 +149,7 @@ async def test_selecting_run_updates_inspector_actions():
         await pilot.pause()
 
         from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
+
         runs_pane = screen.query_one("#watchlists-runs-pane", RunsPane)
         runs_pane.runs = runs
         await pilot.pause()
@@ -352,7 +358,9 @@ async def test_tree_scope_reaching_screen_populates_inspector_breadcrumb():
         # no matching row is found.
         screen._tree_watchlists = [{"id": 7, "name": "Morning AI Brief"}]
 
-        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7)))
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7))
+        )
         await pilot.pause()
 
         inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
@@ -382,7 +390,9 @@ async def test_inspector_breadcrumb_survives_a_left_rail_toggle():
         screen = host.screen_stack[-1]
 
         screen._tree_watchlists = [{"id": 7, "name": "Morning AI Brief"}]
-        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7)))
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7))
+        )
         await pilot.pause()
 
         await pilot.press("[")
@@ -425,7 +435,9 @@ async def test_changing_scope_clears_a_stale_entity_selection():
             {"id": 2, "name": "Second Watchlist"},
         ]
 
-        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1)))
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1))
+        )
         await pilot.pause()
         screen.post_message(ItemSelected({"item_id": "item-1", "title": "RAG Eval"}))
         await pilot.pause()
@@ -436,7 +448,9 @@ async def test_changing_scope_clears_a_stale_entity_selection():
         # are showing.
         assert inspector.query_one("#inspector-ingest-button", Button)
 
-        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=2)))
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=2))
+        )
         await pilot.pause()
 
         assert screen.selected_entity is None, (
@@ -499,7 +513,9 @@ async def test_watchlist_level_actions_are_disabled_not_silently_broken():
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
 
-        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1)))
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1))
+        )
         await pilot.pause()
 
         inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
@@ -580,7 +596,9 @@ async def test_stale_notification_mirror_does_not_resurrect_under_a_new_scope():
             "any other pane-selected entity"
         )
 
-        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1)))
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1))
+        )
         await pilot.pause()
 
         screen.post_message(RefreshNotificationsRequested())
@@ -624,7 +642,9 @@ async def test_apply_tree_scope_clears_all_persisted_selection_shadows():
         screen.selected_run = {"id": "run-1", "status": "completed"}
         screen.selected_notification = {"id": 7, "title": "Research complete"}
 
-        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1)))
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1))
+        )
         await pilot.pause()
 
         assert screen.selected_source is None
@@ -803,7 +823,9 @@ async def test_the_editor_renders_only_for_url_family_sources():
         assert not inspector.query("#inspector-noise-selectors")
 
         screen.post_message(
-            RuleSelected({"rule_id": 3, "name": "Price drop", "condition_type": "keyword"})
+            RuleSelected(
+                {"rule_id": 3, "name": "Price drop", "condition_type": "keyword"}
+            )
         )
         await pilot.pause()
         assert inspector.query_one("#inspector-edit-rule-button", Button), (
@@ -915,9 +937,7 @@ async def test_the_editor_fits_on_screen_with_the_source_actions(selectors, size
         # Measured off the painted strip rather than off `field.border_title`,
         # because the attribute holds the full string whether or not it fits:
         # only `render_lines` knows what the user actually sees.
-        top_border = field.render_lines(
-            Region(0, 0, field.outer_size.width, 1)
-        )[0].text
+        top_border = field.render_lines(Region(0, 0, field.outer_size.width, 1))[0].text
         assert "…" not in top_border, (
             f"the noise field's border title is truncated at {size[0]}x{size[1]}: "
             f"{top_border!r} -- shorten the label, do not widen the rail"
@@ -981,9 +1001,9 @@ async def test_saving_selectors_makes_the_next_check_rebaseline(monkeypatch):
         screen = host.screen_stack[-1]
 
         assert _dispositions(await _check(service, source_id)) == _counts(baseline=1)
-        assert _dispositions(await _check(service, source_id)) == _counts(unchanged=1), (
-            "precondition: the served page does not change between checks"
-        )
+        assert _dispositions(await _check(service, source_id)) == _counts(
+            unchanged=1
+        ), "precondition: the served page does not change between checks"
 
         await _select_real_source(pilot, screen, source_id)
         await _save_selectors(pilot, screen, ".ad\n.promo")
@@ -1002,9 +1022,9 @@ async def test_saving_selectors_makes_the_next_check_rebaseline(monkeypatch):
         )
         assert _stored_items(db, source_id) == [], "no phantom item may be stored"
 
-        assert _dispositions(await _check(service, source_id)) == _counts(unchanged=1), (
-            "and once re-baselined the very next check compares normally"
-        )
+        assert _dispositions(await _check(service, source_id)) == _counts(
+            unchanged=1
+        ), "and once re-baselined the very next check compares normally"
 
         # Fix round 1 (Minor 3): the `reason`, off the disposition dict the
         # aggregated run counts deliberately cannot carry. A second save --
@@ -1066,12 +1086,16 @@ async def test_saving_selectors_does_not_recompose_the_screen():
             await pilot.pause()
 
         assert sources_pane.is_attached and table.is_attached
-        assert screen.query_one("#watchlists-sources-pane", SourcesPane) is sources_pane, (
+        assert (
+            screen.query_one("#watchlists-sources-pane", SourcesPane) is sources_pane
+        ), (
             "saving selectors must not rebuild the screen's regions -- the "
             "same SourcesPane instance must still be mounted"
         )
         assert sources_pane.query_one("#sources-table", DataTable) is table
-        assert screen.query_one("#watchlists-entity-inspector", InspectorPane) is inspector
+        assert (
+            screen.query_one("#watchlists-entity-inspector", InspectorPane) is inspector
+        )
         assert inspector.query_one("#inspector-noise-selectors", TextArea) is field, (
             "not even the Inspector may recompose: the entity dict is patched "
             "in place, so the field the user is typing in survives the save"
@@ -1079,7 +1103,10 @@ async def test_saving_selectors_does_not_recompose_the_screen():
 
         # The in-place patch is the reason no rebuild is needed -- the entity
         # every surface holds already reports the saved value.
-        assert InspectorPane._ignore_selectors_text(screen.selected_entity) == ".ad\n.promo"
+        assert (
+            InspectorPane._ignore_selectors_text(screen.selected_entity)
+            == ".ad\n.promo"
+        )
 
 
 @pytest.mark.asyncio
@@ -1185,13 +1212,9 @@ async def test_a_save_with_an_unparseable_selector_is_refused_and_says_why():
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
         await _select_real_source(pilot, screen, source_id)
-        # `host`, not `app`: the refusal is raised by the PANE, and a widget's
-        # `self.app` is the running App -- which under `DestinationHarness` is
-        # `host`, while `app` is only the mock instance handed to the screen.
-        # The screen-level toasts elsewhere in this module go through `app`
-        # because the screen holds that instance explicitly; patching the wrong
-        # one here captures nothing and looks like a missing toast.
-        host.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+        # `FullAppDestinationContext` now runs the real TldwCli directly, so
+        # the pane's `self.app` and the screen's `app_instance` are both `app`.
+        app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
 
         await _save_selectors(pilot, screen, ".ad\n:::nonsense\n.promo")
         for _ in range(30):
@@ -1245,9 +1268,7 @@ async def test_the_inspector_still_saves_every_shipped_default_selector():
         host.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
         app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
 
-        wanted = "\n".join(
-            (*DEFAULT_IGNORE_SELECTORS, ':is(.a, .b)', '[data-x="a,b"]')
-        )
+        wanted = "\n".join((*DEFAULT_IGNORE_SELECTORS, ":is(.a, .b)", '[data-x="a,b"]'))
         await _save_selectors(pilot, screen, wanted)
         for _ in range(40):
             await pilot.pause()

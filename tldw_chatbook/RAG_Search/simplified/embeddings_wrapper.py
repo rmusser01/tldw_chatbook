@@ -854,29 +854,11 @@ class EmbeddingsServiceWrapper:
         This is useful when switching models or freeing memory.
         """
         try:
-            # Close the current factory
-            self.factory.close()
-
-            # Reinitialize with same configuration
-            config_dict = self._build_config(
-                self.model_name,
-                self.device,
-                self._api_key,
-                self._base_url,
-                self._cache_dir,
-            )
-
-            # Import and validate configuration
-            from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingConfigSchema
-
-            validated_config = EmbeddingConfigSchema(**config_dict)
-
-            self.factory = EmbeddingFactory(
-                cfg=validated_config,
-                max_cached=self._cache_size,
-                idle_seconds=900,
-                allow_dynamic_hf=True,
-            )
+            if self.factory is not None:
+                self.factory.close()
+            self.factory = None
+            self._embedding_dimension = None
+            self._ensure_initialized()
 
             logger.info("Cleared embeddings cache and reinitialized")
         except Exception as e:

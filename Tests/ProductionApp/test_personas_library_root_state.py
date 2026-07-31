@@ -442,7 +442,7 @@ async def test_real_library_prompt_insert_reaches_console_composer(
         async with app.run_test(size=(150, 48)) as pilot:
             saved = await app.prompt_scope_service.save_prompt(
                 mode="local",
-                name="TASK-1214 production Console handoff",
+                name="TASK-1538 production Console handoff",
                 user_prompt=prompt_body,
             )
             prompt_id = saved["local_id"]

@@ -3,7 +3,7 @@
 Status: Accepted
 Date: 2026-07-28
 Related Tasks:
-[TASK-1214](../tasks/task-1214%20-%20Enforce-single-pass-service-composition-and-runtime-dependency-binding.md)
+[TASK-1538](../tasks/task-1538%20-%20Enforce-single-pass-service-composition-and-runtime-dependency-binding.md)
 
 ## Decision
 
@@ -69,11 +69,11 @@ legacy loop repairs Media after construction.
 A focused test separately invokes the private server-context provider helper
 after construction to exercise an unavailable credential-store branch. That
 second invocation is not a production call path and does not prove the wider
-provider graph is safe to replace. TASK-1214 does not define or repair a
+provider graph is safe to replace. TASK-1538 does not define or repair a
 reentrant provider-wiring contract.
 
 There are additional app call sites that use `Server*Service.from_config(...)`.
-TASK-1214 records that inventory as separate follow-up work. Correcting every
+TASK-1538 records that inventory as separate follow-up work. Correcting every
 provider and shutdown contract in the same change would turn a verified
 single-pass repair into an application-wide lifecycle migration.
 
@@ -117,6 +117,6 @@ single-pass repair into an application-wide lifecycle migration.
 
 ## Links
 
-- [TASK-1214 design](../../Docs/superpowers/specs/2026-07-28-application-service-composition-lifecycle-design.md)
+- [TASK-1538 design](../../Docs/superpowers/specs/2026-07-28-application-service-composition-lifecycle-design.md)
 - [ADR-033: Application Session State Ownership](033-application-session-state-ownership.md)
 - [ADR-032: Immutable Installed Distribution Assets](032-immutable-installed-distribution-assets.md)

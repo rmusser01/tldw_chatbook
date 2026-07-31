@@ -1806,9 +1806,7 @@ async def test_console_settings_modal_inputs_keep_visible_content_row_when_unfoc
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_renders_context_and_single_identity_row() -> (
-    None
-):
+async def test_console_settings_modal_renders_context_and_single_identity_row() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
@@ -2989,10 +2987,7 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
             "#console-inspector-source-readiness-heading"
         )
         for _ in range(40):
-            if (
-                staged_context.region.height > 0
-                and readiness_heading.region.height > 0
-            ):
+            if staged_context.region.height > 0 and readiness_heading.region.height > 0:
                 break
             await pilot.pause(0.05)
         assert staged_context.region.y == rail_body.region.y
@@ -3571,7 +3566,7 @@ def test_console_readiness_uses_saved_session_settings_over_stale_global_provide
     assert provider_row.recovery == ""
 
 
-def test_console_control_state_reads_existing_persona_presentation_from_active_session(
+def test_console_control_state_reads_persona_label_without_storing_it_on_session(
     monkeypatch,
 ) -> None:
     app = _build_test_app()
@@ -3591,9 +3586,12 @@ def test_console_control_state_reads_existing_persona_presentation_from_active_s
     state = screen._build_console_control_state(None)
 
     assert state.assistant_label == "Persona: Guide"
-    assert "assistant_kind" not in session.__dataclass_fields__
+    assert session.assistant_kind == "generic"
+    assert session.assistant_id == "console"
+    assert session.assistant_authority_id is None
+    assert "assistant_kind" in session.__dataclass_fields__
+    assert "assistant_id" in session.__dataclass_fields__
     assert "assistant_name" not in session.__dataclass_fields__
-    assert "assistant_id" not in session.__dataclass_fields__
 
 
 def test_console_saved_openai_with_key_shows_ready_readiness() -> None:
@@ -4743,9 +4741,12 @@ def test_save_as_default_model_agrees_across_config_sections() -> None:
 
 def test_discovery_status_renders_next_to_the_discover_button() -> None:
     """Feedback must sit with the control that produced it, not below another field."""
-    source = Path(
-        chat_screen_module.__file__
-    ).resolve().parents[2] / "Widgets" / "Console" / "console_settings_modal.py"
+    source = (
+        Path(chat_screen_module.__file__).resolve().parents[2]
+        / "Widgets"
+        / "Console"
+        / "console_settings_modal.py"
+    )
     text = source.read_text()
 
     status_pos = text.index("id=MODEL_DISCOVER_STATUS_ID,")

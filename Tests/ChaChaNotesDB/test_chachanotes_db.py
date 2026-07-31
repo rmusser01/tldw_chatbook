@@ -249,6 +249,8 @@ class TestDBInitialization:
             "rag_identity_context",
         ):
             conn.execute(f"DROP TABLE {table}")
+        # A V17 fixture also predates the V27->V28 character-authority column.
+        conn.execute("ALTER TABLE conversations DROP COLUMN assistant_authority_id")
         conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
         conn.execute(
             "UPDATE db_schema_version SET version = 17 WHERE schema_name = ?",

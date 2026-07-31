@@ -157,6 +157,7 @@ async def test_study_screen_consumes_pending_initial_section(
     _disable_splash(monkeypatch)
     app = TldwCli()
     app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app._initial_tab_value = "home"
 
     try:

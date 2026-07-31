@@ -53,10 +53,23 @@ def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
     return app
 
 
-async def _wait_for_screen(app: TldwCli, pilot, screen_type):
+async def _wait_for_screen(
+    app: TldwCli,
+    pilot,
+    screen_type,
+    *,
+    selector: str | None = None,
+):
     for _ in range(300):
-        if isinstance(app.screen, screen_type):
-            return app.screen
+        screen = app.screen
+        if isinstance(screen, screen_type) and (
+            selector is None or bool(screen.query(selector))
+        ):
+            await pilot.pause()
+            if app.screen is screen and (
+                selector is None or bool(screen.query(selector))
+            ):
+                return screen
         await pilot.pause(0.01)
     raise AssertionError(f"production TldwCli did not mount {screen_type.__name__}")
 
@@ -92,7 +105,12 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
 
     try:
         async with app.run_test(size=(140, 48)) as pilot:
-            chat = await _wait_for_screen(app, pilot, ChatScreen)
+            chat = await _wait_for_screen(
+                app,
+                pilot,
+                ChatScreen,
+                selector="#console-session-surface",
+            )
             chat.query_one("#console-session-surface", ConsoleSessionSurface)
             composer = chat.query_one("#console-native-composer", ConsoleComposerBar)
             chat.query_one("#console-command-input", Input)
@@ -109,7 +127,12 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
             app.post_message(NavigateToScreen("settings"))
             await _wait_for_screen(app, pilot, SettingsScreen)
             app.post_message(NavigateToScreen("chat"))
-            restored_chat = await _wait_for_screen(app, pilot, ChatScreen)
+            restored_chat = await _wait_for_screen(
+                app,
+                pilot,
+                ChatScreen,
+                selector="#console-session-surface",
+            )
 
             restored_chat.query_one(
                 "#console-session-surface",
@@ -148,26 +171,27 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
         "_start_character_console_session",
         wait_before_native_staging,
     )
-    app.pending_handoffs.stage(
-        HandoffChannel.CHAT,
-        _chat_handoff("first"),
-    )
 
     try:
         async with app.run_test(size=(140, 48)) as pilot:
-            chat = await _wait_for_screen(app, pilot, ChatScreen)
-            await first_started.wait()
+            chat = await _wait_for_screen(
+                app,
+                pilot,
+                ChatScreen,
+                selector="#console-session-surface",
+            )
+            app.pending_handoffs.stage(
+                HandoffChannel.CHAT,
+                _chat_handoff("first"),
+            )
+            first_consumer = asyncio.create_task(chat._consume_pending_chat_handoff())
+            await asyncio.wait_for(first_started.wait(), timeout=6.0)
             app.pending_handoffs.stage(
                 HandoffChannel.CHAT,
                 _chat_handoff("replacement"),
             )
             continue_first.set()
-            for _ in range(300):
-                if not chat._handoff_consumption_in_progress:
-                    break
-                await pilot.pause(0.01)
-            else:
-                raise AssertionError("first Chat handoff did not settle")
+            await asyncio.wait_for(first_consumer, timeout=6.0)
 
             assert app.pending_handoffs.has_pending(HandoffChannel.CHAT)
             assert chat._pending_console_launch_context is not None
@@ -221,7 +245,7 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
                 cancelled_consumer = asyncio.create_task(
                     chat._consume_pending_chat_handoff()
                 )
-                await cancellation_started.wait()
+                await asyncio.wait_for(cancellation_started.wait(), timeout=6.0)
                 cancelled_consumer.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await cancelled_consumer
@@ -241,7 +265,12 @@ async def test_native_console_prompt_handoff_releases_transient_and_acknowledges
 
     try:
         async with app.run_test(size=(140, 48)) as pilot:
-            chat = await _wait_for_screen(app, pilot, ChatScreen)
+            chat = await _wait_for_screen(
+                app,
+                pilot,
+                ChatScreen,
+                selector="#console-session-surface",
+            )
 
             monkeypatch.setattr(
                 chat, "_console_setup_blocked_reason", lambda: "blocked"

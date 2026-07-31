@@ -89,8 +89,7 @@ def _assert_console_density_evidence(svg: str) -> None:
     normalized_svg = unescape(svg).replace("\xa0", " ")
     assert normalized_svg.count("Provider:") == 1
     assert normalized_svg.count("Model:") == 1
-    assert normalized_svg.count("Character:") == 1
-    assert normalized_svg.count("You:") == 1
+    assert normalized_svg.count("Assistant:") == 1
     assert "RAG:" in normalized_svg
     assert "Sources:" in normalized_svg
     assert "Tools:" in normalized_svg

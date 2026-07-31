@@ -3236,8 +3236,8 @@ async def test_console_control_bar_renders_readable_summary_line():
 
         assert "Provider:" in plain
         assert " | Model:" in plain
-        assert " | Character:" in plain
-        assert " | You:" in plain
+        assert " | Assistant:" in plain
+        assert " | RAG:" in plain
         assert " | Sources:" in plain
 
 
@@ -3300,8 +3300,7 @@ async def test_console_native_control_bar_and_staged_context_reflect_pending_han
         text = _visible_text(console)
         assert "Provider:" in text
         assert "Model:" in text
-        assert "Character: none" in text
-        assert "You: General" in text
+        assert "Assistant: General" in text
         assert "RAG:" in text
         assert "Sources: 1 staged" in text
         assert "Transformer notes" in text
