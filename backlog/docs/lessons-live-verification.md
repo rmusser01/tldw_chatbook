@@ -274,3 +274,28 @@ trusting `region` alone.
 ## Related
 
 - `lessons-testing-evidence.md` — why the green suite was not evidence
+
+---
+
+## When live behavior diverges from your probes on the same machine, diff the INTERPRETERS first (2026-07-31)
+
+**Incident.** Four live-gate rounds of Console voice commands failed with "broken" /
+"nothing", while every probe — headless controller, full-app harness, real-microphone
+rig — passed on the same machine, same branch, same config. Three real defects were
+found and fixed along the way (loop starvation, slow model, missing feedback), but the
+final "nothing." had a one-line cause: the user launches with `python3`, which resolves
+to `/usr/bin/python3` (system Python 3.9.6) — it has enough of the stack to run the app
+and record audio (textual, sounddevice, faster-whisper) but no `webrtcvad`, so the
+recorder delivers every frame, the silence gate never fires, and no segment, final, or
+command can ever exist. Every probe ran on the repo `.venv` (Python 3.12, full stack).
+Two interpreters, one machine, opposite behavior — and the degraded-VAD toast that
+should have flagged it claimed "dictation still works; commands execute when you stop",
+which was no longer true under the current architecture.
+
+**What to do.** The first question when a user's live run contradicts your own live
+verification is "which interpreter/environment ran it?" — `which python3` costs one
+second and would have cut three rounds of debugging to zero. Give run instructions with
+the ABSOLUTE venv python path, never bare `python3`. And when a feature degrades
+without a dependency, the warning must state the actual current consequences — copy
+written for an old architecture ("commands execute when you stop") becomes actively
+misleading after a rework and nobody re-reads it unless a review targets it.
