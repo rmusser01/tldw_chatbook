@@ -456,11 +456,23 @@ async def test_generate_script_db_work_runs_off_the_event_loop_thread(tmp_path):
     loop -- an untested regression here would silently reintroduce the
     exact bug phase 1's "whole-branch review fix 1" fixed for
     `generate_briefing`.
+
+    Extended (Task 5 review round 1, Important): the roster here binds a
+    speaker to a character card, so `load_character` is exercised through
+    BOTH of its call sites -- `_snapshot_roster` (inside `_start_script`'s
+    own `asyncio.to_thread` wrapper, already off-loop before this fix) and
+    `_resolve_character_texts` (called directly from `generate_script`'s
+    own coroutine body before this fix -- ON the event loop thread, since
+    the real implementation is a blocking `ChaChaNotesDB.get_character_
+    card_by_id` SELECT). Pinning `load_character`'s own thread identity,
+    not just the DB writes above, is what catches a regression back to the
+    direct (unthreaded) call.
     """
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
-    preset_id = _preset(db)
+    roster = [{"name": "Host", "role_prompt": "Warm.", "character_card_id": 7}]
+    preset_id = _preset(db, roster=roster)
 
     loop_thread_id = threading.get_ident()
     write_thread_ids: list[int] = []
@@ -474,11 +486,28 @@ async def test_generate_script_db_work_runs_off_the_event_loop_thread(tmp_path):
 
         setattr(db, name, _spy)
 
-    row = await generate_script(db, briefing_id, preset_id=preset_id, chat=_FakeChat())
+    load_character_thread_ids: list[int] = []
+
+    def _load_character(card_id):
+        assert card_id == 7
+        load_character_thread_ids.append(threading.get_ident())
+        return {"name": "Ada", "personality": "curious", "description": "a host"}
+
+    row = await generate_script(
+        db,
+        briefing_id,
+        preset_id=preset_id,
+        chat=_FakeChat(reply=json.dumps([{"speaker": "Host", "text": "Hello!"}])),
+        load_character=_load_character,
+    )
 
     assert row["status"] == STATUS_COMPLETE
     assert len(write_thread_ids) >= 4
     assert all(tid != loop_thread_id for tid in write_thread_ids)
+    # `load_character` is called twice per cast (snapshot, then strict
+    # resolve) -- both must be off the event loop thread.
+    assert len(load_character_thread_ids) >= 2
+    assert all(tid != loop_thread_id for tid in load_character_thread_ids)
 
 
 # --- fail_interrupted_scripts --------------------------------------------------

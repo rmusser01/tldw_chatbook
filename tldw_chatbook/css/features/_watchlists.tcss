@@ -1070,6 +1070,21 @@ WatchlistSourcePickerDialog {
  * itself does not need much room -- scrolling a few rows to see an older
  * briefing costs nothing -- so it gives up share to the body it sits
  * above, which is why a user opened Artifacts in the first place.
+ *
+ * `#artifacts-table`'s `min-height: 4` is what keeps the LIST usable once
+ * it has given up most of its share: at the pane's real 10-unit `fr` pool
+ * (`2 + 6 + 1 + 1`), `2fr` alone resolves to EXACTLY this floor (measured:
+ * `region.height == 4`) the moment a briefing is selected at all -- the
+ * scripts section's own fixed rows (toolbar, table, detail) are already
+ * in the layout at that point regardless of whether any script has
+ * actually been cast yet, since `ArtifactsPane.compose` gates that whole
+ * section on `selected_briefing is not None`, not on `scripts` being
+ * non-empty. Without this rule, `2fr` alone drops below one usable data
+ * row at 180x50. It is now pinned by `test_the_briefings_table_keeps_
+ * at_least_three_usable_rows`, which asserts `region.height >= 4` (a
+ * header row plus at least 3 data rows) with both a briefing AND a script
+ * present -- dropping this rule REDs it rather than silently shrinking
+ * the list to something unusable.
  */
 #artifacts-table {
     width: 100%;

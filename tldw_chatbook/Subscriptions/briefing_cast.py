@@ -255,7 +255,7 @@ def _snapshot_roster(
     return enriched
 
 
-def _resolve_character_texts(
+async def _resolve_character_texts(
     roster: list[dict], load_character: Optional[Callable[[int], Optional[dict]]]
 ) -> dict[str, str]:
     """Resolve each bound speaker's character-card contribution, strictly.
@@ -265,6 +265,18 @@ def _resolve_character_texts(
     try/except, so a failure here becomes a `failed` script row rather than
     an unwritten one -- `_snapshot_roster`, above, already wrote the row
     with whatever it could resolve leniently; this is the strict half.
+
+    `async`, and each `load_character` call is offloaded via `asyncio.
+    to_thread` (Task 5 review, Important): `load_character` is a plain sync
+    callable whose real implementation is a blocking DB read
+    (`ChaChaNotesDB.get_character_card_by_id`), and unlike `_snapshot_
+    roster`'s own call to it (already off the event loop, inside `_start_
+    script`'s `asyncio.to_thread` wrapper), THIS function used to be called
+    directly from `generate_script`'s own coroutine body -- i.e. on the
+    event loop thread. The callback's own contract is unchanged (still a
+    plain synchronous `Callable[[int], Optional[dict]]`); this function
+    owns the threading on the caller's behalf, exactly like `_start_script`
+    already does for its own `load_character` call.
 
     Args:
         roster: `validate_roster`'s output.
@@ -286,7 +298,11 @@ def _resolve_character_texts(
         card_id = speaker.get("character_card_id")
         if card_id is None:
             continue
-        card = load_character(card_id) if load_character is not None else None
+        card = (
+            await asyncio.to_thread(load_character, card_id)
+            if load_character is not None
+            else None
+        )
         if card is None:
             raise ScriptCastError(
                 f"speaker {speaker['name']!r} references character card {card_id}, "
@@ -586,7 +602,7 @@ async def generate_script(
     model_used = f"{endpoint}/{resolved_model}" if resolved_model else endpoint
 
     try:
-        character_texts = _resolve_character_texts(roster, load_character)
+        character_texts = await _resolve_character_texts(roster, load_character)
         system, user = build_cast_prompt(
             briefing.get("body_markdown") or "",
             roster,

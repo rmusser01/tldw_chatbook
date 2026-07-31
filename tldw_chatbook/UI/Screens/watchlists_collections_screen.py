@@ -3377,7 +3377,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_load_briefings` -- the SAME worker/to_thread batch that method
         # already uses, rather than standing up a second worker group just
         # to fetch one briefing's scripts.
+        #
+        # Fix round 1, Minor: clearing `self._selected_script` alone (the
+        # SCREEN's own rebuild-survival mirror) was not enough -- the
+        # mounted pane's OWN `scripts`/`selected_script` reactives are what
+        # actually render the scripts table/detail, and those keep
+        # whatever the PREVIOUS briefing left in them until `_load_
+        # briefings`'s asynchronous reload lands. Without patching the pane
+        # directly here too, the old briefing's scripts stay on screen,
+        # under the NEW briefing's own detail, for every frame between this
+        # click and that reload's completion.
         self._selected_script = None
+        self._loaded_scripts = []
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            pane = None
+        if pane is not None:
+            pane.scripts = []
+            pane.selected_script = None
         self.run_worker(
             self._load_briefings(), exclusive=True, group="wl-briefings-load"
         )
@@ -3953,6 +3971,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if db is None or briefing is None:
             self._notify_watchlists(
                 "Select a briefing to cast.", severity="warning", markup=False,
+            )
+            return
+        if self._briefing_default_preset_id is None and self._loaded_briefing_presets:
+            # Task 5 review round 1, ruling 2: the Cast BUTTON stays enabled
+            # here on purpose (`ArtifactsPane.compose`'s own disabled
+            # condition is "no default AND no presets exist at all" --
+            # presets exist here, just none chosen as the default), so a
+            # press in this state must still be refused, but with copy that
+            # tells the user what to do about it -- not the raw
+            # `ScriptCastError` `generate_script` would otherwise produce
+            # (`"briefing preset None does not exist"`, honest but useless
+            # as an instruction).
+            self._notify_watchlists(
+                "Choose a default preset in the toolbar, or create one via "
+                "Presets…, before casting.",
+                severity="warning",
+                markup=False,
             )
             return
         if self._cast_in_flight:

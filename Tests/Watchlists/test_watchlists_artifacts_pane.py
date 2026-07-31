@@ -55,6 +55,7 @@ from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
 )
 from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import (
     ArtifactsPane,
+    BriefingSelected,
     CastScriptRequested,
     GenerateBriefingRequested,
 )
@@ -1462,6 +1463,57 @@ async def test_casting_a_non_complete_briefing_refuses_naming_the_status():
 
 
 @pytest.mark.asyncio
+async def test_casting_with_presets_but_no_default_refuses_with_actionable_copy(
+    monkeypatch,
+):
+    """Fix round 1, ruling 2: Cast stays ENABLED when presets exist but none
+    is chosen as the watchlist's default (`ArtifactsPane`'s disabled
+    condition is "no default AND no presets at all" -- presets exist here,
+    just none picked). Pressing it in this state must still be refused, but
+    with copy that tells the user what to do -- not `generate_script`'s own
+    raw `ScriptCastError` text for `preset_id=None`
+    ("briefing preset None does not exist"), which names nothing the user
+    can act on.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+        briefing_id = _briefing_rows(app, watchlist_id)[0]["id"]
+        db = app.watchlist_bundle_service.db
+        db.insert_briefing_preset("Solo", roster_json=dump_roster(ONE_SPEAKER_ROSTER))
+        # Deliberately NOT set as the watchlist's default preset.
+        await screen._load_briefings()
+        await pilot.pause()
+        assert screen._briefing_default_preset_id is None
+        assert screen._loaded_briefing_presets, "the fixture needs a real preset"
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        cast_button = pane.query_one("#artifacts-cast-button", Button)
+        assert cast_button.disabled is False, "a preset exists, so Cast stays enabled"
+
+        cast_button.press()
+        await pilot.pause()
+
+        assert app.notify.called, "a refusal must be visible, not silent"
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert "default preset" in message.lower(), (
+            "the toast must tell the user to choose or create a default preset"
+        )
+        assert "does not exist" not in message, (
+            "must not be generate_script's raw, unactionable ScriptCastError text"
+        )
+        assert kwargs.get("markup") is False
+        assert db.list_briefing_scripts(briefing_id) == [], (
+            "this refusal must never reach the service at all"
+        )
+
+
+@pytest.mark.asyncio
 async def test_second_cast_while_in_flight_refuses_naming_the_running_one():
     """Sibling of `test_the_refusal_toast_names_the_watchlist_actually_
     generating`: `_cast_in_flight` is screen-global, so the refusal must
@@ -1741,3 +1793,116 @@ async def test_cast_is_disabled_until_a_preset_exists():
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         cast_button = pane.query_one("#artifacts-cast-button", Button)
         assert cast_button.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_the_briefings_table_keeps_at_least_three_usable_rows(monkeypatch):
+    """Fix round 1, ruling 1: no existing test pinned the briefings table's
+    USABLE height -- `test_the_list_the_button_and_the_body_are_all_on_
+    screen` only asserts `region.height > 0`. Re-weighting the pane's `fr`
+    split to 2:6:1:1 (this task's own CSS fix -- see `_watchlists.tcss`)
+    trades the briefings list's share down in favour of its own body and
+    the new scripts section; pinned here with BOTH a briefing and a script
+    actually present, since the scripts section's own fixed rows are part
+    of what squeezes the briefings table down toward its floor. `height >=
+    4` is a header row plus at least 3 data rows -- not merely "some rows".
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        _host,
+    ):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        _use_fake_cast_chat(
+            monkeypatch, _FakeChat(reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}]))
+        )
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        table = pane.query_one("#artifacts-table", DataTable)
+        assert table.region.height >= 4, (
+            f"the briefings table has only {table.region.height} row(s) of "
+            "height -- not enough for a header plus 3 usable data rows"
+        )
+
+
+@pytest.mark.asyncio
+async def test_switching_the_selected_briefing_clears_stale_scripts_before_the_reload_lands(
+    monkeypatch,
+):
+    """Fix round 1, minor: a briefing row click must not show the PREVIOUS
+    briefing's scripts under the NEW selection even for one frame.
+    `handle_briefing_selected` re-dispatches `_load_briefings()` to fetch
+    the newly selected briefing's own scripts, but that reload is
+    asynchronous -- without clearing the pane's `scripts`/`selected_script`
+    reactives SYNCHRONOUSLY at click time, the old scripts would still be
+    on screen (attached to the wrong briefing) until the worker lands.
+
+    `handle_briefing_selected` is called DIRECTLY here, exactly like
+    `test_the_cast_guard_is_claimed_before_the_worker_runs` calls
+    `handle_cast_script_requested` directly: the handler has no `await` in
+    it, so checking pane state immediately after it returns -- with NO
+    `pilot.pause()` at all -- pins the clearing as truly synchronous, not
+    merely "fast enough to usually win a race". A version of this test
+    that went through the real click path plus one `pilot.pause()` was
+    measured to be VACUOUS: `_load_briefings`'s own `asyncio.to_thread`
+    hops finished within that single pause often enough that the assertion
+    passed for the wrong reason (the reload had already landed) even with
+    the clearing code deleted entirely.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        # First briefing, with a real cast script attached to it.
+        first_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        _use_fake_cast_chat(
+            monkeypatch, _FakeChat(reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}]))
+        )
+        await _press_cast(screen, pilot, app, first_id)
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.scripts, "the fixture needs the first briefing to have a script"
+        assert pane.selected_script is not None
+
+        # A second, scriptless briefing for the same watchlist.
+        db = app.watchlist_bundle_service.db
+        second_id = db.insert_briefing(watchlist_id)
+        db.update_briefing(second_id, status="complete", body_markdown="Second body")
+        await screen._load_briefings()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        second_row = next(
+            row for row in _briefing_rows(app, watchlist_id) if row["id"] == second_id
+        )
+
+        # The handler is synchronous (no `await`), so state checked
+        # IMMEDIATELY after it returns -- before `run_worker` has let the
+        # reload do anything at all -- proves the clearing itself, not
+        # merely that it finishes "soon".
+        screen.handle_briefing_selected(BriefingSelected(second_row))
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.selected_script is None, (
+            "the stale script selection must clear synchronously, before "
+            "the reload worker is even dispatched"
+        )
+        assert pane.scripts == [], (
+            "the stale scripts list must clear synchronously, before the "
+            "reload worker is even dispatched"
+        )
+
+        # And once the reload actually lands, the SECOND briefing's (empty)
+        # scripts are what's shown -- not a stale carry-over.
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.scripts == []
