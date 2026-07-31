@@ -1020,6 +1020,11 @@ Update the tests to describe current behavior:
      as the allowed temporary root before writing. Preserve the production
      allowlist and the separate traversal-rejection coverage; do not add
      `/private/tmp` or pytest-specific behavior to production.
+109. In the Watchlists end-to-end create-source journey, wait boundedly for the
+     async controller call and form closure after Submit. Preserve the stronger
+     upstream form/focus/Select readiness checks, real button press, pilot
+     typing, tab order, both viewport cases, and geometry; do not assign input
+     values.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1431,6 +1436,12 @@ behavior. No compatibility shims. No broad deletion of live tests.
   would weaken a security boundary for a test-runner override. Publishing the
   success fixture's private temporary directory through the existing temp-root
   seam keeps the test hermetic and leaves traversal rejection unchanged.
+- Increasing the Watchlists opener's fixed pause would still make focus
+  and child-mount readiness host-dependent. Waiting for the exact Name-input
+  focus and Select option surface that the complete form requires retains real
+  user input and the dedicated focus assertion. Likewise, waiting for the
+  existing controller-call and form-closure outcomes after submit removes the
+  second fixed settlement assumption without changing production behavior.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

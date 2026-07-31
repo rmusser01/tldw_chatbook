@@ -275,11 +275,12 @@ async def test_a_source_can_be_created_end_to_end_through_the_form(size):
         )
 
         pane.query_one("#sources-create-submit", Button).press()
-        await pilot.pause(0.3)
+        for _ in range(200):
+            if created.await_count == 1 and not pane.query("#sources-create-form"):
+                break
+            await pilot.pause(0.01)
 
-        assert created.await_count == 1, (
-            "pressing Create never reached the controller"
-        )
+        assert created.await_count == 1, "pressing Create never reached the controller"
         payload = created.await_args.kwargs["payload"]
         assert payload["name"] == "Morning"
         assert payload["url"] == "https://example.com/feed"

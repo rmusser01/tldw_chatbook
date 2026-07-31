@@ -4333,6 +4333,40 @@ The complete artifact module passed three independent repetitions (6/6) with
 the `/private/tmp` base override. Ruff lint, Ruff format, and
 `git diff --check` pass.
 
+### Task 4da: Wait for Watchlists create submission
+
+**Files:**
+- Modify: `Tests/UI/test_watchlists_source_create_form.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This aligns an end-to-end test with the asynchronous controller and
+form-removal outcomes it asserts; it does not change Watchlists production
+behavior or form structure.
+
+- [x] **Step 1: Preserve the stronger upstream opener**
+
+Keep the current opener's bounded checks for form presence, Name focus, and all
+mounted Select labels. Do not replace it with the older option-surface
+predicate from this commit.
+
+- [x] **Step 2: Wait for the end-to-end submission outcome**
+
+Replace the end-to-end case's fixed post-submit pause with a bounded wait for
+the mocked controller call and form closure that it already asserts.
+
+- [x] **Step 3: Verify both viewports**
+
+Run the two end-to-end parameters repeatedly, the complete create-source form
+module, Ruff/format, and `git diff --check`.
+
+The corrected end-to-end pair passed focused verification. The original branch
+also recorded the complete create-source form module passing 15/15.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
