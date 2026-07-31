@@ -8090,6 +8090,9 @@ class TldwCli(
             if scheduler_worker is not None:
                 try:
                     if not scheduler_worker.is_finished:
+                        # Textual's public cancellation contract cancels the
+                        # underlying asyncio task. Worker.wait() has no timeout
+                        # parameter, so request cancellation before observing it.
                         scheduler_worker.cancel()
                     await scheduler_worker.wait()
                 except WorkerCancelled:

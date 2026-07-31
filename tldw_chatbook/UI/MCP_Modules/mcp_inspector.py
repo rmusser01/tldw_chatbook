@@ -281,7 +281,14 @@ def format_duration_ms(duration_ms: int) -> str:
 
 
 def audit_entry_detail_payload(entry: Mapping[str, Any]) -> dict[str, Any]:
-    """Project one execution-log entry into its metadata-only display schema."""
+    """Project one execution-log entry into its metadata-only display schema.
+
+    Args:
+        entry: Raw execution-log fields to normalize for the inspector.
+
+    Returns:
+        A metadata-only payload safe for the execution-detail display.
+    """
 
     server_key = str(entry.get("server_key") or "")
     tool_name = str(entry.get("tool_name") or "")
