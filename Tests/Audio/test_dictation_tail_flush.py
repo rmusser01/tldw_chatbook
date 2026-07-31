@@ -1,28 +1,33 @@
 """`_processing_loop` must not drop the tail of a capture.
 
 `LazyLiveDictationService._processing_loop` buffers incoming PCM into a
-*local* `accumulated_audio` list and only hands it to
-`_process_audio_buffer()` once `buffer_duration_ms` (500ms in production) has
-elapsed. `stop_dictation()` sets `stop_processing` *before* joining the
-processing thread, so the loop's `while not self.stop_processing.is_set()`
-exits on its very next iteration -- abandoning whatever audio is still
-sitting in `accumulated_audio` and whatever is still unread in
-`processing_queue`.
+*local* `segment_audio` list. For the non-streaming regime (every provider
+except `parakeet-mlx`; see the class docstring on `_processing_loop`)
+nothing transcribes it on a fixed cadence any more -- only a silence pause or
+`stop_dictation()` does, each exactly once per segment, via
+`_transcribe_segment_audio()`. `stop_dictation()` sets `stop_processing`
+*before* joining the processing thread, so the loop's
+`while not self.stop_processing.is_set()` exits on its very next
+iteration -- abandoning whatever audio is still sitting in `segment_audio`
+and whatever is still unread in `processing_queue` unless the tail-drain
+after the loop picks it up.
 
-Two concrete symptoms:
+Two concrete symptoms this guards against:
 
-* A capture shorter than one buffer window (sub-500ms utterance) never
-  crosses the periodic-flush threshold at all: zero `transcribe_buffer`
-  calls, an empty transcript, and the Console reporting "No audio was
-  captured from the microphone" for a microphone that worked perfectly.
-* A capture that runs long enough to flush periodically still loses its
-  final word: whatever arrived after the last periodic flush is discarded
-  the moment the user stops dictating.
+* A capture shorter than one silence pause (e.g. a single short utterance,
+  stopped immediately) never reaches a silence-triggered finalize at all:
+  without the tail-drain, zero `transcribe_buffer` calls, an empty
+  transcript, and the Console reporting "No audio was captured from the
+  microphone" for a microphone that worked perfectly.
+* A longer capture, still mid-segment (no silence pause has fired) when the
+  user stops, must not lose whatever was said since the segment began --
+  the whole thing, not just its tail, since nothing periodic ever flushed
+  part of it away in the first place.
 
 These tests drive the *real* processing thread (no hardware, fake recorder
 and fake transcription service) at the production default
 `buffer_duration_ms` (500) so the real timing is exercised, not a
-test-only fast path that would mask the bug.
+test-only fast path that would mask a bug.
 """
 
 from __future__ import annotations
@@ -185,10 +190,11 @@ def test_capture_shorter_than_one_buffer_window_still_produces_a_transcript(
     monkeypatch,
 ):
     """The first thing a human hits testing by voice: say one short word and
-    let go immediately. At the production 500ms buffer, that utterance never
-    crosses the periodic-flush threshold. `stop_dictation()` must still
-    transcribe it instead of returning an empty result (which the Console
-    then reports as "No audio was captured from the microphone").
+    let go immediately. Stopped well before the silence threshold could ever
+    fire, that utterance never crosses a silence-triggered finalize.
+    `stop_dictation()` must still transcribe it instead of returning an empty
+    result (which the Console then reports as "No audio was captured from
+    the microphone").
     """
     transcription = _RealSignatureTranscriptionService(texts=["hello"])
     recorder = _FakeRecorder()
@@ -209,8 +215,8 @@ def test_capture_shorter_than_one_buffer_window_still_produces_a_transcript(
         is True
     )
 
-    # A single short chunk, then stop right away -- well under the 500ms
-    # periodic-flush window.
+    # A single short chunk, then stop right away -- well before the silence
+    # threshold (2.0s default, not overridden here) could ever fire.
     recorder.feed(b"\x00\x01" * 4000)
     result = service.stop_dictation()
 
@@ -249,11 +255,11 @@ def test_capture_shorter_than_one_buffer_window_with_nothing_queued_stays_silent
 
 
 # --------------------------------------------------------------------------
-# The dropped-final-word case: tail after the last periodic flush
+# The dropped-final-word case: multiple feeds, one in-progress segment
 # --------------------------------------------------------------------------
 
 
-def test_audio_after_the_last_periodic_flush_is_not_lost(monkeypatch):
+def test_multiple_feeds_reach_the_transcriber_as_one_uninterrupted_segment(monkeypatch):
     """A longer capture, still one uninterrupted segment when the user stops.
 
     Updated for the segment-at-silence architecture
@@ -301,7 +307,7 @@ def test_audio_after_the_last_periodic_flush_is_not_lost(monkeypatch):
 
 def test_processing_loop_drains_items_still_in_the_queue_on_stop(monkeypatch):
     """Lower-level check: an item that never even made it out of
-    `processing_queue` into `accumulated_audio` before `stop_processing`
+    `processing_queue` into `segment_audio` before `stop_processing`
     flips must still be drained and flushed, not just whatever the loop had
     already popped by that point.
     """
@@ -318,8 +324,8 @@ def test_processing_loop_drains_items_still_in_the_queue_on_stop(monkeypatch):
     service.on_error = sink.error
 
     # Put straight onto the processing queue, exactly what `_audio_callback`
-    # does, then start the processing thread and stop it immediately --
-    # no window for a periodic flush to run first.
+    # does, then start the processing thread and stop it immediately -- no
+    # window for a silence-triggered finalize to run first.
     service.processing_queue.put(("audio", b"\x00\x01" * 4000))
     service.state = DictationState.LISTENING
     service.start_time = time.time()
