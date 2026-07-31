@@ -18454,6 +18454,25 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
+        # Vertical caret movement differs from every neighbor above: those
+        # always consume the key (there is always somewhere to move -- even
+        # at a boundary, left/right/home/end land on a valid, if unchanged,
+        # offset). `move_cursor_up`/`move_cursor_down` instead return False
+        # on the first/last visual row, and the composer moves nothing at
+        # all -- so the event must fall through UNCONSUMED in that case,
+        # preserving whatever up/down would otherwise do on this screen
+        # (nothing today; a future transcript scroll or default focus
+        # behavior must not be silently swallowed by a no-op composer move).
+        if event.key == "up":
+            if composer.move_cursor_up():
+                event.stop()
+                event.prevent_default()
+                return
+        if event.key == "down":
+            if composer.move_cursor_down():
+                event.stop()
+                event.prevent_default()
+                return
         if event.key == "home":
             composer.move_cursor_home()
             event.stop()
