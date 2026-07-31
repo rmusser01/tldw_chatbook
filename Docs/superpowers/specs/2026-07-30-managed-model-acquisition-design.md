@@ -44,7 +44,9 @@ every integrity-bearing step.
   - `ModelArtifactService.install(..., consume_source: bool = False)` —
     per-file `os.replace` when the source directory lies inside the service
     root; a source outside the root raises `ArtifactPathError` (no silent
-    copy fallback). Halves peak disk during install.
+    copy fallback). Within-root `EXDEV` (a bind-mount under the root)
+    degrades to copy+delete for that file — correctness over the disk
+    optimization. Halves peak disk during install.
   - `reconcile()` staging GC — deletes **true orphans only**: entries with a
     missing or unparseable sidecar (e.g. dead install-staging tmpdirs).
     Valid-sidecar staging is resumable state and is never GC'd (see
@@ -78,7 +80,9 @@ touching staging.
    drift (`ConsentMismatchError`) — changed content means new preflight.
 3. **Fetch** — per artifact in stable sorted order, each declared file
    streams into durable staging `staging/managed/<id>/<rev>/<variant>/<file>`
-   with a sidecar `fetch-state.json` (validators + bytes). Durability order:
+   with ONE sidecar `fetch-state.json` per artifact staging directory,
+   mapping filename → `{validators, bytes_done, complete}` (a single atomic
+   write path; the one thing GC validates). Durability order:
    `fsync(data)` **before** the atomic fsynced sidecar write — resume state
    may only claim durable bytes. Resume: strong validators match → `Range`
    continuation (`resume_from + written ≤ max_bytes`); weak (`W/`) or changed
@@ -125,7 +129,10 @@ class PreflightReport:
     closure_fingerprint: str
     entries: tuple[ArtifactPreflightEntry, ...]   # stable sorted order
     download_bytes: int                           # remaining to transfer
-    already_staged_bytes: int                     # resumable credit, shown to the user
+    already_staged_bytes: int                     # best-effort resumable credit (sidecar
+                                                  # bytes; server revalidation at provision
+                                                  # may still force restarts — consent copy
+                                                  # labels it "up to N already fetched")
     staging_overhead_bytes: int                   # computed for consume_source semantics
     retained_bytes: int                           # prior active kept during upgrade
     destination: Path
@@ -141,18 +148,22 @@ class AcquisitionConsent:
 
 @dataclass(frozen=True)
 class AcquisitionProgress:
-    phase: Literal["fetch", "verify-install", "activate"]
+    phase: Literal["fetch", "pre-verify", "verify-install", "activate"]
     ref: ArtifactRef; file: str | None
-    bytes_done: int; bytes_total: int             # fetch-phase detail; install/activate
-                                                  # phases emit per-artifact events with
-                                                  # indeterminate byte detail
+    bytes_done: int; bytes_total: int             # real byte detail in fetch AND
+                                                  # pre-verify (streaming SHA-256 knows
+                                                  # its position); install/activate emit
+                                                  # per-artifact indeterminate events
 
 class ArtifactAcquisitionService:
     async def preflight(self, root: ArtifactRef, catalog: ArtifactCatalog) -> PreflightReport: ...
     async def provision(
-        self, consent: AcquisitionConsent, *,
+        self, consent: AcquisitionConsent, catalog: ArtifactCatalog, *,
         progress: Callable[[AcquisitionProgress], None] | None = None,
     ) -> ArtifactRef: ...                         # the activated root
+    # provision re-walks the catalog: the fingerprint drift-check REQUIRES an
+    # independent re-resolution, and the freshly resolved descriptors supply
+    # the file URLs — consent alone cannot carry enough to download safely.
 ```
 
 `fetch.stream_fetch(url, destination, *, client, max_bytes, resume_from=0,
@@ -163,7 +174,9 @@ acquisition, not fetch.
 **Errors** extend the existing family: `AcquisitionError(ArtifactError)` →
 `ConsentMismatchError`, `PreflightNotGrantableError`, `AcquisitionBusyError`,
 `InsufficientSpaceError`, `GatedRepositoryError`, `TransferError` (artifact/
-file context, a `retryable` flag, never URLs-with-tokens or header values).
+file context, a `retryable` flag, never URLs-with-tokens or header values),
+`CatalogError` (unknown/invalid refs surface typed at preflight, never a raw
+`KeyError` mid-provision).
 
 ## Credentials
 
