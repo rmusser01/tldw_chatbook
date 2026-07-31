@@ -91,17 +91,39 @@ async def _wait_for_widget(screen, pilot, selector: str, widget_type):
     raise AssertionError(f"production screen did not render {selector}")
 
 
-async def _wait_for_mounted_widget(screen, pilot, selector: str, widget_type):
+async def _wait_for_stable_provider_select(
+    settings: SettingsScreen,
+    pilot,
+) -> Select:
     for _ in range(300):
+        settings_workers = tuple(
+            worker for worker in settings.app.workers if worker.node is settings
+        )
+        if settings_workers:
+            await settings.app.workers.wait_for_complete(settings_workers)
+            await pilot.pause()
+            continue
         try:
-            widget = screen.query_one(selector)
-            assert isinstance(widget, widget_type)
-            if widget.is_mounted:
-                return widget
+            provider_select = settings.query_one("#settings-provider-value", Select)
+            overlay = provider_select.query_one("SelectOverlay")
         except NoMatches:
-            pass
+            await pilot.pause(0.01)
+            continue
+        if (
+            provider_select.is_mounted
+            and overlay.is_mounted
+            and provider_select.region.width > 0
+            and provider_select.region.height > 0
+        ):
+            await pilot.pause()
+            if settings.query_one(
+                "#settings-provider-value", Select
+            ) is provider_select and not any(
+                worker.node is settings for worker in settings.app.workers
+            ):
+                return provider_select
         await pilot.pause(0.01)
-    raise AssertionError(f"production screen did not mount {selector}")
+    raise AssertionError("production Settings provider control did not stabilize")
 
 
 async def _wait_until(pilot, predicate, failure: str) -> None:
@@ -276,19 +298,8 @@ async def test_settings_save_preserves_user_session_then_away_command_hands_off(
                 await pilot.pause(0.01)
             assert settings.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
 
-            provider_select = await _wait_for_widget(
-                settings,
-                pilot,
-                "#settings-provider-value",
-                Select,
-            )
+            provider_select = await _wait_for_stable_provider_select(settings, pilot)
             await _wait_for_widget(provider_select, pilot, "#label", Widget)
-            await _wait_for_mounted_widget(
-                provider_select,
-                pilot,
-                "SelectOverlay",
-                Widget,
-            )
             selected_provider = settings._provider_select_value_for_provider(
                 "Anthropic"
             )
