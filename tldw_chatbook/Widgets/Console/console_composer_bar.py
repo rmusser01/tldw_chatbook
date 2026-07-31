@@ -980,7 +980,26 @@ class ConsoleComposerBar(Horizontal):
         line_slices: list[_DraftLineSlice],
         source_offset: int,
     ) -> int:
-        """Return the wrapped row containing a source-text offset."""
+        """Return the wrapped row containing a source-text offset.
+
+        For SPLICED offsets only -- callers that pass `line_slices` wrapped
+        from a caret-glyph- or placeholder-spliced `render_text`, together
+        with the matching spliced offset into it (the two current
+        production callers, both via `_visible_draft_line_slices(...,
+        cursor_index=...)`: `_draft_renderable`'s glyph splice and
+        `_display_index_at`'s space splice). A real character always
+        occupies the exact offset being looked up under that contract, so
+        the "no row contains this offset" fallback below (unconditionally
+        the LAST row) is never actually reachable there.
+
+        That fallback is WRONG for a genuinely unspliced offset -- e.g. an
+        offset sitting exactly in the gap between two explicit-newline-
+        separated rows, which is common and expected, not an edge case.
+        Canonical/unspliced-offset callers (the vertical caret-movement
+        path) must use `_row_index_for_canonical_offset` instead, which
+        resolves that gap to the row immediately preceding it rather than
+        unconditionally the draft's last row.
+        """
         for row_index, line_slice in enumerate(line_slices):
             if line_slice.start <= source_offset < line_slice.end:
                 return row_index
@@ -2367,6 +2386,26 @@ class ConsoleComposerBar(Horizontal):
         so a caret landing "inside" a collapsed paste token snaps to the
         token's nearest edge exactly as a click would.
 
+        The column clamp ceiling is the target row's own length -- EXCEPT
+        when the target row is soft-wrap-CONTIGUOUS with its own successor
+        (no separator between them, i.e. `target_slice.end ==
+        line_slices[target_row + 1].start`). Landing exactly at that row's
+        full length would place the offset AT that shared join point, which
+        `_row_index_for_canonical_offset` (correctly, per its own
+        contiguous-boundary convention -- and matching how the painted
+        caret glyph resolves the identical join) resolves to the
+        SUCCESSOR row, not the intended target: a caret "Up" from a late
+        column would silently fail to change rows at all (reading as a
+        no-op that still consumes the key), and "Down" from the same shape
+        would skip an entire row. The clamp ceiling is one character short
+        of the full length in that case instead, keeping the landing
+        offset strictly inside the target row. A row that ends in a real
+        newline (or is the draft's own last row) keeps the full-length
+        clamp unchanged: landing one past its last character is a
+        distinct, legitimate caret position there (the separator gives
+        "end of row" its own unambiguous offset), with no successor row's
+        start to collide with.
+
         Args:
             row_delta: -1 to move up one row, +1 to move down one row.
 
@@ -2397,7 +2436,17 @@ class ConsoleComposerBar(Horizontal):
         current_slice = line_slices[current_row]
         target_slice = line_slices[target_row]
         column = caret_display_index - current_slice.start
-        clamped_column = min(column, len(target_slice.text))
+        target_row_length = len(target_slice.text)
+        target_contiguous_with_successor = (
+            target_row + 1 < len(line_slices)
+            and target_slice.end == line_slices[target_row + 1].start
+        )
+        clamp_ceiling = (
+            target_row_length - 1
+            if target_contiguous_with_successor and target_row_length > 0
+            else target_row_length
+        )
+        clamped_column = min(column, clamp_ceiling)
         target_display_index = target_slice.start + clamped_column
         canonical_index = self._canonical_index_at_display(target_display_index)
         return self._move_cursor_to(canonical_index)
