@@ -77,7 +77,7 @@ class _FakeApp:
         await TldwCli._offer_tts_global_override(self, token)
 
 
-class _ProgressHost(App[None]):
+class ProgressHost(App[None]):
     """Real Textual app exposing the DOMQuery used by the progress handler."""
 
     def __init__(self) -> None:
@@ -87,7 +87,8 @@ class _ProgressHost(App[None]):
 
 @pytest.mark.asyncio
 async def test_tts_progress_handler_supports_real_textual_dom_query() -> None:
-    host = _ProgressHost()
+    """Verify progress handling with Textual's concrete DOMQuery type."""
+    host = ProgressHost()
 
     async with host.run_test():
         await TldwCli.handle_tts_progress_event(
