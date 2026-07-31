@@ -98,6 +98,39 @@ class EvalsViewModel:
         group. Runs with no ``run_group_id`` (never grouped) are not
         selectable here -- there is nothing for a "run_group" selection to
         resolve to.
+
+        Each row also carries a rolled-up ``"status"`` (TASK-1480): the
+        rail's run-row label needs one status per GROUP, but the DB tracks
+        status per per-target run, and those can genuinely disagree --
+        ``46d56f371``/``da4967a7a`` wired the primary action to a live
+        ``WordBenchRunner`` pass (``runner.py`` moves each run
+        pending -> running -> completed/cancelled independently), so a
+        group composing mid-run can have one target still "running" while
+        another has already finished. Precedence, computed in this same
+        pivot pass so it never re-reads ``list_runs()``: any run
+        "running" makes the whole group "running"; else any run
+        "cancelled" **or run-level "failed"** (the ``eval_runs.status``
+        CHECK constraint allows ``"failed"`` even though
+        ``WordBenchRunner`` never writes it -- handled defensively anyway)
+        makes it "cancelled"; else "completed". A "pending" run with
+        nothing running/cancelled/failed alongside it also falls through
+        to "completed" -- there is no rail glyph for "queued but never
+        started".
+
+        TASK-1480 amendment (user-directed, reversing this method's
+        original "completed always renders the done glyph" ruling): a
+        "completed" group additionally carries ``"all_cells_failed"`` --
+        ``True`` iff the group has captured at least one cell AND every
+        captured cell errored, so the rail can distinguish a run that
+        finished with real results from one that finished with nothing
+        but failures (a genuinely different outcome the old single
+        "completed" bucket couldn't represent). A group with zero
+        captured cells is ``False`` here (vacuously -- nothing failed),
+        never treated as "all failed". This reads
+        ``EvalsDB.run_group_cell_failure_counts()`` -- ONE extra query for
+        the whole call, not one per group (see that method's own
+        docstring for why a per-cell JSON payload check can't be done any
+        cheaper without it).
         """
         if self._db is None:
             return []
@@ -115,11 +148,39 @@ class EvalsViewModel:
                     "task_name": run.get("task_name"),
                     "created_at": run.get("created_at"),
                     "run_count": 0,
+                    "_has_running": False,
+                    "_has_blocked": False,
                 }
                 groups[group_id] = group
                 order.append(group_id)
             group["run_count"] += 1
-        return [groups[group_id] for group_id in order]
+            run_status = run.get("status")
+            if run_status == "running":
+                group["_has_running"] = True
+            elif run_status in ("cancelled", "failed"):
+                group["_has_blocked"] = True
+
+        # One aggregate query for every group in this call, never a
+        # per-group query loop (see the DB method's own docstring).
+        failure_counts = self._db.run_group_cell_failure_counts()
+
+        results: list[dict[str, Any]] = []
+        for group_id in order:
+            group = groups[group_id]
+            has_running = group.pop("_has_running")
+            has_blocked = group.pop("_has_blocked")
+            if has_running:
+                group["status"] = "running"
+                group["all_cells_failed"] = False
+            elif has_blocked:
+                group["status"] = "cancelled"
+                group["all_cells_failed"] = False
+            else:
+                group["status"] = "completed"
+                total_cells, errored_cells = failure_counts.get(group_id, (0, 0))
+                group["all_cells_failed"] = total_cells > 0 and errored_cells == total_cells
+            results.append(group)
+        return results
 
     def library_is_empty(self) -> bool:
         """Whether the whole workbench library -- benches, classic tasks,

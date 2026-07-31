@@ -38,14 +38,33 @@ and possibly zero configured providers:
   import are plain DB/file operations, not provider calls, mirroring
   ``snippet_editor.py``'s own self-contained import flow) rather than
   routed through ``EvalsScreen``.
+
+**Creation affordances are not empty-only** (TASK-1478). A live UAT pass
+found the rail became read-only the moment it had one row: "Create sample
+bench" and "+ New dataset"/"Import…" used to render only in each
+section's *empty* branch, so a single bench or dataset was a one-way
+trapdoor out of ever creating another one without going through some
+other screen. Both now render unconditionally at the top of their
+section's body (``_benches_section_body``'s ``_create_sample_bench_button``
+call, ``_dataset_actions``) -- only the *explanatory copy* ("No benches
+yet."/"No datasets yet.", the first-run hint, the no-providers message)
+stays scoped to the genuinely-empty case; a real list below it needs no
+prose. The provider gate itself is unchanged: no benches and no provider
+still routes to "Open Settings" rather than a button pointing at nothing,
+and that escape hatch is never duplicated once real benches exist -- see
+``_benches_section_body``'s own comment on why a failed gate with existing
+benches (in practice unreachable, since a word bench's target already
+satisfies ``provider_is_configured``) adds no row at all.
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
@@ -111,11 +130,105 @@ def _dataset_row_label(row: dict[str, Any]) -> str:
     return str(row.get("name") or "Untitled dataset")
 
 
+#: Single-cell-width status glyphs for run rows -- NEVER emoji, which
+#: render double-width in this app's terminal (a repeated past defect).
+#: Status must never be conveyed by colour alone; the glyph itself is the
+#: signal. Keyed by ``EvalsViewModel.run_groups()``'s rolled-up
+#: ``"status"`` (TASK-1480) for the two states that don't depend on cell
+#: data -- "completed" is deliberately absent here, since its glyph also
+#: depends on ``"all_cells_failed"`` (see ``_run_group_row_glyph`` below).
+_RUN_STATUS_GLYPHS: dict[str, str] = {
+    "running": "●",  # ● BLACK CIRCLE
+    "cancelled": "✗",  # ✗ BALLOT X -- also covers eval_runs' run-level
+    # "failed" status, folded into "cancelled" by run_groups()'s roll-up.
+}
+
+#: A completed group where every captured cell errored -- TWO single-width
+#: glyphs (CHECK MARK + BALLOT X), never one double-width character: the
+#: run genuinely finished (``✓``), but produced nothing but failures
+#: (``✗``). Ordering is deliberate -- "finished, then: all failures" reads
+#: left-to-right the way the run itself happened.
+_COMPLETED_ALL_FAILED_GLYPH = "✓✗"
+#: A completed group with at least one successful cell (including a
+#: completed group with zero captured cells at all -- vacuously "nothing
+#: failed", per TASK-1480's amendment). Partial failures still render this
+#: glyph; the results grid's own callout is what explains a partial
+#: failure, not the rail row.
+_COMPLETED_GLYPH = "✓"  # ✓ CHECK MARK
+
+
+def _run_group_row_glyph(row: dict[str, Any]) -> str:
+    """The leading status glyph for a run row (TASK-1480 + its amendment).
+
+    An unrecognised or missing ``"status"`` (there should never be one --
+    ``EvalsViewModel.run_groups()`` always sets exactly one of "running" /
+    "cancelled" / "completed") falls through to the "completed" branch
+    rather than raising, so a stale or malformed row degrades to a glyph
+    instead of crashing the rail.
+    """
+    status = row.get("status")
+    if status in _RUN_STATUS_GLYPHS:
+        return _RUN_STATUS_GLYPHS[status]
+    return _COMPLETED_ALL_FAILED_GLYPH if row.get("all_cells_failed") else _COMPLETED_GLYPH
+
+
+def _run_group_row_time(created_at: Any) -> str:
+    """``created_at`` as ``HH:MM``, per the design spec's rail mock.
+
+    ``EvalsDB`` stores ``eval_runs.created_at`` via SQLite's
+    ``datetime('now', 'utc')`` (``"YYYY-MM-DD HH:MM:SS"``, no ``T`` or UTC
+    offset) -- a format ``datetime.fromisoformat`` happens to accept
+    directly on Python 3.11+. It is still a free-text column with no
+    format enforcement at the DB layer, so this parses defensively and
+    falls back to the raw string on any parse failure rather than crash
+    the rail over a timestamp.
+    """
+    text = "" if created_at is None else str(created_at)
+    try:
+        return datetime.fromisoformat(text).strftime("%H:%M")
+    except (TypeError, ValueError):
+        return text
+
+
 def _run_group_row_label(row: dict[str, Any]) -> str:
-    name = row.get("task_name") or "Untitled run"
-    count = row.get("run_count") or 0
-    target_word = "target" if count == 1 else "targets"
-    return f"{name} ({count} {target_word})"
+    """``● 14:31 · <task_name>`` / ``✓ 14:02 · <task_name>`` / ``✗ 13:55 ·
+    <task_name>`` -- the design spec's own rail mock
+    (``Docs/superpowers/specs/2026-07-25-evals-console-rebuild-design.md``).
+    A completed group where every captured cell errored instead renders
+    ``✓✗ 14:02 · <task_name>`` (TASK-1480 amendment, user-directed): the
+    run genuinely finished, but produced nothing but failures, which is a
+    materially different outcome from a normal or partially-failed
+    completion (the results grid's own callout explains a partial
+    failure; the plain ``✓`` in that case is unchanged).
+
+    TASK-1480: before this, every run row rendered the exact same shape a
+    bench row did (``"<name> (N targets)"``), so a live UAT pass could not
+    tell a bench apart from one of its own past runs at a glance, and had
+    no way to see a run currently in flight. See ``run_groups()``'s own
+    docstring for how the leading glyph's status (and, for a completed
+    group, ``all_cells_failed``) is rolled up from the group's per-target
+    runs and captured cells.
+
+    ``task_name`` reaches this function as a free-text bench name;
+    ``Button(label=...)`` parses its argument as Textual markup by
+    default (``Content.from_text``'s ``markup=True`` default), so an
+    unescaped name containing a bare ``[/]`` would raise ``MarkupError``
+    and crash the rail the instant it composes -- the same hazard
+    task-1476 fixed for bench-run toast text (``evals_screen.py``'s
+    ``_run_bench_worker``/``_create_sample_bench_worker``), left open
+    there as a separate, out-of-scope issue in this exact function (see
+    that commit's ``_RaisingCaptureClient`` docstring in
+    ``Tests/UI/test_evals_screen.py``). Escaping here closes it.
+    """
+    name = str(row.get("task_name") or "Untitled run")
+    glyph = _run_group_row_glyph(row)
+    # escape_markup: `_run_group_row_time`'s parse-failure fallback returns
+    # the RAW `created_at` string verbatim (a free-text DB column with no
+    # format enforcement -- see that function's own docstring), so it
+    # carries the identical markup hazard `name` does. Escaping only `name`
+    # and not this left the fallback path unescaped.
+    time_text = escape_markup(_run_group_row_time(row.get("created_at")))
+    return f"{glyph} {time_text} · {escape_markup(name)}"
 
 
 class LibraryRail(NotifyMixin, Vertical):
@@ -145,6 +258,7 @@ class LibraryRail(NotifyMixin, Vertical):
         selection: Optional[EvalsSelection] = None,
         open_sections: Optional[dict[str, bool]] = None,
         app_config: Optional[dict[str, Any]] = None,
+        sample_bench_running: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -156,6 +270,20 @@ class LibraryRail(NotifyMixin, Vertical):
         #: load) degrades to ``{}`` -- "no providers configured", never a
         #: crash.
         self.app_config: dict[str, Any] = dict(app_config or {})
+        #: Whole-branch review: whether ANY word-bench run (this rail's own
+        #: sample-bench worker, or a bench-run started from the primary
+        #: action in the inspector pane) is in flight right now --
+        #: `EvalsScreen` passes its own OR of both running-flags in. TASK-
+        #: 1478 made "Create sample bench" a PERSISTENT control (no longer
+        #: empty-only), which opened a stale-enabled-button seam identical
+        #: to `_primary_action_state`'s own (see that function's in-flight
+        #: branch): a rail click during an in-flight run recomposes this
+        #: whole widget from scratch, and without this flag the fresh
+        #: instance would render the button enabled again regardless of
+        #: what is actually running. ``False`` in every context that
+        #: doesn't pass it explicitly (production callers other than
+        #: ``EvalsScreen``, if any, and every pre-existing test).
+        self.sample_bench_running = sample_bench_running
         # Shared, mutated in place (never reassigned) rather than copied:
         # EvalsScreen holds this same dict and passes it back in on every
         # recompose, so a section's collapsed/expanded state survives the
@@ -183,7 +311,7 @@ class LibraryRail(NotifyMixin, Vertical):
             kind="dataset",
             empty_copy="No datasets yet.",
             row_label=_dataset_row_label,
-            empty_extra=self._dataset_empty_actions,
+            actions=self._dataset_actions,
         )
         yield from self._section(
             section_id="runs",
@@ -236,6 +364,37 @@ class LibraryRail(NotifyMixin, Vertical):
             tooltip="No local llama.cpp provider is configured yet.",
         )
 
+    def _create_sample_bench_button(self) -> Button:
+        """Shared by both branches of ``_benches_section_body`` (TASK-1478:
+        the button is no longer empty-only, so both the "no benches yet"
+        and "benches already exist" paths need the identical control, id
+        included -- see the module docstring's "Creation affordances are
+        not empty-only" note).
+
+        Whole-branch review: no longer a ``@staticmethod`` -- it now reads
+        ``self.sample_bench_running`` to stay disabled across a mid-run
+        recompose (this button is PERSISTENT since TASK-1478, so a rail
+        click while a run is in flight would otherwise rebuild a fresh,
+        enabled instance; see ``self.sample_bench_running``'s own comment
+        in ``__init__``). The LIVE running label
+        (``EvalsScreen._set_sample_bench_running_ui``, driven by
+        ``query_one`` against the mounted button) is unaffected by this --
+        it still mutates the existing widget directly while a run
+        progresses; this only matters for a FRESH instance built by a
+        recompose landing mid-run.
+        """
+        return Button(
+            "Create sample bench",
+            id="evals-create-sample-bench",
+            disabled=self.sample_bench_running,
+            tooltip=(
+                "A bench run is already in flight."
+                if self.sample_bench_running
+                else "Creates the loaded-nouns sample dataset, wires it to "
+                "a configured target, and runs it."
+            ),
+        )
+
     def _section(
         self,
         *,
@@ -245,7 +404,7 @@ class LibraryRail(NotifyMixin, Vertical):
         kind: str,
         empty_copy: str,
         row_label: Callable[[dict[str, Any]], str],
-        empty_extra: Optional[Callable[[], ComposeResult]] = None,
+        actions: Optional[Callable[[], ComposeResult]] = None,
     ) -> ComposeResult:
         open_state = self.open_sections.get(section_id, True)
         yield Horizontal(
@@ -270,7 +429,7 @@ class LibraryRail(NotifyMixin, Vertical):
             empty_copy=empty_copy,
             row_label=row_label,
             open_state=open_state,
-            empty_extra=empty_extra,
+            actions=actions,
         )
 
     def _row_button(
@@ -297,9 +456,15 @@ class LibraryRail(NotifyMixin, Vertical):
         empty_copy: str,
         row_label: Callable[[dict[str, Any]], str],
         open_state: bool,
-        empty_extra: Optional[Callable[[], ComposeResult]] = None,
+        actions: Optional[Callable[[], ComposeResult]] = None,
     ) -> Vertical:
         children: list[Any] = []
+        # TASK-1478: rendered unconditionally, at the top -- a creation
+        # affordance must survive the section's first row existing, not
+        # just precede it. Lives in the section body (not the header) so it
+        # still collapses with the rest of the section, same as every row.
+        if actions is not None:
+            children.extend(actions())
         if rows:
             for index, row in enumerate(rows):
                 button_id = f"{EVALS_RAIL_ROW_PREFIX}{section_id}-{index}"
@@ -315,8 +480,6 @@ class LibraryRail(NotifyMixin, Vertical):
             children.append(
                 Static(empty_copy, classes="evals-rail-empty-copy", markup=False)
             )
-            if empty_extra is not None:
-                children.extend(empty_extra())
         body = Vertical(
             *children,
             id=f"evals-rail-section-body-{section_id}",
@@ -375,7 +538,25 @@ class LibraryRail(NotifyMixin, Vertical):
         is_first_run: bool = False,
     ) -> Vertical:
         children: list[Any] = []
+        # Read once, shared by both the non-empty and empty branches below
+        # (TASK-1478 needs it in both -- the sample-bench button is no
+        # longer offered only when the section is empty).
+        provider_ready = sample_bench.provider_is_configured(
+            self.view_model, self.app_config
+        )
         if benches:
+            # TASK-1478: a word bench already exists (which itself means a
+            # llama_cpp target -- an eval_models row -- already satisfies
+            # `provider_is_configured`; see sample_bench.py's gate), but
+            # the sample-bench button used to disappear the moment this
+            # branch was reached at all, making bench creation a one-way
+            # trapdoor. Keep it reachable at the top of the list. When the
+            # gate fails here regardless (in practice unreachable, per the
+            # note above), no row is added -- the "Open Settings" escape
+            # hatch below is scoped to the fully-empty branch and must not
+            # be duplicated for a rail that already has real benches.
+            if provider_ready:
+                children.append(self._create_sample_bench_button())
             for index, row in enumerate(benches):
                 button_id = f"{EVALS_RAIL_ROW_PREFIX}benches-{index}"
                 children.append(
@@ -397,9 +578,6 @@ class LibraryRail(NotifyMixin, Vertical):
             # pre-existing classic task and no word benches -- exactly
             # this rebuild's upgrading population -- with NEITHER offer,
             # no matter what providers they had configured.
-            provider_ready = sample_bench.provider_is_configured(
-                self.view_model, self.app_config
-            )
             if not classic_tasks:
                 # Fully empty section -- the full explanatory copy. With a
                 # classic task also present, this text would just be a
@@ -444,16 +622,7 @@ class LibraryRail(NotifyMixin, Vertical):
                 # A real target IS resolvable here -- the button never
                 # appears pointing at nothing (see sample_bench.py's "Do
                 # not fabricate" note).
-                children.append(
-                    Button(
-                        "Create sample bench",
-                        id="evals-create-sample-bench",
-                        tooltip=(
-                            "Creates the loaded-nouns sample dataset, wires "
-                            "it to a configured target, and runs it."
-                        ),
-                    )
-                )
+                children.append(self._create_sample_bench_button())
             else:
                 children.append(self._open_settings_button())
 
@@ -488,11 +657,18 @@ class LibraryRail(NotifyMixin, Vertical):
             body.styles.display = "none"
         return body
 
-    def _dataset_empty_actions(self) -> ComposeResult:
-        """"No datasets" offers authoring and import side by side (design
-        spec's "Empty states and first run" table) -- both handled locally
-        (plain DB/file work, never a provider call), mirroring
-        ``snippet_editor.py``'s own self-contained import flow."""
+    def _dataset_actions(self) -> ComposeResult:
+        """Authoring and import, side by side (design spec's "Empty states
+        and first run" table) -- both handled locally (plain DB/file work,
+        never a provider call), mirroring ``snippet_editor.py``'s own
+        self-contained import flow.
+
+        TASK-1478: no longer empty-only -- rendered unconditionally at the
+        top of the Datasets section body (see ``_section_body``), so
+        dataset creation stays reachable once a dataset already exists
+        rather than only before the first one. Renamed from
+        ``_dataset_empty_actions`` accordingly.
+        """
         yield Horizontal(
             Button("+ New dataset", id="evals-rail-new-dataset", compact=True),
             Button("Import…", id="evals-rail-import-dataset", compact=True),

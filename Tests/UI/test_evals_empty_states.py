@@ -28,12 +28,17 @@ from tldw_chatbook.Evals.word_bench.storage import load_grid
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Evals import sample_bench
 from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
-from tldw_chatbook.UI.Evals.library_rail import LibraryRail
+from tldw_chatbook.UI.Evals.library_rail import (
+    LibraryRail,
+    _run_group_row_label,
+    _run_group_row_time,
+)
 from tldw_chatbook.UI.Evals.results_grid import ResultsGrid
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 
 from .test_evals_screen import EvalsHarness, _FakeAppInstance
+from .test_evals_screen import seeded_bench as seeded_bench  # noqa: F401 -- fixture re-export
 from .test_evals_results_grid import _select_run_group
 from .test_evals_results_grid import evals_db as evals_db  # noqa: F401 -- fixture re-export
 from .test_evals_results_grid import mixed_run_group as mixed_run_group  # noqa: F401
@@ -927,6 +932,110 @@ async def test_import_dataset_file_selected_creates_a_dataset_from_the_file(
 
 
 # ---------------------------------------------------------------------------
+# TASK-1478: creation affordances survive the section's first row -- live
+# UAT found "Create sample bench" and "+ New dataset"/"Import…" vanished
+# the moment one bench/dataset existed, a one-way trapdoor into a
+# read-only rail. The design spec requires both to stay reachable
+# regardless of section contents; only the explanatory empty-state COPY
+# ("No benches yet."/"No datasets yet.", the first-run hint, the
+# no-providers message) stays scoped to a genuinely empty section.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sample_bench_offer_stays_reachable_once_a_bench_already_exists(
+    configured_app, seeded_bench
+):
+    """A configured provider plus one existing word bench used to hide
+    "Create sample bench" entirely -- `_benches_section_body`'s non-empty
+    branch never even looked at the provider gate. It must stay clickable
+    (and contained within the rail) alongside the real bench row."""
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        rail = screen.query_one("#evals-library-pane")
+
+        button = screen.query_one("#evals-create-sample-bench")
+        assert rail.region.contains_region(button.region)
+        # The existing bench itself is still there too -- this is not the
+        # empty-state offer in disguise.
+        bench_row = screen.query_one("#evals-rail-row-benches-0")
+        assert "loaded-nouns" in str(bench_row.label)
+
+        # The empty-state copy is genuinely gone -- a real bench exists,
+        # so "No benches yet."/the first-run hint would be a false claim.
+        assert not screen.query("#evals-rail-first-run-hint")
+        assert not screen.query("#evals-rail-section-body-benches .evals-rail-empty-copy")
+
+
+@pytest.mark.asyncio
+async def test_dataset_actions_stay_reachable_once_a_dataset_already_exists(
+    configured_app, evals_db: EvalsDB
+):
+    """The Datasets-section mirror of the test above: "+ New dataset" and
+    "Import…" used to render only in `_section_body`'s empty branch, so a
+    single dataset made further authoring/import unreachable from the
+    rail. Both must stay present and clickable once a dataset exists."""
+    evals_db.create_dataset(
+        name="already-here", format="custom", source_path="inline:already-here"
+    )
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        rail = screen.query_one("#evals-library-pane")
+
+        new_button = screen.query_one("#evals-rail-new-dataset")
+        import_button = screen.query_one("#evals-rail-import-dataset")
+        assert rail.region.contains_region(new_button.region)
+        assert rail.region.contains_region(import_button.region)
+
+        dataset_row = screen.query_one("#evals-rail-row-datasets-0")
+        assert "already-here" in str(dataset_row.label)
+        assert not screen.query("#evals-rail-section-body-datasets .evals-rail-empty-copy")
+
+        # And the button still works exactly as it does in the empty case.
+        await pilot.click("#evals-rail-new-dataset")
+        await pilot.pause()
+        assert len(evals_db.list_datasets()) == 2
+
+
+@pytest.mark.asyncio
+async def test_collapsing_a_non_empty_section_hides_its_creation_affordance_too(
+    configured_app, seeded_bench, evals_db: EvalsDB
+):
+    """The new affordance rows live in the section BODY (never the header),
+    so collapsing a section must hide them exactly like it hides every
+    row -- proven here against the non-empty case specifically, since
+    that is the state this task newly makes render at all."""
+    evals_db.create_dataset(
+        name="already-here", format="custom", source_path="inline:already-here"
+    )
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+
+        sample_bench_button = screen.query_one("#evals-create-sample-bench")
+        new_dataset_button = screen.query_one("#evals-rail-new-dataset")
+        assert sample_bench_button.region.width > 0
+        assert new_dataset_button.region.width > 0
+
+        await pilot.click("#evals-rail-toggle-benches")
+        await pilot.click("#evals-rail-toggle-datasets")
+        await pilot.pause()
+
+        benches_body = screen.query_one("#evals-rail-section-body-benches")
+        datasets_body = screen.query_one("#evals-rail-section-body-datasets")
+        assert benches_body.styles.display == "none"
+        assert datasets_body.styles.display == "none"
+        # Still present in the DOM (the widget itself did not vanish) but
+        # not actually rendered -- same convention as
+        # test_every_pane_descendant_stays_within_its_pane's "collapsed
+        # rail section" skip.
+        assert sample_bench_button.region.width == 0
+        assert new_dataset_button.region.width == 0
+
+
+# ---------------------------------------------------------------------------
 # Export -- CSV for the active lens, JSON for the whole run group.
 # ---------------------------------------------------------------------------
 
@@ -1051,3 +1160,203 @@ async def test_export_rejects_an_invalid_path_without_crashing(
         monkeypatch.setattr(results_grid_module, "validate_path_simple", _reject)
         # Must not raise.
         grid._write_export_file(Path("/tmp/whatever.json"))
+
+
+# ---------------------------------------------------------------------------
+# TASK-1480 -- run-row status glyph + timestamp. Pure functions, no Textual
+# mount required: `_run_group_row_label`/`_run_group_row_time` take a plain
+# row dict (the shape `EvalsViewModel.run_groups()` returns) and return a
+# str, so these test the rendering logic directly rather than through a
+# mounted rail. `test_evals_screen.py` has the complementary live-run
+# integration test (a genuinely "running" DB row reaching a mounted rail
+# row via a real recompose).
+# ---------------------------------------------------------------------------
+
+
+def test_run_group_row_label_completed_uses_check_glyph_and_hh_mm_time():
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "completed",
+    }
+    assert _run_group_row_label(row) == "✓ 14:02 · loaded-nouns v1"
+
+
+def test_run_group_row_label_cancelled_uses_cross_glyph():
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 13:55:00",
+        "status": "cancelled",
+    }
+    assert _run_group_row_label(row) == "✗ 13:55 · loaded-nouns v1"
+
+
+def test_run_group_row_label_running_uses_dot_glyph():
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:31:00",
+        "status": "running",
+    }
+    assert _run_group_row_label(row) == "● 14:31 · loaded-nouns v1"
+
+
+def test_run_group_row_label_glyphs_are_single_cell_width():
+    """Per the brief/module docstring: never emoji -- double-width in this
+    app's terminal, a repeated past defect. Verify with Rich's own cell
+    width, not just "looks like one character to the eye".
+
+    The all-cells-failed state (TASK-1480 amendment) renders as TWO
+    single-width glyphs (`✓✗`), never one double-width character -- so
+    that state is checked as a 2-cell-wide pair, each character checked
+    individually, rather than asserting the combined string is 1-wide.
+    """
+    from rich.cells import cell_len
+
+    for row, glyph in (
+        ({"status": "running"}, "●"),
+        ({"status": "cancelled"}, "✗"),
+        ({"status": "completed", "all_cells_failed": False}, "✓"),
+    ):
+        row = {"task_name": "x", "created_at": "2026-07-30 14:02:00", **row}
+        label = _run_group_row_label(row)
+        assert label.startswith(glyph), label
+        assert cell_len(glyph) == 1, f"{row['status']} glyph {glyph!r} is not single-width"
+
+    all_failed_row = {
+        "task_name": "x", "created_at": "2026-07-30 14:02:00",
+        "status": "completed", "all_cells_failed": True,
+    }
+    all_failed_label = _run_group_row_label(all_failed_row)
+    assert all_failed_label.startswith("✓✗ "), all_failed_label
+    assert cell_len("✓") == 1 and cell_len("✗") == 1
+    assert cell_len("✓✗") == 2, "the combined glyph must be two single-width cells, not one double-width one"
+
+
+def test_run_group_row_time_falls_back_to_the_raw_string_on_parse_failure():
+    """`created_at` is a free-text DB column with no format enforcement at
+    this layer -- an unparseable value must never crash the rail, and the
+    brief pins the fallback as the raw string, not a placeholder."""
+    assert _run_group_row_time("not-a-timestamp") == "not-a-timestamp"
+
+
+def test_run_group_row_time_falls_back_when_created_at_is_missing():
+    assert _run_group_row_time(None) == ""
+
+
+def test_run_group_row_label_does_not_crash_over_an_unparseable_timestamp():
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "not-a-timestamp",
+        "status": "completed",
+    }
+    assert _run_group_row_label(row) == "✓ not-a-timestamp · loaded-nouns v1"
+
+
+def test_run_group_row_label_a_run_level_failed_status_uses_the_cross_glyph():
+    """TASK-1480 amendment (user-directed, replacing this test's original
+    "folds into the completed/check glyph" assertion): `run_groups()`'s
+    roll-up (evals_state.py) now folds a run-level "failed" status (the
+    `eval_runs` CHECK constraint allows it even though `WordBenchRunner`
+    never writes it) into the same "cancelled" bucket a cancelled run
+    gets -- both render the `✗` glyph. This function only ever receives
+    "running"/"cancelled"/"completed" from that roll-up; "cancelled" here
+    stands in for either source."""
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "cancelled",
+    }
+    assert _run_group_row_label(row) == "✗ 14:02 · loaded-nouns v1"
+
+
+def test_run_group_row_label_all_cells_failed_uses_check_and_cross_glyph():
+    """TASK-1480 amendment: a completed group where every captured cell
+    errored renders `✓✗` (finished, but nothing but failures) instead of
+    the plain `✓` a normal or partially-failed completion gets."""
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "completed",
+        "all_cells_failed": True,
+    }
+    assert _run_group_row_label(row) == "✓✗ 14:02 · loaded-nouns v1"
+
+
+def test_run_group_row_label_partial_failure_still_uses_the_plain_check_glyph():
+    """A completed group with SOME (but not all) failed cells still
+    renders the plain `✓` -- the results grid's own callout is what
+    explains a partial failure, not the rail row."""
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "completed",
+        "all_cells_failed": False,
+    }
+    assert _run_group_row_label(row) == "✓ 14:02 · loaded-nouns v1"
+
+
+def test_run_group_row_label_zero_cell_completed_group_uses_the_plain_check_glyph():
+    """Pins the edge the user's ruling calls out explicitly: a completed
+    group with nothing captured yet is vacuously "not all failed" -- the
+    view-model computes `all_cells_failed=False` for that case (see
+    `test_run_groups_all_cells_failed_false_for_a_completed_group_with_
+    zero_cells` in `test_run_existing_bench.py`), and this function must
+    render that the same as any other non-all-failed completed group."""
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "completed",
+        "all_cells_failed": False,
+    }
+    assert _run_group_row_label(row) == "✓ 14:02 · loaded-nouns v1"
+
+
+def test_run_group_row_label_missing_all_cells_failed_key_degrades_to_the_check_glyph():
+    """A row shape from before this amendment (or any caller that never
+    sets the key) must not crash -- `row.get("all_cells_failed")` degrades
+    to falsy/`None`, rendering the plain `✓` rather than raising."""
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "completed",
+    }
+    assert _run_group_row_label(row) == "✓ 14:02 · loaded-nouns v1"
+
+
+def test_run_group_row_label_unrecognised_status_degrades_to_the_completed_branch():
+    """`_run_group_row_glyph`'s own docstring: a missing/garbage `status`
+    (there should never be one) must degrade to a glyph, never raise."""
+    row = {
+        "task_name": "loaded-nouns v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "some-future-status-this-function-has-never-heard-of",
+    }
+    assert _run_group_row_label(row) == "✓ 14:02 · loaded-nouns v1"
+
+
+def test_run_group_row_label_missing_task_name_falls_back_to_untitled_run():
+    row = {"task_name": None, "created_at": "2026-07-30 14:02:00", "status": "completed"}
+    assert _run_group_row_label(row) == "✓ 14:02 · Untitled run"
+
+
+def test_run_group_row_label_escapes_a_markup_hazard_in_the_task_name():
+    """`Button(label=...)` parses its argument as Textual markup by
+    default (`Content.from_text`'s own `markup=True` default) -- an
+    unescaped bench name containing a bare `[/]` raises `MarkupError` the
+    instant the rail composes (the same hazard task-1476 fixed for
+    bench-run toast text; see `_run_group_row_label`'s own docstring).
+    This proves the label round-trips through the REAL parser without
+    raising, and that the rendered text still contains the raw,
+    unmangled brackets -- not that some other string merely "looks
+    escaped"."""
+    from textual.content import Content
+
+    row = {
+        "task_name": "loaded-nouns[/]v1",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "completed",
+    }
+    label = _run_group_row_label(row)
+
+    content = Content.from_markup(label)  # must not raise MarkupError
+    assert content.plain == "✓ 14:02 · loaded-nouns[/]v1"

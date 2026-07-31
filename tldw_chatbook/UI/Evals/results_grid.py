@@ -71,7 +71,17 @@ Cell states, never conflated (see each lens's own render function):
   ``cells``) -> blank. Never ``0``.
 - **failed** (``CellError``) -> ``FAILED_MARK`` ("—"), with the error's
   reason/detail surfaced in the inspector when the cell is focused (see
-  ``ResultsGrid.CellFocused`` below). Never ``0``.
+  ``ResultsGrid.CellFocused`` below). Never ``0``. TASK-1477: per-cell
+  ``FAILED_MARK``s and the ``meta`` line's buried "N failed" count were the
+  ONLY signal that a run had failures -- live UAT read a 4-of-4-failed run
+  as an unreadable wall of em-dashes with no explanation. ``compose()`` now
+  also yields ``#evals-grid-failure-callout`` (``.ds-recovery-callout``)
+  stating the count and the DOMINANT failure reason (most frequent
+  ``CellError.reason``, ties broken by first-seen -- see
+  ``_failure_summary``), with a "run the bench again" next step only when
+  EVERY cell failed (a partial failure is still a usable run). Rendered
+  only when at least one cell failed; absent, not an empty container,
+  otherwise.
 - **warned column** (the target's ``PreflightResult.is_warned``, carried
   through the run's stored preflight snapshot) -> the column header carries
   a readable ``" [warned]"`` suffix, so a large divergence in that column is
@@ -223,7 +233,7 @@ def degenerate_canary_text(target_labels: Sequence[str]) -> str:
     return (
         f"{names} preflighted with a degenerate canary: {its} plain-text "
         f"{continuation_noun} looked out-of-distribution rather than failing "
-        f"outright. {subject} {be} still runnable -- a large divergence in "
+        f"outright. {subject} {be} still runnable — a large divergence in "
         f"{its} {columns_noun} may reflect that, not the prompt."
     )
 
@@ -241,6 +251,41 @@ def _warned_target_labels(
         for target in targets
         if (result := preflight.get(target["id"])) is not None and result.is_warned
     ]
+
+
+def _failure_summary(
+    cells: dict[tuple[str, str], CellCapture | CellError],
+) -> tuple[int, int, Optional[str]]:
+    """TASK-1477: one pass over the grid's already-loaded ``cells`` for the
+    run-level failure callout (``ResultsGrid.compose()``) -- total attempted
+    cells, how many are ``CellError``, and the DOMINANT failure reason
+    (``CellError.reason``, the same field the cell inspector renders as
+    ``Failed: <reason>`` -- see ``inspector.py``'s ``show_cell``).
+
+    "Dominant" = most frequent reason, ties broken by first-seen: reasons
+    are counted into a plain ``dict``, which preserves insertion (i.e.
+    first-seen) order, and ``max(..., key=...)`` returns the FIRST item
+    that achieves the maximum on a tie -- so counting into that dict
+    already gives first-seen tie-breaking with no extra bookkeeping.
+
+    ``ResultsGrid.compose()`` caches this tuple (``self._failure_summary``)
+    so ``_render_header``'s "N failed" meta count reuses it instead of
+    running its own ``sum(isinstance(..., CellError))`` -- one count over
+    ``cells``, not two that could silently disagree.
+
+    Returns:
+        ``(failed, total, dominant_reason)``. ``dominant_reason`` is
+        ``None`` when nothing failed.
+    """
+    total = len(cells)
+    failed = 0
+    reason_counts: dict[str, int] = {}
+    for cap_or_err in cells.values():
+        if isinstance(cap_or_err, CellError):
+            failed += 1
+            reason_counts[cap_or_err.reason] = reason_counts.get(cap_or_err.reason, 0) + 1
+    dominant_reason = max(reason_counts, key=reason_counts.__getitem__) if reason_counts else None
+    return failed, total, dominant_reason
 
 
 @dataclass(frozen=True)
@@ -430,6 +475,12 @@ class ResultsGrid(NotifyMixin, Vertical):
         #: ``ResultsGrid`` instance). See ``storage.load_grid``'s own
         #: docstring: draining every ``eval_results`` page is real DB work.
         self._grid: Optional[dict[str, Any]] = None
+        #: ``(failed, total, dominant_reason)`` over ``self._grid["cells"]``
+        #: -- computed once in ``compose()`` (``_failure_summary``) and
+        #: reused by ``_render_header``'s meta line, so a run's failures are
+        #: counted exactly once, not twice. Stays ``(0, 0, None)`` until a
+        #: grid is actually loaded.
+        self._failure_summary: tuple[int, int, Optional[str]] = (0, 0, None)
         self._lens: LensKey = "top1"
         self._baseline_mode: BaselineMode = "column"
         self._baseline_index: int = 0
@@ -503,6 +554,11 @@ class ResultsGrid(NotifyMixin, Vertical):
             )
             return
 
+        # TASK-1477: one pass over the already-loaded cells, cached so
+        # `_render_header`'s meta line reuses this same count instead of
+        # running its own -- see `_failure_summary`'s docstring.
+        self._failure_summary = _failure_summary(self._grid["cells"])
+
         # markup=False: both Statics carry user-authored text (bench name,
         # snippet text via _baseline_description()) interpolated by
         # _render_header() below -- see _safe_cell's docstring for the
@@ -525,6 +581,36 @@ class ResultsGrid(NotifyMixin, Vertical):
         )
         yield grid_meta
         yield Static("", id="evals-grid-state", markup=False)
+
+        # TASK-1477: a failed run showed only the meta line's buried "N
+        # failed" -- no explanation, no next step, and nothing above the
+        # per-cell FAILED_MARKs a user could act on. `markup=False`: the
+        # dominant reason is a `CellError.reason`, free text from whatever
+        # raised it (a connection library, a provider's error body), the
+        # same user-derived-text hazard the Statics above and
+        # `degenerate_canary_text` below already guard against. Absent
+        # entirely -- not an empty container -- when nothing failed.
+        failed, total_cells, dominant_reason = self._failure_summary
+        if failed:
+            if failed == total_cells:
+                # Every cell failed: the run is otherwise unusable, so name
+                # the concrete next step (bench Run is recoverable -- see
+                # this batch's earlier task wiring it up).
+                failure_text = (
+                    f"All {total_cells} cells failed — {dominant_reason}. "
+                    f"Check that the target's server is running and "
+                    f"reachable, then run the bench again."
+                )
+            else:
+                # Partial failure: the run still has usable data, so this
+                # states the fact without prescribing a remedy.
+                failure_text = f"{failed} of {total_cells} cells failed — {dominant_reason}."
+            yield Static(
+                failure_text,
+                id="evals-grid-failure-callout",
+                classes="ds-recovery-callout",
+                markup=False,
+            )
 
         # TASK-1036: named, visible without a cell click, and consistent
         # with the bench view's own callout -- see degenerate_canary_text's
@@ -942,7 +1028,10 @@ class ResultsGrid(NotifyMixin, Vertical):
         snapshot = self._grid["snapshot"]
         cells = self._grid["cells"]
         caps = [c for c in cells.values() if isinstance(c, CellCapture)]
-        failed = sum(1 for c in cells.values() if isinstance(c, CellError))
+        # TASK-1477: reuses compose()'s single pass over `cells`
+        # (`self._failure_summary`) instead of a second `sum(isinstance(...,
+        # CellError))` -- see `_failure_summary`'s docstring.
+        failed, _total_cells, _dominant_reason = self._failure_summary
         effective_k = analysis.effective_k(caps)
 
         meta = (
@@ -955,9 +1044,25 @@ class ResultsGrid(NotifyMixin, Vertical):
         sort_label = {"none": "dataset order", "desc": "spread ▼", "asc": "spread ▲"}[
             self._sort_mode
         ]
+        # TASK-1481: a single-target run has no second target for COLUMN-mode
+        # Δ baseline comparison (see _delta_reading's own docstring for why
+        # this is scoped to column mode, not the lens generally -- row mode
+        # still compares two different snippets on the run's one target,
+        # a real reading). The usual "Baseline: column · <name>" segment
+        # (which would otherwise name the run's one and only target) is
+        # replaced with the reason instead.
+        targets = snapshot.get("targets") or []
+        if (
+            self._lens == "delta"
+            and self._baseline_mode == "column"
+            and len(targets) < 2
+        ):
+            baseline_state = "needs at least two targets to compare (this run has one)"
+        else:
+            baseline_state = self._baseline_description()
         state = (
             f"Lens: {self._lens_description()}   "
-            f"Baseline: {self._baseline_description()}   "
+            f"Baseline: {baseline_state}   "
             f"Sort: {sort_label}"
         )
         self.query_one("#evals-grid-state", Static).update(state)
@@ -1177,7 +1282,30 @@ class ResultsGrid(NotifyMixin, Vertical):
         just this cell's own). ``_render_cell`` and ``_on_cell_highlighted``
         both call this rather than each computing (and risking disagreeing
         about) the comparison independently.
+
+        TASK-1481: a single-target run has no second target for COLUMN-mode
+        baseline comparison -- every cell is inherently the baseline column
+        (``tid == baseline_id`` always, there being only one ``tid``), so
+        the ``is_baseline_position`` branch below used to render EVERY cell
+        as the literal "baseline" text there. ROW mode is unaffected by a
+        single target: its baseline is a snippet, not a target, so a cell
+        still compares two DIFFERENT snippets' captures on the same (one)
+        target -- a real, independently reproducible divergence, not a
+        degenerate comparison-with-itself. Gating on target count alone
+        (regardless of ``self._baseline_mode``) would blank out that
+        genuine row-mode reading and silently turn a failed row-mode
+        baseline cell's ``FAILED_MARK`` into blank too -- both real
+        regressions an earlier version of this fix introduced. Only the
+        Spread column (``_compute_active_lens_rows``) needs at least two
+        per-row captures across targets regardless of mode, so it stays
+        silently empty either way; ``_render_header``'s state line is what
+        explains the column-mode case (see ``needs at least two targets``
+        there).
         """
+        targets = self._grid["snapshot"].get("targets") or []
+        if self._baseline_mode == "column" and len(targets) < 2:
+            return _DeltaReading(text="")
+
         if self._baseline_mode == "column":
             baseline_id = self._baseline_target_id()
             is_baseline_position = tid == baseline_id

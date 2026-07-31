@@ -531,6 +531,10 @@ async def test_estimate_cost_is_unknown_when_all_targets_are_unresolvable(
         cost_text = str(cost_line.renderable)
         assert "no cost" not in cost_text
         assert "unknown" in cost_text
+        # TASK-1481 fix-round-1: this line used ASCII "--" where the rest
+        # of the Evals rail copy uses real em-dashes.
+        assert " -- " not in cost_text
+        assert "—" in cost_text
 
 
 @pytest.mark.asyncio

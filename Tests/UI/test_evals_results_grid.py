@@ -358,6 +358,111 @@ def warned_markup_hazard_run_group(evals_db: EvalsDB) -> dict:
     return {"group_id": group_id, "steered_id": steered_id}
 
 
+# ---------------------------------------------------------------------------
+# Fixtures for TASK-1477: the run-level failure callout.
+# ---------------------------------------------------------------------------
+
+
+def _make_two_by_two_run_group(
+    evals_db: EvalsDB, name: str
+) -> tuple[str, str, str, list, dict]:
+    """Shared 2-target x 2-snippet scaffolding for the failure-callout
+    fixtures below -- both need the identical 4-cell shape, differing only
+    in which cells are ``CellError`` vs ``CellCapture``, so the run/target/
+    snippet setup is factored out rather than duplicated twice."""
+    base_id = evals_db.create_model(name="base", provider="llama_cpp", model_id="m")
+    steered_id = evals_db.create_model(name="steered", provider="llama_cpp", model_id="m")
+    dataset_id = evals_db.create_dataset(
+        name=f"{name}-set", format="custom", source_path=f"inline:{name}-set"
+    )
+    config = BenchConfig(
+        name=f"{name} bench", prompt_mode="raw", top_k=20,
+        dataset_id=dataset_id, target_ids=(base_id, steered_id),
+    )
+    task_id = save_bench(evals_db, config)
+    targets = [
+        Target(id=base_id, name="base", provider="llama_cpp", model_id="m"),
+        Target(id=steered_id, name="steered", provider="llama_cpp", model_id="m"),
+    ]
+    snippets = [
+        Snippet(id="s1", text="The protestors were", group=None),
+        Snippet(id="s2", text="The regime said", group=None),
+    ]
+    group_id, run_ids = create_run_group(evals_db, task_id, config, targets, snippets)
+    return group_id, base_id, steered_id, snippets, run_ids
+
+
+def _make_single_target_run_group(
+    evals_db: EvalsDB, name: str, snippet_count: int
+) -> tuple[str, str, list, str]:
+    """A SINGLE target, ``snippet_count`` snippets, one run -- the
+    narrowest shape that lets a test control exactly which order
+    ``load_grid`` inserts cells into its ``cells`` dict (and therefore
+    which ``CellError.reason`` ``_failure_summary`` sees "first"), used by
+    the dominant-reason tie-break test below.
+
+    Two DB-layer ordering facts make a MULTI-target fixture unsuitable for
+    that test: ``_load_run_group_snapshot`` explicitly notes
+    ``list_runs`` is newest-first, so ``load_grid``'s ``for run in runs``
+    loop visits the LAST-created target's run FIRST -- the opposite of
+    ``targets`` construction order; and ``EvalsDB.get_run_results`` orders
+    each run's own rows ``ORDER BY created_at ASC``. With a single run,
+    only the second fact applies, so ``cells`` insertion order is exactly
+    this fixture's ``save_cell`` call order -- no target-interleaving to
+    reason about.
+    """
+    target_id = evals_db.create_model(name=f"{name}-base", provider="llama_cpp", model_id="m")
+    dataset_id = evals_db.create_dataset(
+        name=f"{name}-set", format="custom", source_path=f"inline:{name}-set"
+    )
+    config = BenchConfig(
+        name=f"{name} bench", prompt_mode="raw", top_k=20,
+        dataset_id=dataset_id, target_ids=(target_id,),
+    )
+    task_id = save_bench(evals_db, config)
+    targets = [Target(id=target_id, name=f"{name}-base", provider="llama_cpp", model_id="m")]
+    snippets = [
+        Snippet(id=f"s{i}", text=f"snippet {i}", group=None)
+        for i in range(1, snippet_count + 1)
+    ]
+    group_id, run_ids = create_run_group(evals_db, task_id, config, targets, snippets)
+    return group_id, target_id, snippets, run_ids[target_id]
+
+
+@pytest.fixture
+def all_cells_failed_run_group(evals_db: EvalsDB) -> dict:
+    """2 targets x 2 snippets, EVERY cell failed with the same reason --
+    the "run is otherwise unusable, name a concrete next step" case."""
+    group_id, base_id, steered_id, snippets, run_ids = _make_two_by_two_run_group(
+        evals_db, "all-failed"
+    )
+    for snippet in snippets:
+        for target_id in (base_id, steered_id):
+            save_cell(
+                evals_db, run_ids[target_id], snippet,
+                CellError(reason="unreachable", detail="connection refused"),
+            )
+    return {"group_id": group_id, "base_id": base_id, "steered_id": steered_id}
+
+
+@pytest.fixture
+def one_of_four_cells_failed_run_group(evals_db: EvalsDB) -> dict:
+    """Same 2x2 shape as ``all_cells_failed_run_group``, but only ONE of
+    the four cells failed -- the "run is still usable, state the fact with
+    no next-step sentence" case."""
+    group_id, base_id, steered_id, snippets, run_ids = _make_two_by_two_run_group(
+        evals_db, "one-failed"
+    )
+    save_cell(
+        evals_db, run_ids[base_id], snippets[0],
+        CellError(reason="unreachable", detail="connection refused"),
+    )
+    save_cell(evals_db, run_ids[steered_id], snippets[0], _cap([(" a", 0.9), (" the", 0.05)]))
+    save_cell(evals_db, run_ids[base_id], snippets[1], _cap([(" it", 0.6), (" the", 0.2)]))
+    save_cell(evals_db, run_ids[steered_id], snippets[1], _cap([(" the", 0.5), (" a", 0.3)]))
+    return {"group_id": group_id, "base_id": base_id, "steered_id": steered_id}
+
+
 @pytest.fixture
 def k_depth_matched_run_group(evals_db: EvalsDB) -> dict:
     """A single-snippet K=20-vs-K=5 grid where EVERY cell's ``top_k``
@@ -561,6 +666,21 @@ def test_ever_observed_helpers_share_one_scan_and_hold_the_right_axis_fixed():
         )
     finally:
         monkeypatch.undo()
+
+
+def test_degenerate_canary_text_uses_an_em_dash_not_ascii_double_dash():
+    """TASK-1481 fix-round-1: the reviewer found this rendered sentence
+    (shared verbatim by the grid callout and inspector.py's per-target
+    callout, see the function's own docstring) still used ASCII ``--``
+    where the rest of the Evals rail copy uses real em-dashes. Covers
+    both the singular and plural grammar branches -- the dash sits after
+    ``{be}``, which differs between them ("is"/"are")."""
+    singular = degenerate_canary_text(["steered"])
+    plural = degenerate_canary_text(["steered", "distilled"])
+    assert " -- " not in singular
+    assert " -- " not in plural
+    assert "—" in singular
+    assert "—" in plural
 
 
 def test_near_tie_threshold_is_a_named_constant_not_a_magic_number():
@@ -1035,6 +1155,129 @@ async def test_degenerate_canary_callout_survives_a_target_name_containing_marku
         assert "steered [redacted]" in text
 
 
+# ---------------------------------------------------------------------------
+# TASK-1477: the run-level failure callout.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_failure_callout_names_the_next_step_when_every_cell_failed(
+    evals_app, all_cells_failed_run_group
+):
+    """A fully-failed run used to read as an unexplained wall of
+    ``FAILED_MARK`` em-dashes with only a buried "4 failed" in the meta
+    line's jargon. Every cell failing means the run itself is otherwise
+    unusable, so the callout must name a concrete next step (the bench
+    Run action, wired earlier in this batch, makes "run the bench again"
+    real)."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, all_cells_failed_run_group["group_id"])
+
+        callout = grid.query_one("#evals-grid-failure-callout", Static)
+        assert "ds-recovery-callout" in callout.classes
+        # .visual.plain, not .renderable/.content -- see the canary
+        # callout tests above for why (only .visual catches a lost
+        # markup=False).
+        text = callout.visual.plain
+        assert text == (
+            "All 4 cells failed — unreachable. Check that the target's "
+            "server is running and reachable, then run the bench again."
+        )
+        assert callout.region.width > 0
+        assert callout.region.height > 0
+
+
+@pytest.mark.asyncio
+async def test_failure_callout_states_the_fact_without_a_next_step_when_partial(
+    evals_app, one_of_four_cells_failed_run_group
+):
+    """A partial failure still leaves a usable run -- the callout must
+    state the count/reason but must NOT prescribe "run the bench again",
+    which would misrepresent a run that already has real data in it."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(
+            pilot, one_of_four_cells_failed_run_group["group_id"]
+        )
+
+        callout = grid.query_one("#evals-grid-failure-callout", Static)
+        text = callout.visual.plain
+        assert text == "1 of 4 cells failed — unreachable."
+        assert "run the bench again" not in text
+
+
+@pytest.mark.asyncio
+async def test_failure_callout_absent_when_nothing_failed(evals_app, clean_run_group):
+    """No reserved blank row, no empty container -- the callout must not
+    exist in the DOM at all when every cell captured cleanly."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, clean_run_group["group_id"])
+
+        assert not grid.query("#evals-grid-failure-callout")
+
+
+@pytest.mark.asyncio
+async def test_failure_callout_dominant_reason_ties_broken_by_first_seen_majority_otherwise_wins(
+    evals_app, evals_db
+):
+    """``_failure_summary``'s docstring claims the dominant reason is "most
+    frequent, ties broken by first-seen" -- the three tests above only ever
+    exercise a SINGLE failure reason, so that claim was unpinned: a future
+    refactor to e.g. ``collections.Counter.most_common()`` (whose tie order
+    is an implementation detail, not a contract) could silently flip which
+    reason a tied run's callout names, with nothing in the suite noticing.
+
+    Two grids, one test, both built via ``_make_single_target_run_group``
+    so ``save_cell`` call order is exactly the order ``load_grid`` inserts
+    into ``cells`` (see that helper's docstring):
+
+    - 2-vs-2 TIE: two ``timeout`` cells saved BEFORE two ``unreachable``
+      cells -- the callout must name ``timeout``, the first-seen reason,
+      not ``unreachable`` (which would win under alphabetical or
+      most-recently-seen tie-breaking).
+    - 1-vs-3 MAJORITY: one ``timeout`` cell saved BEFORE three
+      ``unreachable`` cells -- the callout must name ``unreachable``, the
+      real majority, proving the tie-break only applies on an actual tie
+      rather than "first-seen always wins regardless of count".
+    """
+    tie_group_id, _tie_target_id, tie_snippets, tie_run_id = (
+        _make_single_target_run_group(evals_db, "tie-break", 4)
+    )
+    for snippet, reason in zip(
+        tie_snippets, ["timeout", "timeout", "unreachable", "unreachable"]
+    ):
+        save_cell(evals_db, tie_run_id, snippet, CellError(reason=reason, detail=""))
+
+    majority_group_id, _majority_target_id, majority_snippets, majority_run_id = (
+        _make_single_target_run_group(evals_db, "majority", 4)
+    )
+    for snippet, reason in zip(
+        majority_snippets, ["timeout", "unreachable", "unreachable", "unreachable"]
+    ):
+        save_cell(evals_db, majority_run_id, snippet, CellError(reason=reason, detail=""))
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+
+        tie_grid = await _select_run_group(pilot, tie_group_id)
+        tie_callout = tie_grid.query_one("#evals-grid-failure-callout", Static)
+        # .visual.plain -- see the canary/failure callout tests above for
+        # why (only .visual catches a lost markup=False).
+        assert tie_callout.visual.plain == (
+            "All 4 cells failed — timeout. Check that the target's "
+            "server is running and reachable, then run the bench again."
+        )
+
+        majority_grid = await _select_run_group(pilot, majority_group_id)
+        majority_callout = majority_grid.query_one("#evals-grid-failure-callout", Static)
+        assert majority_callout.visual.plain == (
+            "All 4 cells failed — unreachable. Check that the target's "
+            "server is running and reachable, then run the bench again."
+        )
+
+
 @pytest.mark.asyncio
 async def test_entropy_lens_states_effective_k_and_uses_it_for_every_cell(
     evals_app, k_depth_matched_run_group
@@ -1197,6 +1440,116 @@ async def test_delta_lens_baseline_column_shows_literal_baseline_text_or_blank_i
 
         state = str(grid.query_one("#evals-grid-state").renderable)
         assert "column · base" in state
+
+
+@pytest.mark.asyncio
+async def test_delta_lens_on_a_single_target_run_explains_itself_instead_of_faking_baseline(
+    evals_app, evals_db
+):
+    """TASK-1481 (live UAT): a single-target run has no second TARGET for
+    COLUMN-mode Δ baseline comparison (the default baseline mode). Before
+    this fix, ``_delta_reading``'s "is_baseline_position" branch fired for
+    EVERY cell (there being only one target, ``tid == baseline_id``
+    always), so the whole column read as the literal word "baseline" --
+    alongside an always-empty Spread column, since ``analysis.spread``
+    needs at least two per-row captures across targets (see
+    ``_compute_active_lens_rows``). The lens itself must stay selectable
+    (this test switches to it the same way any other delta test does);
+    only what it renders for this shape changes.
+
+    TASK-1481 fix-round-1: this is deliberately scoped to COLUMN mode --
+    see ``test_delta_lens_row_baseline_on_a_single_target_still_computes_
+    real_divergence`` right below for why ROW mode's baseline (a snippet,
+    not a target) is unaffected by a single-target run and must keep
+    rendering real comparisons, not this same blank-and-explain
+    treatment."""
+    group_id, target_id, snippets, run_id = _make_single_target_run_group(
+        evals_db, "lonely-target", 2
+    )
+    save_cell(evals_db, run_id, snippets[0], _cap([(" a", 0.9)]))
+    save_cell(evals_db, run_id, snippets[1], _cap([(" b", 0.7)]))
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, group_id)
+        select = grid.query_one("#evals-lens-selector", Select)
+        select.value = "delta"
+        await pilot.pause()
+
+        table = grid.query_one("#evals-grid-table", DataTable)
+        assert str(table.get_cell("s1", target_id)) != "baseline"
+        assert str(table.get_cell("s2", target_id)) != "baseline"
+        assert str(table.get_cell("s1", target_id)) == ""
+        assert str(table.get_cell("s2", target_id)) == ""
+
+        state = str(grid.query_one("#evals-grid-state").renderable)
+        assert "needs at least two targets" in state
+
+        # The Δ lens is still a live, selectable option -- this fixture's
+        # single-target shape only changes what it renders, never removes
+        # it from the Select.
+        assert select.value == "delta"
+
+
+@pytest.mark.asyncio
+async def test_delta_lens_row_baseline_on_a_single_target_still_computes_real_divergence(
+    evals_app, evals_db
+):
+    """TASK-1481 fix-round-1: the reviewer traced ``_delta_reading`` and
+    confirmed the first version of this fix's gate was too broad -- it
+    keyed off target count ALONE, regardless of ``self._baseline_mode``,
+    so it also blanked out ROW-mode baselines on a single-target run. Row
+    mode's baseline is a SNIPPET, not a target: a cell there compares two
+    DIFFERENT snippets' captures on the run's one (and only) target -- a
+    real, independently reproducible divergence, never a degenerate
+    comparison-with-itself. Row mode is fully reachable via
+    ``#evals-baseline-selector`` even with one target (see
+    ``_baseline_options``, which always lists every snippet as a "Row ·"
+    option). This pins THREE things the broad gate got wrong: a real
+    numeric divergence for a genuine comparison, the literal "baseline"
+    text for the baseline row's own position, and ``FAILED_MARK`` (not
+    blank) for a cell that itself failed."""
+    group_id, target_id, snippets, run_id = _make_single_target_run_group(
+        evals_db, "row-baseline-lonely", 3
+    )
+    baseline_cap = _cap([(" a", 0.9), (" b", 0.1)])
+    real_cap = _cap([(" a", 0.2), (" b", 0.8)])
+    save_cell(evals_db, run_id, snippets[0], baseline_cap)  # s1: the baseline row
+    save_cell(evals_db, run_id, snippets[1], real_cap)  # s2: a real comparison
+    save_cell(
+        evals_db, run_id, snippets[2], CellError(reason="timeout", detail="")
+    )  # s3: this cell itself failed
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, group_id)
+        grid.query_one("#evals-lens-selector", Select).value = "delta"
+        await pilot.pause()
+        grid.query_one("#evals-baseline-selector", Select).value = ("row", "s1")
+        await pilot.pause()
+
+        table = grid.query_one("#evals-grid-table", DataTable)
+        # The baseline row's own position: still the literal word, same as
+        # column mode -- comparing a cell to itself is not a finding.
+        assert str(table.get_cell("s1", target_id)) == "baseline"
+
+        # A real comparison: the SAME divergence analysis.divergence
+        # itself produces for these two captures, computed independently
+        # here rather than hand-picked -- mirrors this file's own
+        # test_group_mean_rows_match_analysis_group_means_over_the_
+        # rendered_divergences pattern.
+        expected_jsd, _ = analysis.divergence(real_cap, baseline_cap)
+        assert str(table.get_cell("s2", target_id)) == f"{expected_jsd:.2f}"
+
+        # A cell that itself failed: FAILED_MARK, never blank -- the
+        # broad gate silently turned this blank too (the reviewer's Minor).
+        assert str(table.get_cell("s3", target_id)) == FAILED_MARK
+
+        # The column-mode-only "needs at least two targets" explanation
+        # must NOT show here -- row mode's baseline is genuinely usable.
+        state = str(grid.query_one("#evals-grid-state").renderable)
+        assert "needs at least two targets" not in state
+        assert "row ·" in state
 
 
 @pytest.mark.asyncio

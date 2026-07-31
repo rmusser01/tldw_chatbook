@@ -244,7 +244,7 @@ class EvalsInspector(Vertical):
             # unresolvable target makes the whole cost line unknown, not
             # just the deleted target's own row.
             cost_text = (
-                "cost unknown -- one or more targets could not be resolved"
+                "cost unknown — one or more targets could not be resolved"
             )
         elif providers and any(not _is_local_provider(provider) for provider in providers):
             cost_text = (

@@ -1511,6 +1511,60 @@ class EvalsDB:
                     (run_id, metric_name, value, metric_type, self.client_id),
                 )
 
+    def run_group_cell_failure_counts(self) -> Dict[str, Tuple[int, int]]:
+        """Per-run-group cell totals, for the library rail's "all cells in
+        this completed run failed" glyph (TASK-1480 amendment).
+
+        Neither ``eval_runs.total_samples`` nor ``completed_samples`` can
+        answer "did every cell fail": ``total_samples`` is the snippet
+        count a target was ASKED to run (``word_bench.storage.
+        create_run_group`` sets it once, up front), and
+        ``completed_samples`` is incremented on every ``store_result``
+        call regardless of outcome -- a failed cell is still a stored
+        result (``word_bench.storage.save_cell`` writes a ``CellError`` as
+        a real ``eval_results`` row precisely so "failed" and "not yet
+        run" stay distinguishable, per that function's own docstring).
+        Whether a given row IS that failure is encoded only inside its
+        ``logprobs`` JSON -- ``"error"`` is the discriminator key
+        ``word_bench.storage._cell_from_payload`` already uses to tell a
+        ``CellError`` payload (``{"schema": ..., "error": {...}}``) apart
+        from a ``CellCapture`` one. This mirrors that exact check via
+        SQLite's ``json_extract`` rather than introducing a second
+        definition of "is this cell an error" alongside the Python one.
+
+        One query for every run group in the database, not one query per
+        group: the rail composes on every selection change, and
+        ``EvalsViewModel.run_groups()`` calls this once per compose,
+        regardless of how many groups it pivots -- a per-group query loop
+        would turn an O(1) DB round trip into O(groups).
+
+        Returns:
+            ``{run_group_id: (total_cells, errored_cells)}``. A run group
+            with zero stored cells (nothing captured yet) has no entry
+            here at all -- callers should treat a missing key as
+            ``(0, 0)``, never as "all failed".
+        """
+        conn = self._get_connection()
+        cursor = conn.execute(
+            """
+            SELECT
+                r.run_group_id AS group_id,
+                COUNT(*) AS total_cells,
+                SUM(
+                    CASE WHEN json_extract(res.logprobs, '$.error') IS NOT NULL
+                         THEN 1 ELSE 0 END
+                ) AS errored_cells
+            FROM eval_results res
+            JOIN eval_runs r ON res.run_id = r.id
+            WHERE r.run_group_id IS NOT NULL AND r.deleted_at IS NULL
+            GROUP BY r.run_group_id
+            """
+        )
+        return {
+            row["group_id"]: (row["total_cells"], row["errored_cells"])
+            for row in cursor.fetchall()
+        }
+
     def get_run_results(
         self, run_id: str, limit: int = 1000, offset: int = 0
     ) -> List[Dict[str, Any]]:

@@ -4,18 +4,28 @@ actually puts widgets on screen."""
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
 from loguru import logger as loguru_logger
 from textual.app import App
 from textual.widget import Widget
+from textual.widgets import Button
 
 import tldw_chatbook
 from tldw_chatbook.DB.Evals_DB import EvalsDB
-from tldw_chatbook.Evals.word_bench.models import BenchConfig
-from tldw_chatbook.Evals.word_bench.storage import save_bench
+from tldw_chatbook.Evals.word_bench.models import (
+    BenchConfig,
+    CellCapture,
+    PreflightResult,
+    Target,
+    TokenProb,
+)
+from tldw_chatbook.Evals.word_bench.storage import create_run_group, save_bench
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
+from tldw_chatbook.UI.Evals.library_rail import LibraryRail
+from tldw_chatbook.UI.Evals.snippet_editor import import_snippets_into_dataset
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 
 #: The real bundled stylesheet (mirrors HomeHarness in test_home_screen.py
@@ -60,7 +70,27 @@ class _FakeAppInstance:
         #: test_evals_empty_states.py for scenarios that set this.
         self.app_config: dict = app_config or {}
 
-    def notify(self, message: str, *, severity: str = "information", **kwargs) -> None:
+    def notify(
+        self, message: str, *, severity: str = "information", markup: bool = True,
+        **kwargs,
+    ) -> None:
+        """A pure recorder, except for one deliberate exception: when
+        ``markup`` is left at its (Textual-matching) default of ``True``,
+        this parses ``message`` through the SAME ``Content.from_markup``
+        call the real ``Toast.render()`` uses (``textual/widgets/_toast.py``)
+        -- raising the same ``textual.markup.MarkupError`` on unbalanced
+        markup (e.g. a bare ``[/]``) that crashes the real app. TASK-1476's
+        review found this reachable: ``EvalsScreen`` interpolates exception
+        text (which can carry a user-controlled dataset/bench name) into
+        `notify()` calls, and a bare recorder that never looks at the text
+        would let a regression here pass silently. ``markup=False`` (what
+        every real call site now passes) skips this entirely, matching
+        ``Toast.render()``'s own ``else`` branch.
+        """
+        if markup:
+            from textual.content import Content  # noqa: PLC0415 -- narrow, mirrors _toast.py's own import
+
+            Content.from_markup(message)
         self.notifications.append((message, severity))
 
 
@@ -401,7 +431,7 @@ async def test_primary_action_reason_is_visible_without_hovering(evals_app):
         status = screen.query_one("#evals-primary-action-status")
         assert str(status.renderable) == "Run Bench: Blocked"
         reason = screen.query_one("#evals-primary-action-reason")
-        assert "Select a bench in the library rail to run it." in str(
+        assert "Select a bench in the Catalog rail to run it." in str(
             reason.renderable
         )
         # Both sit in the inspector pane, ahead of the button itself --
@@ -413,21 +443,436 @@ async def test_primary_action_reason_is_visible_without_hovering(evals_app):
 
 
 @pytest.mark.asyncio
-async def test_primary_action_reason_names_the_bench_once_one_is_selected(
+async def test_primary_action_is_enabled_and_names_the_bench_once_one_is_selected(
     evals_app, seeded_bench
 ):
-    """The visible reason must track the SAME per-selection explanation the
-    button's own tooltip carries (``_primary_action_state``), not a static
-    sentence that goes stale the moment a bench is selected."""
+    """TASK-1476: a found, selected bench now ENABLES the primary action --
+    the Blocked badge/callout (``#evals-primary-action-status`` /
+    ``#evals-primary-action-reason``) only render while ``disabled`` (see
+    ``_compose_inspector_pane``), so once the button is enabled they must
+    not render at all; the ready reason lives on the button's own tooltip
+    instead, tracking the SAME per-selection explanation
+    ``_primary_action_state`` produces."""
     async with evals_app.run_test() as pilot:
         await pilot.pause()
         evals_app.screen.select(kind="bench", id=seeded_bench)
         await pilot.pause()
-        status = evals_app.screen.query_one("#evals-primary-action-status")
-        assert "loaded-nouns" in str(status.renderable)
-        assert str(status.renderable).endswith(": Blocked")
-        reason = evals_app.screen.query_one("#evals-primary-action-reason")
-        assert "isn't wired up yet" in str(reason.renderable)
+        screen = evals_app.screen
+        action = screen.query_one("#evals-primary-action", Button)
+        assert "loaded-nouns" in str(action.label)
+        assert action.disabled is False
+        assert "loaded-nouns v1" in str(action.tooltip)
+        assert not screen.query("#evals-primary-action-status")
+        assert not screen.query("#evals-primary-action-reason")
+
+
+@pytest.mark.asyncio
+async def test_primary_action_state_stays_disabled_for_an_unresolvable_bench(
+    evals_app,
+):
+    """A ``kind="bench"`` selection naming an id with no matching row (e.g.
+    deleted between the rail rendering it and this being read) must stay
+    disabled with its own reason -- unchanged by wiring the found-bench
+    branch."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen = evals_app.screen
+        screen.select(kind="bench", id="does-not-exist")
+        await pilot.pause()
+        label, disabled, tooltip = screen._primary_action_state()
+        assert label == "Run Bench"
+        assert disabled is True
+        assert "no longer exists" in tooltip
+
+
+@pytest.mark.asyncio
+async def test_primary_action_state_stays_disabled_for_a_dataset_selection(
+    evals_app, evals_db
+):
+    dataset_id = evals_db.create_dataset(
+        name="ds", format="custom", source_path="inline:ds"
+    )
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen = evals_app.screen
+        screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        label, disabled, tooltip = screen._primary_action_state()
+        assert label == "Run Bench"
+        assert disabled is True
+        assert "Datasets are run from within a bench" in tooltip
+
+
+@pytest.mark.asyncio
+async def test_primary_action_state_stays_disabled_for_a_completed_run_group(
+    evals_app, evals_db
+):
+    base_id = evals_db.create_model(name="base", provider="llama_cpp", model_id="m")
+    dataset_id = evals_db.create_dataset(
+        name="rg-ds", format="custom", source_path="inline:rg-ds"
+    )
+    config = BenchConfig(
+        name="rg bench", prompt_mode="raw", top_k=5,
+        dataset_id=dataset_id, target_ids=(base_id,),
+    )
+    task_id = save_bench(evals_db, config)
+    target = Target(id=base_id, name="base", provider="llama_cpp", model_id="m")
+    group_id, _run_ids = create_run_group(evals_db, task_id, config, [target], [])
+
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen = evals_app.screen
+        screen.select(kind="run_group", id=group_id)
+        await pilot.pause()
+        label, disabled, tooltip = screen._primary_action_state()
+        assert label == "Run Bench"
+        assert disabled is True
+        assert "This run has already completed" in tooltip
+
+
+def test_the_not_wired_up_copy_no_longer_exists_anywhere_in_the_app():
+    """TASK-1476: the primary action is wired up now -- the old deferral
+    copy (and the docstring paragraph mirroring it) must be gone entirely,
+    not merely unreachable from a live selection."""
+    package_root = Path(tldw_chatbook.__file__).parent
+    offenders = [
+        path
+        for path in package_root.rglob("*.py")
+        if "isn't wired up yet" in path.read_text(encoding="utf-8")
+    ]
+    assert not offenders, offenders
+
+
+# ---------------------------------------------------------------------------
+# Pressing the primary action -- the wiring itself (TASK-1476).
+# ---------------------------------------------------------------------------
+
+
+class _FakeCaptureClient:
+    """Mirrors ``test_evals_empty_states.py``'s own fake -- duplicated per
+    that module's convention (fakes are not shared/imported across test
+    modules here)."""
+
+    def __init__(self, calls: list) -> None:
+        self._calls = calls
+
+    async def preflight(self, target, mode, top_k):
+        return PreflightResult(state="ok", k_returned=5, canary="pass")
+
+    async def capture(self, snippet, target, mode, top_k):
+        self._calls.append((snippet, target.name))
+        return CellCapture(
+            prompt_mode=mode, k_requested=top_k, k_returned=1, content_offset=0,
+            top_k=(TokenProb(token=" a", logprob=-0.3, token_id=1),),
+            canary="unchecked", captured_at="2026-07-30T00:00:00Z",
+        )
+
+
+class _PausableFakeCaptureClient:
+    """Blocks on ``release_event`` inside ``capture`` (never ``preflight``)
+    -- gives a test a controllable window in which a run is genuinely in
+    flight, mirroring ``test_evals_empty_states.py``'s own
+    ``_PausableFakeCaptureClient``."""
+
+    def __init__(self, calls: list, release_event: "asyncio.Event") -> None:
+        self._calls = calls
+        self._release_event = release_event
+
+    async def preflight(self, target, mode, top_k):
+        return PreflightResult(state="ok", k_returned=5, canary="pass")
+
+    async def capture(self, snippet, target, mode, top_k):
+        await self._release_event.wait()
+        self._calls.append((snippet, target.name))
+        return CellCapture(
+            prompt_mode=mode, k_requested=top_k, k_returned=1, content_offset=0,
+            top_k=(TokenProb(token=" a", logprob=-0.3, token_id=1),),
+            canary="unchecked", captured_at="2026-07-30T00:00:00Z",
+        )
+
+
+async def _wait_until(pilot, predicate, *, tries: int = 300, interval: float = 0.02) -> None:
+    for _ in range(tries):
+        if predicate():
+            return
+        await pilot.pause(interval)
+    raise AssertionError("condition never became true")
+
+
+@pytest.fixture
+def runnable_bench(evals_db: EvalsDB) -> str:
+    """A bench whose dataset carries a real snippet -- unlike
+    ``seeded_bench`` (whose empty dataset only ever needs to exist for
+    naming/count tests), this is the minimum
+    ``sample_bench.run_existing_bench`` needs to actually complete a run
+    instead of raising "has no snippets to run"."""
+    base_model_id = evals_db.create_model(
+        name="base", provider="llama_cpp", model_id="m"
+    )
+    dataset_id = evals_db.create_dataset(
+        name="loaded-nouns", format="custom", source_path="inline:loaded-nouns"
+    )
+    import_snippets_into_dataset(
+        evals_db,
+        dataset_id,
+        [{"id": "s1", "text": "The protestors were", "group": "neutral", "note": None}],
+    )
+    config = BenchConfig(
+        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
+        dataset_id=dataset_id, target_ids=(base_model_id,),
+        probes=(" Sure", " I"),
+    )
+    return save_bench(evals_db, config)
+
+
+@pytest.mark.asyncio
+async def test_pressing_the_primary_action_runs_the_bench_and_selects_its_run_group(
+    evals_app, runnable_bench
+):
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _FakeCaptureClient(calls)
+
+        assert screen._view_model.run_groups() == []
+        # No `scroll_visible()` needed here (unlike an earlier version of
+        # this test): `#evals-inspector-bench { height: auto; }` in
+        # _evals.tcss (whole-branch review clipping fix) stopped
+        # `EvalsInspector` from claiming the whole `#lab-inspector`
+        # viewport as an unstyled `1fr` child, which used to push
+        # `#evals-primary-action` out of the visible/painted area --
+        # see `test_primary_action_paints_inside_the_inspector_viewport_
+        # without_scrolling` for the dedicated regression test.
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._selection.kind == "run_group")
+        await pilot.pause()
+
+        assert len(calls) == 1
+        run_groups = screen._view_model.run_groups()
+        assert len(run_groups) == 1
+        assert screen._selection.id == run_groups[0]["id"]
+        assert run_groups[0]["task_id"] == runnable_bench
+
+
+class _RaisingCaptureClient:
+    """A client whose ``preflight`` raises with markup-hazard text baked
+    into the message -- stands in for the real hazard
+    (``sample_bench._load_snippets``'s ``RuntimeError(f"Dataset {name!r}
+    has no snippets to run.")``, where an imported dataset's name defaults
+    to the imported filename's stem, so a file named ``notes[/].txt``
+    would carry it) without needing a REAL dataset/bench/target actually
+    named with a bare ``[/]`` -- that would ALSO crash
+    ``LibraryRail``'s own rail-row ``Button(label=...)`` the moment the
+    rail composes (a separate, pre-existing, out-of-scope hazard the
+    controller is tracking on its own), which would fail this test for
+    the wrong reason before the click under test even happens."""
+
+    async def preflight(self, target, mode, top_k):
+        raise RuntimeError("Target 'notes[/].txt' could not be reached.")
+
+    async def capture(self, snippet, target, mode, top_k):
+        raise AssertionError("capture must not be reached -- preflight fails first")
+
+
+@pytest.mark.asyncio
+async def test_bench_run_failure_toast_with_markup_hazard_text_does_not_crash_the_app(
+    evals_app, runnable_bench
+):
+    """TASK-1476 review Critical: ``_run_bench_worker``'s error ``notify()``
+    interpolates the caught exception's message, which can carry user-
+    controlled text (see ``_RaisingCaptureClient``'s own docstring for the
+    real-world shape) -- a bare ``[/]`` is unbalanced Rich/Textual markup
+    (``textual.markup.MarkupError``). That path was unreachable before
+    this task wired up the button (it was always disabled); this pins
+    that a bench run failing with hazard text in its exception message
+    produces an error toast WITHOUT crashing the app, and that the toast
+    carries the raw, unmangled text. ``_FakeAppInstance.notify`` parses
+    real markup exactly like ``Toast.render()`` does when ``markup=True``
+    -- see its own docstring -- so this fails loudly (a real
+    ``MarkupError``, propagating out of the worker as an unhandled
+    exception) if a future edit ever drops ``markup=False`` from that call
+    again.
+    """
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        screen._sample_bench_client_factory = lambda t: _RaisingCaptureClient()
+
+        # No `scroll_visible()` needed -- see the whole-branch review
+        # clipping fix's own comment above
+        # `test_pressing_the_primary_action_runs_the_bench_and_selects_
+        # its_run_group`.
+        await pilot.click("#evals-primary-action")  # must not crash the app
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+        assert pilot.app.is_running, "the app must survive the failure toast"
+        notifications = evals_app.app_instance.notifications
+        assert notifications, "the failure must still produce a toast"
+        message, severity = notifications[-1]
+        assert severity == "error"
+        assert "[/]" in message, message
+        assert "could not be reached" in message
+
+
+@pytest.mark.asyncio
+async def test_a_second_press_while_a_bench_run_is_in_flight_is_a_no_op(
+    evals_app, runnable_bench
+):
+    """Mirrors ``test_a_second_click_while_running_does_not_start_a_second_
+    run`` (test_evals_empty_states.py) for the run-existing-bench worker:
+    posts the Pressed event directly (simulating whatever might get past a
+    disabled-but-not-yet-rerendered button) and proves it is a genuine
+    no-op -- exactly one run group, never two."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        button = screen.query_one("#evals-primary-action", Button)
+        # No `scroll_visible()` needed -- see the whole-branch review
+        # clipping fix's own comment on the sibling press test above.
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        await pilot.pause()
+        assert button.disabled is True
+
+        screen.post_message(Button.Pressed(button))
+        await pilot.pause()
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+        assert len(calls) == 1  # sanity check -- holds even without the guard
+        # The assertion that actually discriminates: dropping the
+        # `if self._bench_run_running: return` guard (while keeping
+        # `exclusive=True`) would produce 2 here, because the second
+        # `run_worker` call cancels the already-running worker via the
+        # shared exclusive group AFTER it created its own run group, then a
+        # fresh worker creates a second one.
+        assert len(screen._view_model.run_groups()) == 1
+
+
+@pytest.mark.asyncio
+async def test_action_buttons_stay_disabled_across_a_mid_run_recompose(
+    evals_app, evals_db, runnable_bench
+):
+    """Whole-branch review Important finding: ``_primary_action_state()``
+    never consulted ``_bench_run_running``/``_sample_bench_running``, so
+    any rail click while a run is genuinely in flight
+    (``EvalsScreen.select()`` always schedules ``refresh(recompose=True)``,
+    even for a same-bench reselection) recomposed the inspector into a
+    FRESH, ENABLED "Run <name>" button -- a press there would hit
+    ``_on_primary_action_pressed``'s own ``_bench_run_running`` guard and
+    silently no-op, the exact dead-end anti-pattern
+    ``_primary_action_state``'s own docstring forbids. Task 4's persistent
+    "Create sample bench" rail button (no longer empty-only, see
+    ``library_rail.py``'s module docstring) opened the identical seam for
+    itself. Mirrors ``test_rail_run_row_shows_the_running_glyph_while_the_
+    run_is_in_flight``'s own mid-flight-recompose technique, just below.
+    """
+    other_dataset_id = evals_db.create_dataset(
+        name="other-dataset", format="custom", source_path="inline:other-dataset"
+    )
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        # No `scroll_visible()` needed -- see the whole-branch review
+        # clipping fix's own comment on the earlier press tests above.
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+
+        # Force a mid-flight recompose: select a different row, then
+        # reselect the running bench -- exactly the seam the finding
+        # describes (a rail click during an in-flight run).
+        screen.select(kind="dataset", id=other_dataset_id)
+        await pilot.pause()
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+
+        label, disabled, tooltip = screen._primary_action_state()
+        assert disabled is True, (label, disabled, tooltip)
+        assert tooltip == "A bench run is already in flight."
+        action_button = screen.query_one("#evals-primary-action", Button)
+        assert action_button.disabled is True
+
+        sample_bench_button = screen.query_one(
+            "#evals-create-sample-bench", Button
+        )
+        assert sample_bench_button.disabled is True
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_rail_run_row_shows_the_running_glyph_while_the_run_is_in_flight(
+    evals_app, runnable_bench
+):
+    """TASK-1480: ``46d56f371``/``da4967a7a`` wired the primary action to a
+    real ``WordBenchRunner`` pass, which sets every run in a group to
+    "running" in the DB before capturing a single cell (``runner.py``,
+    right after ``create_run_group``) -- a group CAN genuinely be
+    "running" while the rail composes. This pins that a rail recompose
+    landing in that window (mirrors a user clicking a rail row again
+    while a run is in flight -- ``EvalsScreen.select()`` always schedules
+    ``refresh(recompose=True)``, even for a no-op reselection; the
+    progress callback itself only touches the primary-action button, see
+    ``_on_bench_run_progress``) renders the run row with the ``●`` glyph,
+    and that it flips to ``✓`` once the run completes -- i.e. that the
+    view-model's roll-up (TASK-1480) actually reaches the mounted rail
+    row, not just ``run_groups()``'s own return value.
+    """
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        # No `scroll_visible()` needed -- see the whole-branch review
+        # clipping fix's own comment on the earlier press tests above.
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+
+        # Force a fresh rail recompose while the run is still in flight.
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+
+        run_row = screen.query_one("#evals-rail-row-runs-0", Button)
+        assert str(run_row.label).startswith("● "), str(run_row.label)
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+        run_row = screen.query_one("#evals-rail-row-runs-0", Button)
+        assert str(run_row.label).startswith("✓ "), str(run_row.label)
 
 
 @pytest.mark.asyncio
@@ -559,6 +1004,48 @@ async def test_detail_empty_text_stays_generic_when_the_library_has_real_rows(
 
 
 @pytest.mark.asyncio
+async def test_no_rendered_copy_says_library_rail_or_uses_ascii_double_dash(
+    evals_app, seeded_bench
+):
+    """TASK-1481 (live UAT): the rail's actual painted header is "Catalog"
+    (see ``LabWorkbench``'s ``label="Catalog"``/``title="Catalog"``), never
+    "library rail" -- and the rail's own copy uses real em-dashes, not
+    ASCII ``--``. Sweeps every rendered copy string these branches can
+    produce, not the source file: this module's docstrings legitimately
+    keep both "library rail" (module/class/method docstrings) and " -- "
+    (this file's comment convention throughout) -- only user-facing text
+    changes.
+
+    Both "none"-selection detail-empty branches are exercised: the
+    genuinely-empty-library wording (fresh ``evals_app``, no selection
+    yet) and the real-rows-exist wording (after selecting away from
+    ``seeded_bench`` back to "none"). The disabled primary action's
+    reason string is the third known site.
+    """
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen = evals_app.screen
+
+        empty_library_text = str(
+            screen.query_one("#evals-detail-empty").renderable
+        )
+        assert "library rail" not in empty_library_text
+        assert " -- " not in empty_library_text
+
+        _label, _disabled, reason = screen._primary_action_state()
+        assert "library rail" not in reason
+        assert " -- " not in reason
+
+        screen.select(kind="bench", id=seeded_bench)
+        await pilot.pause()
+        screen.select(kind="none", id=None)
+        await pilot.pause()
+        real_rows_text = str(screen.query_one("#evals-detail-empty").renderable)
+        assert "library rail" not in real_rows_text
+        assert " -- " not in real_rows_text
+
+
+@pytest.mark.asyncio
 async def test_selection_change_recompose_reads_tasks_once_for_the_empty_state_check(
     evals_app, evals_db, monkeypatch
 ):
@@ -634,3 +1121,218 @@ async def test_inspector_pane_widens_at_a_wide_terminal_instead_of_staying_fixed
     assert widths[80] < widths[200], (
         f"inspector did not scale with the terminal: {widths}"
     )
+
+
+@pytest.mark.asyncio
+async def test_primary_action_paints_inside_the_inspector_viewport_without_scrolling(
+    evals_app, runnable_bench
+):
+    """Clipping blocker found during live verification at 235x52 (real
+    terminal, not this harness's default). ``EvalsInspector``
+    (``#evals-inspector-bench``) is an unstyled ``Vertical``, and
+    Textual's ``Vertical``/``Container`` DEFAULT_CSS is ``height: 1fr`` --
+    not ``auto``. Inside ``#evals-inspector-pane`` (``_lab.tcss``:
+    ``height: auto``, itself inside ``#lab-inspector``, a
+    ``VerticalScroll``), an unstyled ``1fr`` child has no real denominator
+    during the parent's ``auto`` measurement pass, so ``EvalsInspector``
+    claimed nearly the WHOLE ``#lab-inspector`` viewport regardless of its
+    own (much shorter) actual content -- pushing its sibling
+    ``#evals-primary-action`` button to a row ``#lab-inspector``'s own
+    ``virtual_size`` never grew to cover. The button was unreachable even
+    by scrolling to ``max_scroll_y`` in the live repro (this harness's own
+    single-target repro happened to be reachable at ``max_scroll_y``, but
+    the ROOT CAUSE -- and the fix -- are identical either way: see
+    ``_evals.tcss``'s ``#evals-inspector-bench { height: auto; }`` comment
+    for the full mechanism and why ``#evals-classic-detail`` was verified
+    NOT to share it).
+
+    Exactly the off-by-one/starved-sibling family ``_lab.tcss`` already
+    fixed one level up, for the PANE itself.
+    """
+    async with evals_app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+
+        lab_inspector = screen.query_one("#lab-inspector")
+        button = screen.query_one("#evals-primary-action", Button)
+
+        assert lab_inspector.max_scroll_y == 0, (
+            "the inspector pane still needs to scroll to fit its content "
+            f"(max_scroll_y={lab_inspector.max_scroll_y}) -- EvalsInspector "
+            "is claiming more height than its own content needs"
+        )
+        assert button.region.width > 0 and button.region.height > 0, button.region
+        assert lab_inspector.region.contains_region(button.region), (
+            f"button {button.region} escapes the inspector's own visible "
+            f"viewport {lab_inspector.region}"
+        )
+
+        # Belt: a click with NO scroll_visible() call first must reach the
+        # real handler -- proves the button is genuinely PAINTED there, not
+        # merely LAID OUT there (a region can be geometrically correct on
+        # paper while still sitting under another widget's paint layer --
+        # see Task 2's own now-removed scroll_visible() workaround, which
+        # existed only because of this exact mismatch).
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _FakeCaptureClient(calls)
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._selection.kind == "run_group")
+        await pilot.pause()
+        assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_blocked_primary_action_badge_and_callout_paint_inside_the_inspector_viewport(
+    evals_app, runnable_bench
+):
+    """The DISABLED variant of the primary action -- badge + callout +
+    button, three widgets instead of one -- must ALSO stay fully inside
+    ``#lab-inspector``'s viewport after the ``height: auto`` fix; a fix
+    that only accounted for the (shorter) enabled-state content would be
+    an incomplete fix. The only selection state that mounts
+    ``EvalsInspector`` (i.e. actually exercises ``#evals-inspector-bench``)
+    AND renders a disabled button is a bench run genuinely in flight (see
+    ``_primary_action_state``'s in-flight branch, whole-branch review
+    Finding 1) -- reuses the same pausable-fake-client technique
+    ``test_action_buttons_stay_disabled_across_a_mid_run_recompose`` uses.
+    """
+    async with evals_app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        # Force a fresh recompose while the run is still in flight, so the
+        # rendered badge/callout/button are a genuinely FRESH instance from
+        # the fixed CSS, not the live-mutated original widget.
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+
+        lab_inspector = screen.query_one("#lab-inspector")
+        status = screen.query_one("#evals-primary-action-status")
+        reason = screen.query_one("#evals-primary-action-reason")
+        button = screen.query_one("#evals-primary-action", Button)
+
+        assert lab_inspector.max_scroll_y == 0, lab_inspector.max_scroll_y
+        for widget in (status, reason, button):
+            assert widget.region.width > 0 and widget.region.height > 0, widget.region
+            assert lab_inspector.region.contains_region(widget.region), (
+                f"{widget!r} at {widget.region} escapes the inspector's "
+                f"visible viewport {lab_inspector.region}"
+            )
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_pressing_the_primary_action_while_a_sample_bench_run_is_in_flight_is_a_no_op(
+    evals_app, runnable_bench
+):
+    """PR #1113 review (Qodo, seconding whole-branch review Note 6): the
+    two workers were only guarded against THEMSELVES --
+    ``_on_sample_bench_requested`` checked only ``_sample_bench_running``,
+    ``_on_primary_action_pressed`` checked only ``_bench_run_running`` --
+    so a press of one while the OTHER was in flight started two genuinely
+    overlapping workers (separate ``exclusive`` groups, so neither
+    cancelled the other), producing interleaved toasts and a last-wins
+    completion ``select()``. The recompose-time UI already disables BOTH
+    controls while EITHER flag is set (whole-branch review Finding 1), so
+    this posts ``Button.Pressed`` directly against
+    ``#evals-primary-action`` -- simulating whatever might reach the
+    handler despite that disabled state (a stale render, a race), exactly
+    like the existing same-flag "second press" tests already do -- rather
+    than relying on the disabled attribute alone to prove the handler
+    itself now cross-checks.
+    """
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-create-sample-bench")
+        await _wait_until(pilot, lambda: screen._sample_bench_running)
+        await pilot.pause()
+        # WordBenchRunner.run() creates its run group (status "running")
+        # BEFORE capturing a single cell -- see runner.py, right after
+        # `create_run_group` -- so one already exists here, from the
+        # sample-bench worker itself.
+        assert len(screen._view_model.run_groups()) == 1
+
+        button = screen.query_one("#evals-primary-action", Button)
+        screen.post_message(Button.Pressed(button))
+        await pilot.pause()
+
+        # The assertions that discriminate: dropping the cross-guard (while
+        # keeping each flag's own-worker guard) would leave both of these
+        # true -- a SECOND, overlapping worker genuinely started.
+        assert screen._bench_run_running is False
+        assert screen._bench_run_task_id is None
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._sample_bench_running)
+        await pilot.pause()
+
+        # Only the sample-bench worker's own run group exists -- never a
+        # second one from a bench-run worker that should never have
+        # started.
+        assert len(screen._view_model.run_groups()) == 1
+
+
+@pytest.mark.asyncio
+async def test_sample_bench_request_while_a_bench_run_is_in_flight_is_a_no_op(
+    evals_app, runnable_bench
+):
+    """Mirror of the test above: a bench run started from the primary
+    action, then a directly-posted ``SampleBenchRequested`` (mirroring
+    ``test_a_second_click_while_running_does_not_start_a_second_run``'s own
+    technique in ``test_evals_empty_states.py``) must not start an
+    overlapping sample-bench worker."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        await pilot.pause()
+        assert len(screen._view_model.benches()) == 1
+
+        screen.post_message(LibraryRail.SampleBenchRequested())
+        await pilot.pause()
+
+        # Discriminates: dropping the cross-guard would leave this True --
+        # a second, overlapping sample-bench worker genuinely started (and
+        # would go on to mint its own "loaded-nouns" bench).
+        assert screen._sample_bench_running is False
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+        # Only the pre-existing `runnable_bench` -- never a second,
+        # sample-bench-minted one.
+        assert len(screen._view_model.benches()) == 1
+        assert len(screen._view_model.run_groups()) == 1

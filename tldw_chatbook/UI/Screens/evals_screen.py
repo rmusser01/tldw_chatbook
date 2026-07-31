@@ -29,6 +29,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from loguru import logger
+from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -110,6 +111,24 @@ class EvalsScreen(LabScreen):
         #: 3c, per this program's own PR numbering) should not need a
         #: second plumbing pass to reach it.
         self._sample_bench_cancel_token: Optional[CancelToken] = None
+        #: True for the duration of one run-existing-bench flow. Same
+        #: double-guard rationale as ``_sample_bench_running`` (see that
+        #: field's own comment above): this flag stops a second press once
+        #: a worker has already set it, while ``exclusive=True`` on the
+        #: worker (below) covers the tighter race of two presses already
+        #: queued before either dispatches.
+        self._bench_run_running: bool = False
+        #: The bench (``eval_tasks``) id the in-flight run worker is
+        #: running, resolved from the current selection at PRESS time (see
+        #: ``_on_primary_action_pressed``) and never re-read from
+        #: ``self._selection`` inside the worker -- the selection can move
+        #: (another rail click) while the worker is still in flight.
+        self._bench_run_task_id: Optional[str] = None
+        #: The active run's cooperative cancel token, or ``None`` -- same
+        #: no-current-caller status as ``_sample_bench_cancel_token`` above
+        #: (no Cancel affordance exists in this screen yet): kept as a
+        #: real, threaded seam rather than a decorative parameter.
+        self._bench_run_cancel_token: Optional[CancelToken] = None
 
     def _current_app_config(self) -> dict[str, Any]:
         """The app's loaded settings, read fresh on every recompose (not
@@ -217,6 +236,22 @@ class EvalsScreen(LabScreen):
         ``sample_bench._mark_orphaned_runs_cancelled`` for the cleanup that
         path needs).
 
+        A THIRD check, ``_bench_run_running``, closes a different race: PR
+        #1113 review (Qodo, seconding whole-branch review Note 6) found the
+        sample-bench worker and the bench-run worker (``_run_bench_worker``,
+        started from ``_on_primary_action_pressed``) were only ever guarded
+        against THEMSELVES -- each lived in its own ``exclusive`` group, so
+        neither worker's ``exclusive=True`` cancelled the other, and a press
+        of one while the other was genuinely in flight started two REAL,
+        overlapping runs (interleaved toasts, last-wins completion
+        ``select()``). The recompose-time UI already disables both controls
+        while EITHER flag is set (see ``_primary_action_state``'s and
+        ``LibraryRail.sample_bench_running``'s own in-flight branches), but
+        that alone does not stop a stale-render/queued-press race from
+        reaching this handler -- this cross-check is the same belt this
+        function's OTHER two guards already provide for the same-worker
+        case, just against the other worker.
+
         The worker is handed as a CALLABLE, not a pre-built coroutine:
         ``exclusive=True`` cancels the superseded worker's Task before its
         first step, and a coroutine object constructed at the call site is
@@ -226,7 +261,7 @@ class EvalsScreen(LabScreen):
         orphan coroutine is created.
         """
         event.stop()
-        if self._sample_bench_running:
+        if self._sample_bench_running or self._bench_run_running:
             return
         self.run_worker(
             self._create_sample_bench_worker,
@@ -259,8 +294,16 @@ class EvalsScreen(LabScreen):
             raise
         except Exception as exc:
             logger.opt(exception=True).warning("Sample bench creation failed.")
+            # markup=False: `exc` can carry user-controlled text (e.g. a
+            # dataset name derived from an imported filename stem) and
+            # `notify()` defaults to markup=True -- unbalanced markup in
+            # that text (a bare `[/]`) raises MarkupError inside the toast
+            # renderer and crashes the whole app. See the identical fix on
+            # `_run_bench_worker`'s two notify() calls below.
             self.app_instance.notify(
-                f"Could not create the sample bench: {exc}", severity="error"
+                f"Could not create the sample bench: {exc}",
+                severity="error",
+                markup=False,
             )
         finally:
             self._sample_bench_running = False
@@ -268,7 +311,9 @@ class EvalsScreen(LabScreen):
             self._reset_sample_bench_running_ui()
         if result is not None:
             self.app_instance.notify(
-                "Sample bench created and run.", severity="information"
+                "Sample bench created and run.",
+                severity="information",
+                markup=False,
             )
             self.select(kind="run_group", id=result.run_group_id)
 
@@ -299,12 +344,20 @@ class EvalsScreen(LabScreen):
         )
 
     def _reset_sample_bench_running_ui(self) -> None:
-        """Restores the button after a run ends. A no-op (via the same
-        ``QueryError`` guard) on the success path, where ``self.select(...)``
-        immediately recomposes the rail and replaces this button with the
-        bench's own row anyway -- this only matters on the failure path,
-        where the SAME ``LibraryRail`` instance survives and must not be
-        left permanently disabled."""
+        """Restores the button after a run ends -- on BOTH the success and
+        failure paths.
+
+        TASK-1478 made "Create sample bench" a persistent control (rendered
+        at the top of the Benches section regardless of whether any benches
+        exist yet -- see ``library_rail.py``'s module docstring, "Creation
+        affordances are not empty-only"), so the claim this docstring used
+        to make -- that the success path's ``self.select(...)`` recompose
+        "replaces this button with the bench's own row" -- is no longer
+        true: a fresh ``LibraryRail`` recompose still renders the SAME
+        button, at the same id, still needing to be un-disabled and
+        re-labelled. The ``QueryError`` guard remains for the case the
+        button genuinely isn't in the DOM at all (no configured provider,
+        so the rail renders "Open Settings" instead)."""
         from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
 
         try:
@@ -330,12 +383,157 @@ class EvalsScreen(LabScreen):
             return
         inspector.show_cell(event)
 
-    # No `#evals-primary-action` press handler: `_primary_action_state`
-    # below keeps the button disabled unconditionally (even for a found,
-    # selected bench) until PR 3b wires real bench execution to it. An
-    # enabled button whose only handler shows a "not wired yet" toast is
-    # itself the dead-end-toast anti-pattern this button's own design note
-    # exists to avoid -- see _primary_action_state's docstring.
+    @on(Button.Pressed, "#evals-primary-action")
+    def _on_primary_action_pressed(self, event: Button.Pressed) -> None:
+        """Runs the selected bench (see ``sample_bench.run_existing_bench``).
+
+        Mirrors ``_on_sample_bench_requested``'s guard rationale exactly --
+        see that method's own docstring for the full three-part
+        explanation, repeated here only in brief. If two presses are
+        already queued before either dispatches, both see
+        ``_bench_run_running`` as ``False`` and both reach
+        ``run_worker(exclusive=True, ...)``; it is ``exclusive=True`` that
+        protects there, cancelling the second worker's Task before it takes
+        its first step, so only one worker body (and one flag-set) ever
+        runs. Once a worker IS running and has set the flag, THIS check is
+        what stops a later press from calling ``run_worker`` again --
+        without it, that call would cancel the already-running worker via
+        the same ``exclusive`` group after it has done real work,
+        abandoning its in-flight DB rows (see
+        ``sample_bench._mark_orphaned_runs_cancelled`` for the cleanup that
+        path needs). A THIRD check, ``_sample_bench_running``, closes the
+        cross-worker race PR #1113 review found: this button and
+        ``#evals-create-sample-bench`` live in separate ``exclusive``
+        groups, so without this cross-check a press here while the SAMPLE
+        bench worker is in flight would start a second, genuinely
+        overlapping run.
+
+        The selected bench id is resolved and stored on the instance HERE,
+        not re-read from ``self._selection`` inside the worker -- selection
+        can move (another rail click) while the worker is in flight, and
+        the worker must keep running the bench it was actually launched
+        against.
+        """
+        event.stop()
+        if self._bench_run_running or self._sample_bench_running:
+            return
+        selection = self._selection
+        if selection.kind != "bench" or not selection.id:
+            # Defensive only: `_primary_action_state` keeps the button
+            # disabled (so Textual never emits `Pressed` at all) for every
+            # selection kind but a found bench.
+            return
+        self._bench_run_task_id = selection.id
+        self.run_worker(
+            self._run_bench_worker,
+            exclusive=True,
+            group="evals-run-bench",
+        )
+
+    async def _run_bench_worker(self) -> None:
+        """Runs ``self._bench_run_task_id`` via
+        ``sample_bench.run_existing_bench``. Mirrors
+        ``_create_sample_bench_worker`` structure exactly -- see that
+        method's own comments for the parts not re-explained here.
+        """
+        app_config = self._current_app_config()
+        task_id = self._bench_run_task_id
+        cancel_token = CancelToken()
+        self._bench_run_running = True
+        self._bench_run_cancel_token = cancel_token
+        self._set_bench_run_running_ui()
+        result = None
+        try:
+            result = await sample_bench.run_existing_bench(
+                self._view_model,
+                app_config,
+                task_id,
+                client_factory=self._sample_bench_client_factory,
+                progress=self._on_bench_run_progress,
+                cancel_token=cancel_token,
+            )
+        except asyncio.CancelledError:
+            # run_existing_bench's own except-and-re-raise already marked
+            # any of this bench's still-"running" run rows "cancelled"
+            # before this propagated here -- log and let it continue
+            # propagating; swallowing a CancelledError is its own bug
+            # (Textual's worker bookkeeping needs to observe the real
+            # cancellation).
+            logger.info("Bench run worker was cancelled.")
+            raise
+        except Exception as exc:
+            logger.opt(exception=True).warning("Bench run failed.")
+            # markup=False: `exc` can carry user-controlled text -- e.g.
+            # `sample_bench._load_snippets` raises `RuntimeError(f"Dataset
+            # {name!r} has no snippets to run.")`, and an imported dataset's
+            # name defaults to the imported filename's stem, so a file named
+            # `notes[/].txt` puts live markup straight into this string.
+            # `notify()` defaults to markup=True; unbalanced markup (a bare
+            # `[/]`) raises MarkupError inside the toast renderer and takes
+            # down the whole app -- this path was unreachable before this
+            # button was wired up (it was always disabled), so it is new
+            # here.
+            self.app_instance.notify(
+                f"Could not run the bench: {exc}",
+                severity="error",
+                markup=False,
+            )
+        finally:
+            self._bench_run_running = False
+            self._bench_run_cancel_token = None
+            self._reset_bench_run_running_ui()
+        if result is not None:
+            # markup=False for uniformity with the error toast above -- this
+            # string is static today, but pinning it keeps the pair
+            # consistent if it ever starts interpolating the bench name.
+            self.app_instance.notify(
+                "Bench run finished.", severity="information", markup=False
+            )
+            self.select(kind="run_group", id=result.run_group_id)
+
+    def _on_bench_run_progress(self, done: int, total: int) -> None:
+        """``sample_bench.ProgressFn`` -- called synchronously from within
+        ``WordBenchRunner.run``'s own coroutine (this worker's, not a
+        separate OS thread), so mutating the button directly here is safe,
+        mirroring ``_on_sample_bench_progress``."""
+        self._set_bench_run_running_ui(done=done, total=total)
+
+    def _set_bench_run_running_ui(self, *, done: int = 0, total: int = 0) -> None:
+        """Disables the primary-action button and gives it a live running
+        label for as long as a run is in flight -- see
+        ``_set_sample_bench_running_ui``'s own note on why a disabled-but-
+        not-yet-rerendered button is only a visible signal, not by itself a
+        sufficient guard against a second press."""
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            button = self.query_one("#evals-primary-action", Button)
+        except QueryError:
+            return
+        button.disabled = True
+        button.label = f"Running… ({done}/{total})" if total else "Running…"
+
+    def _reset_bench_run_running_ui(self) -> None:
+        """Restores the primary-action button after a run ends, from
+        ``_primary_action_state()`` -- the current selection's own fresh
+        label/disabled/tooltip, not a hardcoded constant, since (unlike
+        ``_reset_sample_bench_running_ui``'s "Create sample bench") the
+        ready-state label here is per-bench (``f"Run {name}"``). A no-op
+        (via the same ``QueryError`` guard) on the success path, where
+        ``self.select(...)`` immediately recomposes the inspector pane and
+        replaces this button entirely -- this only matters on the failure
+        path, where the SAME button instance survives and must not be left
+        permanently disabled with a stale "Running…" label."""
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            button = self.query_one("#evals-primary-action", Button)
+        except QueryError:
+            return
+        label, disabled, tooltip = self._primary_action_state()
+        button.disabled = disabled
+        button.label = label
+        button.tooltip = tooltip
 
     def lab_header_state(self) -> WorkbenchHeaderState:
         """Return the Evals destination header copy.
@@ -364,6 +562,13 @@ class EvalsScreen(LabScreen):
             selection=self._selection,
             open_sections=self._rail_open_sections,
             app_config=self._current_app_config(),
+            # Whole-branch review: gated on EITHER worker, not just the
+            # sample-bench one -- "a run is in flight" is the condition
+            # that makes starting a SECOND one (via this button) a stale-
+            # button trap, regardless of which worker owns the first run.
+            # See `_primary_action_state`'s own in-flight branch just
+            # below for the identical rationale on the primary action.
+            sample_bench_running=self._sample_bench_running or self._bench_run_running,
             id="evals-library-pane",
         )
 
@@ -518,12 +723,12 @@ class EvalsScreen(LabScreen):
         """
         if self._view_model.library_is_empty():
             return (
-                "Nothing here yet. Create a sample bench in the library "
-                "rail to get started -- it builds a dataset and a run for "
+                "Nothing here yet. Create a sample bench in the Catalog "
+                "rail to get started — it builds a dataset and a run for "
                 "you in one step."
             )
         return (
-            "Select a bench, dataset, or run in the library rail to see "
+            "Select a bench, dataset, or run in the Catalog rail to see "
             "its detail here."
         )
 
@@ -612,15 +817,43 @@ class EvalsScreen(LabScreen):
         note) -- every branch here names the concrete object the action
         would run, or states a concrete reason it can't.
 
-        Every branch is currently disabled, including a found, selected
-        bench: this PR (3a) wires selection and the shell, not execution --
-        the word bench runner (PR 2) has no button connecting to it yet,
-        and that wiring is PR 3b's job (the results grid it runs into). An
-        *enabled* button whose only handler pops a "not wired yet" toast
-        would be exactly the dead-end-toast pattern this function's naming
-        rule exists to avoid, just moved one click later.
+        The found-bench branch is the only one that ever enables the
+        button -- every other branch (an unresolvable bench, a dataset, a
+        completed run group, or no selection at all) stays disabled with
+        its own stated reason, since none of those names an object this
+        action can actually run. The in-flight branch below overrides ALL
+        of those, found-bench included, whenever a run is genuinely in
+        progress.
         """
         selection = self._selection
+
+        if self._bench_run_running or self._sample_bench_running:
+            # Whole-branch review Important finding: this function used to
+            # never consult either running-flag at all, so a rail click
+            # during an in-flight run -- `EvalsScreen.select()` always
+            # schedules `refresh(recompose=True)`, even for a same-bench
+            # reselection -- recomposed the inspector into a FRESH,
+            # ENABLED "Run <name>" button. A press there hits
+            # `_on_primary_action_pressed`'s own `_bench_run_running`
+            # guard and silently no-ops: the exact dead-end-toast/silent-
+            # no-op anti-pattern this whole function's naming rule exists
+            # to avoid, just reopened by a recompose instead of by a
+            # missing press handler. Checked first, before every other
+            # branch, so it wins regardless of what's currently selected --
+            # including the found-bench branch just below, whose own label
+            # this still borrows (escaped) so the button keeps naming its
+            # object even while blocked.
+            bench = (
+                self._view_model.bench_by_id(selection.id)
+                if selection.kind == "bench" and selection.id
+                else None
+            )
+            name = escape_markup(str(bench.get("name") or "Untitled bench")) if bench else None
+            return (
+                f"Run {name}" if name else "Run Bench",
+                True,
+                "A bench run is already in flight.",
+            )
 
         if selection.kind == "bench":
             bench = (
@@ -633,12 +866,25 @@ class EvalsScreen(LabScreen):
                     "The selected bench no longer exists; choose another "
                     "bench to run.",
                 )
-            name = str(bench.get("name") or "Untitled bench")
+            # escape_markup: `name` is free-text and reaches TWO markup-
+            # parsed surfaces from here -- this tooltip string, AND (via
+            # this same return value) `Button(label=...)`'s construction in
+            # `_compose_inspector_pane` plus the live `button.label = ...`/
+            # `button.tooltip = ...` reassignment in
+            # `_reset_bench_run_running_ui`. `Content.from_text`'s
+            # markup=True default applies on EVERY assignment to a
+            # Button's `.label`, not just construction (Textual's
+            # `validate_label` reactive validator), so a bare `[/]` in a
+            # bench name would raise `MarkupError` and crash the rail --
+            # the same hazard class task-1476 fixed for bench-run toast
+            # text, and library_rail.py's `_run_group_row_label` fixed for
+            # run rows; this closes the last unescaped instance of it in
+            # this file.
+            name = escape_markup(str(bench.get("name") or "Untitled bench"))
             return (
                 f"Run {name}",
-                True,
-                "Running a bench from this workbench isn't wired up yet; "
-                "that lands with the results grid in a later PR.",
+                False,
+                f"Runs {name} against its configured targets.",
             )
 
         # No "classic" branch: `_compose_inspector_pane` never calls this
@@ -665,7 +911,7 @@ class EvalsScreen(LabScreen):
         return (
             "Run Bench",
             True,
-            "Select a bench in the library rail to run it.",
+            "Select a bench in the Catalog rail to run it.",
         )
 
     def save_state(self):
