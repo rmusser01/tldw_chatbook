@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-26 04:41'
-updated_date: '2026-07-26 05:43'
+updated_date: '2026-07-31 11:20'
 labels:
   - tts
   - audio-cpp
@@ -212,6 +212,50 @@ latest `origin/dev` control produced the identical exact 37 failures. The
 feature-only regression delta is zero, but the project-wide suite is not green.
 TASK-710 therefore remains **In Progress** and is not marked Done.
 
+### Latest-dev closeout audit (2026-07-31)
+
+- Rebased the clean closeout branch onto `origin/dev`
+  `70f08e5bad26571c7401435d508364607c05f967`.
+- A fresh repository-wide run on the immediately preceding TTS head completed
+  with 24,406 passed, 171 skipped, four failures, and two setup errors. The two
+  intervening `dev` commits only changed Settings styles/tests and did not
+  touch TASK-710 or any red node.
+- Both setup errors were sandbox-only loopback-bind denials. Each exact Console
+  provider gateway node passed alone outside the sandbox (0.80 and 0.83
+  seconds).
+- Closed two TTS-caused verification gaps: refreshed the reviewed production
+  diagnostic inventory for seven added TASK-494 diagnostic calls and one TTS
+  owner file (no persistent-sink topology change), and made Personas generation
+  wiring tests post button events directly when the TTS editor panel pushes
+  Advanced controls below the viewport.
+- Fresh relevant verification passed: 2,100 broad TTS/STTS tests with 14 skips,
+  all nine Personas generation-wiring tests, all three diagnostic-inventory
+  tests, Ruff check, Ruff format, and `git diff --check`.
+- The remaining observed full-suite failure is unrelated wizard test-state leakage:
+  `test_full_track_skip_everything_leaves_app_usable` passes alone but fails
+  after the two preceding wizard tests because the resulting `HomeScreen` lacks
+  the expected shell-nav button. It is intentionally not fixed in this TTS
+  closeout.
+- At the time of that audit, no process was listening on `127.0.0.1:8080`, so
+  a fresh live external audio.cpp rerun was unavailable. Chatbook did not launch
+  or supervise a server. TASK-710 remained **In Progress**.
+
+### Post-UAT progress-handler correction (2026-07-31)
+
+- A fresh live Console UAT exposed one caught UI error on each progress event:
+  the progress handler called unsupported `DOMQuery.union()`. The handler now
+  uses the same materialized two-query iteration as the working completion
+  handler.
+- A real-Textual regression test first reproduced the exact error and then
+  passed after the correction. The focused Console/native lifecycle set passed
+  all 35 tests; targeted Ruff lint and the new test file's format check passed.
+- The complete first-user UAT then passed against the user-owned listener at
+  `127.0.0.1:8080`: four progress events completed without handler errors, one
+  829,118-byte mono PCM16 WAV played through `afplay` (exit 0), and no streaming
+  events were emitted. The listener remained healthy under the same PID 36992
+  before and after the run. Evidence is retained under
+  `/private/tmp/tldw-task710-live-uat-v4963vrz`.
+
 ## Implementation Notes
 
 - Added immutable global TTS preferences with explicit exact/dynamic model and
@@ -233,6 +277,8 @@ TASK-710 therefore remains **In Progress** and is not marked Done.
 - No storage migration, dependency, managed-process behavior, or character
   profile behavior was added. ADR-023 is the governing amended decision; a new
   ADR was not created.
+- Corrected the shared TTS progress handler's Textual query iteration and added
+  a real-DOM regression test; no event, adapter, or runtime contract changed.
 - Added-line process-keyword review found only restart-recommendation copy and
   an in-process `asyncio.Event` close signal; it found no process launch or
   control API. The only changed profile-named file is the approved design

@@ -35,6 +35,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from textual.app import App
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -44,6 +45,7 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSGlobalOverrideDecisionEvent,
     TTSMessageSpeechRequestEvent,
     TTSPlaybackEvent,
+    TTSProgressEvent,
 )
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 
@@ -73,6 +75,32 @@ class _FakeApp:
 
     async def _offer_tts_global_override(self, token: str) -> None:
         await TldwCli._offer_tts_global_override(self, token)
+
+
+class ProgressHost(App[None]):
+    """Real Textual app exposing the DOMQuery used by the progress handler."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.loguru_logger = MagicMock()
+
+
+@pytest.mark.asyncio
+async def test_tts_progress_handler_supports_real_textual_dom_query() -> None:
+    """Verify progress handling with Textual's concrete DOMQuery type."""
+    host = ProgressHost()
+
+    async with host.run_test():
+        await TldwCli.handle_tts_progress_event(
+            host,
+            TTSProgressEvent(
+                message_id="console-msg-1",
+                progress=0.5,
+                status="Generating audio",
+            ),
+        )
+
+    host.loguru_logger.error.assert_not_called()
 
 
 @pytest.mark.asyncio
