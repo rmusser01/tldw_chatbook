@@ -78,6 +78,13 @@ MODE_CURATED = "curated"
 #: The union: window items plus window-exempt queued items, the latter featured.
 MODE_AUTO_FEATURED = "auto_featured"
 
+# Pact: `Subscriptions_DB.set_watchlist_briefing_settings`'s `valid_modes`
+# tuple must name these exact same three strings, in the same meaning --
+# that DB module cannot import from `Subscriptions/` (the dependency runs
+# the other way: `Subscriptions/` imports `DB/`), so the two cannot share a
+# single source of truth in code. TASK-1393 ordering-pact convention: grep
+# "set_watchlist_briefing_settings" if you are changing either side, and
+# change both together.
 VALID_MODES: tuple[str, ...] = (MODE_AUTO, MODE_CURATED, MODE_AUTO_FEATURED)
 
 #: The first briefing has no watermark; it covers this many days back.

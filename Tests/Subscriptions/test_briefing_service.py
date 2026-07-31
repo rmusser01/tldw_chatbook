@@ -579,6 +579,93 @@ async def test_explicit_provider_and_model_override_the_default(monkeypatch, tmp
     assert row["model_used"] == "anthropic/claude-x"
 
 
+# --- Preset plumbing (spec #2 phase 2a, Task 2) ------------------------------
+#
+# `generate_briefing` gained a `preset_id` parameter: a preset resolves
+# provider/model defaults and appends style notes, but explicit `provider`/
+# `model` arguments still win, and a preset id that no longer resolves (a
+# deleted preset) must not brick generation -- it is recorded as `None` and
+# generation proceeds on ordinary defaults. These cases are additive; every
+# test above this point is unmodified from phase 1.
+
+
+@pytest.mark.asyncio
+async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(monkeypatch, tmp_path):
+    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+    preset_id = db.insert_briefing_preset(
+        "Anthropic Duo", roster_json="[]", provider="anthropic", model="claude-x"
+    )
+
+    chat = _FakeChat()
+    row = await generate_briefing(db, watchlist, chat=chat, preset_id=preset_id)
+
+    assert chat.calls[0]["api_endpoint"] == "anthropic"
+    assert chat.calls[0]["model"] == "claude-x"
+    assert row["model_used"] == "anthropic/claude-x"
+    assert row["preset_id"] == preset_id
+
+
+@pytest.mark.asyncio
+async def test_explicit_args_still_win_over_the_presets_provider_and_model(tmp_path):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+    preset_id = db.insert_briefing_preset(
+        "Anthropic Duo", roster_json="[]", provider="anthropic", model="claude-x"
+    )
+
+    chat = _FakeChat()
+    row = await generate_briefing(
+        db, watchlist, chat=chat, preset_id=preset_id, provider="openai", model="gpt-x"
+    )
+
+    assert chat.calls[0]["api_endpoint"] == "openai"
+    assert chat.calls[0]["model"] == "gpt-x"
+    assert row["model_used"] == "openai/gpt-x"
+    assert row["preset_id"] == preset_id
+
+
+@pytest.mark.asyncio
+async def test_a_presets_style_notes_are_appended_to_the_system_prompt(tmp_path):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+    preset_id = db.insert_briefing_preset(
+        "Brisk", roster_json="[]", style_notes="Keep it under 200 words."
+    )
+
+    chat = _FakeChat()
+    await generate_briefing(db, watchlist, chat=chat, preset_id=preset_id)
+
+    assert "Keep it under 200 words." in chat.calls[0]["system_message"]
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_preset_id_is_recorded_as_none_and_generation_proceeds(monkeypatch, tmp_path):
+    """A preset id that no longer resolves must not brick generation."""
+    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+    preset_id = db.insert_briefing_preset("Gone", roster_json="[]", provider="anthropic")
+    assert db.delete_briefing_preset(preset_id) is True
+
+    chat = _FakeChat()
+    row = await generate_briefing(db, watchlist, chat=chat, preset_id=preset_id)
+
+    assert row["status"] == "complete"
+    assert row["preset_id"] is None
+    # Defaults, not the deleted preset's provider.
+    assert chat.calls[0]["api_endpoint"] == "local-llama"
+
+
 @pytest.mark.asyncio
 async def test_curated_mode_generation_leaves_the_window_alone(tmp_path):
     """The service honours the watchlist's stored mode, and curated's echo.
