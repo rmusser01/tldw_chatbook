@@ -36,7 +36,7 @@ Prevent TldwCli startup from replacing live service graphs or attaching long-liv
 - [ ] #5 The clean installed-wheel production-app probe completes the fresh ChaChaNotes migrations and proves the same composition contract outside the checkout; the exact v26-to-v27 citation-provenance and v27-to-v28 character-authority SQL assets are present in both sdist and wheel and enforced by the release checker.
 - [ ] #6 Affected tests, the full repository suite, static checks, formatting, and diff hygiene pass, and the separate remaining legacy-provider inventory is documented without claiming global closure.
 - [ ] #7 The two verified current-dev collection blockers are reconciled with the surviving worker and chat-shell APIs, without restoring retired StreamDone or TabState state and without adding a test application.
-- [ ] #8 Current-dev tests use the surviving public runtime-config and trusted-directory contracts, production-app interaction tests wait for rendered controls, and the reviewed diagnostic inventory matches current source and persistent-sink topology.
+- [ ] #8 Current-dev tests use the surviving public runtime-config and trusted-directory contracts, production-app interaction tests wait for rendered controls, the reviewed diagnostic inventory matches current source and persistent-sink topology, and newly introduced diagnostic paths do not persist user-authored selector content.
 <!-- AC:END -->
 
 ## Implementation Plan

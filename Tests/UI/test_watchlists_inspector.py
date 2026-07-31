@@ -33,6 +33,7 @@ from tldw_chatbook.Subscriptions.noise_defaults import DEFAULT_IGNORE_SELECTORS
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
+from tldw_chatbook.UI.Watchlists_Modules import inspector_pane as inspector_pane_module
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     BreadcrumbScopeSelected,
     InspectorPane,
@@ -1093,9 +1094,7 @@ async def test_saving_selectors_does_not_recompose_the_screen():
             "same SourcesPane instance must still be mounted"
         )
         assert sources_pane.query_one("#sources-table", DataTable) is table
-        assert (
-            screen.query_one("#watchlists-entity-inspector", InspectorPane) is inspector
-        )
+        assert screen.query_one("#watchlists-entity-inspector", InspectorPane) is inspector
         assert inspector.query_one("#inspector-noise-selectors", TextArea) is field, (
             "not even the Inspector may recompose: the entity dict is patched "
             "in place, so the field the user is typing in survives the save"
@@ -1189,7 +1188,9 @@ async def test_a_successful_save_warns_that_the_next_check_loses_a_window():
 
 
 @pytest.mark.asyncio
-async def test_a_save_with_an_unparseable_selector_is_refused_and_says_why():
+async def test_a_save_with_an_unparseable_selector_is_refused_and_says_why(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """Whole-branch fix F1, UI side (Inspector half).
 
     Same refusal as the create form, and the same reason: `soup.select` raises
@@ -1208,6 +1209,14 @@ async def test_a_save_with_an_unparseable_selector_is_refused_and_says_why():
 
     host = DestinationHarness(app, "watchlists_collections")
     toasts: list[tuple[str, dict]] = []
+    diagnostic_warnings: list[str] = []
+    monkeypatch.setattr(
+        inspector_pane_module,
+        "logger",
+        SimpleNamespace(
+            warning=lambda message: diagnostic_warnings.append(str(message))
+        ),
+    )
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
@@ -1234,6 +1243,8 @@ async def test_a_save_with_an_unparseable_selector_is_refused_and_says_why():
         assert kwargs.get("markup") is False, (
             "selectors carry `[`, which Textual's toast markup would consume"
         )
+        assert diagnostic_warnings
+        assert ":::nonsense" not in diagnostic_warnings[-1]
         # The field keeps the user's text so the fix is one edit away.
         inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
         assert (
@@ -1431,7 +1442,9 @@ async def test_pressing_queue_for_briefing_writes_the_flag_and_repaints_the_row(
         # user was looking at must still be the ones mounted.
         assert screen.query_one("#watchlists-items-pane", ItemsPane) is pane
         assert pane.query_one("#items-table", DataTable) is table
-        assert screen.query_one("#watchlists-entity-inspector", InspectorPane) is inspector
+        assert (
+            screen.query_one("#watchlists-entity-inspector", InspectorPane) is inspector
+        )
 
 
 @pytest.mark.asyncio
