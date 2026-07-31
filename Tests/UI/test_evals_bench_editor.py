@@ -1205,6 +1205,54 @@ async def test_renaming_to_a_taken_name_renders_the_conflict_callout(
 
 
 @pytest.mark.asyncio
+async def test_saving_a_bench_deleted_elsewhere_renders_an_error_not_a_false_success(
+    evals_app, evals_db, bench_with_mixed_readiness
+):
+    """PR #1138 review (Bug, accepted): the bench was deleted -- e.g. by a
+    second app instance -- between this editor loading it and Save being
+    pressed. `save_bench`'s update branch now raises `RuntimeError` when
+    `update_task` matched no row (see storage.py's own fix). This asserts
+    the Save handler catches it, renders the exact message in the form
+    callout, posts NO `Saved` message (no false "success"), and leaves the
+    form's own state -- the typed, unsaved value -- untouched, exactly
+    like every other Save failure path (no recompose)."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        name_input = screen.query_one("#evals-bench-name", Input)
+        name_input.value = "renamed-but-bench-is-gone"
+
+        # Simulates a second app instance deleting the bench in the window
+        # between this editor loading it and Save being pressed.
+        evals_db.delete_task(task_id)
+
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        callout = screen.query_one("#evals-bench-form-error")
+        assert callout.display
+        assert str(callout.renderable) == (
+            "This bench no longer exists; it may have been deleted elsewhere."
+        )
+
+        # No recompose: the SAME Input instance, still carrying the typed
+        # (unsaved) value -- proves this was an in-place callout update,
+        # not a rebuild from a (now-nonexistent) reload.
+        assert screen.query_one("#evals-bench-name", Input) is name_input
+        assert name_input.value == "renamed-but-bench-is-gone"
+
+        # No Saved-adjacent side effect: the selection is untouched (no
+        # `select()` call was ever triggered off a `Saved` message the
+        # handler must not have posted).
+        assert screen._selection.kind == "bench"
+        assert screen._selection.id == task_id
+
+
+@pytest.mark.asyncio
 async def test_prompt_mode_switch_revalidates_targets_and_names_the_offending_target(
     evals_app, bench_with_mixed_readiness, monkeypatch
 ):

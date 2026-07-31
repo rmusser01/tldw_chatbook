@@ -88,6 +88,13 @@ def save_bench(db: EvalsDB, config: BenchConfig, task_id: Optional[str] = None) 
             soft-deleted bench's name, not only a live one. Callers that
             want a name guaranteed not to collide (e.g. ``duplicate_bench``
             below) must arrange for one themselves, via ``_unique_name``.
+        RuntimeError: If ``task_id`` is given (the edit path) and
+            ``update_task`` matched no row -- the bench was deleted (by
+            this process or another) between whenever the caller loaded it
+            and this call. ``update_task`` itself only returns ``False``
+            here, never raises, so this is the one place that ambiguity
+            gets turned into an error every caller can rely on rather than
+            silently reporting a write that persisted nothing.
     """
     target_ids = list(config.target_ids)
     if len(set(target_ids)) != len(target_ids):
@@ -106,12 +113,28 @@ def save_bench(db: EvalsDB, config: BenchConfig, task_id: Optional[str] = None) 
         # Evals_DB.update_task takes name/description/config_data as
         # separate keyword args, not a single updates dict. dataset_id is
         # deliberately not among them -- see the immutability note above.
-        db.update_task(
+        updated = db.update_task(
             task_id,
             name=config.name,
             description=config.description,
             config_data=config_data,
         )
+        if not updated:
+            # update_task returns False (never raises) when no row matched
+            # its `WHERE id = ? AND deleted_at IS NULL` -- a task_id that
+            # never existed, or one deleted between the caller loading this
+            # bench and this save (e.g. by a second app instance). Silently
+            # returning task_id here, as this function used to, would tell
+            # every caller "saved" for a write that persisted nothing --
+            # PR #1138 review caught the bench editor doing exactly that
+            # (posting its own success message off this return value
+            # alone). Raising here, at the one place this ambiguity is
+            # resolvable, means every caller gets the same honest failure
+            # rather than each having to re-derive it from a boolean.
+            raise RuntimeError(
+                "This bench no longer exists; it may have been deleted "
+                "elsewhere."
+            )
         return task_id
     return db.create_task(
         name=config.name,

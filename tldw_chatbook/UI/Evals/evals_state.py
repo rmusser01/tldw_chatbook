@@ -106,6 +106,12 @@ class EvalsViewModel:
 
         Empty-safe like every other read on this class, so a caller needs
         no ``db is None`` branch of its own.
+
+        Returns:
+            ``eval_models`` rows (``id``/``name``/``provider``/``model_id``
+            among their keys) whose ``provider`` is ``"llama_cpp"``, newest
+            first (``EvalsDB.list_models``'s own ordering) -- or ``[]`` if
+            no evaluation database is wired, or none are configured.
         """
         if self._db is None:
             return []

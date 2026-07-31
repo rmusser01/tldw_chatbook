@@ -131,6 +131,22 @@ def test_duplicate_bench_dedupes_a_legacy_duplicate_target_id_preserving_order(
     )
 
 
+def test_save_bench_raises_when_the_update_target_no_longer_exists(db, config):
+    """PR #1138 review (Bug, accepted): a stale `task_id` (the bench was
+    deleted -- e.g. by a second app instance -- between the editor loading
+    it and Save being pressed) must not report a silent success.
+    `Evals_DB.update_task` returns `False`, not an exception, when no row
+    matched its `WHERE ... AND deleted_at IS NULL` clause -- `save_bench`'s
+    update branch previously ignored that return value entirely, so a
+    caller (the bench editor) had no way to distinguish "saved" from
+    "there was nothing left to save"."""
+    task_id = save_bench(db, config)
+    db.delete_task(task_id)
+
+    with pytest.raises(RuntimeError, match="no longer exists"):
+        save_bench(db, config, task_id)
+
+
 def test_duplicate_bench_raises_a_readable_runtime_error_for_a_missing_source(db):
     with pytest.raises(RuntimeError, match="does-not-exist"):
         duplicate_bench(db, "does-not-exist")

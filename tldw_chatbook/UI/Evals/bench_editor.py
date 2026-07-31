@@ -694,7 +694,7 @@ class BenchEditor(Vertical):
 
         try:
             save_bench(db, config, self._bench_id)
-        except (ValueError, ConflictError) as exc:
+        except (ValueError, ConflictError, RuntimeError) as exc:
             # ValueError: BenchConfig re-validation inside save_bench (a
             # duplicate target_id -- unreachable here since the Add
             # picker's own inline rejection, `_on_add_target_pressed`,
@@ -703,9 +703,18 @@ class BenchEditor(Vertical):
             # `_clean_task_name` rejecting a blank/control-char-only name.
             # ConflictError: `eval_tasks.name` collided with another task's
             # name, live OR soft-deleted (see `save_bench`'s docstring).
-            # Mutation check: dropping the `ConflictError` half of this
-            # tuple makes a rename-to-a-taken-name Save raise straight out
-            # of this handler instead of rendering the callout.
+            # RuntimeError: `save_bench`'s update branch found no matching
+            # row -- the bench was deleted (this process or another)
+            # between this form loading it and this Save (PR #1138
+            # review). Without this branch the exception propagated
+            # uncaught out of this handler, crashing the worker, AND the
+            # user would otherwise have seen nothing at all -- not even a
+            # crash, if some caller ever swallowed it -- instead of the
+            # honest "this bench is gone" this callout states.
+            # Mutation check: dropping either the `ConflictError` or the
+            # `RuntimeError` half of this tuple makes the matching Save
+            # failure raise straight out of this handler instead of
+            # rendering the callout.
             self._show_form_error(str(exc))
             return
 
