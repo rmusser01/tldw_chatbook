@@ -965,6 +965,11 @@ Update the tests to describe current behavior:
      Keep the never-released fake service gate, explicit cancel request, and
      exact in-flight cleanup assertion unchanged; do not add a production
      pre-mount compatibility path for a user action that is not yet available.
+98. In both missing-note conflict-resolution regressions, wait for Textual's
+     requested list-view recompose to remove the old Reload or Overwrite
+     control after the editor state resets. Keep the selected-note, detail,
+     autosave, and list-view assertions unchanged; do not add a production
+     delay or synchronous DOM mutation for a refresh that is already correct.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library

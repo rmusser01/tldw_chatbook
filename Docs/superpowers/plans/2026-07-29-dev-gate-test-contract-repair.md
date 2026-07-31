@@ -3875,6 +3875,44 @@ lint reports four inherited errors elsewhere in the module, and Ruff format
 reports inherited whole-file drift; the added worker-settlement line is absent
 from both findings.
 
+### Task 4cp: Wait for missing-note conflict controls to leave the DOM
+
+**Files:**
+- Modify: `Tests/UI/test_library_shell.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This aligns two test assertions with Textual's asynchronous
+recomposition after an already-correct editor reset; it does not change
+Library behavior or interfaces.
+
+- [x] **Step 1: Identify the state-before-DOM race**
+
+Full-gate attempt 32 fails after 18,043 passes because missing-note Reload has
+already reset the selected note, detail, autosave state, and notes view, but
+the old conflict control remains for one render cycle. The exact test passes
+in isolation.
+
+- [x] **Step 2: Wait for the asserted DOM state**
+
+Use the existing bounded condition helper in the Reload and symmetric
+Overwrite missing-note regressions to wait until the old conflict control is
+absent before retaining the exact reset-state assertions.
+
+- [x] **Step 3: Verify Library conflict coverage**
+
+Run both missing-note cases repeatedly under current contention, the complete
+Library shell module, Ruff/format, and `git diff --check`.
+
+Both missing-note cases passed three concurrent repetitions (6/6), and the
+complete Library shell module passed 267/267. Ruff lint and `git diff --check`
+pass. Ruff format reports four inherited formatting hunks elsewhere in the
+module; neither added wait appears in that diff.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
