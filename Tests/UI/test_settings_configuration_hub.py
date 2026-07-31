@@ -357,6 +357,32 @@ async def _wait_for_settings_input_value(
     )
 
 
+async def _wait_for_settings_select_value(
+    screen,
+    pilot,
+    selector: str,
+    expected_value: str,
+    *,
+    timeout: float = 4.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if screen.query(selector):
+            field = screen.query_one(selector, Select)
+            if field.value == expected_value:
+                await pilot.pause()
+                return
+        await pilot.pause(0.01)
+    actual = (
+        screen.query_one(selector, Select).value
+        if screen.query(selector)
+        else "<missing>"
+    )
+    raise AssertionError(
+        f"Timed out waiting for {selector} value {expected_value!r}; actual={actual!r}"
+    )
+
+
 async def _click_scrolled_settings_button(screen, pilot, selector: str) -> Button:
     button = screen.query_one(selector, Button)
     detail_pane = screen.query_one("#settings-detail-pane-body", VerticalScroll)
@@ -4634,7 +4660,18 @@ async def test_settings_navigation_context_can_preselect_provider_category_targe
                 "model": "meta-llama/test-model",
             }
         )
-        await pilot.pause()
+        await _wait_for_settings_select_value(
+            screen,
+            pilot,
+            "#settings-provider-value",
+            "huggingface",
+        )
+        await _wait_for_settings_input_value(
+            screen,
+            pilot,
+            "#settings-model-value",
+            "meta-llama/test-model",
+        )
 
         assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
         assert (
@@ -4729,7 +4766,18 @@ async def test_settings_navigation_context_preselection_does_not_create_provider
                 "model": "meta-llama/test-model",
             }
         )
-        await pilot.pause()
+        await _wait_for_settings_select_value(
+            screen,
+            pilot,
+            "#settings-provider-value",
+            "huggingface",
+        )
+        await _wait_for_settings_input_value(
+            screen,
+            pilot,
+            "#settings-model-value",
+            "meta-llama/test-model",
+        )
 
         assert (
             screen.query_one("#settings-provider-value", Select).value == "huggingface"

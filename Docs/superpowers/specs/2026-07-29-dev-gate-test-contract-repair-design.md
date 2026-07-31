@@ -1007,6 +1007,11 @@ Update the tests to describe current behavior:
      state. Keep the reconciled service behavior, retained editor identity, and
      normal poll outcomes unchanged; do not add sleeps or swallow projection
      exceptions.
+106. In the two Settings navigation journeys that assert routed provider/model
+     values, wait boundedly for the recomposed Select and Input to expose those
+     exact values. Preserve category selection, provider recovery copy, and
+     absence of a provider draft; do not change production navigation or add
+     fixed pauses.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1406,6 +1411,10 @@ behavior. No compatibility shims. No broad deletion of live tests.
   parent receives `on_unmount`, so a completed background poll must recheck its
   retained root-status and editor surfaces after I/O and before stateful
   projection.
+- Adding more unconditional pauses to Settings navigation would still encode a
+  host-dependent number of recompose turns. The assertions consume exact
+  provider/model widget values, so boundedly waiting for those values is the
+  smallest truthful readiness boundary.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

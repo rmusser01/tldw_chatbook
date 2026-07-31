@@ -4212,6 +4212,49 @@ inherited whole-file drift in the two edited Python files; neither changed block
 appears in its diff. Independent review approved the post-I/O liveness guard
 and state-coherence coverage with no remaining findings.
 
+### Task 4cx: Wait for routed Settings provider/model values
+
+**Files:**
+- Modify: `Tests/UI/test_settings_configuration_hub.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This aligns two Settings navigation tests with the exact values
+they consume after Textual recomposition; it does not change Settings routing,
+configuration, or persistence behavior.
+
+- [x] **Step 1: Identify the post-recompose value race**
+
+Full-gate attempt 41 fails after 20,234 passes because one `Pilot.pause()` is
+not sufficient for the newly recomposed provider Select to expose its routed
+value under suite load. The category state is already correct, and the two
+affected provider/model preselection journeys pass alone, confirming a
+contention-sensitive test boundary rather than a navigation defect.
+
+- [x] **Step 2: Add one bounded Select-value wait**
+
+Add a Select counterpart to the module's existing bounded Input-value helper,
+then use both helpers in the two journeys that assert routed provider/model
+values. Preserve their existing outcome assertions and do not change production
+code.
+
+- [x] **Step 3: Verify Settings provider navigation coverage**
+
+Run both corrected journeys repeatedly, their provider-navigation neighborhood,
+the complete Settings configuration-hub module, Ruff/format, and
+`git diff --check`.
+
+The corrected pair passed three independent repetitions (6/6), the complete
+navigation-context neighborhood passed 4/4, and the Settings configuration-hub
+module passed 255/255. Ruff lint and `git diff --check` pass. Ruff format reports
+inherited file drift outside the helper and corrected call sites. Independent
+review approved the helper, two-site inventory, and retained exact assertions
+with no findings.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
