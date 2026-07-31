@@ -25,6 +25,8 @@ rendered with `hyperlinks=False` -- see `_MARKDOWN_HYPERLINKS` below.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from typing import Any
 
 from rich.console import Group, RenderableType
@@ -140,6 +142,28 @@ class ManagePresetsRequested(Message):
     """
 
 
+class CastScriptRequested(Message):
+    """Posted when the user asks to cast a script from the selected briefing.
+
+    Carries nothing, same shape as `GenerateBriefingRequested` and for the
+    same reason: the briefing to cast is the screen's own selection state
+    (its `_selected_briefing`), and the preset to cast with is this pane's
+    `default_preset_id` -- both already live on the screen/pane, so the
+    message is only a nudge, not a payload. The screen owns the guard
+    (one cast in flight at a time, zombie recovery) exactly as it owns
+    `_briefing_in_flight`'s guard for Generate -- see
+    `handle_cast_script_requested`.
+    """
+
+
+class ScriptSelected(Message):
+    """Posted when the user selects a cast-script row."""
+
+    def __init__(self, script: dict[str, Any] | None) -> None:
+        self.script = script
+        super().__init__()
+
+
 #: The selection-mode picker's options, in the order defined by
 #: `briefing_selection.VALID_MODES` (the DB's own three-string pact,
 #: verbatim -- see `Subscriptions_DB.set_watchlist_briefing_settings`).
@@ -184,6 +208,75 @@ def _window_text(row: dict[str, Any]) -> str:
     return " · ".join(parts) if parts else "—"
 
 
+#: `briefing_cast.py` defines its OWN `STATUS_GENERATING`/`STATUS_COMPLETE`/
+#: `STATUS_FAILED`, but as the exact same three strings as `briefing_
+#: service`'s (a script has no `empty` status, so it uses only three of the
+#: four already imported above). Reusing the briefing constants here rather
+#: than importing a second, string-identical set from `briefing_cast` keeps
+#: this module's imports to one status vocabulary rather than two names for
+#: the same values.
+_SCRIPT_NO_SELECTION = "Select a script to read it."
+_SCRIPT_NO_SCRIPTS = "No scripts yet. Press Cast to write one."
+_SCRIPT_GENERATING_COPY = "This script is being written now."
+_SCRIPT_UNEXPLAINED_FAILURE = "This script failed, but recorded no reason."
+_SCRIPT_UNREADABLE_TURNS = "This script recorded turns that could not be read."
+_SCRIPT_NO_TURNS = "This script recorded no turns."
+
+#: Turn rendering caps here with an honest "…N more turns" line rather than
+#: silently truncating -- the same ethos `briefing_service`'s own item/
+#: overflow counts already state for a briefing's source material.
+_TURN_RENDER_CAP = 200
+
+
+def _script_status_text(row: dict[str, Any]) -> str:
+    """One script's status, as a bare lowercase string."""
+    return str(row.get("status") or "").strip().lower()
+
+
+def _script_turns_renderable(turns_json: str | None) -> Text:
+    """A script's turns as speaker-labelled `Text` lines.
+
+    Never a markup parser: the model wrote this text, from watchlist
+    content it did not choose either, so it is appended into a `Text`
+    exactly like every other model/source-derived field on this pane
+    (`_detail_renderable`'s `error`/body handling) -- a turn containing
+    literal Rich markup syntax (`[bold red]x[/]`) must paint as those
+    characters, not be interpreted or escaped.
+
+    Args:
+        turns_json: A script row's `turns_json` column -- a JSON array of
+            `{"speaker", "text"}` objects when the script is `complete`,
+            per `briefing_cast.parse_script_turns`'s output contract.
+
+    Returns:
+        One `Text`, speaker-labelled per line, capped at
+        `_TURN_RENDER_CAP` turns with an honest "…N more turns" trailer
+        when the script wrote more than that -- never a silent truncation.
+    """
+    try:
+        turns = json.loads(turns_json or "[]")
+    except (TypeError, ValueError):
+        return Text(_SCRIPT_UNREADABLE_TURNS)
+    if not isinstance(turns, list) or not turns:
+        return Text(_SCRIPT_NO_TURNS)
+
+    shown = turns[:_TURN_RENDER_CAP]
+    text = Text()
+    for turn in shown:
+        if not isinstance(turn, Mapping):
+            continue
+        speaker = str(turn.get("speaker") or "?")
+        turn_text = str(turn.get("text") or "")
+        text.append(speaker, style="bold")
+        text.append(": ")
+        text.append(turn_text)
+        text.append("\n")
+    remaining = len(turns) - len(shown)
+    if remaining > 0:
+        text.append(f"…{remaining} more turns", style="dim")
+    return text
+
+
 class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     """List a watchlist's briefings and render the selected one."""
 
@@ -213,6 +306,15 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: "use the app default" -- the value `_generate_briefing` passes to
     #: `generate_briefing(..., preset_id=...)`.
     default_preset_id = reactive[int | None](None, recompose=True)
+    #: Task 5: every `briefing_scripts` row cast from the SELECTED briefing
+    #: (newest first, per `list_briefing_scripts`) -- never every script
+    #: across the whole watchlist, since a script belongs to exactly one
+    #: briefing and this pane only ever shows one briefing's detail at a
+    #: time.
+    scripts = reactive[list[dict[str, Any]]]([], recompose=True)
+    #: The script whose detail is rendered below the scripts table, or
+    #: `None` when nothing is selected.
+    selected_script = reactive[dict[str, Any] | None](None, recompose=True)
 
     def _preset_select_options(self) -> list[tuple[str, int | None]]:
         """Options for the default-preset picker: "App default" then every
@@ -359,6 +461,71 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         yield Static("Briefing detail", classes="pane-title")
         yield Static(self._detail_renderable(), id="artifacts-detail")
 
+        if self.selected_briefing is not None:
+            # Task 5: casting a script is an action on THE SELECTED
+            # briefing, so -- unlike Generate, which has a watchlist-wide
+            # target and stays visible-but-disabled to explain itself --
+            # there is nothing for Cast to act on at all without a
+            # selection, and this whole section (button, list, detail)
+            # renders only once one exists.
+            cast_disabled = self.default_preset_id is None and not self.presets
+            with Horizontal(
+                id="artifacts-scripts-toolbar", classes="destination-filter-strip"
+            ):
+                yield Button(
+                    "Cast",
+                    id="artifacts-cast-button",
+                    compact=True,
+                    disabled=cast_disabled,
+                    tooltip=(
+                        "Create a briefing preset (Presets…) before casting "
+                        "a script."
+                        if cast_disabled
+                        else "Cast this briefing into a spoken-style script "
+                        "using the current default preset."
+                    ),
+                )
+
+            selected_script_key = (
+                str(self.selected_script.get("id"))
+                if self.selected_script
+                else None
+            )
+            scripts_table = DataTable(id="artifacts-scripts-table")
+            scripts_table.add_columns("Preset", "Status", "Created")
+            selected_script_index: int | None = None
+            for index, row in enumerate(self.scripts):
+                row_key = str(row.get("id"))
+                if row_key == selected_script_key:
+                    selected_script_index = index
+                style = (
+                    self._SELECTED_ROW_STYLE
+                    if row_key == selected_script_key
+                    else ""
+                )
+                scripts_table.add_row(
+                    Text(str(row.get("preset_name") or "—"), style=style),
+                    Text(_script_status_text(row) or "—", style=style),
+                    Text(str(row.get("created_at") or "—"), style=style),
+                    key=row_key,
+                )
+            if selected_script_index is not None:
+                # Same TASK-1105 seeding as the briefings table above.
+                scripts_table.cursor_coordinate = Coordinate(
+                    selected_script_index, 0
+                )
+            yield scripts_table
+
+            # No separate `.pane-title` here (unlike "Briefing detail"
+            # above): a `.pane-title` costs 4 rows (`height: 3` +
+            # `margin-bottom: 1`) inside a region whose total budget is
+            # already fixed and now shared with a second list-over-body
+            # pair -- measured to matter, not assumed (a first draft with
+            # the title pushed `#artifacts-detail` below the height its own
+            # test fixture needs). `_script_detail_renderable`'s own header
+            # names it as "Script:" instead, for one row instead of four.
+            yield Static(self._script_detail_renderable(), id="artifacts-script-detail")
+
     def _detail_renderable(self) -> RenderableType:
         """What the detail area shows for the current selection.
 
@@ -410,6 +577,46 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             return Group(header, Text(_GENERATING_COPY))
         return Group(header, Text(f"Unrecognised briefing status: {status or '—'}"))
 
+    def _script_detail_renderable(self) -> RenderableType:
+        """What the detail area shows for the current script selection.
+
+        Mirrors `_detail_renderable`'s "every status gets a body of its
+        own" rule: `generating`/`complete`/`failed` (a script has no
+        `empty` -- `validate_roster` refuses an empty roster before any row
+        exists) each read as an outcome, never a blank pane.
+        """
+        row = self.selected_script
+        if row is None:
+            return Text(_SCRIPT_NO_SELECTION if self.scripts else _SCRIPT_NO_SCRIPTS)
+
+        status = _script_status_text(row)
+        header = Text()
+        # "Script: " labels this block the way the dropped `.pane-title`
+        # would have -- see the compose()-site comment on why there is no
+        # separate title `Static` here.
+        header.append("Script: ", style="dim")
+        header.append(str(row.get("preset_name") or "Untitled preset"), style="bold")
+        header.append(" · ")
+        header.append(status or "unknown status")
+        model_used = row.get("model_used")
+        if model_used:
+            header.append(" · ")
+            header.append(str(model_used))
+        header.append("\n")
+        header.append(str(row.get("created_at") or "unknown time"), style="dim")
+        header.append("\n")
+
+        if status == STATUS_COMPLETE:
+            return Group(header, _script_turns_renderable(row.get("turns_json")))
+        if status == STATUS_FAILED:
+            return Group(
+                header,
+                Text(str(row.get("error") or _SCRIPT_UNEXPLAINED_FAILURE)),
+            )
+        if status == STATUS_GENERATING:
+            return Group(header, Text(_SCRIPT_GENERATING_COPY))
+        return Group(header, Text(f"Unrecognised script status: {status or '—'}"))
+
     def select_briefing_by_id(self, briefing_id: str) -> None:
         """Select one visible briefing by its row id."""
         self.selected_briefing = next(
@@ -421,24 +628,47 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             None,
         )
 
+    def select_script_by_id(self, script_id: str) -> None:
+        """Select one visible script by its row id."""
+        self.selected_script = next(
+            (row for row in self.scripts if str(row.get("id")) == str(script_id)),
+            None,
+        )
+
     def watch_selected_briefing(self, briefing: dict[str, Any] | None) -> None:
         if self.is_mounted:
             self.post_message(BriefingSelected(briefing))
 
+    def watch_selected_script(self, script: dict[str, Any] | None) -> None:
+        if self.is_mounted:
+            self.post_message(ScriptSelected(script))
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()
-        if event.row_key is not None and event.row_key.value is not None:
+        if event.row_key is None or event.row_key.value is None:
+            return
+        if event.data_table.id == "artifacts-scripts-table":
+            self.select_script_by_id(str(event.row_key.value))
+        else:
             self.select_briefing_by_id(str(event.row_key.value))
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """Select on cursor movement, which is what a single click produces.
 
         Gated on `highlight_is_user_driven` -- see this module's docstring.
+        Routes by which of this pane's TWO tables (briefings, scripts)
+        posted the event -- both are `recompose=True`-backed, so both
+        announce a row-0 highlight on every rebuild, and both need the
+        same gate for the same reason.
         """
         event.stop()
         if not highlight_is_user_driven(event):
             return
-        if event.row_key is not None and event.row_key.value is not None:
+        if event.row_key is None or event.row_key.value is None:
+            return
+        if event.data_table.id == "artifacts-scripts-table":
+            self.select_script_by_id(str(event.row_key.value))
+        else:
             self.select_briefing_by_id(str(event.row_key.value))
 
     def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
@@ -447,7 +677,11 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         if not highlight_is_user_driven(event):
             return
         row_key = getattr(event.cell_key, "row_key", None)
-        if row_key is not None and row_key.value is not None:
+        if row_key is None or row_key.value is None:
+            return
+        if event.data_table.id == "artifacts-scripts-table":
+            self.select_script_by_id(str(row_key.value))
+        else:
             self.select_briefing_by_id(str(row_key.value))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -458,6 +692,8 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             self.post_message(RefreshBriefingsRequested())
         elif button_id == "artifacts-presets-button":
             self.post_message(ManagePresetsRequested())
+        elif button_id == "artifacts-cast-button":
+            self.post_message(CastScriptRequested())
         event.stop()
 
     def on_select_changed(self, event: Select.Changed) -> None:

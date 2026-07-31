@@ -16735,38 +16735,93 @@ WatchlistSourcePickerDialog {
     color: $ds-text-muted;
 }
 
-/* Artifacts pane (spec #2 phase 1, task 4): a briefing list over a briefing
- * body, inside the ITEMS region's fixed budget.
+/* Artifacts pane (spec #2 phase 1, task 4; re-tuned spec #2 phase 2a,
+ * task 5): a briefing list over a briefing body, over a scripts list over
+ * a script body, all inside the ITEMS region's fixed budget.
  *
- * Both halves need an explicit `fr` share, and the DETAIL half is the one
- * that actually bites. `ArtifactsPane` is a `Vertical`, so its children lay
- * out top to bottom: scope note (1), toolbar (1), table, "Briefing detail"
- * title (1), detail. The detail is a `Static` holding a `rich.markdown`
- * render of a whole briefing -- naturally dozens of rows -- and a `Static`
- * sizes to its content by default. Left to that default it does not stop at
- * the bottom of the region: the region's own height is fixed (`2fr` of the
- * centre column, see `.watchlists-region-items` above), so the surplus is
- * laid out BELOW the terminal's last row, where a reader can neither see it
- * nor scroll to it -- measured at 160x42, a 40-line body put the detail's
- * lower edge ~30 rows past the viewport.
+ * Every one of the four needs an explicit `fr` share, and the two DETAIL
+ * halves are the ones that actually bite. `ArtifactsPane` is a `Vertical`,
+ * so its children lay out top to bottom: scope note (1), toolbar (1),
+ * table, "Briefing detail" title (1), detail, Cast toolbar (1), scripts
+ * table, script detail (no separate title -- see `ArtifactsPane.compose`).
+ * Both detail `Static`s hold a `rich.markdown`/turn render that is
+ * naturally dozens of rows for a real briefing/script, and a `Static`
+ * sizes to its content by default -- left to that default it does not stop
+ * at the bottom of the region: the region's own height is fixed (`2fr` of
+ * the centre column, see `.watchlists-region-items` above), so the surplus
+ * is laid out BELOW the terminal's last row, where a reader can neither
+ * see it nor scroll to it -- measured at 160x42 pre-task-5, a 40-line
+ * briefing body put the detail's lower edge ~30 rows past the viewport.
  *
- * `1fr` + `overflow-y: auto` is the fix, and it is the same idiom
+ * `fr` + `overflow-y: auto` is the fix, and it is the same idiom
  * `.watchlists-region-feeds` and `.watchlists-region-content` already use
- * for the same reason: give the box a share of the budget it cannot exceed
- * and let its content scroll inside it. `min-height` on both halves keeps
- * the split from degenerating -- neither the list nor the body may be
- * squeezed to nothing by the other.
+ * for the same reason: give each box a share of the budget it cannot
+ * exceed and let its content scroll inside it. `min-height` on every half
+ * keeps the split from degenerating -- no single half may be squeezed to
+ * nothing by the others.
+ *
+ * The 2:6 weighting between the briefing list and its body (not 1:1, as
+ * task 4 shipped it) is task 5's own trade-off, measured rather than
+ * assumed: adding the scripts section as a plain second `1fr` pair made
+ * an even FOUR-way split (or even a heavily briefing-biased one, `4fr`
+ * each against the scripts' `1fr`) shrink `#artifacts-detail` down to its
+ * `min-height` floor of 4 rows -- not enough to show more than its header,
+ * which broke `test_generate_records_a_complete_briefing_and_renders_
+ * its_body`'s "the link is actually painted" assertion (a SHORT, 5-
+ * paragraph canned body, not the 40-paragraph geometry fixture). The list
+ * itself does not need much room -- scrolling a few rows to see an older
+ * briefing costs nothing -- so it gives up share to the body it sits
+ * above, which is why a user opened Artifacts in the first place.
  */
 #artifacts-table {
     width: 100%;
-    height: 1fr;
+    height: 2fr;
     min-height: 4;
 }
 
 #artifacts-detail {
     width: 100%;
-    height: 1fr;
+    height: 6fr;
     min-height: 4;
+    overflow-y: auto;
+}
+
+/* Cast scripts (spec #2 phase 2a, Task 5): a second list-over-body pair
+ * under the briefing's own, rendered only once a briefing is selected
+ * (`ArtifactsPane.compose`). `1fr` each, the smallest share of the four --
+ * a script's own list/body matter less moment-to-moment than the briefing
+ * they were cast from, and `DataTable` itself has an observed floor near 2
+ * rows (header + a data/empty row) that `min-height` alone does not push
+ * below, so `min-height: 1` here is a documented floor-of-intent rather
+ * than a binding one. Dropping the "Script detail" `.pane-title` (see
+ * `ArtifactsPane.compose`'s own comment -- that shared class alone costs 4
+ * rows: `height: 3` + `margin-bottom: 1`) is what actually bought back the
+ * room `#artifacts-detail` needed above; a script names itself instead,
+ * in `_script_detail_renderable`'s own header ("Script: <preset>"). Longer
+ * scripts/turns overflow into this section's OWN `overflow-y: auto`, same
+ * as the briefing body already does.
+ */
+#artifacts-scripts-table {
+    width: 100%;
+    height: 1fr;
+    min-height: 1;
+}
+
+#artifacts-script-detail {
+    width: 100%;
+    height: 1fr;
+    min-height: 1;
+    overflow-y: auto;
+}
+
+/* Belt-and-suspenders: whatever the `fr` split above computes for these
+ * four regions, the pane as a whole scrolls rather than letting any
+ * child's region extend silently past the terminal's own last row -- the
+ * exact failure mode the comment above already names for a single
+ * overlong body, now possible again one level up once a second
+ * list-over-body pair sits below the first.
+ */
+#watchlists-artifacts-pane {
     overflow-y: auto;
 }
 

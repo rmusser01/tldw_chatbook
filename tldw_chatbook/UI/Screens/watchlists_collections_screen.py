@@ -31,6 +31,11 @@ from ...Constants import (
     WATCHLISTS_SECTION_RUNS,
 )
 from ...runtime_policy.types import PolicyDeniedError
+from ...Subscriptions.briefing_cast import (
+    ScriptCastError,
+    fail_interrupted_scripts,
+    generate_script,
+)
 from ...Subscriptions.briefing_selection import MODE_AUTO_FEATURED, VALID_MODES
 from ...Subscriptions.briefing_service import (
     STATUS_GENERATING,
@@ -63,9 +68,11 @@ from ..Watchlists_Modules.artifacts_pane import (
     BriefingDefaultPresetChanged,
     BriefingModeChanged,
     BriefingSelected,
+    CastScriptRequested,
     GenerateBriefingRequested,
     ManagePresetsRequested,
     RefreshBriefingsRequested,
+    ScriptSelected,
 )
 from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
 from ..Watchlists_Modules.content_pane import ContentPane, UnreadToggleRequested
@@ -365,6 +372,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # contract -- "the modal dismisses True, the screen reloads its
         # preset list" -- is real before that picker exists to consume it.
         self._loaded_briefing_presets: list[dict[str, Any]] = []
+        # Task 5: this same rebuild-survival mirroring, for the SELECTED
+        # briefing's cast scripts. Scoped to one briefing (not the whole
+        # watchlist) because a script belongs to exactly one briefing and
+        # this pane only ever shows one briefing's detail at a time --
+        # loaded and re-resolved alongside `_selected_briefing` inside
+        # `_load_briefings` (see that method).
+        self._loaded_scripts: list[dict[str, Any]] = []
+        self._selected_script: dict[str, Any] | None = None
+        # True only while THIS screen's `wl-cast` worker is running -- the
+        # exact sibling of `_briefing_in_flight` above, for the same reason:
+        # `fail_interrupted_scripts` cannot tell a crashed worker's row from
+        # a live one, so the live case is answered from memory here. See
+        # `handle_cast_script_requested`.
+        self._cast_in_flight = False
+        # Which briefing `_cast_in_flight` refers to, or `None` -- the
+        # `_briefing_in_flight_watchlist_id` sibling, so a refusal can name
+        # the briefing actually being cast.
+        self._cast_in_flight_briefing_id: int | None = None
         # The item currently open in the CONTENT reader (Task 4). Held here
         # for the identical reason as `_loaded_items` above: `_build_content_pane`
         # is a factory the workbench calls on every region rebuild, and a
@@ -1299,6 +1324,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             artifacts_pane.selection_mode = self._briefing_selection_mode
             artifacts_pane.presets = self._loaded_briefing_presets
             artifacts_pane.default_preset_id = self._briefing_default_preset_id
+            artifacts_pane.scripts = self._loaded_scripts
+            artifacts_pane.selected_script = self._selected_script
             children.append(artifacts_pane)
         return Vertical(
             *children,
@@ -3125,6 +3152,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._selected_briefing = None
             self._briefing_selection_mode = MODE_AUTO_FEATURED
             self._briefing_default_preset_id = None
+            self._loaded_scripts = []
+            self._selected_script = None
         else:
             try:
                 # Zombie recovery, before the list query, so a row this
@@ -3178,6 +3207,69 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 ),
                 None,
             )
+            # Task 5: the selected briefing's cast scripts. Scoped to ONE
+            # briefing (the resolved selection above) rather than every
+            # briefing in `self._loaded_briefings` -- a script belongs to
+            # exactly one briefing and this pane only ever renders one
+            # briefing's detail, so there is nothing to gain from fetching
+            # scripts for briefings that are not on screen. This runs
+            # inside the SAME `wl-briefings-load` worker as everything else
+            # in this method (see `handle_briefing_selected`, which
+            # re-dispatches this whole method -- rather than a
+            # scripts-only reload -- exactly so a row click's scripts
+            # arrive through this one worker/to_thread pattern).
+            selected_briefing_id = (self._selected_briefing or {}).get("id")
+            if selected_briefing_id is None:
+                self._loaded_scripts = []
+                self._selected_script = None
+            else:
+                try:
+                    # Zombie recovery for scripts, mirroring the briefing
+                    # sweep above: a cast worker that crashed mid-cast
+                    # leaves a `generating` row that would otherwise wedge
+                    # a one-cast-at-a-time guard shut forever. Gated on
+                    # `_cast_sweep_is_safe` for the identical reason
+                    # `_fail_interrupted_briefings_if_safe` is gated on
+                    # `_zombie_sweep_is_safe`: a load racing a cast THIS
+                    # screen started must not fail that cast's own row out
+                    # from under it.
+                    await self._fail_interrupted_scripts_if_safe(
+                        db, selected_briefing_id
+                    )
+                except Exception as exc:  # noqa: BLE001 - best-effort, not fatal
+                    logger.warning(
+                        "Zombie-script sweep failed for briefing "
+                        f"{selected_briefing_id}: {type(exc).__name__}"
+                    )
+                try:
+                    rows = await asyncio.to_thread(
+                        db.list_briefing_scripts, selected_briefing_id
+                    )
+                    self._loaded_scripts = [dict(row) for row in rows]
+                except Exception as exc:  # noqa: BLE001 - reported, not raised
+                    logger.warning(
+                        "Failed to list scripts for briefing "
+                        f"{selected_briefing_id}: {type(exc).__name__}"
+                    )
+                    self._notify_watchlists(
+                        "Failed to read this briefing's scripts.",
+                        severity="error",
+                        markup=False,
+                    )
+                    self._loaded_scripts = []
+                wanted_script = (
+                    (self._selected_script or {}).get("id")
+                    if self._selected_script
+                    else None
+                )
+                self._selected_script = next(
+                    (
+                        row
+                        for row in self._loaded_scripts
+                        if wanted_script is not None and row.get("id") == wanted_script
+                    ),
+                    None,
+                )
             # Task 4: the toolbar's pickers. One combined `to_thread` hop
             # for both the watchlist's stored settings (the SAME columns
             # `briefing_service._selection_mode` reads) and the full preset
@@ -3221,6 +3313,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.selection_mode = self._briefing_selection_mode
         pane.presets = self._loaded_briefing_presets
         pane.default_preset_id = self._briefing_default_preset_id
+        pane.scripts = self._loaded_scripts
+        pane.selected_script = self._selected_script
 
     @staticmethod
     def _read_watchlist_briefing_settings(db: Any, watchlist_id: int) -> dict[str, Any]:
@@ -3276,6 +3370,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         event.stop()
         self._selected_briefing = event.briefing
+        # Task 5: a different briefing means different scripts. Clear the
+        # stale selection immediately (synchronously, so nothing renders a
+        # PREVIOUS briefing's script against the NEW one even for the one
+        # frame before the reload below lands), then reload through
+        # `_load_briefings` -- the SAME worker/to_thread batch that method
+        # already uses, rather than standing up a second worker group just
+        # to fetch one briefing's scripts.
+        self._selected_script = None
+        self.run_worker(
+            self._load_briefings(), exclusive=True, group="wl-briefings-load"
+        )
+
+    @on(ScriptSelected)
+    def handle_script_selected(self, event: ScriptSelected) -> None:
+        """Mirror the pane's script selection, for rebuild survival --
+        the `_selected_briefing`/`handle_briefing_selected` sibling.
+        """
+        event.stop()
+        self._selected_script = event.script
 
     @on(RefreshBriefingsRequested)
     def handle_refresh_briefings_requested(
@@ -3760,6 +3873,187 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # status, and the failure path may leave a `generating` row this
             # attempt inserted before it broke.
             await self._load_briefings(select_briefing_id=generated_id)
+
+    # --- Cast a script from the selected briefing (spec #2 phase 2a, ------
+    # Task 5). Sibling of the Generate chain immediately above: own
+    # in-flight flag (`_cast_in_flight`), own worker group (`wl-cast`,
+    # `exclusive=True`), claimed at DISPATCH time for the identical reason
+    # `handle_generate_briefing_requested`'s docstring gives -- a check made
+    # inside the worker body leaves a window where two presses both pass.
+    #
+    # One real difference from Generate: `briefing_scripts` has no
+    # one-generating-row-per-briefing invariant the way `briefings` has one
+    # per watchlist (a briefing can be cast many times, with different
+    # rosters, and `briefing_cast.py`'s own module docstring says so
+    # explicitly). So there is no `_sweep_and_guard`-style `blocking` check
+    # here -- recovering a zombie script does not itself refuse THIS cast
+    # attempt the way recovering a zombie briefing refuses THIS generation
+    # attempt. The zombie sweep still runs, in TWO separate seams, pinned
+    # separately by this task's own tests: `_load_briefings` sweeps whenever
+    # Artifacts loads (gated on `_cast_sweep_is_safe`, the `_zombie_sweep_
+    # is_safe` sibling), and `_cast_script` below sweeps again at the front
+    # of every cast, exactly where `_sweep_and_guard` runs for Generate.
+
+    def _cast_sweep_is_safe(self) -> bool:
+        """Whether `fail_interrupted_scripts` may run right now.
+
+        Sibling of `_zombie_sweep_is_safe`: a load racing a cast THIS
+        screen started must not fail that cast's own `generating` row out
+        from under it, so the load path only sweeps when nothing this
+        screen started is still in flight.
+        """
+        return not self._cast_in_flight
+
+    async def _fail_interrupted_scripts_if_safe(
+        self, db: Any, briefing_id: int
+    ) -> int:
+        """Zombie recovery for the Artifacts-load path's scripts, off the
+        UI thread. Sibling of `_fail_interrupted_briefings_if_safe`, scoped
+        to one briefing's scripts rather than one watchlist's briefings.
+        """
+        if not self._cast_sweep_is_safe():
+            return 0
+        return await asyncio.to_thread(fail_interrupted_scripts, db, briefing_id)
+
+    def _cast_load_character(self, character_id: int) -> dict[str, Any] | None:
+        """`generate_script`'s `load_character` seam: a plain, idempotent
+        character-card lookup, with no caching layer and no session state.
+
+        Task 2 review's carried finding: `_snapshot_roster` tolerates a
+        transient failure here by degrading to `character_name: None`, and
+        `_resolve_character_texts` calls `load_character` AGAIN, later, to
+        resolve the same card strictly. If this held a cache -- or any
+        other state that could answer the two calls differently -- the
+        snapshot and the strict resolution could disagree about the SAME
+        card within one cast. A bare `get_character_card_by_id` call never
+        can: it is one SELECT by id, nothing memoized, so both calls always
+        see the same, current answer.
+
+        Only ever called from `_cast_script`, which already checked
+        `chachanotes_db` is bound before passing this method as
+        `load_character` -- see that worker.
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return None
+        return db.get_character_card_by_id(character_id)
+
+    @on(CastScriptRequested)
+    def handle_cast_script_requested(self, event: CastScriptRequested) -> None:
+        """Claim the one-cast-at-a-time guard, then dispatch.
+
+        Answers from memory and dispatches, exactly like
+        `handle_generate_briefing_requested`: `_cast_in_flight` is claimed
+        HERE, before `run_worker`, and not inside the worker body, for the
+        identical reason that handler's own docstring gives.
+        """
+        event.stop()
+        db = self._briefings_db()
+        briefing = self._selected_briefing
+        if db is None or briefing is None:
+            self._notify_watchlists(
+                "Select a briefing to cast.", severity="warning", markup=False,
+            )
+            return
+        if self._cast_in_flight:
+            running_id = self._cast_in_flight_briefing_id
+            message = (
+                f"A script is already being cast for briefing {running_id}. "
+                "Nothing else was started."
+                if running_id is not None
+                else "A script is already being cast. Nothing else was started."
+            )
+            self._notify_watchlists(message, severity="warning", markup=False)
+            return
+        briefing_id = briefing.get("id")
+        self._cast_in_flight = True
+        self._cast_in_flight_briefing_id = briefing_id
+        # Cast the die on the UI thread, alongside the rest of this
+        # synchronous snapshot -- the `_briefing_default_preset_id` read
+        # `handle_generate_briefing_requested` already does the same way,
+        # for the same reason: not read again later inside the worker,
+        # where a concurrent picker write could otherwise change it out
+        # from under a cast already in flight for THIS briefing.
+        preset_id = self._briefing_default_preset_id
+        self.run_worker(
+            self._cast_script(db, briefing_id, preset_id),
+            exclusive=True,
+            group="wl-cast",
+        )
+
+    async def _cast_script(
+        self, db: Any, briefing_id: int, preset_id: int | None
+    ) -> None:
+        """Worker body: sweep, cast, repaint. Sibling of `_generate_briefing`.
+
+        `generate_script`'s own DB calls (`_start_script`, `_finish_script_
+        success`/`_finish_script_failure`) already run through `asyncio.
+        to_thread` internally -- see that function's own docstring -- but a
+        DATABASE error inside any of them still propagates OUT of
+        `generate_script` uncaught: it only wraps the chat-call/parse block
+        in its own try/except, not the whole function. An exception
+        escaping a Textual worker with the default `exit_on_error=True`
+        takes the whole application down, so -- exactly like
+        `_generate_briefing` -- the call is wrapped in a bare `except` that
+        turns any surviving exception into a toast instead of a crash.
+
+        `ScriptCastError` is caught FIRST and separately: it is `generate_
+        script`'s own honest, pre-flight refusal (the briefing is not
+        `complete`, or the preset does not exist) -- a message safe to show
+        verbatim (see that exception's own docstring), not a database
+        failure to hide behind a generic toast.
+        """
+        chachanotes_db = getattr(self.app_instance, "chachanotes_db", None)
+        load_character = (
+            self._cast_load_character if chachanotes_db is not None else None
+        )
+        try:
+            try:
+                await asyncio.to_thread(fail_interrupted_scripts, db, briefing_id)
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                logger.warning(
+                    f"Script guard failed for briefing {briefing_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Failed to check this briefing's scripts. Nothing was "
+                    "started.",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            try:
+                row = await generate_script(
+                    db,
+                    briefing_id,
+                    preset_id=preset_id,
+                    load_character=load_character,
+                )
+                # The freshly cast script (whatever its outcome) is the one
+                # on screen, exactly like `_generate_briefing`'s own
+                # `select_briefing_id=generated_id` -- re-resolved against
+                # the reload below.
+                self._selected_script = row
+            except ScriptCastError as exc:
+                self._notify_watchlists(str(exc), severity="warning", markup=False)
+            except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+                logger.warning(
+                    f"Script cast failed for briefing {briefing_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Could not cast a script: the watchlist database could "
+                    "not be reached. Nothing was recorded.",
+                    severity="error",
+                    markup=False,
+                )
+        finally:
+            self._cast_in_flight = False
+            self._cast_in_flight_briefing_id = None
+            # Repaint on every path: a refusal may have just failed a
+            # zombie row, and a completed cast has a new script to show.
+            if self.is_attached:
+                await self._load_briefings()
 
     async def _load_items(self) -> None:
         notify = getattr(self.app_instance, "notify", None)

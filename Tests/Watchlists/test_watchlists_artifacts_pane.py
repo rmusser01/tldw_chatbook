@@ -27,6 +27,7 @@ could plausibly have shipped:
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import time
@@ -45,7 +46,8 @@ from Tests.UI.test_destination_visual_parity_correction import (
     _visual_destination_harness,
 )
 from Tests.UI.app_factory import _build_test_app
-from tldw_chatbook.Subscriptions import briefing_service
+from tldw_chatbook.Subscriptions import briefing_cast, briefing_service
+from tldw_chatbook.Subscriptions.briefing_cast import dump_roster
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.UI.Screens import watchlists_collections_screen as screen_module
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
@@ -53,6 +55,7 @@ from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
 )
 from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import (
     ArtifactsPane,
+    CastScriptRequested,
     GenerateBriefingRequested,
 )
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
@@ -194,6 +197,79 @@ async def _press_generate(screen, pilot, app, watchlist_id, *, timeout: float = 
 
 def _briefing_rows(app, watchlist_id) -> list[dict]:
     return app.watchlist_bundle_service.db.list_briefings(watchlist_id)
+
+
+# --- Task 5: casting a script ------------------------------------------
+#
+# Same seam discipline as `_use_fake_chat` above: `generate_script` binds
+# its `chat` default at definition time too, so the fake is wrapped around
+# the SCREEN's own `generate_script` reference (`screen_module.
+# generate_script`), keeping the real service -- roster validation, prompt
+# building, strict turn parsing, the snapshot -- running underneath, with
+# only the provider call replaced.
+
+
+def _use_fake_cast_chat(monkeypatch, chat) -> None:
+    async def _generate(db, briefing_id, **kwargs):
+        return await briefing_cast.generate_script(db, briefing_id, chat=chat, **kwargs)
+
+    monkeypatch.setattr(screen_module, "generate_script", _generate)
+
+
+ONE_SPEAKER_ROSTER = [{"name": "Narrator", "role_prompt": "Calm narration."}]
+
+
+async def _prepare_cast(screen, pilot, app, watchlist_id, *, roster=None) -> int:
+    """Generate a `complete` briefing, then create+select a default preset
+    so the Cast button is enabled. Returns the briefing's id.
+
+    Real Generate (not a raw `db.insert_briefing`) so the briefing selected
+    afterwards is the one the whole screen already agrees on -- exactly
+    what `_generate_briefing`'s own `select_briefing_id=generated_id`
+    leaves behind.
+    """
+    db = app.watchlist_bundle_service.db
+    await _press_generate(screen, pilot, app, watchlist_id)
+    briefing_id = _briefing_rows(app, watchlist_id)[0]["id"]
+    preset_id = db.insert_briefing_preset(
+        "Solo", roster_json=dump_roster(roster or ONE_SPEAKER_ROSTER)
+    )
+    db.set_watchlist_briefing_settings(watchlist_id, default_preset_id=preset_id)
+    await screen._load_briefings()
+    await pilot.pause()
+    return briefing_id
+
+
+async def _press_cast(screen, pilot, app, briefing_id, *, timeout: float = 20.0):
+    """Press the real Cast button and wait until the press is answered.
+
+    Mirrors `_press_generate` exactly, scoped to one briefing's scripts
+    rather than a whole watchlist's briefings.
+    """
+    db = app.watchlist_bundle_service.db
+    scripts_before = len(db.list_briefing_scripts(briefing_id))
+    notes_before = getattr(app.notify, "call_count", 0)
+
+    pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+    pane.query_one("#artifacts-cast-button", Button).press()
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        if (
+            screen._cast_in_flight
+            or getattr(app.notify, "call_count", 0) > notes_before
+            or len(db.list_briefing_scripts(briefing_id)) != scripts_before
+        ):
+            break
+    while time.monotonic() < deadline and screen._cast_in_flight:
+        await pilot.pause(0.02)
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        table = pane.query_one("#artifacts-scripts-table", DataTable)
+        if table.row_count == len(db.list_briefing_scripts(briefing_id)):
+            return
 
 
 def _render_to_console(renderable, *, width: int = 100) -> tuple[str, str]:
@@ -1239,3 +1315,429 @@ async def test_presets_button_opens_the_preset_manager(monkeypatch):
         await pilot.pause()
 
     assert calls, "the Presets… button must open the preset manager"
+
+
+# --- 7. Casting a script (spec #2 phase 2a, Task 5) -------------------------
+#
+# Tasks 1-4 built the `briefing_scripts` table, the cast service
+# (`generate_script`/`fail_interrupted_scripts`), and the picker toolbar this
+# section's Cast button reads its default preset from; none of it had a way
+# in from the screen. Same seam discipline as the Generate suite above: the
+# only faked call is the chat provider, wrapped around the screen's own
+# `generate_script` reference -- everything else (roster validation, prompt
+# building, strict turn parsing, the snapshot, `fail_interrupted_scripts`)
+# is the real service and a real `SubscriptionsDB`.
+
+
+@pytest.mark.asyncio
+async def test_casting_a_complete_briefing_writes_a_script_row_and_the_table_shows_it(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        _host,
+    ):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+
+        cast_chat = _FakeChat(
+            reply=json.dumps([{"speaker": "Narrator", "text": "Welcome."}])
+        )
+        _use_fake_cast_chat(monkeypatch, cast_chat)
+
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        assert len(cast_chat.calls) == 1, "exactly one provider call per cast"
+        rows = app.watchlist_bundle_service.db.list_briefing_scripts(briefing_id)
+        assert [row["status"] for row in rows] == ["complete"]
+        assert rows[0]["preset_name"] == "Solo"
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        table = pane.query_one("#artifacts-scripts-table", DataTable)
+        assert table.row_count == 1
+        painted = _painted(screen, table.region)
+        assert "Solo" in painted
+        assert "complete" in painted
+
+
+@pytest.mark.asyncio
+async def test_script_turns_render_as_speaker_labelled_text_never_markup(monkeypatch):
+    """The mandatory literal-paint test: a turn containing `[bold red]x[/]`
+    must paint as those literal characters -- never interpreted as Rich
+    markup, and never escaped into visible backslashes either. Model/turn
+    text goes through `rich.text.Text` exactly like a briefing body's
+    `error`/status fields already do (`_detail_renderable`), never a markup
+    parser.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+
+        hostile_turns = [{"speaker": "Narrator", "text": "[bold red]x[/]"}]
+        _use_fake_cast_chat(monkeypatch, _FakeChat(reply=json.dumps(hostile_turns)))
+
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.selected_script is not None, "the fixture must select a script"
+        detail = pane.query_one("#artifacts-script-detail", Static)
+        plain, ansi = _render_to_console(detail.renderable, width=100)
+
+        assert "[bold red]x[/]" in plain, "the turn must paint exactly as written"
+        assert "\\[" not in plain, "and must not grow escaping backslashes"
+        assert "\x1b[1;31m" not in ansi, "and `[bold red]` must not be applied"
+        # And the speaker label is really there, distinguishing this from a
+        # render that merely dumped the whole JSON blob as text.
+        assert "Narrator" in plain
+
+
+@pytest.mark.asyncio
+async def test_more_than_200_turns_are_capped_with_an_honest_count(monkeypatch):
+    """Spec ethos: never a silent truncation. A script with more than 200
+    turns shows the first 200 plus a stated "…N more turns" line.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+
+        many_turns = [
+            {"speaker": "Narrator", "text": f"Line {index}."} for index in range(210)
+        ]
+        _use_fake_cast_chat(monkeypatch, _FakeChat(reply=json.dumps(many_turns)))
+
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        detail = pane.query_one("#artifacts-script-detail", Static)
+        plain, _ansi = _render_to_console(detail.renderable, width=100)
+
+        assert "Line 199." in plain, "the 200th turn (index 199) must be shown"
+        assert "Line 200." not in plain, "the 201st turn must NOT be shown"
+        assert "10 more turns" in plain, "the overflow must be stated, not silent"
+
+
+@pytest.mark.asyncio
+async def test_casting_a_non_complete_briefing_refuses_naming_the_status():
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    briefing_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(briefing_id, status="failed", error="boom")
+    preset_id = db.insert_briefing_preset(
+        "Solo", roster_json=dump_roster(ONE_SPEAKER_ROSTER)
+    )
+    db.set_watchlist_briefing_settings(watchlist_id, default_preset_id=preset_id)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_briefing_by_id(str(briefing_id))
+        await pilot.pause()
+
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        assert app.notify.called, "a refusal must be visible, not silent"
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert "failed" in message, "the toast must name the briefing's actual status"
+        assert kwargs.get("markup") is False
+        assert db.list_briefing_scripts(briefing_id) == [], (
+            "a pre-flight refusal must never write a row"
+        )
+
+
+@pytest.mark.asyncio
+async def test_second_cast_while_in_flight_refuses_naming_the_running_one():
+    """Sibling of `test_the_refusal_toast_names_the_watchlist_actually_
+    generating`: `_cast_in_flight` is screen-global, so the refusal must
+    name which briefing is actually being cast rather than assume it is
+    whichever one is on screen right now.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    briefing_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(briefing_id, status="complete", body_markdown="Body")
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_briefing_by_id(str(briefing_id))
+        await pilot.pause()
+
+        screen._cast_in_flight = True
+        screen._cast_in_flight_briefing_id = briefing_id
+        try:
+            screen.handle_cast_script_requested(CastScriptRequested())
+        finally:
+            screen._cast_in_flight = False
+            screen._cast_in_flight_briefing_id = None
+
+        assert app.notify.called
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert str(briefing_id) in message
+        assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_the_cast_guard_is_claimed_before_the_worker_runs(monkeypatch):
+    """Mechanism half, the deterministic sibling of `test_the_guard_is_
+    claimed_before_the_worker_runs`: the handler is synchronous with no
+    `await`, so when it returns, no worker code can yet have run. If the
+    guard is claimed there, `_cast_in_flight` is already True at that
+    instant; if it is claimed inside the worker body instead, it is still
+    False -- this is Step 5 mutation (a)'s target.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        cast_chat = _FakeChat(
+            reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}])
+        )
+        _use_fake_cast_chat(monkeypatch, cast_chat)
+
+        screen.handle_cast_script_requested(CastScriptRequested())
+
+        assert screen._cast_in_flight is True, (
+            "the guard must be claimed by the handler, before `run_worker` "
+            "has scheduled anything"
+        )
+        assert cast_chat.calls == [], "and no worker code can have run yet"
+
+        app.notify.reset_mock()
+        screen.handle_cast_script_requested(CastScriptRequested())
+        assert app.notify.call_count == 1
+        _args, kwargs = app.notify.call_args
+        assert kwargs.get("markup") is False
+
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline and screen._cast_in_flight:
+            await pilot.pause(0.02)
+        assert len(cast_chat.calls) == 1, "exactly one cast must have run"
+
+
+@pytest.mark.asyncio
+async def test_a_zombie_generating_script_is_recovered_on_a_plain_artifacts_load(
+    monkeypatch,
+):
+    """Load-path seam: `_load_briefings` sweeps a crashed cast worker's
+    `generating` script row, exactly like `test_a_zombie_generating_row_
+    is_recovered_on_a_plain_artifacts_load` does for briefings. The
+    recorder proves this is the LOAD path's own sweep (`_cast_in_flight`
+    clear at call time), not the Cast worker's -- the flag-at-call-time
+    lesson carried from the phase-1 zombie test.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        db = app.watchlist_bundle_service.db
+        preset_id = db.list_briefing_presets()[0]["id"]
+        zombie_id = db.insert_briefing_script(
+            briefing_id,
+            preset_id=preset_id,
+            preset_name="Solo",
+            roster_snapshot_json=dump_roster(ONE_SPEAKER_ROSTER),
+        )
+
+        in_flight_at_call: list[bool] = []
+        real_sweep = screen_module.fail_interrupted_scripts
+
+        def _recording_sweep(db_arg, briefing_id_arg=None):
+            in_flight_at_call.append(bool(screen._cast_in_flight))
+            return real_sweep(db_arg, briefing_id_arg)
+
+        monkeypatch.setattr(screen_module, "fail_interrupted_scripts", _recording_sweep)
+
+        await screen._load_briefings()
+
+        assert in_flight_at_call, "the load path's own sweep must have run at all"
+        assert all(not flag for flag in in_flight_at_call), (
+            "the load path's sweep must run with `_cast_in_flight` CLEAR -- a "
+            "call recorded True could only be the Cast worker's own sweep"
+        )
+        rows = db.list_briefing_scripts(briefing_id)
+        by_id = {row["id"]: row for row in rows}
+        assert by_id[zombie_id]["status"] == "failed"
+        assert by_id[zombie_id]["error"] == "interrupted"
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_script_by_id(str(zombie_id))
+        await pilot.pause()
+        plain, _ansi = _render_to_console(
+            pane.query_one("#artifacts-script-detail", Static).renderable
+        )
+        assert "interrupted" in plain
+        assert "This script is being written now." not in plain
+
+
+@pytest.mark.asyncio
+async def test_casting_recovers_a_zombie_script_via_its_own_sweep(monkeypatch):
+    """Cast-path seam, pinned SEPARATELY from the load-path test above: the
+    Cast worker sweeps `fail_interrupted_scripts` at its own front, exactly
+    where `_sweep_and_guard` runs for Generate. The recorder proves THIS
+    call carries `_cast_in_flight` claimed (True) -- only the Cast worker's
+    own sweep call can, since the load path's sweep is gated on the flag
+    being clear. Unlike briefings, recovering the zombie does not itself
+    refuse this attempt: `briefing_scripts` has no one-generating-row-
+    per-briefing invariant (a briefing may be cast many times), so the SAME
+    press both recovers the zombie AND casts a real script.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        db = app.watchlist_bundle_service.db
+        preset_id = db.list_briefing_presets()[0]["id"]
+        zombie_id = db.insert_briefing_script(
+            briefing_id,
+            preset_id=preset_id,
+            preset_name="Solo",
+            roster_snapshot_json=dump_roster(ONE_SPEAKER_ROSTER),
+        )
+
+        in_flight_at_call: list[bool] = []
+        real_sweep = screen_module.fail_interrupted_scripts
+
+        def _recording_sweep(db_arg, briefing_id_arg=None):
+            in_flight_at_call.append(bool(screen._cast_in_flight))
+            return real_sweep(db_arg, briefing_id_arg)
+
+        monkeypatch.setattr(screen_module, "fail_interrupted_scripts", _recording_sweep)
+
+        cast_chat = _FakeChat(
+            reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}])
+        )
+        _use_fake_cast_chat(monkeypatch, cast_chat)
+
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        assert True in in_flight_at_call, (
+            "the zombie must be recovered by the Cast worker's OWN sweep "
+            "(a call with `_cast_in_flight` claimed), not merely by the "
+            "load-path recovery that runs after the flag clears"
+        )
+        rows = db.list_briefing_scripts(briefing_id)
+        by_id = {row["id"]: row for row in rows}
+        assert by_id[zombie_id]["status"] == "failed"
+        assert by_id[zombie_id]["error"] == "interrupted"
+        assert any(
+            row["status"] == "complete" for row in rows if row["id"] != zombie_id
+        ), "the same press must also have cast a real script"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_script_renders_its_error_string(monkeypatch):
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        _use_fake_cast_chat(monkeypatch, _FakeChat(reply="not json at all"))
+
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        rows = app.watchlist_bundle_service.db.list_briefing_scripts(briefing_id)
+        assert rows[0]["status"] == "failed"
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.selected_script is not None, "the fresh cast must be selected"
+        assert pane.selected_script["id"] == rows[0]["id"]
+        plain, _ansi = _render_to_console(
+            pane.query_one("#artifacts-script-detail", Static).renderable
+        )
+        assert rows[0]["error"] in plain
+
+
+@pytest.mark.asyncio
+async def test_a_failed_cast_leaves_the_briefing_detail_unchanged(monkeypatch):
+    """Spec §Error-handling ethos: a script's outcome never touches the
+    briefing it was cast from -- asserted byte-for-byte, and by what is
+    still painted in the briefing's own detail area.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        _host,
+    ):
+        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        db = app.watchlist_bundle_service.db
+        before = dict(db.get_briefing(briefing_id))
+
+        _use_fake_cast_chat(monkeypatch, _FakeChat(reply="not json at all"))
+        await _press_cast(screen, pilot, app, briefing_id)
+
+        rows = db.list_briefing_scripts(briefing_id)
+        assert rows and rows[0]["status"] == "failed"
+
+        after = dict(db.get_briefing(briefing_id))
+        assert before == after, "casting a script must never touch the briefing row"
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        detail = pane.query_one("#artifacts-detail", Static)
+        plain, _ansi = _render_to_console(detail.renderable, width=detail.region.width)
+        assert "Acme shipped a thing" in plain
+
+
+@pytest.mark.asyncio
+async def test_cast_is_disabled_until_a_preset_exists():
+    """`Cast` starts disabled with a tooltip when there is no default
+    preset AND no preset exists at all to pick one from; it enables the
+    moment any preset exists.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    briefing_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(briefing_id, status="complete", body_markdown="Body")
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_briefing_by_id(str(briefing_id))
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        cast_button = pane.query_one("#artifacts-cast-button", Button)
+        assert cast_button.disabled is True
+        assert cast_button.tooltip
+
+        db.insert_briefing_preset("Solo", roster_json=dump_roster(ONE_SPEAKER_ROSTER))
+        await screen._load_briefings()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        cast_button = pane.query_one("#artifacts-cast-button", Button)
+        assert cast_button.disabled is False
