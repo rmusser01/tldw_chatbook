@@ -54,7 +54,15 @@ still routes to "Open Settings" rather than a button pointing at nothing,
 and that escape hatch is never duplicated once real benches exist -- see
 ``_benches_section_body``'s own comment on why a failed gate with existing
 benches (in practice unreachable, since a word bench's target already
-satisfies ``provider_is_configured``) adds no row at all.
+satisfies ``provider_is_configured``) adds no SAMPLE-BENCH row at all.
+
+**"+ New bench" has no provider gate at all** (task-1482, ``_new_bench_
+actions``). Unlike the sample bench, creating a draft bench is a plain DB
+write -- no network call -- so it renders (enabled whenever at least one
+dataset exists) in both branches of ``_benches_section_body`` regardless
+of ``provider_is_configured``. This closes the one cell the paragraph
+above still left dark: a rail with real benches but a failed provider
+gate used to offer no bench-creation affordance whatsoever.
 """
 
 from __future__ import annotations
@@ -72,6 +80,8 @@ from textual.widgets import Button, Static
 
 from ...Widgets.destination_rail import GLYPH_COLLAPSED, GLYPH_EXPANDED
 from ...Constants import TAB_SETTINGS
+from ...Evals.word_bench.models import BenchConfig
+from ...Evals.word_bench.storage import _unique_name, save_bench
 from ...Third_Party.textual_fspicker import FileOpen, Filters
 from ...Utils.path_validation import validate_path_simple
 from ..Navigation.main_navigation import NavigateToScreen
@@ -119,15 +129,22 @@ EVALS_RAIL_CLASSIC_ROW_PREFIX = "evals-rail-row-benches-classic-"
 
 
 def _bench_row_label(row: dict[str, Any]) -> str:
-    return str(row.get("name") or "Untitled bench")
+    # escape_markup: `Button(label=...)` parses its argument as Textual
+    # markup by default (`Content.from_text`'s own `markup=True` default),
+    # so an unescaped bench name containing a bare `[/]` raises
+    # `MarkupError` the instant the rail lays out -- the same hazard
+    # `_run_group_row_label` (below) already closed for run rows. Bench
+    # names are machine-generated today, but the bench-authoring program
+    # makes them user-typed (task-1482).
+    return escape_markup(str(row.get("name") or "Untitled bench"))
 
 
 def _classic_row_label(row: dict[str, Any]) -> str:
-    return str(row.get("name") or "Untitled task")
+    return escape_markup(str(row.get("name") or "Untitled task"))
 
 
 def _dataset_row_label(row: dict[str, Any]) -> str:
-    return str(row.get("name") or "Untitled dataset")
+    return escape_markup(str(row.get("name") or "Untitled dataset"))
 
 
 #: Single-cell-width status glyphs for run rows -- NEVER emoji, which
@@ -395,6 +412,59 @@ class LibraryRail(NotifyMixin, Vertical):
             ),
         )
 
+    def _new_bench_actions(self) -> ComposeResult:
+        """"+ New bench": create a draft bench bound to a dataset, in-widget
+        (no worker -- a draft bench is a plain DB write, exactly like
+        ``_create_new_dataset``). Shared by both branches of
+        ``_benches_section_body`` (task-1482), in a ``Horizontal`` row
+        mirroring ``_dataset_actions``'s own shape.
+
+        Deliberately NOT gated on ``sample_bench.provider_is_configured``:
+        creating a bench writes only ``eval_tasks``/``eval_datasets`` rows,
+        no network call -- unlike "Create sample bench", which also RUNS
+        the bench against a real target. This closes a latent cell the
+        module docstring's "Creation affordances are not empty-only" note
+        left unaddressed: a rail with real benches but a failed provider
+        gate used to render no bench-creation affordance at all (see
+        ``_benches_section_body``'s own updated comment on this).
+
+        Disabled -- with an explanatory tooltip AND an adjacent one-line
+        hint, never a silent no-op (the fix-batch convention) -- when
+        there is no dataset yet to bind the new bench to.
+        """
+        has_dataset = bool(self.view_model.datasets())
+        yield Horizontal(
+            Button(
+                "+ New bench",
+                id="evals-rail-new-bench",
+                compact=True,
+                disabled=not has_dataset,
+                tooltip=(
+                    "Create or import a dataset first."
+                    if not has_dataset
+                    else "Creates a draft bench bound to the selected "
+                    "dataset (or the newest one, if none is selected)."
+                ),
+            ),
+            classes="evals-rail-empty-actions",
+        )
+        if not has_dataset:
+            # A DEDICATED class, not `.evals-rail-empty-copy` (same visual
+            # treatment, different identity): `test_first_run_marks_the_
+            # sample_bench_as_the_recommended_first_step` scopes on that
+            # exact class, within this exact section, to confirm "No
+            # benches yet." was REPLACED by the "Start here" hint, not
+            # supplemented -- this hint answers a different question (why
+            # "+ New bench" is disabled) and legitimately coexists with
+            # either, so it must not be mistaken for a second copy of that
+            # wording by a class-scoped query.
+            yield Static(
+                "Create or import a dataset first.",
+                id="evals-rail-new-bench-hint",
+                classes="evals-rail-new-bench-hint",
+                markup=False,
+            )
+
     def _section(
         self,
         *,
@@ -552,11 +622,16 @@ class LibraryRail(NotifyMixin, Vertical):
             # branch was reached at all, making bench creation a one-way
             # trapdoor. Keep it reachable at the top of the list. When the
             # gate fails here regardless (in practice unreachable, per the
-            # note above), no row is added -- the "Open Settings" escape
-            # hatch below is scoped to the fully-empty branch and must not
-            # be duplicated for a rail that already has real benches.
+            # note above), no SAMPLE-BENCH row is added -- the "Open
+            # Settings" escape hatch below is scoped to the fully-empty
+            # branch and must not be duplicated for a rail that already
+            # has real benches. "+ New bench" (task-1482) is a separate
+            # affordance with no provider gate at all -- see
+            # `_new_bench_actions`'s own docstring -- so it always renders
+            # here regardless of `provider_ready`.
             if provider_ready:
                 children.append(self._create_sample_bench_button())
+            children.extend(self._new_bench_actions())
             for index, row in enumerate(benches):
                 button_id = f"{EVALS_RAIL_ROW_PREFIX}benches-{index}"
                 children.append(
@@ -625,6 +700,10 @@ class LibraryRail(NotifyMixin, Vertical):
                 children.append(self._create_sample_bench_button())
             else:
                 children.append(self._open_settings_button())
+            # "+ New bench" (task-1482): no provider gate, so it renders
+            # regardless of which branch just ran above -- see
+            # `_new_bench_actions`'s own docstring.
+            children.extend(self._new_bench_actions())
 
         if classic_tasks:
             # Inert -- never registered in `_row_targets`, so a press on
@@ -693,6 +772,10 @@ class LibraryRail(NotifyMixin, Vertical):
             event.stop()
             self.post_message(self.SampleBenchRequested())
             return
+        if button_id == "evals-rail-new-bench":
+            event.stop()
+            self._create_new_bench()
+            return
         if button_id == "evals-rail-new-dataset":
             event.stop()
             self._create_new_dataset()
@@ -722,6 +805,61 @@ class LibraryRail(NotifyMixin, Vertical):
             return
         self.post_message(
             self.EvalsSelectionChanged(EvalsSelection(kind="dataset", id=dataset_id))
+        )
+
+    def _create_new_bench(self) -> None:
+        """Creates a draft ``BenchConfig`` bound to a dataset and selects
+        it -- the Benches-section mirror of ``_create_new_dataset``.
+        In-widget, no worker: a draft bench is a plain DB write (an
+        ``eval_tasks`` row with ``target_ids=()``, no targets wired yet),
+        never a network call, so there is nothing here that needs a
+        background worker the way running a bench does.
+
+        Dataset binding (task-1482, pinned): the currently selected
+        dataset if one is selected and still resolves, else the newest
+        dataset -- ``view_model.datasets()`` is already newest-first
+        (``EvalsDB.list_datasets``'s own ``ORDER BY created_at DESC``), so
+        ``datasets[0]`` IS "the newest one" with no extra sort needed. A
+        stale ``kind="dataset"`` selection (its id no longer resolves --
+        e.g. the dataset was deleted from under the rail) degrades to the
+        same newest-dataset fallback rather than creating an unbound
+        bench or crashing.
+        """
+        db = self.view_model.db
+        if db is None:
+            self._notify("The evaluation service is unavailable.", severity="error")
+            return
+        datasets = self.view_model.datasets()
+        if not datasets:
+            # The button is disabled whenever this is true (see
+            # `_new_bench_actions`) -- reachable only via a stale render or
+            # a direct press bypassing the widget, but the fix-batch
+            # convention is a real toast, never a silent no-op.
+            self._notify("Create or import a dataset first.", severity="warning")
+            return
+        dataset = None
+        if self.selection.kind == "dataset" and self.selection.id:
+            dataset = next(
+                (row for row in datasets if row.get("id") == self.selection.id), None
+            )
+        if dataset is None:
+            dataset = datasets[0]
+        dataset_name = str(dataset.get("name") or "Untitled dataset")
+        config = BenchConfig(
+            name=_unique_name("Untitled bench"),
+            prompt_mode="raw",
+            top_k=20,
+            dataset_id=dataset["id"],
+            target_ids=(),
+        )
+        try:
+            bench_id = save_bench(db, config)
+        except Exception as exc:
+            self._notify(f"Could not create bench: {exc}", severity="error")
+            return
+        self._notify(f"Bench created against {dataset_name}.")
+        self.post_message(
+            self.EvalsSelectionChanged(EvalsSelection(kind="bench", id=bench_id))
         )
 
     def _open_dataset_import_dialog(self) -> None:

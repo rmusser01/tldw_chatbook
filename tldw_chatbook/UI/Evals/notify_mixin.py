@@ -33,8 +33,16 @@ class NotifyMixin:
     """
 
     def _notify(self, message: str, *, severity: str = "information") -> None:
+        # markup=False: `message` routinely interpolates free-text (a
+        # caught exception's own text, an imported file's name -- see e.g.
+        # library_rail.py's `f"Could not read {Path(path).name}: {exc}"`)
+        # that can carry a bare `[/]`. Both `Toast.render()` and the real
+        # `App.notify()` parse markup by default, which would raise
+        # `textual.markup.MarkupError` and crash the app over free text
+        # neither ever meant as markup -- the same hazard task-1476 closed
+        # for EvalsScreen's own notify() call sites.
         app_instance = getattr(self.screen, "app_instance", None)
         if app_instance is not None and hasattr(app_instance, "notify"):
-            app_instance.notify(message, severity=severity)
+            app_instance.notify(message, severity=severity, markup=False)
         else:
-            self.app.notify(message, severity=severity)
+            self.app.notify(message, severity=severity, markup=False)

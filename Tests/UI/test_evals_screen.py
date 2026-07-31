@@ -11,7 +11,7 @@ import pytest
 from loguru import logger as loguru_logger
 from textual.app import App
 from textual.widget import Widget
-from textual.widgets import Button
+from textual.widgets import Button, Input
 
 import tldw_chatbook
 from tldw_chatbook.DB.Evals_DB import EvalsDB
@@ -123,6 +123,17 @@ def evals_db() -> EvalsDB:
 @pytest.fixture
 def evals_app(evals_db: EvalsDB) -> EvalsHarness:
     return EvalsHarness(_FakeAppInstance(evals_db))
+
+
+@pytest.fixture
+def sample_bench_app(evals_db: EvalsDB) -> EvalsHarness:
+    """Mirrors ``test_evals_empty_states.py``'s own ``configured_app``: a
+    configured llama.cpp endpoint, zero benches -- what a bare
+    ``evals_app`` (no configured provider, no pre-existing ``eval_models``
+    row) does not give ``#evals-create-sample-bench`` to render at all
+    (see ``library_rail.py``'s "no configured provider" branch)."""
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
+    return EvalsHarness(_FakeAppInstance(evals_db, app_config=app_config))
 
 
 @pytest.fixture
@@ -374,8 +385,8 @@ async def test_selecting_a_bench_row_in_the_rail_updates_the_detail_pane(
         await pilot.pause()
         await pilot.click("#evals-rail-row-benches-0")
         await pilot.pause()
-        name = evals_app.screen.query_one("#evals-detail-bench-name")
-        assert "loaded-nouns v1" in str(name.renderable)
+        name = evals_app.screen.query_one("#evals-bench-name", Input)
+        assert name.value == "loaded-nouns v1"
 
 
 @pytest.mark.asyncio
@@ -486,6 +497,42 @@ async def test_primary_action_state_stays_disabled_for_an_unresolvable_bench(
 
 
 @pytest.mark.asyncio
+async def test_primary_action_state_stays_disabled_for_a_target_less_bench(
+    evals_app, evals_db
+):
+    """task-1482 fix round 1: a draft bench created via "+ New bench" has
+    ``target_ids=()`` until the bench editor (Task 6) wires one on.
+    Without this guard, pressing "Run" reached ``run_existing_bench`` with
+    zero targets, which "completed" an EMPTY run group -- the exact
+    dead-end pattern (a success toast followed by "this run could not be
+    found") ``_primary_action_state``'s own naming rule exists to
+    prevent, just one step further downstream."""
+    dataset_id = evals_db.create_dataset(
+        name="ds", format="custom", source_path="inline:ds"
+    )
+    config = BenchConfig(
+        name="draft bench", prompt_mode="raw", top_k=20,
+        dataset_id=dataset_id, target_ids=(),
+    )
+    task_id = save_bench(evals_db, config)
+
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen = evals_app.screen
+        screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        label, disabled, tooltip = screen._primary_action_state()
+        assert label == "Run draft bench"
+        assert disabled is True
+        # Exact-match: same wording as the readiness panel's own "No
+        # targets configured yet." for the identical state
+        # (inspector.py/bench_editor.py), per the coordinator's fix.
+        assert tooltip == (
+            "This bench has no targets yet; add one in the bench editor."
+        )
+
+
+@pytest.mark.asyncio
 async def test_primary_action_state_stays_disabled_for_a_dataset_selection(
     evals_app, evals_db
 ):
@@ -500,7 +547,14 @@ async def test_primary_action_state_stays_disabled_for_a_dataset_selection(
         label, disabled, tooltip = screen._primary_action_state()
         assert label == "Run Bench"
         assert disabled is True
-        assert "Datasets are run from within a bench" in tooltip
+        # Exact-match, deliberately (task-1482): the copy now points at the
+        # concrete fix -- "+ New bench" in the Catalog rail -- rather than
+        # the old, more general "select a bench that uses this dataset
+        # instead" (which presupposed one already existed).
+        assert tooltip == (
+            "Datasets are run from within a bench; use + New bench in "
+            "the Catalog rail to create one against this dataset."
+        )
 
 
 @pytest.mark.asyncio
@@ -1336,3 +1390,203 @@ async def test_sample_bench_request_while_a_bench_run_is_in_flight_is_a_no_op(
         # sample-bench-minted one.
         assert len(screen._view_model.benches()) == 1
         assert len(screen._view_model.run_groups()) == 1
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (task-1482 prep): a completing worker must not yank a selection the
+# user has since moved away from -- see `_selection_unmoved_since_launch`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bench_run_completion_does_not_yank_a_selection_moved_away_mid_flight(
+    evals_app, evals_db, runnable_bench
+):
+    """Once the bench editor holds unsaved form state, a completing
+    background run recomposing the whole screen would destroy it. Presses
+    Run on `runnable_bench`, navigates to an unrelated dataset WHILE the
+    run is still genuinely in flight (a real async suspension inside
+    `_PausableFakeCaptureClient.capture`, not a completed-before-the-test-
+    could-look race), then releases -- the completion toast must still
+    fire (the run is real, not silently dropped), but `self._selection`
+    must remain exactly where the user left it, never yanked to the new
+    run group.
+    """
+    other_dataset_id = evals_db.create_dataset(
+        name="other-dataset", format="custom", source_path="inline:other-dataset"
+    )
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        await pilot.pause()
+
+        # Navigate away while the run is genuinely in flight.
+        screen.select(kind="dataset", id=other_dataset_id)
+        await pilot.pause()
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+        assert screen._selection.kind == "dataset"
+        assert screen._selection.id == other_dataset_id
+        message, severity = evals_app.app_instance.notifications[-1]
+        assert severity == "information"
+        assert message == "Bench run finished — see the Runs section."
+
+
+@pytest.mark.asyncio
+async def test_bench_run_completion_selects_the_run_group_when_selection_is_unchanged(
+    evals_app, runnable_bench
+):
+    """The paired happy-path case: press Run and do not navigate away
+    while it is in flight -- release still moves the selection to the new
+    run group, exactly like before Task 2's guard existed."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        await pilot.pause()
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+        assert screen._selection.kind == "run_group"
+        run_groups = screen._view_model.run_groups()
+        assert screen._selection.id == run_groups[0]["id"]
+        message, severity = evals_app.app_instance.notifications[-1]
+        assert message == "Bench run finished."
+
+
+@pytest.mark.asyncio
+async def test_bench_run_completion_treats_drilling_into_its_own_run_group_as_unmoved(
+    evals_app, runnable_bench
+):
+    """The guard's second branch (`_selection_unmoved_since_launch`):
+    navigating INTO the launched bench's own (still-"running") run group
+    mid-flight -- e.g. clicking the rail row for the run in progress --
+    counts as "still watching this run", not a yank, once the run
+    finishes; this is deliberately a DIFFERENT branch than the "selection
+    == launch_selection" one above, since the selection here is
+    `kind="run_group"`, never `kind="bench"`."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        await pilot.pause()
+
+        # WordBenchRunner.run() creates its run group (status "running")
+        # before capturing a single cell -- see runner.py, right after
+        # `create_run_group` -- so it already exists here.
+        running_group = screen._view_model.run_groups()[0]
+        screen.select(kind="run_group", id=running_group["id"])
+        await pilot.pause()
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+        assert screen._selection.kind == "run_group"
+        assert screen._selection.id == running_group["id"]
+        message, severity = evals_app.app_instance.notifications[-1]
+        assert message == "Bench run finished."
+
+
+@pytest.mark.asyncio
+async def test_sample_bench_completion_does_not_yank_a_selection_moved_away_mid_flight(
+    sample_bench_app, evals_db
+):
+    """Mirrors `test_bench_run_completion_does_not_yank_a_selection_moved_
+    away_mid_flight` for the sample-bench worker: a sample bench does not
+    exist yet at press time, so there is no pre-existing bench selection
+    to pin against -- `_sample_bench_launch_selection` (captured in
+    `_on_sample_bench_requested` at press time) stands in for it."""
+    other_dataset_id = evals_db.create_dataset(
+        name="other-dataset", format="custom", source_path="inline:other-dataset"
+    )
+    async with sample_bench_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = sample_bench_app.screen
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-create-sample-bench")
+        await _wait_until(pilot, lambda: screen._sample_bench_running)
+        await pilot.pause()
+
+        # Navigate away while the run is genuinely in flight.
+        screen.select(kind="dataset", id=other_dataset_id)
+        await pilot.pause()
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._sample_bench_running)
+        await pilot.pause()
+
+        assert screen._selection.kind == "dataset"
+        assert screen._selection.id == other_dataset_id
+        message, severity = sample_bench_app.app_instance.notifications[-1]
+        assert severity == "information"
+        assert message == "Sample bench created and run — see the Runs section."
+
+
+@pytest.mark.asyncio
+async def test_sample_bench_completion_selects_the_run_group_when_selection_is_unchanged(
+    sample_bench_app,
+):
+    """The paired happy-path case for the sample-bench worker: press
+    Create sample bench and do not navigate away while it is in flight --
+    release still moves the selection to the new run group."""
+    async with sample_bench_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = sample_bench_app.screen
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-create-sample-bench")
+        await _wait_until(pilot, lambda: screen._sample_bench_running)
+        await pilot.pause()
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._sample_bench_running)
+        await pilot.pause()
+
+        assert screen._selection.kind == "run_group"
+        run_groups = screen._view_model.run_groups()
+        assert screen._selection.id == run_groups[0]["id"]
+        message, severity = sample_bench_app.app_instance.notifications[-1]
+        assert message == "Sample bench created and run."

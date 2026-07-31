@@ -178,6 +178,20 @@
     margin: 0 1 0 0;
 }
 
+/* Task 4 (task-1482): "+ New bench"'s zero-dataset hint. Same visual
+   treatment as `.evals-rail-empty-copy` (muted, one line) but a DEDICATED
+   class -- see library_rail.py's `_new_bench_actions` for why it must not
+   share that class: `test_first_run_marks_the_sample_bench_as_the_
+   recommended_first_step` scopes a query on `.evals-rail-empty-copy`
+   within the Benches section specifically to confirm "No benches yet."
+   was replaced by the "Start here" hint, not supplemented, and this hint
+   (a different message, answering a different question) must not read as
+   a second copy of that wording to a class-scoped query. */
+.evals-rail-new-bench-hint {
+    color: $ds-text-muted;
+    padding: 0 1;
+}
+
 /* I3: the labelled subgroup separating classic (non-word-bench) tasks from
    word benches under the Benches section -- see library_rail.py's
    CLASSIC_SUBGROUP_LABEL. Inert (a Static, never a Button); styled like
@@ -243,6 +257,80 @@
 
 #evals-inspector-bench .ds-recovery-callout {
     margin: 0 0 1 0;
+}
+
+/* Task 5 (task-1482): the bench editor's own form fields (name,
+   description, prompt mode, top-K, probes). Field WIDTHS follow
+   #evals-grid-controls > Select's own precedent just above -- Input
+   already defaults to width:100% (textual/widgets/_input.py), but Select
+   does not carry an equivalent override in its own DEFAULT_CSS, so left
+   unstyled here it would size to its current option's label rather than
+   filling the row the way every Input beside it does. Labels reuse the
+   app-wide `.form-label` (components/_forms.tcss); this class only trims
+   its default bottom margin, which reads as too much air between a
+   one-line label and the field directly under it in this narrow pane. */
+.evals-bench-field-label {
+    text-style: bold;
+    color: $ds-text-primary;
+    margin-bottom: 0;
+}
+
+#evals-bench-prompt-mode {
+    width: 1fr;
+    margin-bottom: 1;
+}
+
+#evals-bench-name,
+#evals-bench-description,
+#evals-bench-top-k {
+    margin-bottom: 1;
+}
+
+/* Bounded, not the widget's own default `1fr` (textual/widgets/_text_area.
+   py) -- an unbounded probes editor would compete with #evals-bench-
+   target-table below for the pane's remaining height every time, on top
+   of whatever #evals-bench-probes-preview already claims above it.
+   Mirrors mcp_profile_form.py's identical #mcp-form-args/#mcp-form-env
+   fix for the same "TextArea defaults to 1fr" trap. */
+#evals-bench-probes {
+    height: 6;
+    min-height: 4;
+    margin-bottom: 1;
+}
+
+/* The read-only ␣-marker preview of the CURRENTLY SAVED probes (see
+   bench_editor.py's compose() -- it renders `config.probes`, never the
+   TextArea's live, unsaved content). Bounded and independently scrollable
+   so a bench with many probes cannot itself push the Save/Revert buttons
+   off screen; #evals-bench-probes right below already answers "what can
+   I type", so this list does not also need to grow without limit. */
+#evals-bench-probes-preview {
+    height: auto;
+    max-height: 6;
+    overflow-y: auto;
+    margin-bottom: 1;
+}
+
+.evals-bench-probe-preview-row {
+    height: auto;
+}
+
+#evals-bench-probes-preview-empty {
+    color: $ds-text-muted;
+    margin-bottom: 1;
+}
+
+#evals-bench-form-error {
+    margin-bottom: 1;
+}
+
+#evals-bench-form-actions {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#evals-bench-form-actions Button {
+    margin: 0 1 0 0;
 }
 
 /* Task 5 (snippet editor + import). The whitespace marker itself is a

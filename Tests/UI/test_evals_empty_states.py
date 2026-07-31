@@ -19,17 +19,20 @@ from pathlib import Path
 
 import pytest
 from textual import on
-from textual.widgets import Button, DataTable
+from textual.widgets import Button, DataTable, Input
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.word_bench.capture_client import NEUTRAL_SAMPLER
-from tldw_chatbook.Evals.word_bench.models import CellCapture, PreflightResult, TokenProb
-from tldw_chatbook.Evals.word_bench.storage import load_grid
+from tldw_chatbook.Evals.word_bench.models import BenchConfig, CellCapture, PreflightResult, TokenProb
+from tldw_chatbook.Evals.word_bench.storage import load_grid, save_bench
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Evals import sample_bench
 from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook.UI.Evals.library_rail import (
     LibraryRail,
+    _bench_row_label,
+    _classic_row_label,
+    _dataset_row_label,
     _run_group_row_label,
     _run_group_row_time,
 )
@@ -714,9 +717,7 @@ async def test_no_benches_offers_a_genuinely_clickable_sample_bench(configured_a
         # just an ephemeral run.
         screen.select(kind="bench", id=screen._view_model.benches()[0]["id"])
         await pilot.pause()
-        assert "loaded-nouns" in str(
-            screen.query_one("#evals-detail-bench-name").renderable
-        )
+        assert "loaded-nouns" in screen.query_one("#evals-bench-name", Input).value
         assert screen.query_one("#evals-bench-target-0")
 
 
@@ -1033,6 +1034,284 @@ async def test_collapsing_a_non_empty_section_hides_its_creation_affordance_too(
         # rail section" skip.
         assert sample_bench_button.region.width == 0
         assert new_dataset_button.region.width == 0
+
+
+# ---------------------------------------------------------------------------
+# TASK-1482: "+ New bench" -- a draft bench bound to a chosen dataset,
+# reachable from the Benches section regardless of provider configuration
+# (creating a bench is a plain DB write, never a network call).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_new_bench_button_present_in_the_empty_benches_branch(
+    configured_app, evals_db: EvalsDB
+):
+    """Zero benches, one dataset -- `_benches_section_body`'s EMPTY branch
+    must offer "+ New bench" alongside "Create sample bench"."""
+    evals_db.create_dataset(name="ds", format="custom", source_path="inline:ds")
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        rail = screen.query_one("#evals-library-pane")
+        button = screen.query_one("#evals-rail-new-bench")
+        assert rail.region.contains_region(button.region)
+        assert not button.disabled
+
+
+@pytest.mark.asyncio
+async def test_new_bench_button_present_alongside_an_existing_bench(
+    configured_app, seeded_bench, evals_db: EvalsDB
+):
+    """`seeded_bench` already gives a real bench AND a real dataset --
+    `_benches_section_body`'s NON-empty branch must offer "+ New bench"
+    too, not just the empty one (the TASK-1478 trapdoor pattern this
+    program keeps closing for every creation affordance)."""
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        rail = screen.query_one("#evals-library-pane")
+        button = screen.query_one("#evals-rail-new-bench")
+        assert rail.region.contains_region(button.region)
+        assert not button.disabled
+        # The existing bench row is still there too -- this is not the
+        # empty-state offer in disguise.
+        bench_row = screen.query_one("#evals-rail-row-benches-0")
+        assert "loaded-nouns" in str(bench_row.label)
+
+
+@pytest.mark.asyncio
+async def test_new_bench_button_is_not_provider_gated(evals_db: EvalsDB):
+    """TASK-1482 closes the 1478-noted latent cell: creating a DRAFT bench
+    writes only `eval_tasks`/`eval_datasets` rows, so unlike "Create sample
+    bench" (which also RUNS against a real target) it must render -- and
+    stay enabled -- even with zero providers configured."""
+    evals_db.create_dataset(name="ds", format="custom", source_path="inline:ds")
+    app = EvalsHarness(_FakeAppInstance(evals_db, app_config={}))
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        assert not pilot.app.screen.query("#evals-create-sample-bench")
+        button = pilot.app.screen.query_one("#evals-rail-new-bench")
+        assert not button.disabled
+
+
+@pytest.mark.asyncio
+async def test_new_bench_button_disabled_with_a_hint_when_no_datasets_exist(
+    configured_app,
+):
+    """Never a silent no-op (the fix-batch convention): the button itself
+    is disabled AND a one-line hint explains why, right alongside it."""
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        button = screen.query_one("#evals-rail-new-bench")
+        assert button.disabled
+        hint = screen.query_one("#evals-rail-new-bench-hint")
+        assert "Create or import a dataset first." in str(hint.renderable)
+
+
+@pytest.mark.asyncio
+async def test_new_bench_bound_to_the_currently_selected_dataset(
+    configured_app, evals_db: EvalsDB
+):
+    """Selects the OLDER of two datasets deliberately: `view_model.
+    datasets()` is newest-first, so if the press silently ignored the
+    selection and fell back to "newest" regardless, this would still
+    accidentally bind to `ds_b` and read as passing -- forcing `ds_b`
+    strictly newer (never tied on second-resolution `datetime('now')`)
+    makes "bound to the SELECTED dataset, not just the newest one" the
+    only way this assertion can pass."""
+    ds_a = evals_db.create_dataset(name="a", format="custom", source_path="inline:a")
+    ds_b = evals_db.create_dataset(name="b", format="custom", source_path="inline:b")
+    conn = evals_db._get_connection()
+    with conn:
+        conn.execute(
+            "UPDATE eval_datasets SET created_at = ? WHERE id = ?",
+            ("2020-01-01 00:00:00", ds_a),
+        )
+        conn.execute(
+            "UPDATE eval_datasets SET created_at = ? WHERE id = ?",
+            ("2030-01-01 00:00:00", ds_b),
+        )
+    assert evals_db.list_datasets()[0]["id"] == ds_b, "sanity: ds_b must be newest"
+
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+        screen.select(kind="dataset", id=ds_a)
+        await pilot.pause()
+
+        await pilot.click("#evals-rail-new-bench")
+        await pilot.pause()
+
+        benches = evals_db.list_tasks()
+        assert len(benches) == 1
+        assert benches[0]["dataset_id"] == ds_a
+        assert screen._selection.kind == "bench"
+        assert screen._selection.id == benches[0]["id"]
+
+
+@pytest.mark.asyncio
+async def test_new_bench_with_no_dataset_selected_binds_to_the_newest_dataset(
+    configured_app, evals_db: EvalsDB
+):
+    """No dataset selected (the default selection is a bench row here, via
+    `seeded_bench`-style setup is not used -- selection just starts at
+    `kind="none"`) -- the newest dataset wins, per `EvalsDB.list_datasets`'s
+    own `ORDER BY created_at DESC`. Timestamps are forced apart explicitly
+    so the ordering this test asserts can never tie on second-resolution
+    `datetime('now')` defaults."""
+    older = evals_db.create_dataset(
+        name="older", format="custom", source_path="inline:older"
+    )
+    newer = evals_db.create_dataset(
+        name="newer", format="custom", source_path="inline:newer"
+    )
+    conn = evals_db._get_connection()
+    with conn:
+        conn.execute(
+            "UPDATE eval_datasets SET created_at = ? WHERE id = ?",
+            ("2020-01-01 00:00:00", older),
+        )
+        conn.execute(
+            "UPDATE eval_datasets SET created_at = ? WHERE id = ?",
+            ("2030-01-01 00:00:00", newer),
+        )
+
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+        assert screen._selection.kind == "none"
+
+        await pilot.click("#evals-rail-new-bench")
+        await pilot.pause()
+
+        benches = evals_db.list_tasks()
+        assert len(benches) == 1
+        assert benches[0]["dataset_id"] == newer
+
+
+@pytest.mark.asyncio
+async def test_new_bench_selection_stale_dataset_id_falls_back_to_newest(
+    configured_app, evals_db: EvalsDB
+):
+    """A `kind="dataset"` selection whose id no longer resolves (e.g. the
+    selected dataset was deleted from under the rail) must not crash or
+    silently create an unbound bench -- it degrades to the newest dataset,
+    same as an unselected rail."""
+    evals_db.create_dataset(name="real", format="custom", source_path="inline:real")
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+        screen.select(kind="dataset", id="does-not-exist")
+        await pilot.pause()
+
+        await pilot.click("#evals-rail-new-bench")
+        await pilot.pause()
+
+        benches = evals_db.list_tasks()
+        assert len(benches) == 1
+        assert benches[0]["dataset_id"] == evals_db.list_datasets()[0]["id"]
+
+
+@pytest.mark.asyncio
+async def test_new_bench_created_config_matches_the_pinned_defaults(
+    configured_app, evals_db: EvalsDB
+):
+    """`BenchConfig(prompt_mode="raw", top_k=20, target_ids=())` exactly --
+    a draft has no targets yet (wired in a later task); an empty tuple is
+    a valid `BenchConfig` (only its elements are validated, when present)."""
+    from tldw_chatbook.Evals.word_bench.storage import load_bench
+
+    dataset_id = evals_db.create_dataset(
+        name="ds", format="custom", source_path="inline:ds"
+    )
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        await pilot.click("#evals-rail-new-bench")
+        await pilot.pause()
+
+        benches = evals_db.list_tasks()
+        assert len(benches) == 1
+        config = load_bench(evals_db, benches[0]["id"])
+        assert config.prompt_mode == "raw"
+        assert config.top_k == 20
+        assert config.target_ids == ()
+        assert config.dataset_id == dataset_id
+        assert config.name.startswith("Untitled bench ")
+
+
+@pytest.mark.asyncio
+async def test_new_bench_toasts_the_dataset_name_and_never_parses_it_as_markup(
+    configured_app, evals_db: EvalsDB
+):
+    """The toast interpolates the free-text dataset name -- routed through
+    `_notify` (`markup=False` since Task 1), so a name containing a bare
+    `[/]` must render literally rather than raising `MarkupError`."""
+    evals_db.create_dataset(
+        name="loud [/] name", format="custom", source_path="inline:loud"
+    )
+    app_instance = _FakeAppInstance(
+        evals_db, app_config={"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
+    )
+    app = EvalsHarness(app_instance)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        await pilot.click("#evals-rail-new-bench")
+        await pilot.pause()
+
+        assert app_instance.notifications
+        message, severity = app_instance.notifications[-1]
+        assert message == "Bench created against loud [/] name."
+        assert severity == "information"
+
+
+@pytest.mark.asyncio
+async def test_new_bench_save_failure_notifies_and_does_not_select(
+    configured_app, evals_db: EvalsDB, monkeypatch
+):
+    """`ConflictError`/`Exception` from `save_bench` -> an error toast, no
+    `EvalsSelectionChanged` posted -- mirrors `_create_new_dataset`'s own
+    exception handling for the identical failure shape."""
+    evals_db.create_dataset(name="ds", format="custom", source_path="inline:ds")
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Evals.library_rail.save_bench", _raise
+    )
+
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+        await pilot.click("#evals-rail-new-bench")
+        await pilot.pause()
+
+        assert evals_db.list_tasks() == []
+        assert screen._selection.kind == "none"
+        app_instance = screen.app_instance
+        assert app_instance.notifications
+        message, severity = app_instance.notifications[-1]
+        assert "Could not create bench" in message
+        assert severity == "error"
+
+
+@pytest.mark.asyncio
+async def test_new_bench_collapsing_the_benches_section_hides_it_too(
+    configured_app, evals_db: EvalsDB
+):
+    evals_db.create_dataset(name="ds", format="custom", source_path="inline:ds")
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        button = screen.query_one("#evals-rail-new-bench")
+        assert button.region.width > 0
+
+        await pilot.click("#evals-rail-toggle-benches")
+        await pilot.pause()
+
+        assert button.region.width == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1360,3 +1639,137 @@ def test_run_group_row_label_escapes_a_markup_hazard_in_the_task_name():
 
     content = Content.from_markup(label)  # must not raise MarkupError
     assert content.plain == "✓ 14:02 · loaded-nouns[/]v1"
+
+
+# ---------------------------------------------------------------------------
+# task-1482 Task 1: markup hardening prerequisite. Bench/dataset names are
+# machine-generated TODAY, but the upcoming bench-authoring program makes
+# them user-typed -- arming the exact hazard `_run_group_row_label` above
+# was already fixed for (task-1476/TASK-1480), but never closed for the
+# other three rail-row label functions. `_bench_row_label`/
+# `_classic_row_label`/`_dataset_row_label` feed straight into
+# `Button(label=...)`, which parses its argument as markup by default
+# (`Content.from_text`'s own `markup=True`) -- an unescaped `[/]` crashes
+# the WHOLE app the instant the rail lays out, not merely `compose()`
+# (confirmed directly against Textual: an unescaped bracket raises
+# `MarkupError` out of the compositor's reflow during `pilot.pause()`).
+# ---------------------------------------------------------------------------
+
+
+def test_bench_row_label_escapes_a_markup_hazard_in_the_name():
+    from textual.content import Content
+
+    row = {"name": "loaded-nouns[/]v1"}
+    label = _bench_row_label(row)
+
+    content = Content.from_markup(label)  # must not raise MarkupError
+    assert content.plain == "loaded-nouns[/]v1"
+
+
+def test_classic_row_label_escapes_a_markup_hazard_in_the_name():
+    from textual.content import Content
+
+    row = {"name": "mmlu-subset[/]v2"}
+    label = _classic_row_label(row)
+
+    content = Content.from_markup(label)  # must not raise MarkupError
+    assert content.plain == "mmlu-subset[/]v2"
+
+
+def test_dataset_row_label_escapes_a_markup_hazard_in_the_name():
+    from textual.content import Content
+
+    row = {"name": "nouns[/]v1"}
+    label = _dataset_row_label(row)
+
+    content = Content.from_markup(label)  # must not raise MarkupError
+    assert content.plain == "nouns[/]v1"
+
+
+@pytest.mark.asyncio
+async def test_rail_rows_render_bench_dataset_and_classic_hazard_names_literally(
+    evals_db: EvalsDB,
+):
+    """The mounted-widget version of the three pure-function tests above:
+    a real word bench, a real dataset, and a real classic task each named
+    with a bare `[/]` must compose (and lay out -- see the module comment
+    above on where the crash actually surfaces) without raising, and each
+    rail row's real `Button.label` (a parsed `Content` object, not the
+    original string) must round-trip the raw, unmangled name -- proving
+    the fix is genuinely wired into the row-construction path, not just
+    correct in the helper functions tested in isolation above."""
+    target_id = evals_db.create_model(name="target", provider="llama_cpp", model_id="m")
+    # A single shared dataset -- the only row `EvalsViewModel.datasets()`
+    # will list -- avoids depending on this view's row ordering to find
+    # "the hazard one" among several datasets.
+    dataset_id = evals_db.create_dataset(
+        name="dataset[/]name", format="custom", source_path="inline:dataset-hazard"
+    )
+    config = BenchConfig(
+        name="bench[/]name",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(target_id,),
+    )
+    save_bench(evals_db, config)
+
+    evals_db.create_task(
+        name="classic[/]name",
+        task_type="question_answer",
+        config_format="custom",
+        config_data={},
+        dataset_id=dataset_id,
+    )
+
+    app = EvalsHarness(_FakeAppInstance(evals_db))
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        assert pilot.app.is_running, "an unescaped hazard name crashed the app"
+
+        screen = pilot.app.screen
+        bench_row = screen.query_one("#evals-rail-row-benches-0", Button)
+        assert bench_row.label.plain == "bench[/]name"
+
+        dataset_row = screen.query_one("#evals-rail-row-datasets-0", Button)
+        assert dataset_row.label.plain == "dataset[/]name"
+
+        classic_row = screen.query_one("#evals-rail-row-benches-classic-0", Button)
+        assert classic_row.label.plain == "classic[/]name"
+
+
+@pytest.mark.asyncio
+async def test_notify_mixin_passes_markup_false_so_a_bracket_hazard_does_not_raise(
+    no_provider_app,
+):
+    """`NotifyMixin._notify` is shared by `LibraryRail`, `ResultsGrid`, and
+    `SnippetEditor` (see `notify_mixin.py`'s own module docstring) and
+    interpolates free-text (exception messages, imported file names --
+    e.g. `library_rail.py`'s own `f"Could not read {Path(path).name}:
+    {exc}"`) into a toast. Before this fix it called
+    `app_instance.notify(message, severity=severity)`, leaving `markup` at
+    its default `True` -- the same hazard TASK-1476 already closed for
+    `EvalsScreen`'s own `notify()` call sites (see
+    `test_evals_screen.py`'s `_RaisingCaptureClient`/
+    `test_bench_run_failure_toast_with_markup_hazard_text_does_not_crash_
+    the_app`), left open here.
+
+    `no_provider_app`'s `_FakeAppInstance` (imported from
+    `test_evals_screen.py`) already reproduces the real crash: its
+    `notify()` parses `message` through the same `Content.from_markup`
+    call `Toast.render()` uses whenever `markup` is left at its default
+    `True` -- see that fixture's own docstring. Calling `_notify` directly
+    on the mounted rail (rather than threading a hazard through a
+    specific UI flow) isolates the mixin fix itself.
+    """
+    async with no_provider_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        rail = screen.query_one(LibraryRail)
+
+        rail._notify("target[/]name could not be reached", severity="error")
+        await pilot.pause()
+
+        assert pilot.app.is_running, "an unescaped hazard message crashed the app"
+        notifications = no_provider_app.app_instance.notifications
+        assert notifications[-1] == ("target[/]name could not be reached", "error")

@@ -32,6 +32,26 @@ from .models import (
 BENCH_TYPE = "word_bench"
 
 
+def _unique_name(base: str) -> str:
+    """Append a short random suffix so a generated name never collides with
+    an existing one on ``eval_tasks.name``'s ``UNIQUE`` constraint -- which
+    (per ``Evals_DB.py``'s schema) carries no ``deleted_at`` exemption, so
+    even a soft-deleted row's name still blocks a bare literal.
+    ``duplicate_bench`` below is this module's own user, naming a copy
+    ``f"{source.name} copy"`` through this.
+
+    Lives here (the engine layer) rather than in ``UI/Evals/sample_bench.py``
+    (the module that originated it, for the same reason: its one-click
+    sample bench would otherwise collide on a second click after the first
+    sample bench was deleted) so that neither module has to import the
+    other's private helper across the UI/engine boundary in the wrong
+    direction -- ``sample_bench.py`` imports this one back, keeping the
+    UI -> engine import direction one-way, storage.py itself importing
+    nothing from ``UI/`` (task-1482).
+    """
+    return f"{base} {uuid.uuid4().hex[:8]}"
+
+
 def save_bench(db: EvalsDB, config: BenchConfig, task_id: Optional[str] = None) -> str:
     """Persist a bench as an eval_tasks row.
 
@@ -61,6 +81,13 @@ def save_bench(db: EvalsDB, config: BenchConfig, task_id: Optional[str] = None) 
             round-trip back into storage un-flagged just because it arrived
             through a lenient read; it must be resolved before a save
             succeeds, same as a brand-new bench.
+        Evals_DB.ConflictError: Propagated, not caught, from
+            ``create_task``/``update_task`` when ``config.name`` collides
+            with another task's name -- ``eval_tasks.name`` is ``UNIQUE``
+            with no ``deleted_at`` exemption, so this includes a
+            soft-deleted bench's name, not only a live one. Callers that
+            want a name guaranteed not to collide (e.g. ``duplicate_bench``
+            below) must arrange for one themselves, via ``_unique_name``.
     """
     target_ids = list(config.target_ids)
     if len(set(target_ids)) != len(target_ids):
@@ -138,6 +165,59 @@ def load_bench(db: EvalsDB, task_id: str) -> BenchConfig:
         concurrency=int(data.get("concurrency", 1)),
         strict=False,
     )
+
+
+def duplicate_bench(db: EvalsDB, task_id: str) -> str:
+    """Copy a bench definition under a fresh, collision-proof name.
+
+    Loads the source through ``load_bench`` (lenient -- see its own
+    docstring), so a legacy bench whose stored ``target_ids`` already
+    contains a duplicate (task-1132) can still be duplicated even though it
+    can no longer be *run* as-is. ``save_bench``'s pre-write guard rejects a
+    duplicate ``target_ids`` unconditionally, though, so before saving the
+    copy this function dedupes ``target_ids``, preserving the source's
+    order (first occurrence wins) -- the copy is a fresh bench going
+    through the normal write path, not a byte-identical clone of a row that
+    could never have been created that way to begin with.
+
+    Every config field is copied: ``description`` (an ``eval_tasks`` column,
+    not part of ``config_data`` -- see ``save_bench``), ``prompt_mode``,
+    ``top_k``, ``dataset_id`` (the dataset is referenced, not itself
+    copied -- the copy shares its source's snippets), ``target_ids``
+    (deduped as above), ``probes``, and ``concurrency``. Only ``name``
+    changes, and only run history is left behind: no ``eval_runs`` or
+    ``eval_results`` rows are copied, so the new bench starts with an empty
+    grid.
+
+    Args:
+        db: Database handle.
+        task_id: The source bench's ``eval_tasks`` row id.
+
+    Returns:
+        The new bench's task id.
+
+    Raises:
+        RuntimeError: If ``task_id`` does not name an existing, non-deleted
+            bench (readable message naming the id, rather than
+            ``load_bench``'s own ``TypeError`` from subscripting ``None``).
+    """
+    if db.get_task(task_id) is None:
+        raise RuntimeError(f"cannot duplicate bench {task_id!r}: not found")
+
+    source = load_bench(db, task_id)
+    deduped_target_ids = tuple(dict.fromkeys(source.target_ids))
+
+    copy = BenchConfig(
+        name=_unique_name(f"{source.name} copy"),
+        description=source.description,
+        prompt_mode=source.prompt_mode,
+        top_k=source.top_k,
+        dataset_id=source.dataset_id,
+        target_ids=deduped_target_ids,
+        probes=source.probes,
+        concurrency=source.concurrency,
+    )
+    return save_bench(db, copy)
 
 
 def _snapshot(

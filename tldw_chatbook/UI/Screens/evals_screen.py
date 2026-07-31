@@ -111,6 +111,16 @@ class EvalsScreen(LabScreen):
         #: 3c, per this program's own PR numbering) should not need a
         #: second plumbing pass to reach it.
         self._sample_bench_cancel_token: Optional[CancelToken] = None
+        #: The selection snapshotted in ``_on_sample_bench_requested`` at
+        #: PRESS time, before ``run_worker`` is even called -- same
+        #: capture-outside-the-worker rationale as ``_bench_run_task_id``
+        #: below (the selection can move before the scheduled worker's
+        #: first line actually runs). Unlike a bench-run, a sample bench
+        #: does not exist yet when this button is pressed, so there is no
+        #: bench id to pin; what a completing worker must not yank the
+        #: user away from is wherever they WERE, not a specific bench --
+        #: see ``_selection_unmoved_since_launch`` (task-1482 Task 2).
+        self._sample_bench_launch_selection: EvalsSelection = EvalsSelection()
         #: True for the duration of one run-existing-bench flow. Same
         #: double-guard rationale as ``_sample_bench_running`` (see that
         #: field's own comment above): this flag stops a second press once
@@ -180,6 +190,42 @@ class EvalsScreen(LabScreen):
         if self.is_mounted:
             self.refresh(recompose=True)
 
+    def _selection_unmoved_since_launch(
+        self, launch_selection: EvalsSelection, bench_task_id: Optional[str]
+    ) -> bool:
+        """True when it is safe for a just-finished background worker
+        (``_run_bench_worker``/``_create_sample_bench_worker``) to move the
+        screen's selection to the run group it just produced.
+
+        Two cases count as safe, matching what a user would read as "I'm
+        still watching this run" rather than "I've moved on":
+
+        1. ``self._selection`` is unchanged from ``launch_selection`` -- the
+           selection captured at the moment the run/creation was started
+           (``_bench_run_task_id`` for the bench-run worker, ``self.
+           _sample_bench_launch_selection`` for the sample-bench worker,
+           which has no pre-existing bench to pin against).
+        2. The user has since navigated INTO one of ``bench_task_id``'s own
+           run groups (e.g. clicked a still-"running" row in the rail while
+           the run was in flight, per ``test_rail_run_row_shows_the_
+           running_glyph_while_the_run_is_in_flight``) -- moving them to the
+           freshly finished run group there is a refresh, not a yank.
+
+        Any other selection means the user navigated somewhere unrelated
+        while the worker was running -- once the bench editor holds
+        unsaved form state (this task's own motivation), forcing a
+        recompose there would destroy it. The completing worker must
+        degrade to a toast-only notification instead of calling
+        ``select()`` (task-1482 Task 2).
+        """
+        if self._selection == launch_selection:
+            return True
+        if bench_task_id and self._selection.kind == "run_group" and self._selection.id:
+            group = self._view_model.run_group_by_id(self._selection.id)
+            if group is not None and group.get("task_id") == bench_task_id:
+                return True
+        return False
+
     def _register_grid_shortcuts(self) -> None:
         """Advertises the results grid's `l`/`b`/`s`/`e` keys (see
         ``results_grid.ResultsGrid.BINDINGS``) through the shared
@@ -212,6 +258,18 @@ class EvalsScreen(LabScreen):
     ) -> None:
         event.stop()
         self.select(kind=event.selection.kind, id=event.selection.id)
+
+    @on(BenchEditor.Saved)
+    def _on_bench_editor_saved(self, event: BenchEditor.Saved) -> None:
+        """A successful `BenchEditor` Save re-selects the same bench --
+        `select()`'s recompose reloads the form from what `save_bench`
+        actually persisted (see `BenchEditor.Saved`'s own docstring for why
+        that can differ from what was typed, e.g. `_clean_task_name`'s
+        control-character strip), and refreshes the rail row and inspector
+        alongside it for free, the same way any other selection change
+        does."""
+        event.stop()
+        self.select(kind="bench", id=event.bench_id)
 
     @on(LibraryRail.SampleBenchRequested)
     def _on_sample_bench_requested(
@@ -259,10 +317,23 @@ class EvalsScreen(LabScreen):
         never awaited``). Textual only calls the callable when the worker
         actually starts, so in the very race this docstring describes no
         orphan coroutine is created.
+
+        ``self._selection`` is also snapshotted into
+        ``self._sample_bench_launch_selection`` HERE, before ``run_worker``
+        is even called -- not re-read from ``self._selection`` inside the
+        worker, mirroring ``_on_primary_action_pressed``'s own
+        ``_bench_run_task_id`` capture and for the identical reason: the
+        selection can move before the scheduled worker's first line
+        actually runs. The completing worker reads this snapshot to decide
+        whether it is still safe to move the selection to the new run
+        group, or whether the user has navigated elsewhere and a recompose
+        there would yank them (see ``_selection_unmoved_since_launch``,
+        task-1482 Task 2).
         """
         event.stop()
         if self._sample_bench_running or self._bench_run_running:
             return
+        self._sample_bench_launch_selection = self._selection
         self.run_worker(
             self._create_sample_bench_worker,
             exclusive=True,
@@ -270,6 +341,20 @@ class EvalsScreen(LabScreen):
         )
 
     async def _create_sample_bench_worker(self) -> None:
+        """Creates and runs the one-click sample bench (see
+        ``sample_bench.create_and_run_sample_bench``).
+
+        On success, ``select(run_group)`` ONLY when
+        ``_selection_unmoved_since_launch`` says the screen's current
+        selection is still ``self._sample_bench_launch_selection`` (the
+        selection snapshotted in ``_on_sample_bench_requested`` at press
+        time) or has since moved into the freshly created bench's own run
+        groups. Otherwise the run/creation is not lost -- it is still in
+        the DB and the Runs section -- but a completing background worker
+        must not force a recompose that would yank the user from wherever
+        they navigated to mid-flight, e.g. into a half-edited bench editor
+        form (task-1482 Task 2's own motivation).
+        """
         app_config = self._current_app_config()
         cancel_token = CancelToken()
         self._sample_bench_running = True
@@ -315,12 +400,25 @@ class EvalsScreen(LabScreen):
             self._sample_bench_cancel_token = None
             self._reset_sample_bench_running_ui()
         if result is not None:
-            self.app_instance.notify(
-                "Sample bench created and run.",
-                severity="information",
-                markup=False,
-            )
-            self.select(kind="run_group", id=result.run_group_id)
+            if self._selection_unmoved_since_launch(
+                self._sample_bench_launch_selection, result.task_id
+            ):
+                self.app_instance.notify(
+                    "Sample bench created and run.",
+                    severity="information",
+                    markup=False,
+                )
+                self.select(kind="run_group", id=result.run_group_id)
+            else:
+                # The user navigated elsewhere while the run was in flight
+                # -- see `_selection_unmoved_since_launch`'s own docstring.
+                # The bench and run group both still exist; only the
+                # auto-navigate is skipped.
+                self.app_instance.notify(
+                    "Sample bench created and run — see the Runs section.",
+                    severity="information",
+                    markup=False,
+                )
 
     def _on_sample_bench_progress(self, done: int, total: int) -> None:
         """``sample_bench.ProgressFn`` -- called synchronously from within
@@ -439,7 +537,13 @@ class EvalsScreen(LabScreen):
         """Runs ``self._bench_run_task_id`` via
         ``sample_bench.run_existing_bench``. Mirrors
         ``_create_sample_bench_worker`` structure exactly -- see that
-        method's own comments for the parts not re-explained here.
+        method's own comments for the parts not re-explained here,
+        including the "does not auto-select on completion once the user
+        has navigated elsewhere" rule (``_selection_unmoved_since_launch``,
+        task-1482 Task 2): here the launch selection to compare against is
+        always ``EvalsSelection(kind="bench", id=task_id)``, since
+        ``_on_primary_action_pressed`` only ever dispatches this worker
+        for a selected bench.
         """
         app_config = self._current_app_config()
         task_id = self._bench_run_task_id
@@ -493,13 +597,26 @@ class EvalsScreen(LabScreen):
             self._bench_run_cancel_token = None
             self._reset_bench_run_running_ui()
         if result is not None:
-            # markup=False for uniformity with the error toast above -- this
-            # string is static today, but pinning it keeps the pair
-            # consistent if it ever starts interpolating the bench name.
-            self.app_instance.notify(
-                "Bench run finished.", severity="information", markup=False
-            )
-            self.select(kind="run_group", id=result.run_group_id)
+            launch_selection = EvalsSelection(kind="bench", id=task_id)
+            if self._selection_unmoved_since_launch(launch_selection, task_id):
+                # markup=False for uniformity with the error toast above --
+                # this string is static today, but pinning it keeps the
+                # pair consistent if it ever starts interpolating the
+                # bench name.
+                self.app_instance.notify(
+                    "Bench run finished.", severity="information", markup=False
+                )
+                self.select(kind="run_group", id=result.run_group_id)
+            else:
+                # The user navigated elsewhere while the run was in flight
+                # -- see `_selection_unmoved_since_launch`'s own docstring.
+                # The run group still exists; only the auto-navigate is
+                # skipped.
+                self.app_instance.notify(
+                    "Bench run finished — see the Runs section.",
+                    severity="information",
+                    markup=False,
+                )
 
     def _on_bench_run_progress(self, done: int, total: int) -> None:
         """``sample_bench.ProgressFn`` -- called synchronously from within
@@ -877,8 +994,9 @@ class EvalsScreen(LabScreen):
                     "bench to run.",
                 )
             # escape_markup: `name` is free-text and reaches TWO markup-
-            # parsed surfaces from here -- this tooltip string, AND (via
-            # this same return value) `Button(label=...)`'s construction in
+            # parsed surfaces from here -- this tooltip string (both
+            # branches below), AND (via this same return value)
+            # `Button(label=...)`'s construction in
             # `_compose_inspector_pane` plus the live `button.label = ...`/
             # `button.tooltip = ...` reassignment in
             # `_reset_bench_run_running_ui`. `Content.from_text`'s
@@ -889,8 +1007,33 @@ class EvalsScreen(LabScreen):
             # the same hazard class task-1476 fixed for bench-run toast
             # text, and library_rail.py's `_run_group_row_label` fixed for
             # run rows; this closes the last unescaped instance of it in
-            # this file.
+            # this file. Computed once here, ahead of the target-count
+            # check below, so both the found-but-target-less and the
+            # runnable branch can name the bench in their label.
             name = escape_markup(str(bench.get("name") or "Untitled bench"))
+            # task-1482 fix round 1: a draft bench created via "+ New
+            # bench" has `target_ids=()` until the bench editor (Task 6)
+            # wires one on. Read straight from the already-loaded row's
+            # `config_data` (no extra DB call -- `list_tasks`/`bench_by_id`
+            # already parsed it) rather than `storage.load_bench`, which
+            # this function has never otherwise needed. Without this
+            # guard, pressing "Run" reached `run_existing_bench` with zero
+            # targets, which "completed" an EMPTY run group -- the exact
+            # dead-end-toast pattern this function's own naming rule
+            # exists to prevent, just reopened one step further downstream
+            # ("Bench run finished." followed by "This run could not be
+            # found"). Wording matches the readiness panel's own "No
+            # targets configured yet." (inspector.py/bench_editor.py) for
+            # the same state, so the vocabulary stays consistent across
+            # the two surfaces.
+            target_ids = (bench.get("config_data") or {}).get("target_ids") or []
+            if not target_ids:
+                return (
+                    f"Run {name}",
+                    True,
+                    "This bench has no targets yet; add one in the bench "
+                    "editor.",
+                )
             return (
                 f"Run {name}",
                 False,
@@ -906,8 +1049,14 @@ class EvalsScreen(LabScreen):
             return (
                 "Run Bench",
                 True,
-                "Datasets are run from within a bench; select a bench that "
-                "uses this dataset instead.",
+                # task-1482: names the concrete fix ("+ New bench" in the
+                # Catalog rail creates a bench bound to THIS dataset)
+                # instead of the old, more general "select a bench that
+                # uses this dataset instead" -- which presupposed one
+                # already existed, leaving a genuine dead end for a
+                # dataset with no bench yet.
+                "Datasets are run from within a bench; use + New bench in "
+                "the Catalog rail to create one against this dataset.",
             )
 
         if selection.kind == "run_group":

@@ -473,10 +473,15 @@ class SnippetEditor(NotifyMixin, Vertical):
         snippet_word = "snippet" if len(snippets) == 1 else "snippets"
         group_word = "group" if len(groups) == 1 else "groups"
 
+        # markup=False: the dataset name is user-authored free text -- a
+        # bare `[/]` would raise `MarkupError` the instant this Static
+        # lays out (task-1482 Task 1; mirrors bench_editor.py's identical
+        # fix for `config.name`).
         yield Static(
             str(dataset.get("name") or "Untitled dataset"),
             id="evals-detail-dataset-name",
             classes="evals-pane-heading",
+            markup=False,
         )
         yield Static(
             f"inline · {len(snippets)} {snippet_word} · {len(groups)} {group_word}",

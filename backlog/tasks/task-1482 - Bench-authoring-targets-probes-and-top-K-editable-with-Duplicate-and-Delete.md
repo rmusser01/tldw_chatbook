@@ -2,7 +2,7 @@
 id: TASK-1482
 title: >-
   Bench authoring: targets, probes, and top-K editable with Duplicate and Delete
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-30 10:00'
 labels:

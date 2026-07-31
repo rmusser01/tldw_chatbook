@@ -398,6 +398,36 @@ async def test_snippet_table_header_names_the_columns_rows_actually_render(
 
 
 @pytest.mark.asyncio
+async def test_snippet_editor_heading_renders_a_markup_hazard_dataset_name_literally(
+    evals_app, evals_db
+):
+    """task-1482 Task 1: dataset names are machine-generated TODAY, but the
+    upcoming bench-authoring program makes them user-typed -- arming the
+    same Rich/Textual markup hazard task-1476/TASK-1480 already fixed
+    elsewhere in this package (see ``library_rail.py``'s
+    ``_run_group_row_label``). The heading ``Static`` (``#evals-detail-
+    dataset-name``) parses its argument as markup by default, and that
+    parsing happens lazily on first render/layout, so an unescaped hazard
+    dataset name crashes the whole app the instant it is selected --
+    confirmed directly against Textual (a bare-bracket ``Static`` raises
+    ``MarkupError`` out of the compositor's reflow during
+    ``pilot.pause()``, not out of ``compose()`` itself).
+    """
+    dataset_id = _make_dataset(
+        evals_db, "dataset[/]name", [_snip("The protestors were")]
+    )
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        assert pilot.app.is_running, "an unescaped hazard dataset name crashed the app"
+        screen = evals_app.screen
+
+        heading = screen.query_one("#evals-detail-dataset-name")
+        assert heading.visual.plain == "dataset[/]name"
+
+
+@pytest.mark.asyncio
 async def test_normal_snippet_renders_no_whitespace_marker(evals_app, evals_db):
     clean = _snip("The protestors were")
     dataset_id = _make_dataset(evals_db, "clean-set", [clean])
