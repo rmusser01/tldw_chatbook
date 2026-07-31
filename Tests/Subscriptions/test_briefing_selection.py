@@ -15,9 +15,11 @@ under test are *about* what the SQL sees.
 """
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 
 import pytest
 
+from tldw_chatbook.DB import Subscriptions_DB as subscriptions_db_module
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions import briefing_selection
 from tldw_chatbook.Subscriptions.briefing_selection import (
@@ -105,6 +107,28 @@ def test_update_briefing_rejects_unknown_field_but_accepts_a_valid_one():
     row = db.get_briefing(b)
     assert row["status"] == "complete"
     assert row["body_markdown"] == "hello"
+
+
+def test_update_briefing_also_enforces_sql_validation_not_just_the_allowlist(
+    monkeypatch,
+):
+    """Qodo round 1, FIX D: the local allowlist and
+    `sql_validation.validate_identifier` are two independent gates -- a
+    field passing the allowlist must still be rejected if
+    `validate_identifier` itself says no. Forces that divergence with a
+    monkeypatch (every real allowlisted column already passes
+    `validate_identifier`, so this is the only way to prove the second gate
+    is load-bearing and not decorative dead code shadowed by the first).
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    w = WatchlistBundleService(db).create(name="w")["id"]
+    b = db.insert_briefing(w)
+
+    monkeypatch.setattr(
+        subscriptions_db_module, "validate_identifier", lambda *a, **k: False
+    )
+    with pytest.raises(ValueError, match="status"):
+        db.update_briefing(b, status="complete")
 
 
 def test_latest_completed_watermark_is_scoped_per_watchlist():
@@ -739,3 +763,55 @@ def test_unknown_mode_is_rejected_by_name():
     watchlist = WatchlistBundleService(db).create(name="Modes")["id"]
     with pytest.raises(ValueError, match="auto_featureed"):
         select_briefing_items(db, watchlist, mode="auto_featureed")
+
+
+def test_window_query_parameter_count_does_not_scale_with_queue_size():
+    """Qodo round 1, FIX B: `_window_rows`/`_window_count` used to exclude
+    featured ids with one bound `?` per id (`i.id NOT IN (?,?,?...)`). In
+    `auto_featured` mode `featured` IS the entire curated/queued set (see
+    `select_briefing_items`), so a heavy user's backlog could bind hundreds
+    of placeholders -- risking SQLite's host-parameter limit and breaking
+    generation outright. The fix replaces the id enumeration with the
+    equivalent predicate (`_curated_rows`'s own subquery text, reused
+    verbatim), which costs one FIXED extra bound value regardless of how
+    many items are queued.
+
+    Spies on the real connection (`Mock(wraps=...)`, swapped into the
+    thread-local `db._local.conn` that the `conn` property reads) so every
+    SQL statement `select_briefing_items` issues is visible, and asserts
+    the largest parameter count over ALL of them stays small and constant
+    -- never anywhere near the seeded queue size.
+    """
+    db = SubscriptionsDB(":memory:", "test")
+    watchlist = WatchlistBundleService(db).create(name="Heavy queue")["id"]
+    source = _new_source(db, watchlist, "heavy")
+
+    queued_count = 60
+    for n in range(queued_count):
+        _add_item(db, source, f"Queued {n}", "2026-07-20T09:00:00+00:00", queued=True)
+
+    real_conn = db.conn  # materialise this thread's connection first
+    spy_conn = Mock(wraps=real_conn)
+    db._local.conn = spy_conn
+    try:
+        selection = select_briefing_items(
+            db, watchlist, mode="auto_featured", item_cap=queued_count
+        )
+    finally:
+        db._local.conn = real_conn
+
+    # Sanity: the backlog was actually seen by the selection, not skipped.
+    assert len(selection.items) == queued_count
+
+    param_counts = [
+        len(call.args[1]) for call in spy_conn.execute.call_args_list if len(call.args) > 1
+    ]
+    assert param_counts, "select_briefing_items must have executed at least one query"
+    # A per-id `NOT IN` would show up here as a query bound with roughly
+    # `queued_count` parameters; every query this call issues must stay
+    # small and FIXED, independent of `queued_count`.
+    assert max(param_counts) < 10, (
+        f"a query was bound with {max(param_counts)} parameters against a "
+        f"{queued_count}-item queue -- bound parameter count must not scale "
+        "with queue size"
+    )

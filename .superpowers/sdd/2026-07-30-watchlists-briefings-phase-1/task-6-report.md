@@ -259,3 +259,147 @@ then reverted; `git status --short` clean of any mutation artifact between each.
 - `Tests/Watchlists/test_watchlists_items_pane.py` (fix 5)
 - `Docs/superpowers/specs/2026-07-30-watchlists-briefings-design.md` (fix 6)
 - `backlog/tasks/task-1540 - Watchlists-briefings-spec-2-programme-tracking.md` (fix 6)
+
+## Qodo round 1 (PR #1115)
+
+Five findings addressed on `docs/spec-2-watchlists-briefings` from HEAD `81a29fdc9`. Two other
+findings (streaming, markdown sanitization) were declined by the controller and left untouched.
+
+### FIX A (bug) — `_load_briefings` blocked the event loop
+
+`db.list_briefings(watchlist_id)` inside `WatchlistsCollectionsScreen._load_briefings`
+(`watchlists_collections_screen.py:3117-3119`) ran synchronously inside the `wl-briefings-load`
+worker coroutine — `run_worker` only schedules a coroutine back onto the same event loop, it does
+not get blocking work off it. Audited the rest of the method for other synchronous DB calls: the
+zombie sweep immediately above it already goes through `_fail_interrupted_briefings_if_safe`
+(`asyncio.to_thread`), so `list_briefings` was the only offender. Wrapped it the same way:
+`rows = await asyncio.to_thread(db.list_briefings, watchlist_id)`. `self.is_mounted` (the guard
+this method already uses after both awaits) is unchanged — no new UI mutation was inserted before
+it, so its semantics are undisturbed.
+
+**New test:** `test_the_briefings_list_read_runs_off_the_event_loop_thread`
+(`Tests/Watchlists/test_watchlists_artifacts_pane.py`), same pattern as
+`test_the_queue_write_runs_off_the_event_loop_thread` in `Tests/UI/test_watchlists_inspector.py`
+— spies on `db.list_briefings`, records `threading.get_ident()` on every call, asserts none of
+them match the event-loop thread's id.
+
+**Mutation:** reverted `await asyncio.to_thread(db.list_briefings, watchlist_id)` to a direct
+`db.list_briefings(watchlist_id)` call. RED: `AssertionError` on `read_thread_ids` being empty
+(no error above surfaced instead — the point is the assertion path, not a crash). Restored;
+pin test green again.
+
+**Full-suite fallout:** the real thread hop this fix adds exposed two existing tests that
+asserted post-reload state after only a short *fixed* `pilot.pause(...)`, rather than polling —
+`test_a_zombie_generating_row_is_recovered_on_a_plain_artifacts_load` and
+`test_moving_the_tree_scope_moves_what_artifacts_is_about`
+(`Tests/Watchlists/test_watchlists_artifacts_pane.py`). Both passed in isolation but failed
+intermittently in the full 481-test run, where thread-pool contention pushed the
+`asyncio.to_thread` dispatch past the fixed wait. Both passed before this branch because the read
+they depend on ran synchronously in the same tick. Changed both to poll (10s deadline,
+`pilot.pause(0.05)` steps) for the actual expected state instead of trusting a fixed pause,
+matching the poll-loop pattern `_press_generate` already uses in the same file. Confirmed green
+individually, as a file (17 passed), and in the full combined run below.
+
+### FIX B (bug) — unbounded `NOT IN` placeholders in the window query
+
+`_window_rows`/`_window_count` (`briefing_selection.py`) excluded featured ids with one bound `?`
+per id (`i.id NOT IN (?,?,?...)`). In `auto_featured` mode `featured` is the entire
+curated/queued set for the watchlist — a heavy user's backlog could bind hundreds of placeholders,
+risking SQLite's host-parameter limit and breaking generation outright.
+
+Replaced the id enumeration with the exact predicate `_curated_rows` already uses to define
+"is featured": `queued_for_briefing = 1 AND NOT EXISTS (... briefing_items/briefings joined on
+status IN ('complete','empty') ...)`. Factored that `NOT EXISTS` fragment out to a shared
+module-level literal, `_NOT_COVERED_BY_THIS_WATCHLIST`, reused verbatim by both `_curated_rows`
+(selects rows where it's true — er, false, i.e. NOT covered) and the window queries' new
+featured-exclusion (`AND NOT (queued_for_briefing = 1 AND <same text>)`), so the two definitions
+of "already curated" cannot drift apart. `_window_rows`/`_window_count` now take
+`exclude_featured: bool` instead of `exclude_ids: Sequence[int]`; the caller in
+`select_briefing_items` passes `mode == MODE_AUTO_FEATURED`, which is exactly the condition under
+which `featured_ids` was previously non-empty. Bound parameter count per query is now fixed
+(one extra `watchlist_id`) regardless of queue size. All 24 pre-existing pinned tests in
+`Tests/Subscriptions/test_briefing_selection.py` pass unmodified — overflow_count,
+covers_through_item_id, featured survival under the cap, ordering, and the curated-mode watermark
+echo are all untouched by this change (confirmed by re-running the file both before and after).
+
+**New test:** `test_window_query_parameter_count_does_not_scale_with_queue_size` — seeds 60 queued
+items, wraps the thread-local `db._local.conn` with `unittest.mock.Mock(wraps=real_conn)` so every
+SQL statement `select_briefing_items` issues is visible, and asserts the largest bound-parameter
+count across all of them stays under 10 (fixed), never anywhere near the 60-item queue.
+
+**Mutation:** restored a per-id `NOT IN` enumeration (60 placeholders) inside `_window_count`
+(the call that always runs regardless of `remaining_cap`, unlike `_window_rows`, which
+`select_briefing_items` skips entirely once the featured side alone fills the cap — the first
+mutation attempt only touched `_window_rows` and did not RED, exactly because of that skip; moving
+it to `_window_count` reproduced the real bug shape). RED: `assert 63 < 10` (a query bound with 63
+parameters against a 60-item queue). Restored; all 25 tests in the file green again.
+
+### FIX C — wrapped three new reads in `transaction()`
+
+`get_briefing`, `list_briefings`, `latest_completed_watermark` (`Subscriptions_DB.py:1663-1692`)
+executed directly on `self.conn`, bypassing the shared `transaction()` context manager the repo's
+compliance rule requires for all DB operations. Wrapped each in `with self.transaction() as conn:`.
+Line 911's pre-existing bare read (`get_watchlist_item_counts`) was left untouched, as directed —
+out of scope for this PR. No nested-transaction hazard: none of these three methods are called
+from inside another open `with db.transaction():` block anywhere in the callers audited
+(`briefing_service.py`'s `_start_generation`/`_finish_empty`/`_finish_success` call them
+sequentially, never nested).
+
+### FIX D — `update_briefing` identifiers through `sql_validation`
+
+`update_briefing` (`Subscriptions_DB.py:1618-1661`) validated SET-clause column names only against
+its local allowlist. Read `sql_validation.py`'s `validate_column_name`/`validate_identifier`
+first: `validate_column_name(key, table_name="briefings")` would fail closed unconditionally,
+since neither `subscriptions`/`briefings` is a registered `db_type`/table anywhere in that
+module's `VALID_TABLES`/`VALID_COLUMNS` maps (`sql_validation.py` only knows the chachanotes/
+media/prompts schemas; `SubscriptionsDB` has never used this module before). Registering a new
+`briefings` table+column map there was out of scope for a 5-finding review round and would touch
+a validation module shared by three unrelated DB classes. Used `validate_identifier(key, "column
+name")` instead, per the finding's own fallback guidance — the allowlist stays the primary API
+contract (unknown key still raises `ValueError` naming the key), with `validate_identifier` as an
+additional belt-and-suspenders check against a future allowlist edit introducing something unsafe
+(a reserved keyword, invalid characters).
+
+**New test:** `test_update_briefing_also_enforces_sql_validation_not_just_the_allowlist` — every
+real allowlisted column already passes `validate_identifier`, so the only way to prove the second
+gate is load-bearing (not decorative dead code shadowed by the allowlist) is to force a divergence:
+monkeypatches `Subscriptions_DB.validate_identifier` to always return `False`, then asserts
+`update_briefing(b, status="complete")` — `status` being a perfectly valid allowlisted column —
+still raises `ValueError`.
+
+**Mutation:** removed the `validate_identifier` call from `update_briefing`. RED: `Failed: DID NOT
+RAISE ValueError`. Restored; test green again.
+
+### FIX E — Google-style docstrings
+
+All six new public `Subscriptions_DB.py` methods from this branch (confirmed exhaustively via
+`git diff` against the pre-branch commit: `set_item_briefing_queued`, `insert_briefing`,
+`update_briefing`, `get_briefing`, `list_briefings`, `latest_completed_watermark`) now carry
+Args:/Returns:/Raises: sections as applicable, matching the file's existing convention
+(e.g. `_index_unindexed_fts_batch`'s docstring). Existing load-bearing prose — the watermark's
+`failed`-exclusion invariant, the queue flag's global/ADR-018 semantics, `update_briefing`'s
+allowlist rationale — was kept and folded into the fuller docstrings, not replaced.
+`fail_interrupted_briefings` (`briefing_service.py`) already had a complete Google-style docstring
+from task 4 and needed no change; it is not a `Subscriptions_DB.py` method.
+
+### Verification
+
+- `Tests/Subscriptions/` + `Tests/Watchlists/` + `Tests/UI/test_watchlists_inspector.py`, one
+  combined foreground run: **481 passed, 0 failed** (374.11s / 0:06:14) — the 478-test baseline
+  plus the 3 new tests this round added (FIX A, FIX B, FIX D).
+- `Tests/Watchlists/test_watchlists_artifacts_pane.py` alone: **17 passed** (41.89s), confirming
+  the two timing fixes hold outside full-suite contention too.
+- All three documented mutations (FIX A, FIX B, FIX D) confirmed RED on the intended assertion,
+  then restored via `Edit` (no `git checkout`/`restore` used); `git status --short` showed only
+  the five intended source/test files between each mutation and its restore, never a stray diff.
+- FIX C and FIX E were documentation/compliance-only changes (transaction wrapping, docstrings) —
+  no new behavior to mutate; covered by the same 481-test run passing.
+
+### Files (this round)
+
+- `tldw_chatbook/UI/Screens/watchlists_collections_screen.py` (FIX A)
+- `tldw_chatbook/Subscriptions/briefing_selection.py` (FIX B)
+- `tldw_chatbook/DB/Subscriptions_DB.py` (FIX C, D, E)
+- `Tests/Watchlists/test_watchlists_artifacts_pane.py` (FIX A pin test + two timing-robustness
+  fixes)
+- `Tests/Subscriptions/test_briefing_selection.py` (FIX B and FIX D pin tests)

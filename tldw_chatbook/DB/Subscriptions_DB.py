@@ -37,6 +37,7 @@ from loguru import logger
 # Local Imports
 from .private_sqlite import connect_private_sqlite
 from .base_db import BaseDB
+from .sql_validation import validate_identifier
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
@@ -1599,6 +1600,11 @@ class SubscriptionsDB(BaseDB):
         Docs/superpowers/specs/2026-07-30-watchlists-briefings-design.md,
         "The queue flag is global, and never auto-cleared". Only the user
         (or this explicit call) empties it.
+
+        Args:
+            item_id: `subscription_items.id` to update.
+            queued: `True` to mark the item queued for the next briefing,
+                `False` to clear the flag.
         """
         with self.transaction() as conn:
             conn.execute(
@@ -1607,7 +1613,18 @@ class SubscriptionsDB(BaseDB):
             )
 
     def insert_briefing(self, watchlist_id: int, status: str = "generating") -> int:
-        """Create a new `briefings` row for a watchlist and return its id."""
+        """Create a new `briefings` row for a watchlist.
+
+        Args:
+            watchlist_id: The watchlist this briefing belongs to.
+            status: Initial status. Defaults to `"generating"`, matching
+                every real caller's use -- the row exists before the LLM
+                call is even made, so a crash before the first write still
+                leaves a `generating` row for zombie recovery to find.
+
+        Returns:
+            The new row's `id`.
+        """
         with self.transaction() as conn:
             cursor = conn.execute(
                 "INSERT INTO briefings (watchlist_id, status) VALUES (?, ?)",
@@ -1622,10 +1639,25 @@ class SubscriptionsDB(BaseDB):
         validated against an explicit allowlist of real `briefings` columns
         rather than trusted blindly, so a typo'd or renamed field raises
         immediately instead of silently building a SET clause for a column
-        that was never meant to be settable this way.
+        that was never meant to be settable this way. Each key surviving
+        the allowlist is additionally run through
+        `sql_validation.validate_identifier` before it reaches the SQL
+        text -- belt-and-suspenders against the allowlist itself being
+        edited to something unsafe later, since `validate_column_name`'s
+        table-scoped form fails closed for any table (like `briefings`)
+        outside its own `VALID_COLUMNS` map and would reject every field
+        unconditionally.
+
+        Args:
+            briefing_id: `briefings.id` of the row to update.
+            **fields: Column/value pairs to set. A no-op (returns
+                immediately) when empty. `updated_at` is bumped to
+                `CURRENT_TIMESTAMP` automatically unless the caller passes
+                it explicitly.
 
         Raises:
-            ValueError: If any key in `fields` is not an allowed column.
+            ValueError: If any key in `fields` is not an allowed column, or
+                fails `validate_identifier`.
         """
         allowed_fields = (
             "status",
@@ -1646,6 +1678,8 @@ class SubscriptionsDB(BaseDB):
         for key in fields:
             if key not in allowed_fields:
                 raise ValueError(f"update_briefing: unknown field {key!r}")
+            if not validate_identifier(key, "column name"):
+                raise ValueError(f"update_briefing: invalid field {key!r}")
 
         set_clause = ", ".join(f"{key} = ?" for key in fields)
         values = list(fields.values())
@@ -1661,20 +1695,38 @@ class SubscriptionsDB(BaseDB):
             )
 
     def get_briefing(self, briefing_id: int) -> Optional[Dict[str, Any]]:
-        """Fetch one `briefings` row by id, or None if it doesn't exist."""
-        row = self.conn.execute(
-            "SELECT * FROM briefings WHERE id = ?", (briefing_id,)
-        ).fetchone()
+        """Fetch one `briefings` row by id.
+
+        Args:
+            briefing_id: `briefings.id` to look up.
+
+        Returns:
+            The row as a dict, or `None` if no row has that id.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM briefings WHERE id = ?", (briefing_id,)
+            ).fetchone()
         return dict(row) if row is not None else None
 
     def list_briefings(self, watchlist_id: int) -> List[Dict[str, Any]]:
-        """List a watchlist's briefings, newest first."""
-        cursor = self.conn.execute(
-            "SELECT * FROM briefings WHERE watchlist_id = ? "
-            "ORDER BY created_at DESC, id DESC",
-            (watchlist_id,),
-        )
-        return [dict(row) for row in cursor.fetchall()]
+        """List a watchlist's briefings, newest first.
+
+        Args:
+            watchlist_id: The watchlist to list briefings for.
+
+        Returns:
+            Every `briefings` row for `watchlist_id`, newest first by
+            `created_at` then `id` (the tiebreaker for rows created within
+            the same timestamp resolution).
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM briefings WHERE watchlist_id = ? "
+                "ORDER BY created_at DESC, id DESC",
+                (watchlist_id,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
 
     def latest_completed_watermark(self, watchlist_id: int) -> Optional[int]:
         """Max `covers_through_item_id` over this watchlist's complete/empty briefings.
@@ -1683,12 +1735,22 @@ class SubscriptionsDB(BaseDB):
         advance the window (failure never loses items -- the next attempt
         re-covers the same window), so 'failed' is deliberately excluded
         from this status set. Do not add it here.
+
+        Args:
+            watchlist_id: The watchlist to compute the watermark for.
+
+        Returns:
+            The max `covers_through_item_id` among this watchlist's
+            `complete`/`empty` briefings, or `None` if it has none -- read
+            by callers as "there is no watermark yet" (the first-briefing
+            case).
         """
-        row = self.conn.execute(
-            "SELECT MAX(covers_through_item_id) FROM briefings "
-            "WHERE watchlist_id = ? AND status IN ('complete', 'empty')",
-            (watchlist_id,),
-        ).fetchone()
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT MAX(covers_through_item_id) FROM briefings "
+                "WHERE watchlist_id = ? AND status IN ('complete', 'empty')",
+                (watchlist_id,),
+            ).fetchone()
         return row[0] if row is not None else None
 
     def find_duplicate_items(

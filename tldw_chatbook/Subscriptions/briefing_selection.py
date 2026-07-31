@@ -113,6 +113,24 @@ _FROM_WATCHLIST_ITEMS = """
     WHERE ws.watchlist_id = ?
 """
 
+# Whether an item is already covered by a `complete`/`empty` briefing OF
+# THIS WATCHLIST. Literal SQL text shared between `_curated_rows` (which
+# selects the rows where this is false) and the window queries'
+# featured-exclusion (which excludes rows where the FULL curated predicate
+# -- `queued_for_briefing = 1 AND` this -- is true), so the two can never
+# quietly drift onto different definitions of "already curated". The
+# status allowlist is load-bearing: only a briefing that actually reached
+# the user excludes an item, so a `failed` (or zombie `generating`) row
+# must not bury a queued item forever. See `_curated_rows`.
+_NOT_COVERED_BY_THIS_WATCHLIST = (
+    "NOT EXISTS (\n"
+    "          SELECT 1 FROM briefing_items bi\n"
+    "          JOIN briefings b ON b.id = bi.briefing_id\n"
+    "          WHERE bi.item_id = i.id AND b.watchlist_id = ?\n"
+    "            AND b.status IN ('complete', 'empty')\n"
+    "      )"
+)
+
 
 @dataclass(frozen=True)
 class BriefingSelection:
@@ -171,7 +189,7 @@ def _window_rows(
     watermark: int | None,
     floor_ts: str | None,
     limit: int,
-    exclude_ids: Sequence[int] = (),
+    exclude_featured: bool = False,
 ) -> list[dict[str, Any]]:
     """Up to `limit` window rows, newest first -- NOT the whole window.
 
@@ -183,11 +201,19 @@ def _window_rows(
     actually use; `_window_count` and `_window_bounds` answer "how many /
     which line" over the FULL window without ever fetching a row.
 
-    `exclude_ids`, when given (auto_featured mode), removes ids already
-    claimed by the featured side directly in SQL -- so the rows returned
-    are exactly the deduplicated "auto" bucket the caller needs, not a
-    superset it would otherwise have to de-duplicate in Python (and risk
-    under-fetching if it didn't overfetch by enough).
+    `exclude_featured`, when true (auto_featured mode), removes rows
+    already claimed by the featured side directly in SQL -- so the rows
+    returned are exactly the deduplicated "auto" bucket the caller needs,
+    not a superset it would otherwise have to de-duplicate in Python (and
+    risk under-fetching if it didn't overfetch by enough). Qodo round 1,
+    FIX B: this used to be an explicit `exclude_ids` list bound one
+    placeholder per id -- in auto_featured mode that is the ENTIRE queued
+    set, which can exceed SQLite's host-parameter limit for a heavy user's
+    backlog. `featured` IS `_curated_rows(db, watchlist_id)` in that mode
+    (see `select_briefing_items`), so "id is in featured" and "row matches
+    the curated predicate" are the same set over this same watchlist's
+    items -- the predicate is reused here instead of the enumerated ids, at
+    the cost of one bound `watchlist_id`, independent of queue size.
 
     Ordering is by id descending. Ids are the tiebreaker the one-second
     `created_at` resolution cannot provide (first-briefing window only).
@@ -198,10 +224,12 @@ def _window_rows(
     # The interpolated fragments are module-level literals chosen above --
     # no caller value reaches the SQL text; every caller value is bound.
     sql = f"SELECT {_ITEM_COLUMNS}{_FROM_WATCHLIST_ITEMS}      AND {predicate}"
-    if exclude_ids:
-        placeholders = ",".join("?" * len(exclude_ids))
-        sql += f" AND i.id NOT IN ({placeholders})"
-        params.extend(exclude_ids)
+    if exclude_featured:
+        sql += (
+            "\n      AND NOT (i.queued_for_briefing = 1 AND "
+            f"{_NOT_COVERED_BY_THIS_WATCHLIST})"
+        )
+        params.append(watchlist_id)
     sql += "\n    ORDER BY i.id DESC LIMIT ?"
     params.append(limit)
 
@@ -216,22 +244,26 @@ def _window_count(
     watchlist_id: int,
     watermark: int | None,
     floor_ts: str | None,
-    exclude_ids: Sequence[int] = (),
+    exclude_featured: bool = False,
 ) -> int:
     """Exact `COUNT(*)` of the FULL window, without materialising a row.
 
-    `exclude_ids`, when given, excludes ids already claimed by the featured
-    side -- so this is exactly `len(auto)` from the pre-fix4 implementation,
-    computed in SQL instead of over a fully materialised Python list, and it
-    stays exact regardless of how small the row-fetch `limit` is.
+    `exclude_featured`, when true, excludes rows already claimed by the
+    featured side -- so this is exactly `len(auto)` from the pre-fix4
+    implementation, computed in SQL instead of over a fully materialised
+    Python list, and it stays exact regardless of how small the row-fetch
+    `limit` is. See `_window_rows` for why this is a predicate rather than
+    an enumerated id list (Qodo round 1, FIX B).
     """
     predicate, extra = _window_predicate(watermark, floor_ts)
     params: list[Any] = [watchlist_id, *extra]
     sql = f"SELECT COUNT(*){_FROM_WATCHLIST_ITEMS}      AND {predicate}"
-    if exclude_ids:
-        placeholders = ",".join("?" * len(exclude_ids))
-        sql += f" AND i.id NOT IN ({placeholders})"
-        params.extend(exclude_ids)
+    if exclude_featured:
+        sql += (
+            "\n      AND NOT (i.queued_for_briefing = 1 AND "
+            f"{_NOT_COVERED_BY_THIS_WATCHLIST})"
+        )
+        params.append(watchlist_id)
     return int(db.conn.execute(sql, params).fetchone()[0])
 
 
@@ -282,12 +314,7 @@ def _curated_rows(db: "SubscriptionsDB", watchlist_id: int) -> list[dict[str, An
     sql = (
         f"SELECT {_ITEM_COLUMNS}{_FROM_WATCHLIST_ITEMS}"
         "      AND i.queued_for_briefing = 1\n"
-        "      AND NOT EXISTS (\n"
-        "          SELECT 1 FROM briefing_items bi\n"
-        "          JOIN briefings b ON b.id = bi.briefing_id\n"
-        "          WHERE bi.item_id = i.id AND b.watchlist_id = ?\n"
-        "            AND b.status IN ('complete', 'empty')\n"
-        "      )\n"
+        f"      AND {_NOT_COVERED_BY_THIS_WATCHLIST}\n"
         "    ORDER BY i.id DESC"
     )
     rows = db.conn.execute(sql, (watchlist_id, watchlist_id)).fetchall()
@@ -392,9 +419,17 @@ def select_briefing_items(
         # "how many / which line" questions over the FULL window without
         # ever fetching a row, and `_window_rows` fetches only the rows this
         # call can actually use (deduplicated against `featured` in SQL, via
-        # `exclude_ids`, so no Python-side dedup or overfetch is needed).
+        # `exclude_featured`, so no Python-side dedup or overfetch is
+        # needed).
+        #
+        # Qodo round 1, FIX B: `featured` is exactly `curated` in
+        # `auto_featured` mode (line above) and empty otherwise, so
+        # "exclude featured" is a boolean, not the enumerated `featured_ids`
+        # -- see `_window_rows`/`_window_count` for why a per-id `NOT IN`
+        # does not scale to a heavy user's queued backlog.
+        exclude_featured = mode == MODE_AUTO_FEATURED
         auto_full_count = _window_count(
-            db, watchlist_id, watermark, floor_ts, exclude_ids=featured_ids
+            db, watchlist_id, watermark, floor_ts, exclude_featured=exclude_featured
         )
         window_max_id, window_min_created = _window_bounds(
             db, watchlist_id, watermark, floor_ts
@@ -406,7 +441,7 @@ def select_briefing_items(
                 watermark,
                 floor_ts,
                 limit=remaining_cap,
-                exclude_ids=featured_ids,
+                exclude_featured=exclude_featured,
             )
             if remaining_cap > 0
             else []

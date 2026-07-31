@@ -28,6 +28,7 @@ could plausibly have shipped:
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -450,9 +451,19 @@ async def test_a_zombie_generating_row_is_recovered_on_a_plain_artifacts_load():
     zombie_id = app.watchlist_bundle_service.db.insert_briefing(watchlist_id)
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
-        # Nothing pressed Generate -- this is a plain section open.
-        rows = _briefing_rows(app, watchlist_id)
-        by_id = {row["id"]: row for row in rows}
+        # Nothing pressed Generate -- this is a plain section open. Poll
+        # rather than trust `_open_artifacts`'s own fixed pause: the sweep
+        # and the list read (Qodo round 1, FIX A) both now hop off the UI
+        # thread via `asyncio.to_thread`, so under a busy full-suite run
+        # the thread-pool dispatch can outlast a short fixed wait even
+        # though it always finishes eventually.
+        deadline = time.monotonic() + 10.0
+        by_id = {}
+        while time.monotonic() < deadline:
+            by_id = {row["id"]: row for row in _briefing_rows(app, watchlist_id)}
+            if by_id.get(zombie_id, {}).get("status") == "failed":
+                break
+            await pilot.pause(0.05)
         assert by_id[zombie_id]["status"] == "failed"
         assert by_id[zombie_id]["error"] == "interrupted"
 
@@ -495,6 +506,48 @@ async def test_a_live_in_flight_row_is_not_failed_by_a_concurrent_load():
         assert db.get_briefing(live_id)["status"] == "generating", (
             "a row the guard says is live must survive a concurrent load"
         )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_the_briefings_list_read_runs_off_the_event_loop_thread():
+    """Qodo round 1, FIX A: pin the load-bearing part of moving the read off
+    the UI thread. `run_worker` alone only *schedules* `_load_briefings`
+    back onto the SAME event loop -- it is `asyncio.to_thread` wrapping
+    `db.list_briefings` that actually gets the SELECT off it. Same pattern
+    as `test_the_queue_write_runs_off_the_event_loop_thread` in
+    `Tests/UI/test_watchlists_inspector.py`: a mutation that drops
+    `to_thread` and calls `list_briefings` directly still ends in the same
+    state (rows loaded, pane repainted), so only watching WHICH thread runs
+    the call can tell the two apart.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+
+    loop_thread_id = threading.get_ident()
+    read_thread_ids: list[int] = []
+    real_list_briefings = db.list_briefings
+
+    def _spy(watchlist_id_arg):
+        read_thread_ids.append(threading.get_ident())
+        return real_list_briefings(watchlist_id_arg)
+
+    db.list_briefings = _spy
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        # The section open already triggers a load; wait for it, then force
+        # a second one explicitly so the assertion does not depend on
+        # exactly when the initial one ran.
+        read_thread_ids.clear()
+        await screen._load_briefings()
+
+    assert read_thread_ids, "the read must have run at all"
+    assert all(thread_id != loop_thread_id for thread_id in read_thread_ids), (
+        "db.list_briefings must run off the event-loop thread "
+        "(asyncio.to_thread), not synchronously inside the worker on the "
+        "same thread that runs the event loop"
+    )
 
 
 @pytest.mark.asyncio
@@ -791,7 +844,18 @@ async def test_moving_the_tree_scope_moves_what_artifacts_is_about():
         assert pane.query_one("#artifacts-table", DataTable).row_count == 1
 
         screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=second)
-        await pilot.pause(0.2)
+
+        # Poll rather than trust a fixed pause: the reload this scope change
+        # triggers now hops off the UI thread for its DB read (Qodo round 1,
+        # FIX A, `asyncio.to_thread`), so under a busy full-suite run the
+        # thread-pool dispatch can outlast a short fixed wait even though it
+        # always finishes eventually.
+        deadline = time.monotonic() + 10.0
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        while time.monotonic() < deadline:
+            if pane.query_one("#artifacts-table", DataTable).row_count == 0:
+                break
+            await pilot.pause(0.05)
 
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         assert pane.query_one("#artifacts-table", DataTable).row_count == 0

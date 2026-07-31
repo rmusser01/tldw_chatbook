@@ -3114,9 +3114,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     f"{type(exc).__name__}"
                 )
             try:
-                self._loaded_briefings = [
-                    dict(row) for row in db.list_briefings(watchlist_id)
-                ]
+                # `asyncio.to_thread`, not a direct call: this coroutine runs
+                # inside the `wl-briefings-load` worker, which `run_worker`
+                # only schedules back onto the SAME event loop -- a
+                # synchronous `list_briefings` call here would still block
+                # the UI thread for the length of the SELECT, same shape as
+                # the write `_toggle_briefing_queue` documents.
+                rows = await asyncio.to_thread(db.list_briefings, watchlist_id)
+                self._loaded_briefings = [dict(row) for row in rows]
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 # Type only, never `logger.opt(exception=True)`: this app's
                 # file sink runs with `diagnose=True`, so a traceback here
