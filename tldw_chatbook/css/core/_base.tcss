@@ -36,4 +36,17 @@ Toast {
      * Toast itself reliably offsets it from that anchor; 46 cells clears
      * the inspector column at supported widths. */
     margin-right: 46;
+    /* task-1625: full tinted border per severity instead of the stock
+       side-stripe -- DESIGN.md's Don'ts prohibit side-stripe-only
+       callouts (>1-cell colored border-left). */
+    border: round $ds-grid-line;
+}
+Toast.-information {
+    border: round $ds-status-info;
+}
+Toast.-warning {
+    border: round $ds-status-warning;
+}
+Toast.-error {
+    border: round $ds-status-error;
 }

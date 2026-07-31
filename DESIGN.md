@@ -228,6 +228,21 @@ one-row field. The convention for those fields (task-1586):
   ("— no changes"), never dimming alone.
 - **No underline on fields:** underlined placeholders read as links
   (task-185).
+- **Persistence badge:** the State bar leads with the category's save
+  model in the same position everywhere ("Draft — save with s" /
+  "Applies immediately" / "Auto-saved" / "Managed in editor" /
+  "Per-item Save/Reset" / "Validate, then Save" / "Read-only here") —
+  five save models coexist on the Settings screen, and the badge is what
+  keeps their differing footer keys from reading as inconsistency
+  (task-1620).
+- **Fold indicator:** scrollable inspector columns reserve a bottom row
+  ("▼ more — scroll…") shown only while content overflows, so a
+  mid-sentence clip is never the only signal that more exists
+  (task-1623).
+- **Voice carriers (task-1625):** the three pane titles are the one
+  Focus Phosphor accent on the screen; the State bar sits on the focus
+  steel at low alpha; toasts carry a full severity-tinted round border,
+  never a side stripe.
 
 ### Navigation
 
