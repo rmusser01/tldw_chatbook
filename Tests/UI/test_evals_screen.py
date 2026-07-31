@@ -1820,17 +1820,33 @@ async def test_delete_confirm_dialog_message_contains_the_escaped_bench_name(
     the Watchlists convention (``escape_markup(name)`` in ``message``,
     watchlists_collections_screen.py:2117-2135). The name carries a bare
     ``[/]`` -- unbalanced Rich/Textual markup -- so an unescaped ``message``
-    would raise inside the dialog's own ``Label`` render."""
+    would raise inside the dialog's own ``Label`` render.
+
+    A real target (``target_ids=[target_id]``), not the empty tuple this
+    test used before task-1482 Task 7 fix round 1's reorder: with no
+    targets, ``_primary_action_state`` returns its "blocked" branch, which
+    renders TWO extra ``Static`` rows (status + reason) ahead of
+    ``#evals-primary-action`` -- and, since Duplicate/Delete now compose
+    AFTER that button (the fix round's own reorder), those two rows push
+    Delete's painted position past ``#lab-inspector``'s fold at this
+    harness's cramped default (80x24) test size, so a bare
+    ``pilot.click(\"#evals-delete-bench\")`` lands on nothing. Irrelevant
+    to what this test actually verifies (the confirm dialog's escaped
+    message) -- a real target keeps the primary action in its one-widget
+    enabled form instead, matching every other click-driven delete/
+    duplicate test in this file (``seeded_bench``/``runnable_bench``, both
+    real-targeted)."""
     dataset_id = evals_db.create_dataset(
         name="markup-ds", format="custom", source_path="inline:markup-ds"
     )
+    target_id = evals_db.create_model(name="t", provider="llama_cpp", model_id="m")
     task_id = evals_db.create_task(
         name="notes[/].txt bench",
         task_type="logprob",
         config_format="custom",
         config_data={
             "bench_type": "word_bench", "prompt_mode": "raw", "top_k": 5,
-            "probes": [], "target_ids": [], "concurrency": 1,
+            "probes": [], "target_ids": [target_id], "concurrency": 1,
         },
         dataset_id=dataset_id,
     )
@@ -1971,3 +1987,112 @@ async def test_delete_stays_enabled_while_an_unrelated_sample_bench_run_is_in_fl
         delete_button = screen.query_one("#evals-delete-bench", Button)
         assert delete_button.disabled is False
         assert not screen.query("#evals-delete-bench-status")
+
+
+# ---------------------------------------------------------------------------
+# Task 7 fix round 1 (task-1482): reviewer-found reentrancy + spec ordering.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_two_queued_delete_presses_push_exactly_one_confirmation_dialog(
+    evals_app, seeded_bench
+):
+    """Reviewer-reproduced race: ``_on_delete_bench_pressed`` is a plain
+    (non-async) handler that only calls ``run_worker(self._delete_bench_
+    flow(...), group="evals-delete-bench")`` -- deliberately NOT
+    ``exclusive=True`` (see that handler's own docstring for why
+    ``exclusive=True`` is wrong here: ``push_screen_wait`` awaits
+    ``asyncio.shield(future)``, which shields the WAIT from cancellation,
+    not the widget it already pushed -- cancelling a superseded worker via
+    an exclusive group would still orphan its already-mounted
+    ``ConfirmationDialog`` on the screen stack, whose Confirm/Cancel click
+    would then silently do nothing).
+
+    Posting two ``Button.Pressed`` messages back to back, with no
+    intervening ``await``, queues both before either handler invocation
+    can run its worker's first line -- exactly the shape a rapid real
+    double-click (or two events already queued in the message pump)
+    produces. Without a synchronous pending-flag guard, each handler
+    invocation independently passes the (unrelated) in-flight-run disabled
+    check and calls ``run_worker`` a second time, mounting a SECOND
+    ``ConfirmationDialog`` on top of the first."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=seeded_bench)
+        await pilot.pause()
+
+        delete_button = screen.query_one("#evals-delete-bench", Button)
+        stack_depth_before = len(evals_app.screen_stack)
+
+        screen.post_message(Button.Pressed(delete_button))
+        screen.post_message(Button.Pressed(delete_button))
+        await pilot.pause()
+        await pilot.pause()
+
+        dialogs = [s for s in evals_app.screen_stack if isinstance(s, ConfirmationDialog)]
+        assert len(dialogs) == 1, (
+            f"expected exactly one ConfirmationDialog, found "
+            f"{len(dialogs)} (screen stack depth "
+            f"{stack_depth_before} -> {len(evals_app.screen_stack)})"
+        )
+
+
+@pytest.mark.asyncio
+async def test_inspector_pane_buttons_compose_in_the_spec_order(
+    evals_app, seeded_bench
+):
+    """Design-spec ordering (inspector mock): ``[ Run bench ]`` then
+    ``[ Duplicate ]`` then ``[ Delete ]`` -- asserted as a real DOM-order
+    check (not three separate presence checks, which pass regardless of
+    order) so a future edit that reintroduces Duplicate/Delete BEFORE the
+    primary action fails here."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=seeded_bench)
+        await pilot.pause()
+
+        inspector_pane = screen.query_one("#evals-inspector-pane")
+        button_ids = [
+            button.id for button in inspector_pane.query(Button) if button.id
+        ]
+        assert button_ids == [
+            "evals-primary-action",
+            "evals-duplicate-bench",
+            "evals-delete-bench",
+        ], button_ids
+
+
+@pytest.mark.asyncio
+async def test_duplicate_and_delete_buttons_paint_full_width_like_the_primary_action(
+    evals_app, seeded_bench
+):
+    """``#evals-duplicate-bench``/``#evals-delete-bench`` had no width rule
+    of their own and rendered auto-width (Textual's ``Button`` DEFAULT_CSS
+    floors every button at ``min-width: 16``, far short of a real pane at
+    a realistic terminal size) -- inconsistent with ``#evals-primary-
+    action`` directly above, and this pane has a documented history of
+    geometry defects (see ``_evals.tcss``'s own ``#evals-inspector-bench``
+    comment). A painted-geometry check, at the same 235x52 realistic size
+    the sibling primary-action geometry tests in this file use, not a bare
+    ``width == 100%`` CSS-source grep -- proves the fix actually PAINTS
+    wide, not just declares a rule some later cascade entry could still
+    lose to."""
+    async with evals_app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=seeded_bench)
+        await pilot.pause()
+
+        inspector_pane = screen.query_one("#evals-inspector-pane")
+        half_width = inspector_pane.region.width / 2
+        duplicate = screen.query_one("#evals-duplicate-bench", Button)
+        delete = screen.query_one("#evals-delete-bench", Button)
+        for button in (duplicate, delete):
+            assert button.region.width > half_width, (
+                f"{button.id} region.width={button.region.width} is not "
+                f"wider than half the inspector pane's width "
+                f"({half_width}) -- {button.region}"
+            )

@@ -247,6 +247,22 @@
     width: 100%;
 }
 
+/* task-1482 Task 7 fix round 1: `#evals-duplicate-bench`/`#evals-delete-
+   bench` carried no width rule of their own, so Textual's `Button`
+   DEFAULT_CSS (`min-width: 16`, otherwise auto-width to its label) was
+   the only thing sizing them -- a visibly narrow, off-brand island
+   directly beneath the full-width `#evals-primary-action` button above.
+   Matches that sibling's own treatment (`width: 100%` plus the same
+   top margin, spacing each from the widget above it) rather than
+   inventing a second convention for this pane, which has its own
+   documented history of geometry defects (see this file's
+   `#evals-inspector-bench` comment above). */
+#evals-duplicate-bench,
+#evals-delete-bench {
+    margin: 1 0 0 0;
+    width: 100%;
+}
+
 /* Task 4 (bench editor + readiness inspector). Status colour lives here,
    in app-tier CSS, never in bench_editor.py/inspector.py's own widget
    CSS -- `.ds-status-badge { color: $ds-text-primary }`

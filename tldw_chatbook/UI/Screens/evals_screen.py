@@ -141,6 +141,14 @@ class EvalsScreen(LabScreen):
         #: (no Cancel affordance exists in this screen yet): kept as a
         #: real, threaded seam rather than a decorative parameter.
         self._bench_run_cancel_token: Optional[CancelToken] = None
+        #: task-1482 Task 7 fix round 1 (reviewer-found reentrancy): True
+        #: from the moment ``_on_delete_bench_pressed`` dispatches
+        #: ``_delete_bench_flow`` until ``_apply_bench_deletion`` finishes
+        #: (confirmed, cancelled, or erroring out). See that handler's own
+        #: docstring for why a synchronous flag -- not ``exclusive=True``
+        #: on the worker, unlike the run-bench/sample-bench pattern this
+        #: screen uses everywhere else -- is the correct guard here.
+        self._bench_delete_pending: bool = False
 
     def _current_app_config(self) -> dict[str, Any]:
         """The app's loaded settings, read fresh on every recompose (not
@@ -795,6 +803,38 @@ class EvalsScreen(LabScreen):
         ``_on_primary_action_pressed``'s own capture-outside-the-worker
         rationale (the selection can move while the confirm dialog is
         still up).
+
+        ``_bench_delete_pending`` guards a race review reproduced directly
+        (screen stack depth 2 -> 4): two ``Button.Pressed`` messages queued
+        with no intervening ``await`` both reach this synchronous handler
+        before either's ``run_worker`` call has taken its first step, so
+        without a check-and-set flag BOTH calls pass the (unrelated)
+        in-flight-run guard above and each starts its own
+        ``_delete_bench_flow`` worker -- pushing two ``ConfirmationDialog``s
+        onto the screen stack.
+
+        This is deliberately a plain flag, NOT ``exclusive=True`` on the
+        worker below, unlike ``_on_primary_action_pressed``'s identical-
+        looking double-press race (see that handler's own docstring for the
+        contrast). There, ``exclusive=True`` is correct: Textual cancels a
+        superseded worker's ``Task`` before its first step, so only one
+        worker body -- and the DB write it performs -- ever runs. Here that
+        would be actively wrong: ``_delete_bench_flow`` awaits
+        ``self.app.push_screen_wait(...)``, which internally awaits
+        ``asyncio.shield(future)`` -- shielding the WAIT itself from
+        cancellation, not the widget it already pushed. Cancelling this
+        worker's Task via an exclusive group after it has already pushed
+        its ``ConfirmationDialog`` would tear down the coroutine waiting on
+        that dialog's result while leaving the dialog itself mounted on the
+        screen stack -- a user's Confirm/Cancel click would land on a
+        dialog whose owning code no longer exists to act on it, a silent
+        no-op indistinguishable from a hang. A synchronous flag, checked
+        and set here before the FIRST worker is ever dispatched, avoids
+        needing to cancel anything: the second queued press sees the flag
+        already set and returns before calling ``run_worker`` at all, so
+        only one worker -- and one dialog -- is ever created. Cleared in a
+        ``finally`` inside ``_apply_bench_deletion`` (see that method's own
+        docstring) once the flow fully resolves, whichever way it resolves.
         """
         event.stop()
         selection = self._selection
@@ -805,6 +845,9 @@ class EvalsScreen(LabScreen):
             # the button for this case, and a disabled Textual `Button`
             # never emits `Pressed`.
             return
+        if self._bench_delete_pending:
+            return
+        self._bench_delete_pending = True
         bench = self._view_model.bench_by_id(selection.id)
         name = str(bench.get("name")) if bench else "Untitled bench"
         self.run_worker(
@@ -842,40 +885,54 @@ class EvalsScreen(LabScreen):
         ``_handle_import_file_selected`` (the ``FileOpen`` dialog's own
         callback): driving a real modal in a test is expensive, and this
         is the one place the dialog's yes/no decision reaches code.
+
+        The whole body runs inside a ``try/finally`` that clears
+        ``_bench_delete_pending`` -- the single-flight guard
+        ``_on_delete_bench_pressed`` sets before ever dispatching
+        ``_delete_bench_flow`` (see that method's own docstring for the
+        race this closes). Every return path here -- cancelled, no DB,
+        delete failed, or genuinely completed -- is "the flow is over, a
+        fresh press should be allowed again," so the reset lives in
+        ``finally`` rather than being duplicated at each ``return``. Tests
+        that call this method directly, bypassing ``_on_delete_bench_
+        pressed`` entirely, harmlessly reset a flag that was never set.
         """
-        if not confirmed:
-            return
-        db = self._view_model.db
-        if db is None:
-            self.app_instance.notify(
-                "The evaluation service is unavailable.", severity="error"
-            )
-            return
         try:
-            db.delete_task(task_id)
-        except Exception as exc:
-            logger.opt(exception=True).warning("Could not delete bench.")
+            if not confirmed:
+                return
+            db = self._view_model.db
+            if db is None:
+                self.app_instance.notify(
+                    "The evaluation service is unavailable.", severity="error"
+                )
+                return
+            try:
+                db.delete_task(task_id)
+            except Exception as exc:
+                logger.opt(exception=True).warning("Could not delete bench.")
+                self.app_instance.notify(
+                    f"Could not delete the bench: {exc}",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            self.select(kind="none")
+            # Provenance rule (task-1482 plan, "Delete vs runs"): deleting a
+            # bench does not cascade its run history -- `EvalsDB.delete_task`
+            # only soft-deletes the `eval_tasks` row; `list_runs`/`get_run`'s
+            # own `JOIN eval_tasks` (unfiltered on `t.deleted_at`) still
+            # resolves the runs, and `EvalsViewModel.run_groups()` reads
+            # `list_runs()` directly, never `_all_tasks()` (which DOES filter
+            # deleted tasks) -- so the Runs section keeps listing them, and
+            # opening one still renders the grid. This toast is the only
+            # place a user learns that on purpose.
             self.app_instance.notify(
-                f"Could not delete the bench: {exc}",
-                severity="error",
+                "Bench deleted. Its runs remain in the Runs section.",
+                severity="information",
                 markup=False,
             )
-            return
-        self.select(kind="none")
-        # Provenance rule (task-1482 plan, "Delete vs runs"): deleting a
-        # bench does not cascade its run history -- `EvalsDB.delete_task`
-        # only soft-deletes the `eval_tasks` row; `list_runs`/`get_run`'s
-        # own `JOIN eval_tasks` (unfiltered on `t.deleted_at`) still
-        # resolves the runs, and `EvalsViewModel.run_groups()` reads
-        # `list_runs()` directly, never `_all_tasks()` (which DOES filter
-        # deleted tasks) -- so the Runs section keeps listing them, and
-        # opening one still renders the grid. This toast is the only
-        # place a user learns that on purpose.
-        self.app_instance.notify(
-            "Bench deleted. Its runs remain in the Runs section.",
-            severity="information",
-            markup=False,
-        )
+        finally:
+            self._bench_delete_pending = False
 
     def lab_header_state(self) -> WorkbenchHeaderState:
         """Return the Evals destination header copy.
@@ -1091,39 +1148,9 @@ class EvalsScreen(LabScreen):
                     preflight,
                     id="evals-inspector-bench",
                 )
-                # task-1482 Task 7: Duplicate/Delete, composed only for a
-                # resolved bench selection -- an unresolvable id renders
-                # no `EvalsInspector` above and, per this placement,
-                # neither of these buttons either; there is nothing here
-                # to duplicate or delete.
-                yield Button("Duplicate", id="evals-duplicate-bench")
-                delete_reason = self._bench_delete_disabled_reason(selection.id)
-                if delete_reason:
-                    # Mirrors the primary action's own TASK-1076
-                    # convention just below (a status badge plus an
-                    # always-visible callout, not a hover-only tooltip --
-                    # see that block's comment for the accessibility
-                    # rationale). Not factored into one shared helper: the
-                    # primary action's version also folds in the bench's
-                    # own NAME (this button's label never changes).
-                    yield Static(
-                        "Delete: Blocked",
-                        id="evals-delete-bench-status",
-                        classes="ds-status-badge evals-status-blocked",
-                        markup=False,
-                    )
-                    yield Static(
-                        delete_reason,
-                        id="evals-delete-bench-reason",
-                        classes="ds-recovery-callout",
-                        markup=False,
-                    )
-                yield Button(
-                    "Delete",
-                    id="evals-delete-bench",
-                    disabled=bool(delete_reason),
-                    tooltip=delete_reason,
-                )
+                # Duplicate/Delete are composed further down, AFTER
+                # `#evals-primary-action` -- see the comment there (task-
+                # 1482 Task 7 fix round 1) for why.
 
         if selection.kind == "classic":
             # Classic tasks are read-only in this workbench (see the design
@@ -1183,6 +1210,46 @@ class EvalsScreen(LabScreen):
             disabled=disabled,
             tooltip=tooltip,
         )
+
+        # task-1482 Task 7 fix round 1: composed AFTER `#evals-primary-
+        # action`, not before it -- the design spec's inspector mock
+        # orders these `[ Run bench ]` then `[ Duplicate ]` then
+        # `[ Delete ]`, and the original Task 7 placement (right after
+        # `EvalsInspector`, ahead of the primary action) inverted that.
+        # Still bench-selection-only, and still gated on a RESOLVED bench
+        # (`bench is not None`, set in the `selection.kind == "bench"`
+        # branch above): an unresolvable bench id renders no
+        # `EvalsInspector` and, per this same guard, neither of these
+        # buttons either -- there is nothing here to duplicate or delete.
+        if selection.kind == "bench" and bench is not None:
+            yield Button("Duplicate", id="evals-duplicate-bench")
+            delete_reason = self._bench_delete_disabled_reason(selection.id)
+            if delete_reason:
+                # Mirrors the primary action's own TASK-1076 convention
+                # just above (a status badge plus an always-visible
+                # callout, not a hover-only tooltip -- see that block's
+                # comment for the accessibility rationale). Not factored
+                # into one shared helper: the primary action's version
+                # also folds in the bench's own NAME (this button's label
+                # never changes).
+                yield Static(
+                    "Delete: Blocked",
+                    id="evals-delete-bench-status",
+                    classes="ds-status-badge evals-status-blocked",
+                    markup=False,
+                )
+                yield Static(
+                    delete_reason,
+                    id="evals-delete-bench-reason",
+                    classes="ds-recovery-callout",
+                    markup=False,
+                )
+            yield Button(
+                "Delete",
+                id="evals-delete-bench",
+                disabled=bool(delete_reason),
+                tooltip=delete_reason,
+            )
 
     def _primary_action_state(self) -> tuple[str, bool, str]:
         """Label, disabled, and tooltip-reason for the primary action button.
