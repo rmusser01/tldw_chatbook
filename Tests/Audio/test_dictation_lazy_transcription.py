@@ -13,7 +13,6 @@ transcription service: no hardware, no models, no disk.
 from __future__ import annotations
 
 import threading
-import time
 from typing import Any, Callable, Dict, List, Optional
 
 import pytest
@@ -186,15 +185,6 @@ def _attach(service, sink: _Sink) -> None:
     service.on_partial_transcript = sink.partial
     service.on_final_transcript = sink.final
     service.on_error = sink.error
-
-
-def _wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> bool:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.01)
-    return predicate()
 
 
 # --------------------------------------------------------------------------
@@ -379,8 +369,20 @@ def test_streaming_failure_falls_back_to_the_buffer_api(monkeypatch):
 
 
 def test_live_capture_produces_an_accumulated_transcript(monkeypatch):
-    """The whole path, real service and real processing thread, no hardware."""
-    transcription = _FakeTranscriptionService(texts=["one", "two", "three"])
+    """The whole path, real service and real processing thread, no hardware.
+
+    Updated for the segment-at-silence architecture
+    (`dictation_service_lazy.py`'s `_processing_loop`): three chunks fed back
+    to back, with no pause between them, belong to ONE in-progress segment --
+    nothing is transcribed periodically anymore, so `stop_dictation()`
+    transcribes all three together in a single `transcribe_buffer()` call.
+    (Previously this waited for three *separate* periodic-flush calls, one
+    per chunk, and asserted three separate finals joined by `stop_dictation()`
+    into "one two three" -- exactly the per-window chopping this rework
+    removes; see `Tests/Audio/test_dictation_segment_finalization.py` for the
+    dedicated coverage of that defect.)
+    """
+    transcription = _FakeTranscriptionService(texts=["one two three"])
     recorder = _FakeRecorder()
     service = _build_service(monkeypatch, transcription, recorder)
     sink = _Sink()
@@ -394,21 +396,21 @@ def test_live_capture_produces_an_accumulated_transcript(monkeypatch):
     assert recorder.is_recording is True
 
     try:
-        for index in range(3):
+        for _ in range(3):
             recorder.feed(b"\x00\x01" * 160)
-            assert _wait_until(
-                lambda index=index: len(transcription.buffer_calls) > index
-            ), f"chunk {index} was never transcribed"
     finally:
         result = service.stop_dictation()
 
     assert transcription.transcribe_calls == []
-    assert transcription.buffer_calls
+    assert len(transcription.buffer_calls) == 1, (
+        "all three chunks belong to one in-progress segment and must reach "
+        "the transcriber in a single call, not three"
+    )
     assert transcription.buffer_calls[0]["provider"] == "faster-whisper"
     assert recorder.stop_calls == 1
     assert sink.errors == []
 
-    # Everything heard, not just the last half-second.
+    # Everything heard, not just the last chunk.
     assert result.transcript == "one two three"
     assert sink.finals == ["one two three"]
     assert sink.snapshot_partials()[-1] == "one two three"

@@ -176,15 +176,6 @@ def _build_service(
     return service
 
 
-def _wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> bool:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.01)
-    return predicate()
-
-
 # --------------------------------------------------------------------------
 # The false mic-failure case: sub-buffer-window captures
 # --------------------------------------------------------------------------
@@ -263,12 +254,23 @@ def test_capture_shorter_than_one_buffer_window_with_nothing_queued_stays_silent
 
 
 def test_audio_after_the_last_periodic_flush_is_not_lost(monkeypatch):
-    """A longer capture flushes periodically while the user keeps talking.
-    Whatever arrives after the *last* periodic flush -- the final word --
-    must still reach the transcriber when the user stops, not be silently
-    dropped along with the queue.
+    """A longer capture, still one uninterrupted segment when the user stops.
+
+    Updated for the segment-at-silence architecture
+    (`dictation_service_lazy.py`'s `_processing_loop`): `buffer_duration_ms`
+    is now only the accumulation/privacy-trim cadence, not a transcription
+    trigger, so there is no "periodic flush" left to lose a tail after --
+    nothing is transcribed until a silence pause or `stop_dictation()`. Two
+    feeds with no pause between them are therefore one in-progress segment;
+    what must not happen is either of them being dropped, or chopped into a
+    separate transcriber call, when the capture stops before any
+    silence-triggered finalize has had a chance to run. (Previously this
+    asserted the OLD per-window behavior: that the first chunk was flushed
+    and transcribed on its own 500ms after being fed, and the second reached
+    the transcriber in a *second* call at stop -- exactly the chopping this
+    rework removes.)
     """
-    transcription = _RealSignatureTranscriptionService(texts=["one", "two"])
+    transcription = _RealSignatureTranscriptionService(texts=["one two"])
     recorder = _FakeRecorder()
     service = _build_service(
         monkeypatch, transcription, recorder, buffer_duration_ms=500
@@ -284,22 +286,14 @@ def test_audio_after_the_last_periodic_flush_is_not_lost(monkeypatch):
         is True
     )
 
-    # First word: let the periodic flush (500ms) actually fire.
     recorder.feed(b"\x00\x01" * 8000)
-    assert _wait_until(lambda: len(transcription.buffer_calls) == 1, timeout=2.0), (
-        "the first chunk was never flushed periodically"
-    )
-
-    # Final word: queued immediately after the periodic flush, well inside
-    # the next 500ms window. Stop right away -- this is exactly the race
-    # `stop_dictation()` loses today.
     recorder.feed(b"\x00\x01" * 8000)
     result = service.stop_dictation()
 
     assert sink.errors == []
-    assert len(transcription.buffer_calls) == 2, (
-        "the tail chunk queued after the last periodic flush was dropped "
-        "when stop_dictation() was called"
+    assert len(transcription.buffer_calls) == 1, (
+        "both feeds belong to one in-progress segment and must reach the "
+        "transcriber together, not as two separate periodic windows"
     )
     assert result.transcript == "one two"
     assert sink.finals == ["one two"]

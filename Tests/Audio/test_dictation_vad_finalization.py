@@ -287,10 +287,12 @@ def test_pause_in_frame_delivery_finalizes_a_segment_mid_capture():
     # A short threshold (not the 2.0s production default) keeps this test
     # fast without sleeping past a hard-coded production constant.
     service.silence_threshold_seconds = 0.2
-    # A short buffer window so the periodic flush transcribes the queued
-    # frames (populating `current_transcript`) well before the silence
-    # threshold elapses -- otherwise `_finalize_current_segment` would find
-    # nothing to finalize and never fire `on_final_transcript`.
+    # `buffer_duration_ms` no longer gates transcription for this
+    # (non-streaming) service -- `_processing_loop` only accumulates on a
+    # cadence now and transcribes the whole segment once, at the silence
+    # check below, via `_transcribe_segment_audio()`. Left short here only so
+    # the accumulation/privacy-trim housekeeping tick still runs at a
+    # realistic cadence during the test, not because anything depends on it.
     service.buffer_duration_ms = 10
     service._transcription_service = _FakeTranscriptionService(text="hello")
 

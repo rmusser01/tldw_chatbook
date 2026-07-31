@@ -137,6 +137,12 @@ class LazyLiveDictationService:
     captured_bytes = 0
     max_buffer_bytes: Optional[int] = None
     on_buffer_limit: Optional[Callable[[], None]] = None
+    #: `_processing_loop` reads this unconditionally on its very first line
+    #: (to pick its streaming vs. non-streaming regime), so a service built
+    #: via `__new__` without an explicit `_initialize_streaming_transcriber()`
+    #: call needs this default too, or the processing thread dies with an
+    #: `AttributeError` the instant it starts.
+    streaming_transcriber: Optional[Any] = None
 
     # Privacy settings keys
     PRIVACY_KEY_PREFIX = "dictation.privacy"
@@ -648,8 +654,58 @@ class LazyLiveDictationService:
             logger.error(f"Audio callback error: {e}")
 
     def _processing_loop(self):
-        """Simplified processing loop for single-user app."""
-        accumulated_audio = []
+        """Drain queued audio into the segment it belongs to.
+
+        Two entirely different regimes, chosen once at the top -- checked
+        against `self.streaming_transcriber` at the moment this thread
+        starts, since `start_dictation()` builds it (if at all) before this
+        thread is spawned and nothing reassigns it mid-session:
+
+        * A streaming transcriber -- in this codebase, only ever built for
+          `parakeet-mlx` on Apple Silicon (see
+          `Local_Ingestion/transcription_service.py`
+          `create_streaming_transcriber`; every other provider this app ships,
+          including the default `faster-whisper`, returns `None`) -- already
+          pushes its own finals through `_handle_streamed_final`, and its
+          `process_audio()` calls are cheap incremental pushes, not a
+          from-scratch transcription. This regime is UNCHANGED: transcribe
+          whatever accumulated on the old `buffer_duration_ms` cadence, and
+          let the silence check finalize whatever partial is outstanding as a
+          fallback when the backend never sends an explicit final.
+
+        * Every other provider has no streaming transcriber, so
+          `_process_audio_buffer()` always took the buffer API, which is a
+          full, synchronous, from-scratch transcription of whatever bytes it
+          is handed (~4-5s for a 0.5s window measured live, on
+          distil-large-v3, on a loaded machine). Calling that on a cadence
+          starves the silence check that shares this same thread: while the
+          loop is inside `_transcribe_buffer_with_faster_whisper`, it is not
+          polling `last_speech_time`, so a threshold-length pause can elapse
+          invisibly -- live captures showed `last_speech_time` age reach 8.6s
+          against a 2.0s threshold, with a non-empty `current_transcript` and
+          no final ever firing while the capture ran. Worse, on the rare
+          iteration the loop *did* get a turn, it would finalize whatever
+          fraction of one utterance it happened to be holding, chopping one
+          utterance into unrelated finals ("console stop" -> "consoles." /
+          "stop." on two different windows).
+
+          So for this regime the loop does no transcription of its own: it
+          only accumulates VAD-gated chunks into `segment_audio`. The only
+          two places that ever call `_process_audio_buffer()` for this
+          regime are the silence check below and the tail-drain after the
+          loop exits -- each transcribing the whole segment exactly once. A
+          segment transcription can take seconds; chunks that arrive while
+          one is in flight simply queue in `processing_queue` (the audio
+          callback never blocks on this thread) and open the *next*
+          segment once this call returns and the loop resumes draining --
+          nothing is lost or mixed into the segment already sent for
+          transcription, at the cost of delaying that next segment's own
+          silence-finalize until this call returns. Accepted: the
+          alternative (transcribing on the shared loop thread) is the
+          defect this method exists to fix.
+        """
+        streaming = self.streaming_transcriber is not None
+        segment_audio = []
         last_process_time = time.time()
 
         while not self.stop_processing.is_set():
@@ -659,45 +715,55 @@ class LazyLiveDictationService:
                     item_type, data = self.processing_queue.get(timeout=0.1)
 
                     if item_type == "audio":
-                        accumulated_audio.append(data)
+                        segment_audio.append(data)
 
                 except queue.Empty:
                     pass
 
-                # Process accumulated audio periodically
                 current_time = time.time()
                 buffer_duration_sec = self.buffer_duration_ms / 1000
-
-                if (
-                    accumulated_audio
+                cadence_elapsed = (
+                    segment_audio
                     and (current_time - last_process_time) >= buffer_duration_sec
-                ):
-                    audio_data = b"".join(accumulated_audio)
+                )
+
+                if streaming and cadence_elapsed:
+                    audio_data = b"".join(segment_audio)
                     self._process_audio_buffer(audio_data)
-
-                    # Clear accumulated audio
-                    accumulated_audio = []
+                    segment_audio = []
                     last_process_time = current_time
-
-                    # Auto-clear buffer if privacy enabled
-                    if self.privacy_settings["auto_clear_buffer"]:
-                        with self.buffer_lock:
-                            # Keep only last few chunks for context
-                            if len(self.audio_buffer) > 10:
-                                self.audio_buffer = self.audio_buffer[-5:]
+                    self._trim_privacy_audio_buffer()
+                elif cadence_elapsed:
+                    # Non-streaming: accumulate only -- see method docstring
+                    # for why transcribing here is exactly the defect this
+                    # rework fixes. Still tick the cadence clock and trim the
+                    # privacy buffer on the same schedule as before; only the
+                    # transcribe call moved.
+                    last_process_time = current_time
+                    self._trim_privacy_audio_buffer()
 
                 # Check for silence timeout. Runs every ~0.1s iteration
                 # independent of chunk arrival -- deliberately not derived
                 # from queue activity, so it still fires while the recorder's
-                # VAD is withholding frames during a pause.
+                # VAD is withholding frames during a pause. Cheap for BOTH
+                # regimes now: the non-streaming loop never blocks on a
+                # transcription except right here, once per segment.
                 if (
                     self.last_speech_time
                     and (current_time - self.last_speech_time)
                     > self.silence_threshold_seconds
                 ):
-                    # Finalize current segment after a threshold pause.
-                    self._finalize_current_segment()
                     self.last_speech_time = 0
+                    if streaming:
+                        # Finalizes whatever partial text streaming pushed in
+                        # via `_handle_partial_text`, as a fallback for a
+                        # backend that never sent an explicit final.
+                        self._finalize_current_segment()
+                    else:
+                        if segment_audio:
+                            pending, segment_audio = segment_audio, []
+                            self._transcribe_segment_audio(pending)
+                        self._finalize_current_segment()
 
             except Exception as e:
                 logger.error(f"Processing loop error: {e}")
@@ -705,12 +771,15 @@ class LazyLiveDictationService:
 
         # `stop_dictation()` sets `stop_processing` and the `while` above
         # exits on its very next iteration, abandoning whatever is still in
-        # `accumulated_audio` plus anything left unread in
-        # `processing_queue`. Without this, a capture shorter than one
-        # `buffer_duration_ms` window is transcribed as nothing at all, and
-        # the tail of every longer capture (audio queued since the last
-        # periodic flush) is silently dropped. Drain the queue and flush
-        # whatever remains before the thread returns.
+        # `segment_audio` plus anything left unread in `processing_queue`.
+        # Without this, a capture shorter than one `buffer_duration_ms`
+        # window (non-streaming: shorter than one silence pause) is
+        # transcribed as nothing at all, and the tail of every longer
+        # capture is silently dropped. Drain the queue and transcribe
+        # whatever remains before the thread returns; `stop_dictation()`
+        # calls `_finalize_current_segment()` itself right after this thread
+        # is joined, exactly as it always has -- this only ever sets
+        # `current_transcript`, never finalizes it.
         try:
             while True:
                 try:
@@ -719,15 +788,67 @@ class LazyLiveDictationService:
                     break
 
                 if item_type == "audio":
-                    accumulated_audio.append(data)
+                    segment_audio.append(data)
 
-            if accumulated_audio:
-                audio_data = b"".join(accumulated_audio)
-                self._process_audio_buffer(audio_data)
-                accumulated_audio = []
+            if segment_audio:
+                if streaming:
+                    audio_data = b"".join(segment_audio)
+                    self._process_audio_buffer(audio_data)
+                    segment_audio = []
+                else:
+                    pending, segment_audio = segment_audio, []
+                    self._transcribe_segment_audio(pending)
         except Exception as e:
             logger.error(f"Processing loop final flush error: {e}")
             self._notify_error(e)
+
+    def _trim_privacy_audio_buffer(self) -> None:
+        """Keep only the last few raw chunks in `self.audio_buffer` for context.
+
+        Unrelated to segment/transcript tracking -- `self.audio_buffer` is the
+        raw-PCM history `_audio_callback()` appends to, trimmed periodically
+        (on the `buffer_duration_ms` cadence, same as before this rework) so a
+        long capture does not hold its entire raw audio in memory when
+        `dictation.privacy.auto_clear_buffer` is on (the default).
+        """
+        if self.privacy_settings["auto_clear_buffer"]:
+            with self.buffer_lock:
+                if len(self.audio_buffer) > 10:
+                    self.audio_buffer = self.audio_buffer[-5:]
+
+    def _transcribe_segment_audio(self, segment_audio: List[bytes]) -> None:
+        """Transcribe one whole non-streaming segment's audio, exactly once.
+
+        Called only from `_processing_loop`'s non-streaming regime -- the
+        silence check (mid-capture) and the tail-drain (stop) -- never on a
+        cadence, and never for the streaming regime, whose own finals arrive
+        push-style through `_handle_streamed_final`. Reuses
+        `_process_audio_buffer()` unchanged (same `transcribe_buffer()` call
+        shape: provider/model/language passthrough, sample params), so it
+        sets `self.current_transcript` exactly as every other caller of that
+        method always has; the caller decides whether/when to finalize it.
+
+        Args:
+            segment_audio: The chunks accumulated since the last finalize.
+                A no-op when empty (nothing to transcribe).
+        """
+        if not segment_audio:
+            return
+        audio_data = b"".join(segment_audio)
+        self._process_audio_buffer(audio_data)
+        with self.transcript_lock:
+            produced_text = bool(self.current_transcript.strip())
+        if not produced_text:
+            # Whisper-family models routinely return empty or whitespace-only
+            # text for room noise or a too-short VAD sliver -- routine, not a
+            # failure, so this stays a debug log rather than `on_error`/a
+            # user-facing notice. `_finalize_current_segment()` already no-ops
+            # on empty text, so nothing further is needed to drop the segment.
+            logger.debug(
+                "Dictation segment ({} bytes) produced no usable transcript; "
+                "dropping silently",
+                len(audio_data),
+            )
 
     def _cleanup(self):
         """Clean up resources with privacy considerations."""
