@@ -3577,6 +3577,40 @@ Do not change production code or the fast reset/set lock.
 Run the held-lock reproducer, the complete shared-lock class, the full
 ingestion-indexing module, Ruff/format, and `git diff --check`.
 
+### Task 4ch: Wait for the Evals results grid to mount
+
+**Files:**
+- Modify: `Tests/UI/test_evals_results_grid.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This makes an existing test helper wait for an asynchronous
+recompose; it does not change the Evals runtime contract.
+
+- [x] **Step 1: Reproduce and isolate the mount race**
+
+The full gate fails after 17,271 passes because one event-loop pause returns
+before `#evals-results-grid` mounts. The exact test passes alone.
+
+- [x] **Step 2: Bound the selector wait**
+
+Make the shared run-group selection helper poll briefly for the results-grid
+selector, then retain one settling pause before returning the typed widget.
+
+- [x] **Step 3: Verify Evals results-grid coverage**
+
+Run the exact regression repeatedly, the complete results-grid module,
+Ruff/format, and `git diff --check`.
+
+The exact regression passed three consecutive runs and the complete module
+passed 42/42. Ruff lint and `git diff --check` pass. Ruff format reports the
+same inherited whole-file drift on both the changed file and its untouched
+`HEAD` version, so this correction does not rewrite unrelated test formatting.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

@@ -312,6 +312,9 @@ The failures reproduce on an exact `origin/dev` checkout:
   process-wide construction lock. A background application initializer can
   still hold that lock on a real embedding-model build, preventing the test's
   controlled constructor from starting before its timeout.
+- The Evals results-grid selection helper assumes one event-loop pause completes
+  a scheduled screen recompose. Under the full-gate load, the pause can return
+  before `#evals-results-grid` mounts even though the same test passes alone.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -920,6 +923,9 @@ Update the tests to describe current behavior:
 89. Give every shared-RAG concurrency regression a fresh construction lock
     through a class autouse fixture. This confines each race to the threads
     created by that test without changing production locking.
+90. Make the shared Evals run-group selection helper wait briefly for the
+    results-grid selector instead of treating one event-loop pause as a mount
+    completion guarantee.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library

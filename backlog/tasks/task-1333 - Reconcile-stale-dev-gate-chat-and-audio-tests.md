@@ -119,6 +119,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #89 Real Parakeet MLX integration tests run only when the installed cached module exposes the callable `from_pretrained` API required by production, while all mocked unit coverage continues to run on macOS when that runtime API is absent.
 - [ ] #90 Faster-whisper tests that instantiate a real model are consistently classified as slow, so the mandatory offline gate does not download model artifacts while explicit `--run-slow` runs retain the real integration coverage.
 - [ ] #91 Shared-RAG concurrency regressions use a fresh construction lock for their controlled race, so an unrelated in-flight application model build cannot prevent the test threads from reaching their controlled synchronization points.
+- [ ] #92 Evals results-grid tests wait for the selected run group's grid to mount instead of assuming one event-loop pause completes the scheduled screen recompose.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -215,6 +216,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 83. Gate both real Parakeet MLX integration entry points on the loader API production actually calls, not package discoverability alone.
 84. Mark the remaining faster-whisper tests that load the real tiny model as slow, matching the rest of that real-model integration class.
 85. Isolate shared-RAG construction-race regressions from unrelated process-wide background builds with a class-local autouse fixture that replaces their build lock.
-86. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-87. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+86. Replace the Evals results-grid test helper's single-pause mount assumption with a bounded selector wait.
+87. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+88. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
