@@ -748,3 +748,37 @@ def build_summary_rows(
         ),
         encryption_row,
     )
+
+
+def rerun_model_prefill(
+    app_config: Mapping[str, object], *, provider_value: str
+) -> str:
+    """Persisted default model to prefill when re-entering the Model step.
+
+    TASK-1374: the prefill fires from a genuinely reachable condition — the
+    session's provider matches the persisted ``chat_defaults.provider`` — so
+    a re-run that keeps the same provider surfaces the saved model instead
+    of blanking it. Both sides are normalized with
+    ``provider_readiness.provider_config_key`` because the template stores a
+    display-cased value ("OpenAI") while wizard commits store the raw key.
+
+    Args:
+        app_config: The in-memory app config mapping.
+        provider_value: The session's current provider (raw key or display
+            form); empty means no provider context, so no prefill.
+
+    Returns:
+        The persisted model id when providers match, else "".
+    """
+    if not provider_value:
+        return ""
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+
+    prefill = read_wizard_prefill(app_config)
+    if not (prefill.provider_value and prefill.model_id):
+        return ""
+    if provider_config_key(provider_value) != provider_config_key(
+        prefill.provider_value
+    ):
+        return ""
+    return prefill.model_id

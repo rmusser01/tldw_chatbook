@@ -2048,17 +2048,22 @@ async def test_tools_step_rerun_prefills_switches_from_config():
 
 
 @pytest.mark.asyncio
-async def test_model_step_rerun_prefills_from_config_when_no_provider_entry_yet():
-    """Added scope: a re-run user who reaches Model before wizard_data has a
-    "provider" entry this session (e.g. jumping forward) must see the
-    persisted chat_defaults.model resurface as the initial selection and in
-    the custom-model Input, rather than a blank slate."""
+async def test_model_step_rerun_prefills_when_session_provider_matches_persisted():
+    """TASK-1374: the prefill fires on the REACHABLE path — the normal
+    sequential walk where the session provider equals the persisted
+    chat_defaults.provider (a re-run keeping the same provider). The old
+    no-provider-entry guard was dead code: _advance() always records a
+    provider entry before Model can be shown."""
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     wizard = SimpleNamespace(
-        app_instance=MagicMock(app_config={"chat_defaults": {"model": "gpt-4o"}}),
-        wizard_data={},  # no "provider" key yet
+        app_instance=MagicMock(
+            app_config={"chat_defaults": {"provider": "openai", "model": "gpt-4o"}}
+        ),
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "openai"}
+        },  # the entry _advance always writes — this state is reachable
         commit_config=AsyncMock(return_value=True),
         rerun=True,
     )
@@ -2528,3 +2533,87 @@ async def test_provider_reentry_with_visible_discovery_button_focuses_list():
         await pilot.pause(0.2)
         radio_set = provider_step.query_one("#setup-provider-choice", RadioSet)
         assert app.focused is radio_set, f"focus stole by {app.focused!r}"
+
+
+class TestComposeCrashPolicy:
+    """TASK-1266 (spec §5): a step whose compose fails is auto-skipped with a
+    notice and a reasoned summary row — never a crashed screen."""
+
+    @pytest.mark.asyncio
+    async def test_failing_step_is_skipped_and_wizard_survives(self):
+        """The wizard mounts, drops the broken step from navigation, and
+        renders a notice in its place."""
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            RagStep,
+            SetupWizardContainer,
+        )
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            STEP_RAG,
+            TRACK_FULL,
+        )
+
+        original = RagStep.compose_step
+
+        def _boom(self):
+            raise RuntimeError("boom")
+            yield  # pragma: no cover
+
+        RagStep.compose_step = _boom
+        try:
+            wizard = _make_wizard()
+            app = _HostApp(wizard)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause(0.2)
+                container = wizard.query_one(SetupWizardContainer)
+                container.select_track(TRACK_FULL)
+                await pilot.pause(0.1)
+                assert STEP_RAG not in container.active_ids
+                failed_step = next(
+                    s for s in container.steps
+                    if s.config and s.config.id == STEP_RAG
+                )
+                assert failed_step.compose_failed is True
+                notice = str(
+                    failed_step.query_one(".setup-step-error", Static).render()
+                )
+                assert "skipped" in notice.lower()
+        finally:
+            RagStep.compose_step = original
+
+    @pytest.mark.asyncio
+    async def test_summary_reports_the_skipped_step(self):
+        """The read-back Summary carries a reasoned row for the broken step."""
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            RagStep,
+            SetupWizardContainer,
+            SummaryStep,
+        )
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import TRACK_FULL
+
+        original = RagStep.compose_step
+
+        def _boom(self):
+            raise RuntimeError("boom")
+            yield  # pragma: no cover
+
+        RagStep.compose_step = _boom
+        try:
+            wizard = _make_wizard()
+            app = _HostApp(wizard)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause(0.2)
+                container = wizard.query_one(SetupWizardContainer)
+                container.select_track(TRACK_FULL)
+                await pilot.pause(0.1)
+                summary = next(
+                    s for s in container.steps if isinstance(s, SummaryStep)
+                )
+                container.show_step(container.steps.index(summary))
+                await pilot.pause(0.4)
+                rendered = str(
+                    summary.query_one("#setup-summary-rows", Static).render()
+                )
+                assert "couldn't be shown" in rendered
+                assert "RAG" in rendered
+        finally:
+            RagStep.compose_step = original
