@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Literal, Protocol, TypeAlias
 from uuid import UUID
 
+from loguru import logger
+
 from tldw_chatbook.TTS.adapter_types import TTSRequest
 from tldw_chatbook.TTS.profile_errors import (
     ProfileRepositoryError,
@@ -119,6 +121,28 @@ def _global_resolution(
     )
 
 
+def _log_resolution_failure(
+    code: CharacterTTSResolutionCode,
+    error: Exception,
+) -> None:
+    detail_code = (
+        error.code
+        if isinstance(
+            error,
+            (ProfileRepositoryError, ProfileServiceError, ProfileValidationError),
+        )
+        else "not_available"
+    )
+    logger.warning(
+        "Character TTS request resolution failed "
+        "(operation=character_tts_resolution, outcome_code={}, "
+        "exception_category={}, detail_code={})",
+        code,
+        type(error).__name__,
+        detail_code,
+    )
+
+
 class CharacterTTSRequestResolver:
     """Convert validated authorship facts into one immutable TTS selection."""
 
@@ -138,7 +162,21 @@ class CharacterTTSRequestResolver:
         assistant_kind: str | None,
         character_ref: CharacterRef | None,
     ) -> CharacterTTSRequestResolution:
-        """Resolve one already-validated trusted message without fallback."""
+        """Resolve one already-validated trusted message without fallback.
+
+        Args:
+            text: Trusted message text to synthesize.
+            assistant_kind: Verified assistant authorship classification.
+            character_ref: Exact character authority, when character-authored.
+
+        Returns:
+            The immutable assigned-profile or global-path resolution.
+
+        Raises:
+            CharacterTTSResolutionError: If authorship or assignment resolution
+                fails closed.
+            asyncio.CancelledError: If assignment lookup is cancelled.
+        """
 
         validated_text = self._validate_text(text)
         if assistant_kind is not None and type(assistant_kind) is not str:
@@ -161,9 +199,15 @@ class CharacterTTSRequestResolver:
             loaded = await service.get_assigned_profile(character_ref)
         except asyncio.CancelledError:
             raise
-        except (ProfileRepositoryError, ProfileServiceError, ProfileValidationError):
+        except (
+            ProfileRepositoryError,
+            ProfileServiceError,
+            ProfileValidationError,
+        ) as error:
+            _log_resolution_failure("profile_store_unavailable", error)
             raise CharacterTTSResolutionError("profile_store_unavailable") from None
-        except Exception:
+        except Exception as error:
+            _log_resolution_failure("profile_store_unavailable", error)
             raise CharacterTTSResolutionError("profile_store_unavailable") from None
 
         try:
@@ -193,7 +237,8 @@ class CharacterTTSRequestResolver:
             )
         except CharacterTTSResolutionError:
             raise
-        except Exception:
+        except Exception as error:
+            _log_resolution_failure("assignment_invalid", error)
             raise CharacterTTSResolutionError("assignment_invalid") from None
 
     def resolve_explicit_global_override(
@@ -201,7 +246,17 @@ class CharacterTTSRequestResolver:
         *,
         text: str,
     ) -> CharacterTTSRequestResolution:
-        """Return the handler-authorized one-message global path."""
+        """Return the handler-authorized one-message global path.
+
+        Args:
+            text: Trusted message text that will use the global voice.
+
+        Returns:
+            An immutable explicit-global-override resolution.
+
+        Raises:
+            CharacterTTSResolutionError: If ``text`` is empty or invalid.
+        """
 
         self._validate_text(text)
         return _global_resolution("explicit_override")

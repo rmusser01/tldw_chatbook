@@ -412,9 +412,14 @@ class TTSEventHandler:
             # stricter validate/resolve-before-cooldown ordering below.
             self._enforce_cooldown_limit()
 
+        effective_message_id = (
+            request_message_id
+            if isinstance(request_message_id, str) and request_message_id
+            else "adhoc"
+        )
         text = await self._prepare_tts_text(
             request_text,
-            request_message_id or "unknown",
+            effective_message_id,
         )
         if text is None:
             return
@@ -440,7 +445,7 @@ class TTSEventHandler:
                 )
                 await self._post_tts_message(
                     TTSCompleteEvent(
-                        message_id=event.message_id,
+                        message_id=effective_message_id,
                         error=str(error),
                         global_override_token=token,
                     )
@@ -449,7 +454,7 @@ class TTSEventHandler:
 
         await self._admit_tts_generation(
             text=text,
-            message_id=request_message_id or "adhoc",
+            message_id=effective_message_id,
             voice=request_voice,
             resolution=resolution,
         )
@@ -458,7 +463,11 @@ class TTSEventHandler:
         self,
         event: TTSGlobalOverrideDecisionEvent,
     ) -> None:
-        """Consume one fallback decision and re-admit its original snapshot."""
+        """Consume one fallback decision and re-admit its original snapshot.
+
+        Args:
+            event: One opaque, message-scoped global-voice decision.
+        """
         pending = self._consume_global_override(event.token)
         if pending is None or not event.accepted:
             return

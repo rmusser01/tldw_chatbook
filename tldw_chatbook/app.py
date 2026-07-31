@@ -6540,7 +6540,11 @@ class TldwCli(
         self,
         event: TTSGlobalOverrideDecisionEvent,
     ) -> None:
-        """Route one opaque character-speech fallback decision."""
+        """Route one opaque character-speech fallback decision.
+
+        Args:
+            event: The accepted or rejected message-scoped fallback decision.
+        """
         handler = await self._ensure_tts_handler()
         if handler:
             await handler.handle_tts_global_override_decision(event)

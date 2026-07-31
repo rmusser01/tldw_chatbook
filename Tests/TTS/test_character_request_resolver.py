@@ -5,6 +5,7 @@ from typing import cast
 from uuid import UUID
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.TTS.adapter_types import TTSRequest
 from tldw_chatbook.TTS.character_request_resolver import (
@@ -233,33 +234,57 @@ async def test_character_speech_without_authority_fails_closed() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "error",
+    ("error", "exception_category", "detail_code"),
     (
-        ProfileRepositoryError("unavailable"),
-        ProfileServiceError("operation_failed"),
-        RuntimeError(
-            "https://user:credential@example.test/private/path submitted text"
+        (
+            ProfileRepositoryError("unavailable"),
+            "ProfileRepositoryError",
+            "unavailable",
+        ),
+        (
+            ProfileServiceError("operation_failed"),
+            "ProfileServiceError",
+            "operation_failed",
+        ),
+        (
+            RuntimeError(
+                "https://user:credential@example.test/private/path submitted text"
+            ),
+            "RuntimeError",
+            "not_available",
         ),
     ),
 )
 async def test_profile_store_failures_are_bounded_and_never_become_global(
     error: BaseException,
+    exception_category: str,
+    detail_code: str,
 ) -> None:
     character_ref = _character_ref()
     service = _FakeProfileService(result=object())
     service.error = error
     resolver = CharacterTTSRequestResolver(service)
+    log_messages: list[str] = []
 
-    with pytest.raises(CharacterTTSResolutionError) as caught:
-        await resolver.resolve(
-            text="Private character reply.",
-            assistant_kind="character",
-            character_ref=character_ref,
-        )
+    sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
+    try:
+        with pytest.raises(CharacterTTSResolutionError) as caught:
+            await resolver.resolve(
+                text="Private character reply.",
+                assistant_kind="character",
+                character_ref=character_ref,
+            )
+    finally:
+        logger.remove(sink_id)
 
     assert caught.value.code == "profile_store_unavailable"
     assert caught.value.allow_global_override is True
     rendered = str(caught.value)
+    rendered_logs = "\n".join(log_messages)
+    assert "operation=character_tts_resolution" in rendered_logs
+    assert "outcome_code=profile_store_unavailable" in rendered_logs
+    assert f"exception_category={exception_category}" in rendered_logs
+    assert f"detail_code={detail_code}" in rendered_logs
     for secret in (
         character_ref.authority_id,
         "credential",
@@ -268,13 +293,18 @@ async def test_profile_store_failures_are_bounded_and_never_become_global(
         "submitted text",
     ):
         assert secret not in rendered
+        assert secret not in rendered_logs
     assert service.calls == [character_ref]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ("wrong-type", "wrong-character"))
+@pytest.mark.parametrize(
+    ("case", "exception_category"),
+    (("wrong-type", "TypeError"), ("wrong-character", "ValueError")),
+)
 async def test_malformed_joined_assignment_fails_closed_without_fallback(
     case: str,
+    exception_category: str,
 ) -> None:
     character_ref = _character_ref()
     if case == "wrong-type":
@@ -285,16 +315,28 @@ async def test_malformed_joined_assignment_fails_closed_without_fallback(
         )
     service = _FakeProfileService(result=result)
     resolver = CharacterTTSRequestResolver(service)
+    log_messages: list[str] = []
 
-    with pytest.raises(CharacterTTSResolutionError) as caught:
-        await resolver.resolve(
-            text="Private character reply.",
-            assistant_kind="character",
-            character_ref=character_ref,
-        )
+    sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
+    try:
+        with pytest.raises(CharacterTTSResolutionError) as caught:
+            await resolver.resolve(
+                text="Private character reply.",
+                assistant_kind="character",
+                character_ref=character_ref,
+            )
+    finally:
+        logger.remove(sink_id)
 
     assert caught.value.code == "assignment_invalid"
     assert caught.value.allow_global_override is True
+    rendered_logs = "\n".join(log_messages)
+    assert "operation=character_tts_resolution" in rendered_logs
+    assert "outcome_code=assignment_invalid" in rendered_logs
+    assert f"exception_category={exception_category}" in rendered_logs
+    assert "detail_code=not_available" in rendered_logs
+    assert character_ref.authority_id not in rendered_logs
+    assert "Private character reply." not in rendered_logs
     assert service.calls == [character_ref]
 
 

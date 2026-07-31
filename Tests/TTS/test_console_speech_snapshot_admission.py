@@ -246,6 +246,38 @@ async def test_explicit_global_request_path_remains_available():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("message_id", (None, ""))
+async def test_explicit_global_request_uses_one_fallback_message_id(
+    message_id: str | None,
+) -> None:
+    rejected_handler = _RecordingHandler()
+    rejected_handler._tts_service = object()
+
+    await rejected_handler.handle_tts_request(
+        TTSRequestEvent(text="", message_id=message_id)
+    )
+
+    completions = [
+        message
+        for message in rejected_handler.messages
+        if isinstance(message, TTSCompleteEvent)
+    ]
+    assert len(completions) == 1
+    assert completions[0].message_id == "adhoc"
+
+    admitted_handler = _RecordingHandler()
+    admitted_handler._tts_service = object()
+    await admitted_handler.handle_tts_request(
+        TTSRequestEvent(text="Speak this.", message_id=message_id)
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert admitted_handler.generated == [("Speak this.", "adhoc", None)]
+    assert set(admitted_handler._request_cooldown) == {"adhoc"}
+
+
+@pytest.mark.asyncio
 async def test_unassigned_character_reads_once_then_uses_global_resolution() -> None:
     store, snapshot = _issued_character_snapshot()
     profile_service = _UnassignedProfileService()

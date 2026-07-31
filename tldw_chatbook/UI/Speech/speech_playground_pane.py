@@ -546,7 +546,14 @@ class SpeechPlaygroundPane(
         self,
         preset: TTSPlaygroundSelectionPreset,
     ) -> None:
-        """Apply one exact process-local preset to this mounted Playground."""
+        """Apply one exact process-local preset to this mounted Playground.
+
+        Args:
+            preset: Exact profile selection to apply to the Playground.
+
+        Raises:
+            TypeError: If ``preset`` is not a selection preset.
+        """
 
         if type(preset) is not TTSPlaygroundSelectionPreset:
             raise TypeError("preset must be TTSPlaygroundSelectionPreset")
