@@ -534,7 +534,12 @@ class _WindowsFailedAdmissionProcess:
 
     def owns_process_info(self) -> bool:
         """Return whether native launch storage remains retained."""
-        return self._process_info is not None
+        if self._process_info is None:
+            return False
+        try:
+            return bool(self._process_info.hProcess)
+        except BaseException:
+            return True
 
     def adopt_pipes(
         self,
@@ -831,7 +836,6 @@ class _WindowsKernel:
                 child_handles=(child_stdin, child_stdout, child_stderr),
                 fallback=fallback,
                 identity=identity,
-                tree=tree,
             )
             fallback.adopt_pipes(
                 parent_stdin,
@@ -1056,7 +1060,6 @@ class _WindowsKernel:
         child_handles: tuple[int, int, int],
         fallback: _WindowsFailedAdmissionProcess,
         identity: _WindowsJobIdentity,
-        tree: OwnedProcessTree,
     ) -> None:
         attribute_size = self.ctypes.c_size_t()
         self.kernel32.InitializeProcThreadAttributeList(
@@ -1134,7 +1137,7 @@ class _WindowsKernel:
                 identity.thread_handle = thread_handle
                 identity.pid = pid
                 fallback.detach_process_info()
-            except BaseException as error:
+            except BaseException:
                 identity.thread_handle = 0
                 identity.pid = 0
                 try:
@@ -1144,10 +1147,7 @@ class _WindowsKernel:
                     )
                 except BaseException:
                     pass
-                raise ProcessTreeAdmissionError(
-                    "Windows process-tree admission failed",
-                    tree,
-                ) from error
+                raise
         finally:
             self.kernel32.DeleteProcThreadAttributeList(attribute_list)
 

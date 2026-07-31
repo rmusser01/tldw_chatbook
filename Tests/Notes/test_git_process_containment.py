@@ -184,7 +184,6 @@ def _fake_windows_kernel(
         child_handles: tuple[int, int, int],
         fallback: containment._WindowsFailedAdmissionProcess,
         identity: containment._WindowsJobIdentity,
-        tree: containment.OwnedProcessTree,
     ) -> None:
         assert argv == ("C:/Git/bin/git.exe", "push")
         assert cwd == "C:/repo"
@@ -193,8 +192,6 @@ def _fake_windows_kernel(
         trace.append("create_suspended_with_exact_handle_list")
         if create_process_fails:
             raise OSError("process creation failed")
-        assert tree.process is fallback
-        assert tree.native_identity is identity
         fallback.adopt(500, 4242)
         identity.thread_handle = 501
         identity.pid = 4242
@@ -435,6 +432,39 @@ async def test_windows_post_create_failure_is_retained_until_process_signals(
         501: 1,
     }
     assert tree.closed
+
+
+@pytest.mark.asyncio
+async def test_windows_pre_create_exception_does_not_retain_empty_process_info(
+) -> None:
+    kernel, calls = _ctypes_windows_kernel_for_create_process(
+        create_process_raises=True,
+    )
+    pipe_pairs = iter(((200, 201), (300, 301), (400, 401)))
+    kernel._create_job = lambda: 100
+    kernel._pipe = lambda *, parent_reads: next(pipe_pairs)
+    controller = containment._WindowsJobObjectController()
+    controller._kernel = kernel
+
+    with pytest.raises(MemoryError, match="CreateProcessW bridge failed"):
+        await controller.spawn(
+            "C:/Git/bin/git.exe",
+            "push",
+            cwd="C:/repo",
+            environment={"PATH": "C:/Git/bin"},
+            stdin=False,
+        )
+
+    assert "terminate_process" not in calls.trace
+    assert collections.Counter(calls.closed_handles) == {
+        100: 1,
+        200: 1,
+        201: 1,
+        300: 1,
+        301: 1,
+        400: 1,
+        401: 1,
+    }
 
 
 @pytest.mark.asyncio
@@ -784,9 +814,11 @@ class _FakeCreateProcessCalls:
         kernel,
         *,
         terminate_process_fails: bool = False,
+        create_process_raises: bool = False,
     ) -> None:
         self.kernel = kernel
         self.terminate_process_fails = terminate_process_fails
+        self.create_process_raises = create_process_raises
         self.process_signaled = False
         self.trace: list[str] = []
         self.created: dict[str, object] = {}
@@ -867,6 +899,9 @@ class _FakeCreateProcessCalls:
             startup_flags=int(startup.dwFlags),
         )
         info = process_info_pointer._obj
+        if self.create_process_raises:
+            self.trace.append("create_process")
+            raise MemoryError("CreateProcessW bridge failed")
         info.hProcess = 500
         info.hThread = 501
         info.dwProcessId = 4242
@@ -902,6 +937,7 @@ class _FakeCreateProcessCalls:
 def _ctypes_windows_kernel_for_create_process(
     *,
     terminate_process_fails: bool = False,
+    create_process_raises: bool = False,
 ):
     import ctypes
     from ctypes import wintypes
@@ -913,6 +949,7 @@ def _ctypes_windows_kernel_for_create_process(
     calls = _FakeCreateProcessCalls(
         kernel,
         terminate_process_fails=terminate_process_fails,
+        create_process_raises=create_process_raises,
     )
     kernel.kernel32 = calls
     return kernel, calls
@@ -926,8 +963,6 @@ def test_windows_containment_createprocess_uses_exact_abi_contract() -> None:
         stdin=False,
     )
     identity = containment._WindowsJobIdentity(100, 0)
-    tree = containment.OwnedProcessTree(fallback, identity)
-
     kernel._create_process(
         (executable, "push", "arg with space"),
         cwd="C:/repo",
@@ -935,7 +970,6 @@ def test_windows_containment_createprocess_uses_exact_abi_contract() -> None:
         child_handles=(201, 301, 401),
         fallback=fallback,
         identity=identity,
-        tree=tree,
     )
 
     assert fallback.wrapper_handles()[0] == 500
