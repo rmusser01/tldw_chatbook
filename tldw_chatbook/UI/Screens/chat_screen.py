@@ -245,10 +245,12 @@ from ...Chat.console_image_view import (
     ConsoleImageRenderCache,
     ConsoleImageRowSpec,
     ConsoleImageViewState,
+    extract_image_urls,
     fit_image_cell_size,
     next_view_mode,
     resolve_default_mode,
     resolve_react_character_expressions,
+    resolve_render_remote_images,
     resolve_show_character_avatar,
 )
 from ...Chat.console_paste_attach import (
@@ -337,6 +339,11 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
+from ...Widgets.Console.console_image_viewer_modal import (
+    AvatarViewRequested,
+    ClickableAvatarBox,
+    ConsoleImageViewerModal,
+)
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
 from ...Widgets.Console.console_citation_sources_modal import (
     selected_valid_evidence_ordinals,
@@ -529,6 +536,11 @@ CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
 # smaller for the rail's narrower column).
 CHARACTER_AVATAR_COLS = 16
 CHARACTER_AVATAR_LINES = 8
+# task-1537: remote inline images. Only the most recent assistant replies are
+# scanned for image links (older history never triggers fetches), and one
+# fetched body is capped well below the render cache's decode ceiling.
+REMOTE_IMAGE_SCAN_WINDOW = 20
+REMOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 # P3d-1 Task 3 (review fix): bound `_console_expression_spec_cache` so a
 # long session visiting many characters/states doesn't retain unbounded PIL
 # image references (the spec dicts hold their own `PILImage.Image`, so the
@@ -1114,7 +1126,9 @@ def _character_avatar_fallback_renderable(pil: Any):
     """
     from ...Utils.mosaic_render import mosaic_from_image
 
-    return mosaic_from_image(pil, CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES)
+    return mosaic_from_image(
+        pil, CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES, fit="cover"
+    )
 
 
 def _is_personas_preview_handoff(payload: ChatHandoffPayload) -> bool:
@@ -4237,7 +4251,96 @@ class ChatScreen(BaseAppScreen):
                 pixels=cache.get_pixels(message.id) if mode == "pixels" else None,
                 pil=pil if mode == "graphics" else None,
             )
+        self._extend_specs_with_remote_images(messages, specs, state, cache)
         return specs
+
+    def _extend_specs_with_remote_images(
+        self, messages, specs: dict, state, cache
+    ) -> None:
+        """Add rows for images referenced by LINKS in recent assistant replies.
+
+        task-1537, OFF unless ``[chat.images] render_remote_images`` -- a
+        model-suggested URL is untrusted input, so every fetch goes through
+        the egress-hardened image GET (per-hop SSRF policy, credential
+        stripping on cross-origin redirects, byte caps) and each URL is
+        attempted at most once per screen lifetime. Decoded bodies share the
+        bounded transcript render cache under a per-URL ``remote:`` key, so
+        the row appears on the next transcript sync tick after the fetch
+        lands; failures negative-cache and stay blank.
+        """
+        app_config = (
+            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
+        )
+        if not resolve_render_remote_images(app_config):
+            return
+        default_mode = self._console_image_default_mode
+        for message in messages[-REMOTE_IMAGE_SCAN_WINDOW:]:
+            if message.role is not ConsoleMessageRole.ASSISTANT:
+                continue
+            if message.id in specs:
+                continue
+            if message.status == "failed":
+                continue
+            urls = extract_image_urls(message.content or "", limit=1)
+            if not urls:
+                continue
+            url = urls[0]
+            key = f"remote:{url}"
+            pil = cache.get_pil(key)
+            if pil is not None:
+                mode = state.mode_for(message.id, default=default_mode)
+                if mode == "hidden":
+                    continue
+                specs[message.id] = ConsoleImageRowSpec(
+                    message_id=message.id,
+                    mode=mode,
+                    pixels=cache.get_pixels(key) if mode == "pixels" else None,
+                    pil=pil if mode == "graphics" else None,
+                )
+                continue
+            if cache.is_failed(key):
+                continue
+            attempts = getattr(self, "_remote_image_fetch_attempts", None)
+            if attempts is None:
+                attempts = set()
+                self._remote_image_fetch_attempts = attempts
+            if url in attempts:
+                continue
+            attempts.add(url)
+            self.run_worker(
+                self._fetch_remote_transcript_image(url, key),
+                group="console-remote-image-fetch",
+                exclusive=False,
+                exit_on_error=False,
+            )
+
+    async def _fetch_remote_transcript_image(self, url: str, cache_key: str) -> None:
+        """Fetch one linked image via the egress-hardened GET and cache it.
+
+        Must never raise (workers dispatched from the transcript sync path):
+        any failure -- egress-blocked URL, oversize body, non-image
+        content-type, decode error -- logs at debug and leaves the URL
+        negative-cached/attempted so it is not retried this session.
+        """
+        try:
+            from ...Image_Generation.adapters.image_format_utils import (
+                fetch_image_bytes,
+            )
+
+            data, content_type = await asyncio.to_thread(
+                fetch_image_bytes,
+                url,
+                timeout=20,
+                max_bytes=REMOTE_IMAGE_MAX_BYTES,
+            )
+            if content_type and not str(content_type).split(";")[0].strip().lower().startswith("image/"):
+                return
+            _state, cache = self._ensure_console_image_view()
+            await asyncio.to_thread(cache.prepare, cache_key, data)
+        except Exception:
+            logger.opt(exception=True).debug(
+                "remote transcript image fetch failed: {}", url
+            )
 
     def _console_generation_browse(self) -> dict[str, int]:
         """Return the lazily-created browsed-variant-index map for generation cards.
@@ -6010,6 +6113,21 @@ class ChatScreen(BaseAppScreen):
             # escaping mount failure (e.g. a session-switch/resume tick
             # racing a transient layout state) could crash the app.
             logger.opt(exception=True).debug("avatar: render into section failed")
+
+    @on(AvatarViewRequested)
+    def _handle_avatar_view_requested(self, message: AvatarViewRequested) -> None:
+        """Open the full-size portrait viewer for the rail avatar (task-1534)."""
+        message.stop()
+        spec = self._active_character_avatar or {}
+        pil = spec.get("pil")
+        if pil is None:
+            return
+        self.app.push_screen(
+            ConsoleImageViewerModal(
+                pil,
+                title=self._active_character_avatar_name or "Character portrait",
+            )
+        )
 
     def _build_character_avatar_widget(self, spec: dict | None) -> Widget:
         """Build a fresh avatar widget from the cached spec (data, not a widget).
@@ -11295,7 +11413,9 @@ class ChatScreen(BaseAppScreen):
                             if not rail_state.character_open:
                                 character_body.styles.display = "none"
                             with character_body:
-                                avatar_holder = Container(id="console-character-avatar")
+                                avatar_holder = ClickableAvatarBox(
+                                    id="console-character-avatar"
+                                )
                                 with avatar_holder:
                                     yield self._build_character_avatar_widget(
                                         self._active_character_avatar
