@@ -3636,7 +3636,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # scope-change path (`watch_tree_scope`) already re-dispatched its
         # own `_load_briefings()` reload the moment the scope moved, so the
         # new watchlist's own settings are not lost -- just not overwritten
-        # by this stale completion.
+        # by this stale completion. This guard has no mutation test of its
+        # own: the claim is carried by
+        # `test_switching_watchlists_mid_write_does_not_let_the_stale_write_clobber_the_new_one`,
+        # which pins the identical guard on the preset writer below.
         if self._briefing_watchlist_id() != watchlist_id:
             return
         self._briefing_selection_mode = mode
