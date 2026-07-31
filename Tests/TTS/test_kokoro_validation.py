@@ -392,4 +392,8 @@ async def test_integration_with_real_kokoro():
     except ImportError:
         pytest.skip("Kokoro dependencies not installed")
     except Exception as e:
-        pytest.skip(f"Kokoro initialization failed: {e}")
+        # Skip only when kokoro/model files are absent; other init failures
+        # now FAIL (task-1464: any exception used to become a skip).
+        if "kokoro" in str(e).lower() or "onnx" in str(e).lower() or isinstance(e, (ImportError, FileNotFoundError)):
+            pytest.skip(f"Kokoro initialization failed: {e}")
+        raise

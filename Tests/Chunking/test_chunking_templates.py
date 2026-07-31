@@ -315,9 +315,12 @@ class TestImprovedChunkingProcessWithTemplates:
             # Should have extracted metadata
             metadata = results[0]["metadata"]
             assert metadata is not None
-        except Exception:
-            # Template might not exist in test environment
-            pytest.skip("academic_paper template not found")
+        except Exception as e:
+            # Skip ONLY when the template itself is unavailable; any other
+            # failure used to be silently converted to a skip (task-1464).
+            if "template" in str(e).lower():
+                pytest.skip(f"academic_paper template unavailable: {e}")
+            raise
 
 
 class TestCustomOperations:

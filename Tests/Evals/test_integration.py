@@ -131,49 +131,45 @@ class TestFullEvaluationPipeline:
                 config={"api_key": "mock_key"},
             )
 
-            try:
-                # Run evaluation
-                run_id = await orchestrator.run_evaluation(
-                    task_id=task_id, model_id=model_id, max_samples=3
-                )
+            # Run evaluation
+            run_id = await orchestrator.run_evaluation(
+                task_id=task_id, model_id=model_id, max_samples=3
+            )
 
-                # Export results
-                exporter = EvaluationExporter()
-                output_path = Path(env["output_dir"]) / "results.json"
+            # Export results
+            exporter = EvaluationExporter()
+            output_path = Path(env["output_dir"]) / "results.json"
 
-                # Mock getting results from DB
-                mock_results = {
-                    "run_id": run_id,
-                    "status": "completed",
-                    "metrics": {"exact_match": 1.0, "f1": 1.0},
-                    "results": [
-                        {
-                            "id": "1",
-                            "input": "What is 2+2?",
-                            "output": "4",
-                            "expected": "4",
-                        },
-                        {
-                            "id": "2",
-                            "input": "What is the capital of France?",
-                            "output": "Paris",
-                            "expected": "Paris",
-                        },
-                    ],
-                }
+            # Mock getting results from DB
+            mock_results = {
+                "run_id": run_id,
+                "status": "completed",
+                "metrics": {"exact_match": 1.0, "f1": 1.0},
+                "results": [
+                    {
+                        "id": "1",
+                        "input": "What is 2+2?",
+                        "output": "4",
+                        "expected": "4",
+                    },
+                    {
+                        "id": "2",
+                        "input": "What is the capital of France?",
+                        "output": "Paris",
+                        "expected": "Paris",
+                    },
+                ],
+            }
 
-                exporter.export(mock_results, output_path, format="json")
+            exporter.export(mock_results, output_path, format="json")
 
-                # Verify export
-                assert output_path.exists()
-                with open(output_path, "r") as f:
-                    exported_data = json.load(f)
-                    assert exported_data["run_id"] == run_id
-                    assert exported_data["metrics"]["exact_match"] == 1.0
+            # Verify export
+            assert output_path.exists()
+            with open(output_path, "r") as f:
+                exported_data = json.load(f)
+                assert exported_data["run_id"] == run_id
+                assert exported_data["metrics"]["exact_match"] == 1.0
 
-            except Exception as e:
-                # Some parts may fail in test environment, but we're testing the flow
-                print(f"Expected error in integration test: {e}")
 
     @pytest.mark.asyncio
     async def test_error_handling_integration(self, setup_test_environment):
@@ -205,24 +201,21 @@ class TestFullEvaluationPipeline:
         budget_monitor = BudgetMonitor(budget_limit=0.01)  # Very low limit
 
         # Test budget exceeded scenario
-        try:
-            # Update cost to exceed limit
-            budget_monitor.update_cost(0.006)  # First update
-            budget_monitor.update_cost(0.006)  # Second update - should exceed
+        # Update cost to exceed limit. The monitor raises EAGERLY from
+        # update_cost the moment the limit is crossed — the old version of
+        # this test expected only check_budget() to raise, and its blanket
+        # except converted the contract mismatch into a skip labelled "not
+        # fully integrated" (task-1464: the feature is integrated; the test
+        # predated the eager-raise behavior).
+        budget_monitor.update_cost(0.006)  # First update: under the limit
+        with pytest.raises(EvaluationError) as exc_info:
+            budget_monitor.update_cost(0.006)  # Second update crosses and raises
 
-            # Check if budget is exceeded
-            assert budget_monitor.is_budget_exceeded()
+        assert "budget" in str(exc_info.value).lower()
+        # is_budget_exceeded()/check_budget() no longer exist; the observable
+        # exceeded-state is a spent budget with nothing remaining.
+        assert budget_monitor.get_remaining_budget() == 0
 
-            # Should raise when checking
-            with pytest.raises(EvaluationError) as exc_info:
-                budget_monitor.check_budget()
-
-            assert "budget" in str(exc_info.value).lower()
-
-        except Exception as e:
-            # Budget monitoring might not be fully integrated
-            print(f"Budget monitoring test skipped: {e}")
-            pytest.skip("Budget monitoring not fully integrated")
 
 
 class TestTemplateIntegration:

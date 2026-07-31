@@ -523,7 +523,9 @@ class TestRealModelVariations:
                 service.close()
 
             except Exception as e:
-                print(f"Failed to test {model_name}: {e}")
+                # A model that fails is a FAILURE, not a console line
+                # (task-1464: the old handler printed and moved on).
+                raise AssertionError(f"model {model_name} failed") from e
 
 
 # TestRealMemoryManagement class removed - memory management service not exposed in simplified API
