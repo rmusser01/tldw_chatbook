@@ -1688,6 +1688,7 @@ class LibraryFileNotesWorkspace(Vertical):
             if operation.kind == "push" and operation.child_started
             else "checking"
         )
+        self._render_session_git_label()
         task = asyncio.create_task(
             self._observe_push_operation(operation, key, operation_id)
         )
@@ -4204,9 +4205,12 @@ class LibraryFileNotesWorkspace(Vertical):
         if (
             operation is None
             or key is None
-            or self._push_view_phase != "pushing"
+            or self._push_view_phase not in {"checking_uncertain", "pushing"}
             or operation_id != self._push_operation_id
-            or not operation.child_started
+            or (
+                operation.kind != "recovery"
+                and (operation.kind != "push" or not operation.child_started)
+            )
             or not self._push_operation_is_current(
                 operation,
                 key,

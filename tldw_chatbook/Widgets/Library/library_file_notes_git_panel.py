@@ -109,7 +109,7 @@ _PUSH_PROGRESS: dict[PushProgressPhase, tuple[str, str, str]] = {
     "checking_uncertain": (
         "Checking uncertain outcome…",
         "This check does not push.",
-        "#file-notes-git-push-body",
+        "#file-notes-git-push-back-to-files",
     ),
     "pushing": (
         "Pushing 1 reviewed commit…",
@@ -812,6 +812,15 @@ class LibraryFileNotesGitPanel(Vertical):
     #file-notes-git-push-footer Button {
         display: none;
         width: 1fr;
+    }
+
+    LibraryFileNotesGitPanel.-push-footer-narrow
+    #file-notes-git-push-footer {
+        grid-size: 1 2;
+        grid-columns: 1fr;
+        grid-rows: 1 1;
+        height: 2;
+        min-height: 2;
     }
 
     #file-notes-git-push-cancel,
@@ -1586,6 +1595,7 @@ class LibraryFileNotesGitPanel(Vertical):
         """Recompute mounted copy and actions from real available geometry."""
         self._sync_action_layout(event.size.width)
         self._sync_commit_footer_layout(event.size.width)
+        self._sync_push_footer_layout(event.size.width)
         self.call_after_refresh(self._fit_fixed_regions)
 
     def _sync_action_layout(self, width: int) -> None:
@@ -1615,6 +1625,25 @@ class LibraryFileNotesGitPanel(Vertical):
             for label in ("Edit message", "Cancel commit", "Confirm commit")
         )
         self.set_class(width < required, "-commit-footer-narrow")
+
+    def _sync_push_footer_layout(self, width: int) -> None:
+        """Stack only when the complete visible push actions cannot fit."""
+        if not self.is_mounted:
+            return
+        footer = self.query_one("#file-notes-git-push-footer")
+        visible = tuple(
+            button for button in footer.query(Button) if button.display
+        )
+        requirements = tuple(
+            cell_len(str(button.label)) + button.styles.padding.width
+            for button in visible
+        )
+        required = len(requirements) * max(requirements, default=0)
+        available = footer.content_region.width or width
+        self.set_class(
+            len(visible) > 1 and required > available,
+            "-push-footer-narrow",
+        )
 
     def _visible_action_cells(self, selector: str) -> int:
         row = self.query_one(selector)
@@ -1896,7 +1925,7 @@ class LibraryFileNotesGitPanel(Vertical):
             }
         elif phase in {"checking_candidate", "checking_remote"}:
             visible = {"file-notes-git-push-cancel"}
-        elif phase == "pushing":
+        elif phase in {"checking_uncertain", "pushing"}:
             visible = {"file-notes-git-push-back-to-files"}
         elif phase == "result" and self._push_result is not None:
             action_id = _PUSH_RESULT_ACTION_BUTTON[self._push_result.action]
@@ -1908,11 +1937,17 @@ class LibraryFileNotesGitPanel(Vertical):
         ).query(Button):
             button.display = button.id in visible
             button.disabled = False
+        self.query_one("#file-notes-git-push-back-to-files", Button).label = (
+            "Back to Files — check continues"
+            if phase == "checking_uncertain"
+            else "Back to Files — push continues"
+        )
         if phase == "result" and self._push_result is not None:
             action_id = _PUSH_RESULT_ACTION_BUTTON[self._push_result.action]
             self.query_one(f"#{action_id}", Button).disabled = (
                 not self._push_result.action_enabled
             )
+        self._sync_push_footer_layout(self.size.width)
 
     def _sync_workflow_surfaces(self) -> None:
         """Resolve list/commit/push visibility from two independent phases."""
@@ -3057,7 +3092,10 @@ class LibraryFileNotesGitPanel(Vertical):
     ) -> None:
         event.stop()
         operation_id = self._push_operation_id
-        if self._push_phase == "pushing" and operation_id is not None:
+        if (
+            self._push_phase in {"checking_uncertain", "pushing"}
+            and operation_id is not None
+        ):
             self.post_message(
                 self.PushOperationRequested("back_to_files", operation_id)
             )
@@ -3242,7 +3280,7 @@ class LibraryFileNotesGitPanel(Vertical):
                 self.post_message(
                     self.PushOperationRequested("cancel_check", operation_id)
                 )
-            elif self._push_phase == "pushing":
+            elif self._push_phase in {"checking_uncertain", "pushing"}:
                 self.post_message(
                     self.PushOperationRequested("back_to_files", operation_id)
                 )
@@ -3385,7 +3423,7 @@ class PushDestinationAuthorizationDialog(ModalScreen[bool]):
     #file-notes-push-auth-dialog {
         width: 78;
         max-width: 95%;
-        height: auto;
+        height: 24;
         max-height: 92%;
         border: round $primary;
         background: $surface;
@@ -3399,9 +3437,21 @@ class PushDestinationAuthorizationDialog(ModalScreen[bool]):
     }
 
     #file-notes-push-auth-copy {
+        width: 100%;
         height: auto;
         min-height: 8;
         text-wrap: wrap;
+    }
+
+    #file-notes-push-auth-body {
+        width: 100%;
+        height: 1fr;
+        min-height: 4;
+        scrollbar-size: 1 1;
+    }
+
+    #file-notes-push-auth-body:focus {
+        outline: heavy $primary;
     }
 
     #file-notes-push-auth-actions {
@@ -3418,6 +3468,18 @@ class PushDestinationAuthorizationDialog(ModalScreen[bool]):
         padding: 0 1;
         border: none;
     }
+
+    PushDestinationAuthorizationDialog.-compact-actions
+    #file-notes-push-auth-actions {
+        layout: vertical;
+        height: 3;
+        min-height: 3;
+    }
+
+    PushDestinationAuthorizationDialog.-compact-actions
+    #file-notes-push-auth-actions Button {
+        width: 1fr;
+    }
     """
 
     def __init__(
@@ -3428,6 +3490,7 @@ class PushDestinationAuthorizationDialog(ModalScreen[bool]):
         super().__init__(id="file-notes-push-auth-screen")
         self._candidate = candidate
         self._authorization = authorization
+        self._action_required_width: int | None = None
 
     def compose(self) -> ComposeResult:
         destination = self._authorization.destination
@@ -3438,21 +3501,22 @@ class PushDestinationAuthorizationDialog(ModalScreen[bool]):
                 id="file-notes-push-auth-title",
                 markup=False,
             )
-            yield Label(
-                (
-                    f"Endpoint: {_push_destination_summary(destination)}\n"
-                    f"Local branch: {self._candidate.local_branch_ref}\n"
-                    f"Full destination ref: {destination.destination_ref}\n"
-                    f"Transport: {transport}\n\n"
-                    "Scope: authorization lasts only for this application "
-                    "process and this exact configured destination.\n"
-                    "Existing configured SSH or credential helpers may run "
-                    "after authorization. Terminal prompts are disabled.\n"
-                    "This authorization checks the destination and does not push."
-                ),
-                id="file-notes-push-auth-copy",
-                markup=False,
-            )
+            with _WorkflowScroll(id="file-notes-push-auth-body"):
+                yield Label(
+                    (
+                        f"Endpoint: {_push_destination_summary(destination)}\n"
+                        f"Local branch: {self._candidate.local_branch_ref}\n"
+                        f"Full destination ref: {destination.destination_ref}\n"
+                        f"Transport: {transport}\n\n"
+                        "Scope: authorization lasts only for this application "
+                        "process and this exact configured destination.\n"
+                        "Existing configured SSH or credential helpers may run "
+                        "after authorization. Terminal prompts are disabled.\n"
+                        "This authorization checks the destination and does not push."
+                    ),
+                    id="file-notes-push-auth-copy",
+                    markup=False,
+                )
             with Horizontal(id="file-notes-push-auth-actions"):
                 yield Button(
                     "Cancel",
@@ -3472,6 +3536,29 @@ class PushDestinationAuthorizationDialog(ModalScreen[bool]):
 
     def on_mount(self) -> None:
         self.query_one("#file-notes-push-auth-cancel", Button).focus()
+        self.call_after_refresh(self._sync_action_layout)
+
+    def on_resize(self, _event: Resize) -> None:
+        """Stack only when the complete authorization actions cannot fit."""
+        self.call_after_refresh(self._sync_action_layout)
+
+    def _sync_action_layout(self) -> None:
+        """Preserve wide action order while protecting compact dialog geometry."""
+        if not self.is_mounted:
+            return
+        actions = self.query_one("#file-notes-push-auth-actions")
+        buttons = tuple(actions.query(Button))
+        if self._action_required_width is None:
+            widths = tuple(button.region.width for button in buttons)
+            if not widths or any(width <= 0 for width in widths):
+                return
+            self._action_required_width = sum(widths)
+        available = actions.content_region.width
+        if available > 0:
+            self.set_class(
+                self._action_required_width > available,
+                "-compact-actions",
+            )
 
     def dismiss(self, result: bool | None = None) -> AwaitComplete:
         """Treat any close path without an affirmative result as decline."""

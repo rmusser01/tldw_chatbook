@@ -929,17 +929,22 @@ git commit -m "feat(notes): add guarded push review UI [TASK-1566]"
 - Modify: `Tests/ProductionApp/test_file_notes_session_owner_lifecycle.py`
 
 - [ ] Add a compact mounted matrix at `40x20` covering every push phase,
-  outcome, disabled reason, recovery action, focus order, body scroll, fixed
-  footer, Details open/close, accessible status, and focused-control
-  visibility. Use real Pilot Tab/Shift+Tab/Enter/Escape/scroll events.
+  representative typed outcomes, the visible uncertain-recovery disabled
+  reason, recovery action, focus order, body scroll, fixed footer, Details
+  open/close, accessible status, and focused-control visibility. Use real Pilot
+  Tab/Shift+Tab/Enter/Escape/scroll events. Do not invent a disabled-action
+  subsystem for absent process-only candidates, which remain hidden by
+  contract.
 - [ ] Add one representative happy path at `120x40`, and retained-operation
   leave/reopen tests at both `40x20` and `120x40`. Do not create a
   phase-by-viewport Cartesian suite or repeat every state at `160x45`.
 - [ ] Preserve the existing narrow Navigator/Editor switching and the existing
   `160x45` Files-source-entry regression. Assert results do not depend on the
   editor action-status surface hidden in compact Navigator/Prepare mode.
-- [ ] Add production-owner lifecycle assertions for one active push and one
-  uncertain query-only recovery, without launching the full app UAT in pytest.
+- [ ] Reuse and, only if evidence is missing, strengthen the existing
+  production-owner lifecycle proof for one active push and one uncertain
+  query-only recovery. Do not duplicate its preflight/push/recovery shutdown
+  matrix or launch the full app UAT in pytest.
 - [ ] Run:
 
 ```bash
@@ -948,6 +953,13 @@ python3 -m pytest Tests/UI/test_library_file_notes_git_push.py Tests/ProductionA
 
 Expected: FAIL on the newly added compact/remount/lifecycle assertions until
 focus/geometry/lifecycle defects are corrected.
+
+If shared panel/workspace CSS changes, also run the existing Files-source
+regression rather than duplicating it:
+
+```bash
+python3 -m pytest Tests/UI/test_library_file_notes_workspace.py::test_library_notes_source_choices_render_and_switch_by_keyboard -q
+```
 
 - [ ] Make only focused presentation/lifecycle corrections required by these
   tests. Do not redesign unrelated File Notes controls or change app/screen

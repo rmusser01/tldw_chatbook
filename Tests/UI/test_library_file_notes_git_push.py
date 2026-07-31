@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from textual.containers import VerticalScroll
+from textual.widget import Widget
 from textual.widgets import Button, Label, TextArea
 
 sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
@@ -428,6 +429,20 @@ def _assert_last_push_action(
     assert message.operation_id == operation_id
 
 
+def _assert_within_terminal(
+    *widgets: Widget,
+    size: tuple[int, int],
+) -> None:
+    """Keep a modal and its reachable controls within the compact viewport."""
+    width, height = size
+    for widget in widgets:
+        assert widget.display
+        assert 0 <= widget.region.x < width
+        assert 0 <= widget.region.y < height
+        assert widget.region.right <= width
+        assert widget.region.bottom <= height
+
+
 @pytest.mark.asyncio
 async def test_push_panel_availability_is_a_separate_stable_list_action() -> None:
     """Coupling push availability to commit rows/status must break this test."""
@@ -494,9 +509,22 @@ async def test_push_authorization_dialog_is_safe_explicit_and_has_endpoint_detai
     )
     app = _DialogHarness(dialog)
 
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(40, 20)) as pilot:
         await pilot.pause()
         cancel = dialog.query_one("#file-notes-push-auth-cancel", Button)
+        details = dialog.query_one("#file-notes-push-auth-details", Button)
+        confirm = dialog.query_one("#file-notes-push-auth-confirm", Button)
+        auth_surface = dialog.query_one("#file-notes-push-auth-dialog", Widget)
+        actions = dialog.query_one("#file-notes-push-auth-actions", Widget)
+        _assert_within_terminal(
+            dialog,
+            auth_surface,
+            actions,
+            cancel,
+            details,
+            confirm,
+            size=(40, 20),
+        )
         assert cancel.has_focus
         copy = _text(dialog.query_one("#file-notes-push-auth-copy", Label))
         assert "Authorize configured destination" in _text(
@@ -512,15 +540,34 @@ async def test_push_authorization_dialog_is_safe_explicit_and_has_endpoint_detai
         assert "Terminal prompts are disabled" in copy
         assert "checks the destination and does not push" in copy
 
-        details = dialog.query_one("#file-notes-push-auth-details", Button)
-        details.focus()
+        await pilot.press("tab")
+        assert details.has_focus
+        await pilot.press("shift+tab")
+        assert cancel.has_focus
+        await pilot.press("tab")
+        assert details.has_focus
         await pilot.press("enter")
         await pilot.pause()
         endpoint_dialog = app.screen
         assert endpoint_dialog.__class__.__name__ == "PushEndpointDetailsDialog"
+        endpoint_surface = endpoint_dialog.query_one(
+            "#file-notes-push-endpoint-details-dialog",
+            Widget,
+        )
         endpoint_text = endpoint_dialog.query_one(
             "#file-notes-push-endpoint-details-text",
             TextArea,
+        )
+        endpoint_close = endpoint_dialog.query_one(
+            "#file-notes-push-endpoint-details-close",
+            Button,
+        )
+        _assert_within_terminal(
+            endpoint_dialog,
+            endpoint_surface,
+            endpoint_text,
+            endpoint_close,
+            size=(40, 20),
         )
         assert endpoint_text.read_only
         assert endpoint_text.has_focus
@@ -535,6 +582,101 @@ async def test_push_authorization_dialog_is_safe_explicit_and_has_endpoint_detai
         await pilot.press("escape")
         await pilot.pause()
         assert app.result is False
+
+
+@pytest.mark.parametrize(
+    ("size", "scrolls"),
+    (((40, 20), True), ((120, 40), False)),
+)
+@pytest.mark.asyncio
+async def test_push_authorization_disclosure_is_bounded_and_keyboard_reachable(
+    size: tuple[int, int],
+    scrolls: bool,
+) -> None:
+    """The complete disclosure must wrap and remain keyboard reachable."""
+    dialog = git_panel_module.PushDestinationAuthorizationDialog(
+        _push_availability_projection().candidate,
+        PushAuthorizationProjection(_push_destination_projection()),
+    )
+    app = _DialogHarness(dialog)
+
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        surface = dialog.query_one("#file-notes-push-auth-dialog", Widget)
+        body = dialog.query_one(
+            "#file-notes-push-auth-body",
+            VerticalScroll,
+        )
+        copy = dialog.query_one("#file-notes-push-auth-copy", Label)
+        actions = dialog.query_one("#file-notes-push-auth-actions", Widget)
+        cancel = dialog.query_one("#file-notes-push-auth-cancel", Button)
+
+        assert copy.region.x >= body.content_region.x
+        assert copy.region.right <= body.content_region.right
+        assert copy.region.width <= body.content_region.width
+        assert body.region.x >= surface.content_region.x
+        assert body.region.right <= surface.content_region.right
+        assert body.region.bottom <= actions.region.y
+        assert actions.region.bottom == surface.content_region.bottom
+        _assert_within_terminal(
+            surface,
+            body,
+            actions,
+            size=size,
+        )
+
+        assert cancel.has_focus
+        await pilot.press("shift+tab")
+        assert body.has_focus
+        prior_scroll = body.scroll_y
+        await pilot.press("pagedown")
+        await pilot.pause()
+        assert body.has_focus
+        assert (body.scroll_y > prior_scroll) is scrolls
+        assert (body.max_scroll_y > 0) is scrolls
+        if scrolls:
+            await pilot.press("end")
+            await pilot.pause()
+            assert body.scroll_y == body.max_scroll_y
+            await pilot.press("home")
+            await pilot.pause()
+            assert body.scroll_y == 0
+        await pilot.press("tab")
+        assert cancel.has_focus
+
+
+@pytest.mark.parametrize(
+    ("width", "stacked"),
+    ((53, True), (56, True), (62, True), (63, False)),
+)
+@pytest.mark.asyncio
+async def test_push_authorization_actions_use_their_real_available_width(
+    width: int,
+    stacked: bool,
+) -> None:
+    """The action layout boundary must follow the dialog's measured row."""
+    dialog = git_panel_module.PushDestinationAuthorizationDialog(
+        _push_availability_projection().candidate,
+        PushAuthorizationProjection(_push_destination_projection()),
+    )
+    app = _DialogHarness(dialog)
+
+    async with app.run_test(size=(width, 20)) as pilot:
+        await pilot.pause()
+        actions = dialog.query_one("#file-notes-push-auth-actions", Widget)
+        buttons = tuple(actions.query(Button))
+        assert actions.region.height == (3 if stacked else 1)
+        for button in buttons:
+            assert button.region.x >= actions.content_region.x
+            assert button.region.right <= actions.content_region.right
+        if stacked:
+            assert all(
+                button.region.width == actions.content_region.width
+                for button in buttons
+            )
+        else:
+            assert buttons[0].region.x == actions.content_region.x
+            assert buttons[-1].region.right == actions.content_region.right
 
 
 @pytest.mark.asyncio
@@ -690,89 +832,353 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
         _assert_last_push_action(app, "push_reviewed_commit", 41)
 
 
+@pytest.mark.parametrize(
+    (
+        "phase",
+        "copy",
+        "detail",
+        "control_id",
+        "control_label",
+        "action",
+    ),
+    (
+        (
+            "checking_candidate",
+            "Checking push candidate…",
+            "",
+            "file-notes-git-push-cancel",
+            "Cancel check",
+            "cancel_check",
+        ),
+        (
+            "checking_remote",
+            "Checking remote before push…",
+            "",
+            "file-notes-git-push-cancel",
+            "Cancel check",
+            "cancel_check",
+        ),
+        (
+            "checking_uncertain",
+            "Checking uncertain outcome…",
+            "This check does not push.",
+            "file-notes-git-push-back-to-files",
+            "Back to Files — check continues",
+            "back_to_files",
+        ),
+        (
+            "pushing",
+            "Pushing 1 reviewed commit…",
+            "Cancellation is unavailable after the network push starts.",
+            "file-notes-git-push-back-to-files",
+            "Back to Files — push continues",
+            "back_to_files",
+        ),
+    ),
+)
 @pytest.mark.asyncio
-async def test_push_panel_progress_labels_and_exit_intents_are_phase_scoped(
+async def test_push_panel_progress_is_compact_and_phase_safe(
+    phase: git_panel_module.PushProgressPhase,
+    copy: str,
+    detail: str,
+    control_id: str,
+    control_label: str,
+    action: str,
 ) -> None:
-    """Reusing commit phases or an unkeyed generic Cancel must fail."""
+    """Every compact progress phase keeps a fixed safe exit and viewport."""
     panel = git_panel_module.LibraryFileNotesGitPanel()
     panel.styles.display = "block"
     app = _PushPanelHarness(panel)
 
-    async with app.run_test() as pilot:
-        panel.render_push_progress("checking_candidate", operation_id=51)
+    async with app.run_test(size=(40, 20)) as pilot:
+        operation_id = 51
+        panel.render_push_progress(phase, operation_id=operation_id)
         await pilot.pause()
-        assert panel.push_phase == "checking_candidate"
+        assert panel.push_phase == phase
         assert _text(panel.query_one("#file-notes-git-push-progress-copy")) == (
-            "Checking push candidate…"
-        )
-        cancel = panel.query_one("#file-notes-git-push-cancel", Button)
-        assert cancel.display
-        assert cancel.has_focus
-        cancel.press()
-        await pilot.pause()
-        _assert_last_push_action(app, "cancel_check", 51)
-
-        panel.render_push_progress("checking_remote", operation_id=52)
-        await pilot.pause()
-        assert _text(panel.query_one("#file-notes-git-push-progress-copy")) == (
-            "Checking remote before push…"
-        )
-        cancel.press()
-        await pilot.pause()
-        _assert_last_push_action(app, "cancel_check", 52)
-
-        panel.render_push_progress("checking_uncertain", operation_id=53)
-        await pilot.pause()
-        assert _text(panel.query_one("#file-notes-git-push-progress-copy")) == (
-            "Checking uncertain outcome…"
-        )
-        assert not cancel.display
-        assert panel.query_one("#file-notes-git-push-body").has_focus
-
-        panel.render_push_progress("pushing", operation_id=54)
-        await pilot.pause()
-        assert _text(panel.query_one("#file-notes-git-push-progress-copy")) == (
-            "Pushing 1 reviewed commit…"
+            copy
         )
         assert _text(panel.query_one("#file-notes-git-push-progress-detail")) == (
-            "Cancellation is unavailable after the network push starts."
+            detail
         )
-        back = panel.query_one(
-            "#file-notes-git-push-back-to-files",
-            Button,
-        )
-        assert back.display
-        assert back.has_focus
-        back.press()
+        body = panel.query_one("#file-notes-git-push-body", VerticalScroll)
+        footer = panel.query_one("#file-notes-git-push-footer", Widget)
+        control = panel.query_one(f"#{control_id}", Button)
+        assert control.display
+        assert str(control.label) == control_label
+        assert control.has_focus
+        assert body.region.x == footer.region.x == panel.content_region.x
+        assert body.region.width == footer.region.width == panel.content_region.width
+        assert body.region.bottom == footer.region.y
+        assert footer.region.height == 1
+        assert footer.region.bottom == panel.content_region.bottom
+        assert control.region == footer.content_region
+
+        body.focus()
+        await pilot.press("pagedown")
+        assert body.has_focus
+        assert not app.messages
+
+        control.focus()
+        await pilot.press("enter")
         await pilot.pause()
-        _assert_last_push_action(app, "back_to_files", 54)
+        _assert_last_push_action(app, action, operation_id)
+        await pilot.press("escape")
+        await pilot.pause()
+        _assert_last_push_action(app, action, operation_id)
 
 
+@pytest.mark.parametrize(
+    (
+        "case",
+        "title",
+        "action",
+        "action_enabled",
+        "disabled_reason",
+        "primary_id",
+        "primary_label",
+    ),
+    (
+        ("review", "", None, True, None, "file-notes-git-push-confirm", "Push 1 commit"),
+        (
+            "success",
+            "Succeeded",
+            "back_to_session",
+            True,
+            None,
+            "file-notes-git-push-back-session",
+            "Back to session",
+        ),
+        (
+            "failed",
+            "Failed with no update currently observed",
+            "review_again",
+            True,
+            None,
+            "file-notes-git-push-review-again",
+            "Review again",
+        ),
+        (
+            "uncertain-enabled",
+            "Uncertain",
+            "check_remote_again",
+            True,
+            None,
+            "file-notes-git-push-check-remote",
+            "Check remote again — no push",
+        ),
+        (
+            "uncertain-disabled",
+            "Uncertain",
+            "check_remote_again",
+            False,
+            (
+                "Owned push descendants are still settling; checking becomes "
+                "available after every owned process ends."
+            ),
+            "file-notes-git-push-check-remote",
+            "Check remote again — no push",
+        ),
+    ),
+    ids=(
+        "review",
+        "success",
+        "failed",
+        "uncertain-enabled",
+        "uncertain-disabled",
+    ),
+)
 @pytest.mark.asyncio
-async def test_push_panel_escape_uses_each_phase_safe_action() -> None:
-    """Escape must never fall through to the commit/list binding mid-push."""
+async def test_push_panel_compact_review_and_result_matrix_is_keyboard_safe(
+    case: str,
+    title: str,
+    action: str | None,
+    action_enabled: bool,
+    disabled_reason: str | None,
+    primary_id: str,
+    primary_label: str,
+) -> None:
+    """Compact review/results keep complete copy above a fixed safe footer."""
+    panel = git_panel_module.LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PushPanelHarness(panel)
+    operation_id = 58
+    message = f"{case}: " + "complete selectable outcome copy; " * 16
+
+    async with app.run_test(size=(40, 20)) as pilot:
+        if case == "review":
+            panel.render_push_review(
+                _push_panel_review_projection(),
+                operation_id=operation_id,
+            )
+        else:
+            assert action is not None
+            panel.render_push_result(
+                git_panel_module.PushPanelResultProjection(
+                    title=title,
+                    message=message,
+                    action=action,
+                    action_enabled=action_enabled,
+                    disabled_reason=disabled_reason,
+                ),
+                operation_id=operation_id,
+            )
+        await pilot.pause()
+
+        body = panel.query_one("#file-notes-git-push-body", VerticalScroll)
+        footer = panel.query_one("#file-notes-git-push-footer", Widget)
+        back_id = (
+            "file-notes-git-push-back"
+            if case == "review"
+            else "file-notes-git-push-back-session"
+        )
+        back = panel.query_one(f"#{back_id}", Button)
+        primary = panel.query_one(f"#{primary_id}", Button)
+        visible_buttons = tuple(
+            button.id for button in footer.query(Button) if button.display
+        )
+        expected_buttons = (
+            (back_id,)
+            if primary_id == back_id
+            else (back_id, primary_id)
+        )
+        assert visible_buttons == expected_buttons
+        assert back.has_focus
+        assert str(primary.label) == primary_label
+        assert primary.region.width >= len(primary_label) + 2
+        assert body.region.x == footer.region.x == panel.content_region.x
+        assert body.region.width == footer.region.width == panel.content_region.width
+        assert body.region.bottom == footer.region.y
+        assert footer.region.bottom == panel.content_region.bottom
+        assert footer.region.height == (
+            2 if primary_id == "file-notes-git-push-check-remote" else 1
+        )
+        _assert_within_terminal(
+            body,
+            footer,
+            back,
+            primary,
+            size=(40, 20),
+        )
+
+        if case == "review":
+            notes = panel.query_one(
+                "#file-notes-git-push-review-notes",
+                TextArea,
+            )
+            details = panel.query_one(
+                "#file-notes-git-push-review-details",
+                Button,
+            )
+            body.focus()
+            prior_scroll = body.scroll_y
+            await pilot.press("pagedown")
+            await pilot.pause()
+            assert body.has_focus
+            assert body.scroll_y > prior_scroll
+
+            back.focus()
+            await pilot.press("tab")
+            assert primary.has_focus
+            await pilot.press("shift+tab")
+            assert back.has_focus
+            await pilot.press("shift+tab")
+            assert notes.has_focus
+            await pilot.press("shift+tab")
+            assert details.has_focus
+            await pilot.press("enter")
+            await pilot.pause()
+            _assert_last_push_action(app, "endpoint_details", operation_id)
+            back.focus()
+            await pilot.press("tab", "enter")
+            await pilot.pause()
+            _assert_last_push_action(app, "push_reviewed_commit", operation_id)
+            await pilot.press("escape")
+            await pilot.pause()
+            _assert_last_push_action(app, "back_from_review", operation_id)
+            return
+
+        result_title = panel.query_one(
+            "#file-notes-git-push-result-title",
+            Widget,
+        )
+        result_copy = panel.query_one(
+            "#file-notes-git-push-result-copy",
+            TextArea,
+        )
+        reason = panel.query_one("#file-notes-git-push-result-reason")
+        assert _text(result_title) == title
+        assert result_copy.read_only
+        assert result_copy.text == message
+        assert reason.display is (disabled_reason is not None)
+        assert _text(reason) == (disabled_reason or "")
+
+        await pilot.press("shift+tab")
+        assert result_copy.has_focus
+        await pilot.press("f7")
+        assert result_copy.selected_text == message
+        await pilot.press("pagedown")
+        assert result_copy.has_focus
+        await pilot.press("tab")
+        assert back.has_focus
+
+        if primary_id != back_id:
+            await pilot.press("tab")
+            if action_enabled:
+                assert primary.has_focus
+                await pilot.press("enter")
+                await pilot.pause()
+                assert action is not None
+                _assert_last_push_action(app, action, operation_id)
+            else:
+                assert not primary.has_focus
+                assert primary.disabled
+                assert not app.messages
+        else:
+            await pilot.press("enter")
+            await pilot.pause()
+            _assert_last_push_action(app, "back_to_session", operation_id)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        _assert_last_push_action(app, "back_to_session", operation_id)
+
+
+@pytest.mark.parametrize(
+    ("width", "stacked"),
+    ((47, True), (59, True), (60, False)),
+)
+@pytest.mark.asyncio
+async def test_push_result_footer_uses_widest_equal_column_boundary(
+    width: int,
+    stacked: bool,
+) -> None:
+    """Unequal result labels must fit both equal columns before unstacking."""
     panel = git_panel_module.LibraryFileNotesGitPanel()
     panel.styles.display = "block"
     app = _PushPanelHarness(panel)
 
-    async with app.run_test() as pilot:
-        panel.render_push_review(
-            _push_panel_review_projection(),
-            operation_id=55,
+    async with app.run_test(size=(width, 20)) as pilot:
+        panel.render_push_result(
+            git_panel_module.PushPanelResultProjection(
+                title="Uncertain",
+                message="The exact outcome remains uncertain.",
+                action="check_remote_again",
+            ),
+            operation_id=59,
         )
-        await pilot.press("escape")
         await pilot.pause()
-        _assert_last_push_action(app, "back_from_review", 55)
 
-        panel.render_push_progress("checking_remote", operation_id=56)
-        await pilot.press("escape")
-        await pilot.pause()
-        _assert_last_push_action(app, "cancel_check", 56)
-
-        panel.render_push_progress("pushing", operation_id=57)
-        await pilot.press("escape")
-        await pilot.pause()
-        _assert_last_push_action(app, "back_to_files", 57)
+        footer = panel.query_one("#file-notes-git-push-footer", Widget)
+        buttons = tuple(
+            button for button in footer.query(Button) if button.display
+        )
+        assert footer.region.height == (2 if stacked else 1)
+        for button in buttons:
+            required = len(str(button.label)) + button.styles.padding.width
+            assert button.region.width >= required
+            assert button.region.x >= footer.content_region.x
+            assert button.region.right <= footer.content_region.right
 
 
 @pytest.mark.asyncio
@@ -794,111 +1200,6 @@ async def test_push_focus_repair_and_buffered_enter_cannot_cross_operation(
 
         assert panel.query_one("#file-notes-git-push-back", Button).has_focus
         assert not app.messages
-
-
-@pytest.mark.asyncio
-async def test_push_results_are_selectable_and_offer_only_typed_safe_recovery(
-) -> None:
-    """Elided results, Retry copy, or unkeyed recovery must fail."""
-    projection_type = git_panel_module.PushPanelResultProjection
-    panel = git_panel_module.LibraryFileNotesGitPanel()
-    panel.styles.display = "block"
-    app = _PushPanelHarness(panel)
-    long_message = "Exact result: " + "remote observation remains selectable; " * 20
-
-    async with app.run_test(size=(80, 30)) as pilot:
-        panel.render_push_result(
-            projection_type(
-                title="Succeeded",
-                message=long_message,
-                action="back_to_session",
-            ),
-            operation_id=71,
-        )
-        await pilot.pause()
-        result_copy = panel.query_one(
-            "#file-notes-git-push-result-copy",
-            TextArea,
-        )
-        assert result_copy.read_only
-        assert result_copy.text == long_message
-        back = panel.query_one("#file-notes-git-push-back-session", Button)
-        assert str(back.label) == "Back to session"
-        assert back.has_focus
-        back.press()
-        await pilot.pause()
-        _assert_last_push_action(app, "back_to_session", 71)
-
-        panel.render_push_result(
-            projection_type(
-                title="Failed with no update currently observed",
-                message=long_message,
-                action="review_again",
-            ),
-            operation_id=72,
-        )
-        await pilot.pause()
-        review_again = panel.query_one(
-            "#file-notes-git-push-review-again",
-            Button,
-        )
-        assert str(review_again.label) == "Review again"
-        assert back.display
-        assert review_again.display
-        assert back.has_focus
-        assert "Retry" not in " ".join(
-            str(button.label) for button in panel.query(Button)
-        )
-        review_again.press()
-        await pilot.pause()
-        _assert_last_push_action(app, "review_again", 72)
-
-        reason_copy = (
-            "Owned push descendants are still settling; checking becomes "
-            "available after every owned process ends."
-        )
-        panel.render_push_result(
-            projection_type(
-                title="Uncertain",
-                message=long_message,
-                action="check_remote_again",
-                action_enabled=False,
-                disabled_reason=reason_copy,
-            ),
-            operation_id=73,
-        )
-        await pilot.pause()
-        check = panel.query_one("#file-notes-git-push-check-remote", Button)
-        reason = panel.query_one("#file-notes-git-push-result-reason")
-        assert str(check.label) == "Check remote again — no push"
-        assert check.disabled
-        assert reason.display
-        assert _text(reason) == reason_copy
-        assert back.display
-        assert back.has_focus
-        message_count = len(app.messages)
-        check.press()
-        await pilot.pause()
-        assert len(app.messages) == message_count
-        await pilot.press("escape")
-        await pilot.pause()
-        _assert_last_push_action(app, "back_to_session", 73)
-
-        panel.render_push_result(
-            projection_type(
-                title="Uncertain",
-                message=long_message,
-                action="check_remote_again",
-            ),
-            operation_id=73,
-        )
-        await pilot.pause()
-        assert not check.disabled
-        assert not reason.display
-        assert back.has_focus
-        check.press()
-        await pilot.pause()
-        _assert_last_push_action(app, "check_remote_again", 73)
 
 
 @pytest.mark.asyncio
@@ -1023,6 +1324,179 @@ async def test_workspace_push_review_adopts_retained_operations_and_authorizes(
         )
         assert service.cancel_push_calls == [binding]
         assert workspace._push_review_handle is None
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_push_keyboard_happy_path_reaches_succeeded_result(
+    tmp_path: Path,
+) -> None:
+    """One real-keyboard journey must admit each exact operation only once."""
+    owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
+    _publish_candidate_on_owner(
+        owner,
+        binding,
+        service.repository,
+        parent_oid="a" * 40,
+        candidate_oid="d" * 40,
+    )
+    candidate = owner.snapshot(binding).push_candidate
+    assert candidate is not None
+    service.head = replace(
+        service.head,
+        branch=candidate.candidate.local_branch_ref,
+        object_id=candidate.candidate.candidate_oid,
+    )
+    destination = _push_destination_projection()
+    local_release = asyncio.Event()
+    preflight_release = asyncio.Event()
+    push_release = asyncio.Event()
+    local_result = _push_destination_policy_result("ready", destination)
+    handle = object.__new__(PushReviewHandle)
+    review = PushReviewProjection(candidate.candidate, destination, "origin")
+    preflight_result = PushPreflightResult("review", handle, review)
+    push_result = PushExecutionResult(
+        "succeeded",
+        push_outcome_copy("succeeded"),
+    )
+    service.plan_push_operation("local_proof", local_result, local_release)
+    service.plan_push_operation("preflight", preflight_result, preflight_release)
+    service.plan_push_operation("push", push_result, push_release)
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        session_git = workspace.query_one(
+            "#file-notes-session-changes",
+            Button,
+        )
+        session_git.focus()
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: workspace._navigator_mode == "git",
+            "keyboard did not open Prepare session",
+        )
+        review_button = workspace.query_one(
+            "#file-notes-git-push-review",
+            Button,
+        )
+        await _until(
+            pilot,
+            lambda: review_button.display,
+            "Review push did not become visible",
+        )
+        review_button.focus()
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: service.push_review_calls == [binding],
+            "keyboard did not start the local push proof",
+        )
+        local_operation = service.retained_push_operation(binding)
+        assert local_operation is not None
+        assert workspace._git_panel_widget.push_phase == "checking_candidate"
+
+        local_release.set()
+        await _until(
+            pilot,
+            lambda: isinstance(
+                workspace.app.screen,
+                git_panel_module.PushDestinationAuthorizationDialog,
+            ),
+            "destination authorization did not open",
+        )
+        authorization = workspace.app.screen
+        cancel = authorization.query_one(
+            "#file-notes-push-auth-cancel",
+            Button,
+        )
+        details = authorization.query_one(
+            "#file-notes-push-auth-details",
+            Button,
+        )
+        confirm = authorization.query_one(
+            "#file-notes-push-auth-confirm",
+            Button,
+        )
+        assert cancel.has_focus
+        await pilot.press("tab")
+        assert details.has_focus
+        await pilot.press("tab")
+        assert confirm.has_focus
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: service.authorize_and_check_calls
+            == [(binding, local_operation)],
+            "authorization did not admit the exact preflight",
+        )
+        assert workspace._git_panel_widget.push_phase == "checking_remote"
+
+        preflight_release.set()
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "review",
+            "immutable push review did not render",
+        )
+        back = workspace.query_one("#file-notes-git-push-back", Button)
+        push = workspace.query_one("#file-notes-git-push-confirm", Button)
+        assert back.has_focus
+        await pilot.press("tab")
+        assert push.has_focus
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: service.push_calls == [binding],
+            "keyboard did not admit the reviewed push",
+        )
+        assert workspace._git_panel_widget.push_phase == "checking_remote"
+
+        service.mark_push_child_started()
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "pushing",
+            "child start did not transition to pushing",
+        )
+        assert workspace.query_one(
+            "#file-notes-git-push-back-to-files",
+            Button,
+        ).has_focus
+
+        push_release.set()
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "result",
+            "successful push result did not render",
+        )
+        result_copy = workspace.query_one(
+            "#file-notes-git-push-result-copy",
+            TextArea,
+        )
+        result_back = workspace.query_one(
+            "#file-notes-git-push-back-session",
+            Button,
+        )
+        assert result_copy.text == push_result.outcome.message
+        assert result_back.has_focus
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "list",
+            "result Back did not return to the retained session",
+        )
+
+        assert service.push_review_calls == [binding]
+        assert service.authorize_and_check_calls == [(binding, local_operation)]
+        assert service.push_calls == [binding]
+        assert service.push_query_calls == []
+        assert service.cancel_push_calls == []
 
     await workspace.shutdown()
     owner.shutdown()
@@ -1762,13 +2236,43 @@ async def test_workspace_push_recovery_authorizes_then_queries_retained_endpoint
         assert workspace._push_operation is recovery_operation
         assert workspace._git_panel_widget.push_phase == "checking_uncertain"
         assert service.push_calls == []
+        assert not recovery_operation.child_started
+        recovery_observer = workspace._push_observer_task
+        assert recovery_observer is not None
+
+        await pilot.press("escape")
+        await _until(
+            pilot,
+            lambda: workspace._navigator_mode == "files",
+            "Back to Files did not hide the query-only recovery",
+        )
+        assert service.cancel_push_calls == []
+        assert workspace._push_operation is recovery_operation
+        assert workspace._push_observer_task is recovery_observer
+        assert service.push_query_calls == [binding, binding]
+        session_git = workspace.query_one(
+            "#file-notes-session-changes",
+            Button,
+        )
+        assert "Push checking" in str(session_git.label)
+        assert session_git.has_focus
 
         recovery_release.set()
         await _until(
             pilot,
-            lambda: workspace._git_panel_widget.push_phase == "result",
-            "query-only recovery result did not render",
+            lambda: workspace._push_result is recovered,
+            "query-only recovery result did not settle",
         )
+        session_git.focus()
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "result",
+            "settled query-only recovery did not rehydrate its result",
+        )
+        assert workspace._push_operation is recovery_operation
+        assert workspace._push_observer_task is recovery_observer
+        assert service.push_query_calls == [binding, binding]
         workspace.query_one(
             "#file-notes-git-push-back-session",
             Button,
@@ -2544,11 +3048,13 @@ async def test_workspace_recovery_first_attach_rejects_mismatched_candidate(
     replica.close()
 
 
+@pytest.mark.parametrize("size", ((40, 20), (120, 40)))
 @pytest.mark.asyncio
 async def test_workspace_rehydrate_hidden_settlement_without_duplicate_work(
     tmp_path: Path,
+    size: tuple[int, int],
 ) -> None:
-    """Remount must reuse the exact observer instead of launching Git again."""
+    """Leave/remount must reuse the exact observer without launching Git again."""
     owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
     _publish_candidate_on_owner(
         owner,
@@ -2568,14 +3074,56 @@ async def test_workspace_rehydrate_hidden_settlement_without_duplicate_work(
     )
     app = _RemountWorkspaceHarness(workspace)
 
-    async with app.run_test() as pilot:
+    async with app.run_test(size=size) as pilot:
         await _until(
             pilot,
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
+        assert await workspace.open_path("folder/one.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        assert not editor.read_only
+        assert workspace._editor_read_only_leases == {}
+        if size == (40, 20):
+            navigator_back = workspace.query_one("#file-notes-back", Button)
+            assert navigator_back.display
+            navigator_back.focus()
+            await pilot.press("enter")
+            assert workspace._narrow_view == "navigator"
+            assert workspace.query_one("#file-notes-navigator").display
+            assert not workspace.query_one("#file-notes-editor-pane").display
+
         observer = workspace._push_observer_task
         assert observer is not None
+        assert "Pushing" in str(
+            workspace.query_one("#file-notes-session-changes").label
+        )
+        session_git = workspace.query_one(
+            "#file-notes-session-changes",
+            Button,
+        )
+        session_git.focus()
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "pushing",
+            "retained push did not open from Session Git",
+        )
+        back_to_files = workspace.query_one(
+            "#file-notes-git-push-back-to-files",
+            Button,
+        )
+        assert back_to_files.has_focus
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: workspace._navigator_mode == "files",
+            "keyboard did not leave the retained push",
+        )
+        assert workspace._push_observer_task is observer
+        assert workspace._push_operation is operation
+        assert service.cancel_push_calls == []
+
         host = app.query_one("#remount-workspace-host")
         await host.remove_children()
         await _until(
@@ -2600,9 +3148,42 @@ async def test_workspace_rehydrate_hidden_settlement_without_duplicate_work(
         assert "Push needs attention" in str(
             workspace.query_one("#file-notes-session-changes").label
         )
+        assert not editor.read_only
+        assert workspace._editor_read_only_leases == {}
+        action_status = workspace.query_one("#file-notes-action-status")
+        assert result.outcome is not None
+        assert result.outcome.message not in _text(action_status)
+        if size == (40, 20):
+            assert workspace._narrow_view == "navigator"
+            assert workspace.query_one("#file-notes-navigator").display
+            assert not workspace.query_one("#file-notes-editor-pane").display
+
+        session_git = workspace.query_one(
+            "#file-notes-session-changes",
+            Button,
+        )
+        session_git.focus()
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "result",
+            "hidden result did not render after keyboard reopen",
+        )
+        assert workspace._push_observer_task is observer
+        assert workspace._push_operation is operation
+        assert workspace.query_one(
+            "#file-notes-git-push-result-copy",
+            TextArea,
+        ).text == result.outcome.message
+        if size == (40, 20):
+            assert workspace.query_one("#file-notes-navigator").display
+            assert not workspace.query_one("#file-notes-editor-pane").display
+
         assert service.push_review_calls == []
         assert service.push_query_calls == []
         assert service.push_calls == []
+        assert service.cancel_push_calls == []
+        assert service.published_results == [result]
 
     await workspace.shutdown()
     owner.shutdown()
