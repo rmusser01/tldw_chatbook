@@ -1,11 +1,11 @@
 ---
 id: TASK-1566
 title: Add guarded exact-session-commit push to File Notes
-status: To Do
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-31 02:38'
-updated_date: '2026-07-31 02:52'
+updated_date: '2026-07-31 05:07'
 labels:
   - notes
   - git
@@ -17,6 +17,7 @@ dependencies:
   - TASK-1411
 documentation:
   - Docs/superpowers/specs/2026-07-30-file-notes-guarded-session-push-design.md
+  - Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md
   - backlog/decisions/039-file-notes-guarded-session-push.md
   - backlog/decisions/038-file-notes-guarded-session-commit.md
   - backlog/decisions/035-file-notes-session-git-index-controls.md
@@ -46,3 +47,27 @@ Let users separately publish exactly the one guarded File Notes commit Chatbook 
 - [ ] #9 No database schema, persistent push candidate, trust journal, crash recovery claim, remote creation/configuration, branch creation, general history/status browser, pull/fetch workflow, credential UI, provider-specific integration, or background retry is added; after process exit users inspect and push existing commits with external Git.
 - [ ] #10 Focused pure, real-Git CAS/race, secure SSH/HTTPS transport, native process-containment, lifecycle, mounted Textual, and same-process production-app PTY UAT cover the approved boundary with sanitized durable evidence and a phase-to-evidence matrix; verification remains risk-focused and does not add a repository-wide test, coverage, or broad local CI run.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/039-file-notes-guarded-session-push.md
+Reason: Guarded push changes the remote/network/authentication boundary, exact compare-and-swap contract, uncertain recovery, process ownership, and long-lived Prepare-panel workflow.
+Detailed plan: Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md
+
+1. Add pure push contracts, parsers, and exact argv builders.
+2. Atomically publish one exact guarded-commit push candidate.
+3. Prove local destination, transport, configuration, and LFS policy.
+4. Own network process trees through settlement.
+5. Build one immutable network Git execution context.
+6. Add authorized remote preflight and immutable review.
+7. Execute the exact lease-guarded push and prove CAS semantics.
+8. Retain uncertain proof, query only, and settle shutdown.
+9. Rehydrate push state and keep Session Git truthful.
+10. Add the separate keyboard-safe push presentation.
+11. Verify compact, remounted, and lifecycle UX.
+12. Prove secure SSH/HTTPS and ambiguous transport behavior.
+13. Run same-process production-app PTY acceptance.
+14. Run the focused regression gate and close ADR/task only after evidence.
+<!-- SECTION:PLAN:END -->
