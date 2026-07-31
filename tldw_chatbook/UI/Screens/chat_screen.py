@@ -186,6 +186,7 @@ from ...Chat.console_voice_input import (
     VAD_UNAVAILABLE_MESSAGE,
     ConsoleVoiceInputController,
     VoiceCommand,
+    VoiceDictationModelDefaulted,
     VoiceFailed,
     VoiceFinal,
     VoiceModelPreparing,
@@ -5305,6 +5306,32 @@ class ChatScreen(BaseAppScreen):
                     f"'{escape_markup(event.configured)}' isn't available; "
                     f"using '{escape_markup(event.effective)}' instead.",
                     severity="warning",
+                )
+            return
+        if isinstance(event, VoiceDictationModelDefaulted):
+            # Same two-tier latch as `VoiceProviderOverridden` just above,
+            # for the same reason -- see `VoiceDictationModelDefaulted`'s own
+            # docstring. This is a deliberate latency policy, not a failure
+            # (unlike the provider case), so it stays "information" rather
+            # than "warning".
+            if not getattr(
+                self.app_instance,
+                "_console_dictation_model_default_notified",
+                False,
+            ):
+                self.app_instance._console_dictation_model_default_notified = True
+                # `event.effective` is `DICTATION_FAST_MODEL_DEFAULT`, a
+                # closed constant this code controls -- but `event.configured`
+                # traces back to the user's own `transcription.default_model`
+                # TOML setting, unvalidated free text, so both go through
+                # `escape_markup` for the same reason the provider notice
+                # above does.
+                self.app_instance.notify(
+                    f"Dictation uses the fast '{escape_markup(event.effective)}' "
+                    f"model for low latency (configured model: "
+                    f"'{escape_markup(event.configured)}') — set dictation.model "
+                    f"to change.",
+                    severity="information",
                 )
             return
         if isinstance(event, VoiceVadUnavailable):

@@ -223,6 +223,21 @@ class EffectiveConfig:
     #: the transcription stack on purpose," which is a distinct reason and
     #: never itself a failure.
     model_overridden_for_dictation: bool = False
+    #: `transcription.default_model`'s raw configured value, independent of
+    #: what `model` ended up being -- the transcription stack's own answer to
+    #: "what model would this be without dictation's fast-default policy."
+    #: `None` when nothing is configured there.
+    configured_model: str | None = None
+    #: True only for the fast-default branch specifically (unset
+    #: `dictation.model`, `provider` resolved to `DICTATION_FAST_MODEL_PROVIDER`)
+    #: AND `configured_model` names something other than
+    #: `DICTATION_FAST_MODEL_DEFAULT` -- i.e. the fast default actually
+    #: displaced a value the user configured elsewhere, not merely a bare
+    #: default winning over an equally-unconfigured slot. False for an
+    #: explicit `dictation.model` override (the user's own deliberate choice
+    #: needs no advisory) and false when there was nothing configured to
+    #: displace. Drives `VoiceDictationModelDefaulted` (review finding L1).
+    fast_default_displaced_configured_model: bool = False
 
 
 def _dictation_model_override() -> str | None:
@@ -311,16 +326,27 @@ def resolve() -> EffectiveConfig | None:
     # -- see `DICTATION_FAST_MODEL_DEFAULT`). Every other provider is
     # unaffected: it keeps reading the transcription stack's own model,
     # exactly as before this function drew a distinction.
+    #
+    # Read once, up front: needed both as the `else` branch's own `model`
+    # and, in the fast-default branch, to tell "displaced a value the user
+    # actually configured" apart from "there was nothing there to displace"
+    # (`fast_default_displaced_configured_model`, review finding L1).
+    configured_model_raw = get_cli_setting("transcription", "default_model", None)
+    configured_model = str(configured_model_raw) if configured_model_raw else None
+
     dictation_model = _dictation_model_override()
+    fast_default_displaced_configured_model = False
     if dictation_model is not None:
         model = dictation_model
         model_overridden_for_dictation = True
     elif provider == DICTATION_FAST_MODEL_PROVIDER:
         model = DICTATION_FAST_MODEL_DEFAULT
         model_overridden_for_dictation = True
+        fast_default_displaced_configured_model = bool(
+            configured_model and configured_model != DICTATION_FAST_MODEL_DEFAULT
+        )
     else:
-        configured_model = get_cli_setting("transcription", "default_model", None)
-        model = str(configured_model) if configured_model else None
+        model = configured_model
         model_overridden_for_dictation = False
 
     language = get_cli_setting("transcription", "default_language", DEFAULT_LANGUAGE)
@@ -332,6 +358,8 @@ def resolve() -> EffectiveConfig | None:
         configured_provider=configured,
         was_overridden=bool(configured) and provider != configured,
         model_overridden_for_dictation=model_overridden_for_dictation,
+        configured_model=configured_model,
+        fast_default_displaced_configured_model=fast_default_displaced_configured_model,
     )
 
 
@@ -435,6 +463,31 @@ class VoiceFailed:
 @dataclass(frozen=True)
 class VoiceProviderOverridden:
     """The `configured` provider was unavailable; `effective` is what ran instead."""
+
+    configured: str
+    effective: str
+
+
+@dataclass(frozen=True)
+class VoiceDictationModelDefaulted:
+    """Dictation's fast-model default (`effective`) displaced `configured`.
+
+    Emitted only when `EffectiveConfig.fast_default_displaced_configured_model`
+    is True: `dictation.model` was unset, the resolved provider is
+    `DICTATION_FAST_MODEL_PROVIDER`, and the transcription stack has its own
+    `transcription.default_model` configured to something else. A user who
+    deliberately set that value otherwise gets `DICTATION_FAST_MODEL_DEFAULT`
+    with no runtime signal at all (review finding L1) -- the only prior
+    disclosure was a comment in the config guide. Mirrors
+    `VoiceProviderOverridden`'s shape and its two-tier once-per-run latch
+    (per-controller `_model_default_announced`, app-instance
+    `_console_dictation_model_default_notified`).
+
+    Attributes:
+        configured: `transcription.default_model`'s raw configured value.
+        effective: The model dictation is actually using instead
+            (`DICTATION_FAST_MODEL_DEFAULT`).
+    """
 
     configured: str
     effective: str
@@ -790,6 +843,10 @@ class ConsoleVoiceInputController:
         self._state = STATE_IDLE
         self._state_lock = threading.Lock()
         self._override_announced = False
+        # Same shape as `_override_announced`, for `VoiceDictationModelDefaulted`
+        # (review finding L1) -- see that event's docstring for the two-tier
+        # scheme.
+        self._model_default_announced = False
         # Same shape as `_override_announced`: latches `VoiceVadUnavailable`
         # to once per controller instance. `_handle_console_dictation_event`
         # (chat_screen.py) latches it a second time on `self.app_instance`,
@@ -963,6 +1020,18 @@ class ConsoleVoiceInputController:
                     VoiceProviderOverridden(
                         configured=effective.configured_provider,
                         effective=effective.provider,
+                    )
+                )
+
+            if (
+                effective.fast_default_displaced_configured_model
+                and not self._model_default_announced
+            ):
+                self._model_default_announced = True
+                self._emit(
+                    VoiceDictationModelDefaulted(
+                        configured=effective.configured_model or "",
+                        effective=effective.model or "",
                     )
                 )
 
