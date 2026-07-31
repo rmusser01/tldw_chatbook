@@ -203,10 +203,10 @@ Enter again to send as text."
 ## Related settings & docs
 
 - `config.toml` `[rag]` (and legacy `[rag_search]`) — retrieval and
-  processing settings; covered with the Library/Search pages (not yet
-  written).
-- Library ▸ Prompts (not yet written) — where saved prompts are created
-  and managed.
+  processing settings; covered in
+  [Library ▸ Search & RAG](../library/search-and-rag.md).
+- [Library ▸ Prompts](../library/prompts.md) — where saved prompts are
+  created and managed.
 - [Console orientation](../console.md) — layout tour, rails, and chips.
 - [Branching & rewind](branching-and-rewind.md) — how regenerate, edit &
   resend, and "Summarize up to here" change what history the model sees.

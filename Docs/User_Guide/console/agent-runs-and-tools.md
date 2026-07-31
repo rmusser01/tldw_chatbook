@@ -191,7 +191,7 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   `console.max_parallel_runs`; raising it is allowed without limit) and
   "Tool result display cap" (how much of a tool result the transcript
   preview shows).
-- **Library ▸ Skills** (not yet written) — create, import, review, and
+- [Library ▸ Skills](../library/skills.md) — create, import, review, and
   approve skills.
 - [MCP](../mcp.md) 🚧 — servers, tools, and permissions.
 - [Console agent runs are screen-scoped](../index.md#console-agent-runs-are-screen-scoped)

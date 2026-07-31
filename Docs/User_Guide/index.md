@@ -30,7 +30,7 @@ can sync with a tldw server you configure).
 |-----|--------|----------------|
 | Ctrl+1 | Home (not yet written) | Dashboard, notifications, status, and next actions. |
 | Ctrl+2 | [Console](console.md) | Live agent conversations, approvals, tools, RAG, and runs. |
-| Ctrl+3 | Library (not yet written) | Workspaces, source material, imports, notes, media, conversations, Study, flashcards, quizzes, and Search/RAG. |
+| Ctrl+3 | [Library](library.md) | Source material, imports, notes, media, conversations, prompts, skills, Search/RAG — plus hand-offs to Study for flashcards and quizzes. |
 | Ctrl+4 | [Artifacts](artifacts.md) 🚧 | Generated outputs, bundles, reports, datasets, and Chatbooks. |
 | Ctrl+5 | Roleplay & Chat Dictionaries (not yet written) | Characters, user profiles, dictionaries, and behavior profiles. |
 | Ctrl+6 | [Watchlists](watchlists.md) 🚧 | Monitored sources, runs, alerts, and recovery. |
@@ -95,14 +95,14 @@ Full detail on runs, approvals, and tools:
 
 | Old name | Now lives in |
 |----------|--------------|
-| Notes | Library ▸ Notes (not yet written) |
-| Prompts | Library ▸ Prompts (not yet written) |
-| Skills | Library ▸ Skills (not yet written) |
+| Notes | [Library ▸ Notes](library/notes.md) |
+| Prompts | [Library ▸ Prompts](library/prompts.md) |
+| Skills | [Library ▸ Skills](library/skills.md) |
 | Subscriptions | [Watchlists](watchlists.md) 🚧 |
 | Coding | [Console](console.md) |
 | Conversations / CCP | Roleplay & Chat Dictionaries (not yet written) |
 | LLM management | [Lab](lab.md) 🚧 |
-| Research | Library (not yet written) |
+| Research | [Library](library.md) |
 | Customize | Settings (not yet written) |
 
 ## Conventions
