@@ -558,8 +558,8 @@ class FakeDictationService:
     def emit_error(self, error):
         self._callbacks["on_error"](error)
 
-    def emit_segment_transcribing(self):
-        self._callbacks["on_segment_transcribing"]()
+    def emit_segment_transcribing(self, done: bool = False):
+        self._callbacks["on_segment_transcribing"](done)
 
 
 class FakeAudioService:
@@ -2271,12 +2271,18 @@ def test_segment_transcribing_is_emitted_with_the_capture_generation_token(
     controller.start(capture_generation=7)
     events.clear()
 
-    service.emit_segment_transcribing()
+    service.emit_segment_transcribing()  # done=False: "started"
+    service.emit_segment_transcribing(done=True)  # "completed"
 
-    assert len(events) == 1
-    event, generation = events[0]
-    assert isinstance(event, cvi.VoiceSegmentTranscribing)
-    assert generation == 7
+    assert len(events) == 2
+    started_event, started_generation = events[0]
+    done_event, done_generation = events[1]
+    assert isinstance(started_event, cvi.VoiceSegmentTranscribing)
+    assert started_event.done is False
+    assert started_generation == 7
+    assert isinstance(done_event, cvi.VoiceSegmentTranscribing)
+    assert done_event.done is True
+    assert done_generation == 7
 
 
 def test_segment_transcribing_with_no_generation_tracking_uses_the_single_arg_emit(

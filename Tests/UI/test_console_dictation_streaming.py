@@ -132,11 +132,11 @@ class FakeDictationService:
         assert self.on_final is not None, "start_dictation() has not run yet"
         self.on_final(text)
 
-    def emit_segment_transcribing(self) -> None:
+    def emit_segment_transcribing(self, done: bool = False) -> None:
         assert self.on_segment_transcribing is not None, (
             "start_dictation() has not run yet"
         )
-        self.on_segment_transcribing()
+        self.on_segment_transcribing(done)
 
     def emit_error(self, message: str) -> None:
         assert self.on_error is not None, "start_dictation() has not run yet"
@@ -830,6 +830,84 @@ async def test_the_transcribing_indication_reverts_on_a_mid_capture_stop(monkeyp
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Rec ●")
         assert "Transcribing" not in _painted(chip)
+
+
+@pytest.mark.asyncio
+async def test_a_blank_segment_completion_reverts_the_indication_with_no_final(
+    monkeypatch,
+):
+    """Review M1: a segment that transcribes to blank/whitespace fires
+    neither a final nor a command (the service drops it silently -- routine
+    for room noise or a too-short VAD sliver), so only the `done=True`
+    completion signal can revert the chip. Without it the indicator claims
+    work is in flight for the rest of the capture, or until a later,
+    non-blank segment happens to land.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        chip = composer.query_one("#console-voice-status", Static)
+        service.emit_segment_transcribing()  # done=False: segment started
+        await pilot.pause()
+        assert "Transcribing" in _painted(chip)
+
+        # The segment transcribed to blank: no partial, no final, no
+        # command -- only the completion signal the service now fires
+        # unconditionally.
+        service.emit_segment_transcribing(done=True)
+        await pilot.pause()
+
+        assert "Transcribing" not in _painted(chip), (
+            "a blank-transcription segment must still revert the chip -- "
+            "nothing else will"
+        )
+        assert console._console_dictation_partial == ""
+
+
+@pytest.mark.asyncio
+async def test_the_tick_forwards_the_indication_while_it_is_still_live(monkeypatch):
+    """Review M2: the elapsed-counter tick fires once a second; the
+    transcription behind a live indication routinely takes multiple seconds
+    (that is the entire premise of this fix). `tick_voice_elapsed()` must
+    keep painting the indication rather than blanking it on its very next
+    tick -- that would reduce the fix to a sub-second flicker.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        chip = composer.query_one("#console-voice-status", Static)
+        service.emit_segment_transcribing()  # still in flight
+        await pilot.pause()
+        assert "Transcribing" in _painted(chip)
+
+        composer.tick_voice_elapsed()
+        await pilot.pause()
+
+        assert "Transcribing" in _painted(chip), (
+            "the elapsed-counter tick blanked a live segment-transcribing "
+            "indication"
+        )
+        # And the elapsed counter itself did advance -- this is a real tick,
+        # not a no-op that happens to leave everything untouched.
+        assert "0:01" in _painted(chip)
 
 
 @pytest.mark.asyncio

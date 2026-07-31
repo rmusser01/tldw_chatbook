@@ -6,11 +6,15 @@ that one call can take seconds against a real speech model (measured 11.47s
 for `distil-large-v3` on a loaded machine, `Chat/console_voice_input.py`).
 Until this callback, there was zero signal in that gap: no live partial text,
 nothing, so a slow segment looked identical to a dead capture. This file pins
-that `_transcribe_segment_audio` fires `on_segment_transcribing` exactly once
-per segment, before the (slow) transcription call, both at the mid-capture
-silence gate and at the stop-path tail-fold -- and that a raising callback
-cannot break dictation, mirroring every other `_notify_*` callback in this
-class.
+that `_transcribe_segment_audio` fires `on_segment_transcribing` TWICE per
+segment -- `done=False` before the (slow) transcription call, `done=True`
+right after it returns, unconditionally -- both at the mid-capture silence
+gate and at the stop-path tail-fold; that the completion half fires even when
+the segment transcribes to blank (review finding M1: a blank result fires
+neither a partial nor a final, so without an unconditional completion signal
+a consumer would have nothing to revert a "transcribing" indication on); and
+that a raising callback cannot break dictation, mirroring every other
+`_notify_*` callback in this class.
 
 Per `backlog/docs/lessons-testing-evidence.md`'s "zero-latency fake" lesson
 (the very defect `test_dictation_segment_finalization.py`'s RED tests exist
@@ -79,7 +83,7 @@ class _RaisingSegmentTranscribingSink:
     def __init__(self) -> None:
         self.calls = 0
 
-    def __call__(self) -> None:
+    def __call__(self, done: bool = False) -> None:
         self.calls += 1
         raise RuntimeError("boom: a broken UI callback")
 
@@ -110,13 +114,19 @@ class _FakeRecorder:
 
 
 class _Sink:
-    """Collects transcript/segment-transcribing callbacks."""
+    """Collects transcript/segment-transcribing callbacks.
+
+    `segment_transcribing_calls` records the exact sequence of `done` values
+    the callback was invoked with -- e.g. `[False, True]` for one ordinary
+    segment -- so a test can pin the start/completion symmetry precisely,
+    not just a raw count.
+    """
 
     def __init__(self) -> None:
         self.partials: List[str] = []
         self.finals: List[str] = []
         self.errors: List[Exception] = []
-        self.segment_transcribing_calls = 0
+        self.segment_transcribing_calls: List[bool] = []
         self._lock = threading.Lock()
 
     def partial(self, text: str) -> None:
@@ -131,17 +141,17 @@ class _Sink:
         with self._lock:
             self.errors.append(exc)
 
-    def segment_transcribing(self) -> None:
+    def segment_transcribing(self, done: bool = False) -> None:
         with self._lock:
-            self.segment_transcribing_calls += 1
+            self.segment_transcribing_calls.append(done)
 
     def snapshot_finals(self) -> List[str]:
         with self._lock:
             return list(self.finals)
 
-    def snapshot_segment_transcribing_calls(self) -> int:
+    def snapshot_segment_transcribing_calls(self) -> List[bool]:
         with self._lock:
-            return self.segment_transcribing_calls
+            return list(self.segment_transcribing_calls)
 
 
 # --------------------------------------------------------------------------
@@ -309,9 +319,11 @@ def test_the_callback_fires_before_the_slow_transcription_call_completes():
         # call alone takes `latency` (0.6s), well past `threshold + 0.3`
         # (0.45s).
         assert _wait_until(
-            lambda: sink.snapshot_segment_transcribing_calls() >= 1,
+            lambda: len(sink.snapshot_segment_transcribing_calls()) >= 1,
             timeout=threshold + 0.3,
         ), "on_segment_transcribing did not fire before the slow call returned"
+        # Only the `done=False` "started" half must have landed yet.
+        assert sink.snapshot_segment_transcribing_calls() == [False]
         # The segment cannot have finalized yet at this point -- proof the
         # transcription is still genuinely in flight, not merely that this
         # test raced a fast one.
@@ -319,13 +331,15 @@ def test_the_callback_fires_before_the_slow_transcription_call_completes():
 
         assert _wait_until(lambda: bool(sink.finals), timeout=latency + 1.0)
         assert sink.errors == []
-        assert sink.snapshot_segment_transcribing_calls() == 1
+        assert sink.snapshot_segment_transcribing_calls() == [False, True]
     finally:
         _stop_loop(service)
 
 
-def test_the_callback_fires_exactly_once_per_segment_not_per_chunk():
-    """Several chunks feeding one segment must produce exactly one callback."""
+def test_the_callback_fires_start_and_done_exactly_once_each_per_segment():
+    """Several chunks feeding one segment must produce exactly one start
+    signal and exactly one completion signal -- not one pair per chunk.
+    """
     threshold = 0.2
     transcription = _LatentTranscriptionService(0.0)
     service = _mid_capture_service(transcription, silence_threshold=threshold)
@@ -343,15 +357,15 @@ def test_the_callback_fires_exactly_once_per_segment_not_per_chunk():
 
         assert _wait_until(lambda: bool(sink.finals), timeout=threshold + 1.0)
         assert sink.errors == []
-        assert sink.snapshot_segment_transcribing_calls() == 1, (
-            f"expected exactly one callback for the whole segment, got "
-            f"{sink.snapshot_segment_transcribing_calls()}"
+        assert sink.snapshot_segment_transcribing_calls() == [False, True], (
+            f"expected exactly one start + one completion for the whole "
+            f"segment, got {sink.snapshot_segment_transcribing_calls()!r}"
         )
     finally:
         _stop_loop(service)
 
 
-def test_two_segments_separated_by_silence_each_get_their_own_callback():
+def test_two_segments_separated_by_silence_each_get_their_own_start_and_done():
     threshold = 0.15
     transcription = _LatentTranscriptionService(0.0)
     service = _mid_capture_service(transcription, silence_threshold=threshold)
@@ -365,11 +379,11 @@ def test_two_segments_separated_by_silence_each_get_their_own_callback():
     try:
         service._audio_callback(_chunk())
         assert _wait_until(lambda: len(sink.finals) == 1, timeout=threshold + 1.0)
-        assert sink.snapshot_segment_transcribing_calls() == 1
+        assert sink.snapshot_segment_transcribing_calls() == [False, True]
 
         service._audio_callback(_chunk())
         assert _wait_until(lambda: len(sink.finals) == 2, timeout=threshold + 1.0)
-        assert sink.snapshot_segment_transcribing_calls() == 2
+        assert sink.snapshot_segment_transcribing_calls() == [False, True, False, True]
 
         assert sink.errors == []
     finally:
@@ -377,7 +391,10 @@ def test_two_segments_separated_by_silence_each_get_their_own_callback():
 
 
 def test_a_raising_callback_never_reaches_the_processing_loop():
-    """Mirrors every other `_notify_*` in this class: advisory, never fatal."""
+    """Mirrors every other `_notify_*` in this class: advisory, never fatal.
+
+    Fires twice (start + done), and both must be swallowed independently.
+    """
     threshold = 0.15
     transcription = _LatentTranscriptionService(0.0, texts=["hello"])
     service = _mid_capture_service(transcription, silence_threshold=threshold)
@@ -393,7 +410,7 @@ def test_a_raising_callback_never_reaches_the_processing_loop():
         service._audio_callback(_chunk())
         assert _wait_until(lambda: bool(sink.finals), timeout=threshold + 1.0)
 
-        assert raiser.calls == 1
+        assert raiser.calls == 2
         # The raise must not have been reported through on_error, nor killed
         # the loop's ability to still finalize the segment normally.
         assert sink.errors == []
@@ -408,7 +425,7 @@ def test_streaming_regime_never_invokes_the_non_streaming_segment_callback():
     A streaming transcriber (parakeet-mlx) pushes its own finals via
     `_handle_streamed_final` and never calls `_transcribe_segment_audio` at
     all, so this callback -- wired for the multi-second whole-segment
-    buffer-API call -- must never fire for it.
+    buffer-API call -- must never fire for it, either half.
     """
     threshold = 0.15
 
@@ -429,7 +446,56 @@ def test_streaming_regime_never_invokes_the_non_streaming_segment_callback():
         service._audio_callback(_chunk())
         assert _wait_until(lambda: bool(sink.finals), timeout=threshold + 1.0)
         assert sink.errors == []
-        assert sink.snapshot_segment_transcribing_calls() == 0
+        assert sink.snapshot_segment_transcribing_calls() == []
+    finally:
+        _stop_loop(service)
+
+
+# --------------------------------------------------------------------------
+# Review finding M1: a blank segment must still fire the completion signal.
+# --------------------------------------------------------------------------
+
+
+def test_a_blank_segment_still_fires_the_unconditional_completion_signal():
+    """The headline fix: a segment that transcribes to blank/whitespace
+    fires neither `on_partial_transcript` nor `on_final_transcript` --
+    `_handle_partial_text` no-ops on blank input -- so `done=True` is the
+    ONLY signal a consumer gets that this segment is over. Without it, a
+    "transcribing" indication driven only by `done=False` would have nothing
+    to revert on for the rest of the capture.
+    """
+    threshold = 0.15
+    # `_LatentTranscriptionService.transcribe_buffer` returns `{"text": ""}`
+    # for this segment -- `_process_audio_buffer` treats a falsy `text` as
+    # "nothing to hand to `_handle_partial_text`" (see its
+    # `if result and result.get("text"):` guard), so `current_transcript`
+    # never changes and neither a partial nor a final ever fires.
+    transcription = _LatentTranscriptionService(0.0, texts=[""])
+    service = _mid_capture_service(transcription, silence_threshold=threshold)
+
+    sink = _Sink()
+    service.on_partial_transcript = sink.partial
+    service.on_final_transcript = sink.final
+    service.on_error = sink.error
+    service.on_segment_transcribing = sink.segment_transcribing
+
+    _run_loop(service)
+    try:
+        service._audio_callback(_chunk())
+
+        assert _wait_until(
+            lambda: sink.snapshot_segment_transcribing_calls() == [False, True],
+            timeout=threshold + 1.0,
+        ), (
+            f"expected [False, True] for a blank segment, got "
+            f"{sink.snapshot_segment_transcribing_calls()!r}"
+        )
+
+        assert sink.errors == []
+        # The whole point: a blank result produces neither a partial nor a
+        # final -- `done=True` above is the only thing that ever fired.
+        assert sink.finals == []
+        assert sink.partials == []
     finally:
         _stop_loop(service)
 
@@ -467,7 +533,7 @@ def test_stop_path_tail_fold_fires_the_callback_before_the_slow_transcription(
     result = service.stop_dictation()
 
     assert sink.errors == []
-    assert sink.snapshot_segment_transcribing_calls() == 1
+    assert sink.snapshot_segment_transcribing_calls() == [False, True]
     assert result.transcript == "one two"
     assert sink.finals == ["one two"]
 
@@ -495,7 +561,7 @@ def test_stop_path_with_no_audio_never_fires_the_callback(monkeypatch):
     service.stop_dictation()
 
     assert sink.errors == []
-    assert sink.snapshot_segment_transcribing_calls() == 0
+    assert sink.snapshot_segment_transcribing_calls() == []
     assert sink.finals == []
 
 
