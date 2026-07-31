@@ -1,7 +1,7 @@
 # Library Notes Adaptive 60×20 Design
 
 Date: 2026-07-30
-Status: User-approved
+Status: Design sections user-approved; independent review approved
 
 ## Summary
 
@@ -28,6 +28,9 @@ This is the first command in the approved phased sequence:
 6. **Polish** — interaction and visual refinement.
 
 Only Adapt is in scope here.
+
+Backlog task:
+[`TASK-1333`](../../../backlog/tasks/task-1333%20-%20Adapt-Library-Notes-for-lossless-60x20-workflow.md)
 
 ## Motivation and Evidence
 
@@ -57,9 +60,8 @@ The same UAT verified useful behavior that must survive:
 - Console handoff;
 - stale-result guards and navigation flushes.
 
-The archived critique is:
-
-`/.impeccable/critique/2026-07-30T21-12-35Z__w-chatbook-widgets-library-library-notes-canvas-py.md`
+The archived critique is
+[`.impeccable/critique/2026-07-30T21-12-35Z__w-chatbook-widgets-library-library-notes-canvas-py.md`](../../../.impeccable/critique/2026-07-30T21-12-35Z__w-chatbook-widgets-library-library-notes-canvas-py.md).
 
 The current UAT score was 22/40: a strong local-authority and recovery
 foundation inside a flat CRUD shell, not yet a capable knowledge workbench.
@@ -95,8 +97,10 @@ safe and usable enough to support the later knowledge-loop work.
 - New global shortcuts, command-palette systems, or Vim-style navigation.
 - Storage, schema, sync-policy, file-authority, or conflict-policy changes.
 - Changes to filter-clearing behavior after successful create/delete.
-- The existing zero-match copy defect; Harden will distinguish “no notes” from
-  “no notes match this filter.”
+- Changes to the existing status/empty-state semantics. Harden will distinguish
+  “no notes” from “no notes match this filter.”
+- Crash-proof draft recovery or new application-shutdown orchestration beyond
+  the existing persistence posture.
 - Broad visual polish.
 - A claim of terminal screen-reader parity.
 
@@ -104,35 +108,44 @@ safe and usable enough to support the later knowledge-loop work.
 
 ### Breakpoint
 
-Compact mode is driven by the available Library workbench width, not by a
-device label. The initial breakpoint is 120 cells:
+Compact mode is driven by the content width of the live
+`#library-shell-grid`, not by terminal width or a device label. The initial
+breakpoint is 120 cells:
 
-- `< 120`: compact, one Library stage visible at a time;
+- `< 120`: active Database Notes uses one Library stage at a time;
 - `>= 120`: wide, existing Library rail and canvas side by side.
 
 The boundary is conservative enough to fit the rail plus an unclipped Notes
-canvas and is verified at 119/120 in the real generated stylesheet. If Pilot
-geometry proves the actual content budget differs, the constant may be tuned
-before implementation completion, with the measured reason documented in the
-task notes and tests moved to the final boundary.
+canvas. Boundary tests use whatever host terminal dimensions produce measured
+`#library-shell-grid` content widths of 119 and 120 cells; they do not assume
+that terminal width and workbench width are equal. If Pilot geometry proves
+the actual content budget differs, the constant may be tuned before
+implementation completion, with the measured reason documented in the task
+notes and tests moved to the final boundary.
 
 The screen updates responsive state only when it crosses the boundary. Resize
 events that remain on the same side perform no presentation-state work.
 
 ### Compact Library shell
 
-The Library rail and canvas remain mounted but are mutually exclusive visible
-stages. This shell behavior is generic so any Library canvas selected at
-60×20 has a way back to the Library rail; the full interaction verification in
-this task remains Notes-focused.
+While the Database Notes Navigator, Editor, Create, or Sync workflow is active,
+the Library rail and canvas remain mounted but become mutually exclusive
+visible stages. Adapt does not change compact behavior for unrelated Library
+canvases; making the single-stage shell generic belongs in a separately
+specified and tested Library-wide task.
+
+Activating Browse Notes or New Note from the compact Library rail explicitly
+switches the visible stage to the Notes canvas; focus-derived rules apply only
+when crossing the breakpoint without a new activation intent.
 
 When entering compact mode:
 
+- an explicit navigation or deep-link context wins;
 - focus in the Library rail keeps the rail visible;
 - focus in the active canvas keeps the canvas visible;
-- a Notes or item deep link explicitly activates the canvas;
-- when no meaningful focus exists, an explicit navigation context wins,
-  otherwise the Library rail is the safe default.
+- an active non-list Notes workflow or selected note activates the canvas;
+- only when none of those signals exists does the Library rail become the safe
+  fallback.
 
 Crossing back to wide mode reveals both panes without changing selection,
 workflow, or note draft state.
@@ -147,8 +160,6 @@ Library → Notes Navigator → Editor → Context
 - Editor Back flushes pending work and returns to Navigator.
 - Navigator Back returns to the Library rail.
 - Create and Sync Back return to Navigator.
-- Other compact Library canvases receive an immediate `Back to Library`
-  escape without adopting Notes-specific state.
 
 The compact shell position is not independently persisted. It is derived from
 restored route, selection, workflow, and focus intent.
@@ -171,7 +182,7 @@ Presentation:
   - Import;
   - Export;
   - Select;
-- persistent filter/status or actionable empty state;
+- existing persistent filter/status or empty-state copy;
 - note list occupying the remaining height.
 
 Only the note list scrolls. Header, filter, actions, and status remain visible.
@@ -186,12 +197,13 @@ the row instead.
 Compact multi-select replaces the normal action group with:
 
 - Done;
-- Select all;
+- `Select all N shown`;
 - Clear;
 - Export selected.
 
-New, Sync, and Import are not mixed into the selection task. Returning to
-Library clears transient selection.
+It also shows a persistent `N selected` status. New, Sync, and Import are not
+mixed into the selection task. Returning to Library clears transient
+selection.
 
 ### Editor
 
@@ -221,7 +233,8 @@ Saving never steals focus or moves the caret.
 ### Preview
 
 Preview shares Editor's header, save status, and actions. Edit and Preview
-surfaces are mounted once and visibility is toggled.
+surfaces are mounted once within the current canvas instance and visibility is
+toggled.
 
 The Preview body is a focusable scrolling surface:
 
@@ -235,8 +248,9 @@ snapshot.
 
 ### Context
 
-Context is titled `‹ Editor · <current title>` and replaces Editor at every
-width during Adapt. A simultaneous wide inspector belongs to Shape.
+Context is titled `‹ Note · <current title>` and replaces Editor at every width
+during Adapt. The neutral Back label returns to whichever Edit or Preview
+presentation opened Context. A simultaneous wide inspector belongs to Shape.
 
 Context is one vertically scrollable region with:
 
@@ -298,6 +312,7 @@ The note session distinguishes:
    - Edit or Preview;
    - Editor or Context;
    - conflict;
+   - conflict-resolution running flag and operation generation/token;
    - delete confirmation;
    - loading and mutation-running flags.
 
@@ -322,6 +337,13 @@ Every genuine user mutation:
 - marks the session dirty;
 - rearms the autosave debounce unless the session is in conflict.
 
+Programmatic presentation synchronization runs under a dedicated guard.
+`apply_session_state()` and rehydration assign title/body/keyword widget values
+only when those values differ, and all related change handlers ignore guarded
+assignments. Mount-time arming remains a separate lifecycle guard. Preview,
+Context, status, conflict, and rehydration synchronization therefore cannot
+advance `draft_revision`, mark the session dirty, or arm autosave.
+
 Title/body widgets and the Context keyword field update the same draft. Save,
 Preview, Context, export, copy, and Console handoff all read it.
 
@@ -341,6 +363,18 @@ follow-up instead of cancelling the in-flight request. This matters because
 cancelling an asyncio worker cannot stop a service call already executing in a
 thread.
 
+The save driver owns a single `pending_save_requested` flag. Every genuine edit
+that occurs during an in-flight attempt raises it immediately, including during
+a follow-up attempt. A Save/autosave request also raises it when it targets a
+revision newer than the active attempt; a request for the already-active
+revision is satisfied by that attempt. Before starting an attempt, the driver
+clears the flag and captures the latest revision, version, and payload. After a
+successful attempt, it rechecks the flag and current revision, clears a request
+already satisfied by the saved revision, and starts another attempt only when
+the current revision is newer. This loop continues until the current revision
+equals the saved revision and the pending flag is clear; there is no
+two-attempt limit.
+
 On success:
 
 - always accept the returned/new optimistic-lock version for the same active
@@ -350,12 +384,16 @@ On success:
 - if the current draft revision equals the saved revision, clear dirty and
   show `Saved`;
 - if the current draft revision is newer, retain dirty, retain the newer raw
-  draft, and run one follow-up save against the updated version.
+  draft, and continue the save driver against the updated version.
 
 On ordinary failure:
 
 - retain the current draft and dirty state;
 - show `Save failed — edits kept`;
+- clear the pending flag and stop automatic chaining so a failing service
+  cannot enter a retry loop;
+- let the next genuine edit/autosave or explicit Save retry the latest
+  revision;
 - do not navigate away.
 
 On optimistic-lock conflict:
@@ -366,15 +404,37 @@ On optimistic-lock conflict:
 - switch from Context or Preview to Editor;
 - show a focusable explanatory callout plus Overwrite and Reload.
 
-Overwrite fetches the fresh server version and attempts to save the current
-canonical draft. Reload explicitly replaces the draft from the fresh persisted
-detail. If the note was deleted elsewhere, the workflow returns to Navigator
-with a warning.
+Conflict resolution is a single gated operation. The first Overwrite or Reload
+sets `conflict_resolution_running`, increments/captures an operation token, and
+disables both actions. Duplicate activation or activation of the other action
+while the fetch is running is a no-op. Every completion verifies the active
+note id, conflict generation, and operation token before it may update state.
+The gate clears only at the terminal success, ordinary failure, missing-note,
+or renewed-conflict outcome.
+
+Overwrite fetches the fresh persisted version without changing the draft,
+rebases the expected version, and enters the same serialized save driver with
+the latest revision and payload. Edits made during either the fetch or save are
+therefore included in that attempt or a later coalesced attempt. A second
+optimistic-lock conflict returns to the same conflict state.
+
+Reload captures the draft revision when the user activates it, then fetches the
+fresh persisted detail. The result may replace the canonical draft only when
+the active note and conflict are unchanged and the current revision still
+equals the captured revision. If the user typed during the fetch, Reload is not
+applied; the conflict and draft remain, the UI reports
+`Draft changed — Reload not applied`, and the user must choose again.
+
+If the note was deleted elsewhere, Overwrite retains the draft in Editor and
+reports that the target no longer exists. An unchanged-revision Reload is the
+explicit discard decision and may return to Navigator with a warning; a
+changed-revision Reload remains vetoed.
 
 ### Flush and lifecycle
 
-Back, row switching, rail switching, route navigation, and unmount continue to
-use the pending-work flush barrier.
+Back, row switching, rail switching, route navigation, and controlled screen
+replacement continue to use the pending-work flush barrier before permitting
+Library to unmount.
 
 Flush:
 
@@ -385,6 +445,12 @@ Flush:
 
 Resize, Preview, and Context toggles never force a save.
 
+`on_unmount` is cleanup-only: it cancels timers and workers after the
+navigation barrier has succeeded and does not attempt asynchronous persistence.
+The app must not voluntarily replace a dirty Library screen by bypassing the
+barrier. Abrupt process termination and application-wide shutdown
+orchestration are outside Adapt.
+
 Transient Context, Preview, confirmation, loading, and compact-stage state are
 not restored on a new screen instance. Selected note, list/editor workflow,
 filter, and sort retain their existing persisted behavior. A restored editor
@@ -392,9 +458,10 @@ session opens Editor, not Context or Preview.
 
 ## Stable Composition
 
-The Library rail and canvas remain mounted across compact shell changes.
+The Library rail and canvas remain mounted across Notes compact shell changes.
 
-After a note detail loads, the note session mounts these surfaces once:
+After a note detail loads, the current `LibraryNotesCanvas` instance mounts
+these surfaces once:
 
 - Edit;
 - Preview;
@@ -415,12 +482,24 @@ presentation seam, conceptually `apply_session_state(state)`, which:
 - updates conflict and delete-confirmation visibility;
 - applies compact/wide action-group classes.
 
+The seam performs value-difference checks and uses the screen-owned
+presentation-sync guard for any Input/TextArea assignment.
+
 The method does not query a database, call services, perform navigation, own
 timers, or mutate global application state.
 
 Navigator → Editor and Editor → Navigator may recompose because they are
 workflow transitions. Resize, Preview, Context, status, and confirmation
 changes do not.
+
+An unrelated whole-`LibraryScreen` source-snapshot recompose may replace the
+canvas under the current architecture. Before such a recompose, the screen
+captures the canonical draft plus caret, selection, body scroll, active
+presentation, and focus identity; after the new canvas mounts, it rehydrates
+those values by `note_id` without consulting stale persisted text. Stable
+widget identity is guaranteed across Notes compact/wide, Preview, Context,
+status, conflict, and confirmation transitions within one canvas instance,
+not across an unrelated whole-screen recompose.
 
 ## Focus and Safety
 
@@ -432,7 +511,7 @@ changes do not.
 - New note → focus title.
 - Editor Back → focus the originating note row by `note_id`.
 - If the row vanished or is filtered out → focus the filter.
-- Context Back → focus the Context action that opened it.
+- Context Back → focus the Editor/Preview Context button that opened Context.
 - Preview Edit → restore body caret, selection, and scroll.
 - Navigator Back → restore the selected Library rail row.
 
@@ -569,8 +648,15 @@ Owns:
 - genuine user edits increment draft revision;
 - mount events do not;
 - a current-revision success clears dirty;
-- a stale-revision success retains dirty and requests one follow-up;
+- stale-revision successes retain dirty and continue through three or more
+  successive edit revisions until the latest revision is saved;
+- ordinary failure stops automatic chaining and the next edit or explicit Save
+  retries the latest revision;
 - conflict preserves the newest draft;
+- Overwrite rebases through the serialized save driver;
+- Reload applies only when its captured draft revision is still current;
+- guarded programmatic synchronization never advances the revision or arms
+  autosave;
 - Preview and Context derive from the canonical draft;
 - transient presentation state is excluded from persistence.
 
@@ -583,11 +669,20 @@ Run with the real generated stylesheet:
 - create Blank/template → Editor;
 - compact Sync entry and Back;
 - compact multi-select and Done;
+- compact keyboard activation of Import, whole-source Export, Copy,
+  per-note Markdown/text export, and Use in Console with temporary paths plus
+  stub clipboard/navigation services;
 - loading Back plus late-result rejection;
 - Preview keyboard focus and scroll;
 - Context keyword edit and autosave;
-- edit while an earlier autosave is in flight;
+- three successive edits while earlier saves are in flight;
 - explicit Save while save is in flight;
+- edit during Overwrite fetch/save;
+- edit during Reload fetch, proving the fetched detail is not applied;
+- Overwrite then Reload, Reload then Overwrite, and duplicate conflict-action
+  activation while the first fetch runs, proving only one token can apply;
+- Preview, Context, save-status, conflict, and rehydration synchronization
+  proving no draft-revision or autosave change;
 - Back waiting for the complete save chain;
 - save failure vetoing Back;
 - conflict from Editor, Preview, and Context;
@@ -600,7 +695,8 @@ Run with the real generated stylesheet:
 
 - 60×20 fully usable;
 - representative compact 80×24 and 100×30;
-- breakpoint boundary 119/120, or the final measured boundary;
+- host sizes that produce measured `#library-shell-grid` content widths of
+  119/120, or the final measured boundary;
 - existing 170×48 wide layout;
 - dirty 170 → 60 → 170 round trip preserving:
   - draft text;
@@ -624,8 +720,12 @@ Run with the real generated stylesheet:
 
 - repeatedly cross the breakpoint and toggle Context/Preview;
 - assert Editor widget identities remain stable;
-- assert worker and timer counts do not grow;
+- await a quiet baseline, then assert the relevant Notes save/autosave worker
+  groups and timers do not grow;
 - assert no unbounded mount/remove churn;
+- land an unrelated source snapshot during a dirty edit and verify the new
+  canvas rehydrates the draft, caret, selection, scroll, presentation, and
+  focus;
 - navigate away with a pending and an in-flight save;
 - unmount/remount and verify only intended persistent state returns.
 
@@ -634,6 +734,8 @@ Run with the real generated stylesheet:
 - focused Library/Notes state and UI tests;
 - navigation, persistence, sync, import/export, and Console-handoff regressions;
 - CSS generation, parsing, and source/bundle parity;
+- targeted parity for geometry-critical selectors/properties shared by
+  `LibraryScreen.DEFAULT_CSS` and `_agentic_terminal.tcss`;
 - repository static checks;
 - full project tests required by the repository Definition of Done;
 - interface detector on the changed UI sources as supplemental evidence;
@@ -661,20 +763,19 @@ visibly rather than discard content:
 
 ADR required: no new ADR
 
-ADR path: N/A
+Governing ADR:
+`backlog/decisions/011-chatbook-workbench-ui-system.md`
 
 Reason: Adapt changes presentation and in-session safety inside accepted
 Library/Database Note ownership. It changes no schema, file authority, sync
 policy, route ownership, security boundary, provider/runtime boundary, or
 long-lived dedicated-workbench structure.
 
-Existing decisions:
+Related decisions:
 
-- `backlog/decisions/011-chatbook-workbench-ui-system.md` — stable composition,
-  explicit state snapshots, visible workflows, and responsiveness gates.
 - `backlog/decisions/015-shell-destination-ia.md` — Notes remains owned by
   Library.
-- `backlog/decisions/021-file-backed-notes-disk-authority-and-recovery-replica.md`
+- `backlog/decisions/021-file-backed-notes-disk-authority-and-recovery.md`
   — File Notes keeps a separate future workbench/controller boundary and is
   not folded into this Database Notes session.
 - `backlog/decisions/022-textual-8-runtime-floor.md` — supported Textual runtime
