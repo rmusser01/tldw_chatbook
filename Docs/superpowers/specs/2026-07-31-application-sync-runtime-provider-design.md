@@ -323,12 +323,20 @@ Implementation verification includes:
 - the changed direct Sync tests;
 - the focused production-app lifecycle module;
 - runtime provider and full-app runtime-policy tests;
+- the provider-migration audit guard, including a numeric service-name
+  regression;
 - all `Tests/ProductionApp/` and `Tests/Packaging/` tests;
 - the full repository suite;
 - compile, Ruff lint/format, static privacy/surrogate guards, and diff hygiene;
 - the installed sdist/wheel probe from a clean temporary installation.
 
 ### 6. Documentation and inventory
+
+TASK-1601 is the single Provider Migration Audit Owner for this tranche's
+delta. It owns both
+`Docs/Development/server-client-provider-migration-audit.md` and
+`Tests/RuntimePolicy/test_server_client_provider_migration_audit.py` for this
+change; no parallel domain sub-batch may edit either file.
 
 Amend ADR-036 because it is the existing canonical application service
 composition and provider-ownership decision. Add TASK-1601 to its related
@@ -342,8 +350,13 @@ The public compatibility factory remains an intentional provider-backed API,
 not a removal target.
 
 Correct the audit's alphabetic-only service pattern so numeric class names
-such as `ServerText2SQLService` cannot disappear from its semantic scan. Use
-an AST call inventory to derive the executable app count, and repeat that
+such as `ServerText2SQLService` cannot disappear from its semantic scan. First
+add a failing audit-guard regression using an unlisted numeric service class,
+then broaden `INDIRECT_BUILDER_RE` and the documented direct-scan expression to
+accept digits. Reconcile the app audit row by adding the previously invisible
+Text2SQL semantic match while removing the migrated Sync match.
+
+Use an AST call inventory to derive the executable app count, and repeat that
 inventory after every rebase. If current `dev` has independently changed the
 inventory, record the newly verified count instead of forcing the reviewed
 baseline's expected 31.
