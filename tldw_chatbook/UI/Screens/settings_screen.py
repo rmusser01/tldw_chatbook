@@ -18,7 +18,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
-from textual.events import DescendantFocus, Key
+from textual.events import DescendantFocus, Key, Resize
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -12248,6 +12248,11 @@ class SettingsScreen(BaseAppScreen):
             pane.scroll_to_widget(first_row, animate=False, force=True, top=True)
 
         self.call_after_refresh(_scroll)
+        # Qodo PR #1139: focus-driven guidance refreshes change the body's
+        # height in place (a real entry's wrapped Consequences vs the short
+        # fallback), so the fold indicator must be re-evaluated here too --
+        # mount/resize/category-switch alone leave it stale.
+        self.call_after_refresh(self._update_inspector_overflow_hint)
 
     @on(Collapsible.Toggled)
     def handle_settings_library_rag_collapsible_toggled(
@@ -12306,7 +12311,13 @@ class SettingsScreen(BaseAppScreen):
             return
         hint.display = body.virtual_size.height > body.container_size.height
 
-    def on_resize(self, event) -> None:
+    def on_resize(self, event: Resize) -> None:
+        """Re-evaluate the inspector fold indicator on viewport changes.
+
+        Args:
+            event: The resize event; sizes are re-read after the refresh
+                completes, so only the notification matters here.
+        """
         self.call_after_refresh(self._update_inspector_overflow_hint)
 
     def _refresh_theme_modified_widgets(self) -> None:

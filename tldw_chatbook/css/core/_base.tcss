@@ -50,3 +50,9 @@ Toast.-warning {
 Toast.-error {
     border: round $ds-status-error;
 }
+/* Qodo PR #1139: three call sites pass severity="success" -- not a
+   Textual SeverityLevel, but the Toast still gains a "-success" class,
+   which previously fell through unstyled. */
+Toast.-success {
+    border: round $ds-status-ready;
+}
