@@ -2224,6 +2224,118 @@ class ConsoleComposerBar(Horizontal):
             step = 1
         return self._move_cursor_to(self._cursor_index + step)
 
+    def move_cursor_up(self) -> bool:
+        """Move the caret up one visual (wrapped) row, at the same column.
+
+        "Same column" is measured in CHARACTERS within the row's DISPLAY
+        text -- the same unit `move_cursor_left`/`move_cursor_right` already
+        step through -- and is clamped to the target row's own length when
+        it is shorter. There is no goal-column memory across calls: every
+        move recomputes its starting column from the caret's row at the
+        moment it is called, so a run of consecutive Up presses through rows
+        of varying length can drift the apparent column over time, exactly
+        as repeated left/right stepping already has no memory of a "preferred"
+        position either.
+
+        Returns:
+            True when the caret moved; False (moving nothing at all -- no
+            refresh, no selection/coalescing reset) when the caret is
+            already on the topmost visual row.
+        """
+        return self._move_cursor_vertically(-1)
+
+    def move_cursor_down(self) -> bool:
+        """Move the caret down one visual (wrapped) row, at the same column.
+
+        See `move_cursor_up` for the full column/clamping/no-goal-column-
+        memory contract -- identical here, mirrored downward.
+
+        Returns:
+            True when the caret moved; False (moving nothing at all) when
+            the caret is already on the bottommost visual row.
+        """
+        return self._move_cursor_vertically(1)
+
+    def _move_cursor_vertically(self, row_delta: int) -> bool:
+        """Shared row-stepping logic behind `move_cursor_up`/`move_cursor_down`.
+
+        Maps the caret to (visual row, column) against the FULL, unwindowed
+        wrap of the display draft (`_wrap_draft_line_slices`) -- not the
+        windowed/prefixed `_visible_draft_line_slices` the bounded 4-row
+        composer actually paints. Those wrapped slices carry source offsets,
+        the same source-offset-carrying machinery the mouse-click mapping
+        (`_display_index_at`) and `_row_index_for_source_offset` already use
+        -- reused here rather than reinvented. Using the unwindowed slices
+        sidesteps the windowed view's synthetic "... " prefix on its top
+        visible row entirely: that prefix trims leading DISPLAY characters
+        for paint only, and mapping against it would otherwise drift column
+        math by the prefix's own width whenever the caret's target row
+        happens to be a windowed top row. The caret's actual on-screen row
+        is left to resolve on the very next `_refresh_visible_draft()` (run
+        by `_move_cursor_to` below), which already re-centers the
+        caret-following window -- not reimplemented here.
+
+        Before wrapping, a single placeholder character is spliced into the
+        DISPLAY text at the caret -- exactly the "reserved caret cell"
+        `_draft_renderable` splices in for painting, and the same technique
+        `_display_index_at` uses for click mapping. Without it, a caret
+        sitting at the exact END of an explicit-newline-terminated row (not
+        the draft's own last row) is genuinely ambiguous: that source offset
+        is simultaneously "one past this row's last character" and "where
+        the row-separating newline lives", which is not inside ANY wrapped
+        row's [start, end) span, so `_row_index_for_source_offset` falls
+        back to resolving it as the LAST row instead of the row it visually
+        belongs to -- confirmed by a RED reproduction where repeated Up
+        presses through equal-length explicit-newline rows oscillated back
+        to the bottom row every second press instead of climbing. The
+        placeholder occupies that exact offset with a real character,
+        resolving the row unambiguously, matching how every other caret-
+        geometry computation in this class already avoids the same trap.
+        Any resulting target offset past the caret is then shifted back by
+        the placeholder's one character -- the identical correction
+        `_display_index_at` applies to its own post-splice `source_index`.
+
+        Column offsets are computed in DISPLAY space (`_display_draft_text`/
+        `_cursor_display_index`), then mapped back to a canonical draft
+        offset via `_canonical_index_at_display` -- the same display<->
+        canonical translation the click-to-position path already performs,
+        so a caret landing "inside" a collapsed paste token snaps to the
+        token's nearest edge exactly as a click would.
+
+        Args:
+            row_delta: -1 to move up one row, +1 to move down one row.
+
+        Returns:
+            True when a target row exists in that direction and the caret
+            moved there; False when the caret is already on the first (up)
+            or last (down) visual row -- nothing is moved or reset.
+        """
+        self._clamp_cursor()
+        if not self._segments_initialized:
+            return self._move_cursor_to(self._cursor_index)
+        display_text = self._display_draft_text()
+        caret_position = max(0, min(self._cursor_display_index(), len(display_text)))
+        spliced_text = f"{display_text[:caret_position]} {display_text[caret_position:]}"
+        line_slices = self._wrap_draft_line_slices(
+            spliced_text, self._draft_render_width()
+        )
+        current_row = self._row_index_for_source_offset(line_slices, caret_position)
+        target_row = current_row + row_delta
+        if target_row < 0 or target_row >= len(line_slices):
+            return False
+        current_slice = line_slices[current_row]
+        target_slice = line_slices[target_row]
+        column = caret_position - current_slice.start
+        clamped_column = min(column, len(target_slice.text))
+        spliced_target_index = target_slice.start + clamped_column
+        target_display_index = (
+            spliced_target_index - 1
+            if spliced_target_index > caret_position
+            else spliced_target_index
+        )
+        canonical_index = self._canonical_index_at_display(target_display_index)
+        return self._move_cursor_to(canonical_index)
+
     def move_cursor_home(self) -> bool:
         """Move the caret to the start of the draft.
 
