@@ -188,8 +188,14 @@ async def test_library_registration_updates_the_screens_own_footer():
 @pytest.mark.asyncio
 async def test_settings_registration_updates_the_screens_own_footer():
     """task-264 review Important: Settings' s/r/t hints (previously rendered
-    by the retired Footer) must reach its own footer via registration."""
+    by the retired Footer) must reach its own footer via registration.
+
+    The hints are category-gated (rescore P1): the read-only Overview
+    default advertises none of them, so the check switches to a guided
+    draft category first.
+    """
     from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 
     app_instance = _build_test_app()
     host = _DefaultScreenFooterHost(app_instance, SettingsScreen)
@@ -198,6 +204,15 @@ async def test_settings_registration_updates_the_screens_own_footer():
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         screen = host.screen_stack[-1]
+        screen_footer = screen.query_one(AppFooterStatus)
+        for token in ("save category", "revert category", "test category"):
+            assert token not in screen_footer.shortcut_text
+        screen.active_category = SettingsCategoryId.PROVIDERS_MODELS.value
+        await pilot.pause()
+        screen._register_footer_shortcuts()
+        await pilot.pause()
+        # The category switch recomposes the screen, replacing the footer
+        # widget -- re-query rather than trusting the stale reference.
         screen_footer = screen.query_one(AppFooterStatus)
         for token in ("save category", "revert category", "test category"):
             assert token in screen_footer.shortcut_text

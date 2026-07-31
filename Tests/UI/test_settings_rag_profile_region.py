@@ -3518,8 +3518,10 @@ async def test_rag_category_footer_advertises_the_new_accelerators(
         overview_footer = screen.query_one(AppFooterStatus)
         for token in ("a set active", "c clone", "b backfill"):
             assert token not in overview_footer.shortcut_text
+        # Overview is read-only and untestable: the category-gated footer
+        # (rescore P1) advertises no settings keys there at all.
         for token in ("s save category", "r revert category", "t test category"):
-            assert token in overview_footer.shortcut_text
+            assert token not in overview_footer.shortcut_text
 
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)

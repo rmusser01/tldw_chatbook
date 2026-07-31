@@ -1831,13 +1831,22 @@ class SettingsScreen(BaseAppScreen):
     def _footer_shortcut_entries(self) -> tuple[tuple[str, str], ...]:
         """Category- and focus-aware footer hints (task-1564/1560).
 
-        Drops the ``t`` hint for categories whose test action is the "No
-        test action is available" toast, appends the RAG accelerators only
-        where they act, and prefixes keys with "Esc, " while a text-entry
-        widget owns focus (printable keys feed the field until Esc).
+        Drops the ``s``/``r`` hints for categories outside the guided draft
+        model (read-only pages, autosave Splash, immediate-apply Workspaces,
+        the editor-owned Theme -- everywhere action_settings_save_category
+        answers with an informational toast), drops the ``t`` hint for
+        categories whose test action is the "No test action is available"
+        toast, appends the RAG accelerators only where they act, and
+        prefixes keys with "Esc, " while a text-entry widget owns focus
+        (printable keys feed the field until Esc).
         """
         shortcuts = self.SETTINGS_SHORTCUTS
-        if self._active_category_id() not in self.TESTABLE_SETTINGS_CATEGORIES:
+        active = self._active_category_id()
+        if active not in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+            shortcuts = tuple(
+                entry for entry in shortcuts if entry[0] not in {"s", "r"}
+            )
+        if active not in self.TESTABLE_SETTINGS_CATEGORIES:
             shortcuts = tuple(
                 entry for entry in shortcuts if entry[0] != "t"
             )
