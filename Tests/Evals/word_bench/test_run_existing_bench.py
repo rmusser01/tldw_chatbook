@@ -364,6 +364,38 @@ async def test_run_existing_bench_rejects_a_chat_mode_bench_with_a_prefix_target
     assert db.list_runs(task_id=task_id) == []
 
 
+@pytest.mark.asyncio
+async def test_run_existing_bench_persists_a_steered_targets_prefix_in_the_snapshot(
+    view_model, db, dataset_id
+):
+    """Fix round 1: the steering _resolve_targets reads out of
+    eval_models.config must actually reach the persisted run snapshot, not
+    only the in-memory Target -- storage._snapshot already serializes
+    Target.prefix/system_prompt; this pins that task-1611's newly resolved
+    values flow all the way through create_run_group's write. Reads
+    run["config_overrides"]["snapshot"]["targets"], the same shape
+    test_storage.py's own snapshot tests (e.g.
+    test_run_snapshot_carries_snippet_text_not_only_ids) already use."""
+    target_id = db.create_model(
+        name="steered target", provider="llama_cpp", model_id="m",
+        config={"prefix": "Be careful. "},
+    )
+    config = BenchConfig(
+        name="steered bench", prompt_mode="raw", top_k=5,
+        dataset_id=dataset_id, target_ids=(target_id,),
+    )
+    task_id = save_bench(db, config)
+
+    result = await run_existing_bench(
+        view_model, {}, task_id, client_factory=lambda t: _WorkingClient()
+    )
+
+    run = db.list_runs(run_group_id=result.run_group_id, limit=10)[0]
+    snapshot_targets = run["config_overrides"]["snapshot"]["targets"]
+    assert snapshot_targets[0]["prefix"] == "Be careful. "
+    assert snapshot_targets[0]["system_prompt"] is None
+
+
 # ---------------------------------------------------------------------------
 # TASK-1480 -- EvalsViewModel.run_groups() status roll-up.
 #

@@ -72,6 +72,13 @@ def model_steering(model_row: Mapping[str, Any]) -> tuple[Optional[str], Optiona
             JSON) must be surfaced as the corrupt row it is -- naming the
             model id -- rather than have this function silently pick one
             field over the other and hide the inconsistency.
+        ValueError: If ``config`` parses to something other than a JSON
+            object (e.g. hand-edited into a list or a bare number) --
+            naming the model id, same as the both-set case above, rather
+            than raising an opaque ``AttributeError`` out of the ``.get()``
+            calls below. An empty list is falsy and is caught by the
+            ``or {}`` fallback before this check, same as a missing or
+            ``None`` config.
     """
     config = model_row.get("config") or {}
     if isinstance(config, str):
@@ -80,6 +87,12 @@ def model_steering(model_row: Mapping[str, Any]) -> tuple[Optional[str], Optiona
         # still a JSON string) is accommodated rather than made to fail
         # with an opaque AttributeError on the .get() calls below.
         config = json.loads(config)
+    if not isinstance(config, dict):
+        raise ValueError(
+            f"eval_models row {model_row.get('id')!r} has a non-mapping "
+            "config; expected an object with optional 'prefix'/"
+            "'system_prompt'"
+        )
     prefix = config.get("prefix") or None
     system_prompt = config.get("system_prompt") or None
     if prefix and system_prompt:

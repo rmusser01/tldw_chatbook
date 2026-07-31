@@ -414,6 +414,20 @@ async def create_and_run_sample_bench(
             target could be resolved (callers should have already checked
             ``provider_is_configured`` and hidden the offer in that case;
             this is a defensive re-check, not the primary gate).
+        ValueError: Via ``storage.model_steering``, if the resolved target
+            row's ``config`` is corrupt (both ``prefix`` and
+            ``system_prompt`` set, or a non-mapping ``config``).
+            ``resolve_sample_target`` REUSES an arbitrary existing
+            ``llama_cpp`` ``eval_models`` row when one is already
+            registered (see its own docstring) rather than always minting
+            a fresh one, so this is reachable with a pre-existing corrupt
+            row, not only through this function's own writes. NOT wrapped
+            into a ``RuntimeError`` the way ``run_existing_bench`` wraps
+            the equivalent case (task-1611) -- this function's only
+            caller today (``evals_screen.py``'s sample-bench worker)
+            already catches broad ``Exception`` around the whole call, so
+            the un-wrapped type reaches the same user-facing toast either
+            way.
         asyncio.CancelledError: If this coroutine itself is hard-cancelled
             (e.g. by Textual's ``exclusive=True`` worker mechanism) while
             ``runner.run`` is in flight. Re-raised after marking any

@@ -529,3 +529,51 @@ def test_model_steering_raises_naming_the_model_id_when_both_are_set(db):
     )
     with pytest.raises(ValueError, match=model_id):
         model_steering(db.get_model(model_id))
+
+
+def test_model_steering_preserves_prefix_and_system_prompt_whitespace(db):
+    """Fix round 1: pins that model_steering never trims -- a future
+    ``.strip()`` "cleanup" must fail this. A leading newline in a raw-mode
+    prefix and a leading space in a chat-mode system_prompt are both
+    meaningful content, not incidental formatting."""
+    prefix_id = db.create_model(
+        name="newline-prefix", provider="llama_cpp", model_id="m",
+        config={"prefix": "\nBe careful. "},
+    )
+    assert model_steering(db.get_model(prefix_id)) == ("\nBe careful. ", None)
+
+    system_prompt_id = db.create_model(
+        name="space-system-prompt", provider="llama_cpp", model_id="m",
+        config={"system_prompt": " Be terse."},
+    )
+    assert model_steering(db.get_model(system_prompt_id)) == (None, " Be terse.")
+
+
+def test_model_steering_raises_naming_the_model_id_for_a_non_mapping_config(db):
+    """Fix round 1: a hand-edited config that parses to something other
+    than a JSON object (a list, a bare number) must not reach the `.get()`
+    calls below as an opaque AttributeError -- it is the exact corruption
+    vector this function's docstring already anticipates for the
+    both-set case."""
+    list_id = db.create_model(name="list-config", provider="llama_cpp", model_id="m")
+    db.get_connection().execute(
+        "UPDATE eval_models SET config = ? WHERE id = ?", ('["a"]', list_id)
+    )
+    with pytest.raises(ValueError, match=list_id):
+        model_steering(db.get_model(list_id))
+
+    int_id = db.create_model(name="int-config", provider="llama_cpp", model_id="m")
+    db.get_connection().execute(
+        "UPDATE eval_models SET config = ? WHERE id = ?", ("5", int_id)
+    )
+    with pytest.raises(ValueError, match=int_id):
+        model_steering(db.get_model(int_id))
+
+
+def test_model_steering_treats_an_empty_list_config_as_unsteered(db):
+    """An empty list is falsy, same as a missing/None config -- caught by
+    the `or {}` fallback before the non-mapping check ever runs. Exercised
+    directly against the function (rather than through create_model/
+    get_model) because create_model's own `config or {}` already
+    normalizes a `[]` argument to `{}` before it is ever stored."""
+    assert model_steering({"id": "x", "config": []}) == (None, None)
