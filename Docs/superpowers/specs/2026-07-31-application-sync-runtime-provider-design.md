@@ -92,6 +92,8 @@ The reviewed `origin/dev` contains 32 executable
 `Server*Service.from_config(...)` calls in `tldw_chatbook/app.py`. The Sync
 migration will leave 31. An AST inventory includes `ServerText2SQLService`;
 text patterns restricted to alphabetic class names incorrectly report 31.
+The residual count is re-derived after every rebase; 31 is the expected result
+for the reviewed baseline, not a repository-wide constant.
 
 Before design changes, the focused existing baseline passed:
 
@@ -269,7 +271,8 @@ provider-aware factory:
 - keeps no service-local client reference.
 
 Keep the public `from_config(...)` compatibility test and explicitly close the
-compatibility provider's cached client after its assertions.
+compatibility provider's cached client in `finally`, including when an
+assertion fails.
 
 Update `Tests/Sync_Interop/test_local_first_sync_service.py` with an initially
 empty shared cache. Add a key after construction and prove the service observes
@@ -288,6 +291,12 @@ The existing test will continue constructing and mounting the real
 and dataset-key identity listed above before, during, and after the mounted
 production-app lifecycle. It will also prove the local apply store remains
 unavailable rather than installing a verification store.
+
+Instrument the real app provider's `close_cached_client()` method while still
+invoking its original implementation. Normal `run_test()` exit must call it
+once. Combined with `server_sync_service.client is None` and the exact provider
+identity, this proves Sync introduces no second client teardown owner. The
+test's best-effort final cleanup remains outside that lifecycle assertion.
 
 Runtime client re-resolution is covered compositionally: the production-app
 test proves Sync holds the exact app provider, the direct Sync test proves the
@@ -331,6 +340,13 @@ the app-composed Sync compatibility call and explicitly record 31 remaining
 executable app-level `Server*Service.from_config(...)` calls after the change.
 The public compatibility factory remains an intentional provider-backed API,
 not a removal target.
+
+Correct the audit's alphabetic-only service pattern so numeric class names
+such as `ServerText2SQLService` cannot disappear from its semantic scan. Use
+an AST call inventory to derive the executable app count, and repeat that
+inventory after every rebase. If current `dev` has independently changed the
+inventory, record the newly verified count instead of forcing the reviewed
+baseline's expected 31.
 
 TASK-1602 separately records the verified production local-apply-store design
 gap. TASK-1601 must not claim that manual Sync is operational merely because

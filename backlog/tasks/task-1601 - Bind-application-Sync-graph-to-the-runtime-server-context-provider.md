@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-31 14:02'
-updated_date: '2026-07-31 14:06'
+updated_date: '2026-07-31 14:11'
 labels:
   - architecture
   - sync
@@ -34,7 +34,7 @@ Make the app-composed Sync graph follow the application-owned runtime server sel
 - [ ] #3 Sync operations resolve clients lazily through the shared provider without a service-local client cache, and application shutdown remains the sole owner of provider client cleanup.
 - [ ] #4 The missing production local apply store remains explicitly blocked and is not replaced with an in-memory or test-only implementation in this provider-ownership tranche.
 - [ ] #5 Focused source checks, real production TldwCli tests, and an offline installed-wheel production-app probe verify the ownership graph without a test, surrogate, simplified, or locally redefined application.
-- [ ] #6 ADR-036 and the provider-migration audit describe the corrected Sync boundary and the verified residual count of 31 executable app-level compatibility-provider calls.
+- [ ] #6 ADR-036 and the provider-migration audit use a numeric-safe semantic and AST inventory and record the verified residual app-level compatibility-provider count, expected to be 31 on the reviewed baseline and re-derived after rebases.
 - [ ] #7 Focused Sync, runtime-policy, ProductionApp, Packaging, full-suite, static, formatting, and diff-hygiene verification passes.
 <!-- AC:END -->
 
