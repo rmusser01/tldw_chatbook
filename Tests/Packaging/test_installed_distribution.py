@@ -459,6 +459,11 @@ def service_identities(app):
             "citation_artifact_ownership_coordinator",
             "media_reading_scope_service",
             "sync_scope_service",
+            "server_sync_service",
+            "local_first_sync_service",
+            "manual_sync_control_service",
+            "sync_v2_dataset_keys",
+            "sync_state_repository",
         )
     )
 
@@ -501,6 +506,21 @@ def assert_service_graph(app):
         app.citation_artifact_ownership_coordinator.artifact_store
         is app.local_chatbook_service
     )
+    assert app.server_sync_service.client is None
+    assert app.server_sync_service.client_provider is app.server_context_provider
+    assert app.server_sync_service.state_repository is app.sync_state_repository
+    assert app.sync_scope_service.server_service is app.server_sync_service
+    assert app.sync_scope_service.state_repository is app.sync_state_repository
+    assert app.local_first_sync_service.server_service is app.server_sync_service
+    assert app.local_first_sync_service.state_repository is app.sync_state_repository
+    assert app.local_first_sync_service.local_store is None
+    assert app.local_first_sync_service.dataset_keys is app.sync_v2_dataset_keys
+    assert (
+        app.manual_sync_control_service.local_first_sync_service
+        is app.local_first_sync_service
+    )
+    assert app.manual_sync_control_service.state_repository is app.sync_state_repository
+    assert app.manual_sync_control_service.dataset_keys is app.sync_v2_dataset_keys
 
 
 app = get_app()

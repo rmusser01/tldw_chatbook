@@ -33,6 +33,11 @@ SERVICE_ATTRIBUTES = (
     "citation_artifact_ownership_coordinator",
     "media_reading_scope_service",
     "sync_scope_service",
+    "server_sync_service",
+    "local_first_sync_service",
+    "manual_sync_control_service",
+    "sync_v2_dataset_keys",
+    "sync_state_repository",
 )
 APP_PATH = Path(app_module.__file__).resolve()
 
@@ -63,6 +68,26 @@ def _constructor_wiring_calls() -> Counter[str]:
             and node.func.attr in WIRING_METHODS
         )
     )
+
+
+def _server_sync_config_factory_calls() -> list[int]:
+    tree = ast.parse(APP_PATH.read_text(encoding="utf-8"), filename=str(APP_PATH))
+    app_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "TldwCli"
+    )
+    return [
+        node.lineno
+        for node in ast.walk(app_class)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "from_config"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "ServerSyncService"
+        )
+    ]
 
 
 def _disable_splash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -119,6 +144,21 @@ def _assert_service_graph(app: TldwCli) -> None:
         app.citation_artifact_ownership_coordinator.artifact_store
         is app.local_chatbook_service
     )
+    assert app.server_sync_service.client is None
+    assert app.server_sync_service.client_provider is app.server_context_provider
+    assert app.server_sync_service.state_repository is app.sync_state_repository
+    assert app.sync_scope_service.server_service is app.server_sync_service
+    assert app.sync_scope_service.state_repository is app.sync_state_repository
+    assert app.local_first_sync_service.server_service is app.server_sync_service
+    assert app.local_first_sync_service.state_repository is app.sync_state_repository
+    assert app.local_first_sync_service.local_store is None
+    assert app.local_first_sync_service.dataset_keys is app.sync_v2_dataset_keys
+    assert (
+        app.manual_sync_control_service.local_first_sync_service
+        is app.local_first_sync_service
+    )
+    assert app.manual_sync_control_service.state_repository is app.sync_state_repository
+    assert app.manual_sync_control_service.dataset_keys is app.sync_v2_dataset_keys
 
 
 async def _close_production_app(app: TldwCli) -> None:
@@ -135,6 +175,10 @@ async def _close_production_app(app: TldwCli) -> None:
 
 def test_constructor_contains_one_call_for_each_guarded_composition_helper() -> None:
     assert _constructor_wiring_calls() == EXPECTED_WIRING_CALLS
+
+
+def test_app_composition_does_not_use_sync_config_factory() -> None:
+    assert _server_sync_config_factory_calls() == []
 
 
 @pytest.mark.asyncio
@@ -180,6 +224,19 @@ async def test_production_app_composes_one_stable_dependency_graph(
     app.app_config["_first_run"] = False
     app.app_config.setdefault("first_run", {})["setup_completed"] = True
     identities = _service_identities(app)
+    provider_close_calls = 0
+    original_close_cached_client = app.server_context_provider.close_cached_client
+
+    async def counted_close_cached_client() -> None:
+        nonlocal provider_close_calls
+        provider_close_calls += 1
+        await original_close_cached_client()
+
+    monkeypatch.setattr(
+        app.server_context_provider,
+        "close_cached_client",
+        counted_close_cached_client,
+    )
 
     try:
         assert calls == EXPECTED_WIRING_CALLS
@@ -196,6 +253,7 @@ async def test_production_app_composes_one_stable_dependency_graph(
         assert calls == EXPECTED_WIRING_CALLS
         _assert_service_identities(app, identities)
         _assert_service_graph(app)
+        assert provider_close_calls == 1
     finally:
         await _close_production_app(app)
 

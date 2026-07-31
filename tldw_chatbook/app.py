@@ -5144,18 +5144,11 @@ class TldwCli(
             server_service=self.server_text2sql_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        try:
-            self.server_sync_service = ServerSyncService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-                state_repository=self.sync_state_repository,
-            )
-        except ValueError:
-            self.server_sync_service = ServerSyncService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-                state_repository=self.sync_state_repository,
-            )
+        self.server_sync_service = ServerSyncService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+            state_repository=self.sync_state_repository,
+        )
         self.sync_scope_service = SyncScopeService(
             server_service=self.server_sync_service,
             policy_enforcer=self.service_policy_enforcer,
