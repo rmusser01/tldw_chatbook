@@ -1,5 +1,5 @@
 ---
-id: task-1582
+id: TASK-1582
 title: 'Settings: interactive elements indistinguishable from prose'
 status: Done
 assignee:

@@ -11,6 +11,8 @@ import wave
 import struct
 from pathlib import Path
 
+import pytest
+
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -66,6 +68,7 @@ class TestDiarizationIntegration(unittest.TestCase):
 
         return audio_path
 
+    @pytest.mark.slow
     def test_real_transcription_with_diarization(self):
         """Test actual transcription with diarization on real audio."""
         # Check if all dependencies are available
@@ -108,6 +111,7 @@ class TestDiarizationIntegration(unittest.TestCase):
             if os.path.exists(audio_path):
                 os.unlink(audio_path)
 
+    @pytest.mark.slow
     def test_transcription_without_diarization(self):
         """Test that transcription works normally when diarization is disabled."""
         if not FASTER_WHISPER_AVAILABLE:
@@ -146,6 +150,7 @@ class TestDiarizationIntegration(unittest.TestCase):
             if os.path.exists(audio_path):
                 os.unlink(audio_path)
 
+    @pytest.mark.slow
     def test_diarization_with_known_speakers(self):
         """Test diarization when number of speakers is specified."""
         if not self.service.is_diarization_available():
@@ -231,6 +236,7 @@ class TestDiarizationIntegration(unittest.TestCase):
                         status, f"Core dependency {dep} should be available"
                     )
 
+    @pytest.mark.slow
     def test_progress_callback(self):
         """Test that progress callbacks work during diarization."""
         if not self.service.is_diarization_available():

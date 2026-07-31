@@ -856,6 +856,7 @@ class TestFasterWhisperIntegration:
             )
 
     @pytest.mark.integration
+    @pytest.mark.slow
     def test_real_transcription_empty_file(self, real_transcription_service):
         """Test transcription with empty audio file."""
         # Create an empty WAV file
@@ -910,6 +911,7 @@ class TestFasterWhisperIntegration:
         # Can't guarantee exact behavior without knowing audio content
 
     @pytest.mark.integration
+    @pytest.mark.slow
     def test_real_transcription_progress_tracking(
         self, real_transcription_service, test_audio_file
     ):

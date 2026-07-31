@@ -1,5 +1,5 @@
 ---
-id: task-1580
+id: TASK-1580
 title: 'Settings: footer s/r hints gated to draft-model categories'
 status: Done
 assignee:

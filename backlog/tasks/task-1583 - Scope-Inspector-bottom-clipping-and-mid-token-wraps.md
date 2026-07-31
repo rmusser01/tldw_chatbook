@@ -1,5 +1,5 @@
 ---
-id: task-1583
+id: TASK-1583
 title: 'Scope Inspector: bottom clipping and mid-token wraps'
 status: Done
 assignee:

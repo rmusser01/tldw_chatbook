@@ -10011,28 +10011,50 @@ async def test_library_shell_ingest_canvas_different_canvas_isolation(tmp_path):
     db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-isolation")
     source = tmp_path / "delta.txt"
     source.write_text("Deltas form where rivers meet the sea.", encoding="utf-8")
-    harness = _LibraryIngestCanvasHarness(db)
+    app = _build_test_app(configured_default="library")
+    app.media_db = db
+    app.media_reading_scope_service = MediaReadingScopeService(
+        LocalMediaReadingService(db),
+        None,
+    )
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app._create_ingest_parse_pool = lambda: _FakeIngestParsePool()
 
-    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = harness.screen_stack[-1]
+    async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, LibraryScreen),
+            message="production app did not mount Library",
+        )
+        screen = app.screen
+        assert isinstance(screen, LibraryScreen)
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one("#library-row-browse-notes").press()
-        await pilot.pause()
-        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+                and bool(screen.query("#library-row-browse-media"))
+            ),
+            message="Library Notes canvas and rail did not settle",
+        )
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
 
-        harness.submit_library_ingest_job(source_path=str(source))
+        app.submit_library_ingest_job(source_path=str(source))
 
+        media_button = None
         for _ in range(_INGEST_POLL_ATTEMPTS):
-            media_button = screen.query_one("#library-row-browse-media", Button)
-            if "Media (1)" in str(media_button.label):
+            media_buttons = list(screen.query("#library-row-browse-media"))
+            media_button = media_buttons[0] if media_buttons else None
+            if media_button is not None and "Media (1)" in str(media_button.label):
                 break
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
             raise AssertionError(
                 f"Rail Media count never incremented while Notes was open. "
-                f"Label: {media_button.label!r}"
+                f"Label: {getattr(media_button, 'label', None)!r}"
             )
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES

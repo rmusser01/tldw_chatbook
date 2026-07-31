@@ -1,5 +1,5 @@
 ---
-id: task-1585
+id: TASK-1585
 title: 'Settings hygiene batch: empty states, casing, repeated mode line'
 status: Done
 assignee:
