@@ -21,7 +21,10 @@ from tldw_chatbook.Notes.file_notes_git_push import (
     PushContractError,
     PushDestinationProjection,
     PushIncludedNote,
+    PushReviewHandle,
+    PushReviewProjection,
     _issue_push_authorization_handle,
+    _issue_push_review_handle,
 )
 
 SessionChangeAction = Literal[
@@ -490,6 +493,7 @@ class FileNotesSessionSnapshot:
     repository_trust_generation: int = 0
     destination_policy_generation: int = 0
     destination_authorization_epoch: int = 0
+    push_review_generation: int = 0
 
 
 class FileNotesGitServiceLifecycle(Protocol):
@@ -770,6 +774,31 @@ class _DestinationPolicyCapture:
     authorization_epoch: int
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class _PushReviewCapture:
+    """Exact owner-issued authority for one immutable push review."""
+
+    candidate_capture: _PushCandidateCapture = field(repr=False)
+    policy_capture: _DestinationPolicyCapture = field(repr=False)
+    authorization: PushAuthorizationHandle = field(repr=False)
+    authorization_epoch: int
+    review_generation: int
+    operation_id: object = field(repr=False)
+    network_context: object = field(repr=False)
+    command_policy_fingerprint: str = field(repr=False)
+    parent_oid: str
+    projection: PushReviewProjection
+
+
+@dataclass(frozen=True, slots=True)
+class _RetiredPushReview:
+    """Most recent spent review bound to its original authorization."""
+
+    handle: PushReviewHandle = field(repr=False)
+    authorization: PushAuthorizationHandle = field(repr=False)
+    authorization_epoch: int
+
+
 @dataclass(frozen=True, slots=True)
 class RootCommitReservation:
     """Fail-fast ownership of one validated root commit."""
@@ -844,6 +873,10 @@ class FileNotesSessionOwner:
         "_destination_authorization",
         "_destination_authorization_capture",
         "_destination_authorization_epoch",
+        "_push_review",
+        "_push_review_capture",
+        "_push_review_generation",
+        "_retired_push_review",
         "_shutdown",
         "_shutdown_condition",
         "_shutdown_error",
@@ -875,6 +908,10 @@ class FileNotesSessionOwner:
             _DestinationPolicyCapture | None
         ) = None
         self._destination_authorization_epoch = 0
+        self._push_review: PushReviewHandle | None = None
+        self._push_review_capture: _PushReviewCapture | None = None
+        self._push_review_generation = 0
+        self._retired_push_review: _RetiredPushReview | None = None
         self._issued_commit_capture: CommitAuthorityCapture | None = None
         self._issued_commit_identity: object | None = None
         self._issued_commit_publication_token: object | None = None
@@ -1073,6 +1110,7 @@ class FileNotesSessionOwner:
                 destination_authorization_epoch=(
                     self._destination_authorization_epoch
                 ),
+                push_review_generation=self._push_review_generation,
             )
 
     def publish_trust(
@@ -1630,6 +1668,116 @@ class FileNotesSessionOwner:
                 and capture.repository_trust_generation
                 == self._repository_trust_generation
             )
+
+    def _capture_push_review_after_parent_observation(
+        self,
+        policy: _DestinationPolicyCapture,
+        authorization: PushAuthorizationHandle,
+        *,
+        operation_id: object,
+        network_context: object,
+        command_policy_fingerprint: str,
+        parent_oid: str,
+    ) -> tuple[PushReviewHandle, PushReviewProjection] | None:
+        """Issue one exact immutable review after observing its parent ref."""
+        if (
+            operation_id is None
+            or network_context is None
+            or len(command_policy_fingerprint) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in command_policy_fingerprint
+            )
+        ):
+            return None
+        with self._lock:
+            candidate_capture = policy.candidate_capture
+            if (
+                self._shutdown
+                or policy is not self._destination_policy_capture
+                or candidate_capture is not self._push_candidate_capture
+                or authorization is not self._destination_authorization
+                or self._destination_authorization_capture is not policy
+                or policy.policy_generation
+                != self._destination_policy_generation
+                or policy.repository_trust_generation
+                != self._repository_trust_generation
+                or parent_oid != candidate_capture.candidate.parent_oid
+            ):
+                return None
+            self._revoke_push_review_locked()
+            self._retired_push_review = None
+            self._push_review_generation += 1
+            projection = PushReviewProjection(
+                candidate_capture.candidate,
+                policy.destination,
+            )
+            capture = _PushReviewCapture(
+                candidate_capture=candidate_capture,
+                policy_capture=policy,
+                authorization=authorization,
+                authorization_epoch=self._destination_authorization_epoch,
+                review_generation=self._push_review_generation,
+                operation_id=operation_id,
+                network_context=network_context,
+                command_policy_fingerprint=command_policy_fingerprint,
+                parent_oid=parent_oid,
+                projection=projection,
+            )
+            handle = _issue_push_review_handle()
+            self._push_review = handle
+            self._push_review_capture = capture
+            return handle, projection
+
+    def _consume_push_review(
+        self,
+        handle: PushReviewHandle,
+        *,
+        operation_id: object,
+        network_context: object,
+    ) -> _PushReviewCapture | None:
+        """Consume one exact review once without binding ordinary edit churn."""
+        with self._lock:
+            capture = self._push_review_capture
+            if handle is not self._push_review:
+                retired = self._retired_push_review
+                if (
+                    retired is not None
+                    and handle is retired.handle
+                    and retired.authorization is self._destination_authorization
+                    and retired.authorization_epoch
+                    == self._destination_authorization_epoch
+                ):
+                    self._revoke_destination_authorization_locked(force_epoch=True)
+                return None
+            valid = (
+                not self._shutdown
+                and capture is not None
+                and capture.operation_id is operation_id
+                and capture.network_context is network_context
+                and capture.candidate_capture is self._push_candidate_capture
+                and capture.policy_capture is self._destination_policy_capture
+                and capture.authorization is self._destination_authorization
+                and capture.authorization_epoch
+                == self._destination_authorization_epoch
+                and capture.review_generation == self._push_review_generation
+                and capture.policy_capture.policy_generation
+                == self._destination_policy_generation
+                and capture.policy_capture.repository_trust_generation
+                == self._repository_trust_generation
+            )
+            if not valid:
+                self._revoke_destination_authorization_locked(force_epoch=True)
+                return None
+            self._retired_push_review = _RetiredPushReview(
+                handle,
+                capture.authorization,
+                capture.authorization_epoch,
+            )
+            self._push_review = None
+            self._push_review_capture = None
+            self._push_review_generation += 1
+            return capture
 
     def _revoke_destination_authorization(
         self,
@@ -2345,11 +2493,28 @@ class FileNotesSessionOwner:
         *,
         force_epoch: bool = False,
     ) -> None:
+        self._revoke_push_review_locked()
         had_authorization = self._destination_authorization is not None
         self._destination_authorization = None
         self._destination_authorization_capture = None
         if had_authorization or force_epoch:
             self._destination_authorization_epoch += 1
+
+    def _revoke_push_review_locked(self) -> None:
+        had_review = (
+            self._push_review is not None
+            or self._push_review_capture is not None
+        )
+        if self._push_review is not None and self._push_review_capture is not None:
+            self._retired_push_review = _RetiredPushReview(
+                self._push_review,
+                self._push_review_capture.authorization,
+                self._push_review_capture.authorization_epoch,
+            )
+        self._push_review = None
+        self._push_review_capture = None
+        if had_review:
+            self._push_review_generation += 1
 
     def _invalidate_git_authority_locked(self) -> None:
         self._git_authority_generation += 1

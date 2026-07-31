@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import os
 import shutil
 import stat
@@ -42,15 +43,23 @@ from tldw_chatbook.Notes.file_notes_git_push import (
     PushContractError,
     PushDestinationPolicyResult,
     PushIncludedNote,
+    PushOutcomeProjection,
+    PushReviewHandle,
+    PushReviewProjection,
     TransportAdmission,
     _GitConfigFact,
     _ResolvedPushConfiguration,
+    parse_ls_remote_refs,
+    push_outcome_copy,
     _push_destination_policy_result,
     _resolve_push_configuration,
 )
 from tldw_chatbook.Notes.file_notes_git_network import (
     NetworkConfigAuthorization,
+    NetworkContextFactory,
     NetworkContextError,
+    NetworkContextLease,
+    NetworkGitExecutionContext,
     SourceObjectDirectoryAuthorization,
     _authorize_network_config_snapshot,
     _authorize_source_object_directory,
@@ -109,6 +118,12 @@ DiscoveryState = Literal[
 HeadReadFailureKind = Literal["unavailable", "error"]
 GitActionState = Literal["success", "blocked", "stale", "error", "uncertain"]
 CommitOperationKind = Literal["review", "commit", "recovery"]
+PushPreflightState = Literal[
+    "review",
+    "already_published",
+    "blocked",
+    "cancelled",
+]
 RetainedGitChildState = Literal[
     "alive",
     "natural",
@@ -196,6 +211,9 @@ _LOCAL_PUSH_CONFIG_PATTERN = (
 )
 _LOCAL_PUSH_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024
 _LOCAL_PUSH_PROOF_FILE_LIMIT_BYTES = 64 * 1024 * 1024
+_PUSH_REMOTE_OUTPUT_LIMIT_BYTES = 64 * 1024
+_DEFAULT_PUSH_QUERY_TIMEOUT_SECONDS = 30.0
+_PUSH_QUARANTINE_TRANSFER_TIMEOUT_SECONDS = 0.2
 DEFAULT_GIT_STDERR_LIMIT_BYTES = 4096
 DEFAULT_COMMIT_PROOF_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024
 DEFAULT_COMMIT_PROOF_STDERR_LIMIT_BYTES = DEFAULT_GIT_STDERR_LIMIT_BYTES
@@ -409,8 +427,58 @@ class _PushDestinationPolicySnapshot:
     configuration: _ResolvedPushConfiguration
     network_configuration: NetworkConfigAuthorization
     source_objects: SourceObjectDirectoryAuthorization
+    git_exec_path: str = field(repr=False)
     candidate_tree_oid: str
     included_paths_fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
+class PushPreflightResult:
+    """Sanitized result of one retained authorized remote preflight."""
+
+    state: PushPreflightState
+    handle: PushReviewHandle | None = None
+    review: PushReviewProjection | None = None
+    outcome: PushOutcomeProjection | None = None
+
+    def __post_init__(self) -> None:
+        ready = self.state == "review"
+        already_published = self.state == "already_published"
+        if (
+            self.state
+            not in {"review", "already_published", "blocked", "cancelled"}
+            or ready != (type(self.handle) is PushReviewHandle)
+            or ready != (type(self.review) is PushReviewProjection)
+            or already_published
+            != (type(self.outcome) is PushOutcomeProjection)
+        ):
+            raise ValueError("Invalid push preflight result")
+
+
+@dataclass(frozen=True, slots=True)
+class _PushReviewSnapshot:
+    """Service-private context retained by one owner-issued review."""
+
+    binding: SessionBinding
+    operation_id: object = field(repr=False)
+    policy: _PushDestinationPolicySnapshot = field(repr=False)
+    authorization: PushAuthorizationHandle = field(repr=False)
+    context: NetworkGitExecutionContext = field(repr=False)
+    review_lease: NetworkContextLease = field(repr=False)
+    command_policy_fingerprint: str = field(repr=False)
+    projection: PushReviewProjection
+
+
+@dataclass(frozen=True, slots=True)
+class _UnsettledPushPreflight:
+    """Fail-closed ownership retained after bounded controller failure."""
+
+    binding: SessionBinding
+    retained_child: RetainedGitChildToken = field(repr=False)
+    mutation_lease: GitMutationLease = field(repr=False)
+    context: NetworkGitExecutionContext = field(repr=False)
+    active_lease: NetworkContextLease = field(repr=False)
+    authorization: PushAuthorizationHandle = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -975,6 +1043,14 @@ class GitRunCancellationRejected(GitRunCancelled):
         )
 
 
+class _PushContainmentUnproved(RuntimeError):
+    """Internal transfer of an unproved child into fail-closed ownership."""
+
+    def __init__(self, retained_child: RetainedGitChildToken) -> None:
+        super().__init__("Push preflight containment remains unproved")
+        self.retained_child = retained_child
+
+
 class GitProcessRunner(Protocol):
     """Injectable direct-argv child-process boundary."""
 
@@ -1081,6 +1157,29 @@ class RetainedCommitOperation:
         if signal is None:
             return False
         return await asyncio.shield(signal)
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class RetainedPushOperation:
+    """Cancellation-safe observation of one exact push preflight."""
+
+    binding: SessionBinding
+    operation_id: int
+    kind: Literal["local_proof", "preflight"]
+    _settlement: asyncio.Task[
+        PushDestinationPolicyResult | PushPreflightResult
+    ] = field(repr=False)
+
+    @property
+    def settled(self) -> bool:
+        """Return whether the retained service operation has settled."""
+        return self._settlement.done()
+
+    async def wait(
+        self,
+    ) -> PushDestinationPolicyResult | PushPreflightResult:
+        """Await settlement without allowing an observer to cancel it."""
+        return await asyncio.shield(self._settlement)
 
 
 @dataclass(slots=True)
@@ -2665,8 +2764,10 @@ class FileNotesGitService:
         git_executable: str | None = None,
         environment: Mapping[str, str] | None = None,
         transport_admission: TransportAdmission | None = None,
+        network_context_factory: NetworkContextFactory | None = None,
         discovery_timeout: float = 3.0,
         status_timeout: float = 5.0,
+        push_query_timeout: float = _DEFAULT_PUSH_QUERY_TIMEOUT_SECONDS,
     ) -> None:
         self._owner = owner
         self._runner = runner or AsyncGitProcessRunner()
@@ -2687,10 +2788,47 @@ class FileNotesGitService:
         )
         if type(self._transport_admission) is not TransportAdmission:
             raise TypeError("Invalid guarded-push transport admission")
+        if (
+            network_context_factory is not None
+            and type(network_context_factory) is not NetworkContextFactory
+        ):
+            raise TypeError("Invalid guarded-push network context factory")
+        if (
+            isinstance(push_query_timeout, bool)
+            or not isinstance(push_query_timeout, (int, float))
+            or (
+                isinstance(push_query_timeout, float)
+                and not math.isfinite(push_query_timeout)
+            )
+            or push_query_timeout <= 0
+        ):
+            raise ValueError(
+                "push_query_timeout must be a finite positive number"
+            )
+        self._network_context_factory = network_context_factory
+        self._push_query_timeout = push_query_timeout
         self._push_destination_policy: (
             _PushDestinationPolicySnapshot | None
         ) = None
         self._push_authorization: PushAuthorizationHandle | None = None
+        self._push_local_proof_cycle: (
+            asyncio.Task[PushDestinationPolicyResult] | None
+        ) = None
+        self._push_local_proof_waiter: (
+            asyncio.Task[PushDestinationPolicyResult] | None
+        ) = None
+        self._push_preflight_cycle: asyncio.Task[PushPreflightResult] | None = None
+        self._push_preflight_waiter: asyncio.Task[PushPreflightResult] | None = None
+        self._push_quarantine_signal: asyncio.Future[None] | None = None
+        self._push_quarantine_requested = False
+        self._push_review_snapshots: dict[
+            PushReviewHandle,
+            _PushReviewSnapshot,
+        ] = {}
+        self._pending_push_contexts: set[NetworkGitExecutionContext] = set()
+        self._unsettled_push_preflight: _UnsettledPushPreflight | None = None
+        self._push_operation_generation = 0
+        self._retained_push_operation: RetainedPushOperation | None = None
         self._sealed = False
         self._status_cycle: asyncio.Task[SessionGitStatus] | None = None
         self._status_cycle_binding: SessionBinding | None = None
@@ -2872,6 +3010,7 @@ class FileNotesGitService:
         binding: SessionBinding,
     ) -> PushDestinationPolicyResult:
         """Run bounded local-only candidate, config, transport, and LFS proof."""
+        self._observe_push_rebinding()
         previous = self._push_destination_policy
         if previous is not None:
             self._owner._revoke_destination_policy(previous.owner_capture)
@@ -2885,6 +3024,94 @@ class FileNotesGitService:
             "ready",
             policy.configuration.transport.destination,
         )
+
+    def start_push_review(
+        self,
+        binding: SessionBinding,
+    ) -> asyncio.Task[PushDestinationPolicyResult]:
+        """Admit and retain the local-only guarded-push proof phase."""
+        if self._sealed:
+            raise GitMutationAdmissionError(
+                "shutdown",
+                "File Notes Git service is shut down",
+            )
+        if binding != self._owner.current_binding():
+            raise GitMutationAdmissionError(
+                "stale_binding",
+                "File Notes root binding is stale",
+            )
+        self._observe_push_rebinding()
+        if (
+            self._push_local_proof_cycle is not None
+            and not self._push_local_proof_cycle.done()
+        ) or (
+            self._push_preflight_cycle is not None
+            and not self._push_preflight_cycle.done()
+        ) or self._push_review_snapshots or self._pending_push_contexts:
+            raise GitMutationAdmissionError(
+                "mutation_active",
+                "A guarded push review is already active",
+            )
+        admission = self._owner.admit_mutation(binding)
+        lease = admission.lease
+        if lease is None:
+            raise GitMutationAdmissionError(
+                admission.reason or "mutation_active",
+                "File Notes Git mutation admission was refused",
+            )
+        self._push_operation_generation += 1
+        operation_generation = self._push_operation_generation
+        cycle: asyncio.Task[PushDestinationPolicyResult] | None = None
+        try:
+            loop = asyncio.get_running_loop()
+            cycle = loop.create_task(
+                self._run_push_local_proof_cycle(binding, lease)
+            )
+            waiter = loop.create_task(
+                self._shield_push_local_proof_cycle(cycle)
+            )
+        except BaseException:
+            if cycle is not None:
+                cycle.cancel()
+            lease.release()
+            raise
+        self._push_local_proof_cycle = cycle
+        self._push_local_proof_waiter = waiter
+        self._retained_push_operation = RetainedPushOperation(
+            binding,
+            operation_generation,
+            "local_proof",
+            cycle,
+        )
+        cycle.add_done_callback(self._push_local_proof_cycle_completed)
+        return waiter
+
+    async def _run_push_local_proof_cycle(
+        self,
+        binding: SessionBinding,
+        lease: GitMutationLease,
+    ) -> PushDestinationPolicyResult:
+        try:
+            return await self.review_push_destination(binding)
+        except asyncio.CancelledError:
+            return _push_destination_policy_result("blocked")
+        finally:
+            lease.release()
+
+    async def _shield_push_local_proof_cycle(
+        self,
+        cycle: asyncio.Task[PushDestinationPolicyResult],
+    ) -> PushDestinationPolicyResult:
+        return await asyncio.shield(cycle)
+
+    def _push_local_proof_cycle_completed(
+        self,
+        cycle: asyncio.Task[PushDestinationPolicyResult],
+    ) -> None:
+        if self._push_local_proof_cycle is cycle:
+            self._push_local_proof_cycle = None
+        if not cycle.cancelled():
+            cycle.exception()
 
     def authorize_push_destination(
         self,
@@ -2939,6 +3166,526 @@ class FileNotesGitService:
             authorization,
         )
 
+    def authorize_and_check_push(
+        self,
+        binding: SessionBinding,
+        operation: RetainedPushOperation,
+    ) -> asyncio.Task[PushPreflightResult]:
+        """Authorize one frozen destination and retain its exact-ref query."""
+        if self._sealed:
+            raise GitMutationAdmissionError(
+                "shutdown",
+                "File Notes Git service is shut down",
+            )
+        self._observe_push_rebinding()
+        if (
+            operation is not self._retained_push_operation
+            or operation.binding != binding
+            or operation.kind != "local_proof"
+            or not operation.settled
+        ):
+            raise GitMutationAdmissionError(
+                "stale_binding",
+                "Push local-proof operation is stale",
+            )
+        policy = self._push_destination_policy
+        if (
+            policy is None
+            or policy.candidate_capture.binding != binding
+            or binding != self._owner.current_binding()
+        ):
+            raise GitMutationAdmissionError(
+                "stale_binding",
+                "Push destination proof is stale",
+            )
+        if (
+            self._push_preflight_cycle is not None
+            and not self._push_preflight_cycle.done()
+        ) or self._push_review_snapshots:
+            raise GitMutationAdmissionError(
+                "mutation_active",
+                "A guarded push review is already retained",
+            )
+        admission = self._owner.admit_mutation(binding)
+        lease = admission.lease
+        if lease is None:
+            raise GitMutationAdmissionError(
+                admission.reason or "mutation_active",
+                "File Notes Git mutation admission was refused",
+            )
+        self._push_operation_generation += 1
+        operation_generation = self._push_operation_generation
+        operation_id = object()
+        cycle: asyncio.Task[PushPreflightResult] | None = None
+        try:
+            loop = asyncio.get_running_loop()
+            quarantine_signal = loop.create_future()
+            cycle = loop.create_task(
+                self._run_push_preflight_cycle(
+                    binding,
+                    policy,
+                    operation_id,
+                    lease,
+                )
+            )
+            waiter = loop.create_task(
+                self._shield_push_preflight_cycle(cycle)
+            )
+        except BaseException:
+            if cycle is not None:
+                cycle.cancel()
+            lease.release()
+            raise
+        self._push_preflight_cycle = cycle
+        self._push_preflight_waiter = waiter
+        self._push_quarantine_signal = quarantine_signal
+        self._retained_push_operation = RetainedPushOperation(
+            binding,
+            operation_generation,
+            "preflight",
+            cycle,
+        )
+        cycle.add_done_callback(self._push_preflight_cycle_completed)
+        return waiter
+
+    async def _shield_push_preflight_cycle(
+        self,
+        cycle: asyncio.Task[PushPreflightResult],
+    ) -> PushPreflightResult:
+        return await asyncio.shield(cycle)
+
+    def _push_preflight_cycle_completed(
+        self,
+        cycle: asyncio.Task[PushPreflightResult],
+    ) -> None:
+        if self._push_preflight_cycle is cycle:
+            self._push_preflight_cycle = None
+        quarantine_signal = self._push_quarantine_signal
+        if quarantine_signal is not None and not quarantine_signal.done():
+            quarantine_signal.cancel()
+        self._push_quarantine_signal = None
+        if not cycle.cancelled():
+            cycle.exception()
+
+    async def _run_push_preflight_cycle(
+        self,
+        binding: SessionBinding,
+        policy: _PushDestinationPolicySnapshot,
+        operation_id: object,
+        mutation_lease: GitMutationLease,
+    ) -> PushPreflightResult:
+        context: NetworkGitExecutionContext | None = None
+        active_lease: NetworkContextLease | None = None
+        authorization: PushAuthorizationHandle | None = None
+        review_retained = False
+        containment_quarantined = False
+        try:
+            refreshed, _state = await self._prove_push_destination(
+                binding,
+                prior=policy,
+            )
+            if refreshed is not policy:
+                self._owner._revoke_destination_policy(policy.owner_capture)
+                self._push_destination_policy = refreshed
+                self._push_authorization = None
+                return PushPreflightResult("blocked")
+            if os.name != "posix" or not hasattr(os, "geteuid"):
+                return PushPreflightResult("blocked")
+            authorization = self.authorize_push_destination(binding)
+            if authorization is None:
+                return PushPreflightResult("blocked")
+            endpoint = policy.configuration.transport.endpoint
+            factory = self._network_context_factory
+            if endpoint is None:
+                return PushPreflightResult("blocked")
+            if factory is None:
+                factory = NetworkContextFactory(
+                    environment=self._environment,
+                    git_executable=self._git_executable,
+                    git_exec_path=policy.git_exec_path,
+                    allow_ssh_agent=True,
+                )
+            context = factory.create(
+                repository=policy.candidate_capture.repository,
+                source_objects=policy.source_objects,
+                configuration=policy.network_configuration,
+                destination=policy.configuration.transport.destination,
+                endpoint=endpoint,
+            )
+            active_lease = context.retain("active")
+            settings = context.command_settings()
+            argv = context.build_query_argv(endpoint)
+            command_policy_fingerprint = self._push_command_policy_fingerprint(
+                policy,
+                context,
+                settings.environment_fingerprint,
+            )
+            try:
+                result = await self._runner.run(
+                    argv,
+                    cwd=settings.cwd,
+                    environment=settings.environment,
+                    stdin=settings.stdin,
+                    timeout=self._push_query_timeout,
+                    stdout_limit=_PUSH_REMOTE_OUTPUT_LIMIT_BYTES,
+                    stderr_limit=DEFAULT_GIT_STDERR_LIMIT_BYTES,
+                    owned_process_tree=True,
+                )
+            except GitRunCancelled as cancellation:
+                retained_child = cancellation.retained_child
+                if retained_child is not None:
+                    await self._drain_push_preflight_child(retained_child)
+                return PushPreflightResult("cancelled")
+            result = await self._settle_push_preflight_result(result)
+            if (
+                result.returncode != 0
+                or result.timed_out
+                or result.termination_uncertain
+                or result.output_overflow
+                or not result.owned_process_tree
+                or not result.containment_proved
+            ):
+                return PushPreflightResult("blocked")
+            candidate = policy.candidate_capture.candidate
+            observation = parse_ls_remote_refs(
+                result.stdout,
+                policy.configuration.transport.destination.destination_ref,
+                candidate.parent_oid,
+                candidate.candidate_oid,
+            )
+            if observation.state == "candidate":
+                if not self._owner.clear_push_candidate(
+                    policy.candidate_capture
+                ):
+                    return PushPreflightResult("blocked")
+                return PushPreflightResult(
+                    "already_published",
+                    outcome=push_outcome_copy("already_published"),
+                )
+            if observation.state != "parent":
+                return PushPreflightResult("blocked")
+            review_lease = context.retain("review")
+            issued = self._owner._capture_push_review_after_parent_observation(
+                policy.owner_capture,
+                authorization,
+                operation_id=operation_id,
+                network_context=context,
+                command_policy_fingerprint=command_policy_fingerprint,
+                parent_oid=candidate.parent_oid,
+            )
+            if issued is None:
+                review_lease.release()
+                return PushPreflightResult("blocked")
+            handle, projection = issued
+            self._push_review_snapshots[handle] = _PushReviewSnapshot(
+                binding=binding,
+                operation_id=operation_id,
+                policy=policy,
+                authorization=authorization,
+                context=context,
+                review_lease=review_lease,
+                command_policy_fingerprint=command_policy_fingerprint,
+                projection=projection,
+            )
+            review_retained = True
+            return PushPreflightResult(
+                "review",
+                handle=handle,
+                review=projection,
+            )
+        except _PushContainmentUnproved as unproved:
+            retained_child = unproved.retained_child
+            if (
+                context is None
+                or active_lease is None
+                or authorization is None
+                or self._unsettled_push_preflight is not None
+            ):
+                raise RuntimeError(
+                    "Push containment ownership transfer failed"
+                ) from None
+            self._unsettled_push_preflight = _UnsettledPushPreflight(
+                binding=binding,
+                retained_child=retained_child,
+                mutation_lease=mutation_lease,
+                context=context,
+                active_lease=active_lease,
+                authorization=authorization,
+            )
+            containment_quarantined = True
+            quarantine_signal = self._push_quarantine_signal
+            if quarantine_signal is not None and not quarantine_signal.done():
+                quarantine_signal.set_result(None)
+        except asyncio.CancelledError:
+            return PushPreflightResult("cancelled")
+        except (NetworkContextError, OSError, PushContractError):
+            return PushPreflightResult("blocked")
+        finally:
+            if active_lease is not None and not containment_quarantined:
+                active_lease.release()
+            if not review_retained and not containment_quarantined:
+                if authorization is not None:
+                    self._owner._revoke_destination_authorization(
+                        authorization
+                    )
+                if context is not None:
+                    self._close_or_retain_push_context(context)
+            if not containment_quarantined:
+                mutation_lease.release()
+        if containment_quarantined:
+            await asyncio.get_running_loop().create_future()
+            raise AssertionError("unreachable")
+
+    async def _settle_push_preflight_result(
+        self,
+        result: GitCommandResult,
+    ) -> GitCommandResult:
+        """Drain an exposed read-only child before classifying its result."""
+        retained_child = result.retained_child
+        if retained_child is None:
+            return result
+        settlement = await self._drain_push_preflight_child(retained_child)
+        return GitCommandResult(
+            settlement.returncode,
+            settlement.stdout,
+            settlement.stderr,
+            timed_out=result.timed_out,
+            termination_uncertain=(
+                result.termination_uncertain
+                or settlement.stop_requested
+                or settlement.force_stopped
+                or settlement.state == "contained_uncertain"
+            ),
+            stop_requested=(
+                result.stop_requested or settlement.stop_requested
+            ),
+            force_stopped=(
+                result.force_stopped or settlement.force_stopped
+            ),
+            output_overflow=(
+                result.output_overflow or settlement.output_overflow
+            ),
+            owned_process_tree=settlement.owned_process_tree,
+            containment_proved=settlement.containment_proved,
+        )
+
+    async def _drain_push_preflight_child(
+        self,
+        retained_child: RetainedGitChildToken,
+    ) -> RetainedGitChildSettlement:
+        """Claim one exact query child until I/O and native tree settle."""
+        claim_failed = False
+        try:
+            claimed = self._runner.claim_retained_child(retained_child)
+        except Exception:
+            claim_failed = True
+            claimed = False
+        if claim_failed or claimed is not True:
+            raise _PushContainmentUnproved(retained_child) from None
+        cancelled = False
+        while True:
+            if self._sealed and (
+                self._shutdown_runner_confirmed is False
+                or self._push_quarantine_requested
+            ):
+                raise _PushContainmentUnproved(retained_child)
+            settlement_failed = False
+            try:
+                settlement = await self._runner.settle_retained_child(
+                    retained_child,
+                    timeout=0.1,
+                )
+            except asyncio.CancelledError:
+                cancelled = True
+                continue
+            except Exception:
+                settlement_failed = True
+                settlement = None
+            if settlement_failed:
+                raise _PushContainmentUnproved(retained_child) from None
+            if self._sealed and (
+                self._shutdown_runner_confirmed is False
+                or self._push_quarantine_requested
+            ):
+                raise _PushContainmentUnproved(retained_child)
+            if type(settlement) is not RetainedGitChildSettlement:
+                raise _PushContainmentUnproved(retained_child)
+            settled = (
+                settlement.state not in {"alive", "uncertain"}
+                and settlement.owned_process_tree
+                and settlement.containment_proved
+            )
+            if settled:
+                release_failed = False
+                try:
+                    released = self._runner.release_retained_child(
+                        retained_child
+                    )
+                except Exception:
+                    release_failed = True
+                    released = False
+                if release_failed or released is not True:
+                    raise _PushContainmentUnproved(retained_child) from None
+                if cancelled:
+                    raise asyncio.CancelledError
+                return settlement
+            try:
+                await asyncio.sleep(0.01)
+            except asyncio.CancelledError:
+                cancelled = True
+                continue
+            except Exception:
+                raise _PushContainmentUnproved(retained_child) from None
+
+    def _push_command_policy_fingerprint(
+        self,
+        policy: _PushDestinationPolicySnapshot,
+        context: NetworkGitExecutionContext,
+        environment_fingerprint: str,
+    ) -> str:
+        """Bind exact command facts without retaining endpoint or path text."""
+        candidate = policy.candidate_capture.candidate
+        digest = hashlib.sha256()
+        for value in (
+            "file-notes-push-review-v1",
+            policy.configuration.configuration_fingerprint,
+            policy.network_configuration.copy_fingerprint,
+            policy.source_objects.identity_fingerprint,
+            policy.source_objects.object_format,
+            context.config_copy_fingerprint,
+            environment_fingerprint,
+            policy.git_exec_path,
+            candidate.local_branch_ref,
+            candidate.parent_oid,
+            candidate.candidate_oid,
+            policy.configuration.transport.destination.destination_ref,
+            str(self._push_query_timeout),
+        ):
+            encoded = value.encode("utf-8")
+            digest.update(len(encoded).to_bytes(8, "big"))
+            digest.update(encoded)
+        return digest.hexdigest()
+
+    def retained_push_operation(
+        self,
+        binding: SessionBinding,
+    ) -> RetainedPushOperation | None:
+        """Return the latest exact-binding push work without transferring it."""
+        self._observe_push_rebinding()
+        operation = self._retained_push_operation
+        if operation is None or operation.binding != binding:
+            return None
+        return operation
+
+    def cancel_push(
+        self,
+        binding: SessionBinding,
+        operation: RetainedPushOperation,
+    ) -> bool:
+        """Drop one settled review while preserving its exact candidate."""
+        self._observe_push_rebinding()
+        if (
+            operation is not self._retained_push_operation
+            or operation.binding != binding
+            or self._unsettled_push_preflight is not None
+        ):
+            return False
+        local_cycle = self._push_local_proof_cycle
+        if (
+            operation.kind == "local_proof"
+            and local_cycle is not None
+            and not local_cycle.done()
+        ):
+            local_cycle.cancel()
+            return True
+        preflight_cycle = self._push_preflight_cycle
+        if (
+            operation.kind == "preflight"
+            and preflight_cycle is not None
+            and not preflight_cycle.done()
+        ):
+            preflight_cycle.cancel()
+            return True
+        if not operation.settled:
+            return False
+        if operation.kind == "local_proof":
+            policy = self._push_destination_policy
+            if policy is not None:
+                self._owner._revoke_destination_policy(policy.owner_capture)
+            self._push_destination_policy = None
+            self._push_authorization = None
+            self._retained_push_operation = None
+            return True
+        matching = tuple(
+            (handle, snapshot)
+            for handle, snapshot in self._push_review_snapshots.items()
+            if snapshot.binding == binding
+        )
+        if len(matching) != 1:
+            return False
+        handle, snapshot = matching[0]
+        self._push_review_snapshots.pop(handle, None)
+        self._owner._revoke_destination_authorization(snapshot.authorization)
+        snapshot.review_lease.release()
+        self._close_or_retain_push_context(snapshot.context)
+        self._retained_push_operation = None
+        return True
+
+    def _observe_push_rebinding(self) -> None:
+        """Release reviews whose exact owner authority is no longer current."""
+        self._retry_pending_push_context_cleanup()
+        current_binding = self._owner.current_binding()
+        for handle, snapshot in tuple(self._push_review_snapshots.items()):
+            current = (
+                snapshot.binding == current_binding
+                and self._owner._destination_authorization_matches(
+                    snapshot.policy.owner_capture,
+                    snapshot.authorization,
+                )
+            )
+            if current:
+                continue
+            if self._push_review_snapshots.get(handle) is not snapshot:
+                continue
+            self._push_review_snapshots.pop(handle)
+            self._owner._revoke_destination_authorization(
+                snapshot.authorization
+            )
+            snapshot.review_lease.release()
+            self._close_or_retain_push_context(snapshot.context)
+            if self._push_destination_policy is snapshot.policy:
+                self._push_destination_policy = None
+            if self._push_authorization is snapshot.authorization:
+                self._push_authorization = None
+            operation = self._retained_push_operation
+            if (
+                operation is not None
+                and operation.kind == "preflight"
+                and operation.binding == snapshot.binding
+                and operation.settled
+            ):
+                self._retained_push_operation = None
+
+    def _close_or_retain_push_context(
+        self,
+        context: NetworkGitExecutionContext,
+    ) -> bool:
+        """Close one exact context or retain its cleanup authority for retry."""
+        try:
+            cleaned = context.close()
+        except NetworkContextError:
+            cleaned = False
+        if cleaned is True:
+            self._pending_push_contexts.discard(context)
+            return True
+        self._pending_push_contexts.add(context)
+        return False
+
+    def _retry_pending_push_context_cleanup(self) -> None:
+        """Retry only exact contexts whose prior close could not complete."""
+        for context in tuple(self._pending_push_contexts):
+            self._close_or_retain_push_context(context)
+
     async def _prove_push_destination(
         self,
         binding: SessionBinding,
@@ -2972,6 +3719,19 @@ class FileNotesGitService:
             return None, "blocked"
         with proof:
             prefix = self._local_push_proof_prefix(hooks_directory)
+
+            exec_path_result = await self._run_local_push_proof_command(
+                repository,
+                (*prefix, "--exec-path"),
+                proof=proof,
+            )
+            git_exec_path = (
+                _canonical_directory_from_git(exec_path_result.stdout)
+                if _command_succeeded(exec_path_result)
+                else None
+            )
+            if git_exec_path is None:
+                return None, "blocked"
 
             branch_result = await self._run_local_push_proof_command(
                 repository,
@@ -3155,6 +3915,7 @@ class FileNotesGitService:
                     and prior.source_objects.identity_fingerprint
                     == source_objects.identity_fingerprint
                     and prior.source_objects.object_format == object_format
+                    and prior.git_exec_path == str(git_exec_path)
                 )
                 if not unchanged or not proof.cleanup():
                     return None, "blocked"
@@ -3185,6 +3946,7 @@ class FileNotesGitService:
                     configuration=configuration,
                     network_configuration=network_configuration,
                     source_objects=source_objects,
+                    git_exec_path=str(git_exec_path),
                     candidate_tree_oid=raw_commit.tree_object_id,
                     included_paths_fingerprint=attribute_fingerprint,
                 ),
@@ -5713,6 +6475,7 @@ class FileNotesGitService:
             ):
                 if self._shutdown_runner_confirmed is True:
                     self._settle_uncertain_commit_shutdown(True)
+                    self._settle_push_shutdown(True)
                 self._retry_pending_hooks_cleanup()
             return self._shutdown_settlement
         cycle = self._status_cycle
@@ -5725,6 +6488,10 @@ class FileNotesGitService:
         commit_waiter = self._commit_waiter
         recovery_cycle = self._commit_recovery_cycle
         recovery_waiter = self._commit_recovery_waiter
+        push_local_cycle = self._push_local_proof_cycle
+        push_local_waiter = self._push_local_proof_waiter
+        push_preflight_cycle = self._push_preflight_cycle
+        push_preflight_waiter = self._push_preflight_waiter
         active_task = next(
             (
                 task
@@ -5739,6 +6506,10 @@ class FileNotesGitService:
                     commit_waiter,
                     recovery_cycle,
                     recovery_waiter,
+                    push_local_cycle,
+                    push_local_waiter,
+                    push_preflight_cycle,
+                    push_preflight_waiter,
                 )
                 if task is not None and not task.done()
             ),
@@ -5757,6 +6528,10 @@ class FileNotesGitService:
                 )
         runner_settlement = self._runner.shutdown()
         self._sealed = True
+        if push_local_cycle is not None and not push_local_cycle.done():
+            push_local_cycle.cancel()
+        if push_preflight_cycle is not None and not push_preflight_cycle.done():
+            push_preflight_cycle.cancel()
         binding = self._owner.current_binding()
         self._pending_status = None
         self._rerun_available = False
@@ -5772,6 +6547,10 @@ class FileNotesGitService:
             and (commit_waiter is None or commit_waiter.done())
             and (recovery_cycle is None or recovery_cycle.done())
             and (recovery_waiter is None or recovery_waiter.done())
+            and (push_local_cycle is None or push_local_cycle.done())
+            and (push_local_waiter is None or push_local_waiter.done())
+            and (push_preflight_cycle is None or push_preflight_cycle.done())
+            and (push_preflight_waiter is None or push_preflight_waiter.done())
             and (
                 runner_settlement is None
                 or isinstance(runner_settlement, _ImmediateSettlement)
@@ -5783,6 +6562,7 @@ class FileNotesGitService:
             )
             self._shutdown_runner_confirmed = runner_confirmed
             self._settle_uncertain_commit_shutdown(runner_confirmed)
+            self._settle_push_shutdown(runner_confirmed)
             self._status_cycle = None
             self._status_cycle_binding = None
             self._status_waiter = None
@@ -5818,6 +6598,10 @@ class FileNotesGitService:
                     commit_waiter,
                     recovery_cycle,
                     recovery_waiter,
+                    push_local_cycle,
+                    push_local_waiter,
+                    push_preflight_cycle,
+                    push_preflight_waiter,
                     runner_settlement,
                 )
             )
@@ -5838,6 +6622,10 @@ class FileNotesGitService:
         commit_waiter: asyncio.Task[CommitOutcome] | None,
         recovery_cycle: asyncio.Task[CommitOutcome] | None,
         recovery_waiter: asyncio.Task[CommitOutcome] | None,
+        push_local_cycle: asyncio.Task[PushDestinationPolicyResult] | None,
+        push_local_waiter: asyncio.Task[PushDestinationPolicyResult] | None,
+        push_preflight_cycle: asyncio.Task[PushPreflightResult] | None,
+        push_preflight_waiter: asyncio.Task[PushPreflightResult] | None,
         runner_settlement: Awaitable[bool] | None,
     ) -> None:
         """Join every retained task and preserve fail-closed shutdown state."""
@@ -5872,8 +6660,73 @@ class FileNotesGitService:
                 )
             except BaseException:
                 runner_confirmed = False
+        push_tasks = tuple(
+            task
+            for task in (
+                push_local_cycle,
+                push_local_waiter,
+                push_preflight_cycle,
+                push_preflight_waiter,
+            )
+            if task is not None and not task.done()
+        )
         self._shutdown_runner_confirmed = runner_confirmed
+        if runner_confirmed and push_tasks:
+            _done, pending = await asyncio.wait(
+                push_tasks,
+                timeout=_PUSH_QUARANTINE_TRANSFER_TIMEOUT_SECONDS,
+            )
+            if (
+                pending
+                and push_preflight_cycle is not None
+                and not push_preflight_cycle.done()
+            ):
+                self._push_quarantine_requested = True
+                push_preflight_cycle.cancel()
+        if push_preflight_cycle is not None and not push_preflight_cycle.done():
+            quarantine_signal = self._push_quarantine_signal
+            if quarantine_signal is not None and not quarantine_signal.done():
+                await asyncio.wait(
+                    (push_preflight_cycle, quarantine_signal),
+                    timeout=_PUSH_QUARANTINE_TRANSFER_TIMEOUT_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+        quarantine_cleared = False
+        if runner_confirmed and self._unsettled_push_preflight is not None:
+            quarantine_cleared = (
+                await self._settle_unsettled_push_preflight_shutdown()
+            )
+            if quarantine_cleared:
+                if (
+                    push_preflight_cycle is not None
+                    and not push_preflight_cycle.done()
+                ):
+                    push_preflight_cycle.cancel()
+                if (
+                    push_preflight_waiter is not None
+                    and not push_preflight_waiter.done()
+                ):
+                    push_preflight_waiter.cancel()
+                self._push_quarantine_requested = False
+        if (
+            runner_confirmed
+            and self._unsettled_push_preflight is None
+            and push_tasks
+        ):
+            await asyncio.wait(
+                push_tasks,
+                timeout=_PUSH_QUARANTINE_TRANSFER_TIMEOUT_SECONDS,
+            )
+        if (
+            self._unsettled_push_preflight is None
+            and (
+                push_preflight_cycle is None
+                or push_preflight_cycle.done()
+            )
+        ):
+            self._push_quarantine_requested = False
         self._settle_uncertain_commit_shutdown(runner_confirmed)
+        self._settle_push_shutdown(runner_confirmed)
         self._retry_pending_hooks_cleanup()
         self._status_cycle = None
         self._status_cycle_binding = None
@@ -5896,6 +6749,87 @@ class FileNotesGitService:
         if binding is not None:
             self._owner.clear_ownership(binding)
             self._owner.clear_status(binding)
+
+    async def _settle_unsettled_push_preflight_shutdown(self) -> bool:
+        """Release one quarantined preflight only after exact terminal proof."""
+        quarantine = self._unsettled_push_preflight
+        if quarantine is None:
+            return True
+        token = quarantine.retained_child
+        token_was_globally_released = False
+        try:
+            claimed = self._runner.claim_retained_child(token)
+        except ValueError:
+            token_was_globally_released = True
+            claimed = False
+        except Exception:
+            return False
+        if not token_was_globally_released:
+            if claimed is not True:
+                return False
+            try:
+                settlement = await self._runner.settle_retained_child(
+                    token,
+                    timeout=_PUSH_QUARANTINE_TRANSFER_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                return False
+            if (
+                type(settlement) is not RetainedGitChildSettlement
+                or settlement.state in {"alive", "uncertain"}
+                or not settlement.owned_process_tree
+                or not settlement.containment_proved
+            ):
+                return False
+            try:
+                released = self._runner.release_retained_child(token)
+            except Exception:
+                return False
+            if released is not True:
+                return False
+        self._owner._revoke_destination_authorization(
+            quarantine.authorization
+        )
+        if quarantine.active_lease.release() is not True:
+            return False
+        self._close_or_retain_push_context(quarantine.context)
+        quarantine.mutation_lease.release()
+        self._unsettled_push_preflight = None
+        return True
+
+    def _settle_push_shutdown(self, runner_confirmed: bool) -> None:
+        """Release push review/context state only after runner settlement."""
+        if not runner_confirmed:
+            return
+        for handle, snapshot in tuple(self._push_review_snapshots.items()):
+            self._owner._revoke_destination_authorization(
+                snapshot.authorization
+            )
+            snapshot.review_lease.release()
+            self._push_review_snapshots.pop(handle, None)
+            self._close_or_retain_push_context(snapshot.context)
+        self._retry_pending_push_context_cleanup()
+        push_cycles_active = any(
+            task is not None and not task.done()
+            for task in (
+                self._push_local_proof_cycle,
+                self._push_local_proof_waiter,
+                self._push_preflight_cycle,
+                self._push_preflight_waiter,
+            )
+        )
+        if not push_cycles_active:
+            self._push_local_proof_cycle = None
+            self._push_local_proof_waiter = None
+            self._push_preflight_cycle = None
+            self._push_preflight_waiter = None
+        if (
+            not self._push_review_snapshots
+            and not self._pending_push_contexts
+            and self._unsettled_push_preflight is None
+            and not push_cycles_active
+        ):
+            self._retained_push_operation = None
 
     def _settle_uncertain_commit_shutdown(
         self,

@@ -637,6 +637,446 @@ def test_repository_trust_revokes_downstream_destination_authority(
     assert not owner._destination_authorization_matches(policy, authorization)
 
 
+def test_push_review_is_exact_single_use_and_survives_ordinary_edits(
+    tmp_path: Path,
+) -> None:
+    """Dropping the owner review registry or binding edit churn must fail."""
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    repository, _candidate, policy = _capture_destination_policy(owner, binding)
+    assert policy is not None
+    authorization = owner._authorize_destination_policy(policy)
+    assert authorization is not None
+    operation_id = object()
+    network_context = object()
+
+    issued = owner._capture_push_review_after_parent_observation(
+        policy,
+        authorization,
+        operation_id=operation_id,
+        network_context=network_context,
+        command_policy_fingerprint="4" * 64,
+        parent_oid="b" * 40,
+    )
+    assert issued is not None
+    handle, projection = issued
+    assert projection.candidate.candidate_oid == "d" * 40
+    assert projection.destination == policy.destination
+
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "later.md"),
+    )
+    compatible_status = _ready_status(
+        owner,
+        binding,
+        repository,
+        head_object_id="d" * 40,
+    )
+    assert owner.publish_status(binding, compatible_status)
+    later_ownership = _ownership_for(
+        repository,
+        path="later.md",
+        object_id="f" * 40,
+        head_object_id="d" * 40,
+    )
+    assert owner.publish_ownership(
+        binding,
+        {3: later_ownership},
+        group_sequence_ids={3: (3,)},
+    )
+    capture = owner._consume_push_review(
+        handle,
+        operation_id=operation_id,
+        network_context=network_context,
+    )
+
+    assert capture is not None
+    assert capture.operation_id is operation_id
+    assert capture.network_context is network_context
+    assert capture.candidate_capture.binding == binding
+    assert capture.candidate_capture.repository == repository
+    assert (
+        capture.candidate_capture.repository_trust_generation
+        == capture.policy_capture.repository_trust_generation
+    )
+    assert capture.policy_capture.configuration_fingerprint == "1" * 64
+    assert capture.authorization is authorization
+    assert capture.command_policy_fingerprint == "4" * 64
+    assert capture.parent_oid == "b" * 40
+    assert not hasattr(capture, "git_authority_generation")
+    assert not hasattr(capture, "status_generation")
+    assert not hasattr(capture, "staging_ownership_generation")
+    assert not hasattr(capture, "index_generation")
+    assert not hasattr(capture, "worktree_generation")
+    assert (
+        owner._consume_push_review(
+            handle,
+            operation_id=operation_id,
+            network_context=network_context,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("wrong_fact", ["operation", "context"])
+def test_push_review_wrong_exact_fact_revokes_authorization(
+    tmp_path: Path,
+    wrong_fact: str,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    _repository, _candidate, policy = _capture_destination_policy(owner, binding)
+    assert policy is not None
+    authorization = owner._authorize_destination_policy(policy)
+    assert authorization is not None
+    operation_id = object()
+    network_context = object()
+    issued = owner._capture_push_review_after_parent_observation(
+        policy,
+        authorization,
+        operation_id=operation_id,
+        network_context=network_context,
+        command_policy_fingerprint="4" * 64,
+        parent_oid="b" * 40,
+    )
+    assert issued is not None
+    handle, _projection = issued
+    before = owner.snapshot(binding)
+
+    assert (
+        owner._consume_push_review(
+            handle,
+            operation_id=(object() if wrong_fact == "operation" else operation_id),
+            network_context=(
+                object() if wrong_fact == "context" else network_context
+            ),
+        )
+        is None
+    )
+
+    after = owner.snapshot(binding)
+    assert (
+        after.destination_authorization_epoch
+        > before.destination_authorization_epoch
+    )
+    assert not owner._destination_authorization_matches(policy, authorization)
+    assert owner._authorize_destination_policy(policy) is not authorization
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ["candidate", "root_aba", "repository_trust_aba", "policy_aba"],
+)
+def test_push_review_bound_drift_and_aba_require_fresh_authorization(
+    tmp_path: Path,
+    drift: str,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    repository, candidate, policy = _capture_destination_policy(owner, binding)
+    assert policy is not None
+    authorization = owner._authorize_destination_policy(policy)
+    assert authorization is not None
+    operation_id = object()
+    network_context = object()
+    issued = owner._capture_push_review_after_parent_observation(
+        policy,
+        authorization,
+        operation_id=operation_id,
+        network_context=network_context,
+        command_policy_fingerprint="4" * 64,
+        parent_oid="b" * 40,
+    )
+    assert issued is not None
+    handle, _projection = issued
+    replacement_policy = None
+
+    if drift == "candidate":
+        assert owner.clear_push_candidate(candidate)
+    elif drift == "root_aba":
+        owner.select_root(tmp_path / "other-notes")
+        owner.select_root(Path(binding.root_key))
+    elif drift == "repository_trust_aba":
+        assert owner.clear_trust_if_matches(binding, repository)
+        assert owner.publish_trust(binding, repository)
+    else:
+        changed = owner._capture_destination_policy_after_fresh_proof(
+            candidate,
+            configuration_fingerprint="6" * 64,
+            configured_destination_identity="7" * 64,
+            destination=parse_push_endpoint(
+                "https://changed.example.test/team/notes.git",
+                "refs/heads/main",
+            ),
+            candidate_tree_oid="e" * 40,
+            included_paths_fingerprint="3" * 64,
+        )
+        assert changed is not None
+        replacement_policy = owner._capture_destination_policy_after_fresh_proof(
+            candidate,
+            configuration_fingerprint="1" * 64,
+            configured_destination_identity="2" * 64,
+            destination=policy.destination,
+            candidate_tree_oid="e" * 40,
+            included_paths_fingerprint="3" * 64,
+        )
+        assert replacement_policy is not None
+
+    assert (
+        owner._consume_push_review(
+            handle,
+            operation_id=operation_id,
+            network_context=network_context,
+        )
+        is None
+    )
+    assert not owner._destination_authorization_matches(policy, authorization)
+    if replacement_policy is not None:
+        assert (
+            owner._authorize_destination_policy(replacement_policy)
+            is not authorization
+        )
+    else:
+        assert owner._authorize_destination_policy(policy) is None
+
+
+def test_push_review_forgery_does_not_consume_genuine_authority(
+    tmp_path: Path,
+) -> None:
+    """Treating an unrelated handle as revocation authority must fail."""
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    _repository, _candidate, policy = _capture_destination_policy(owner, binding)
+    assert policy is not None
+    authorization = owner._authorize_destination_policy(policy)
+    assert authorization is not None
+    operation_id = object()
+    network_context = object()
+    issued = owner._capture_push_review_after_parent_observation(
+        policy,
+        authorization,
+        operation_id=operation_id,
+        network_context=network_context,
+        command_policy_fingerprint="4" * 64,
+        parent_oid="b" * 40,
+    )
+    assert issued is not None
+    handle, _projection = issued
+    before = owner.snapshot(binding)
+
+    assert (
+        owner._consume_push_review(
+            session_owner._issue_push_review_handle(),
+            operation_id=operation_id,
+            network_context=network_context,
+        )
+        is None
+    )
+    after_forgery = owner.snapshot(binding)
+
+    assert (
+        after_forgery.destination_authorization_epoch
+        == before.destination_authorization_epoch
+    )
+    assert after_forgery.push_review_generation == before.push_review_generation
+    assert (
+        owner._consume_push_review(
+            handle,
+            operation_id=operation_id,
+            network_context=network_context,
+        )
+        is not None
+    )
+
+
+def test_used_push_review_revokes_authorization_and_requires_reauthorization(
+    tmp_path: Path,
+) -> None:
+    """Treating a known-used handle like unknown forgery must fail."""
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    _repository, _candidate, policy = _capture_destination_policy(owner, binding)
+    assert policy is not None
+    authorization = owner._authorize_destination_policy(policy)
+    assert authorization is not None
+    operation_id = object()
+    network_context = object()
+    issued = owner._capture_push_review_after_parent_observation(
+        policy,
+        authorization,
+        operation_id=operation_id,
+        network_context=network_context,
+        command_policy_fingerprint="4" * 64,
+        parent_oid="b" * 40,
+    )
+    assert issued is not None
+    handle, _projection = issued
+    assert (
+        owner._consume_push_review(
+            handle,
+            operation_id=operation_id,
+            network_context=network_context,
+        )
+        is not None
+    )
+    before_reuse = owner.snapshot(binding)
+
+    assert (
+        owner._consume_push_review(
+            handle,
+            operation_id=operation_id,
+            network_context=network_context,
+        )
+        is None
+    )
+
+    after_reuse = owner.snapshot(binding)
+    assert (
+        after_reuse.destination_authorization_epoch
+        > before_reuse.destination_authorization_epoch
+    )
+    assert not owner._destination_authorization_matches(policy, authorization)
+    assert owner._authorize_destination_policy(policy) is not authorization
+
+
+def test_old_push_review_replay_cannot_revoke_new_authorization(
+    tmp_path: Path,
+) -> None:
+    """A retired capability has no authority over a later review cycle."""
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    _repository, _candidate, policy = _capture_destination_policy(owner, binding)
+    assert policy is not None
+    old_authorization = owner._authorize_destination_policy(policy)
+    assert old_authorization is not None
+    old_operation = object()
+    old_context = object()
+    old_issued = owner._capture_push_review_after_parent_observation(
+        policy,
+        old_authorization,
+        operation_id=old_operation,
+        network_context=old_context,
+        command_policy_fingerprint="4" * 64,
+        parent_oid="b" * 40,
+    )
+    assert old_issued is not None
+    old_handle, _projection = old_issued
+    assert owner._revoke_destination_authorization(old_authorization)
+
+    new_authorization = owner._authorize_destination_policy(policy)
+    assert new_authorization is not None
+    new_operation = object()
+    new_context = object()
+    new_issued = owner._capture_push_review_after_parent_observation(
+        policy,
+        new_authorization,
+        operation_id=new_operation,
+        network_context=new_context,
+        command_policy_fingerprint="5" * 64,
+        parent_oid="b" * 40,
+    )
+    assert new_issued is not None
+    new_handle, _projection = new_issued
+    before_replay = owner.snapshot(binding)
+
+    assert (
+        owner._consume_push_review(
+            old_handle,
+            operation_id=old_operation,
+            network_context=old_context,
+        )
+        is None
+    )
+
+    after_replay = owner.snapshot(binding)
+    assert (
+        after_replay.destination_authorization_epoch
+        == before_replay.destination_authorization_epoch
+    )
+    assert after_replay.push_review_generation == before_replay.push_review_generation
+    assert owner._destination_authorization_matches(policy, new_authorization)
+    assert (
+        owner._consume_push_review(
+            new_handle,
+            operation_id=new_operation,
+            network_context=new_context,
+        )
+        is not None
+    )
+
+
+def test_spent_push_review_cannot_revoke_new_review_under_same_authorization(
+    tmp_path: Path,
+) -> None:
+    """Issuing a newer review fences replay even when authorization is reused."""
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    _repository, _candidate, policy = _capture_destination_policy(owner, binding)
+    assert policy is not None
+    authorization = owner._authorize_destination_policy(policy)
+    assert authorization is not None
+    first_operation = object()
+    first_context = object()
+    first_issued = owner._capture_push_review_after_parent_observation(
+        policy,
+        authorization,
+        operation_id=first_operation,
+        network_context=first_context,
+        command_policy_fingerprint="4" * 64,
+        parent_oid="b" * 40,
+    )
+    assert first_issued is not None
+    first_handle, _projection = first_issued
+    assert (
+        owner._consume_push_review(
+            first_handle,
+            operation_id=first_operation,
+            network_context=first_context,
+        )
+        is not None
+    )
+
+    second_operation = object()
+    second_context = object()
+    second_issued = owner._capture_push_review_after_parent_observation(
+        policy,
+        authorization,
+        operation_id=second_operation,
+        network_context=second_context,
+        command_policy_fingerprint="5" * 64,
+        parent_oid="b" * 40,
+    )
+    assert second_issued is not None
+    second_handle, _projection = second_issued
+    before_replay = owner.snapshot(binding)
+
+    assert (
+        owner._consume_push_review(
+            first_handle,
+            operation_id=first_operation,
+            network_context=first_context,
+        )
+        is None
+    )
+
+    after_replay = owner.snapshot(binding)
+    assert (
+        after_replay.destination_authorization_epoch
+        == before_replay.destination_authorization_epoch
+    )
+    assert after_replay.push_review_generation == before_replay.push_review_generation
+    assert owner._destination_authorization_matches(policy, authorization)
+    assert (
+        owner._consume_push_review(
+            second_handle,
+            operation_id=second_operation,
+            network_context=second_context,
+        )
+        is not None
+    )
+
+
 def test_candidate_publication_is_atomic_with_success_and_copies_provenance(
     tmp_path: Path,
 ) -> None:
