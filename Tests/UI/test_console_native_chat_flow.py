@@ -69,6 +69,7 @@ from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryServ
 
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
+_ASYNC_SETTLE_TIMEOUT = 10.0
 
 
 def test_checking_citations_is_an_active_console_run_status():
@@ -1523,7 +1524,7 @@ async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible(
         composer.load_draft("hello")
 
         console.query_one("#console-send-message", Button).press()
-        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await asyncio.wait_for(gateway.started.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
         await _wait_for_text(console, pilot, "partial")
         assert "streaming" in _visible_text(console).lower()
 
@@ -1554,7 +1555,7 @@ async def test_console_collapsed_stop_interrupts_real_run_without_expanding():
         composer.load_draft("hello")
 
         composer.query_one("#console-send-message", Button).press()
-        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await asyncio.wait_for(gateway.started.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
         await _wait_for_text(console, pilot, "partial")
         console._set_console_composer_collapsed(True)
         await pilot.pause()
@@ -1598,7 +1599,7 @@ async def test_console_collapsed_stop_stale_action_warns_without_expanding():
         composer.load_draft("hello")
 
         composer.query_one("#console-send-message", Button).press()
-        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await asyncio.wait_for(gateway.started.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
         await _wait_for_text(console, pilot, "partial")
         console._set_console_composer_collapsed(True)
         await pilot.pause()
@@ -1640,7 +1641,7 @@ async def test_console_composer_stop_is_subdued_when_idle():
 
         composer.load_draft("hello")
         console.query_one("#console-send-message", Button).press()
-        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await asyncio.wait_for(gateway.started.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
         await _wait_for_text(console, pilot, "partial")
 
         assert send_button.disabled is False
@@ -1673,7 +1674,7 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
         composer.load_draft("hello")
 
         console.query_one("#console-send-message", Button).press()
-        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await asyncio.wait_for(gateway.started.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
         await _wait_for_text(console, pilot, "partial")
 
         composer.load_draft("second send")
@@ -1708,7 +1709,9 @@ async def test_console_streaming_chunks_render_after_slow_provider_validation():
         composer.load_draft("hello")
 
         console.query_one("#console-send-message", Button).press()
-        await asyncio.wait_for(gateway.validation_started.wait(), timeout=1)
+        await asyncio.wait_for(
+            gateway.validation_started.wait(), timeout=_ASYNC_SETTLE_TIMEOUT
+        )
         assert (
             console._ensure_console_chat_controller().run_state.status
             is ConsoleRunStatus.VALIDATING
@@ -1725,7 +1728,7 @@ async def test_console_streaming_chunks_render_after_slow_provider_validation():
         assert stop_button.has_class("console-stop-idle")
 
         gateway.validation_release.set()
-        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await asyncio.wait_for(gateway.started.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
         await _wait_for_text(console, pilot, "partial")
         gateway.release.set()
         await _wait_for_text(console, pilot, "partial done")
@@ -1779,7 +1782,7 @@ async def test_console_send_echoes_user_message_before_transcript_poll(monkeypat
         console.query_one("#console-send-message", Button).press()
 
         # Stream reached => the USER row was appended and the submit accepted.
-        await asyncio.wait_for(gateway.started.wait(), timeout=2)
+        await asyncio.wait_for(gateway.started.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
         try:
             # With the poll disabled and no stream content, the sent message can
             # only reach the transcript via the acceptance-time echo. Use the
@@ -3437,7 +3440,7 @@ async def test_cancel_after_character_session_commit_consumes_without_replay(
     )
 
     consume_task = asyncio.create_task(screen._consume_pending_chat_handoff())
-    await asyncio.wait_for(sync_started.wait(), timeout=1)
+    await asyncio.wait_for(sync_started.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
     consume_task.cancel()
     await consume_task
 

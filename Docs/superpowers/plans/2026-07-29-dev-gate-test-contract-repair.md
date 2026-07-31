@@ -3795,6 +3795,45 @@ runs, and the complete File Notes Git module passed 138/138. Ruff lint and
 `git diff --check` pass. Ruff format reports inherited whole-file drift only;
 the changed focus assertion is already formatted as proposed.
 
+### Task 4cn: Share native Console chat-flow settle bounds
+
+**Files:**
+- Modify: `Tests/UI/test_console_native_chat_flow.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This adjusts test-only synchronization bounds for controlled
+signals; it does not change Console runtime behavior or interfaces.
+
+- [x] **Step 1: Identify the accidental performance gate**
+
+Full-gate attempt 29 records
+`test_console_composer_stop_is_subdued_when_idle` as the new failure after
+roughly two-thirds of the repository passed. The isolated test passes, while
+its fake gateway start signal and eight sibling controlled signals use one- or
+two-second `asyncio.wait_for` literals despite the full gate running under
+concurrent repository load.
+
+- [x] **Step 2: Share one bounded settlement guard**
+
+Replace the module's one- and two-second controlled-signal waits with one
+ten-second constant. Keep all waits bounded, assertions exact, successful runs
+immediate, and production code unchanged.
+
+- [x] **Step 3: Verify native Console chat-flow coverage**
+
+Run the exact failed journey repeatedly under current contention, the complete
+native Console chat-flow module, Ruff/format, and `git diff --check`.
+
+The exact journey passed three concurrent repetitions, and the complete native
+Console chat-flow module passed 273/273 under repository contention. Ruff lint
+and `git diff --check` pass. Ruff format reports inherited whole-file drift
+only; none of the changed timeout lines appears in the formatter diff.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

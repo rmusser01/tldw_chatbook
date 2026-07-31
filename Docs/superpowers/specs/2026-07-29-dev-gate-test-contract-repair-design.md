@@ -955,6 +955,11 @@ Update the tests to describe current behavior:
      the visible Back control if the bounded row-focus retries completed before
      the async status render. Continue requiring focus to leave the hidden
      session entry and leave production focus behavior unchanged.
+96. Replace the native Console chat-flow module's one- and two-second
+     `asyncio.wait_for` literals with one ten-second settlement constant. These
+     waits coordinate controlled fake-gateway and handoff signals; none is a
+     product performance contract. Keep every wait bounded and leave production
+     Console behavior unchanged.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
