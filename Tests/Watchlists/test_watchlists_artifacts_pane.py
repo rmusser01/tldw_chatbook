@@ -1332,6 +1332,100 @@ async def test_presets_button_opens_the_preset_manager(monkeypatch):
     assert calls, "the Presets… button must open the preset manager"
 
 
+# --- Whole-branch review fix wave, Important #3 -----------------------------
+#
+# `_write_briefing_selection_mode`/`_write_briefing_default_preset` patch
+# screen memory (and the mounted pane's matching reactive) after their own
+# `await`, without checking the screen is still scoped to the SAME
+# watchlist the write was dispatched for. `handle_generate_briefing_
+# requested` reads `_briefing_default_preset_id` at its own dispatch time,
+# so a stale write's completion landing after a scope change could hand a
+# Generate press for a DIFFERENT watchlist the wrong preset.
+
+
+@pytest.mark.asyncio
+async def test_switching_watchlists_mid_write_does_not_let_the_stale_write_clobber_the_new_one():
+    """Deterministic control over exactly when `set_watchlist_briefing_
+    settings` resolves comes from a `threading.Event` the fake write blocks
+    on (Task 3's own controllable-seam pattern, not a sleep/poll race):
+    pick a default preset for watchlist A (the write blocks), switch
+    Artifacts to watchlist B while it is still in flight (B's own settings
+    load for real -- a different, unblocked read path), release A's write,
+    and confirm the screen -- now scoped to B -- keeps B's own default
+    preset rather than being clobbered by A's write landing late. The
+    write itself is unaffected: A's own row really does end up holding
+    A's chosen preset, even though the screen never reflects it.
+    """
+    app = _build_test_app()
+    watchlist_a = _seed_watchlist(app)
+    watchlist_b = app.watchlist_bundle_service.create("Security Watch")["id"]
+    db = app.watchlist_bundle_service.db
+    preset_a = db.insert_briefing_preset("For A", roster_json="[]")
+    preset_b = db.insert_briefing_preset("For B", roster_json="[]")
+    db.set_watchlist_briefing_settings(watchlist_b, default_preset_id=preset_b)
+
+    async with _open_artifacts(app, watchlist_a) as (screen, pilot, host):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        release_write = threading.Event()
+        call_started = threading.Event()
+        real_set = db.set_watchlist_briefing_settings
+
+        def _blocking_set(watchlist_id_arg, **kwargs):
+            call_started.set()
+            assert release_write.wait(timeout=5), "test setup: write never released"
+            return real_set(watchlist_id_arg, **kwargs)
+
+        db.set_watchlist_briefing_settings = _blocking_set
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        preset_select = pane.query_one("#artifacts-preset-select", Select)
+        assert preset_select.value is None, "watchlist A has no default yet"
+
+        # Pick a default preset for A -- this write blocks.
+        preset_select.value = preset_a
+        await pilot.pause()
+
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not call_started.is_set():
+            await pilot.pause(0.02)
+        assert call_started.is_set(), "the write must have started"
+
+        # While A's write is still blocked, switch Artifacts to B.
+        screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=watchlist_b)
+        await pilot.pause()
+
+        deadline = time.monotonic() + 5.0
+        while (
+            time.monotonic() < deadline
+            and screen._briefing_default_preset_id != preset_b
+        ):
+            await pilot.pause(0.02)
+        assert screen._briefing_default_preset_id == preset_b, (
+            "switching scope must load B's own settings"
+        )
+
+        # NOW release A's write and let it finish.
+        release_write.set()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Still scoped to B: A's stale completion must not have clobbered
+        # B's own in-memory state.
+        assert screen._briefing_default_preset_id == preset_b
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.default_preset_id == preset_b
+
+    # The DB write itself is correctly keyed and needed no change: A's own
+    # row really did get preset_a, even though the screen never reflected it.
+    row = db.conn.execute(
+        "SELECT default_briefing_preset_id FROM watchlists WHERE id = ?",
+        (watchlist_a,),
+    ).fetchone()
+    assert row["default_briefing_preset_id"] == preset_a
+
+
 # --- 7. Casting a script (spec #2 phase 2a, Task 5) -------------------------
 #
 # Tasks 1-4 built the `briefing_scripts` table, the cast service
@@ -1518,6 +1612,81 @@ async def test_casting_with_presets_but_no_default_refuses_with_actionable_copy(
         assert "default preset" in message.lower(), (
             "the toast must tell the user to choose or create a default preset"
         )
+        assert "does not exist" not in message, (
+            "must not be generate_script's raw, unactionable ScriptCastError text"
+        )
+        assert kwargs.get("markup") is False
+        assert db.list_briefing_scripts(briefing_id) == [], (
+            "this refusal must never reach the service at all"
+        )
+
+
+@pytest.mark.asyncio
+async def test_casting_refuses_before_dispatch_when_the_default_preset_is_dangling(
+    monkeypatch,
+):
+    """Whole-branch review fix wave, Important #1.
+
+    A default preset can be hard-deleted (`BriefingPresetModal`, Task 3 --
+    no FK enforces the pointer) while it is still a watchlist's stored
+    default: `_load_briefings`'s combined read re-reads the watchlist's own
+    `default_briefing_preset_id` column verbatim, but reloads the preset
+    LIST fresh, so the dangling id survives a reload even though it no
+    longer names a real row. Before this fix, pressing Cast in that state
+    fell through to `generate_script`'s own raw `ScriptCastError` text
+    ("briefing preset <id> does not exist") -- honest, but naming nothing
+    the user can act on -- while the toolbar's own preset picker was
+    already showing "Preset <id> (deleted)" for the exact same id. This
+    test also pins that Select surface, closing the Task 4 report's own
+    parked test gap (concern 4).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _use_fake_chat(monkeypatch, _FakeChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+        briefing_id = _briefing_rows(app, watchlist_id)[0]["id"]
+        db = app.watchlist_bundle_service.db
+        preset_id = db.insert_briefing_preset(
+            "Solo", roster_json=dump_roster(ONE_SPEAKER_ROSTER)
+        )
+        db.set_watchlist_briefing_settings(watchlist_id, default_preset_id=preset_id)
+        await screen._load_briefings()
+        await pilot.pause()
+        assert screen._briefing_default_preset_id == preset_id
+
+        # Hard-delete the preset (the modal's own path; no FK stops this),
+        # then reload exactly as a plain Artifacts refresh would.
+        assert db.delete_briefing_preset(preset_id) is True
+        await screen._load_briefings()
+        await pilot.pause()
+
+        # The dangling id survives the reload; only the loaded preset LIST
+        # drops the row.
+        assert screen._briefing_default_preset_id == preset_id
+        assert all(
+            preset.get("id") != preset_id
+            for preset in screen._loaded_briefing_presets
+        )
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        preset_select = pane.query_one("#artifacts-preset-select", Select)
+        option_labels = {value: str(label) for label, value in preset_select._options}
+        assert option_labels[preset_id] == f"Preset {preset_id} (deleted)"
+        assert preset_select.value == preset_id
+
+        cast_button = pane.query_one("#artifacts-cast-button", Button)
+        assert cast_button.disabled is False, "presets is non-empty; Cast stays enabled"
+
+        cast_button.press()
+        await pilot.pause()
+
+        assert app.notify.called, "a refusal must be visible, not silent"
+        args, kwargs = app.notify.call_args
+        message = args[0] if args else str(kwargs.get("message", ""))
+        assert "no longer exists" in message.lower()
         assert "does not exist" not in message, (
             "must not be generate_script's raw, unactionable ScriptCastError text"
         )

@@ -3625,6 +3625,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     severity="error",
                 )
             return
+        # Whole-branch review fix wave, Important #3: the write above is
+        # correctly keyed to `watchlist_id` captured at dispatch and needs
+        # no change, but this in-memory patch runs on the SCREEN, which is
+        # global, singular state -- if the user switched Artifacts to a
+        # DIFFERENT watchlist while this write was still in flight, `self.
+        # _briefing_selection_mode`/the pane's reactive must not be
+        # clobbered with the watchlist THIS write was about. Only patch
+        # when the screen is still scoped to the same watchlist; the
+        # scope-change path (`watch_tree_scope`) already re-dispatched its
+        # own `_load_briefings()` reload the moment the scope moved, so the
+        # new watchlist's own settings are not lost -- just not overwritten
+        # by this stale completion.
+        if self._briefing_watchlist_id() != watchlist_id:
+            return
         self._briefing_selection_mode = mode
         if not self.is_attached:
             return
@@ -3671,6 +3685,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     "Could not save the default preset. Nothing changed.",
                     severity="error",
                 )
+            return
+        # Whole-branch review fix wave, Important #3: see the identical
+        # note in `_write_briefing_selection_mode` -- the DB write above is
+        # correctly keyed to `watchlist_id` and needs no change, but this
+        # patch must not land if Artifacts has since moved to a different
+        # watchlist. `handle_generate_briefing_requested:3880` reads `self.
+        # _briefing_default_preset_id` at ITS OWN dispatch time, so an
+        # unguarded patch here is not merely cosmetic: a Generate press for
+        # a DIFFERENT, newly-scoped watchlist could otherwise pick up a
+        # preset id that belongs to the watchlist this write was about.
+        if self._briefing_watchlist_id() != watchlist_id:
             return
         self._briefing_default_preset_id = preset_id
         if not self.is_attached:
@@ -4113,6 +4138,29 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return None
         return db.get_character_card_by_id(character_id)
 
+    def _briefing_default_preset_is_dangling(self) -> bool:
+        """Whether the stored default preset id no longer resolves.
+
+        Whole-branch review fix wave, Important #1: `BriefingPresetModal`
+        hard-deletes a preset (Task 3; no FK enforces the pointer), and
+        `_load_briefings`'s combined read (`_read_watchlist_briefing_
+        state`) reloads the preset LIST but re-reads the watchlist's own
+        `default_briefing_preset_id` column verbatim -- so a preset deleted
+        while it was a watchlist's default leaves `_briefing_default_
+        preset_id` pointing at a row that no longer exists among `_loaded_
+        briefing_presets`. `ArtifactsPane._preset_select_options` already
+        assumes exactly this shape (its own synthetic "Preset N (deleted)"
+        option) -- this is that same check, on the screen side, so Cast can
+        refuse before ever reaching `generate_script`'s own raw
+        `ScriptCastError` text for it.
+        """
+        preset_id = self._briefing_default_preset_id
+        if preset_id is None:
+            return False
+        return not any(
+            preset.get("id") == preset_id for preset in self._loaded_briefing_presets
+        )
+
     @on(CastScriptRequested)
     def handle_cast_script_requested(self, event: CastScriptRequested) -> None:
         """Claim the one-cast-at-a-time guard, then dispatch.
@@ -4128,6 +4176,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if db is None or briefing is None:
             self._notify_watchlists(
                 "Select a briefing to cast.", severity="warning", markup=False,
+            )
+            return
+        if self._briefing_default_preset_is_dangling():
+            # Whole-branch review fix wave, Important #1: the stored
+            # default resolved to a real preset once, but that preset was
+            # since hard-deleted (from the toolbar's own picker, which is
+            # already showing "(deleted)" for this same id). Refuse HERE,
+            # before dispatch, with copy that tells the user what to do --
+            # not `generate_script`'s own raw `ScriptCastError` text for
+            # this case ("briefing preset 1 does not exist"), which names
+            # an id but no action.
+            self._notify_watchlists(
+                "The stored default preset no longer exists. Pick another "
+                "in the toolbar, or create one via Presets…, before "
+                "casting.",
+                severity="warning",
+                markup=False,
             )
             return
         if self._briefing_default_preset_id is None and self._loaded_briefing_presets:

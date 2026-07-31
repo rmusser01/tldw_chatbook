@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 import pytest
 from loguru import logger
 
+from tldw_chatbook import config as app_config
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions import briefing_cast
 from tldw_chatbook.Subscriptions.briefing_cast import (
@@ -320,6 +321,83 @@ async def test_generate_script_refuses_when_the_preset_is_missing(tmp_path):
         await generate_script(db, briefing_id, preset_id=9999, chat=_FakeChat())
 
     assert db.list_briefing_scripts(briefing_id) == [], "no row on a pre-flight refusal"
+
+
+# --- Provider/model resolution (whole-branch review fix wave, Important #2) --
+#
+# `generate_script` resolves `endpoint`/`resolved_model` correctly
+# (briefing_cast.py:600-601: explicit args, then the preset's own
+# provider/model, then the app default), but nothing pinned it -- the
+# reviewer mutated both lines away (dropping the preset resolution
+# entirely) and every one of the file's other tests stayed green, because
+# every other test either passes no preset provider/model at all or never
+# inspects the chat call's own kwargs. Mirrors `test_briefing_service.py`'s
+# own three pins for `generate_briefing` (lines 629, 649, and the bare
+# default asserted by `test_generation_happy_path_writes_everything`)
+# exactly, on the cast side.
+
+
+@pytest.mark.asyncio
+async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    preset_id = _preset(db, provider="anthropic", model="claude-x")
+
+    chat = _FakeChat()
+    row = await generate_script(db, briefing_id, preset_id=preset_id, chat=chat)
+
+    assert chat.calls[0]["api_endpoint"] == "anthropic"
+    assert chat.calls[0]["model"] == "claude-x"
+    assert row["model_used"] == "anthropic/claude-x"
+
+
+@pytest.mark.asyncio
+async def test_explicit_provider_and_model_win_over_the_presets_own(tmp_path):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    preset_id = _preset(db, provider="anthropic", model="claude-x")
+
+    chat = _FakeChat()
+    row = await generate_script(
+        db,
+        briefing_id,
+        preset_id=preset_id,
+        chat=chat,
+        provider="openai",
+        model="gpt-x",
+    )
+
+    assert chat.calls[0]["api_endpoint"] == "openai"
+    assert chat.calls[0]["model"] == "gpt-x"
+    assert row["model_used"] == "openai/gpt-x"
+
+
+@pytest.mark.asyncio
+async def test_no_preset_provider_or_model_falls_back_to_the_app_default(
+    tmp_path, monkeypatch
+):
+    """A preset with no provider/model of its own (and no explicit
+    override) must reach the app's configured default endpoint -- the
+    third leg of the fallback chain `_default_provider`'s own docstring
+    names.
+    """
+    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    preset_id = _preset(db)  # no provider/model set
+
+    chat = _FakeChat()
+    row = await generate_script(db, briefing_id, preset_id=preset_id, chat=chat)
+
+    assert chat.calls[0]["api_endpoint"] == "local-llama"
+    assert chat.calls[0].get("model") is None
+    assert row["model_used"] == "local-llama"
 
 
 @pytest.mark.asyncio

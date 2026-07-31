@@ -28,6 +28,10 @@ audio" below):
    decode-and-concat primitive must be written.
 5. `private_paths` has no binary append/stream/move helper -- storage is buffer-whole-then-
    `atomic_private_write_bytes` or a new helper.
+6. `briefing_presets` ships a single free-text `style_notes` field, not the separate "style and
+   target-length notes" the entity table below promises: target-length guidance ships folded into
+   that same free-text field for 2a, with no dedicated field of its own; a dedicated field is 2b's
+   call if audio pacing turns out to need one.
 
 **Predecessor:** `2026-07-25-watchlists-console-rebuild-design.md` (spec #1), which deferred this
 slice: *"Spec #2 covers artifact generation (briefings, 2-speaker podcasts) and its scheduled
