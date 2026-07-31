@@ -406,7 +406,7 @@ class ConsoleTranscriptMessage(Static):
         while transcript is not None and not isinstance(transcript, ConsoleTranscript):
             transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
-            transcript.select_message(self.message_id)
+            transcript.toggle_message_selection(self.message_id)
 
 
 class ConsoleTranscriptActionButton(Button):
@@ -948,6 +948,15 @@ class ConsoleTranscript(VerticalScroll):
         if self.is_mounted:
             self.call_later(self.refresh_messages)
             self.call_later(self._notify_selection_changed)
+
+    def toggle_message_selection(self, message_id: str) -> None:
+        """Toggle one message's contextual selection state."""
+        if self._message_by_id(message_id) is None:
+            return
+        if self.selected_message_id == message_id:
+            self.action_clear_selection()
+            return
+        self.select_message(message_id)
 
     def focus_action(self, message_id: str, action_id: str) -> None:
         """Focus a selected-message action button by message/action ID."""

@@ -576,6 +576,27 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
 
 
 @pytest.mark.asyncio
+async def test_console_transcript_click_selected_message_clears_selection():
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        transcript = app.query_one(
+            "#console-native-transcript", ConsoleTranscript
+        )
+
+        await pilot.click("#console-message-m2")
+        await pilot.pause()
+        assert transcript.selected_message_id == "m2"
+        assert "Save as..." in _visible_text(app)
+
+        await pilot.click("#console-message-m2")
+        await pilot.pause()
+
+        assert transcript.selected_message_id is None
+        assert "Save as..." not in _visible_text(app)
+
+
+@pytest.mark.asyncio
 async def test_console_transcript_click_background_clears_selection():
     app = TranscriptHarness()
 
