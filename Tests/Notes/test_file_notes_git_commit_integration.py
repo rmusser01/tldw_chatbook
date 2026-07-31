@@ -2184,7 +2184,7 @@ async def test_hooks_directory_lives_through_child_and_is_removed_with_rmdir(
     assert hooks_directory is not None and hooks_directory.is_dir()
     assert removed == []
     runner.release_commit.set()
-    await asyncio.wait_for(waiter, 1.0)
+    await asyncio.wait_for(waiter, 10.0)
 
     assert removed == [hooks_directory]
     assert not hooks_directory.exists()

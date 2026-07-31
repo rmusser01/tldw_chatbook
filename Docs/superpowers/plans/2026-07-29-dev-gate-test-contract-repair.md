@@ -3680,6 +3680,45 @@ handoff module, Ruff/format, and `git diff --check`.
 Both parameters passed three consecutive runs and the complete module passed
 48/48. Ruff lint, Ruff format, and `git diff --check` pass.
 
+### Task 4ck: Bound File Notes Git hook-cleanup settlement
+
+**Files:**
+- Modify: `Tests/Notes/test_file_notes_git_commit_integration.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This widens a test-only deadlock guard after a controlled commit is
+released; it does not change Git behavior or define an application performance
+contract.
+
+- [x] **Step 1: Capture the contention-sensitive failure**
+
+Full-gate attempt 23 fails after 9,012 passes when the released commit cycle
+does not settle within one second. Pytest then remains in teardown until the
+hung run is interrupted, while the production path reports no functional
+failure.
+
+- [x] **Step 2: Widen only the completion guard**
+
+Give the released commit waiter ten seconds to settle. Preserve the one-second
+controlled-start signal and the exact hook-directory lifetime, `Path.rmdir`,
+and removal assertions.
+
+- [x] **Step 3: Verify hook-cleanup coverage**
+
+Run the exact regression repeatedly under the current contention, the complete
+commit-integration module, Ruff/format, and `git diff --check`.
+
+The exact regression passed three consecutive runs, including two concurrent
+runs, and the complete commit-integration module passed 124/124 under the same
+repository load. Ruff lint and `git diff --check` pass. Ruff format reports the
+same inherited whole-file drift on both the changed file and its untouched
+`HEAD` version.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

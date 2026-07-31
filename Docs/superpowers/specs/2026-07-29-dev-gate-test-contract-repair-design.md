@@ -941,6 +941,10 @@ Update the tests to describe current behavior:
 92. Make the skeletal Console-action test wait briefly for its exact recovery
     copy instead of assuming the Workflows worker and recompose finish within a
     fixed sleep.
+93. Give the File Notes Git hook-cleanup test's released commit cycle a
+    ten-second settlement guard. Keep its one-second controlled-start signal,
+    exact `Path.rmdir` observation, and production implementation unchanged.
+    The wider completion guard is a deadlock bound, not a performance target.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
