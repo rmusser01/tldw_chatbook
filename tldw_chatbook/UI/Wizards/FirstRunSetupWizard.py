@@ -168,8 +168,13 @@ class ProviderStep(SetupStep):
             # top-to-bottom order exactly: radio list -> key input ->
             # Keep/Replace/Clear -> detected-server button.
             yield Label("API key", classes="setup-field-label")
-            yield Input(password=True, id="setup-provider-key-input",
-                        placeholder="Paste your API key")
+            # TASK-1506: the probe used to fire only on Enter inside the
+            # field — undiscoverable. A visible Test button shares the
+            # input's row so the 1495 row budget is unchanged.
+            with Horizontal(classes="setup-key-row"):
+                yield Input(password=True, id="setup-provider-key-input",
+                            placeholder="Paste your API key")
+                yield Button("Test", id="setup-provider-test")
             yield Static("", id="setup-provider-key-status", classes="setup-probe-status")
             with Horizontal(id="setup-provider-key-actions", classes="hidden"):
                 yield Button("Keep current", id="setup-provider-key-keep")
@@ -387,6 +392,13 @@ class ProviderStep(SetupStep):
         """Live-but-never-blocking verification: probe on Enter in the key field."""
         if event.value.strip():
             self._launch_probe(api_key=event.value.strip())
+
+    @on(Button.Pressed, "#setup-provider-test")
+    def _on_test_pressed(self, event: Button.Pressed) -> None:
+        """TASK-1506: same probe as Enter-in-field, behind a visible control."""
+        event.stop()
+        typed = self.query_one("#setup-provider-key-input", Input).value.strip()
+        self._launch_probe(api_key=typed or None)
 
     def _launch_probe(self, *, api_key: str | None = None) -> None:
         self.probe_generation += 1
@@ -2011,6 +2023,13 @@ class FirstRunSetupWizard(WizardScreen):
 
     def compose(self) -> ComposeResult:
         yield SetupWizardContainer(self.app_instance, rerun=self.rerun)
+        # TASK-1505: the wizard's keys are otherwise undiscoverable — one
+        # quiet, always-visible line names them.
+        yield Static(
+            "Ctrl+N next · Ctrl+B back · Esc finish later",
+            id="setup-key-hints",
+            classes="setup-key-hints",
+        )
 
     def on_mount(self) -> None:
         if not self.rerun:

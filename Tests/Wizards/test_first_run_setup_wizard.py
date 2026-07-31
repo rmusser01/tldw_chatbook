@@ -2442,3 +2442,47 @@ async def test_provider_list_grouped_popular_first_with_pinned_discovery():
         banner = step.query_one("#setup-provider-detected")
         siblings = list(banner.parent.children)
         assert siblings.index(banner) < siblings.index(radio_set)
+
+
+@pytest.mark.asyncio
+async def test_key_hints_footer_and_test_button_probe():
+    """TASK-1505/1506: hints line renders; Test fires the injected probe."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ProviderStep
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+
+    # Footer: rendered by the real wizard screen.
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        hints = wizard.query_one("#setup-key-hints", Static)
+        text = str(hints.render())
+        assert "Ctrl+N" in text and "Esc" in text
+        assert hints in app.screen._compositor.visible_widgets
+
+    # Test button: fires the probe with the typed key.
+    probe = AsyncMock()
+    step_wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = ProviderStep(
+        wizard=step_wizard,
+        config=WizardStepConfig(id="provider", title="Provider", step_number=2),
+        discover=AsyncMock(return_value=()),
+        probe=probe,
+        environ={},
+    )
+    host = _StepHost(step)
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        step.query_one("#setup-provider-key-input", Input).value = "wizard-test-key-x"
+        step.query_one("#setup-provider-test", Button).press()
+        await pilot.pause(0.3)
+        assert probe.await_count >= 1

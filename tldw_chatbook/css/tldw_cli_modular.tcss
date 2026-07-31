@@ -14356,6 +14356,27 @@ SmartContentTree Tree > .selected-node {
     display: none;
 }
 
+/* TASK-1505: persistent key-hints line docked under the wizard. */
+.setup-key-hints {
+    dock: bottom;
+    height: 1;
+    color: $text-muted;
+    text-align: center;
+    background: $panel;
+}
+
+/* TASK-1506: key input and its Test button share one row. */
+.setup-key-row {
+    height: 3;
+}
+.setup-key-row Input {
+    width: 1fr;
+}
+.setup-key-row Button {
+    margin-left: 1;
+    min-width: 8;
+}
+
 /* ===== MODULE: features/_chatbooks.tcss ===== */
 /* _chatbooks.tcss */
 /* Styles for the Chatbooks window */
