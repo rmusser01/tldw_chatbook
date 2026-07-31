@@ -13,6 +13,7 @@ transcription service: no hardware, no models, no disk.
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 import pytest
@@ -138,6 +139,8 @@ def _build_service(
     monkeypatch,
     transcription: _FakeTranscriptionService,
     recorder: Optional[_FakeRecorder] = None,
+    provider: str = "faster-whisper",
+    model: Optional[str] = "base.en",
     **settings: Any,
 ):
     """The real service, wired to fakes. No lazy property ever constructs."""
@@ -145,8 +148,8 @@ def _build_service(
     from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
 
     service = LazyLiveDictationService(
-        transcription_provider="faster-whisper",
-        transcription_model="base.en",
+        transcription_provider=provider,
+        transcription_model=model,
         language="fr",
         enable_commands=False,
     )
@@ -360,6 +363,109 @@ def test_streaming_failure_falls_back_to_the_buffer_api(monkeypatch):
     assert streaming.calls  # it was tried
     assert len(transcription.buffer_calls) == 1
     assert sink.partials == ["rescued"]
+    assert transcription.transcribe_calls == []
+
+
+def test_streaming_transcriber_requested_for_parakeet_mlx_with_the_resolved_model(
+    monkeypatch,
+):
+    """The streaming regime engages for parakeet-mlx, model included verbatim.
+
+    `_initialize_streaming_transcriber` always calls
+    `create_streaming_transcriber`; the provider gate lives in
+    `TranscriptionService.create_streaming_transcriber` itself (only
+    parakeet-mlx ever returns non-None there). This pins the CALL, with
+    `model=None` -- the resolved value for parakeet-mlx once
+    `Chat/console_voice_input.py::resolve()` stops inheriting
+    `transcription.default_model` (a provider-scoped fix) -- reaching this
+    call site unchanged: not stringified to `"None"`, not defaulted back to
+    something else. `TranscriptionService.create_streaming_transcriber`
+    already does `model or <its own default>`, so `None` here is exactly the
+    "no model given" case that resolves to
+    `mlx-community/parakeet-tdt-0.6b-v2` on the real class.
+    """
+    streaming = _FakeStreamingTranscriber()
+    transcription = _FakeTranscriptionService(streaming_transcriber=streaming)
+    service = _build_service(
+        monkeypatch, transcription, provider="parakeet-mlx", model=None
+    )
+
+    service._initialize_streaming_transcriber()
+
+    assert service.streaming_transcriber is streaming
+    assert transcription.streaming_requests == [
+        {"provider": "parakeet-mlx", "model": None, "language": "fr"}
+    ]
+
+
+def test_parakeet_mlx_streams_finals_without_double_firing_and_drains_the_tail(
+    monkeypatch,
+):
+    """End-to-end capture, provider=parakeet-mlx, streaming_transcriber set.
+
+    Covers the three things asked of the streaming regime for parakeet-mlx:
+    finals stream during capture (a "final" result from the streaming
+    transcriber reaches `on_final_transcript` directly); the silence gate --
+    driven all the way to firing, with a short
+    `dictation.silence_threshold_seconds` -- does not ALSO fire a buffer
+    transcription for audio the streaming transcriber already consumed (its
+    streaming-regime branch only ever calls `_finalize_current_segment()`,
+    never `_process_audio_buffer()` a second time); and the stop path drains
+    whatever is left through that same `_process_audio_buffer` call the
+    cadence uses, not a separate buffer-API mechanism.
+    """
+    streaming = _FakeStreamingTranscriber(
+        results=[{"text": "hello", "partial": True}]
+    )
+    transcription = _FakeTranscriptionService(streaming_transcriber=streaming)
+    recorder = _FakeRecorder()
+    service = _build_service(
+        monkeypatch,
+        transcription,
+        recorder,
+        provider="parakeet-mlx",
+        model=None,
+        **{"dictation.silence_threshold_seconds": 0.1},
+    )
+    sink = _Sink()
+
+    started = service.start_dictation(
+        on_partial_transcript=sink.partial,
+        on_final_transcript=sink.final,
+        on_error=sink.error,
+    )
+    assert started is True
+    assert transcription.streaming_requests == [
+        {"provider": "parakeet-mlx", "model": None, "language": "fr"}
+    ]
+
+    recorder.feed(b"\x00\x01" * 160)
+    # Cadence-paced: wait for the one queued chunk to reach the streaming
+    # transcriber (its only queued result is a partial, not a final).
+    for _ in range(100):
+        if streaming.calls:
+            break
+        time.sleep(0.01)
+    assert streaming.calls, "the streaming transcriber was never called"
+    assert sink.partials == ["hello"]
+
+    # Past `silence_threshold_seconds` with nothing further queued: the
+    # streaming branch of the silence check must fire
+    # `_finalize_current_segment()` -- turning the accumulated partial into
+    # a final -- and nothing else.
+    for _ in range(100):
+        if sink.finals:
+            break
+        time.sleep(0.01)
+    assert sink.finals == ["hello"]
+    assert transcription.buffer_calls == [], (
+        "the silence gate double-fired a buffer transcription in the "
+        "streaming regime"
+    )
+
+    service.stop_dictation()
+
+    assert transcription.buffer_calls == []
     assert transcription.transcribe_calls == []
 
 
