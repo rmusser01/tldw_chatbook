@@ -5,10 +5,12 @@ actually puts widgets on screen."""
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 import pytest
 from loguru import logger as loguru_logger
+from rich.markup import escape as escape_markup
 from textual.app import App
 from textual.widget import Widget
 from textual.widgets import Button, Input
@@ -27,6 +29,7 @@ from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
 from tldw_chatbook.UI.Evals.library_rail import LibraryRail
 from tldw_chatbook.UI.Evals.snippet_editor import import_snippets_into_dataset
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 #: The real bundled stylesheet (mirrors HomeHarness in test_home_screen.py
 #: and CanvasAppWithBundledCSS in test_mcp_servers_mode.py). This is not what
@@ -1590,3 +1593,381 @@ async def test_sample_bench_completion_selects_the_run_group_when_selection_is_u
         assert screen._selection.id == run_groups[0]["id"]
         message, severity = sample_bench_app.app_instance.notifications[-1]
         assert message == "Sample bench created and run."
+
+
+# ---------------------------------------------------------------------------
+# Task 7 (task-1482): Duplicate and Delete.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_duplicate_and_delete_buttons_render_only_for_a_resolved_bench(
+    evals_app, evals_db, seeded_bench
+):
+    """``#evals-duplicate-bench``/``#evals-delete-bench`` are composed only
+    inside the resolved-bench branch of ``_compose_inspector_pane`` --
+    absent for every other selection kind (including a ``kind="bench"``
+    id that no longer resolves), present and enabled once a real bench is
+    selected."""
+    dataset_id = evals_db.create_dataset(
+        name="other-ds", format="custom", source_path="inline:other-ds"
+    )
+    classic_id = evals_db.create_task(
+        name="classic task",
+        task_type="question_answer",
+        config_format="custom",
+        config_data={},
+    )
+    base_id = evals_db.create_model(name="rg-base", provider="llama_cpp", model_id="m")
+    rg_config = BenchConfig(
+        name="rg bench", prompt_mode="raw", top_k=5,
+        dataset_id=dataset_id, target_ids=(base_id,),
+    )
+    rg_task_id = save_bench(evals_db, rg_config)
+    target = Target(id=base_id, name="base", provider="llama_cpp", model_id="m")
+    group_id, _run_ids = create_run_group(evals_db, rg_task_id, rg_config, [target], [])
+
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+
+        for kind, sel_id in (
+            ("none", None),
+            ("dataset", dataset_id),
+            ("classic", classic_id),
+            ("run_group", group_id),
+            ("bench", "does-not-exist"),
+        ):
+            screen.select(kind=kind, id=sel_id)
+            await pilot.pause()
+            assert not screen.query("#evals-duplicate-bench"), kind
+            assert not screen.query("#evals-delete-bench"), kind
+
+        screen.select(kind="bench", id=seeded_bench)
+        await pilot.pause()
+        duplicate = screen.query_one("#evals-duplicate-bench", Button)
+        delete = screen.query_one("#evals-delete-bench", Button)
+        assert duplicate.disabled is False
+        assert delete.disabled is False
+        # The blocked badge/callout only render while disabled -- see the
+        # in-flight test below.
+        assert not screen.query("#evals-delete-bench-status")
+        assert not screen.query("#evals-delete-bench-reason")
+
+
+@pytest.mark.asyncio
+async def test_pressing_duplicate_creates_and_selects_a_copy(evals_app, seeded_bench):
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=seeded_bench)
+        await pilot.pause()
+
+        before_ids = {bench["id"] for bench in screen._view_model.benches()}
+        await pilot.click("#evals-duplicate-bench")
+        await pilot.pause()
+
+        new_ids = {bench["id"] for bench in screen._view_model.benches()} - before_ids
+        assert len(new_ids) == 1, new_ids
+        new_id = new_ids.pop()
+        assert screen._selection.kind == "bench"
+        assert screen._selection.id == new_id
+
+        new_bench = screen._view_model.bench_by_id(new_id)
+        assert re.fullmatch(r"loaded-nouns v1 copy [0-9a-f]{8}", new_bench["name"]), (
+            new_bench["name"]
+        )
+
+        notifications = evals_app.app_instance.notifications
+        assert notifications
+        message, severity = notifications[-1]
+        assert severity == "information"
+        assert message == f"Duplicated as {new_bench['name']}."
+
+
+@pytest.mark.asyncio
+async def test_duplicate_of_a_corrupt_legacy_bench_toasts_instead_of_crashing(
+    evals_app, evals_db
+):
+    """Controller ruling (Task 3's review): ``_on_duplicate_bench_pressed``
+    catches broad ``Exception``, not ``duplicate_bench``'s own narrower
+    ``RuntimeError`` (which it raises only for a missing/soft-deleted
+    source). A corrupt legacy bench -- ``config_data.target_ids`` carrying
+    a malformed (non-string) entry -- makes ``duplicate_bench``'s own
+    ``load_bench`` call raise a plain ``ValueError`` instead (see
+    ``test_load_bench_rejects_a_malformed_stored_target_id``,
+    Tests/Evals/word_bench/test_storage.py), which a narrow
+    ``except RuntimeError`` would not catch."""
+    dataset_id = evals_db.create_dataset(
+        name="corrupt-ds", format="custom", source_path="inline:corrupt-ds"
+    )
+    target_id = evals_db.create_model(name="t", provider="llama_cpp", model_id="m")
+    task_id = evals_db.create_task(
+        name="corrupted bench",
+        task_type="logprob",
+        config_format="custom",
+        config_data={
+            "bench_type": "word_bench",
+            "prompt_mode": "raw",
+            "top_k": 20,
+            "probes": [],
+            "target_ids": [target_id, 123],
+            "concurrency": 1,
+        },
+        dataset_id=dataset_id,
+    )
+
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+
+        await pilot.click("#evals-duplicate-bench")  # must not crash the app
+        await pilot.pause()
+
+        assert pilot.app.is_running, "the app must survive the failure toast"
+        assert screen._selection.id == task_id  # unchanged -- duplication failed
+        notifications = evals_app.app_instance.notifications
+        assert notifications
+        message, severity = notifications[-1]
+        assert severity == "error"
+        assert "Could not duplicate the bench" in message
+
+
+@pytest.mark.asyncio
+async def test_delete_confirmed_removes_from_rail_selection_none_runs_remain(
+    evals_app, evals_db
+):
+    """Deleting a bench soft-deletes its ``eval_tasks`` row -- it
+    disappears from the rail's Benches section and ``screen._selection``
+    moves to ``kind="none"`` -- but its run history is NOT cascaded: the
+    Runs section keeps listing the run group, and reselecting it still
+    renders the grid (see ``_apply_bench_deletion``'s own comment:
+    ``list_runs``/``get_run``'s ``JOIN eval_tasks`` is unfiltered on
+    ``t.deleted_at``).
+
+    Uses ``_apply_bench_deletion`` directly (``confirmed=True``), bypassing
+    the modal per this task's own public-shaped-callback convention (see
+    ``snippet_editor.py``'s ``_handle_import_file_selected``) -- the
+    dialog's own message content is pinned separately, below."""
+    base_id = evals_db.create_model(name="base", provider="llama_cpp", model_id="m")
+    dataset_id = evals_db.create_dataset(
+        name="del-ds", format="custom", source_path="inline:del-ds"
+    )
+    config = BenchConfig(
+        name="to delete", prompt_mode="raw", top_k=5,
+        dataset_id=dataset_id, target_ids=(base_id,),
+    )
+    task_id = save_bench(evals_db, config)
+    target = Target(id=base_id, name="base", provider="llama_cpp", model_id="m")
+    group_id, _run_ids = create_run_group(evals_db, task_id, config, [target], [])
+
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+
+        screen._apply_bench_deletion(True, task_id)
+        await pilot.pause()
+
+        assert screen._selection.kind == "none"
+        assert screen._view_model.bench_by_id(task_id) is None
+        assert not screen.query("#evals-rail-row-benches-0")
+
+        notifications = evals_app.app_instance.notifications
+        assert notifications
+        message, severity = notifications[-1]
+        assert severity == "information"
+        assert message == "Bench deleted. Its runs remain in the Runs section."
+
+        run_groups = screen._view_model.run_groups()
+        assert len(run_groups) == 1
+        assert run_groups[0]["id"] == group_id
+
+        screen.select(kind="run_group", id=group_id)
+        await pilot.pause()
+        assert screen.query_one("#evals-results-grid")
+        assert not screen.query("#evals-detail-missing")
+
+
+@pytest.mark.asyncio
+async def test_delete_cancelled_is_a_no_op(evals_app, seeded_bench):
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=seeded_bench)
+        await pilot.pause()
+
+        screen._apply_bench_deletion(False, seeded_bench)
+        await pilot.pause()
+
+        assert screen._selection.kind == "bench"
+        assert screen._selection.id == seeded_bench
+        assert screen._view_model.bench_by_id(seeded_bench) is not None
+        assert evals_app.app_instance.notifications == []
+
+
+@pytest.mark.asyncio
+async def test_delete_confirm_dialog_message_contains_the_escaped_bench_name(
+    evals_app, evals_db
+):
+    """Drives the real button + real ``push_screen_wait`` (unlike the
+    confirmed/cancelled tests above, which bypass the modal via
+    ``_apply_bench_deletion`` directly) -- this is the one test proving
+    the pushed ``ConfirmationDialog`` itself carries the escaped name, per
+    the Watchlists convention (``escape_markup(name)`` in ``message``,
+    watchlists_collections_screen.py:2117-2135). The name carries a bare
+    ``[/]`` -- unbalanced Rich/Textual markup -- so an unescaped ``message``
+    would raise inside the dialog's own ``Label`` render."""
+    dataset_id = evals_db.create_dataset(
+        name="markup-ds", format="custom", source_path="inline:markup-ds"
+    )
+    task_id = evals_db.create_task(
+        name="notes[/].txt bench",
+        task_type="logprob",
+        config_format="custom",
+        config_data={
+            "bench_type": "word_bench", "prompt_mode": "raw", "top_k": 5,
+            "probes": [], "target_ids": [], "concurrency": 1,
+        },
+        dataset_id=dataset_id,
+    )
+
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+
+        stack_depth_before = len(evals_app.screen_stack)
+        await pilot.click("#evals-delete-bench")
+        await pilot.pause()
+
+        assert len(evals_app.screen_stack) == stack_depth_before + 1
+        dialog = evals_app.screen
+        assert isinstance(dialog, ConfirmationDialog)
+        assert dialog.title == "Delete bench?"
+        assert escape_markup("notes[/].txt bench") in dialog.message
+        assert "notes[/].txt bench" not in dialog.message
+
+        # Cancel (the dialog's own primary button, per its DEFAULT_CSS/
+        # variant) rather than deleting -- confirms the bench survives a
+        # dismissed dialog reached through the real UI path, not just
+        # through `_apply_bench_deletion(False, ...)` directly.
+        await pilot.click("#cancel-button")
+        await _wait_until(pilot, lambda: len(evals_app.screen_stack) == stack_depth_before)
+        await pilot.pause()
+
+        assert screen._selection.kind == "bench"
+        assert screen._view_model.bench_by_id(task_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_pressing_delete_then_confirming_in_the_real_dialog_deletes_the_bench(
+    evals_app, seeded_bench
+):
+    """End-to-end wiring check: ``_on_delete_bench_pressed`` ->
+    ``_delete_bench_flow`` -> the real ``ConfirmationDialog`` -> Confirm ->
+    ``_apply_bench_deletion``. The confirmed/cancelled BEHAVIOR itself is
+    pinned against ``_apply_bench_deletion`` directly elsewhere in this
+    file (bypassing the modal, per this task's own convention) -- this
+    proves the pieces are actually wired together end to end."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=seeded_bench)
+        await pilot.pause()
+
+        await pilot.click("#evals-delete-bench")
+        await pilot.pause()
+        assert isinstance(evals_app.screen, ConfirmationDialog)
+
+        await pilot.click("#confirm-button")
+        await _wait_until(pilot, lambda: screen._selection.kind == "none")
+        await pilot.pause()
+
+        assert screen._view_model.bench_by_id(seeded_bench) is None
+        message, severity = evals_app.app_instance.notifications[-1]
+        assert message == "Bench deleted. Its runs remain in the Runs section."
+        assert severity == "information"
+
+
+@pytest.mark.asyncio
+async def test_delete_is_disabled_with_a_reason_while_this_benchs_run_is_in_flight(
+    evals_app, runnable_bench
+):
+    """Mirrors ``test_action_buttons_stay_disabled_across_a_mid_run_
+    recompose``'s technique: starts a real (paused) bench run, forces a
+    recompose while it is still in flight, then checks Delete -- not the
+    primary action -- picks up the SAME in-flight state. Duplicate must
+    stay enabled throughout: nothing about duplicating this bench's
+    CONFIG conflicts with a run reading its already-loaded snapshot."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        # Force a recompose while the run is still in flight -- mirrors
+        # `test_action_buttons_stay_disabled_across_a_mid_run_recompose`.
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+
+        delete_button = screen.query_one("#evals-delete-bench", Button)
+        assert delete_button.disabled is True
+        assert delete_button.tooltip == "A run of this bench is in flight."
+        status = screen.query_one("#evals-delete-bench-status")
+        assert str(status.renderable) == "Delete: Blocked"
+        reason = screen.query_one("#evals-delete-bench-reason")
+        assert "A run of this bench is in flight." in str(reason.renderable)
+
+        duplicate_button = screen.query_one("#evals-duplicate-bench", Button)
+        assert duplicate_button.disabled is False
+
+        # A press that somehow reaches the handler anyway (e.g. a stale,
+        # not-yet-rerendered button) must still be a genuine no-op, not
+        # just visually disabled -- mirrors
+        # `test_a_second_press_while_a_bench_run_is_in_flight_is_a_no_op`.
+        screen.post_message(Button.Pressed(delete_button))
+        await pilot.pause()
+        assert screen._selection.kind == "bench"
+        assert screen._selection.id == runnable_bench
+        assert screen._view_model.bench_by_id(runnable_bench) is not None
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_delete_stays_enabled_while_an_unrelated_sample_bench_run_is_in_flight(
+    evals_app, seeded_bench
+):
+    """The sample-bench worker pins its own not-yet-existing bench, never
+    an already-selected one -- unlike the primary action
+    (``_primary_action_state``), Delete must not treat a running SAMPLE
+    bench as a reason to block deleting some other, unrelated, already-
+    selected bench (task-7 brief: "decide whether sample runs block
+    Delete of an UNRELATED bench")."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=seeded_bench)
+        await pilot.pause()
+
+        screen._sample_bench_running = True
+        screen.refresh(recompose=True)
+        await pilot.pause()
+
+        delete_button = screen.query_one("#evals-delete-bench", Button)
+        assert delete_button.disabled is False
+        assert not screen.query("#evals-delete-bench-status")
