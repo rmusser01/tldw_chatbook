@@ -3526,11 +3526,12 @@ async def test_hidden_unexpected_action_failure_refreshes_on_reopen(
         )
         await _wait_for_current_git_row_projection(workspace)
         assert not workspace._git_refresh_after_mutation
+        git_back = workspace.query_one("#file-notes-git-back", Button)
         git_rows = workspace.query_one("#file-notes-git-rows", ListView)
         await _wait_until(
             pilot,
-            lambda: git_rows.has_focus,
-            "reopen did not restore focus to the refreshed rows",
+            lambda: git_back.has_focus or git_rows.has_focus,
+            "reopen did not restore focus to the visible Git surface",
         )
         assert workspace._git_last_action == retained_action
         action_status = workspace.query_one(

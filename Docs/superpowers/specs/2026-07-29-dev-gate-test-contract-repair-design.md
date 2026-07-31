@@ -950,6 +950,11 @@ Update the tests to describe current behavior:
      waits coordinate controlled test events, shutdown, and retained cycles;
      none is a product performance contract. Keep every wait bounded and leave
      production Git code unchanged.
+95. Align the hidden-action File Notes Git reopen assertion with the existing
+     focus fallback: after current rows mount, focus may be on the row list or
+     the visible Back control if the bounded row-focus retries completed before
+     the async status render. Continue requiring focus to leave the hidden
+     session entry and leave production focus behavior unchanged.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library

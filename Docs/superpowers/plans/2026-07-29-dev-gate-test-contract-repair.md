@@ -3757,6 +3757,44 @@ module passed 124/124. Ruff lint and `git diff --check` pass. Ruff format
 reports only the same inherited whole-file drift present in `HEAD`; changed
 wait expressions match Ruff's proposed formatting.
 
+### Task 4cm: Accept the visible Git focus fallback
+
+**Files:**
+- Modify: `Tests/UI/test_library_file_notes_git.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This aligns one UI assertion with the production focus fallback
+already covered elsewhere; it does not change application focus behavior.
+
+- [x] **Step 1: Identify the bounded fallback**
+
+Full-gate attempt 28 fails after 17,635 passes because current Git rows are
+mounted but do not own focus. Production `_focus_session_git_panel()` explicitly
+falls back to the visible Back control if rows remain undisplayed across its
+bounded refresh retries, and another workspace focus test already accepts
+either visible owner.
+
+- [x] **Step 2: Assert the visible Git surface**
+
+After the current row projection settles, require focus on either the Back
+control or the row list. Keep the hidden-entry transition, current-status,
+retained-action, and row-projection assertions unchanged.
+
+- [x] **Step 3: Verify File Notes Git coverage**
+
+Run the exact hidden-action journey repeatedly under current contention, the
+complete File Notes Git module, Ruff/format, and `git diff --check`.
+
+The exact journey passed three consecutive runs, including two concurrent
+runs, and the complete File Notes Git module passed 138/138. Ruff lint and
+`git diff --check` pass. Ruff format reports inherited whole-file drift only;
+the changed focus assertion is already formatted as proposed.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
