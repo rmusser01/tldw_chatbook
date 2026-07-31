@@ -49,6 +49,11 @@ async def test_viewer_modal_renders_image_and_escape_dismisses():
         # The mosaic fallback paints a renderable child sized well beyond
         # the 16-col avatar thumb (full-size means tens of columns here).
         assert body.children
+        # Renderable != painted: the body must occupy real screen area, not
+        # collapse to zero under a 100%-height default inside an auto parent.
+        image_widget = modal.query_one("#console-image-viewer-image")
+        assert image_widget.region.width >= 20
+        assert image_widget.region.height >= 10
         await pilot.press("escape")
         await pilot.pause()
         assert not isinstance(app.screen, ConsoleImageViewerModal)

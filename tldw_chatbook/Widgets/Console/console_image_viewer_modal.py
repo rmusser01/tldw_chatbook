@@ -93,7 +93,23 @@ class ConsoleImageViewerModal(ModalScreen[None]):
 
     async def on_mount(self) -> None:
         body = self.query_one("#console-image-viewer-body", Container)
-        await body.mount(self._build_full_size_widget())
+        widget = self._build_full_size_widget()
+        # Inline styles, not CSS: the app-tier stylesheet bundle outranks a
+        # widget's DEFAULT_CSS, and a Container's default 100% height inside
+        # this auto-sized modal collapses to zero under it. Explicit cell
+        # sizes derived from the built renderable are bundle-proof.
+        width = getattr(widget.styles.width, "value", None) or 0
+        height = getattr(widget.styles.height, "value", None) or 0
+        if width and height:
+            body.styles.width = width
+            body.styles.height = height
+        else:
+            body.styles.width = "auto"
+            body.styles.height = "auto"
+        outer = self.query_one("#console-image-viewer")
+        outer.styles.width = "auto"
+        outer.styles.height = "auto"
+        await body.mount(widget)
 
     def _build_full_size_widget(self) -> Static:
         """Build the largest renderable the viewport allows.
@@ -126,10 +142,14 @@ class ConsoleImageViewerModal(ModalScreen[None]):
                 pass
         from ...Utils.mosaic_render import mosaic_from_image
 
-        return Static(
-            mosaic_from_image(self._image, cols, lines),
-            id="console-image-viewer-image",
-        )
+        mosaic = mosaic_from_image(self._image, cols, lines)
+        lines_out = mosaic.plain.split("\n")
+        widget = Static(mosaic, id="console-image-viewer-image")
+        # Explicit fitted size (same guard as the graphics branch): the
+        # mosaic's own line grid is the authoritative cell size.
+        widget.styles.width = max(len(line) for line in lines_out)
+        widget.styles.height = len(lines_out)
+        return widget
 
     def _resolve_mode(self) -> str:
         try:

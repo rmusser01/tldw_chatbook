@@ -4336,9 +4336,14 @@ class ChatScreen(BaseAppScreen):
             if content_type and not str(content_type).split(";")[0].strip().lower().startswith("image/"):
                 return
             _state, cache = self._ensure_console_image_view()
-            await asyncio.to_thread(cache.prepare, cache_key, data)
+            prepared = await asyncio.to_thread(cache.prepare, cache_key, data)
+            if prepared and self.is_mounted:
+                # The Console sync is demand-driven, not a free-running
+                # timer: without this request the freshly cached image would
+                # sit invisible until the next unrelated UI action.
+                await self._sync_native_console_chat_ui()
         except Exception:
-            logger.opt(exception=True).debug(
+            logger.opt(exception=True).warning(
                 "remote transcript image fetch failed: {}", url
             )
 

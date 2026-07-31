@@ -33,3 +33,23 @@ viewer, budgets).
 - [x] #3 URL extraction accepts markdown image links and bare image-extension URLs only, http(s) only, deduped and capped.
 - [x] #4 All fetches route through the per-hop-validated egress GET with byte caps and content-type check.
 <!-- AC:END -->
+
+## Implementation Notes (live-verification addendum)
+
+Live end-to-end run (textual-serve + Playwright + local llama.cpp): the model
+emitted the requested markdown image line, the egress GET fetched 44 KB of
+image/jpeg from gstatic.com, and the row rendered inline. Two findings from
+the live pass, both fixed:
+
+1. The Console sync is DEMAND-driven, not a free-running timer -- after the
+   fetch cached the image, nothing requested a re-render, so the row stayed
+   invisible until an unrelated UI action. The fetch worker now requests
+   `_sync_native_console_chat_ui()` after a successful prepare.
+2. The persistent app log admits only diagnostics events (ADR-029 sink), so
+   module-level logger warnings from this path are NOT visible there --
+   debugging used a temporary file probe, since removed.
+
+Also: the viewer modal needed explicit inline cell sizes -- the app-tier CSS
+bundle outranks a modal's DEFAULT_CSS and a Container's default 100% height
+collapses to zero inside the auto-sized modal (caught live, pinned by a
+region-size assertion; harness CSS does NOT reproduce bundle interference).
