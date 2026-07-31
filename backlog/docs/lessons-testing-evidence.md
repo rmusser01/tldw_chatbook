@@ -571,3 +571,28 @@ the real app in tmux. `render_line`/`region` alone prove what a widget WOULD pai
 never what the screen shows; the composited screen is the only authority (third
 recorded instance of this lesson class). When a live report contradicts a green suite,
 suspect the harness before the reporter.
+
+---
+
+## A zero-latency fake makes loop-starvation bugs invisible (2026-07-30)
+
+**Incident.** Live dictation never emitted a final during capture — voice commands
+(classified on finals) were completely dead in the field — while 300+ dictation tests
+stayed green. `_processing_loop` transcribed each 0.5 s audio window synchronously on
+the same thread that runs the silence-finalize check; real transcription took 4-5 s per
+window (proven with `sys._current_frames()` stack dumps against a live microphone), so
+the check starved indefinitely. Every test fake transcribed in ~0 ms, which makes the
+serial design behave identically to a concurrent one. The probe ladder that isolated it,
+in increasing depth: call the transcriber+classifier directly (chain worked) → measure
+`captured_bytes` during silence (VAD worked) → shim the finalize method (never called
+despite an 8.6 s silence age at a 2.0 s threshold) → per-tick thread stack dumps (loop
+permanently inside the transcriber). Fix: segment-at-silence architecture; the RED test
+that pins it gives the fake a CONTROLLABLE latency (2× the threshold) — with a fast fake
+it cannot fail.
+
+**What to do.** Any fake standing in for an operation whose real latency exceeds the
+loop/timer cadence it shares a thread with must be able to sleep. Test both fast and
+slow. And when a threaded pipeline works in tests but not live, dump the worker's stack
+(`sys._current_frames()[thread.ident]`) once a second before theorizing — it answered in
+one run what three cheaper probes could only narrow. Bonus rig: macOS `say` through the
+speakers + the real microphone is a full live STT test harness needing no human.
