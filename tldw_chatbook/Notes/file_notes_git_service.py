@@ -37,7 +37,17 @@ from tldw_chatbook.Notes.file_notes_git_commit import (
     parse_raw_commit_object,
     parse_raw_staged_delta,
 )
-from tldw_chatbook.Notes.file_notes_git_push import PushIncludedNote
+from tldw_chatbook.Notes.file_notes_git_push import (
+    PushAuthorizationHandle,
+    PushContractError,
+    PushDestinationPolicyResult,
+    PushIncludedNote,
+    TransportAdmission,
+    _GitConfigFact,
+    _ResolvedPushConfiguration,
+    _push_destination_policy_result,
+    _resolve_push_configuration,
+)
 from tldw_chatbook.Notes.file_notes_session_owner import (
     CommitAuthorityCapture,
     CommitPublication,
@@ -58,6 +68,8 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     SessionGitRow,
     StagingOwnership,
     PushCandidateSeed,
+    _DestinationPolicyCapture,
+    _PushCandidateCapture,
     coalesce_session_changes,
 )
 
@@ -136,6 +148,36 @@ _COMMIT_ONLY_REMOVED_ENVIRONMENT = frozenset(
         "GIT_OPTIONAL_LOCKS",
     }
 )
+_LOCAL_PUSH_PROOF_REMOVED_ENVIRONMENT = frozenset(
+    {
+        *_REDIRECTING_GIT_ENVIRONMENT,
+        *_COMMIT_ONLY_REMOVED_ENVIRONMENT,
+        "GIT_SSH",
+        "GIT_SSH_COMMAND",
+        "GIT_SSH_VARIANT",
+        "GIT_PROXY_COMMAND",
+        "GIT_HTTP_PROXY_AUTHMETHOD",
+        "GIT_ATTR_NOSYSTEM",
+        "GIT_ATTR_SOURCE",
+        "GCM_INTERACTIVE",
+        "SSH_AUTH_SOCK",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+    }
+)
+_LOCAL_PUSH_CONFIG_PATTERN = (
+    r"^(branch\..*\.(remote|merge|pushremote)|remote\.pushdefault|"
+    r"remote\..*\.(url|pushurl|mirror|push|pushoption|receivepack|vcs|proxy)|"
+    r"push\.pushoption|url\..*\.(pushinsteadof|insteadof)|http\..*|"
+    r"credential\..*helper|core\.sshcommand|ssh\.variant|filter\.lfs\..*)$"
+)
+_LOCAL_PUSH_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024
 DEFAULT_GIT_STDERR_LIMIT_BYTES = 4096
 DEFAULT_COMMIT_PROOF_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024
 DEFAULT_COMMIT_PROOF_STDERR_LIMIT_BYTES = DEFAULT_GIT_STDERR_LIMIT_BYTES
@@ -334,6 +376,17 @@ class _HeadReadFailure:
 
     kind: HeadReadFailureKind
     message: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PushDestinationPolicySnapshot:
+    """Service-private exact local proof retained for authorization."""
+
+    owner_capture: _DestinationPolicyCapture
+    candidate_capture: _PushCandidateCapture
+    configuration: _ResolvedPushConfiguration
+    candidate_tree_oid: str
+    included_paths_fingerprint: str
 
 
 GitStatusAdmissionReason = Literal[
@@ -568,6 +621,53 @@ def build_git_environment(
         environment["LC_ALL"] = "C"
     if for_status:
         environment["GIT_OPTIONAL_LOCKS"] = "0"
+    return environment
+
+
+def build_local_push_proof_environment(
+    ambient: Mapping[str, str] | None = None,
+    *,
+    index_file: str | None = None,
+) -> dict[str, str]:
+    """Build the isolated environment for local-only push policy proof.
+
+    Args:
+        ambient: Source environment. Defaults to the current process.
+        index_file: Optional service-owned temporary index for tree attributes.
+
+    Returns:
+        A copied environment stripped of repository, config, transport,
+        credential, proxy, editor, pager, and optional-write redirects.
+    """
+    source = os.environ if ambient is None else ambient
+    environment = {
+        key: value
+        for key, value in source.items()
+        if (
+            key not in _LOCAL_PUSH_PROOF_REMOVED_ENVIRONMENT
+            and key != "GIT_CONFIG_COUNT"
+            and not key.startswith(_DYNAMIC_CONFIG_ENVIRONMENT_PREFIXES)
+        )
+    }
+    environment.update(
+        {
+            "LC_ALL": "C",
+            "LANG": "C",
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_NO_LAZY_FETCH": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_PAGER": "",
+            "PAGER": "",
+            "GIT_EDITOR": "",
+            "GIT_SEQUENCE_EDITOR": "",
+            "EDITOR": "",
+            "VISUAL": "",
+        }
+    )
+    if index_file is not None:
+        if not index_file or "\0" in index_file:
+            raise ValueError("Invalid local push proof index")
+        environment["GIT_INDEX_FILE"] = index_file
     return environment
 
 
@@ -1693,6 +1793,7 @@ class FileNotesGitService:
         runner: GitProcessRunner | None = None,
         git_executable: str | None = None,
         environment: Mapping[str, str] | None = None,
+        transport_admission: TransportAdmission | None = None,
         discovery_timeout: float = 3.0,
         status_timeout: float = 5.0,
     ) -> None:
@@ -1708,6 +1809,17 @@ class FileNotesGitService:
         )
         self._discovery_timeout = discovery_timeout
         self._status_timeout = status_timeout
+        self._transport_admission = (
+            TransportAdmission()
+            if transport_admission is None
+            else transport_admission
+        )
+        if type(self._transport_admission) is not TransportAdmission:
+            raise TypeError("Invalid guarded-push transport admission")
+        self._push_destination_policy: (
+            _PushDestinationPolicySnapshot | None
+        ) = None
+        self._push_authorization: PushAuthorizationHandle | None = None
         self._sealed = False
         self._status_cycle: asyncio.Task[SessionGitStatus] | None = None
         self._status_cycle_binding: SessionBinding | None = None
@@ -1883,6 +1995,384 @@ class FileNotesGitService:
         if not valid:
             self._owner.clear_trust_if_matches(binding, repository)
         return valid
+
+    async def review_push_destination(
+        self,
+        binding: SessionBinding,
+    ) -> PushDestinationPolicyResult:
+        """Run bounded local-only candidate, config, transport, and LFS proof."""
+        previous = self._push_destination_policy
+        if previous is not None:
+            self._owner._revoke_destination_policy(previous.owner_capture)
+        self._push_destination_policy = None
+        self._push_authorization = None
+        policy, state = await self._prove_push_destination(binding)
+        if policy is None:
+            return _push_destination_policy_result(state)
+        self._push_destination_policy = policy
+        return _push_destination_policy_result(
+            "ready",
+            policy.configuration.transport.destination,
+        )
+
+    def authorize_push_destination(
+        self,
+        binding: SessionBinding,
+    ) -> PushAuthorizationHandle | None:
+        """Authorize later contact with the exact locally proved destination."""
+        policy = self._push_destination_policy
+        if (
+            self._sealed
+            or policy is None
+            or policy.candidate_capture.binding != binding
+            or binding != self._owner.current_binding()
+        ):
+            return None
+        authorization = self._owner._authorize_destination_policy(
+            policy.owner_capture
+        )
+        if authorization is None:
+            self._push_authorization = None
+            return None
+        self._push_authorization = authorization
+        return authorization
+
+    async def revalidate_push_destination(
+        self,
+        binding: SessionBinding,
+        authorization: PushAuthorizationHandle,
+    ) -> bool:
+        """Re-run local proof for Confirm without contacting the destination."""
+        policy = self._push_destination_policy
+        if (
+            self._sealed
+            or policy is None
+            or authorization is not self._push_authorization
+            or not self._owner._destination_authorization_matches(
+                policy.owner_capture,
+                authorization,
+            )
+        ):
+            return False
+        refreshed, _state = await self._prove_push_destination(
+            binding,
+            prior=policy,
+        )
+        if refreshed is not policy:
+            self._owner._revoke_destination_policy(policy.owner_capture)
+            self._push_destination_policy = refreshed
+            self._push_authorization = None
+            return False
+        return self._owner._destination_authorization_matches(
+            policy.owner_capture,
+            authorization,
+        )
+
+    async def _prove_push_destination(
+        self,
+        binding: SessionBinding,
+        *,
+        prior: _PushDestinationPolicySnapshot | None = None,
+    ) -> tuple[
+        _PushDestinationPolicySnapshot | None,
+        Literal["blocked", "stale"],
+    ]:
+        current = self._owner.snapshot(binding)
+        availability = current.push_candidate
+        repository = current.trusted_repository
+        if (
+            self._sealed
+            or binding != self._owner.current_binding()
+            or availability is None
+            or repository is None
+            or self._git_executable is None
+            or not self._repository_identity_matches(binding, repository)
+        ):
+            return None, "stale"
+
+        candidate = availability.candidate
+        with tempfile.TemporaryDirectory(
+            prefix=".chatbook-push-proof-"
+        ) as proof_directory_text:
+            proof_directory = Path(proof_directory_text)
+            hooks_directory = proof_directory / "hooks"
+            hooks_directory.mkdir(mode=0o700)
+            index_file = proof_directory / "candidate.index"
+            prefix = self._local_push_proof_prefix(hooks_directory)
+
+            branch_result = await self._run_local_push_proof_command(
+                repository,
+                (*prefix, "symbolic-ref", "--quiet", "HEAD"),
+            )
+            head_result = await self._run_local_push_proof_command(
+                repository,
+                (
+                    *prefix,
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    "HEAD^{commit}",
+                ),
+            )
+            branch = (
+                _single_git_value(branch_result.stdout)
+                if _command_succeeded(branch_result)
+                else None
+            )
+            head_oid = (
+                _ascii_object_id(head_result.stdout)
+                if _command_succeeded(head_result)
+                else None
+            )
+            if (
+                branch != candidate.local_branch_ref
+                or head_oid != candidate.candidate_oid
+            ):
+                return None, "stale"
+
+            object_result = await self._run_local_push_proof_command(
+                repository,
+                (*prefix, "cat-file", "commit", candidate.candidate_oid),
+            )
+            if not _command_succeeded(object_result):
+                return None, "blocked"
+            try:
+                raw_commit = parse_raw_commit_object(object_result.stdout)
+            except CommitContractError:
+                return None, "blocked"
+            if (
+                raw_commit.parent_object_id != candidate.parent_oid
+                or len(raw_commit.tree_object_id) != len(candidate.candidate_oid)
+            ):
+                return None, "blocked"
+            fresh_head = HeadIdentity.attached(branch, head_oid)
+            if prior is None:
+                candidate_capture = (
+                    self._owner._capture_push_candidate_after_fresh_proof(
+                        binding,
+                        candidate_generation=availability.generation,
+                        repository=repository,
+                        head=fresh_head,
+                        sole_parent_oid=raw_commit.parent_object_id,
+                    )
+                )
+                if candidate_capture is None:
+                    return None, "stale"
+            else:
+                candidate_capture = prior.candidate_capture
+                if not self._owner._revalidate_push_candidate_after_fresh_proof(
+                    candidate_capture,
+                    repository=repository,
+                    head=fresh_head,
+                    sole_parent_oid=raw_commit.parent_object_id,
+                ):
+                    return None, "stale"
+
+            configuration = await self._read_push_configuration(
+                repository,
+                prefix,
+                candidate.local_branch_ref,
+            )
+            if configuration is None:
+                return None, "blocked"
+
+            paths_result = await self._run_local_push_proof_command(
+                repository,
+                (
+                    *prefix,
+                    "diff-tree",
+                    "--no-commit-id",
+                    "--name-only",
+                    "-z",
+                    "-r",
+                    "--no-renames",
+                    candidate.parent_oid,
+                    candidate.candidate_oid,
+                    "--",
+                ),
+            )
+            included_paths = (
+                _parse_candidate_paths(paths_result.stdout)
+                if _command_succeeded(paths_result)
+                else None
+            )
+            if included_paths is None or not included_paths:
+                return None, "blocked"
+
+            index_environment = build_local_push_proof_environment(
+                self._environment,
+                index_file=str(index_file),
+            )
+            tree_result = await self._run_local_push_proof_command(
+                repository,
+                (
+                    *prefix,
+                    "read-tree",
+                    raw_commit.tree_object_id,
+                ),
+                environment=index_environment,
+            )
+            if not _command_succeeded(tree_result):
+                return None, "blocked"
+            attribute_result = await self._run_local_push_proof_command(
+                repository,
+                (
+                    *prefix,
+                    "check-attr",
+                    "--cached",
+                    "-z",
+                    "--stdin",
+                    "filter",
+                ),
+                environment=index_environment,
+                stdin=b"\0".join(included_paths) + b"\0",
+            )
+            attribute_fingerprint = (
+                _candidate_attribute_fingerprint(
+                    included_paths,
+                    attribute_result.stdout,
+                )
+                if _command_succeeded(attribute_result)
+                else None
+            )
+            if attribute_fingerprint is None:
+                return None, "blocked"
+            if not self._repository_identity_matches(binding, repository):
+                return None, "stale"
+
+            if prior is not None:
+                unchanged = (
+                    prior.candidate_tree_oid == raw_commit.tree_object_id
+                    and prior.included_paths_fingerprint
+                    == attribute_fingerprint
+                    and prior.configuration.configuration_fingerprint
+                    == configuration.configuration_fingerprint
+                    and prior.configuration.transport.configured_identity
+                    == configuration.transport.configured_identity
+                )
+                return (prior, "blocked") if unchanged else (None, "blocked")
+
+            owner_capture = (
+                self._owner._capture_destination_policy_after_fresh_proof(
+                    candidate_capture,
+                    configuration_fingerprint=(
+                        configuration.configuration_fingerprint
+                    ),
+                    configured_destination_identity=(
+                        configuration.transport.configured_identity
+                    ),
+                    destination=configuration.transport.destination,
+                    candidate_tree_oid=raw_commit.tree_object_id,
+                    included_paths_fingerprint=attribute_fingerprint,
+                )
+            )
+            if owner_capture is None:
+                return None, "stale"
+            return (
+                _PushDestinationPolicySnapshot(
+                    owner_capture=owner_capture,
+                    candidate_capture=candidate_capture,
+                    configuration=configuration,
+                    candidate_tree_oid=raw_commit.tree_object_id,
+                    included_paths_fingerprint=attribute_fingerprint,
+                ),
+                "blocked",
+            )
+
+    def _local_push_proof_prefix(
+        self,
+        hooks_directory: Path,
+    ) -> tuple[str, ...]:
+        return (
+            self._git_executable_or_raise(),
+            "--no-replace-objects",
+            "-c",
+            f"core.hooksPath={hooks_directory}",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "maintenance.auto=false",
+            "-c",
+            "gc.auto=0",
+        )
+
+    async def _read_push_configuration(
+        self,
+        repository: RepositoryIdentity,
+        prefix: tuple[str, ...],
+        branch_ref: str,
+    ) -> _ResolvedPushConfiguration | None:
+        argv = (
+            *prefix,
+            "config",
+            "--null",
+            "--show-origin",
+            "--show-scope",
+            "--includes",
+            "--get-regexp",
+            _LOCAL_PUSH_CONFIG_PATTERN,
+        )
+        first = await self._run_local_push_proof_command(repository, argv)
+        if not _command_succeeded(first):
+            return None
+        first_facts = _parse_push_config_facts(
+            first.stdout,
+            repository.worktree_root,
+        )
+        if first_facts is None:
+            return None
+        second = await self._run_local_push_proof_command(repository, argv)
+        if not _command_succeeded(second) or second.stdout != first.stdout:
+            return None
+        second_facts = _parse_push_config_facts(
+            second.stdout,
+            repository.worktree_root,
+        )
+        if second_facts is None or second_facts != first_facts:
+            return None
+        try:
+            return _resolve_push_configuration(
+                second_facts,
+                branch_ref,
+                self._transport_admission,
+            )
+        except PushContractError:
+            return None
+
+    async def _run_local_push_proof_command(
+        self,
+        repository: RepositoryIdentity,
+        argv: Sequence[GitArg],
+        *,
+        environment: Mapping[str, str] | None = None,
+        stdin: bytes | None = None,
+    ) -> GitCommandResult:
+        try:
+            result = await self._runner.run(
+                tuple(argv),
+                cwd=repository.worktree_root,
+                environment=(
+                    build_local_push_proof_environment(self._environment)
+                    if environment is None
+                    else environment
+                ),
+                stdin=stdin,
+                timeout=self._status_timeout,
+                stdout_limit=_LOCAL_PUSH_STDOUT_LIMIT_BYTES,
+                stderr_limit=DEFAULT_GIT_STDERR_LIMIT_BYTES,
+            )
+        except GitRunCancelled as cancellation:
+            if cancellation.result is not None:
+                return await self._settle_commit_proof_result(
+                    cancellation.result
+                )
+            retained_child = cancellation.retained_child
+            assert retained_child is not None
+            await self._drain_commit_proof_child(retained_child)
+            raise
+        except OSError:
+            return GitCommandResult(127, b"", b"")
+        return await self._settle_commit_proof_result(result)
 
     def retained_status(
         self,
@@ -6280,6 +6770,138 @@ class FileNotesGitService:
         except ValueError:
             return False
         return True
+
+
+def _parse_candidate_paths(payload: bytes) -> tuple[bytes, ...] | None:
+    """Parse one bounded NUL path batch without decoding repository paths."""
+    if (
+        not payload
+        or not payload.endswith(b"\0")
+        or len(payload) > _LOCAL_PUSH_STDOUT_LIMIT_BYTES
+    ):
+        return None
+    paths = tuple(payload[:-1].split(b"\0"))
+    if len(paths) > 100_000 or len(paths) != len(set(paths)):
+        return None
+    for path in paths:
+        components = path.split(b"/")
+        if (
+            not path
+            or path.startswith(b"/")
+            or any(
+                component in {b"", b".", b"..", b".git"}
+                for component in components
+            )
+        ):
+            return None
+    return paths
+
+
+def _candidate_attribute_fingerprint(
+    paths: tuple[bytes, ...],
+    payload: bytes,
+) -> str | None:
+    """Prove one batched exact-tree filter result and reject LFS/custom filters."""
+    if not payload.endswith(b"\0"):
+        return None
+    fields = payload[:-1].split(b"\0")
+    if len(fields) != len(paths) * 3:
+        return None
+    digest = hashlib.sha256()
+    digest.update(b"file-notes-candidate-attributes-v1\0")
+    for index, expected_path in enumerate(paths):
+        path, attribute, value = fields[index * 3 : index * 3 + 3]
+        if (
+            path != expected_path
+            or attribute != b"filter"
+            or value not in {b"unspecified", b"unset"}
+        ):
+            return None
+        digest.update(len(path).to_bytes(8, "big"))
+        digest.update(path)
+        digest.update(b"\0")
+        digest.update(value)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _parse_push_config_facts(
+    payload: bytes,
+    worktree_root: str,
+) -> tuple[_GitConfigFact, ...] | None:
+    """Parse relevant scoped config and fingerprint each canonical source."""
+    if not payload or not payload.endswith(b"\0"):
+        return None
+    fields = payload[:-1].split(b"\0")
+    if len(fields) % 3:
+        return None
+    facts: list[_GitConfigFact] = []
+    for offset in range(0, len(fields), 3):
+        scope_bytes, origin_bytes, item = fields[offset : offset + 3]
+        if not origin_bytes.startswith(b"file:") or b"\n" not in item:
+            return None
+        key_bytes, value_bytes = item.split(b"\n", 1)
+        try:
+            scope = scope_bytes.decode("ascii")
+            key = key_bytes.decode("utf-8")
+            value = value_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        if scope == "unknown":
+            scope = "system"
+        origin_identity = _config_source_identity(
+            origin_bytes[5:],
+            worktree_root,
+        )
+        if origin_identity is None:
+            return None
+        try:
+            facts.append(
+                _GitConfigFact(
+                    scope,
+                    origin_identity,
+                    key,
+                    value,
+                )
+            )
+        except PushContractError:
+            return None
+    return tuple(facts)
+
+
+def _config_source_identity(
+    raw_path: bytes,
+    worktree_root: str,
+) -> str | None:
+    """Hash canonical config source identity and change metadata, never values."""
+    if not raw_path or b"\0" in raw_path:
+        return None
+    path = Path(os.fsdecode(raw_path))
+    if not path.is_absolute():
+        path = Path(worktree_root) / path
+    try:
+        canonical = path.resolve(strict=True)
+        metadata = canonical.stat(follow_symlinks=False)
+    except (OSError, RuntimeError):
+        return None
+    if canonical != path or not stat.S_ISREG(metadata.st_mode):
+        return None
+    digest = hashlib.sha256()
+    digest.update(b"file-notes-config-source-v1\0")
+    for value in (
+        os.fsencode(str(canonical)),
+        str(metadata.st_dev).encode("ascii"),
+        str(metadata.st_ino).encode("ascii"),
+        str(metadata.st_mode).encode("ascii"),
+        str(metadata.st_uid).encode("ascii"),
+        str(metadata.st_gid).encode("ascii"),
+        str(metadata.st_size).encode("ascii"),
+        str(metadata.st_mtime_ns).encode("ascii"),
+        str(metadata.st_ctime_ns).encode("ascii"),
+    ):
+        digest.update(len(value).to_bytes(8, "big"))
+        digest.update(value)
+    return digest.hexdigest()
 
 
 def build_file_notes_session_owner() -> FileNotesSessionOwner:

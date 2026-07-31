@@ -11,7 +11,10 @@ import pytest
 
 import tldw_chatbook.Notes.file_notes_session_owner as session_owner
 from tldw_chatbook.Notes.file_notes_git_commit import CommitRecoveryProjection
-from tldw_chatbook.Notes.file_notes_git_push import PushIncludedNote
+from tldw_chatbook.Notes.file_notes_git_push import (
+    PushIncludedNote,
+    parse_push_endpoint,
+)
 from tldw_chatbook.Notes.file_notes_session_owner import (
     CommitAuthorityCapture,
     CommitPublication,
@@ -438,6 +441,200 @@ def _publish_uncertain_commit(
     )
     lease.release()
     return repository, ownership, publication.recovery_capability
+
+
+def _capture_destination_policy(
+    owner: FileNotesSessionOwner,
+    binding: SessionBinding,
+    *,
+    fingerprint: str = "1" * 64,
+    destination_ref: str = "refs/heads/main",
+):
+    """Capture one exact candidate and bind one sanitized local policy."""
+    repository, _guarded_capture, _seed = _publish_push_candidate(owner, binding)
+    availability = owner.snapshot(binding).push_candidate
+    assert availability is not None
+    candidate_capture = owner._capture_push_candidate_after_fresh_proof(
+        binding,
+        candidate_generation=availability.generation,
+        repository=repository,
+        head=HeadIdentity.attached("refs/heads/main", "d" * 40),
+        sole_parent_oid="b" * 40,
+    )
+    assert candidate_capture is not None
+    capture = owner._capture_destination_policy_after_fresh_proof(
+        candidate_capture,
+        configuration_fingerprint=fingerprint,
+        configured_destination_identity="2" * 64,
+        destination=parse_push_endpoint(
+            "https://example.test/team/notes.git",
+            destination_ref,
+        ),
+        candidate_tree_oid="e" * 40,
+        included_paths_fingerprint="3" * 64,
+    )
+    return repository, candidate_capture, capture
+
+
+def test_destination_policy_allows_a_distinct_full_tracking_branch(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+
+    _repository, _candidate, policy = _capture_destination_policy(
+        owner,
+        binding,
+        destination_ref="refs/heads/reviewed-notes",
+    )
+
+    assert policy is not None
+    assert policy.destination.destination_ref == "refs/heads/reviewed-notes"
+
+
+def test_destination_policy_and_authorization_epochs_are_independent(
+    tmp_path: Path,
+) -> None:
+    """Collapsing trust, policy, and grants into one generation must fail."""
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    _repository, _candidate, policy = _capture_destination_policy(
+        owner,
+        binding,
+    )
+    assert policy is not None
+    before = owner.snapshot(binding)
+
+    authorization = owner._authorize_destination_policy(policy)
+
+    assert authorization is not None
+    after = owner.snapshot(binding)
+    assert after.repository_trust_generation == before.repository_trust_generation
+    assert after.destination_policy_generation == before.destination_policy_generation
+    assert (
+        after.destination_authorization_epoch
+        == before.destination_authorization_epoch + 1
+    )
+
+
+def test_destination_policy_requires_exact_candidate_and_policy_captures(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    _repository, candidate, policy = _capture_destination_policy(owner, binding)
+    assert policy is not None
+
+    assert (
+        owner._capture_destination_policy_after_fresh_proof(
+            replace(candidate),
+            configuration_fingerprint="1" * 64,
+            configured_destination_identity="2" * 64,
+            destination=policy.destination,
+            candidate_tree_oid="e" * 40,
+            included_paths_fingerprint="3" * 64,
+        )
+        is None
+    )
+    assert owner._authorize_destination_policy(replace(policy)) is None
+    authorization = owner._authorize_destination_policy(policy)
+    assert authorization is not None
+    assert owner._destination_authorization_matches(policy, authorization)
+
+
+def test_destination_configuration_value_aba_never_revives_authorization(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    _repository, candidate, first = _capture_destination_policy(owner, binding)
+    assert first is not None
+    authorization = owner._authorize_destination_policy(first)
+    assert authorization is not None
+    first_snapshot = owner.snapshot(binding)
+
+    changed = owner._capture_destination_policy_after_fresh_proof(
+        candidate,
+        configuration_fingerprint="4" * 64,
+        configured_destination_identity="5" * 64,
+        destination=parse_push_endpoint(
+            "https://changed.example.test/team/notes.git",
+            "refs/heads/main",
+        ),
+        candidate_tree_oid="e" * 40,
+        included_paths_fingerprint="3" * 64,
+    )
+    assert changed is not None
+    restored = owner._capture_destination_policy_after_fresh_proof(
+        candidate,
+        configuration_fingerprint="1" * 64,
+        configured_destination_identity="2" * 64,
+        destination=first.destination,
+        candidate_tree_oid="e" * 40,
+        included_paths_fingerprint="3" * 64,
+    )
+    assert restored is not None
+
+    final_snapshot = owner.snapshot(binding)
+    assert (
+        final_snapshot.destination_policy_generation
+        >= first_snapshot.destination_policy_generation + 2
+    )
+    assert (
+        final_snapshot.destination_authorization_epoch
+        > first_snapshot.destination_authorization_epoch
+    )
+    assert not owner._destination_authorization_matches(first, authorization)
+    assert owner._authorize_destination_policy(restored) is not authorization
+
+
+def test_destination_authorization_revocation_is_exact_and_monotonic(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    _repository, _candidate, policy = _capture_destination_policy(owner, binding)
+    assert policy is not None
+    authorization = owner._authorize_destination_policy(policy)
+    assert authorization is not None
+    epoch = owner.snapshot(binding).destination_authorization_epoch
+
+    assert not owner._revoke_destination_authorization(
+        session_owner._issue_push_authorization_handle()
+    )
+    assert owner.snapshot(binding).destination_authorization_epoch == epoch
+    assert owner._revoke_destination_authorization(authorization)
+    assert owner.snapshot(binding).destination_authorization_epoch == epoch + 1
+    assert not owner._destination_authorization_matches(policy, authorization)
+
+
+def test_repository_trust_revokes_downstream_destination_authority(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    repository, _candidate, policy = _capture_destination_policy(owner, binding)
+    assert policy is not None
+    authorization = owner._authorize_destination_policy(policy)
+    assert authorization is not None
+    before = owner.snapshot(binding)
+
+    assert owner.clear_trust_if_matches(binding, repository)
+
+    after = owner.snapshot(binding)
+    assert (
+        after.repository_trust_generation
+        == before.repository_trust_generation + 1
+    )
+    assert (
+        after.destination_policy_generation
+        > before.destination_policy_generation
+    )
+    assert (
+        after.destination_authorization_epoch
+        > before.destination_authorization_epoch
+    )
+    assert not owner._destination_authorization_matches(policy, authorization)
 
 
 def test_candidate_publication_is_atomic_with_success_and_copies_provenance(

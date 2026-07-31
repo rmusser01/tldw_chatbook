@@ -58,6 +58,37 @@ def _destination() -> PushDestinationProjection:
     )
 
 
+def test_production_transport_admission_rejects_local_and_file_endpoints() -> None:
+    """A future refactor must not make local transports user-configurable."""
+    admission = push_contracts.TransportAdmission()
+
+    for endpoint in ("/tmp/remote.git", "file:///tmp/remote.git"):
+        with pytest.raises(PushContractError) as error:
+            push_contracts._admit_push_transport(
+                admission,
+                endpoint,
+                _DESTINATION_REF,
+            )
+
+        assert error.value.code == "invalid_endpoint"
+
+
+def test_private_local_bare_transport_admission_is_explicit_and_nonproduction() -> None:
+    """Deleting the private issuer must leave no way to test local proof safely."""
+    admission = push_contracts._local_bare_transport_admission_for_tests()
+
+    admitted = push_contracts._admit_push_transport(
+        admission,
+        "/tmp/disposable-remote.git",
+        _DESTINATION_REF,
+    )
+
+    assert admitted.test_local_bare is True
+    assert admitted.configured_identity
+    assert admitted.endpoint is None
+    assert admitted.destination.host == "local-test.invalid"
+
+
 @pytest.mark.parametrize(
     "model_type",
     [

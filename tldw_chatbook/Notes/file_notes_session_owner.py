@@ -16,9 +16,12 @@ from tldw_chatbook.Notes.file_notes_git_commit import (
     CommitReviewChangeType,
 )
 from tldw_chatbook.Notes.file_notes_git_push import (
+    PushAuthorizationHandle,
     PushCandidateProjection,
     PushContractError,
+    PushDestinationProjection,
     PushIncludedNote,
+    _issue_push_authorization_handle,
 )
 
 SessionChangeAction = Literal[
@@ -484,6 +487,9 @@ class FileNotesSessionSnapshot:
     commit_recovery: CommitRecoveryProjection | None = None
     push_candidate: PushCandidateAvailability | None = None
     push_candidate_generation: int = 0
+    repository_trust_generation: int = 0
+    destination_policy_generation: int = 0
+    destination_authorization_epoch: int = 0
 
 
 class FileNotesGitServiceLifecycle(Protocol):
@@ -749,6 +755,21 @@ class _PushCandidate:
         )
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class _DestinationPolicyCapture:
+    """Exact owner-issued binding of local proof to sanitized destination."""
+
+    candidate_capture: _PushCandidateCapture = field(repr=False)
+    configuration_fingerprint: str = field(repr=False)
+    configured_destination_identity: str = field(repr=False)
+    destination: PushDestinationProjection
+    candidate_tree_oid: str = field(repr=False)
+    included_paths_fingerprint: str = field(repr=False)
+    policy_generation: int
+    repository_trust_generation: int
+    authorization_epoch: int
+
+
 @dataclass(frozen=True, slots=True)
 class RootCommitReservation:
     """Fail-fast ownership of one validated root commit."""
@@ -817,6 +838,12 @@ class FileNotesSessionOwner:
         "_push_candidate_capture",
         "_push_candidate_generation",
         "_repository_trust_generation",
+        "_destination_policy_capture",
+        "_destination_policy_fingerprint",
+        "_destination_policy_generation",
+        "_destination_authorization",
+        "_destination_authorization_capture",
+        "_destination_authorization_epoch",
         "_shutdown",
         "_shutdown_condition",
         "_shutdown_error",
@@ -840,6 +867,14 @@ class FileNotesSessionOwner:
         self._push_candidate_generation = 0
         self._push_candidate: _PushCandidate | None = None
         self._push_candidate_capture: _PushCandidateCapture | None = None
+        self._destination_policy_capture: _DestinationPolicyCapture | None = None
+        self._destination_policy_fingerprint: tuple[object, ...] | None = None
+        self._destination_policy_generation = 0
+        self._destination_authorization: PushAuthorizationHandle | None = None
+        self._destination_authorization_capture: (
+            _DestinationPolicyCapture | None
+        ) = None
+        self._destination_authorization_epoch = 0
         self._issued_commit_capture: CommitAuthorityCapture | None = None
         self._issued_commit_identity: object | None = None
         self._issued_commit_publication_token: object | None = None
@@ -1033,6 +1068,11 @@ class FileNotesSessionOwner:
                     else self._push_candidate.availability
                 ),
                 push_candidate_generation=self._push_candidate_generation,
+                repository_trust_generation=self._repository_trust_generation,
+                destination_policy_generation=self._destination_policy_generation,
+                destination_authorization_epoch=(
+                    self._destination_authorization_epoch
+                ),
             )
 
     def publish_trust(
@@ -1438,8 +1478,180 @@ class FileNotesSessionOwner:
                 change_types=candidate.change_types,
                 sole_parent_oid=candidate.sole_parent_oid,
             )
+            if self._push_candidate_capture is not None:
+                self._revoke_destination_policy_locked()
             self._push_candidate_capture = capture
             return capture
+
+    def _capture_destination_policy_after_fresh_proof(
+        self,
+        candidate_capture: _PushCandidateCapture,
+        *,
+        configuration_fingerprint: str,
+        configured_destination_identity: str,
+        destination: PushDestinationProjection,
+        candidate_tree_oid: str,
+        included_paths_fingerprint: str,
+    ) -> _DestinationPolicyCapture | None:
+        """Bind exact local policy proof to the latest issued candidate."""
+        fingerprints = (
+            configuration_fingerprint,
+            configured_destination_identity,
+            included_paths_fingerprint,
+        )
+        if any(
+            len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+            for value in fingerprints
+        ):
+            return None
+        if (
+            len(candidate_tree_oid) not in {40, 64}
+            or any(
+                character not in "0123456789abcdef"
+                for character in candidate_tree_oid
+            )
+            or not any(character != "0" for character in candidate_tree_oid)
+            or type(destination) is not PushDestinationProjection
+        ):
+            return None
+        with self._lock:
+            candidate = self._push_candidate
+            if (
+                self._shutdown
+                or candidate is None
+                or candidate_capture is not self._push_candidate_capture
+                or candidate_capture.candidate_generation != candidate.generation
+                or candidate_capture.repository != self._trusted_repository
+                or candidate_capture.repository_trust_generation
+                != self._repository_trust_generation
+            ):
+                return None
+            observed = (
+                candidate_capture.candidate_generation,
+                configuration_fingerprint,
+                configured_destination_identity,
+                candidate_tree_oid,
+                included_paths_fingerprint,
+            )
+            existing = self._destination_policy_capture
+            if (
+                observed == self._destination_policy_fingerprint
+                and existing is not None
+                and existing.candidate_capture is candidate_capture
+            ):
+                return existing
+            self._revoke_destination_authorization_locked()
+            self._destination_policy_generation += 1
+            self._destination_policy_fingerprint = observed
+            capture = _DestinationPolicyCapture(
+                candidate_capture=candidate_capture,
+                configuration_fingerprint=configuration_fingerprint,
+                configured_destination_identity=configured_destination_identity,
+                destination=destination,
+                candidate_tree_oid=candidate_tree_oid,
+                included_paths_fingerprint=included_paths_fingerprint,
+                policy_generation=self._destination_policy_generation,
+                repository_trust_generation=self._repository_trust_generation,
+                authorization_epoch=self._destination_authorization_epoch,
+            )
+            self._destination_policy_capture = capture
+            return capture
+
+    def _revalidate_push_candidate_after_fresh_proof(
+        self,
+        capture: _PushCandidateCapture,
+        *,
+        repository: RepositoryIdentity,
+        head: HeadIdentity,
+        sole_parent_oid: str,
+    ) -> bool:
+        """Revalidate the exact current capture without replacing its identity."""
+        with self._lock:
+            candidate = self._push_candidate
+            return (
+                not self._shutdown
+                and candidate is not None
+                and capture is self._push_candidate_capture
+                and capture.candidate_generation == candidate.generation
+                and capture.repository == repository == self._trusted_repository
+                and capture.repository_trust_generation
+                == self._repository_trust_generation
+                and head.kind == "attached"
+                and head.branch == capture.candidate.local_branch_ref
+                and head.object_id == capture.candidate.candidate_oid
+                and sole_parent_oid
+                == capture.sole_parent_oid
+                == capture.candidate.parent_oid
+            )
+
+    def _authorize_destination_policy(
+        self,
+        capture: _DestinationPolicyCapture,
+    ) -> PushAuthorizationHandle | None:
+        """Authorize later contact with one exact frozen configured destination."""
+        with self._lock:
+            if (
+                self._shutdown
+                or capture is not self._destination_policy_capture
+                or capture.candidate_capture is not self._push_candidate_capture
+                or capture.policy_generation
+                != self._destination_policy_generation
+                or capture.repository_trust_generation
+                != self._repository_trust_generation
+            ):
+                return None
+            if (
+                self._destination_authorization is not None
+                and self._destination_authorization_capture is capture
+            ):
+                return self._destination_authorization
+            self._destination_authorization_epoch += 1
+            handle = _issue_push_authorization_handle()
+            self._destination_authorization = handle
+            self._destination_authorization_capture = capture
+            return handle
+
+    def _destination_authorization_matches(
+        self,
+        capture: _DestinationPolicyCapture,
+        authorization: PushAuthorizationHandle,
+    ) -> bool:
+        """Check exact in-process destination authority without contacting it."""
+        with self._lock:
+            return (
+                not self._shutdown
+                and capture is self._destination_policy_capture
+                and capture.candidate_capture is self._push_candidate_capture
+                and authorization is self._destination_authorization
+                and self._destination_authorization_capture is capture
+                and capture.policy_generation
+                == self._destination_policy_generation
+                and capture.repository_trust_generation
+                == self._repository_trust_generation
+            )
+
+    def _revoke_destination_authorization(
+        self,
+        authorization: PushAuthorizationHandle,
+    ) -> bool:
+        """Revoke only the exact current process authorization."""
+        with self._lock:
+            if authorization is not self._destination_authorization:
+                return False
+            self._revoke_destination_authorization_locked(force_epoch=True)
+            return True
+
+    def _revoke_destination_policy(
+        self,
+        capture: _DestinationPolicyCapture,
+    ) -> bool:
+        """Revoke only one exact current destination-policy capture."""
+        with self._lock:
+            if capture is not self._destination_policy_capture:
+                return False
+            self._revoke_destination_policy_locked()
+            return True
 
     def clear_push_candidate(self, capture: _PushCandidateCapture) -> bool:
         """Compare-and-clear only one exact private candidate capability."""
@@ -2110,11 +2322,34 @@ class FileNotesSessionOwner:
             self._revoke_push_candidate_locked()
 
     def _revoke_push_candidate_locked(self) -> None:
+        self._revoke_destination_policy_locked()
         self._push_candidate_capture = None
         if self._push_candidate is None:
             return
         self._push_candidate = None
         self._push_candidate_generation += 1
+
+    def _revoke_destination_policy_locked(self) -> None:
+        had_policy = (
+            self._destination_policy_capture is not None
+            or self._destination_policy_fingerprint is not None
+        )
+        self._revoke_destination_authorization_locked()
+        self._destination_policy_capture = None
+        self._destination_policy_fingerprint = None
+        if had_policy:
+            self._destination_policy_generation += 1
+
+    def _revoke_destination_authorization_locked(
+        self,
+        *,
+        force_epoch: bool = False,
+    ) -> None:
+        had_authorization = self._destination_authorization is not None
+        self._destination_authorization = None
+        self._destination_authorization_capture = None
+        if had_authorization or force_epoch:
+            self._destination_authorization_epoch += 1
 
     def _invalidate_git_authority_locked(self) -> None:
         self._git_authority_generation += 1

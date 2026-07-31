@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
+import os
 import re
 import unicodedata
 from collections.abc import Callable
-from dataclasses import FrozenInstanceError, dataclass
+from dataclasses import FrozenInstanceError, dataclass, field
 from enum import Enum
 from typing import Literal
 from urllib.parse import SplitResult, urlsplit
@@ -15,6 +17,7 @@ from weakref import WeakKeyDictionary
 PushContractErrorCode = Literal[
     "invalid_destination_ref",
     "invalid_endpoint",
+    "invalid_configuration",
     "invalid_object_id",
     "unsafe_text",
     "invalid_command_context",
@@ -35,10 +38,12 @@ PushOutcomeState = Literal[
 ]
 PushRecoveryState = Literal["succeeded", "uncertain", "needs_attention"]
 PushTransport = Literal["https", "ssh"]
+PushDestinationPolicyState = Literal["ready", "blocked", "stale"]
 
 _ERROR_MESSAGES: dict[PushContractErrorCode, str] = {
     "invalid_destination_ref": "The destination branch ref is not allowed.",
     "invalid_endpoint": "The configured push endpoint is not allowed.",
+    "invalid_configuration": "The configured push destination is not allowed.",
     "invalid_object_id": "A complete lowercase Git object ID is required.",
     "unsafe_text": "Text contains characters that cannot be displayed safely.",
     "invalid_command_context": "The private Git command context is invalid.",
@@ -135,6 +140,20 @@ _RECOVERY_COPY: dict[str, tuple[PushRecoveryState, str, str, bool]] = {
     ),
 }
 _RECOVERY_COPY_VALUES = frozenset(_RECOVERY_COPY.values())
+_DESTINATION_POLICY_MESSAGES: dict[PushDestinationPolicyState, str] = {
+    "ready": (
+        "The exact local candidate and configured destination passed local "
+        "policy checks. No remote contact has started."
+    ),
+    "blocked": (
+        "The exact local candidate or configured destination did not pass "
+        "local policy checks. No remote contact was made."
+    ),
+    "stale": (
+        "The local candidate or repository authority changed before policy "
+        "proof completed. No remote contact was made."
+    ),
+}
 
 
 class PushContractError(ValueError):
@@ -314,6 +333,32 @@ class PushAuthorizationProjection:
     @property
     def trusts_remote_content(self) -> bool:
         """Return whether authorization asserts trust in remote content."""
+        return False
+
+
+@dataclass(frozen=True, slots=True)
+class PushDestinationPolicyResult:
+    """Sanitized result of local-only candidate and destination proof."""
+
+    state: PushDestinationPolicyState
+    message: str
+    authorization: PushAuthorizationProjection | None = None
+
+    def __post_init__(self) -> None:
+        expected = _DESTINATION_POLICY_MESSAGES.get(self.state)
+        if (
+            expected is None
+            or self.message != expected
+            or (
+                (self.state == "ready")
+                != (type(self.authorization) is PushAuthorizationProjection)
+            )
+        ):
+            raise PushContractError("unsafe_text")
+
+    @property
+    def remote_contact_started(self) -> bool:
+        """Return the fixed local-only boundary for this task."""
         return False
 
 
@@ -524,6 +569,364 @@ class _FrozenPushEndpoint:
 
     def __setattr__(self, _name: str, _value: object) -> None:
         raise FrozenInstanceError("cannot assign to frozen push endpoint")
+
+
+class TransportAdmission:
+    """Immutable production admission for secure network transports only."""
+
+    __slots__ = ("_test_local_bare",)
+
+    def __init__(self) -> None:
+        """Create the only production transport policy."""
+        object.__setattr__(self, "_test_local_bare", False)
+
+    def __setattr__(self, _name: str, _value: object) -> None:
+        raise FrozenInstanceError("cannot change transport admission")
+
+
+@dataclass(frozen=True, slots=True)
+class _AdmittedPushTransport:
+    """Service-private endpoint admission without exposing configured text."""
+
+    configured_identity: str
+    destination: PushDestinationProjection
+    endpoint: _FrozenPushEndpoint | None
+    test_local_bare: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _GitConfigFact:
+    """One relevant Git config fact with a pre-hashed source identity."""
+
+    scope: str
+    origin_identity: str = field(repr=False)
+    key: str
+    value: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if (
+            self.scope not in {"system", "global", "local", "worktree"}
+            or len(self.origin_identity) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in self.origin_identity
+            )
+            or not self.key
+            or _contains_unsafe_text(self.key)
+            or _contains_unsafe_text(self.value)
+        ):
+            raise PushContractError("invalid_configuration")
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedPushConfiguration:
+    """Service-private exact configured destination and its fingerprint."""
+
+    tracking_remote: str = field(repr=False)
+    merge_ref: str
+    configuration_fingerprint: str
+    transport: _AdmittedPushTransport
+
+
+def _local_bare_transport_admission_for_tests() -> TransportAdmission:
+    """Issue an explicit nonproduction local-bare admission for tests."""
+    admission = object.__new__(TransportAdmission)
+    object.__setattr__(admission, "_test_local_bare", True)
+    return admission
+
+
+def _admit_push_transport(
+    admission: TransportAdmission,
+    effective_endpoint: str,
+    destination_ref: str,
+) -> _AdmittedPushTransport:
+    """Admit one configured endpoint under an immutable transport policy."""
+    if type(admission) is not TransportAdmission:
+        raise PushContractError("invalid_endpoint")
+    try:
+        allow_local_bare = admission._test_local_bare
+    except AttributeError:
+        raise PushContractError("invalid_endpoint") from None
+
+    local_path = effective_endpoint
+    if isinstance(effective_endpoint, str) and effective_endpoint.startswith(
+        "file://"
+    ):
+        local_path = effective_endpoint.removeprefix("file://")
+    if (
+        allow_local_bare
+        and isinstance(local_path, str)
+        and local_path.startswith("/")
+        and local_path == os.path.normpath(local_path)
+        and "\0" not in local_path
+        and "?" not in local_path
+        and "#" not in local_path
+    ):
+        validate_destination_ref(destination_ref)
+        configured_identity = hashlib.sha256(
+            (
+                "test-local-bare\0"
+                + local_path
+                + "\0"
+                + destination_ref
+            ).encode("utf-8")
+        ).hexdigest()
+        return _AdmittedPushTransport(
+            configured_identity=configured_identity,
+            destination=PushDestinationProjection(
+                scheme="https",
+                host="local-test.invalid",
+                port=443,
+                repository_path="/test-only",
+                destination_ref=destination_ref,
+            ),
+            endpoint=None,
+            test_local_bare=True,
+        )
+
+    endpoint = _freeze_push_endpoint(effective_endpoint, destination_ref)
+    normalized, destination = _read_frozen_endpoint(endpoint)
+    configured_identity = hashlib.sha256(
+        (normalized + "\0" + destination_ref).encode("utf-8")
+    ).hexdigest()
+    return _AdmittedPushTransport(
+        configured_identity=configured_identity,
+        destination=destination,
+        endpoint=endpoint,
+    )
+
+
+def _resolve_push_configuration(
+    facts: tuple[_GitConfigFact, ...],
+    local_branch_ref: str,
+    admission: TransportAdmission,
+) -> _ResolvedPushConfiguration:
+    """Resolve one frozen destination from bounded relevant config facts."""
+    validate_destination_ref(local_branch_ref)
+    if (
+        type(facts) is not tuple
+        or any(type(fact) is not _GitConfigFact for fact in facts)
+        or type(admission) is not TransportAdmission
+    ):
+        raise PushContractError("invalid_configuration")
+    branch_name = local_branch_ref.removeprefix("refs/heads/")
+    tracking = _config_values(facts, "branch", branch_name, "remote")
+    merges = _config_values(facts, "branch", branch_name, "merge")
+    if (
+        len(tracking) != 1
+        or len(merges) != 1
+        or tracking[0] == "."
+    ):
+        raise PushContractError("invalid_configuration")
+    tracking_remote = tracking[0]
+    try:
+        merge_ref = validate_destination_ref(merges[0])
+    except PushContractError:
+        raise PushContractError("invalid_configuration") from None
+
+    branch_push_remote = _config_values(
+        facts,
+        "branch",
+        branch_name,
+        "pushremote",
+    )
+    push_default = _config_values(facts, "remote", None, "pushdefault")
+    if len(branch_push_remote) > 1 or len(push_default) > 1:
+        raise PushContractError("invalid_configuration")
+    selected_remote = (
+        branch_push_remote[0]
+        if branch_push_remote
+        else push_default[0] if push_default else tracking_remote
+    )
+    if selected_remote != tracking_remote:
+        raise PushContractError("invalid_configuration")
+
+    _validate_push_security_facts(facts, tracking_remote)
+    push_urls = _config_values(
+        facts,
+        "remote",
+        tracking_remote,
+        "pushurl",
+    )
+    fetch_urls = _config_values(
+        facts,
+        "remote",
+        tracking_remote,
+        "url",
+    )
+    if len(push_urls) > 1 or (not push_urls and len(fetch_urls) != 1):
+        raise PushContractError("invalid_configuration")
+    configured_endpoint = push_urls[0] if push_urls else fetch_urls[0]
+    effective_endpoint = _rewrite_push_endpoint(configured_endpoint, facts)
+    try:
+        transport = _admit_push_transport(
+            admission,
+            effective_endpoint,
+            merge_ref,
+        )
+    except PushContractError:
+        raise PushContractError("invalid_configuration") from None
+    return _ResolvedPushConfiguration(
+        tracking_remote=tracking_remote,
+        merge_ref=merge_ref,
+        configuration_fingerprint=_configuration_fingerprint(
+            facts,
+            local_branch_ref,
+        ),
+        transport=transport,
+    )
+
+
+def _config_values(
+    facts: tuple[_GitConfigFact, ...],
+    section: str,
+    subsection: str | None,
+    name: str,
+) -> tuple[str, ...]:
+    return tuple(
+        fact.value
+        for fact in facts
+        if _config_key_matches(fact.key, section, subsection, name)
+    )
+
+
+def _config_key_matches(
+    key: str,
+    section: str,
+    subsection: str | None,
+    name: str,
+) -> bool:
+    components = key.split(".")
+    if subsection is None:
+        return (
+            len(components) == 2
+            and components[0].lower() == section
+            and components[1].lower() == name
+        )
+    return (
+        len(components) >= 3
+        and components[0].lower() == section
+        and ".".join(components[1:-1]) == subsection
+        and components[-1].lower() == name
+    )
+
+
+def _validate_push_security_facts(
+    facts: tuple[_GitConfigFact, ...],
+    remote: str,
+) -> None:
+    remote_blocked_names = {
+        "push",
+        "pushoption",
+        "receivepack",
+        "vcs",
+    }
+    local_security_names = {
+        "sslcainfo",
+        "sslcapath",
+        "sslcert",
+        "sslcertpasswordprotected",
+        "sslkey",
+        "extraheader",
+        "proxy",
+        "proxyauthmethod",
+    }
+    for fact in facts:
+        lowered = fact.key.lower()
+        value = fact.value.strip().lower()
+        if (
+            lowered == "push.pushoption"
+            or any(
+                _config_key_matches(fact.key, "remote", remote, name)
+                for name in remote_blocked_names
+            )
+        ):
+            raise PushContractError("invalid_configuration")
+        if _config_key_matches(fact.key, "remote", remote, "mirror"):
+            if value not in {"false", "no", "off", "0"}:
+                raise PushContractError("invalid_configuration")
+        if (
+            (lowered == "http.sslverify" or lowered.endswith(".sslverify"))
+            and value in {"false", "no", "off", "0"}
+        ):
+            raise PushContractError("invalid_configuration")
+        if fact.scope not in {"local", "worktree"}:
+            continue
+        last_name = lowered.rsplit(".", 1)[-1]
+        if (
+            (
+                lowered.startswith("credential.")
+                and last_name == "helper"
+            )
+            or lowered in {"core.sshcommand", "ssh.variant"}
+            or (
+                lowered.startswith("http.")
+                and last_name in local_security_names
+            )
+            or _config_key_matches(fact.key, "remote", remote, "proxy")
+        ):
+            raise PushContractError("invalid_configuration")
+
+
+def _rewrite_push_endpoint(
+    endpoint: str,
+    facts: tuple[_GitConfigFact, ...],
+) -> str:
+    push_rules = _rewrite_rules(facts, "pushinsteadof", endpoint)
+    rules = push_rules or _rewrite_rules(facts, "insteadof", endpoint)
+    if not rules:
+        return endpoint
+    longest = max(len(prefix) for prefix, _replacement in rules)
+    winners = tuple(rule for rule in rules if len(rule[0]) == longest)
+    if len(winners) != 1:
+        raise PushContractError("invalid_configuration")
+    prefix, replacement = winners[0]
+    return replacement + endpoint[len(prefix) :]
+
+
+def _rewrite_rules(
+    facts: tuple[_GitConfigFact, ...],
+    name: str,
+    endpoint: str,
+) -> tuple[tuple[str, str], ...]:
+    suffix = f".{name}"
+    rules: list[tuple[str, str]] = []
+    for fact in facts:
+        lowered = fact.key.lower()
+        if (
+            not lowered.startswith("url.")
+            or not lowered.endswith(suffix)
+        ):
+            continue
+        replacement = fact.key[4 : len(fact.key) - len(suffix)]
+        if replacement and endpoint.startswith(fact.value):
+            rules.append((fact.value, replacement))
+    return tuple(rules)
+
+
+def _configuration_fingerprint(
+    facts: tuple[_GitConfigFact, ...],
+    local_branch_ref: str,
+) -> str:
+    digest = hashlib.sha256()
+    for value in (
+        "file-notes-push-config-v1",
+        local_branch_ref,
+        *(
+            component
+            for fact in facts
+            for component in (
+                fact.scope,
+                fact.origin_identity,
+                fact.key,
+                fact.value,
+            )
+        ),
+    ):
+        encoded = value.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+    return digest.hexdigest()
 
 
 def _make_endpoint_registry() -> tuple[
@@ -929,6 +1332,22 @@ def push_recovery_copy(
     )
 
 
+def _push_destination_policy_result(
+    state: PushDestinationPolicyState,
+    destination: PushDestinationProjection | None = None,
+) -> PushDestinationPolicyResult:
+    authorization = (
+        PushAuthorizationProjection(destination)
+        if state == "ready" and destination is not None
+        else None
+    )
+    return PushDestinationPolicyResult(
+        state,
+        _DESTINATION_POLICY_MESSAGES[state],
+        authorization,
+    )
+
+
 def _parse_push_endpoint(
     effective_endpoint: str,
     destination_ref: str,
@@ -1220,6 +1639,7 @@ __all__ = [
     "PushAuthorizationProjection",
     "PushCandidateProjection",
     "PushContractError",
+    "PushDestinationPolicyResult",
     "PushDestinationProjection",
     "PushDiagnostic",
     "PushDiagnosticCategory",
@@ -1231,6 +1651,7 @@ __all__ = [
     "PushReviewHandle",
     "PushReviewProjection",
     "RemoteRefObservation",
+    "TransportAdmission",
     "build_push_argv",
     "build_push_query_argv",
     "classify_push_diagnostic",
