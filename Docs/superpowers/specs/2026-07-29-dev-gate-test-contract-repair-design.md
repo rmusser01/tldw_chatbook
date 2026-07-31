@@ -992,6 +992,11 @@ Update the tests to describe current behavior:
      reset, initialization ordering, and runtime-backend recomputation
      assertions unchanged. Dedicated TASK-1320 coverage continues to prove
      that the real mount schedules this work off the application message pump.
+103. In the two remaining File Notes repository-trust retries that directly
+     press a dialog child, require both the active `SessionGitTrustDialog` and
+     the exact Cancel or Confirm control before the press. Keep decline/retry,
+     identity revalidation, fresh status, and disabled-mutation assertions
+     unchanged; do not add a production mount hook, sleep, or shared helper.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library
@@ -1374,6 +1379,12 @@ behavior. No compatibility shims. No broad deletion of live tests.
   scope-state tests to Textual scheduling. Awaiting the existing deferred load
   coroutine exercises their current unit boundary directly, while the
   dedicated off-message-pump suite retains real mount-scheduling coverage.
+- Treating the active `SessionGitTrustDialog` screen object as proof that its
+  composed buttons have mounted repeats Textual's root-before-child race.
+  Adding a production compatibility button or sleeping after every dialog
+  would change or slow unrelated behavior. Extending each existing local wait
+  with the exact control it immediately presses is the smallest truthful
+  boundary and covers the two identical latent sites found in the same module.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

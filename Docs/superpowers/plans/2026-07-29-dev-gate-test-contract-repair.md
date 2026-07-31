@@ -4080,6 +4080,45 @@ complete Study screen module passed 18/18, and the dedicated mount-I/O suite
 passed 10/10. Scoped Ruff lint and format checks pass, as does
 `git diff --check`.
 
+### Task 4cu: Wait for Session Git trust-dialog controls
+
+**Files:**
+- Modify: `Tests/UI/test_library_file_notes_git.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This aligns existing test waits with Textual's child-mount boundary
+before direct interaction; it does not change trust, repository identity, Git
+service, or production dialog behavior.
+
+- [x] **Step 1: Identify root-before-control trust-dialog races**
+
+The production-app retrust journey already waits for its Confirm control.
+Inventory finds two remaining direct child presses that rely on an
+active-screen-only boundary: the decline/retry Cancel and final Confirm
+actions.
+
+- [x] **Step 2: Wait for each exact action control**
+
+Extend those two remaining `_wait_until` predicates to require the exact
+Cancel or Confirm selector that the journey immediately presses. Preserve all
+existing trust, identity, status, revalidation, and mutation assertions without
+adding a helper, fixed pause, or production change.
+
+- [x] **Step 3: Verify repository-trust and File Notes Git coverage**
+
+Run the corrected decline/retry journey, the complete File Notes Git module,
+Ruff/format, and `git diff --check`.
+
+The affected journey passed focused verification. The original branch also
+recorded the complete File Notes Git module passing 138/138. Scoped Ruff lint
+and `git diff --check` passed there; Ruff format reported inherited whole-file
+drift outside the corrected predicates.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**

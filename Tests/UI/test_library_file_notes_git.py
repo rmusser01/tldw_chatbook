@@ -3805,7 +3805,10 @@ async def test_workspace_trust_decline_runs_no_status_and_retry_revalidates(
         panel.query_one("#file-notes-git-trust", Button).press()
         await _wait_until(
             pilot,
-            lambda: isinstance(workspace.app.screen, SessionGitTrustDialog),
+            lambda: (
+                isinstance(workspace.app.screen, SessionGitTrustDialog)
+                and bool(list(workspace.app.screen.query("#cancel-button")))
+            ),
             "cancel retry did not reopen the prompt",
         )
         workspace.app.screen.query_one("#cancel-button", Button).press()
@@ -3825,7 +3828,10 @@ async def test_workspace_trust_decline_runs_no_status_and_retry_revalidates(
         panel.query_one("#file-notes-git-trust", Button).press()
         await _wait_until(
             pilot,
-            lambda: isinstance(workspace.app.screen, SessionGitTrustDialog),
+            lambda: (
+                isinstance(workspace.app.screen, SessionGitTrustDialog)
+                and bool(list(workspace.app.screen.query("#confirm-button")))
+            ),
             "trust retry did not reopen the prompt",
         )
         workspace.app.screen.query_one("#confirm-button", Button).press()
