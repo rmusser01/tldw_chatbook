@@ -294,8 +294,9 @@ class TestChatImageHandlerEdgeCases:
                 )
                 # If it doesn't raise, it should return original data
                 assert isinstance(image_data, bytes)
-            except Exception:
-                # This is also acceptable behavior
+            except (ValueError, OSError):
+                # PIL rejects corrupt input with these; other exception
+                # classes are crashes and now FAIL (task-1464).
                 pass
 
     @pytest.mark.asyncio
@@ -315,8 +316,9 @@ class TestChatImageHandlerEdgeCases:
                 assert isinstance(image_data, bytes)
                 assert len(image_data) == 0
                 assert mime_type == "image/png"
-            except Exception:
-                # This is also acceptable - PIL might fail to process empty file
+            except (ValueError, OSError):
+                # PIL rejects an empty file with these; other exception
+                # classes are crashes and now FAIL (task-1464).
                 pass
 
     @pytest.mark.asyncio

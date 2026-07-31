@@ -425,8 +425,9 @@ Can I join the conversation too?"""
         try:
             async for chunk in backend.generate_speech_stream(request):
                 chunks.append(chunk)
-        except Exception as e:
-            # Empty text might raise an error, which is fine
+        except (ValueError, RuntimeError) as e:
+            # Rejecting empty text with a domain error is fine; crash
+            # classes now propagate (task-1464).
             logger.info(f"Empty text handled with error: {e}")
 
         # Test with invalid voice (should fall back to default)
@@ -451,7 +452,7 @@ Can I join the conversation too?"""
             )
             # Should fail
             assert False, "Expected error for nonexistent file"
-        except Exception as e:
+        except (ValueError, RuntimeError, OSError) as e:
             logger.info(f"Correctly handled invalid file: {e}")
 
 
@@ -644,7 +645,11 @@ The more perspectives, the better!"""
             )
 
         except Exception as e:
-            pytest.skip(f"Cannot complete full workflow: {e}")
+            # Skip only for the missing optional dependency — mirroring this
+            # test's own inner handlers; other failures now FAIL (task-1464).
+            if "boson_multimodal" in str(e):
+                pytest.skip("Higgs Audio model not installed")
+            raise
 
 
 if __name__ == "__main__":

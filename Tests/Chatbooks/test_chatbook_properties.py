@@ -322,8 +322,10 @@ class TestChatbookProperties:
             try:
                 # Simulate file operation
                 if "/" in path and ".." not in path:
-                    # Valid path structure
-                    assert True
+                    # Valid path structure: nothing to verify in this
+                    # simulation branch (task-1464: was a vacuous
+                    # `assert True`).
+                    continue
                 else:
                     # Should handle invalid paths
                     error = ChatbookErrorHandler.handle_error(
@@ -543,6 +545,9 @@ class TestAdvancedProperties:
             # If successful, should have required fields
             assert manifest.name == "Test"
             assert manifest.version == ChatbookVersion.V1
-        except Exception:
-            # Should handle invalid data gracefully
+        except (ValueError, KeyError, TypeError):
+            # Domain errors on junk manifests are the graceful contract;
+            # anything else (AttributeError etc.) is a crash and now FAILS
+            # (task-1464: the old blanket `except Exception: pass` made this
+            # test unfalsifiable).
             pass
