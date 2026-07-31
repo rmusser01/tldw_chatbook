@@ -1,7 +1,7 @@
 # Console Message Selection Toggle Design
 
 **Date:** 2026-07-31
-**Status:** Approved design; written-spec review pending
+**Status:** Approved
 
 ## Goal
 
