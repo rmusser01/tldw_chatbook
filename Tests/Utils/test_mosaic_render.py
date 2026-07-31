@@ -84,3 +84,24 @@ def test_square_image_fills_square_cell_box_without_vertical_stretch():
     lines = [line.rstrip() for line in rendered.splitlines() if line.strip()]
     assert len(lines) == 8
     assert max(len(line) for line in lines) == 16
+
+
+def test_cover_fit_fills_entire_box_with_center_crop():
+    """fit="cover" scales to FILL the box (cropping overflow) instead of
+    letterboxing: a very wide image still paints every cell row. Geometry
+    is asserted on the renderable's plain text (painted flat cells are
+    styled SPACES, so console text export would miscount them)."""
+    text = mosaic_from_image(
+        PILImage.new("RGB", (400, 100), (10, 200, 60)), 10, 5, fit="cover"
+    )
+
+    lines = text.plain.split("\n")
+    assert len(lines) == 5
+    assert all(len(line) == 10 for line in lines)
+
+
+def test_contain_stays_default():
+    text = mosaic_from_image(PILImage.new("RGB", (400, 100), (10, 200, 60)), 10, 5)
+
+    lines = text.plain.split("\n")
+    assert len(lines) < 5

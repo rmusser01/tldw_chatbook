@@ -49,7 +49,11 @@ def _mean(colors: list[tuple[int, int, int]]) -> tuple[int, int, int]:
 
 
 def mosaic_from_image(
-    image: "PILImage.Image", box_cols: int, box_lines: int
+    image: "PILImage.Image",
+    box_cols: int,
+    box_lines: int,
+    *,
+    fit: str = "contain",
 ) -> Text:
     """Render ``image`` into a quadrant-glyph mosaic fitting a cell box.
 
@@ -66,6 +70,9 @@ def mosaic_from_image(
             black before sampling.
         box_cols: Destination box width in character columns.
         box_lines: Destination box height in character lines.
+        fit: "contain" (default) letterboxes the whole image inside the
+            box; "cover" scales to FILL the box and center-crops the
+            overflow (object-fit: cover) -- aspect is preserved either way.
 
     Returns:
         A non-wrapping Rich ``Text`` renderable, one line per cell row.
@@ -76,10 +83,21 @@ def mosaic_from_image(
         base = PILImage.new("RGBA", rgba.size, (0, 0, 0, 255))
         source = PILImage.alpha_composite(base, rgba).convert("RGB")
     src_w, src_h = source.size
-    scale = min(max(1, box_cols) / src_w, max(1, box_lines) * 2 / src_h)
-    grid_w = min(max(2, round(src_w * scale * 2)), max(1, box_cols) * 2)
-    grid_h = min(max(1, round(src_h * scale)), max(1, box_lines) * 2)
-    source = source.resize((grid_w, grid_h), PILImage.Resampling.LANCZOS)
+    box_w = max(1, box_cols)
+    box_h = max(1, box_lines)
+    if fit == "cover":
+        scale = max(box_w / src_w, box_h * 2 / src_h)
+        grid_w = max(box_w * 2, round(src_w * scale * 2))
+        grid_h = max(box_h * 2, round(src_h * scale))
+        source = source.resize((grid_w, grid_h), PILImage.Resampling.LANCZOS)
+        left = (grid_w - box_w * 2) // 2
+        top = (grid_h - box_h * 2) // 2
+        source = source.crop((left, top, left + box_w * 2, top + box_h * 2))
+    else:
+        scale = min(box_w / src_w, box_h * 2 / src_h)
+        grid_w = min(max(2, round(src_w * scale * 2)), box_w * 2)
+        grid_h = min(max(1, round(src_h * scale)), box_h * 2)
+        source = source.resize((grid_w, grid_h), PILImage.Resampling.LANCZOS)
     width, height = source.size
     cell_cols = max(1, (width + 1) // 2)
     cell_rows = max(1, (height + 1) // 2)

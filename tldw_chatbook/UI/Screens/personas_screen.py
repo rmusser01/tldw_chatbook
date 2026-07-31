@@ -52,6 +52,10 @@ from ...tldw_api.character_persona_schemas import (
 from ...Utils.path_validation import validate_path_simple
 from ...Utils.paths import get_user_data_dir
 from ...Widgets.destination_rail import DestinationRailHandle
+from ...Widgets.Console.console_image_viewer_modal import (
+    AvatarViewRequested,
+    ConsoleImageViewerModal,
+)
 from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
@@ -5132,6 +5136,24 @@ class PersonasScreen(BaseAppScreen):
             exclusive=True,
         )
 
+    @on(AvatarViewRequested)
+    def _handle_avatar_view_requested(self, message: AvatarViewRequested) -> None:
+        """Open the full-size portrait viewer for the Inspector thumb (task-1534)."""
+        message.stop()
+        cache = getattr(self, "_avatar_render_cache", None)
+        selected_id = str(self.state.selected_entity_id or "")
+        pil = None
+        if cache is not None and selected_id:
+            pil = cache.get_pil(f"inspector-avatar-{selected_id}")
+        if pil is None:
+            return
+        self.app.push_screen(
+            ConsoleImageViewerModal(
+                pil,
+                title=self.state.selected_entity_name or "Character portrait",
+            )
+        )
+
     async def _render_inspector_avatar(self) -> None:
         """Decode and mount the selected character's Inspector portrait.
 
@@ -5365,7 +5387,9 @@ class PersonasScreen(BaseAppScreen):
         pil = cache.get_pil(cache_key)
         if pil is None:
             return None
-        return mosaic_from_image(pil, AVATAR_THUMB_COLS, AVATAR_THUMB_LINES)
+        return mosaic_from_image(
+            pil, AVATAR_THUMB_COLS, AVATAR_THUMB_LINES, fit="cover"
+        )
 
     async def _render_all_character_editor_thumbnails(
         self, character_id: int | None
