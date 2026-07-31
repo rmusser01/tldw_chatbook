@@ -62,7 +62,10 @@ Below the chips sit three panes:
   button in its header collapses it to a slim **Library** handle; click the
   handle to bring it back.
 - The **centre pane** — the detail view or editor for whatever you
-  selected. Empty until you pick something.
+  selected. Empty until you pick something. In Characters and Personas
+  modes it ends with a **Preview conversation** pane for trying the
+  selection out without saving anything; in Dictionaries and Lore modes
+  the equivalent is a **Try it** preview.
 - **Inspector** (right rail) — what's selected, whether it validates, its
   saved conversations, and the actions that send it to Console. Its
   header's **>** button collapses it to an **Inspector** handle.
@@ -111,13 +114,18 @@ Below the list:
 
 Which action buttons appear depends on what you selected:
 
-| Selection | Attach to Console | Start Chat | Export JSON | Export PNG | Delete |
-|---|---|---|---|---|---|
-| Character | shown | shown | shown | shown | shown |
-| Persona | shown | shown | shown | hidden | shown |
-| Dictionary | hidden | hidden | hidden | hidden | shown |
-| Lore book | hidden | hidden | hidden | hidden | shown |
-| Nothing selected | shown, disabled | shown, disabled | shown, disabled | shown, disabled | shown, disabled |
+| Selection | Attach to Console | Start Chat | Include assigned voice profile | Export JSON | Export PNG | Delete |
+|---|---|---|---|---|---|---|
+| Character | shown | shown | shown | shown | shown | shown |
+| Persona | shown | shown | hidden | shown | hidden | shown |
+| Dictionary | hidden | hidden | hidden | hidden | hidden | shown |
+| Lore book | hidden | hidden | hidden | hidden | hidden | shown |
+| Nothing selected | shown, disabled | shown, disabled | shown, disabled | shown, disabled | shown, disabled | shown, disabled |
+
+**Include assigned voice profile** is a checkbox rather than a button: tick
+it to carry a character's voice along with **Export JSON**. It only takes
+effect once that character has a voice assigned — see
+[Characters & personas](roleplay-chat-dictionaries/characters-and-personas.md).
 
 The **Readiness** line is the single source of truth for why a Console
 action won't fire:
@@ -146,6 +154,11 @@ anything by themselves.
 - **Start Chat** opens Console on a fresh chat with the suggested prompt
   "Respond as \<name\>." and confirms with "Chat staged in Console." It
   refuses to run while the provider is unready.
+
+A third route sits outside the Inspector: the centre pane's **Preview
+conversation** has its own **Open in Console** button, which carries the
+test exchange you just ran into a real session. See
+[Characters & personas](roleplay-chat-dictionaries/characters-and-personas.md).
 
 ### Leaving with unsaved edits
 
@@ -206,6 +219,9 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 - Concept and format deep dives: [World & Lore Books](../Features/World-Lore-Books-Documented.md) · [Chat Dictionaries](../Features/ChatDictionaries-Documented.md) — the data
   model, matching rules, and file formats. Their UI walkthroughs describe
   a retired tab and no longer match this screen.
+- Where the work lands: [Console ▸ Context & RAG](console/context-and-rag.md)
+  shows which dictionaries and world books are in play on a live chat, and
+  [Console ▸ Chat basics](console/chat-basics.md) covers sending itself.
 - `config.toml`: this screen reads no section of its own. The only setting
   it reflects is your chat provider default — what the Readiness line and
   the **Blocked** badge report on.
@@ -236,4 +252,4 @@ Screen-level keys only — global keys live in the [guide index](index.md).
   are live. Prompts moved out to Library and is no longer a mode here.
 
 —
-*Verified against dev @ 207053253 — 2026-07-31*
+*Verified against dev @ 8b7fa5eb6 — 2026-07-31*

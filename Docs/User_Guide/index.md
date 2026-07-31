@@ -106,7 +106,8 @@ Full detail on runs, approvals, and tools:
 | Skills | [Library ▸ Skills](library/skills.md) |
 | Subscriptions | [Watchlists](watchlists.md) 🚧 |
 | Coding | [Console](console.md) |
-| Conversations / CCP | [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md) |
+| Conversations | [Library ▸ Media & conversations](library/media-and-conversations.md) |
+| CCP (Conversations, Characters & Prompts) | [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md) for characters and personas; prompts moved to [Library ▸ Prompts](library/prompts.md) |
 | LLM management | [Lab](lab.md) 🚧 |
 | Research | [Library](library.md) |
 | Customize | Settings (not yet written) |

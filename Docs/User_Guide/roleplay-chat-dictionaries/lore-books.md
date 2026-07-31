@@ -1,4 +1,4 @@
-# Lore — world facts injected on keywords
+# Lore books — world facts injected on keywords
 
 ## What this screen is for
 
@@ -137,7 +137,8 @@ character card that ships with a lorebook attaches one automatically
 
 ### Create a world book and add its first entry
 1. In Lore mode, click **New** (or press **Ctrl+N**). A book called "Untitled
-   world book" appears and the Settings tab opens with the name selected.
+   world book" appears — or "Untitled world book 2", "3", … if those names
+   are taken — and the Settings tab opens with the name selected.
 2. Type a real name and click **Save settings**.
 3. Switch to the **Entries** tab, type your trigger words into "Keys
    (comma-separated)", write the fact in the content box, and click **Add**.
@@ -197,6 +198,12 @@ noted on [Roleplay & Chat Dictionaries](../roleplay-chat-dictionaries.md).
 
 ## Quirks & troubleshooting
 
+- **A deleted book's name stays taken.** Deleting a world book removes it
+  from every list, but its name is still reserved: creating or renaming a
+  book to that name fails with "A lore book with that name already exists."
+  for a record you can no longer see or restore. Pick a different name —
+  and note this can even make **New** fail, since the automatic "Untitled
+  world book N" names collide the same way (task-1650).
 - **Nothing is ever "always on."** Every entry is keyword-triggered; there is
   no constant or always-injected entry type. To approximate one, give the
   entry a keyword that your world uses constantly.
@@ -217,4 +224,4 @@ noted on [Roleplay & Chat Dictionaries](../roleplay-chat-dictionaries.md).
   back to reload it, then redo the edit.
 
 —
-*Verified against dev @ 207053253 — 2026-07-31*
+*Verified against dev @ 8b7fa5eb6 — 2026-07-31*

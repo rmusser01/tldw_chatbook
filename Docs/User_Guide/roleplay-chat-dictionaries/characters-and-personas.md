@@ -38,6 +38,8 @@ and **"World Books (copied into this character)"**. The rail's **New**,
 
 ### The character card
 
+![Character card](../images/roleplay/character-card.svg)
+
 Rows render as "Label: value" and appear only when filled in: **Name**
 (falling back to "Unnamed Character"), **Description**, **Personality**,
 **Scenario**, **First message** (the greeting the character opens with),
@@ -46,7 +48,43 @@ conversation so far), **Creator**, and **Version** (defaulting to "1.0").
 Three rows always show: **"Tags: none"** (or a comma-separated list),
 **"Alternate greetings: N"**, and **"Avatar: none"** / **"Avatar: embedded"**;
 the first alternate greeting, if any, is previewed underneath. **Edit** opens
-the editor, and stays disabled until a saved character is loaded.
+the editor, and stays disabled until a saved character is loaded. Below the
+rows sit the **Voice & Speech** block (next section) and, in Characters and
+Personas modes, the **Preview conversation** pane.
+
+### Voice & Speech
+
+This block appears on both the card and the editor. A picker chooses the
+voice this character speaks with — its first option is **"Use global
+default"**, meaning the app's normal text-to-speech voice — over four
+buttons: **Preview** (hear it), **Create** (make a new voice profile),
+**Edit**, and **Remove**. **Edit** reads **"Repair"** instead when the
+assigned profile has gone missing.
+
+On a character you have not saved yet the status line reads **"Save/reopen
+before assigning."** — save first, reopen the character, then pick a voice.
+You may also see **"Loading voice profiles…"** or, after profiles change
+underneath you, **"Voice profiles changed; reselect to retry."**
+
+### Preview conversation
+
+In Characters and Personas modes the centre pane ends with a
+**Preview conversation** toggle — "Test the selected character or persona
+in an ephemeral conversation; nothing is saved." Expand it to try the
+character before committing to a real chat:
+
+| Control | What it does |
+|---|---|
+| Provider line | Names the model that will answer, so you know what you are testing |
+| **"Greeting:"** picker | Choose which greeting opens the test — handy once you have alternates |
+| "Test message..." | Type the line you want to try |
+| **Test Reply** | Sends it and shows the reply in the transcript above |
+| **Reset** | Clears the test conversation |
+| **Open in Console** | Carries this test into a real Console session — a third route to Console alongside the two Inspector buttons below |
+| **Configure** | "Open Settings > Providers & Models to change which provider answers character chats." |
+
+Nothing here is saved: closing the pane or leaving the screen discards the
+test exchange.
 
 ### Editor — the generation toolbar
 
@@ -132,9 +170,10 @@ standard embedded card data (older and v3 flavours), **WebP cards** carrying
 it in their EXIF comment, and **text cards** — `.json`, `.yaml`, `.md` — as
 raw JSON, as front matter, or as a fenced JSON block; common exports from
 other apps are converted on the way in, and other image types are refused
-("Use PNG or WebP cards."). Anything else that goes wrong gives one
-deliberately plain message: **"Character import failed; verify the file and
-retry."**
+("Use PNG or WebP cards."). A file that parses but holds no card is refused
+with **"Import failed: the file did not contain a valid character card."**;
+anything else that goes wrong gives one deliberately plain message:
+**"Character import failed; verify the file and retry."**
 
 On success: **"Character imported."**, and the list jumps to the new row; if
 the card carried a lorebook the toast gains **" Lorebook '{name}' attached
@@ -142,17 +181,30 @@ the card carried a lorebook the toast gains **" Lorebook '{name}' attached
 existed; selected it. Re-importing does not update an existing character."**
 — delete the old character first, or import under a different name.
 
+If the card also carries a voice profile, importing can ask you two
+questions: **"Imported voice profile conflict"** (Cancel / Reuse / Create
+copy) when a profile of that name already exists, and **"Apply imported
+voice?"** (Keep current / Apply voice) when the character you are importing
+over already has one.
+
 **Exporting.** The Inspector offers **Export JSON** (characters and personas)
 and **Export PNG** (characters only), opening "Export as JSON" / "Export as
-PNG" with the name pre-filled; the JSON export carries the avatar. Results
-read "Exported to {path}" or "Export failed: …". Refusals: "Select a saved
+PNG" with the name pre-filled; the JSON export carries the avatar. A
+checkbox, **"Include assigned voice profile"**, sits between **Start Chat**
+and **Export JSON** — tick it to carry this character's voice with the
+export. It stays greyed out until the character has a voice assigned
+("Assign a voice profile before including it."). Results read "Exported to
+the selected destination." or "Export failed. The selected item was not
+written." Refusals: "Select a saved
 item before exporting." and "PNG export is only available for characters.";
 with unsaved edits both buttons are disabled, tooltipped "Save before using
 this action; the selection has unsaved edits."
 
 ### Handing a character to Console
 
-Two Inspector buttons, and they are not the same thing:
+Two Inspector buttons, and they are not the same thing (a third route,
+**Open in Console**, lives in the Preview conversation pane above and
+carries your test exchange with it):
 
 | | **Attach to Console** | **Start Chat** |
 |---|---|---|
@@ -203,7 +255,7 @@ mentions them, so this guide is where you learn them.
 
 - `{{char}}`, `{{character}}`, `{{persona}}` and `<CHAR>` all become the
   **character's** name.
-- `{{user}}` and `<USER>` become **your** name.
+- `{{user}}`, `{{random_user}}` and `<USER>` become **your** name.
 
 Note the trap: `{{persona}}` resolves to the *character*, never to you. In the
 previews on this screen, `{{user}}` comes out as the literal word "User".
@@ -278,4 +330,4 @@ click a nav label, press **Ctrl+P**, or use Ctrl+5 … Ctrl+0.
   once become *one* greeting; press **Add** for each.
 
 —
-*Verified against dev @ 207053253 — 2026-07-31*
+*Verified against dev @ 8b7fa5eb6 — 2026-07-31*

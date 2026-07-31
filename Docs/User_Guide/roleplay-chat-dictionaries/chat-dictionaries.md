@@ -39,8 +39,9 @@ to switch that dictionary on or off without opening it.
 - **"Try it — substitution preview"** (below the tabs, this mode only) — a
   sample-text box, a **Run preview** button, the before/after result.
 - **Inspector** (right) — for a dictionary it offers only **Delete**, and its
-  readiness line reads "Console blocked: …": dictionaries attach to a
-  conversation rather than starting a chat.
+  readiness line reads "Console blocked: attach arrives in a later update".
+  You attach a dictionary from its own **Attachments** tab (or from Console)
+  rather than from the Inspector.
 
 ## Features & controls
 
@@ -247,4 +248,4 @@ dictionary.
   again."** — something else changed it; re-select it and redo the edit.
 
 —
-*Verified against dev @ 207053253 — 2026-07-31*
+*Verified against dev @ 8b7fa5eb6 — 2026-07-31*
