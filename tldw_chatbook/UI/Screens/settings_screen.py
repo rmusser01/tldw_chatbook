@@ -1207,7 +1207,10 @@ class SettingsCategorySearchInput(Input):
     """
 
     async def _on_key(self, event: Key) -> None:
-        if event.key == "/" or event.character == "/":
+        # Same slash representations the screen-level handler accepts --
+        # some platforms/layouts emit key="slash" without character="/"
+        # (Qodo review; the Playwright driver hit the "slash" name too).
+        if event.key in {"/", "slash"} or event.character == "/":
             self.select_all()
             event.stop()
             event.prevent_default()

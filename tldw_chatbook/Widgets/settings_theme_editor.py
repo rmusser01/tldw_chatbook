@@ -19,7 +19,6 @@ from textual.theme import Theme
 from textual.widgets import Button, Input, Static, Switch, Tree
 
 from .settings_splash_screen_viewer import switch_state_label
-
 from ..css.Themes.themes import ALL_THEMES, create_theme_from_dict
 from ..Utils.path_validation import validate_filename
 
