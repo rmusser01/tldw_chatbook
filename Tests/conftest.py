@@ -873,9 +873,7 @@ def trust_service_with_skill(make_trust_service):
     (skill_dir / "SKILL.md").write_text(
         "---\nname: demo-skill\ndescription: demo\n---\nbody\n", encoding="utf-8"
     )
-    (skill_dir / "scripts" / "hello.py").write_text(
-        "print('hello')", encoding="utf-8"
-    )
+    (skill_dir / "scripts" / "hello.py").write_text("print('hello')", encoding="utf-8")
     return service, name
 
 

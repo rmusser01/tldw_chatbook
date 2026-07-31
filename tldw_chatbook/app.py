@@ -6422,8 +6422,7 @@ class TldwCli(
                 # AttributeError escaped this handler and Textual exited the
                 # whole app rather than the user simply failing to reach MCP.
                 logger.opt(exception=True).error(
-                    "Screen construction failed "
-                    "(route={}, exception_category={}).",
+                    "Screen construction failed (route={}, exception_category={}).",
                     screen_name,
                     type(exc).__name__,
                 )
@@ -7225,7 +7224,9 @@ class TldwCli(
     def _push_first_run_wizard(self) -> None:
         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
 
-        self.push_screen(FirstRunSetupWizard(self), self._handle_first_run_wizard_result)
+        self.push_screen(
+            FirstRunSetupWizard(self), self._handle_first_run_wizard_result
+        )
 
     def _handle_first_run_wizard_result(self, result: dict | None) -> None:
         if not isinstance(result, dict):
@@ -7950,7 +7951,9 @@ class TldwCli(
         """
         from textual.worker import WorkerFailed
 
-        underlying = getattr(error, "error", None) if isinstance(error, WorkerFailed) else None
+        underlying = (
+            getattr(error, "error", None) if isinstance(error, WorkerFailed) else None
+        )
         try:
             persist_event(
                 _DIAGNOSTICS_COMPONENT_APP,
