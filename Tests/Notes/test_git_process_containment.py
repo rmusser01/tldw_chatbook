@@ -347,7 +347,10 @@ async def test_windows_owner_allocation_failure_precedes_child_creation(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure_point", ["extraction", "adoption"])
+@pytest.mark.parametrize(
+    "failure_point",
+    ["extraction", "adoption", "identity", "detachment"],
+)
 @pytest.mark.parametrize("terminate_process_fails", [False, True])
 async def test_windows_post_create_failure_is_retained_until_process_signals(
     monkeypatch: pytest.MonkeyPatch,
@@ -368,7 +371,37 @@ async def test_windows_post_create_failure_is_retained_until_process_signals(
         calls.trace.append(f"{failure_point}_failed")
         raise MemoryError(f"process {failure_point} failed")
 
-    if failure_point == "adoption":
+    if failure_point == "identity":
+        pid_member = containment._WindowsJobIdentity.pid
+
+        def get_pid(identity):
+            return pid_member.__get__(identity, type(identity))
+
+        def set_pid(identity, value):
+            if value:
+                fail_boundary()
+            pid_member.__set__(identity, value)
+
+        monkeypatch.setattr(
+            containment._WindowsJobIdentity,
+            "pid",
+            property(get_pid, set_pid),
+        )
+    elif failure_point == "detachment":
+        detach_process_info = (
+            containment._WindowsFailedAdmissionProcess.detach_process_info
+        )
+
+        def fail_detachment(process):
+            detach_process_info(process)
+            fail_boundary()
+
+        monkeypatch.setattr(
+            containment._WindowsFailedAdmissionProcess,
+            "detach_process_info",
+            fail_detachment,
+        )
+    elif failure_point == "adoption":
         monkeypatch.setattr(
             containment._WindowsFailedAdmissionProcess,
             "adopt",

@@ -532,8 +532,10 @@ class _WindowsFailedAdmissionProcess:
         """Release native backup storage after normal adoption completes."""
         self._process_info = None
 
-    def owns_process_info(self) -> bool:
-        """Return whether native launch storage remains retained."""
+    def owns_native_process(self) -> bool:
+        """Return whether adopted or backup process ownership is retained."""
+        if self._process_handle:
+            return True
         if self._process_info is None:
             return False
         try:
@@ -893,7 +895,7 @@ class _WindowsKernel:
                     identity.pid > 0
                     or (
                         fallback is not None
-                        and fallback.owns_process_info()
+                        and fallback.owns_native_process()
                     )
                 )
             ):
@@ -1138,8 +1140,9 @@ class _WindowsKernel:
                 identity.pid = pid
                 fallback.detach_process_info()
             except BaseException:
-                identity.thread_handle = 0
-                identity.pid = 0
+                if fallback._process_info is not None:
+                    identity.thread_handle = 0
+                    identity.pid = 0
                 try:
                     self.terminate_process(
                         fallback._owned_process_handle(),
