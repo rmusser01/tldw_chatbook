@@ -1810,9 +1810,28 @@ class SettingsScreen(BaseAppScreen):
         footer in sync without waiting for a recompose.
         """
         shortcuts = self.SETTINGS_SHORTCUTS
+        if self._text_entry_focused():
+            # task-1560: s/r/t are real bindings and therefore inert while an
+            # Input/TextArea consumes printable keys -- advertising the bare
+            # key would be a silent no-op (the critique's Alex trap). Tell
+            # the truth about the escape hatch instead.
+            shortcuts = tuple(
+                (f"Esc, {key}", description) for key, description in shortcuts
+            )
         if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
             shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
         self.register_footer_shortcuts(source="settings", shortcuts=shortcuts)
+
+    def _text_entry_focused(self) -> bool:
+        """Whether a printable-key-consuming widget owns focus right now."""
+        focused = getattr(self.app, "focused", None)
+        return isinstance(focused, (Input, TextArea))
+
+    def on_descendant_focus(self, event) -> None:
+        self._register_footer_shortcuts()
+
+    def on_descendant_blur(self, event) -> None:
+        self._register_footer_shortcuts()
 
     @staticmethod
     def _binding_entry_key_action_description(
@@ -3212,13 +3231,17 @@ class SettingsScreen(BaseAppScreen):
         if not checkbox_id.startswith("settings-imagegen-"):
             return
         event.stop()
+        from ...Widgets.settings_image_gen_panel import switch_word, toggle_label
+
         if checkbox_id == "settings-imagegen-context_llm_enabled":
+            event.checkbox.label = toggle_label("Context LLM", bool(event.value))
             original = bool(self._image_gen_raw_section().get("context_llm_enabled"))
             self._image_gen_stage("context_llm_enabled", original, bool(event.value))
             return
         prefix = "settings-imagegen-enabled-"
         if not checkbox_id.startswith(prefix):
             return
+        event.checkbox.label = switch_word(bool(event.value))
         try:
             panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
         except QueryError:
@@ -11108,9 +11131,15 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-advanced-config-editor",
                 )
 
-    def _render_impact_pane(self) -> ComposeResult:
+    def _render_impact_pane_header(self) -> ComposeResult:
+        """Fixed (non-scrolling) inspector header (task-1560/task-1562).
+
+        Identity, draft status, guided-action state, and the Save/Revert
+        pair are pinned above the scrollable body so the commit affordance
+        can never scroll out of sight -- the critique's live dirty-state
+        capture showed the rail scrolled with no visible Save anywhere.
+        """
         summary = self._active_summary()
-        ownership = self._ownership_record(summary.category)
         yield Static(
             "Scope Inspector", classes="destination-section settings-column-title"
         )
@@ -11137,19 +11166,24 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategoryId.WORKSPACES,
         ):
             save_button = Button(
-                "Save",
+                "Save (s)",
                 id="settings-save-category",
                 tooltip="Save changes for the selected Settings category.",
             )
             save_button.disabled = not self._guided_actions_enabled(summary.category)
             yield save_button
             revert_button = Button(
-                "Revert",
+                "Revert (r)",
                 id="settings-revert-category",
                 tooltip="Discard unsaved changes for the selected Settings category.",
             )
             revert_button.disabled = not self._guided_actions_enabled(summary.category)
             yield revert_button
+
+    def _render_impact_pane_body(self) -> ComposeResult:
+        """Scrollable inspector remainder: guides, ownership, boundaries."""
+        summary = self._active_summary()
+        ownership = self._ownership_record(summary.category)
         if summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static("Control guide", classes="destination-section")
             yield self._detail_row(
@@ -11348,7 +11382,7 @@ class SettingsScreen(BaseAppScreen):
         if ownership.owns_config_sections:
             yield self._detail_row(
                 "Owns",
-                ", ".join(ownership.owns_config_sections),
+                "\n".join(ownership.owns_config_sections),
             )
         if ownership.read_only_reason:
             yield self._detail_row("Read-only/WIP", ownership.read_only_reason)
@@ -11435,11 +11469,26 @@ class SettingsScreen(BaseAppScreen):
                     )
                     yield from self._render_detail_pane()
                 yield self._column_divider("settings-detail-impact-divider")
-                with VerticalScroll(
+                impact_pane = Vertical(
                     id="settings-impact-pane",
                     classes="destination-workbench-pane ds-inspector",
-                ):
-                    yield from self._render_impact_pane()
+                )
+                # Explicit height: under the real CSS bundle the pane class
+                # sizes a scroll container, not a plain Vertical -- without
+                # this the 1fr body below collapses to zero (StyledSettings
+                # harness caught it; the plain harness cannot).
+                impact_pane.styles.height = "100%"
+                with impact_pane:
+                    yield from self._render_impact_pane_header()
+                    impact_body = VerticalScroll(id="settings-impact-pane-body")
+                    # Inline styles, not CSS: the app-tier bundle outranks
+                    # screen CSS and a 100%-height default would collapse
+                    # inside the auto-flow wrapper (same guard as the image
+                    # viewer modal).
+                    impact_body.styles.height = "1fr"
+                    impact_body.styles.scrollbar_size_vertical = 1
+                    with impact_body:
+                        yield from self._render_impact_pane_body()
 
     def _category_value_from_button(self, button: Button) -> str | None:
         if not button.id or not button.has_class("settings-category-button"):
@@ -11850,7 +11899,7 @@ class SettingsScreen(BaseAppScreen):
 
         def _scroll() -> None:
             try:
-                pane = self.query_one("#settings-impact-pane")
+                pane = self.query_one("#settings-impact-pane-body")
                 first_row = self.query_one(f"#{row_id}")
             except Exception:
                 return
@@ -15260,6 +15309,21 @@ class SettingsScreen(BaseAppScreen):
             event.key in {"/", "slash"} or getattr(event, "character", None) == "/"
         ) and not isinstance(focused, (Input, TextArea)):
             self._focus_category_search()
+            event.stop()
+            event.prevent_default()
+            return
+        if (
+            event.key == "escape"
+            and isinstance(focused, (Input, TextArea))
+            and not self._category_search_has_focus()
+        ):
+            # task-1560: Esc releases field focus so the footer's advertised
+            # "Esc, s save category" chain is true for EVERY text-entry
+            # field -- previously only the filter input handled Esc, so
+            # keys after Esc kept feeding the field (the critique's silent
+            # no-op trap, one level deeper).
+            self.set_focus(None)
+            self._register_footer_shortcuts()
             event.stop()
             event.prevent_default()
             return
