@@ -339,28 +339,36 @@ that reason in its own notice, so the spoken ack is just "Not sent." — never
 
 **Choreography and latency.** A command only fires once its segment
 finalizes, and a segment finalizes on a pause in speech — so **pause
-briefly both before and after speaking a command**. A command executes
-roughly `dictation.silence_threshold_seconds` (default 2.0 s) after you
-stop talking. Concretely: the recorder runs voice-activity detection over
-20 ms frames and only forwards the ones that contain speech, so a segment
-finalizes once the recorder has forwarded nothing for the whole threshold.
-In practice the effective latency runs a little past the bare threshold —
-the detector carries a short per-frame "hangover" that keeps forwarding for
-a moment after you actually stop, and the transcription buffer flushes on a
-cycle of its own — so the realistic budget is threshold + one buffer cycle
-(~500 ms). This is expected behavior, not a bug, and lowering the threshold
-shortens it (at the cost of finalizing plain dictation into more, shorter
-segments). Because the pause *before* the command and the pause *after* it
-must each complete before their segments finalize, a full "pause, command,
-pause" round trip costs roughly **two** threshold intervals, not one —
-budget for that rather than reading it as lag.
+briefly both before and after speaking a command**. Concretely: the
+recorder runs voice-activity detection over 20 ms frames and only forwards
+the ones that contain speech; the dictation service accumulates whatever it
+is forwarded and, once the recorder has forwarded nothing for the whole
+`dictation.silence_threshold_seconds` (default 2.0 s), transcribes that
+*entire* accumulated segment in one call and finalizes it. There is no
+periodic transcription cycle any more — a segment's audio is only ever sent
+to the speech model once, at that pause (or at stop). So the realistic
+budget for a command to fire is `silence_threshold_seconds` **plus one
+whole-segment transcription** — measured 4-5 s for a short utterance on a
+loaded machine with a local Whisper-family model; faster on an idle machine,
+and it scales with how much was said, not with a fixed buffer interval. This
+is expected behavior, not a bug, and lowering the threshold shortens the
+pause half of it (at the cost of finalizing plain dictation into more,
+shorter segments) — it does not shorten the transcription itself. Because
+the pause *before* the command and the pause *after* it must each complete
+their own threshold-plus-transcription cycle before their segments
+finalize, a full "pause, command, pause" round trip costs roughly **two**
+threshold intervals **plus two whole-segment transcriptions**, not one of
+each — budget for that rather than reading it as lag.
 
 Voice-activity detection needs the optional `webrtcvad-wheels` package
 (installed by the `speech_recording` extra; it still imports as `webrtcvad`,
 unchanged). Without it the recorder forwards every frame, nothing ever looks
 like a pause, and segments finalize only when the capture stops — so inline
 commands and mid-capture finalization do not fire, though dictation itself
-still works end to end. The Console notifies once per run when this happens.
+still works end to end: the *entire* capture accumulates as one segment and
+is transcribed in a single call once you stop, bounded by
+`dictation.stop_join_timeout_seconds` (default 30 s) rather than by
+anything mid-capture. The Console notifies once per run when this happens.
 
 **Configuring the prefix.** `dictation.command_prefix` accepts multi-word
 prefixes and is normalized the same way as spoken commands. Leaving it
