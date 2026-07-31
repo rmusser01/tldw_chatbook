@@ -358,6 +358,32 @@ class VoiceFinal:
 
 
 @dataclass(frozen=True)
+class VoiceSegmentTranscribing:
+    """The silence gate closed a segment; its transcription is starting.
+
+    Recognizer-driven, exactly like `VoicePartial`: fired from
+    `LazyLiveDictationService._transcribe_segment_audio`, on the processing
+    thread, right before the call that can take seconds
+    (`dictation_service_lazy.py`'s module docstring has the measured
+    latencies). Under the segment-at-silence architecture there is otherwise
+    no signal at all in that gap -- no live partial text, nothing -- so
+    without this a multi-second pause between the silence pause and the next
+    `VoiceFinal`/`VoiceCommand` looks identical to a dead capture.
+
+    Carries no payload -- there is nothing to say yet, only that work has
+    started. Consumers show a transcribing indication until the next event
+    (a final, a command, or a state change) supersedes it; see
+    `ConsoleComposerBar.set_voice_segment_transcribing`.
+
+    Not proof the recognizer produced anything: it only proves the silence
+    gate fired. `ConsoleStreamingDictationSession._handle_event` deliberately
+    does NOT set `_heard_recognizer_output` for this event -- see that
+    method's docstring for why the distinction matters for the silent-capture
+    messaging in `stop_and_transcribe()`.
+    """
+
+
+@dataclass(frozen=True)
 class VoiceCommand:
     """A finalized segment that matched the spoken-command grammar.
 
@@ -991,6 +1017,9 @@ class ConsoleVoiceInputController:
                 ),
                 on_final_transcript=lambda text, _gen=capture_generation: (
                     self._emit_capture_event(classify_segment(text), _gen)
+                ),
+                on_segment_transcribing=lambda _gen=capture_generation: (
+                    self._emit_capture_event(VoiceSegmentTranscribing(), _gen)
                 ),
                 on_state_change=lambda _state: None,  # our state machine is authoritative
                 on_error=lambda error, _gen=capture_generation: self._report_service_error(

@@ -155,6 +155,13 @@ class ConsoleComposerBar(Horizontal):
     COMPOSER_CHROME_ROWS = 4
     VOICE_CHIP_MIN_WIDTH = 24
     VOICE_CHIP_MAX_WIDTH = 42
+    #: Shown in the chip both for the terminal "stop and transcribe" phase
+    #: (`sync_dictation_state`'s "transcribing" branch) and for a per-segment
+    #: transcription in flight while still `recording`
+    #: (`set_voice_segment_transcribing`) -- same word for "the model is
+    #: working on your audio right now" in both places, so there is only one
+    #: phrase to recognize rather than two.
+    VOICE_CHIP_TRANSCRIBING_LABEL = "◌ Transcribing…"
     FALLBACK_DRAFT_WIDTH = 80
     PASTE_TOKEN_STYLE = "bold cyan"
     PASTE_CONFIRM_STYLE = "bold black on yellow"
@@ -279,6 +286,16 @@ class ConsoleComposerBar(Horizontal):
         #: nothing is preparing a microphone. Cleared only on a genuine
         #: transition into "starting", and on recording/idle.
         self._voice_preparing_message: str = ""
+        #: True while a per-segment transcription is in flight (the silence
+        #: gate closed a segment and the recognizer is working on it, a call
+        #: that can take seconds -- see `VoiceSegmentTranscribing`). Reset
+        #: the same way `_voice_partial` is: on every fresh entry into
+        #: "recording", cleared by `set_voice_partial()` (the next final or
+        #: command lands), and on any OTHER lifecycle state change; preserved
+        #: across a redundant `sync_dictation_state("recording")` resync so
+        #: an unrelated UI refresh cannot blank an indicator that is still
+        #: legitimately showing.
+        self._voice_segment_transcribing: bool = False
         self._pending_attachment_label: str | None = None
         self._suppress_next_draft_click = False
         self._draft_selection_all = False
@@ -611,7 +628,16 @@ class ConsoleComposerBar(Horizontal):
         """
         entering_recording = state == "recording" and self._dictation_state != "recording"
         entering_starting = state == "starting" and self._dictation_state != "starting"
+        state_changed = state != self._dictation_state
         self._dictation_state = state
+        if state_changed:
+            # Any genuine lifecycle transition -- including "recording" ->
+            # "transcribing" via the mic button, which never routes through
+            # `set_voice_partial()` -- ends a live per-segment transcribing
+            # indication. A redundant resync that leaves the state unchanged
+            # (the 0.2s Console UI-sync tick) must NOT reset it: see
+            # `_voice_segment_transcribing`'s docstring.
+            self._voice_segment_transcribing = False
         try:
             button = self.query_one("#console-dictation", Button)
         except NoMatches:
@@ -683,9 +709,15 @@ class ConsoleComposerBar(Horizontal):
                 STATE_LISTENING,
                 partial=self._voice_partial,
                 elapsed_seconds=self._voice_elapsed_seconds,
+                # Re-applied, not recomputed -- same reasoning as "starting"'s
+                # `_voice_preparing_message` above: a redundant resync must
+                # not blank a live segment-transcribing indication.
+                segment_transcribing=self._voice_segment_transcribing,
             )
         elif state == "transcribing":
-            self.set_voice_status(STATE_FINISHING, message="◌ Transcribing…")
+            self.set_voice_status(
+                STATE_FINISHING, message=self.VOICE_CHIP_TRANSCRIBING_LABEL
+            )
 
     def set_dictation_availability(
         self, *, available: bool, tooltip: str = ""
@@ -740,10 +772,43 @@ class ConsoleComposerBar(Horizontal):
         if self._dictation_state != "recording":
             return
         self._voice_partial = text
+        # A partial lands exactly when a segment's transcription has
+        # finished (see `VoiceSegmentTranscribing`'s docstring: under the
+        # segment-at-silence architecture there is no partial *during* the
+        # transcription, only once it completes) -- and this same method
+        # renders the ack for `VoiceCommand`/clears the chip for `VoiceFinal`
+        # too, both of which equally supersede an in-flight indication.
+        self._voice_segment_transcribing = False
         self.set_voice_status(
             STATE_LISTENING,
             partial=self._voice_partial,
             elapsed_seconds=self._voice_elapsed_seconds,
+        )
+
+    def set_voice_segment_transcribing(self, transcribing: bool) -> None:
+        """Show or hide a per-segment transcribing indicator in the chip.
+
+        Fills the gap `VoiceSegmentTranscribing` exists for: the silence gate
+        can close a segment and then say nothing at all for seconds while it
+        transcribes (no live partial text under the segment-at-silence
+        architecture), which otherwise looks identical to a dead capture.
+
+        Args:
+            transcribing: True right when that gap starts. Reverted to False
+                by `set_voice_partial()` (the next final or command landing)
+                or by any `sync_dictation_state()` lifecycle transition --
+                never called with False directly by a caller. Ignored (a
+                no-op) outside the `recording` lifecycle state, the same
+                guard `set_voice_partial` uses.
+        """
+        if self._dictation_state != "recording":
+            return
+        self._voice_segment_transcribing = transcribing
+        self.set_voice_status(
+            STATE_LISTENING,
+            partial=self._voice_partial,
+            elapsed_seconds=self._voice_elapsed_seconds,
+            segment_transcribing=self._voice_segment_transcribing,
         )
 
     def tick_voice_elapsed(self) -> None:
@@ -761,6 +826,12 @@ class ConsoleComposerBar(Horizontal):
             STATE_LISTENING,
             partial=self._voice_partial,
             elapsed_seconds=self._voice_elapsed_seconds,
+            # Without this, the 1s elapsed-counter tick would blank a live
+            # segment-transcribing indication every second (`set_voice_status`
+            # defaults the parameter to False) -- the indicator can easily
+            # outlast one tick, since the transcription behind it takes
+            # seconds.
+            segment_transcribing=self._voice_segment_transcribing,
         )
 
     @staticmethod
@@ -2992,6 +3063,7 @@ class ConsoleComposerBar(Horizontal):
         partial: str = "",
         elapsed_seconds: int = 0,
         message: str = "",
+        segment_transcribing: bool = False,
     ) -> None:
         """Render the dictation state into the inline voice chip.
 
@@ -3013,6 +3085,12 @@ class ConsoleComposerBar(Horizontal):
                 terminals so the 1fr draft never collapses.
             elapsed_seconds: Recording duration, rendered as m:ss.
             message: Status or failure text for non-listening states.
+            segment_transcribing: True while a per-segment transcription is
+                in flight (see `set_voice_segment_transcribing`). Only
+                meaningful for `state == "listening"`; overrides `partial`
+                there, since the two are never simultaneously true under the
+                segment-at-silence architecture (a partial only ever lands
+                once a segment's transcription has completed).
         """
         try:
             chip = self.query_one("#console-voice-status", Static)
@@ -3035,7 +3113,10 @@ class ConsoleComposerBar(Horizontal):
         if state == "listening":
             head = f"● {elapsed_seconds // 60}:{elapsed_seconds % 60:02d}"
             room = width - len(head) - 3
-            if partial and room > 8:
+            if segment_transcribing and room > 8:
+                tail = self.VOICE_CHIP_TRANSCRIBING_LABEL[-room:]
+                body = f"{head}  {tail}"
+            elif partial and room > 8:
                 tail = partial[-room:]
                 body = f"{head}  {tail}"
             else:

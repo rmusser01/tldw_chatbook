@@ -143,6 +143,11 @@ class LazyLiveDictationService:
     #: call needs this default too, or the processing thread dies with an
     #: `AttributeError` the instant it starts.
     streaming_transcriber: Optional[Any] = None
+    #: Same `__new__`-safety reasoning as `streaming_transcriber` just above:
+    #: `_transcribe_segment_audio` reads this unconditionally, so a service
+    #: built via `__new__` without going through `start_dictation()` needs
+    #: this class-level default too.
+    on_segment_transcribing: Optional[Callable[[], None]] = None
 
     # Privacy settings keys
     PRIVACY_KEY_PREFIX = "dictation.privacy"
@@ -219,6 +224,7 @@ class LazyLiveDictationService:
         self.on_state_change = None
         self.on_error = None
         self.on_command = None
+        self.on_segment_transcribing = None
 
         # Processing thread
         self.processing_thread = None
@@ -465,10 +471,22 @@ class LazyLiveDictationService:
         on_state_change: Optional[Callable[[str], None]] = None,
         on_error: Optional[Callable[[Exception], None]] = None,
         on_command: Optional[Callable[[str], None]] = None,
+        on_segment_transcribing: Optional[Callable[[], None]] = None,
         save_audio: bool = False,
     ) -> bool:
         """
         Start live dictation with improved initialization.
+
+        Args:
+            on_segment_transcribing: Fired from `_transcribe_segment_audio`,
+                on the processing thread, right when a (potentially
+                seconds-long) whole-segment transcription starts -- both at
+                the mid-capture silence gate and at the stop-path tail-fold.
+                Takes no arguments; see `on_segment_transcribing`'s use in
+                `_transcribe_segment_audio` for why there is nothing to say
+                yet. Never invoked for the streaming-transcriber regime,
+                whose `process_audio()` calls are cheap incremental pushes,
+                not a from-scratch transcription.
         """
         with self.state_lock:
             if self.state != DictationState.IDLE:
@@ -484,6 +502,7 @@ class LazyLiveDictationService:
             self.on_state_change = on_state_change
             self.on_error = on_error
             self.on_command = on_command
+            self.on_segment_transcribing = on_segment_transcribing
 
             self._notify_state_change()
 
@@ -881,6 +900,15 @@ class LazyLiveDictationService:
         """
         if not segment_audio:
             return
+        # Fired right here, before the call that can take seconds: this is
+        # the ONLY place `_processing_loop` ever calls this method (the
+        # mid-capture silence gate and the stop-path tail-fold both funnel
+        # through it), so one call site covers both without duplicating the
+        # notification at each caller. There is otherwise zero signal in this
+        # gap under the segment-at-silence architecture -- no live partial
+        # text, nothing -- so a multi-second transcription looks identical to
+        # a dead capture without it.
+        self._notify_segment_transcribing()
         audio_data = b"".join(segment_audio)
         # Snapshot before the call and compare after, rather than reading
         # `current_transcript` alone post-call: this call is the only writer
@@ -1298,6 +1326,20 @@ class LazyLiveDictationService:
                 self.on_error(safe_error)
             except Exception as e:
                 logger.error(f"Error callback error: {e}")
+
+    def _notify_segment_transcribing(self):
+        """Tell the caller a whole-segment transcription is starting.
+
+        Called only from `_transcribe_segment_audio`, on this thread, right
+        before the call that can take seconds. Advisory, like every other
+        `_notify_*`/callback invocation in this class: never lets a raising
+        callback escape into the processing loop.
+        """
+        if self.on_segment_transcribing:
+            try:
+                self.on_segment_transcribing()
+            except Exception as e:
+                logger.error(f"Segment-transcribing callback error: {e}")
 
 
 class AudioInitializationError(Exception):

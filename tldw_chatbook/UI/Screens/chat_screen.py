@@ -192,6 +192,7 @@ from ...Chat.console_voice_input import (
     VoiceModelWarmupFailed,
     VoicePartial,
     VoiceProviderOverridden,
+    VoiceSegmentTranscribing,
     VoiceVadUnavailable,
     default_service_factory,
 )
@@ -619,8 +620,9 @@ class ConsoleDictationEvent(Message):
         Args:
             session: The session that emitted it, so the screen can drop
                 events from a session it has already discarded.
-            event: The `VoicePartial` / `VoiceFinal` / `VoiceFailed` /
-                `VoiceStateChanged` / `VoiceProviderOverridden` instance.
+            event: The `VoicePartial` / `VoiceSegmentTranscribing` /
+                `VoiceFinal` / `VoiceFailed` / `VoiceStateChanged` /
+                `VoiceProviderOverridden` instance.
         """
         super().__init__()
         self.session = session
@@ -5160,6 +5162,20 @@ class ChatScreen(BaseAppScreen):
                 composer = self._console_composer_or_none()
                 if composer is not None:
                     composer.set_voice_partial(event.text)
+            return
+        if isinstance(event, VoiceSegmentTranscribing):
+            # The silence gate closed a segment and its (potentially
+            # seconds-long) transcription just started -- otherwise zero
+            # signal under the segment-at-silence architecture. Same staleness
+            # guard as `VoicePartial` just above: only while THIS capture is
+            # still actually recording. It reverts on the next event that
+            # lands, whichever comes first -- `set_voice_partial` (called by
+            # both the `VoiceFinal` and `VoiceCommand` branches below) clears
+            # it, and so does any `sync_dictation_state` lifecycle transition.
+            if self._console_dictation_state == "recording":
+                composer = self._console_composer_or_none()
+                if composer is not None:
+                    composer.set_voice_segment_transcribing(True)
             return
         if isinstance(event, VoiceFinal):
             # The segment is committed; the partial that previewed it is spent.
