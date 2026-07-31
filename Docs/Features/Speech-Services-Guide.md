@@ -370,6 +370,20 @@ is transcribed in a single call once you stop, bounded by
 `dictation.stop_join_timeout_seconds` (default 30 s) rather than by
 anything mid-capture. The Console notifies once per run when this happens.
 
+**Onset pre-roll.** VAD gating a frame at a time can clip the very start of
+an utterance: low-energy onsets — word-initial fricatives especially ("s" in
+"stop"/"send") — are classified as non-speech at the default
+`vad_aggressiveness`, so without further help the first frame(s) of a word
+would be dropped before transcription ever saw them (observed live as "stop"
+transcribed as "top"/"dot"-like forms, "send" as "and"). The recorder guards
+against this with a small pre-roll: it keeps the last
+`dictation.vad_preroll_ms` (default 240 ms / 12 frames) of *rejected* audio
+on hand and replays it, through the same path as any accepted frame, the
+instant VAD accepts a frame after a silence run — recovering the clipped
+onset without holding back enough rejected audio to meaningfully dilute VAD
+gating. It never fires between two already-accepted frames, so ongoing
+speech and the choreography above are unaffected.
+
 **Configuring the prefix.** `dictation.command_prefix` accepts multi-word
 prefixes and is normalized the same way as spoken commands. Leaving it
 blank (or whitespace-only) falls back to the default `"console"` rather
@@ -701,6 +715,11 @@ silence_threshold_seconds = 2.0
 # Lower values admit more ambient noise as speech and can prevent
 # pause-finalization entirely.
 vad_aggressiveness = 3
+# How many milliseconds of recently-rejected audio the recorder replays the
+# instant VAD accepts a frame after a silence run, to recover a clipped
+# speech onset (see "Onset pre-roll" above). Must be a non-negative integer;
+# invalid values fall back to this 240ms (12-frame) default.
+vad_preroll_ms = 240
 # Speech-to-text model dictation uses. Model resolution is PROVIDER-SCOPED
 # and, when unset, never inherits `[transcription] default_model` -- that
 # key is not scoped to any particular provider, so it may well name a model
