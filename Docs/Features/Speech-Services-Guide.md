@@ -714,7 +714,29 @@ vad_aggressiveness = 3
 # more than latency for your captures. Blank/whitespace is treated as unset;
 # a non-string value is ignored with a warning. Providers other than
 # faster-whisper are unaffected either way and keep reading
-# `[transcription] default_model`.
+# `[transcription] default_model`. The Console shows a one-time notice (once
+# per app run) when the fast default actually displaces a differing
+# `[transcription] default_model` you configured, so it never happens
+# silently.
+#
+# NOT a Console-only key: the standalone Dictation window (Speech >
+# Dictation) already reads and writes this same `dictation.model` value, so
+# a value set here also changes that window's model, and vice versa. That
+# window has no control of its own for picking a model -- it only ever
+# round-trips whatever this key already holds whenever some OTHER dictation
+# setting there is changed -- so it cannot silently acquire a value on its
+# own; the only way `dictation.model` gets set at all is by hand-editing
+# config.toml, or by setting it here.
+#
+# First-run cost: if faster-whisper is your resolved provider and you have
+# only a larger model (e.g. distil-large-v3) already downloaded, the fast
+# default triggers a fresh "base" download on your first Console dictation
+# capture. That warm-up (see "First run" below) is a single, non-fatal
+# attempt before the microphone opens -- a failure there does not block the
+# capture, but does NOT make the model load succeed either: if the download
+# was interrupted, every segment's own transcription for the rest of that
+# capture hits the same missing model, one at a time, rather than the
+# capture failing fast up front.
 # model = "base"
 
 [dictation.privacy]
