@@ -189,6 +189,20 @@ def probe() -> Availability:
 
 DEFAULT_LANGUAGE = "en"
 
+#: The provider `resolve()` picks a dictation-specific fast model for when
+#: `dictation.model` is unset -- see `_dictation_model_override` and the
+#: `model` block in `resolve()` below.
+DICTATION_FAST_MODEL_PROVIDER = "faster-whisper"
+#: Measured on real hardware (a loaded machine, one short "console stop" WAV):
+#: the transcription stack's own default faster-whisper model,
+#: `distil-large-v3`, took 11.47s to transcribe it -- dead on arrival for a
+#: spoken command, and with zero feedback while it ran (see
+#: `VoiceSegmentTranscribing`). `base` measured 1.43s on the identical WAV,
+#: transcribing it correctly. `dictation.model`, when set, always wins over
+#: this; this is only the *unset* default for a dictation capture, and it
+#: never changes what the transcription stack itself uses elsewhere.
+DICTATION_FAST_MODEL_DEFAULT = "base"
+
 
 @dataclass(frozen=True)
 class EffectiveConfig:
@@ -199,6 +213,42 @@ class EffectiveConfig:
     language: str
     configured_provider: str
     was_overridden: bool
+    #: True when `model` is NOT what `transcription.default_model` would have
+    #: produced -- either an explicit `dictation.model` override, or (when
+    #: that key is unset and `provider` resolved to
+    #: `DICTATION_FAST_MODEL_PROVIDER`) the dictation-specific fast default.
+    #: Mirrors `was_overridden`'s provenance role, scoped to the model rather
+    #: than the provider: `was_overridden` means "the configured provider
+    #: wasn't available," this means "dictation chose a different model than
+    #: the transcription stack on purpose," which is a distinct reason and
+    #: never itself a failure.
+    model_overridden_for_dictation: bool = False
+
+
+def _dictation_model_override() -> str | None:
+    """Read `dictation.model`, the dictation-specific model override.
+
+    Same warn+fallback shape as this module's other config readers (see
+    `command_prefix()`/`warm_before_capture_enabled()`): a blank or
+    whitespace-only value is treated as unset, not an error, and a non-string
+    value is logged and ignored rather than propagated as a confusing type
+    into `EffectiveConfig.model`.
+
+    Returns:
+        The configured model name, stripped, or `None` when unset, blank, or
+        not a string.
+    """
+    raw = get_cli_setting("dictation", "model", None)
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        logger.warning(
+            "dictation.model must be a string (got {!r}); ignoring",
+            raw,
+        )
+        return None
+    value = raw.strip()
+    return value or None
 
 
 def resolve() -> EffectiveConfig | None:
@@ -216,6 +266,14 @@ def resolve() -> EffectiveConfig | None:
     module's catalogue grew to seven while the service's allowlist stayed at
     three -- the Console warmed and announced one model, then transcribed with
     another. Both now read `Utils/local_stt_providers.LOCAL_STT_PROVIDERS`.
+
+    The model is resolved separately from -- and takes priority over -- the
+    transcription stack's own `transcription.default_model`: `dictation.model`
+    wins when set, and otherwise a `DICTATION_FAST_MODEL_PROVIDER` resolution
+    defaults to `DICTATION_FAST_MODEL_DEFAULT` rather than inheriting whatever
+    (potentially much slower) model the transcription stack is configured
+    with. See `_dictation_model_override`'s docstring for the measured numbers
+    behind that default.
 
     Returns:
         The settings to run with, or None when no local provider is installed.
@@ -246,15 +304,34 @@ def resolve() -> EffectiveConfig | None:
                 provider,
             )
 
-    model = get_cli_setting("transcription", "default_model", None)
+    # `dictation.model` (when set) always wins; failing that, a
+    # `faster-whisper` resolution gets a dictation-specific fast default
+    # rather than inheriting `transcription.default_model` (typically
+    # distil-large-v3, measured ~11.5s per short segment on a loaded machine
+    # -- see `DICTATION_FAST_MODEL_DEFAULT`). Every other provider is
+    # unaffected: it keeps reading the transcription stack's own model,
+    # exactly as before this function drew a distinction.
+    dictation_model = _dictation_model_override()
+    if dictation_model is not None:
+        model = dictation_model
+        model_overridden_for_dictation = True
+    elif provider == DICTATION_FAST_MODEL_PROVIDER:
+        model = DICTATION_FAST_MODEL_DEFAULT
+        model_overridden_for_dictation = True
+    else:
+        configured_model = get_cli_setting("transcription", "default_model", None)
+        model = str(configured_model) if configured_model else None
+        model_overridden_for_dictation = False
+
     language = get_cli_setting("transcription", "default_language", DEFAULT_LANGUAGE)
 
     return EffectiveConfig(
         provider=provider,
-        model=str(model) if model else None,
+        model=model,
         language=str(language or DEFAULT_LANGUAGE),
         configured_provider=configured,
         was_overridden=bool(configured) and provider != configured,
+        model_overridden_for_dictation=model_overridden_for_dictation,
     )
 
 

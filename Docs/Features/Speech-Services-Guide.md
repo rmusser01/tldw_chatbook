@@ -701,6 +701,21 @@ silence_threshold_seconds = 2.0
 # Lower values admit more ambient noise as speech and can prevent
 # pause-finalization entirely.
 vad_aggressiveness = 3
+# Speech-to-text model dictation uses, independent of `[transcription]
+# default_model`. Unset (the default) and a faster-whisper provider means
+# dictation picks "base" rather than inheriting whatever model
+# `[transcription] default_model` names -- measured on real hardware,
+# faster-whisper's own default (distil-large-v3) took 11.5s to transcribe a
+# short spoken command under load, against 1.4s for "base"; a spoken command
+# only fires once its segment finalizes (see "Choreography and latency"
+# above), so that difference is the whole gap between commands feeling
+# instant and feeling dead. Set this to use any other model for dictation
+# specifically -- including distil-large-v3, on purpose, if accuracy matters
+# more than latency for your captures. Blank/whitespace is treated as unset;
+# a non-string value is ignored with a warning. Providers other than
+# faster-whisper are unaffected either way and keep reading
+# `[transcription] default_model`.
+# model = "base"
 
 [dictation.privacy]
 save_history = false
