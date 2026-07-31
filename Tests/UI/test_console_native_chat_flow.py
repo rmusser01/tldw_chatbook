@@ -2486,7 +2486,7 @@ async def test_console_original_attempt_preview_toggles_without_changing_selecte
             spoken_event = next(
                 call.args[0]
                 for call in app.post_message.call_args_list
-                if call.args[0].__class__.__name__ == "TTSRequestEvent"
+                if call.args[0].__class__.__name__ == "TTSMessageSpeechRequestEvent"
             )
 
             assert selected.content == repaired
@@ -2494,14 +2494,14 @@ async def test_console_original_attempt_preview_toggles_without_changing_selecte
             assert repaired in plain_export
             assert save_payload == repaired
             assert repaired in provider_contents
-            assert spoken_event.text == repaired
+            assert spoken_event.snapshot.raw_content == repaired
             for output in (
                 selected.content,
                 copied_text,
                 plain_export,
                 save_payload,
                 *provider_contents,
-                spoken_event.text,
+                spoken_event.snapshot.raw_content,
             ):
                 assert original not in str(output)
 

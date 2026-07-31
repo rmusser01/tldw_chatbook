@@ -15,6 +15,10 @@ from loguru import logger
 from textual.message import Message
 
 # Local imports
+from tldw_chatbook.Chat.console_speech import (
+    ConsoleSpeechSnapshotRejected,
+    TTSMessageSpeechSnapshot,
+)
 from tldw_chatbook.TTS import get_tts_service
 from tldw_chatbook.TTS.adapter_types import (
     TTSConfigurationRevisionError,
@@ -47,7 +51,7 @@ class _TTSArtifactIOTimeout(RuntimeError):
 
 
 class TTSRequestEvent(Message):
-    """Event to request TTS generation"""
+    """Explicit trusted global-speech request without a Console message."""
 
     def __init__(
         self, text: str, message_id: Optional[str] = None, voice: Optional[str] = None
@@ -56,6 +60,28 @@ class TTSRequestEvent(Message):
         self.text = text
         self.message_id = message_id  # ID of the chat message
         self.voice = voice  # Optional voice override
+
+
+class TTSMessageSpeechRequestEvent(Message):
+    """Request speech for one store-issued immutable Console snapshot."""
+
+    def __init__(
+        self,
+        snapshot: TTSMessageSpeechSnapshot,
+        validator: Callable[[TTSMessageSpeechSnapshot], str],
+    ) -> None:
+        super().__init__()
+        if type(snapshot) is not TTSMessageSpeechSnapshot:
+            raise ValueError("snapshot must be TTSMessageSpeechSnapshot")
+        if not callable(validator):
+            raise ValueError("validator must be callable")
+        self.snapshot = snapshot
+        self.validator = validator
+
+    @property
+    def message_id(self) -> str:
+        """Expose the native message id without duplicating caller text."""
+        return self.snapshot.message_id
 
 
 class TTSStreamingEvent(Message):
@@ -314,8 +340,57 @@ class TTSEventHandler:
             if asyncio.iscoroutine(result):
                 await result
 
-    async def handle_tts_request(self, event: TTSRequestEvent) -> None:
-        """Handle TTS generation request"""
+    async def handle_tts_request(
+        self,
+        event: TTSRequestEvent | TTSMessageSpeechRequestEvent,
+    ) -> None:
+        """Admit a trusted request, then run the shared TTS generation path."""
+        if isinstance(event, TTSMessageSpeechRequestEvent):
+            try:
+                request_text = event.validator(event.snapshot)
+            except ConsoleSpeechSnapshotRejected as error:
+                logger.warning(
+                    "Console speech snapshot rejected (outcome_code={})",
+                    error.code.value,
+                )
+                await self._post_tts_message(
+                    TTSCompleteEvent(
+                        message_id=event.message_id,
+                        error=str(error),
+                    )
+                )
+                return
+            except Exception:
+                logger.warning(
+                    "Console speech snapshot rejected "
+                    "(outcome_code=validator_failure)"
+                )
+                await self._post_tts_message(
+                    TTSCompleteEvent(
+                        message_id=event.message_id,
+                        error=ConsoleSpeechSnapshotRejected.USER_COPY,
+                    )
+                )
+                return
+            if type(request_text) is not str:
+                logger.warning(
+                    "Console speech snapshot rejected "
+                    "(outcome_code=invalid_validator_result)"
+                )
+                await self._post_tts_message(
+                    TTSCompleteEvent(
+                        message_id=event.message_id,
+                        error=ConsoleSpeechSnapshotRejected.USER_COPY,
+                    )
+                )
+                return
+            request_message_id: str | None = event.message_id
+            request_voice: str | None = None
+        else:
+            request_text = event.text
+            request_message_id = event.message_id
+            request_voice = event.voice
+
         current_time = asyncio.get_event_loop().time()
         if current_time - self._last_cooldown_cleanup > self.COOLDOWN_CLEANUP_INTERVAL:
             self._cleanup_cooldown_dict(current_time)
@@ -326,17 +401,17 @@ class TTSEventHandler:
             logger.error("TTS service not initialized")
             await self._post_tts_message(
                 TTSCompleteEvent(
-                    message_id=event.message_id or "unknown",
+                    message_id=request_message_id or "unknown",
                     error="TTS service not available",
                 )
             )
             return
 
         # Validate input text
-        if not event.text:
+        if not request_text:
             await self._post_tts_message(
                 TTSCompleteEvent(
-                    message_id=event.message_id or "unknown",
+                    message_id=request_message_id or "unknown",
                     error="No text provided for TTS generation",
                 )
             )
@@ -344,29 +419,29 @@ class TTSEventHandler:
 
         # Check text length limits
         MAX_TTS_LENGTH = 5000  # Maximum characters for TTS
-        if len(event.text) > MAX_TTS_LENGTH:
-            logger.warning(f"TTS text too long: {len(event.text)} characters")
+        if len(request_text) > MAX_TTS_LENGTH:
+            logger.warning(f"TTS text too long: {len(request_text)} characters")
             await self._post_tts_message(
                 TTSCompleteEvent(
-                    message_id=event.message_id or "unknown",
+                    message_id=request_message_id or "unknown",
                     error=f"Text is too long for TTS. Maximum {MAX_TTS_LENGTH} characters allowed.",
                 )
             )
             return
 
         # Basic sanitization - remove excessive whitespace
-        text = " ".join(event.text.split())
+        text = " ".join(request_text.split())
         if len(text) < 1:
             await self._post_tts_message(
                 TTSCompleteEvent(
-                    message_id=event.message_id or "unknown",
+                    message_id=request_message_id or "unknown",
                     error="Text contains only whitespace",
                 )
             )
             return
 
         # Check rate limiting for this message
-        message_id = event.message_id or "adhoc"
+        message_id = request_message_id or "adhoc"
 
         if message_id in self._request_cooldown:
             time_since_last = current_time - self._request_cooldown[message_id]
@@ -393,7 +468,7 @@ class TTSEventHandler:
             self._generate_tts_with_rate_limit(
                 text,  # Use sanitized text
                 message_id,
-                event.voice,
+                request_voice,
             )
         )
         # Track the task
@@ -1084,6 +1159,14 @@ class TTSEventHandler:
         """Handle TTS request event"""
         task = asyncio.create_task(self.handle_tts_request(event))
         # Use create_task to add task safely
+        asyncio.create_task(self._add_active_task(task))
+
+    def on_tts_message_speech_request_event(
+        self,
+        event: TTSMessageSpeechRequestEvent,
+    ) -> None:
+        """Handle one trusted Console message speech request event."""
+        task = asyncio.create_task(self.handle_tts_request(event))
         asyncio.create_task(self._add_active_task(task))
 
     def on_tts_playback_event(self, event: TTSPlaybackEvent) -> None:

@@ -85,11 +85,12 @@ class ConsoleMessageActionService:
 
     @staticmethod
     def _speak_visible(message: ConsoleChatMessage) -> bool:
-        """Spec §1a: speak is offered for any completed message with
-        non-empty text (any role, generation-card marker text included) --
-        absent (not merely disabled) for a failed message or one with no
-        text yet (e.g. a still-pending assistant turn)."""
-        return message.status != "failed" and bool(message.content.strip())
+        """Offer speech only for trusted completed assistant text."""
+        return (
+            message.role is ConsoleMessageRole.ASSISTANT
+            and message.status == "complete"
+            and bool(message.content.strip())
+        )
 
     def __init__(
         self,

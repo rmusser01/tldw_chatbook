@@ -31,13 +31,16 @@ path the legacy play button drives today), not new logic introduced here.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSCompleteEvent,
+    TTSMessageSpeechRequestEvent,
     TTSPlaybackEvent,
 )
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
@@ -58,6 +61,78 @@ class _FakeApp:
     def post_message(self, message) -> bool:
         self.posted.append(message)
         return True
+
+
+@pytest.mark.asyncio
+async def test_app_routes_snapshot_event_without_logging_private_snapshot_data():
+    store = ConsoleChatStore()
+    session = store.create_session(
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        assistant_authority_id="PRIVATE_AUTHORITY",
+        character_id=7,
+    )
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="PRIVATE_RESPONSE_TEXT",
+    )
+    event = TTSMessageSpeechRequestEvent(
+        store.issue_tts_message_speech_snapshot(message.id),
+        store.validate_tts_message_speech_snapshot,
+    )
+    handler = MagicMock()
+    handler.handle_tts_request = AsyncMock()
+    fake_app = _FakeApp()
+    fake_app._ensure_tts_handler = AsyncMock(return_value=handler)
+
+    await TldwCli.handle_tts_message_speech_request_event(fake_app, event)
+
+    handler.handle_tts_request.assert_awaited_once_with(event)
+    rendered_logs = repr(fake_app.loguru_logger.method_calls)
+    assert "PRIVATE_RESPONSE_TEXT" not in rendered_logs
+    assert "PRIVATE_AUTHORITY" not in rendered_logs
+
+
+@pytest.mark.asyncio
+async def test_app_snapshot_handler_unavailable_logs_only_safe_context():
+    store = ConsoleChatStore()
+    session = store.create_session(
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        assistant_authority_id="PRIVATE_AUTHORITY",
+        character_id=7,
+    )
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="PRIVATE_RESPONSE_TEXT",
+    )
+    event = TTSMessageSpeechRequestEvent(
+        store.issue_tts_message_speech_snapshot(message.id),
+        store.validate_tts_message_speech_snapshot,
+    )
+    fake_app = _FakeApp()
+    fake_app._ensure_tts_handler = AsyncMock(return_value=None)
+    fake_app.post_message = AsyncMock()
+
+    await TldwCli.handle_tts_message_speech_request_event(fake_app, event)
+
+    fake_app.loguru_logger.error.assert_called_once_with(
+        "TTS handler not initialized "
+        "(operation=trusted_console_speech, outcome_code=handler_unavailable)"
+    )
+    rendered_logs = repr(fake_app.loguru_logger.method_calls)
+    assert "PRIVATE_RESPONSE_TEXT" not in rendered_logs
+    assert "PRIVATE_AUTHORITY" not in rendered_logs
+    assert message.id not in rendered_logs
+    fake_app.post_message.assert_awaited_once()
+    completion = fake_app.post_message.await_args.args[0]
+    assert isinstance(completion, TTSCompleteEvent)
+    assert completion.message_id == message.id
+    assert completion.error == "TTS service not available"
 
 
 @pytest.mark.asyncio

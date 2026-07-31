@@ -232,6 +232,7 @@ from .config import (
 )
 from .Event_Handlers import worker_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+    TTSMessageSpeechRequestEvent,
     TTSRequestEvent,
     TTSCompleteEvent,
     TTSPlaybackEvent,
@@ -6511,6 +6512,29 @@ class TldwCli(
             await self.post_message(
                 TTSCompleteEvent(
                     message_id=event.message_id or "unknown",
+                    error="TTS service not available",
+                )
+            )
+
+    @on(TTSMessageSpeechRequestEvent)
+    async def handle_tts_message_speech_request_event(
+        self,
+        event: TTSMessageSpeechRequestEvent,
+    ) -> None:
+        """Route a trusted Console snapshot without logging private content."""
+        self.loguru_logger.info("Trusted Console speech request received")
+        handler = await self._ensure_tts_handler()
+        if handler:
+            await handler.handle_tts_request(event)
+        else:
+            self.loguru_logger.error(
+                "TTS handler not initialized "
+                "(operation=trusted_console_speech, "
+                "outcome_code=handler_unavailable)"
+            )
+            await self.post_message(
+                TTSCompleteEvent(
+                    message_id=event.message_id,
                     error="TTS service not available",
                 )
             )

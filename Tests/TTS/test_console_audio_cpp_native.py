@@ -10,10 +10,13 @@ from typing import Any
 
 import pytest
 
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Event_Handlers.TTS_Events import tts_events as tts_events_module
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSCompleteEvent,
     TTSEventHandler,
+    TTSMessageSpeechRequestEvent,
     TTSProgressEvent,
     TTSRequestEvent,
     TTSStreamingEvent,
@@ -304,7 +307,7 @@ def _external_preferences() -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_console_audio_cpp_request_uses_native_default_without_rewriting_ids() -> (
+async def test_console_audio_cpp_snapshot_uses_native_default_without_rewriting_ids() -> (
     None
 ):
     timeline: list[str] = []
@@ -345,12 +348,26 @@ async def test_console_audio_cpp_request_uses_native_default_without_rewriting_i
     handler = _Handler(timeline)
     handler._request_cooldown = {}
     handler._tts_service = service
+    store = ConsoleChatStore()
+    session = store.create_session(
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        assistant_authority_id="local-authority",
+        character_id=7,
+        character_name="Mira",
+    )
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Character response",
+    )
     artifact: Path | None = None
     try:
         await handler.handle_tts_request(
-            TTSRequestEvent(
-                text="Character response",
-                message_id="console-native-1",
+            TTSMessageSpeechRequestEvent(
+                store.issue_tts_message_speech_snapshot(message.id),
+                store.validate_tts_message_speech_snapshot,
             )
         )
         await asyncio.wait_for(
@@ -364,6 +381,7 @@ async def test_console_audio_cpp_request_uses_native_default_without_rewriting_i
         )
         artifact = completion.audio_file
 
+        assert completion.message_id == message.id
         assert adapter.requests == [
             TTSRequest(
                 provider_id="audio_cpp",
@@ -397,6 +415,52 @@ async def test_console_audio_cpp_request_uses_native_default_without_rewriting_i
         await handler.cleanup_tts_resources()
         await service.close()
         await service.wait_closed()
+
+    assert artifact is not None
+    assert not artifact.exists()
+
+
+@pytest.mark.asyncio
+async def test_non_console_tts_request_event_keeps_global_default_path(
+    tmp_path: Path,
+) -> None:
+    timeline: list[str] = []
+    response = _Response(_RecordingStream(_WAV_CHUNKS, timeline))
+    service = _DefaultService(response)
+    handler = _Handler()
+    handler._tts_service = service
+    handler._temp_manager = _RecordingTempManager(tmp_path)
+    artifact: Path | None = None
+    try:
+        await handler.handle_tts_request(
+            TTSRequestEvent(
+                text="Global caller response",
+                message_id="global-native-1",
+                voice="Global voice override",
+            )
+        )
+        await asyncio.wait_for(
+            handler.completion_posted.wait(),
+            timeout=_WAIT_SECONDS,
+        )
+        completion = next(
+            message
+            for message in handler.messages
+            if isinstance(message, TTSCompleteEvent)
+        )
+        artifact = completion.audio_file
+
+        assert len(service.calls) == 1
+        text, voice, progress_sink = service.calls[0]
+        assert text == "Global caller response"
+        assert voice == "Global voice override"
+        assert callable(progress_sink)
+        assert artifact is not None
+        assert artifact.read_bytes() == b"".join(_WAV_CHUNKS)
+        assert response.close_calls == 1
+        assert response.byte_stream.close_calls == 1
+    finally:
+        await handler.cleanup_tts_resources()
 
     assert artifact is not None
     assert not artifact.exists()
