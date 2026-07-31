@@ -203,8 +203,8 @@ Enter again to send as text."
 ## Related settings & docs
 
 - `config.toml` `[rag]` (and legacy `[rag_search]`) — retrieval and
-  processing settings; covered with the Library/Search pages (not yet
-  written).
+  processing settings; covered in
+  [Library ▸ Search & RAG](../library/search-and-rag.md).
 - [Library ▸ Prompts](../library/prompts.md) — where saved prompts are
   created and managed.
 - [Console orientation](../console.md) — layout tour, rails, and chips.
