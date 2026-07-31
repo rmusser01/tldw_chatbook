@@ -12,6 +12,7 @@ from tldw_chatbook.Notes.file_notes_git_push import (
     PushCandidateProjection,
     PushContractError,
     PushDestinationProjection,
+    PushDiagnostic,
     PushDiagnosticCategory,
     PushIncludedNote,
     PushOutcomeProjection,
@@ -174,6 +175,72 @@ def test_public_projections_reject_mutable_or_nonboolean_authority(
 
 
 @pytest.mark.parametrize(
+    "factory",
+    [
+        lambda: PushDiagnostic(
+            PushDiagnosticCategory.UNKNOWN_FAILURE,
+            "fatal: https://user:super-secret-token@example.test/repo.git",
+        ),
+        lambda: PushOutcomeProjection(
+            "uncertain",
+            "Uncertain",
+            "Raw SSH failure for /private/path-canary/repo.git",
+            recovery_available=True,
+        ),
+        lambda: PushRecoveryProjection(
+            _destination(),
+            "uncertain",
+            "Uncertain",
+            "Raw helper token: super-secret-token",
+            can_check_again=True,
+        ),
+    ],
+)
+def test_public_copy_contracts_reject_caller_supplied_raw_copy(
+    factory: Callable[[], object],
+) -> None:
+    with pytest.raises(PushContractError) as error:
+        factory()
+
+    rendered = repr(error.value)
+    assert error.value.code == "unsafe_text"
+    assert "super-secret-token" not in rendered
+    assert "path-canary" not in rendered
+
+
+def test_outcome_projection_rejects_inconsistent_canonical_flags() -> None:
+    with pytest.raises(PushContractError) as error:
+        PushOutcomeProjection(
+            "already_published",
+            "Already published",
+            (
+                "The configured destination currently points to this commit. "
+                "No push was started by Chatbook."
+            ),
+            recovery_available=True,
+        )
+
+    assert error.value.code == "unsafe_text"
+
+
+def test_recovery_projection_rejects_inconsistent_canonical_flags() -> None:
+    with pytest.raises(PushContractError) as error:
+        PushRecoveryProjection(
+            _destination(),
+            "succeeded",
+            "Succeeded",
+            (
+                "A query-only check currently observes the candidate at the "
+                "original destination. The observation does not establish the "
+                "cause of the update. No push was sent by this check."
+            ),
+            can_check_again=True,
+        )
+
+    assert error.value.code == "unsafe_text"
+
+
+@pytest.mark.parametrize(
     "model",
     [
         _candidate(),
@@ -275,6 +342,16 @@ def test_destination_ref_rejects_relative_malformed_or_hostile_refnames(
 
     assert error.value.code == "invalid_destination_ref"
     assert "secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("format_character", ["\u200b", "\u00ad"])
+def test_destination_ref_rejects_default_ignorable_format_characters(
+    format_character: str,
+) -> None:
+    with pytest.raises(PushContractError) as error:
+        validate_destination_ref(f"refs/heads/release{format_character}candidate")
+
+    assert error.value.code == "invalid_destination_ref"
 
 
 @pytest.mark.parametrize(
@@ -421,6 +498,19 @@ def test_endpoint_parser_normalizes_ssh_identity_without_exposing_a_url() -> Non
     assert destination.port == 22
     assert destination.repository_path == "/srv/releases.git"
     assert all("://" not in value for _, value in destination.selectable_details)
+
+
+@pytest.mark.parametrize("format_character", ["\u200b", "\u00ad"])
+def test_endpoint_parser_rejects_default_ignorable_hostname_characters(
+    format_character: str,
+) -> None:
+    with pytest.raises(PushContractError) as error:
+        parse_push_endpoint(
+            f"https://exa{format_character}mple.com/team/notes.git",
+            _DESTINATION_REF,
+        )
+
+    assert error.value.code == "invalid_endpoint"
 
 
 @pytest.mark.parametrize(
@@ -941,8 +1031,8 @@ def test_uncertain_copy_forbids_retry_and_offers_query_only_recovery() -> None:
         ),
         (
             RemoteRefObservation("malformed"),
-            "needs_attention",
-            "Needs attention",
+            "uncertain",
+            "Uncertain",
         ),
     ],
 )
@@ -972,3 +1062,14 @@ def test_recovery_parent_observation_remains_uncertain() -> None:
     assert recovery.state == "uncertain"
     assert recovery.can_check_again is True
     assert "Remote-side work may still be pending" in recovery.message
+
+
+def test_recovery_malformed_observation_remains_uncertain() -> None:
+    recovery = push_recovery_copy(
+        _destination(),
+        RemoteRefObservation("malformed"),
+    )
+
+    assert recovery.state == "uncertain"
+    assert recovery.can_check_again is True
+    assert "prior attempt remains uncertain" in recovery.message

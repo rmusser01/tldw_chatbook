@@ -53,28 +53,88 @@ _SCP_ENDPOINT_PATTERN = re.compile(
     r"(?P<path>.+)"
 )
 _MAX_REMOTE_OUTPUT_BYTES = 64 * 1024
-_BIDI_CONTROL_CODEPOINTS = frozenset(
-    {
-        0x061C,
-        0x200E,
-        0x200F,
-        *range(0x202A, 0x202F),
-        *range(0x2066, 0x206A),
-    }
-)
 _REMOTE_REF_STATES = frozenset(
     {"parent", "candidate", "missing", "divergent", "malformed"}
 )
 _PORCELAIN_STATES = frozenset({"accepted", "rejected", "malformed"})
-_OUTCOME_STATES = frozenset(
-    {
-        "already_published",
+_OUTCOME_COPY: dict[PushOutcomeState, tuple[str, str, bool]] = {
+    "already_published": (
+        "Already published",
+        (
+            "The configured destination currently points to this commit. "
+            "No push was started by Chatbook."
+        ),
+        False,
+    ),
+    "succeeded": (
+        "Succeeded",
+        (
+            "Git reported the exact update accepted, and the configured "
+            "destination currently points to this commit."
+        ),
+        False,
+    ),
+    "failed_no_update_observed": (
+        "Failed with no update currently observed",
+        (
+            "Git reported an unsuccessful push, every owned process ended, "
+            "and the configured destination currently points to the reviewed "
+            "parent. Remote-side work may still be pending or may occur later."
+        ),
+        False,
+    ),
+    "uncertain": (
+        "Uncertain",
+        (
+            "Chatbook cannot currently prove whether the destination accepted "
+            "the update. Do not push again automatically. Check the original "
+            "destination again without pushing."
+        ),
+        True,
+    ),
+}
+_RECOVERY_COPY: dict[str, tuple[PushRecoveryState, str, str, bool]] = {
+    "candidate": (
         "succeeded",
-        "failed_no_update_observed",
+        "Succeeded",
+        (
+            "A query-only check currently observes the candidate at the "
+            "original destination. The observation does not establish the "
+            "cause of the update. No push was sent by this check."
+        ),
+        False,
+    ),
+    "parent": (
         "uncertain",
-    }
-)
-_RECOVERY_STATES = frozenset({"succeeded", "uncertain", "needs_attention"})
+        "Uncertain",
+        (
+            "A query-only check currently observes the reviewed parent, so "
+            "the prior attempt remains uncertain. Remote-side work may still "
+            "be pending. No push was sent by this check."
+        ),
+        True,
+    ),
+    "unprovable": (
+        "uncertain",
+        "Uncertain",
+        (
+            "A query-only check currently cannot prove the candidate at the "
+            "original destination, so the prior attempt remains uncertain. "
+            "No push was sent by this check."
+        ),
+        True,
+    ),
+    "needs_attention": (
+        "needs_attention",
+        "Needs attention",
+        (
+            "A query-only check currently cannot prove the candidate at the "
+            "original destination. No push was sent by this check."
+        ),
+        True,
+    ),
+}
+_RECOVERY_COPY_VALUES = frozenset(_RECOVERY_COPY.values())
 
 
 class PushContractError(ValueError):
@@ -289,11 +349,13 @@ class PushOutcomeProjection:
     recovery_available: bool = False
 
     def __post_init__(self) -> None:
+        expected = _OUTCOME_COPY.get(self.state) if type(self.state) is str else None
         if (
-            self.state not in _OUTCOME_STATES
-            or not _is_safe_display_text(self.title)
-            or not _is_safe_display_text(self.message)
+            expected is None
+            or type(self.title) is not str
+            or type(self.message) is not str
             or type(self.recovery_available) is not bool
+            or (self.title, self.message, self.recovery_available) != expected
         ):
             raise PushContractError("unsafe_text")
 
@@ -316,10 +378,17 @@ class PushRecoveryProjection:
     def __post_init__(self) -> None:
         if (
             type(self.destination) is not PushDestinationProjection
+            or type(self.state) is not str
+            or type(self.title) is not str
+            or type(self.message) is not str
             or type(self.can_check_again) is not bool
-            or self.state not in _RECOVERY_STATES
-            or not _is_safe_display_text(self.title)
-            or not _is_safe_display_text(self.message)
+            or (
+                self.state,
+                self.title,
+                self.message,
+                self.can_check_again,
+            )
+            not in _RECOVERY_COPY_VALUES
         ):
             raise PushContractError("unsafe_text")
 
@@ -419,6 +488,14 @@ class PushDiagnostic:
 
     category: PushDiagnosticCategory
     message: str
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.category) is not PushDiagnosticCategory
+            or type(self.message) is not str
+            or self.message != _DIAGNOSTIC_MESSAGES[self.category]
+        ):
+            raise PushContractError("unsafe_text")
 
 
 class _FrozenPushEndpoint:
@@ -804,47 +881,16 @@ def build_push_argv(
 
 def push_outcome_copy(state: PushOutcomeState) -> PushOutcomeProjection:
     """Return fixed honest point-in-time copy for one proven outcome state."""
-    if state == "already_published":
-        return PushOutcomeProjection(
-            state,
-            "Already published",
-            (
-                "The configured destination currently points to this commit. "
-                "No push was started by Chatbook."
-            ),
-        )
-    if state == "succeeded":
-        return PushOutcomeProjection(
-            state,
-            "Succeeded",
-            (
-                "Git reported the exact update accepted, and the configured "
-                "destination currently points to this commit."
-            ),
-        )
-    if state == "failed_no_update_observed":
-        return PushOutcomeProjection(
-            state,
-            "Failed with no update currently observed",
-            (
-                "Git reported an unsuccessful push, every owned process ended, "
-                "and the configured destination currently points to the "
-                "reviewed parent. Remote-side work may still be pending or may "
-                "occur later."
-            ),
-        )
-    if state == "uncertain":
-        return PushOutcomeProjection(
-            state,
-            "Uncertain",
-            (
-                "Chatbook cannot currently prove whether the destination "
-                "accepted the update. Do not push again automatically. Check "
-                "the original destination again without pushing."
-            ),
-            recovery_available=True,
-        )
-    raise PushContractError("unsafe_text")
+    try:
+        title, message, recovery_available = _OUTCOME_COPY[state]
+    except (KeyError, TypeError):
+        raise PushContractError("unsafe_text") from None
+    return PushOutcomeProjection(
+        state,
+        title,
+        message,
+        recovery_available,
+    )
 
 
 def push_recovery_copy(
@@ -852,40 +898,21 @@ def push_recovery_copy(
     observation: RemoteRefObservation,
 ) -> PushRecoveryProjection:
     """Return query-only copy for a current retained-destination observation."""
-    no_push_copy = " No push was sent by this check."
     if observation.state == "candidate":
-        return PushRecoveryProjection(
-            destination,
-            "succeeded",
-            "Succeeded",
-            (
-                "A query-only check currently observes the candidate at the "
-                "original destination. The observation does not establish the "
-                f"cause of the update.{no_push_copy}"
-            ),
-            can_check_again=False,
-        )
-    if observation.state == "parent":
-        return PushRecoveryProjection(
-            destination,
-            "uncertain",
-            "Uncertain",
-            (
-                "A query-only check currently observes the reviewed parent, so "
-                "the prior attempt remains uncertain. Remote-side work may "
-                f"still be pending.{no_push_copy}"
-            ),
-            can_check_again=True,
-        )
+        copy_state = "candidate"
+    elif observation.state == "parent":
+        copy_state = "parent"
+    elif observation.state == "malformed":
+        copy_state = "unprovable"
+    else:
+        copy_state = "needs_attention"
+    state, title, message, can_check_again = _RECOVERY_COPY[copy_state]
     return PushRecoveryProjection(
         destination,
-        "needs_attention",
-        "Needs attention",
-        (
-            "A query-only check currently cannot prove the candidate at the "
-            f"original destination.{no_push_copy}"
-        ),
-        can_check_again=True,
+        state,
+        title,
+        message,
+        can_check_again,
     )
 
 
@@ -1164,11 +1191,7 @@ def _contains_unsafe_text(value: str) -> bool:
     for character in value:
         codepoint = ord(character)
         category = unicodedata.category(character)
-        if (
-            category in {"Cc", "Cs"}
-            or codepoint in _BIDI_CONTROL_CODEPOINTS
-            or codepoint in {0x2028, 0x2029, 0xFEFF}
-        ):
+        if category in {"Cc", "Cf", "Cs"} or codepoint in {0x2028, 0x2029}:
             return True
     return False
 
