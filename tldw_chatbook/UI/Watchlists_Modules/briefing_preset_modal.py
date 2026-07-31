@@ -36,6 +36,18 @@ with a tooltip explaining why) rather than a degraded modal.
 `voice_profile_id` is recorded on the roster here but otherwise INERT in
 phase 2a: nothing reads it yet. Phase 2b (audio synthesis) is what
 consumes it.
+
+**Write-completion owns its edit state** (review round 1). A Save/Delete's
+`await` (`asyncio.to_thread`, or the confirmation dialog) is a window in
+which nothing else may repoint `_editing_id` at a different preset --
+`_refuse_if_write_in_flight` closes that window at the two places that
+could (`_select_preset_for_edit`, `_start_new_preset`), and
+`_handle_save`/`_handle_delete` additionally verify, AFTER their own
+`await`, that they still own the edit target before mutating it. Both
+exist: the gate is the user-facing fix (a switch mid-write is refused, not
+silently lost), the post-await check is what makes a completion's own
+effect correct even if some future caller reaches `_editing_id` a third
+way this module does not yet anticipate.
 """
 
 from __future__ import annotations
@@ -76,6 +88,10 @@ _VOICE_INERT_COPY = (
     "Recorded, not yet used: audio synthesis (phase 2b) is what will read "
     "this voice profile."
 )
+#: Review round 1 (fix round 1): shown when Add/New-preset/switching the
+#: selected preset is refused because a write is in flight -- see
+#: `_refuse_if_write_in_flight`'s docstring for the race this closes.
+_WRITE_IN_PROGRESS_COPY = "A save or delete is in progress. Try again once it finishes."
 
 
 def _blank_speaker() -> dict[str, Any]:
@@ -367,7 +383,38 @@ class BriefingPresetModal(ModalScreen[bool]):
 
     # --- Preset switching / speaker rows -----------------------------------
 
+    def _refuse_if_write_in_flight(self) -> bool:
+        """Refuse to change WHICH preset is being edited mid-write.
+
+        Review round 1, Important finding: `_handle_save`/`_handle_delete`
+        capture their target id and their field values before their one
+        `await`, but until this gate existed, nothing stopped
+        `_select_preset_for_edit`/`_start_new_preset` from running DURING
+        that `await` and repointing `_editing_id`/`_draft_*`/`_speakers` at
+        a DIFFERENT preset. Concretely: save a brand-new preset ("A")
+        in flight -> switch to an existing preset ("B") while the insert is
+        still running -> the insert resolves and (pre-fix)
+        unconditionally assigns `self._editing_id = new_id` (A's row),
+        while the form still displays B's data (from the switch) -- so the
+        editor now shows B's fields "over" A's id. The user's next Save
+        would silently overwrite A's row with B's content.
+
+        This refuses the switch outright rather than queueing it (the
+        smaller of the brief's two options: no extra state to hold or
+        replay, and the write itself finishes in well under a second on a
+        local SQLite file, so "try again" costs nothing real). The
+        post-await ownership check in `_handle_save`/`_handle_delete` is a
+        second, independent guard for the same invariant -- see their own
+        comments -- so this is belt-and-suspenders, not the only fix.
+        """
+        if not self._write_in_flight:
+            return False
+        self._show_error(_WRITE_IN_PROGRESS_COPY)
+        return True
+
     def _start_new_preset(self) -> None:
+        if self._refuse_if_write_in_flight():
+            return
         self._sync_draft_from_form()
         self._editing_id = None
         self._draft_name = ""
@@ -379,6 +426,8 @@ class BriefingPresetModal(ModalScreen[bool]):
         self.refresh(recompose=True)
 
     def _select_preset_for_edit(self, preset_id: int) -> None:
+        if self._refuse_if_write_in_flight():
+            return
         preset = next(
             (row for row in self._presets if int(row["id"]) == preset_id), None
         )
@@ -454,8 +503,19 @@ class BriefingPresetModal(ModalScreen[bool]):
         style_notes = self._draft_style_notes.strip() or None
         provider = self._draft_provider.strip() or None
         model = self._draft_model.strip() or None
+        # Snapshot WHICH preset this write targets, before the one `await`
+        # below -- `None` means "insert a new row". `_refuse_if_write_in_flight`
+        # already stops `_select_preset_for_edit`/`_start_new_preset` from
+        # repointing `self._editing_id` while this is in flight, but this
+        # completion still verifies it independently (review round 1: "the
+        # post-await completions verify they still own the edit state
+        # before mutating it") rather than trusting that gate alone -- two
+        # call sites enforcing the same invariant is exactly the
+        # belt-and-suspenders shape `_refuse_if_write_in_flight`'s own
+        # docstring names.
+        target_editing_id = self._editing_id
 
-        if self._editing_id is None:
+        if target_editing_id is None:
             new_id = await asyncio.to_thread(
                 self.db.insert_briefing_preset,
                 name,
@@ -464,11 +524,16 @@ class BriefingPresetModal(ModalScreen[bool]):
                 provider=provider,
                 model=model,
             )
-            self._editing_id = int(new_id)
+            # Only claim the new row as the active edit target if nothing
+            # else has claimed a DIFFERENT one in the meantime -- otherwise
+            # the next Save would silently overwrite this brand-new row
+            # with whatever preset is now actually on screen.
+            if self._editing_id == target_editing_id:
+                self._editing_id = int(new_id)
         else:
             await asyncio.to_thread(
                 self.db.update_briefing_preset,
-                self._editing_id,
+                target_editing_id,
                 name=name,
                 roster_json=roster_json,
                 style_notes=style_notes,
@@ -482,6 +547,16 @@ class BriefingPresetModal(ModalScreen[bool]):
     async def _handle_delete(self) -> None:
         if self._editing_id is None:
             return
+        # Snapshotted before the two `await`s below (the confirmation
+        # dialog, then the delete itself) for the same reason `_handle_save`
+        # snapshots `target_editing_id`: the confirmation dialog is itself a
+        # NESTED modal, which already blocks clicks on this modal's own
+        # preset-list buttons for that window, but `_refuse_if_write_in_flight`
+        # (claimed for this whole coroutine's lifetime via `_write_in_flight`)
+        # is what covers the second `await`. This local variable is the
+        # completion's own independent verification, not a re-statement of
+        # that gate.
+        target_editing_id = self._editing_id
         preset_name = self._draft_name.strip() or "this preset"
         confirmed = await self.app.push_screen_wait(
             ConfirmationDialog(
@@ -496,14 +571,19 @@ class BriefingPresetModal(ModalScreen[bool]):
         )
         if not confirmed:
             return
-        await asyncio.to_thread(self.db.delete_briefing_preset, self._editing_id)
+        await asyncio.to_thread(self.db.delete_briefing_preset, target_editing_id)
         self._changed = True
-        self._editing_id = None
-        self._draft_name = ""
-        self._draft_style_notes = ""
-        self._draft_provider = ""
-        self._draft_model = ""
-        self._speakers = [_blank_speaker()]
+        # Only clear the editor back to blank if it is still showing the
+        # preset just deleted -- if something else is now the active edit
+        # target, blanking it here would wipe out an in-progress edit of a
+        # DIFFERENT preset that this delete never touched.
+        if self._editing_id == target_editing_id:
+            self._editing_id = None
+            self._draft_name = ""
+            self._draft_style_notes = ""
+            self._draft_provider = ""
+            self._draft_model = ""
+            self._speakers = [_blank_speaker()]
         self._clear_error()
         await self._load_presets()
 

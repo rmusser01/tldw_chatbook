@@ -22,6 +22,7 @@ and are only real once the bundle is regenerated from them.
 
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -211,6 +212,50 @@ async def test_duplicate_speaker_name_shows_inline_error_and_does_not_persist(
 
 
 @pytest.mark.asyncio
+async def test_inline_error_paints_a_markup_shaped_speaker_name_literally(tmp_path):
+    """Review round 1, Minor 2: probed as safe by the reviewer, now pinned.
+
+    `validate_roster`'s `ScriptCastError` message interpolates the
+    offending speaker's name verbatim. A name that is itself markup-shaped
+    must still paint as literal characters -- proof, not just code-reading,
+    that `_show_error` never reaches `Text.from_markup` or a bare `str`.
+    """
+    db = _db(tmp_path)
+    modal = BriefingPresetModal(db, character_options=[], voice_options=[])
+    markup_name = "has [bold red]markup[/] inside"
+
+    app = _ModalHost()
+    async with app.run_test(size=(160, 42)) as pilot:
+        app.push_screen(modal)
+        assert await _wait_until(pilot, lambda: modal.is_mounted)
+
+        modal.query_one("#bpm-name-input", Input).value = "Markup names"
+        modal.query_one("#bpm-speaker-name-0", Input).value = markup_name
+        await pilot.click("#bpm-add-speaker")
+        await pilot.pause()
+        modal.query_one("#bpm-speaker-name-1", Input).value = markup_name
+
+        await pilot.click("#bpm-save")
+        assert await _wait_until(
+            pilot,
+            lambda: bool(
+                str(modal.query_one("#bpm-error", Static).renderable).strip()
+            ),
+        )
+
+        error_content = modal.query_one("#bpm-error", Static).renderable
+        assert isinstance(error_content, Text)
+        # Literal, unparsed: the exact source string -- brackets included --
+        # appears verbatim. A markup-parsing surface would instead consume
+        # `[bold red]...[/]` as a style span, and the plain text read back
+        # would NOT contain the brackets at all.
+        assert markup_name in str(error_content)
+        assert "duplicate" in str(error_content).lower()
+
+    assert db.list_briefing_presets() == []
+
+
+@pytest.mark.asyncio
 async def test_delete_asks_confirmation_and_hard_deletes(tmp_path):
     db = _db(tmp_path)
     preset_id = db.insert_briefing_preset(
@@ -314,6 +359,47 @@ async def test_editing_preserves_untouched_fields(tmp_path):
     assert row["provider"] == "openai"
     assert row["model"] == "gpt-4o-mini"
     assert load_roster(row["roster_json"]) == original_roster
+
+
+@pytest.mark.asyncio
+async def test_editing_an_existing_preset_and_saving_dismisses_true(tmp_path):
+    """Review round 1, Minor 3: the other half of the dismiss contract.
+
+    `test_close_without_any_change_dismisses_false` already pins "no
+    changes -> False". This pins the mirror case: a session that opens on
+    an EXISTING preset, edits it, saves, and closes must dismiss `True` --
+    editing a row is still "something changed", not only "something
+    created".
+    """
+    db = _db(tmp_path)
+    preset_id = db.insert_briefing_preset(
+        "Old name", roster_json=dump_roster(validate_roster([{"name": "Host"}]))
+    )
+    modal = BriefingPresetModal(db, character_options=[], voice_options=[])
+    results: list[bool] = []
+
+    app = _ModalHost()
+    async with app.run_test(size=(160, 42)) as pilot:
+        app.push_screen(modal, results.append)
+        assert await _wait_until(
+            pilot, lambda: bool(modal.query("#bpm-preset-list Button"))
+        )
+
+        await pilot.click(f"#bpm-preset-btn-{preset_id}")
+        await pilot.pause()
+        modal.query_one("#bpm-name-input", Input).value = "New name"
+
+        await pilot.click("#bpm-save")
+        assert await _wait_until(
+            pilot,
+            lambda: (db.get_briefing_preset(preset_id) or {}).get("name")
+            == "New name",
+        )
+
+        await pilot.click("#bpm-close")
+        assert await _wait_until(pilot, lambda: results != [])
+
+    assert results == [True]
 
 
 # --- Character / voice Selects ----------------------------------------------
@@ -454,6 +540,96 @@ async def test_close_without_any_change_dismisses_false(tmp_path):
         assert await _wait_until(pilot, lambda: results != [])
 
     assert results == [False]
+
+
+# --- Review round 1: write-in-flight race guards ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_switching_the_selected_preset_mid_write_does_not_let_the_next_save_overwrite_it(
+    tmp_path,
+):
+    """Review round 1, Important finding, driven exactly as reported.
+
+    Deterministic control over exactly when the insert's `asyncio.to_thread`
+    call resolves comes from a `threading.Event` the fake write blocks on
+    (the phase-1 controllable-seam pattern, not a sleep/poll race) --
+    `threading.Event`, not `asyncio.Event`, because the fake runs INSIDE
+    the `to_thread` executor thread, and an `asyncio.Event` cannot be
+    waited on safely from a thread other than its owning loop's.
+
+    Sequence, exactly as the review names it: start a brand-new preset
+    ("Preset A") and press Save -- the insert blocks. While it is still in
+    flight, attempt to switch to an existing preset ("Preset B") in the
+    list: this must be REFUSED (the form must still show Preset A's own,
+    unsaved draft) -- not silently succeed and repoint the editor at B
+    while the about-to-be-created row is still in flight. Release the
+    write; let it finish. THEN legitimately switch to Preset B and press
+    Save again ("the user's next Save") -- this must update B with its own
+    content; Preset A's row must survive with ITS OWN content, never
+    silently overwritten by B's.
+    """
+    db = _db(tmp_path)
+    b_id = db.insert_briefing_preset(
+        "Preset B", roster_json=dump_roster(validate_roster([{"name": "Guest"}]))
+    )
+    modal = BriefingPresetModal(db, character_options=[], voice_options=[])
+
+    release_write = threading.Event()
+    real_insert = db.insert_briefing_preset
+
+    def _blocking_insert(*args, **kwargs):
+        assert release_write.wait(timeout=5), "test setup: write never released"
+        return real_insert(*args, **kwargs)
+
+    db.insert_briefing_preset = _blocking_insert
+
+    app = _ModalHost()
+    async with app.run_test(size=(160, 42)) as pilot:
+        app.push_screen(modal)
+        assert await _wait_until(
+            pilot, lambda: bool(modal.query("#bpm-preset-list Button"))
+        )
+
+        # Start a brand-new preset and Save it -- the insert blocks.
+        modal.query_one("#bpm-name-input", Input).value = "Preset A"
+        modal.query_one("#bpm-speaker-name-0", Input).value = "Host A"
+        await pilot.click("#bpm-save")
+        assert await _wait_until(pilot, lambda: modal._write_in_flight)
+
+        # While that write is in flight, attempt to switch to Preset B.
+        await pilot.click(f"#bpm-preset-btn-{b_id}")
+        await pilot.pause()
+
+        # Refused: the form must still show Preset A's own, unsaved draft --
+        # not Preset B's, sitting "over" whatever id the insert is about to
+        # claim (the exact corruption shape the review names).
+        assert modal.query_one("#bpm-name-input", Input).value == "Preset A"
+        assert modal._editing_id is None
+
+        # Let the insert finish.
+        release_write.set()
+        assert await _wait_until(pilot, lambda: not modal._write_in_flight)
+        assert await _wait_until(pilot, lambda: len(db.list_briefing_presets()) == 2)
+
+        # NOW legitimately switch to Preset B (the write is no longer in
+        # flight, so this is allowed) and Save again -- "the user's next
+        # Save".
+        await pilot.click(f"#bpm-preset-btn-{b_id}")
+        await pilot.pause()
+        assert modal.query_one("#bpm-name-input", Input).value == "Preset B"
+        await pilot.click("#bpm-save")
+        assert await _wait_until(pilot, lambda: not modal._write_in_flight)
+
+    rows = {row["name"]: row for row in db.list_briefing_presets()}
+    assert set(rows) == {"Preset A", "Preset B"}, (
+        "Preset A must survive as its own row -- not get clobbered by "
+        "Preset B's content, and not vanish"
+    )
+    assert rows["Preset A"]["id"] != b_id
+    assert load_roster(rows["Preset A"]["roster_json"])[0]["name"] == "Host A"
+    assert rows["Preset B"]["id"] == b_id
+    assert load_roster(rows["Preset B"]["roster_json"])[0]["name"] == "Guest"
 
 
 # --- Geometry (real generated CSS, per the three-way-vacuity lesson) -------
