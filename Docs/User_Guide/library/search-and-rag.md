@@ -36,10 +36,6 @@ Top to bottom on the main canvas:
 - **"Evidence · top 5 per source"** — the result rows (anatomy below).
 - **"Recent searches"** — a collapsible fold of your recent queries.
 
-The right pane is the **"Retrieval Inspector"**, with **Retrieval Status**,
-**Console Handoff**, **Selected Evidence**, **Recovery**, and **Future
-Attribution** blocks — covered below.
-
 ## Features & controls
 
 ### Running a query
@@ -101,36 +97,13 @@ across restarts. "Select an entry to run it again." — each entry re-runs
 that exact query; **"Clear history"** empties the list. The fold closes
 itself when results land and opens itself when a search comes back empty.
 
-### The Retrieval Inspector
-
-The right pane narrates where retrieval stands so you never have to guess:
-
-- **Retrieval Status** — "Status: Ready / Searching / Empty / Blocked /
-  Failed" plus a next-action line, e.g. "Review cited evidence or send the
-  selected result to Console." or "Revise the query or broaden the source
-  scope."
-- **Console Handoff** — "Use in Console: ready" or "Use in Console:
-  blocked", a Why/Next line for each, and its own **Use in Console**
-  button. While disabled, the button's tooltip reads "Run a query and
-  select usable evidence before sending to Console."
-- **Selected Evidence** — a detail block for the selected row: snippet,
-  citations ("No citation labels provided." when there are none),
-  source/chunk identity, authority and workspace eligibility, and
-  "Allowed: inspect snippet, review citations, use eligible evidence in
-  Console".
-- **Recovery** — the current way forward, e.g. "Recovery: choose a
-  different evidence row, revise the query, or send to Console."
-- **Future Attribution** — a placeholder that is honest about downstream
-  work: "Blocked: answer generation and artifact citation persistence
-  remain downstream work". Citations do not yet carry through into
-  generated answers or saved artifacts.
-
 ### Sending evidence to Console
 
-With an eligible row selected, either **Use in Console** button — or the
-`u` key — opens Console with the evidence staged as live work labeled
-**"Review evidence in Console"**; the snippet, citations, and source
-identity travel with it. See [Console: Context &
+Press **Select evidence** on the best row (it relabels to **"Selected
+evidence"**), then press the row's inline **Use in Console** button — or
+the `u` key — and Console opens with the evidence staged as live work
+labeled **"Review evidence in Console"**; the snippet, citations, and
+source identity travel with it. See [Console: Context &
 RAG](../console/context-and-rag.md) for the staged-sources side.
 
 ### Not the same screen as "Search"
@@ -169,8 +142,8 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 
 ## Related settings & docs
 
-- **Settings ▸ Library RAG defaults** — search mode, citation style,
-  chunking, top-k, and embedding-model defaults for RAG retrieval.
+- **Settings ▸ RAG** — search mode, citation style, chunking, top-k, and
+  embedding-model defaults for RAG retrieval.
 - `config.toml`:
   - `[library.search]` → `history` — the persisted "Recent searches" list.
   - `[rag]` (with `[rag.retriever]`, `[rag.chroma]`, …) — retrieval and
@@ -188,7 +161,7 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 ## Quirks & troubleshooting
 
 - **"top 5 per source" is fixed here.** The tunable top-k in Settings ▸
-  Library RAG defaults does not change this canvas.
+  RAG does not change this canvas.
 - **The scope summary line never changes.** "Scope: all local sources" is a
   fixed label — the ✓/○ toggles are the real record of what's in scope.
 - **Workspaces and Collections can't be searched yet.** They exist as
@@ -199,9 +172,9 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
   always works.
 - **`u` works only on this row.** Elsewhere in Library the key does
   nothing, and the footer hint disappears.
-- **Citations don't flow into generated answers yet.** The inspector's
-  Future Attribution block says so verbatim: "Blocked: answer generation
-  and artifact citation persistence remain downstream work".
+- **Citations don't flow into generated answers yet.** Evidence carries
+  its citation labels into the Console handoff, but answer generation and
+  saved-artifact citation persistence are still downstream work.
 - **A hit's conversation may vanish between searching and opening** — if it
   was deleted since the search, **Open** notifies "Conversation is
   unavailable."

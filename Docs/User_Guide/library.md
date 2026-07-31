@@ -23,11 +23,13 @@ pages:
 
 - Press **Ctrl+3** from anywhere, or click **Library** in the nav bar.
 - **Ctrl+P** → "Switch to Library" in the command palette.
-- Old destination names still work: typing **notes**, **prompts**,
-  **skills**, **ingest**, **research**, **media**, **search**, **study**,
-  **writing**, or **conversation** into the palette routes to Library —
-  those former screens now live inside it. The palette also offers
-  "Library — Skills", which lands directly on the Skills row.
+- Old destination names still find it: the five retired screens —
+  **notes**, **prompts**, **skills**, **ingest**, and **research** — now
+  live inside Library, and typing any of them into the palette routes
+  here. (Typing **media**, **search**, or **study** also surfaces the
+  Library command, but those three still exist as their own screens with
+  their own palette entries.) The palette also offers "Library — Skills",
+  which lands directly on the Skills row.
 
 ## Layout tour
 
@@ -38,8 +40,9 @@ pages:
 - **Left rail**, top to bottom:
   - the **Ingest content…** button ("Open the ingest canvas to add
     Library content.");
-  - the **Search Library…** box — submitting it always lands on the
-    Search / RAG canvas and runs your query;
+  - the **Search Library…** box — submitting it lands on the
+    Search / RAG canvas and runs your query (an empty submit just opens
+    the canvas);
   - three sections — **Browse** (Media, Conversations, Notes, Prompts,
     Skills, Collections, Search / RAG), **Create** (New note, New prompt,
     New skill, Study decks, Flashcards, Quizzes), and **Import / Export**
@@ -66,7 +69,7 @@ File Notes workspace — see [File Notes](library/file-notes.md).
 | Control | What it does |
 |---|---|
 | **Ingest content…** | Opens the Import media canvas — see [Import & export](library/import-and-export.md). |
-| **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it — see [Search & RAG](library/search-and-rag.md). |
+| **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). |
 | **▾** / **▸** (section headers) | Open or collapse that rail section. |
 
 ### Browse rows
@@ -162,7 +165,8 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | u | Use Library context in Console — only while the Search / RAG row is selected (the footer hint appears only there) |
 
 Escape and Ctrl+S are bound only inside the skill editor (back to list /
-save) — see [Skills](library/skills.md).
+save) — see [Skills](library/skills.md). Esc is also live inside the File
+Notes surface's panels and dialogs — see [File Notes](library/file-notes.md).
 
 ## Related settings & docs
 
