@@ -54,7 +54,7 @@ from ...DB.Evals_DB import EvalsDB
 from ...Evals.word_bench.capture_client import WordBenchCaptureClient
 from ...Evals.word_bench.models import BenchConfig, Snippet, Target
 from ...Evals.word_bench.runner import CancelToken, CaptureClientLike, ProgressFn, WordBenchRunner
-from ...Evals.word_bench.storage import load_bench, save_bench
+from ...Evals.word_bench.storage import _unique_name, load_bench, save_bench
 from .evals_state import EvalsViewModel
 from .snippet_editor import dataset_snippets, import_snippets_into_dataset
 
@@ -70,7 +70,8 @@ SAMPLE_SNIPPETS: tuple[tuple[str, str], ...] = (
 )
 
 #: Base names for the created rows. A short id suffix is appended at
-#: creation time (see ``_unique_name``) -- both ``eval_tasks.name`` and
+#: creation time (see ``storage._unique_name``, imported above -- the
+#: engine layer owns it now, task-1482) -- both ``eval_tasks.name`` and
 #: ``eval_datasets.name`` are UNIQUE with no ``deleted_at`` exemption
 #: (``Evals_DB.py``'s schema), so a bare literal here would raise a
 #: sqlite3 UNIQUE-constraint error on a second click after the first
@@ -80,14 +81,17 @@ SAMPLE_BENCH_NAME = "loaded-nouns (sample)"
 SAMPLE_DATASET_NAME = "loaded-nouns (sample)"
 SAMPLE_TARGET_NAME = "Sample target (llama.cpp)"
 
+#: task-1482 Task 6: the base name for a row created via bench_editor.py's
+#: "Create target" button (an authored bench's own target, never part of
+#: the one-click sample flow above) -- passed as `resolve_sample_target`'s
+#: `name` override so that flow's row does not read as though it came from
+#: SAMPLE_TARGET_NAME's unrelated demo.
+BENCH_EDITOR_TARGET_NAME = "llama.cpp target"
+
 #: The word bench's own preflight canary already answers "is this endpoint
 #: reachable and sane" honestly, post-creation -- this K is a modest default
 #: for a 4-row demo grid, not a claim about the target's capability.
 SAMPLE_TOP_K = 20
-
-
-def _unique_name(base: str) -> str:
-    return f"{base} {uuid.uuid4().hex[:8]}"
 
 
 def _llama_cpp_settings(app_config: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
@@ -215,6 +219,7 @@ def resolve_sample_target(
     app_config: Optional[Mapping[str, Any]],
     *,
     create: bool = False,
+    name: str = SAMPLE_TARGET_NAME,
 ) -> Optional[dict[str, Any]]:
     """The ``eval_models`` row the sample bench will target, or ``None``.
 
@@ -238,6 +243,16 @@ def resolve_sample_target(
             genuinely needs a row to point a run at -- passes ``True``.
             Ask ``provider_is_configured`` whether a row WOULD be
             resolvable; it answers without writing.
+        name: The base name for a newly CREATED row (irrelevant when an
+            existing row is reused instead -- see above). Defaults to
+            ``SAMPLE_TARGET_NAME``, the one-click sample bench's own
+            wording; ``bench_editor.py``'s Task 6 "Create target" button
+            (via ``evals_screen.py``, this module's other caller of the
+            ``create=True`` path) passes ``BENCH_EDITOR_TARGET_NAME``
+            instead, so a target created from an authored bench does not
+            read as though it came from the unrelated one-click flow.
+            Always passed through ``storage._unique_name`` before the
+            write, exactly like the default.
 
     Returns:
         The resolved ``eval_models`` row (a real, DB-backed dict), or
@@ -264,7 +279,7 @@ def resolve_sample_target(
     # model that exists.
     model_id = _configured_llama_cpp_model_id(app_config) or "default"
     new_id = db.create_model(
-        name=_unique_name(SAMPLE_TARGET_NAME), provider="llama_cpp", model_id=model_id
+        name=_unique_name(name), provider="llama_cpp", model_id=model_id
     )
     return db.get_model(new_id)
 
@@ -599,9 +614,11 @@ async def run_existing_bench(
 
     Raises:
         RuntimeError: If the evaluation service is unavailable, ``task_id``
-            does not name an existing, readable bench, any of its targets
-            no longer resolve to a live ``eval_models`` row, or its dataset
-            is missing or has no snippets.
+            does not name an existing, readable bench, the bench has no
+            targets configured (task-1482: a draft bench created via the
+            rail's "+ New bench" starts with ``target_ids=()``), any of
+            its targets no longer resolve to a live ``eval_models`` row,
+            or its dataset is missing or has no snippets.
         asyncio.CancelledError: If this coroutine itself is hard-cancelled
             (e.g. by Textual's ``exclusive=True`` worker mechanism) while
             ``runner.run`` is in flight. Re-raised after marking any
@@ -625,6 +642,20 @@ async def run_existing_bench(
         # bench_editor.py's own broad `except Exception` around this same
         # call.
         raise RuntimeError(f"Bench {task_id!r} could not be read: {exc}") from exc
+
+    if not config.target_ids:
+        # task-1482 fix round 1: a draft bench created via the rail's
+        # "+ New bench" (no targets wired on until the bench editor's
+        # Task 6) must never reach `runner.run` with an empty target list
+        # -- `create_run_group` loops over `targets`, so zero targets
+        # silently produces a run group with ZERO `eval_runs` rows, which
+        # then reads back as "this run could not be found" the moment
+        # anything tries to select it. `_primary_action_state` already
+        # blocks the button for this exact case, but this is the engine
+        # seam itself: belt-and-suspenders for any other caller (a future
+        # CLI/API entry point, a test driving this function directly)
+        # that does not go through the UI gate.
+        raise RuntimeError(f"Bench {config.name!r} has no targets to run.")
 
     targets = _resolve_targets(db, config)
     snippets = _load_snippets(db, config.dataset_id)

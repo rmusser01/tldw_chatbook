@@ -21,15 +21,22 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from rich.markup import escape as escape_markup
 from textual.app import App
+from textual.widgets import Button, Input, Select, TextArea
 
 import tldw_chatbook
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.word_bench.models import BenchConfig, PreflightResult, Snippet, Target
-from tldw_chatbook.Evals.word_bench.storage import BENCH_TYPE, create_run_group, save_bench
+from tldw_chatbook.Evals.word_bench.storage import (
+    BENCH_TYPE,
+    create_run_group,
+    load_bench,
+    save_bench,
+)
 from tldw_chatbook.UI.Evals import bench_editor as bench_editor_module
 from tldw_chatbook.UI.Evals import inspector as inspector_module
-from tldw_chatbook.UI.Evals.bench_editor import CLASSIC_TASK_DEFERRAL_SENTENCE
+from tldw_chatbook.UI.Evals.bench_editor import CLASSIC_TASK_DEFERRAL_SENTENCE, TOP_K_ERROR_TEXT
 from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook.UI.Evals.inspector import EvalsInspector
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen, EvalsSelection
@@ -45,9 +52,14 @@ class _FakeOrchestrator:
 
 
 class _FakeAppInstance:
-    def __init__(self, db: EvalsDB) -> None:
+    def __init__(self, db: EvalsDB, app_config: dict | None = None) -> None:
         self.evaluation_orchestrator = _FakeOrchestrator(db)
         self.notifications: list[tuple[str, str]] = []
+        #: Read by EvalsScreen._current_app_config for the Task 6
+        #: zero-models "Create target" flow (sample_bench.
+        #: resolve_sample_target's own configured-endpoint gate) --
+        #: mirrors test_evals_screen.py's own _FakeAppInstance.
+        self.app_config: dict = app_config or {}
 
     def notify(self, message: str, *, severity: str = "information", **kwargs) -> None:
         self.notifications.append((message, severity))
@@ -72,6 +84,17 @@ def evals_db() -> EvalsDB:
 @pytest.fixture
 def evals_app(evals_db: EvalsDB) -> EvalsHarness:
     return EvalsHarness(_FakeAppInstance(evals_db))
+
+
+@pytest.fixture
+def evals_app_configured(evals_db: EvalsDB) -> EvalsHarness:
+    """Mirrors ``test_evals_screen.py``'s own ``sample_bench_app``: a
+    configured llama.cpp endpoint, used by the Task 6 zero-models
+    "Create target" flow, which needs a real configured endpoint for
+    ``sample_bench.resolve_sample_target(..., create=True)`` to mint a row
+    from."""
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
+    return EvalsHarness(_FakeAppInstance(evals_db, app_config=app_config))
 
 
 def _make_model(db: EvalsDB, name: str, *, provider: str = "llama_cpp", model_id: str = "m") -> str:
@@ -121,6 +144,45 @@ def bench_with_mixed_readiness(evals_db: EvalsDB) -> tuple[str, dict[str, str]]:
     }
     create_run_group(evals_db, task_id, config, targets, snippets, preflight=preflight)
     return task_id, {"ready": ready_id, "warned": warned_id, "blocked": blocked_id}
+
+
+@pytest.fixture
+def bench_with_markup_hazard_text(evals_db: EvalsDB) -> str:
+    """task-1482 Task 1: every user-authored string ``BenchEditor`` renders
+    as a plain ``Static`` -- name, description, dataset name, and a probe
+    -- carries a bare ``[/]``, the same Rich/Textual markup hazard
+    task-1476/TASK-1480 already fixed for the rail's own toast text and
+    run-row labels (see ``library_rail.py``'s ``_run_group_row_label``).
+    ``Static`` parses its argument as markup by default
+    (``visualize()``'s own ``markup=True`` default, via ``Content.from_
+    markup``), and that parsing happens lazily on first render/layout --
+    not merely inside ``compose()`` -- so an unescaped hazard string
+    crashes the WHOLE app the instant this bench is selected and laid
+    out, confirmed directly against Textual (a bare-bracket ``Static``
+    raises ``MarkupError`` out of the compositor's reflow during
+    ``pilot.pause()``, not out of ``compose()`` itself).
+
+    Bench/dataset names are machine-generated TODAY -- this hardens the
+    rendering path ahead of the bench-authoring program that makes them
+    user-typed.
+    """
+    target_id = _make_model(evals_db, "hazard-target")
+    dataset_id = evals_db.create_dataset(
+        name="dataset[/]name",
+        format="custom",
+        source_path="inline:dataset-hazard",
+        metadata={"sample_count": 4},
+    )
+    config = BenchConfig(
+        name="bench[/]name",
+        description="description[/]text",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(target_id,),
+        probes=("probe[/]text",),
+    )
+    return save_bench(evals_db, config)
 
 
 #: `bench_with_mixed_readiness` builds `config.target_ids` in exactly this
@@ -237,6 +299,30 @@ def classic_task_with_runs(evals_db: EvalsDB) -> str:
     return task_id
 
 
+@pytest.fixture
+def classic_task_with_markup_hazard_name(evals_db: EvalsDB) -> str:
+    """task-1482 Task 1 fix round 1: ``ClassicTaskDetail.compose()``'s own
+    heading Static (``#evals-detail-classic-name``) was missed by the
+    original sweep -- it renders ``task.get("name")`` with no
+    ``markup=False``, unlike the run rows and deferral sentence a few
+    lines below it in the same method (both already protected). A classic
+    task's name is exactly as user-authored as a word bench's (see
+    ``_classic_row_label`` in ``library_rail.py``, fixed in the same
+    original commit) -- this fixture carries the identical `[/]` hazard
+    into the detail pane instead of the rail row.
+    """
+    dataset_id = evals_db.create_dataset(
+        name="hazard-500", format="custom", source_path="inline:hazard-500"
+    )
+    return evals_db.create_task(
+        name="classic[/]name",
+        task_type="question_answer",
+        config_format="custom",
+        config_data={},
+        dataset_id=dataset_id,
+    )
+
+
 def _target_status_text(screen, index: int) -> str:
     """Looks up an inspector target row by INDEX, not target id -- widget
     ids in ``inspector.py`` are index-derived (see its fix for the same
@@ -252,43 +338,136 @@ def _target_status_text(screen, index: int) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: A realistic detail-pane size -- matches test_evals_results_grid.py's own
+#: standard (160x45), used everywhere in this file a painted-geometry
+#: assertion needs a size closer to a real terminal than pytest-textual's
+#: small default.
+_REALISTIC_SIZE = (160, 45)
+
+
 @pytest.mark.asyncio
 async def test_bench_detail_pane_shows_metadata_and_target_table(
     evals_app, bench_with_mixed_readiness
 ):
+    """Task 5: every editable field starts pre-filled from the loaded
+    ``BenchConfig`` -- the read/write round-trip's read half. Save/Revert
+    and every field, including the target table below them, must actually
+    paint inside the detail pane at a realistic size, not merely exist in
+    the DOM (see evals_screen.py's own module docstring on the hub's
+    original zero-size-region defect)."""
     task_id, target_ids = bench_with_mixed_readiness
-    async with evals_app.run_test() as pilot:
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
         await pilot.pause()
         evals_app.screen.select(kind="bench", id=task_id)
         await pilot.pause()
         screen = evals_app.screen
 
-        name = screen.query_one("#evals-detail-bench-name")
-        assert "loaded-nouns v1" in str(name.renderable)
+        name = screen.query_one("#evals-bench-name", Input)
+        assert name.value == "loaded-nouns v1"
+
+        description = screen.query_one("#evals-bench-description", Input)
+        assert description.value == ""
 
         dataset_line = screen.query_one("#evals-detail-bench-dataset")
         assert "loaded-nouns" in str(dataset_line.renderable)
+        # Dataset is read-only permanently (task-1482's own recorded spec
+        # deviation) -- the tooltip is the only place that is stated, since
+        # there is no edit control at all to disable instead.
+        assert "cannot be changed" in str(dataset_line.tooltip)
 
-        mode_line = screen.query_one("#evals-detail-bench-prompt-mode")
-        assert "raw" in str(mode_line.renderable)
+        mode_select = screen.query_one("#evals-bench-prompt-mode", Select)
+        assert mode_select.value == "raw"
 
-        top_k_line = screen.query_one("#evals-detail-bench-top-k")
-        assert "20" in str(top_k_line.renderable)
+        top_k_input = screen.query_one("#evals-bench-top-k", Input)
+        assert top_k_input.value == "20"
 
-        probes_line = screen.query_one("#evals-detail-bench-probes")
-        assert "Sure" in str(probes_line.renderable)
+        probes_area = screen.query_one("#evals-bench-probes", TextArea)
+        # bench_with_mixed_readiness's own probes=(" Sure", " I") -- one
+        # probe per line, whitespace preserved exactly (see the module
+        # docstring's own whitespace-is-the-instrument rationale).
+        assert probes_area.text == " Sure\n I"
+
+        save_button = screen.query_one("#evals-bench-save")
+        revert_button = screen.query_one("#evals-bench-revert")
 
         # Region, not just query_one success -- a widget can be present in
         # the DOM and occupy zero space (see evals_screen.py's own module
         # docstring on the hub's original defect).
-        for metadata_widget in (name, dataset_line, mode_line, top_k_line, probes_line):
-            assert metadata_widget.region.width > 0
-            assert metadata_widget.region.height > 0
+        for field_widget in (
+            name,
+            description,
+            dataset_line,
+            mode_select,
+            top_k_input,
+            probes_area,
+            save_button,
+            revert_button,
+        ):
+            assert field_widget.region.width > 0, field_widget
+            assert field_widget.region.height > 0, field_widget
 
         for index in range(len(target_ids)):
             row = screen.query_one(f"#evals-bench-target-{index}")
             assert row.region.width > 0
             assert row.region.height > 0
+
+
+@pytest.mark.asyncio
+async def test_probe_preview_renders_leading_space_markers(
+    evals_app, bench_with_mixed_readiness
+):
+    """The read-only probe preview (above the editable TextArea) reuses
+    snippet_editor's whitespace-marker convention: a probe's leading space
+    is exactly as semantically loaded as a snippet's (see the module
+    docstring), so it gets the identical visible ␣ treatment."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        first = screen.query_one("#evals-bench-probe-preview-0")
+        assert first.renderable.plain == "␣Sure"
+        assert first.region.width > 0
+        assert first.region.height > 0
+
+        second = screen.query_one("#evals-bench-probe-preview-1")
+        assert second.renderable.plain == "␣I"
+
+
+@pytest.mark.asyncio
+async def test_bench_editor_fields_render_a_markup_hazard_literally(
+    evals_app, bench_with_markup_hazard_text
+):
+    """task-1482 Task 1's original hazard sweep, updated for Task 5's field
+    types. ``Input``/``TextArea`` never parse Rich markup at all (unlike a
+    ``Static``, whose lazily-computed ``Content`` -- ``.visual`` -- raised
+    ``MarkupError`` on a bare ``[/]`` at layout time before this task), so
+    the crash risk for name/description/probe is gone; this instead proves
+    the hazardous text round-trips into those widgets byte-for-byte rather
+    than being silently dropped or mangled. The dataset name stays a
+    ``Static`` (read-only, permanently -- see the module docstring) and
+    keeps the original crash-must-not-happen assertion.
+    """
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=bench_with_markup_hazard_text)
+        await pilot.pause()
+        assert pilot.app.is_running, "an unescaped hazard string crashed the app"
+        screen = evals_app.screen
+
+        name = screen.query_one("#evals-bench-name", Input)
+        assert name.value == "bench[/]name"
+
+        description = screen.query_one("#evals-bench-description", Input)
+        assert description.value == "description[/]text"
+
+        probes_area = screen.query_one("#evals-bench-probes", TextArea)
+        assert probes_area.text == "probe[/]text"
+
+        dataset_line = screen.query_one("#evals-detail-bench-dataset")
+        assert "dataset[/]name" in dataset_line.visual.plain
 
 
 # ---------------------------------------------------------------------------
@@ -607,6 +786,28 @@ async def test_classic_task_detail_shows_run_history_and_deferral_sentence(
 
 
 @pytest.mark.asyncio
+async def test_classic_task_detail_heading_renders_a_markup_hazard_name_literally(
+    evals_app, classic_task_with_markup_hazard_name
+):
+    """task-1482 Task 1 fix round 1. Selecting a classic task named with a
+    bare `[/]` must not crash the app (the same lazy-parse-at-layout hazard
+    ``test_bench_editor_statics_render_a_markup_hazard_literally`` pins for
+    ``BenchEditor`` -- see that test's own docstring for why the crash
+    surfaces at layout, not ``compose()``), and the heading Static's
+    parsed plain text must round-trip the raw, unmangled name.
+    """
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="classic", id=classic_task_with_markup_hazard_name)
+        await pilot.pause()
+        assert pilot.app.is_running, "an unescaped hazard name crashed the app"
+        screen = evals_app.screen
+
+        name = screen.query_one("#evals-detail-classic-name")
+        assert name.visual.plain == "classic[/]name"
+
+
+@pytest.mark.asyncio
 async def test_classic_task_subgroup_is_reachable_by_clicking_its_rail_row(
     evals_app, classic_task_with_runs
 ):
@@ -771,3 +972,679 @@ async def test_bench_with_duplicate_target_id_composes_without_raising(
         assert screen.query_one("#evals-bench-target-1")
         assert screen.query_one("#evals-inspector-target-0")
         assert screen.query_one("#evals-inspector-target-1")
+
+
+# ---------------------------------------------------------------------------
+# Task 5 (task-1482): BenchEditor becomes a form -- Save/Revert
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_save_persists_every_field_and_reselects_the_bench(
+    evals_app, evals_db, bench_with_mixed_readiness
+):
+    """The write half of the field round-trip: every editable field, typed
+    into and saved, lands in storage exactly as typed, `target_ids` pass
+    through untouched (Task 5 does not edit targets), and a successful
+    Save posts `Saved` -> the screen re-selects the same bench, recomposing
+    the form from what was actually persisted."""
+    task_id, target_ids = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        screen.query_one("#evals-bench-name", Input).value = "loaded-nouns v2"
+        screen.query_one("#evals-bench-description", Input).value = "a new description"
+        screen.query_one("#evals-bench-prompt-mode", Select).value = "chat"
+        screen.query_one("#evals-bench-top-k", Input).value = "5"
+        screen.query_one("#evals-bench-probes", TextArea).text = " Sure\n No way"
+
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        # No error callout on a successful save. Scoped to the form's own
+        # error Static, not a screen-wide `.ds-recovery-callout` query --
+        # `bench_with_mixed_readiness`'s warned target legitimately renders
+        # its OWN `.ds-recovery-callout` in the readiness inspector,
+        # unrelated to this form's Save outcome.
+        assert not screen.query_one("#evals-bench-form-error").display
+
+        saved = load_bench(evals_db, task_id)
+        assert saved.name == "loaded-nouns v2"
+        assert saved.description == "a new description"
+        assert saved.prompt_mode == "chat"
+        assert saved.top_k == 5
+        # Byte-exact round-trip, including the leading space on " Sure".
+        assert saved.probes == (" Sure", " No way")
+        assert set(saved.target_ids) == set(target_ids.values())
+
+        assert screen._selection.kind == "bench"
+        assert screen._selection.id == task_id
+        assert screen.query_one("#evals-bench-name", Input).value == "loaded-nouns v2"
+        assert screen.query_one("#evals-bench-prompt-mode", Select).value == "chat"
+        assert screen.query_one("#evals-bench-probes", TextArea).text == " Sure\n No way"
+
+
+@pytest.mark.asyncio
+async def test_trailing_newline_after_the_last_probe_does_not_persist_an_empty_probe(
+    evals_app, evals_db, bench_with_mixed_readiness
+):
+    """Fix round 1 (reviewer Important, bench_editor.py:362): a user who
+    presses Enter after typing the last probe leaves a genuine zero-length
+    line in `TextArea.text` -- `BenchConfig` accepts an empty-string probe
+    happily, and `analysis.resolve_probe` would then carry a meaningless
+    probe column all the way through a run. Only the trailing empty line
+    must be dropped; the two real probes must still round-trip byte-exact."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        screen.query_one("#evals-bench-probes", TextArea).text = " Sure\n No way\n"
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        assert not screen.query_one("#evals-bench-form-error").display
+        saved = load_bench(evals_db, task_id)
+        assert saved.probes == (" Sure", " No way")
+        assert "" not in saved.probes
+
+
+@pytest.mark.asyncio
+async def test_empty_probes_textarea_saves_zero_probes(
+    evals_app, evals_db, bench_with_mixed_readiness
+):
+    """An entirely empty TextArea means zero probes, not one empty-string
+    probe."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        screen.query_one("#evals-bench-probes", TextArea).text = ""
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        assert not screen.query_one("#evals-bench-form-error").display
+        saved = load_bench(evals_db, task_id)
+        assert saved.probes == ()
+
+
+@pytest.mark.asyncio
+async def test_whitespace_only_probe_line_is_kept_byte_exact(
+    evals_app, evals_db, bench_with_mixed_readiness
+):
+    """A lone space is a legitimate exact token, not an empty one --
+    "whitespace preserved exactly" is a claim about a token's CONTENT, and
+    only a genuinely ZERO-LENGTH line is dropped (see the trailing-newline
+    test above), never a whitespace-only one.
+
+    Mutation check (pinned by the controller): changing this handler's
+    filter to also drop whitespace-only lines (e.g. `if line.strip()`
+    instead of `if line != ""`) makes this exact test fail -- confirmed by
+    hand, then reverted; see task-5-report.md's "Fix round 1" section."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        screen.query_one("#evals-bench-probes", TextArea).text = " Sure\n \n No way"
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        assert not screen.query_one("#evals-bench-form-error").display
+        saved = load_bench(evals_db, task_id)
+        assert saved.probes == (" Sure", " ", " No way")
+
+
+@pytest.mark.asyncio
+async def test_top_k_parse_failure_renders_the_pinned_callout_and_keeps_typed_state(
+    evals_app, bench_with_mixed_readiness
+):
+    """Pinned exact error text, and the "no recompose on failure" contract:
+    every OTHER field's unsaved edit survives a failed Save untouched, and
+    the field widgets are the literal same instances -- proof this is an
+    in-place callout update, not a rebuild from the last-saved config."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        name_input = screen.query_one("#evals-bench-name", Input)
+        name_input.value = "renamed-but-not-saved"
+        screen.query_one("#evals-bench-top-k", Input).value = "abc"
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        callout = screen.query_one("#evals-bench-form-error")
+        assert callout.display
+        assert "ds-recovery-callout" in callout.classes
+        assert str(callout.renderable) == TOP_K_ERROR_TEXT
+
+        assert screen.query_one("#evals-bench-name", Input) is name_input
+        assert name_input.value == "renamed-but-not-saved"
+
+
+@pytest.mark.asyncio
+async def test_blank_name_save_failure_renders_the_db_rejection_callout(
+    evals_app, bench_with_mixed_readiness
+):
+    """A whitespace-only name passes `BenchConfig`'s own construction (it
+    has no name check) but is rejected inside `save_bench` -> `Evals_DB.
+    update_task` -> `_clean_task_name`, which raises `InputError` -- a
+    `ValueError` subclass this handler's `except ValueError` branch must
+    catch."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        screen.query_one("#evals-bench-name", Input).value = "   "
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        callout = screen.query_one("#evals-bench-form-error")
+        assert callout.display
+        assert "cannot be empty" in str(callout.renderable)
+
+
+@pytest.mark.asyncio
+async def test_renaming_to_a_taken_name_renders_the_conflict_callout(
+    evals_app, evals_db, bench_with_mixed_readiness
+):
+    """Mutation check (Step 4 of the task-5 brief): dropping the
+    `ConflictError` half of `_on_save_pressed`'s `except (ValueError,
+    ConflictError)` clause makes this test fail -- `Evals_DB.update_task`
+    raises `ConflictError` (an `EvalsDBError`, NOT a `ValueError`) for a
+    `eval_tasks.name` UNIQUE collision, so a bare `except ValueError` would
+    let it propagate uncaught out of this handler instead of rendering the
+    callout asserted below."""
+    task_id, _ = bench_with_mixed_readiness
+    other_dataset_id = evals_db.create_dataset(
+        name="other-dataset", format="custom", source_path="inline:other-dataset"
+    )
+    save_bench(
+        evals_db,
+        BenchConfig(
+            name="taken-name",
+            prompt_mode="raw",
+            top_k=5,
+            dataset_id=other_dataset_id,
+            target_ids=(),
+        ),
+    )
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        screen.query_one("#evals-bench-name", Input).value = "taken-name"
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        callout = screen.query_one("#evals-bench-form-error")
+        assert callout.display
+        assert "already exists" in str(callout.renderable)
+
+        # No recompose on failure: the Input still shows what was typed.
+        assert screen.query_one("#evals-bench-name", Input).value == "taken-name"
+
+
+@pytest.mark.asyncio
+async def test_saving_a_bench_deleted_elsewhere_renders_an_error_not_a_false_success(
+    evals_app, evals_db, bench_with_mixed_readiness
+):
+    """PR #1138 review (Bug, accepted): the bench was deleted -- e.g. by a
+    second app instance -- between this editor loading it and Save being
+    pressed. `save_bench`'s update branch now raises `RuntimeError` when
+    `update_task` matched no row (see storage.py's own fix). This asserts
+    the Save handler catches it, renders the exact message in the form
+    callout, posts NO `Saved` message (no false "success"), and leaves the
+    form's own state -- the typed, unsaved value -- untouched, exactly
+    like every other Save failure path (no recompose)."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        name_input = screen.query_one("#evals-bench-name", Input)
+        name_input.value = "renamed-but-bench-is-gone"
+
+        # Simulates a second app instance deleting the bench in the window
+        # between this editor loading it and Save being pressed.
+        evals_db.delete_task(task_id)
+
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        callout = screen.query_one("#evals-bench-form-error")
+        assert callout.display
+        assert str(callout.renderable) == (
+            "This bench no longer exists; it may have been deleted elsewhere."
+        )
+
+        # No recompose: the SAME Input instance, still carrying the typed
+        # (unsaved) value -- proves this was an in-place callout update,
+        # not a rebuild from a (now-nonexistent) reload.
+        assert screen.query_one("#evals-bench-name", Input) is name_input
+        assert name_input.value == "renamed-but-bench-is-gone"
+
+        # No Saved-adjacent side effect: the selection is untouched (no
+        # `select()` call was ever triggered off a `Saved` message the
+        # handler must not have posted).
+        assert screen._selection.kind == "bench"
+        assert screen._selection.id == task_id
+
+
+@pytest.mark.asyncio
+async def test_prompt_mode_switch_revalidates_targets_and_names_the_offending_target(
+    evals_app, bench_with_mixed_readiness, monkeypatch
+):
+    """The prompt-mode/target revalidation seam: unreachable through a real
+    db-backed target today (no `eval_models` column stores `prefix`/
+    `system_prompt`, see `_resolve_bench_targets`'s own docstring), so this
+    monkeypatches that resolution function directly with a hand-built
+    `Target` carrying a `prefix` -- invalid the instant the mode switches
+    to "chat" (`Target.is_valid_for_mode`: chat requires `prefix is
+    None`)."""
+    task_id, target_ids = bench_with_mixed_readiness
+
+    def _fake_resolve_bench_targets(db, ids):
+        return [
+            Target(
+                id=target_ids["ready"],
+                name="ready-target",
+                provider="llama_cpp",
+                model_id="m",
+                prefix="Continue the story:",
+            )
+        ]
+
+    monkeypatch.setattr(
+        bench_editor_module, "_resolve_bench_targets", _fake_resolve_bench_targets
+    )
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        screen.query_one("#evals-bench-prompt-mode", Select).value = "chat"
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        callout = screen.query_one("#evals-bench-form-error")
+        assert callout.display
+        text = str(callout.renderable)
+        assert "ready-target" in text
+        assert "chat" in text
+
+
+@pytest.mark.asyncio
+async def test_revert_discards_unsaved_edits_and_reloads_from_storage(
+    evals_app, bench_with_mixed_readiness
+):
+    """Revert = re-selecting this same bench: the screen's own `select()`
+    recompose reloads every field from storage, which is what "revert"
+    means here (there is no separate in-memory draft -- the fields ARE the
+    widgets)."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        screen.query_one("#evals-bench-name", Input).value = "typed-but-not-saved"
+        await pilot.click("#evals-bench-revert")
+        await pilot.pause()
+
+        assert screen.query_one("#evals-bench-name", Input).value == "loaded-nouns v1"
+        # Scoped to the form's own error Static -- see the identical note
+        # in test_save_persists_every_field_and_reselects_the_bench.
+        assert not screen.query_one("#evals-bench-form-error").display
+
+
+# ---------------------------------------------------------------------------
+# Task 6 (task-1482): targets become editable -- Add/Remove + create-target
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def bench_with_available_add_target(evals_db: EvalsDB) -> tuple[str, str, str]:
+    """One bench with one target already wired, plus a SECOND `llama_cpp`
+    `eval_models` row not yet on the bench -- exactly what the Add picker
+    needs to offer a genuine, addable option.
+
+    Returns:
+        ``(task_id, existing_target_id, addable_target_id)``.
+    """
+    existing_id = _make_model(evals_db, "existing-target")
+    addable_id = _make_model(evals_db, "extra-target", model_id="m2")
+    dataset_id = evals_db.create_dataset(
+        name="add-target-set",
+        format="custom",
+        source_path="inline:add-target-set",
+        metadata={"sample_count": 4},
+    )
+    config = BenchConfig(
+        name="add-target bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(existing_id,),
+    )
+    task_id = save_bench(evals_db, config)
+    return task_id, existing_id, addable_id
+
+
+@pytest.fixture
+def bench_with_zero_llama_models(evals_db: EvalsDB) -> str:
+    """A draft bench (no targets) with NO `llama_cpp` `eval_models` row
+    anywhere in the db -- the zero-models "Create target" affordance's own
+    gate."""
+    dataset_id = evals_db.create_dataset(
+        name="zero-models-set",
+        format="custom",
+        source_path="inline:zero-models-set",
+        metadata={"sample_count": 4},
+    )
+    config = BenchConfig(
+        name="zero-models bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(),
+    )
+    return save_bench(evals_db, config)
+
+
+@pytest.fixture
+def bench_with_markup_hazard_llama_model(evals_db: EvalsDB) -> tuple[str, str]:
+    """A draft bench (no targets) plus one already-registered `llama_cpp`
+    model whose name carries a bare `[/]` -- the Add picker's own option
+    labels ("name (model_id)") must escape it, matching every other
+    user-authored string this widget renders (see the module docstring's
+    markup-hazard sweep)."""
+    hazard_id = _make_model(evals_db, "loud[/]target", model_id="m")
+    dataset_id = evals_db.create_dataset(
+        name="hazard-picker-set",
+        format="custom",
+        source_path="inline:hazard-picker-set",
+        metadata={"sample_count": 4},
+    )
+    config = BenchConfig(
+        name="hazard-picker bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(),
+    )
+    task_id = save_bench(evals_db, config)
+    return task_id, hazard_id
+
+
+@pytest.mark.asyncio
+async def test_add_from_picker_stages_a_row_and_save_persists_it(
+    evals_app, evals_db, bench_with_available_add_target
+):
+    task_id, existing_id, addable_id = bench_with_available_add_target
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        assert screen.query_one("#evals-bench-target-0")
+        assert not screen.query("#evals-bench-target-1")
+
+        select = screen.query_one("#evals-bench-add-target", Select)
+        select.value = addable_id
+        await pilot.click("#evals-bench-add-target-button")
+        await pilot.pause()
+
+        # The staged row renders immediately, before Save, with the
+        # "never checked" status -- it was never part of the bench's last
+        # run snapshot.
+        new_row = screen.query_one("#evals-bench-target-1")
+        row_text = str(new_row.renderable)
+        assert "extra-target" in row_text
+        assert "Not yet checked" in row_text
+        assert new_row.region.width > 0
+        assert new_row.region.height > 0
+
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        assert not screen.query_one("#evals-bench-form-error").display
+        saved = load_bench(evals_db, task_id)
+        assert set(saved.target_ids) == {existing_id, addable_id}
+
+
+@pytest.mark.asyncio
+async def test_remove_target_row_and_save_persists_the_removal(
+    evals_app, evals_db, bench_with_mixed_readiness
+):
+    task_id, target_ids = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        # Remove the "ready" target (index 0, per _TARGET_INDEX).
+        await pilot.click("#evals-bench-target-remove-0")
+        await pilot.pause()
+
+        # Rows re-index: the remaining two targets now sit at 0/1, and
+        # there is no longer a row at 2.
+        assert screen.query_one("#evals-bench-target-0")
+        assert screen.query_one("#evals-bench-target-1")
+        assert not screen.query("#evals-bench-target-2")
+
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        assert not screen.query_one("#evals-bench-form-error").display
+        saved = load_bench(evals_db, task_id)
+        assert set(saved.target_ids) == {target_ids["warned"], target_ids["blocked"]}
+
+
+@pytest.mark.asyncio
+async def test_duplicate_add_is_rejected_inline_with_the_pinned_text(
+    evals_app, evals_db, bench_with_available_add_target
+):
+    task_id, existing_id, _addable_id = bench_with_available_add_target
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        select = screen.query_one("#evals-bench-add-target", Select)
+        select.value = existing_id
+        await pilot.click("#evals-bench-add-target-button")
+        await pilot.pause()
+
+        callout = screen.query_one("#evals-bench-form-error")
+        assert callout.display
+        assert str(callout.renderable) == "Target already on this bench."
+
+        # No second row was staged -- the rejected add left the bench's
+        # target list untouched.
+        assert not screen.query("#evals-bench-target-1")
+
+        # And a save persists exactly what was there before the rejected
+        # add, not a duplicate.
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+        saved = load_bench(evals_db, task_id)
+        assert saved.target_ids == (existing_id,)
+
+
+@pytest.mark.asyncio
+async def test_zero_models_state_offers_create_target_and_stages_it(
+    evals_app_configured, evals_db, bench_with_zero_llama_models
+):
+    task_id = bench_with_zero_llama_models
+    assert evals_db.list_models(provider="llama_cpp") == []
+
+    async with evals_app_configured.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app_configured.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app_configured.screen
+
+        assert not screen.query("#evals-bench-add-target")
+        create_button = screen.query_one("#evals-bench-create-target", Button)
+        assert create_button.region.width > 0
+        assert create_button.region.height > 0
+
+        await pilot.click("#evals-bench-create-target")
+        await pilot.pause()
+
+        models = evals_db.list_models(provider="llama_cpp")
+        assert len(models) == 1, "pressing Create target should create exactly one row"
+
+        row = screen.query_one("#evals-bench-target-0")
+        row_text = str(row.renderable)
+        assert models[0]["name"] in row_text
+        assert "Not yet checked" in row_text
+
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        assert not screen.query_one("#evals-bench-form-error").display
+        saved = load_bench(evals_db, task_id)
+        assert saved.target_ids == (models[0]["id"],)
+
+
+@pytest.mark.asyncio
+async def test_add_target_picker_option_labels_escape_markup_hazard_names(
+    evals_app, bench_with_markup_hazard_llama_model
+):
+    task_id, hazard_id = bench_with_markup_hazard_llama_model
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        assert pilot.app.is_running, "an unescaped picker label crashed the app"
+        screen = evals_app.screen
+
+        select = screen.query_one("#evals-bench-add-target", Select)
+        option_texts = [str(label) for label, _value in select._options]
+        expected = escape_markup("loud[/]target (m)")
+        assert any(text == expected for text in option_texts), option_texts
+
+
+@pytest.fixture
+def bench_with_two_saved_targets_only(evals_db: EvalsDB) -> tuple[str, dict[str, str]]:
+    """Two targets, both already saved on the bench, and NO other
+    `llama_cpp` `eval_models` row anywhere in the db -- "zero llama models
+    beyond them", per the whole-branch pre-PR review's own scenario for
+    the staged-edit-survival regression test below. Two (not one, not
+    three) so the test can drive two SEPARATE staged Remove mutations in a
+    row, each independently re-checked against the same unsaved Name/
+    probe text.
+    """
+    first_id = _make_model(evals_db, "first-target", model_id="m1")
+    second_id = _make_model(evals_db, "second-target", model_id="m2")
+    dataset_id = evals_db.create_dataset(
+        name="two-target-set",
+        format="custom",
+        source_path="inline:two-target-set",
+        metadata={"sample_count": 4},
+    )
+    config = BenchConfig(
+        name="two-target bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(first_id, second_id),
+    )
+    task_id = save_bench(evals_db, config)
+    return task_id, {"first": first_id, "second": second_id}
+
+
+@pytest.mark.asyncio
+async def test_staged_target_edits_survive_unsaved_name_and_probe_text(
+    evals_app, bench_with_two_saved_targets_only
+):
+    """Whole-branch pre-PR review: every OTHER Task 6 test drives a target
+    mutation against a form nobody has typed into, so nothing previously
+    proved the "targeted refresh, not a whole-widget recompose" contract
+    `_refresh_targets_section`'s own docstring claims -- a future
+    refactor to a bare `self.refresh(recompose=True)` there would pass
+    every existing test while silently discarding a user's unsaved Name/
+    Probes edit the instant they touched Add or Remove. This types into
+    both, then drives TWO separate staged Remove mutations in a row,
+    re-asserting survival after each -- not just the first, since a
+    recompose-based regression could plausibly be masked by state that
+    happens to survive exactly one refresh but not a second.
+    """
+    task_id, target_ids = bench_with_two_saved_targets_only
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        name_input = screen.query_one("#evals-bench-name", Input)
+        name_input.value = "typed-not-saved"
+        probes_area = screen.query_one("#evals-bench-probes", TextArea)
+        probes_area.text = "unsaved probe line"
+
+        assert screen.query_one("#evals-bench-target-0")
+        assert screen.query_one("#evals-bench-target-1")
+
+        # First staged mutation: remove the first target row.
+        await pilot.click("#evals-bench-target-remove-0")
+        await pilot.pause()
+
+        assert screen.query_one("#evals-bench-name", Input).value == "typed-not-saved"
+        assert screen.query_one("#evals-bench-probes", TextArea).text == "unsaved probe line"
+        # Also proves the SAME widget instances survived, not merely
+        # matching values from a rebuilt pair -- a recompose would have
+        # replaced both with fresh instances reading the last-SAVED
+        # config, which happens to have an empty description/name-suffix
+        # collision risk this identity check sidesteps entirely.
+        assert screen.query_one("#evals-bench-name", Input) is name_input
+        assert screen.query_one("#evals-bench-probes", TextArea) is probes_area
+        assert screen.query_one("#evals-bench-target-0")
+        assert not screen.query("#evals-bench-target-1")
+
+        # Second staged mutation: remove the remaining target too (it is
+        # now re-indexed to row 0 -- see `_build_target_row`'s own
+        # index-derived-id comment).
+        await pilot.click("#evals-bench-target-remove-0")
+        await pilot.pause()
+
+        assert screen.query_one("#evals-bench-name", Input).value == "typed-not-saved"
+        assert screen.query_one("#evals-bench-probes", TextArea).text == "unsaved probe line"
+        assert screen.query_one("#evals-bench-name", Input) is name_input
+        assert screen.query_one("#evals-bench-probes", TextArea) is probes_area
+        assert screen.query_one("#evals-bench-targets-empty")
+        assert not screen.query(".evals-bench-target-row")
+
+        # Neither mutation ever pressed Save -- both edits are still
+        # genuinely unsaved, and no form error was ever triggered. Scoped
+        # to the form's own error Static, mirroring the identical check in
+        # test_save_persists_every_field_and_reselects_the_bench.
+        assert not screen.query_one("#evals-bench-form-error").display

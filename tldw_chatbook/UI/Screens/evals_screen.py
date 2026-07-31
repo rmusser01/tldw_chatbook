@@ -39,6 +39,8 @@ from ...DB.Evals_DB import EvalsDB
 from ...Evals.word_bench.models import PreflightResult
 from ...Evals.word_bench.models import Target as WordBenchTarget
 from ...Evals.word_bench.runner import CancelToken, CaptureClientLike
+from ...Evals.word_bench.storage import duplicate_bench
+from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ..Evals import sample_bench
 from ..Evals.bench_editor import BenchEditor, ClassicTaskDetail
 from ..Evals.evals_state import EvalsSelection, EvalsViewModel, SelectionKind
@@ -111,6 +113,16 @@ class EvalsScreen(LabScreen):
         #: 3c, per this program's own PR numbering) should not need a
         #: second plumbing pass to reach it.
         self._sample_bench_cancel_token: Optional[CancelToken] = None
+        #: The selection snapshotted in ``_on_sample_bench_requested`` at
+        #: PRESS time, before ``run_worker`` is even called -- same
+        #: capture-outside-the-worker rationale as ``_bench_run_task_id``
+        #: below (the selection can move before the scheduled worker's
+        #: first line actually runs). Unlike a bench-run, a sample bench
+        #: does not exist yet when this button is pressed, so there is no
+        #: bench id to pin; what a completing worker must not yank the
+        #: user away from is wherever they WERE, not a specific bench --
+        #: see ``_selection_unmoved_since_launch`` (task-1482 Task 2).
+        self._sample_bench_launch_selection: EvalsSelection = EvalsSelection()
         #: True for the duration of one run-existing-bench flow. Same
         #: double-guard rationale as ``_sample_bench_running`` (see that
         #: field's own comment above): this flag stops a second press once
@@ -129,6 +141,14 @@ class EvalsScreen(LabScreen):
         #: (no Cancel affordance exists in this screen yet): kept as a
         #: real, threaded seam rather than a decorative parameter.
         self._bench_run_cancel_token: Optional[CancelToken] = None
+        #: task-1482 Task 7 fix round 1 (reviewer-found reentrancy): True
+        #: from the moment ``_on_delete_bench_pressed`` dispatches
+        #: ``_delete_bench_flow`` until ``_apply_bench_deletion`` finishes
+        #: (confirmed, cancelled, or erroring out). See that handler's own
+        #: docstring for why a synchronous flag -- not ``exclusive=True``
+        #: on the worker, unlike the run-bench/sample-bench pattern this
+        #: screen uses everywhere else -- is the correct guard here.
+        self._bench_delete_pending: bool = False
 
     def _current_app_config(self) -> dict[str, Any]:
         """The app's loaded settings, read fresh on every recompose (not
@@ -180,6 +200,42 @@ class EvalsScreen(LabScreen):
         if self.is_mounted:
             self.refresh(recompose=True)
 
+    def _selection_unmoved_since_launch(
+        self, launch_selection: EvalsSelection, bench_task_id: Optional[str]
+    ) -> bool:
+        """True when it is safe for a just-finished background worker
+        (``_run_bench_worker``/``_create_sample_bench_worker``) to move the
+        screen's selection to the run group it just produced.
+
+        Two cases count as safe, matching what a user would read as "I'm
+        still watching this run" rather than "I've moved on":
+
+        1. ``self._selection`` is unchanged from ``launch_selection`` -- the
+           selection captured at the moment the run/creation was started
+           (``_bench_run_task_id`` for the bench-run worker, ``self.
+           _sample_bench_launch_selection`` for the sample-bench worker,
+           which has no pre-existing bench to pin against).
+        2. The user has since navigated INTO one of ``bench_task_id``'s own
+           run groups (e.g. clicked a still-"running" row in the rail while
+           the run was in flight, per ``test_rail_run_row_shows_the_
+           running_glyph_while_the_run_is_in_flight``) -- moving them to the
+           freshly finished run group there is a refresh, not a yank.
+
+        Any other selection means the user navigated somewhere unrelated
+        while the worker was running -- once the bench editor holds
+        unsaved form state (this task's own motivation), forcing a
+        recompose there would destroy it. The completing worker must
+        degrade to a toast-only notification instead of calling
+        ``select()`` (task-1482 Task 2).
+        """
+        if self._selection == launch_selection:
+            return True
+        if bench_task_id and self._selection.kind == "run_group" and self._selection.id:
+            group = self._view_model.run_group_by_id(self._selection.id)
+            if group is not None and group.get("task_id") == bench_task_id:
+                return True
+        return False
+
     def _register_grid_shortcuts(self) -> None:
         """Advertises the results grid's `l`/`b`/`s`/`e` keys (see
         ``results_grid.ResultsGrid.BINDINGS``) through the shared
@@ -212,6 +268,70 @@ class EvalsScreen(LabScreen):
     ) -> None:
         event.stop()
         self.select(kind=event.selection.kind, id=event.selection.id)
+
+    @on(BenchEditor.Saved)
+    def _on_bench_editor_saved(self, event: BenchEditor.Saved) -> None:
+        """A successful `BenchEditor` Save re-selects the same bench --
+        `select()`'s recompose reloads the form from what `save_bench`
+        actually persisted (see `BenchEditor.Saved`'s own docstring for why
+        that can differ from what was typed, e.g. `_clean_task_name`'s
+        control-character strip), and refreshes the rail row and inspector
+        alongside it for free, the same way any other selection change
+        does."""
+        event.stop()
+        self.select(kind="bench", id=event.bench_id)
+
+    @on(BenchEditor.CreateTargetRequested)
+    async def _on_bench_create_target_requested(
+        self, event: BenchEditor.CreateTargetRequested
+    ) -> None:
+        """Creates a real `eval_models` row for the zero-`llama_cpp`-
+        models "Create target" button, and stages it on the mounted
+        `BenchEditor` -- see that message class's own docstring for why
+        `bench_editor.py` cannot make this call itself (the source-scan
+        pin against `capture_client`/`WordBenchRunner` imports).
+
+        Reuses `sample_bench.resolve_sample_target(..., create=True)`
+        (the SAME function `create_and_run_sample_bench` uses) rather than
+        duplicating its configured-endpoint/model-id resolution logic --
+        `name=BENCH_EDITOR_TARGET_NAME` only changes the base name a freshly
+        CREATED row gets; an already-registered `llama_cpp` row (there
+        should be none, since this button only renders when `llama_
+        targets()` is empty, but a race is not worth guarding against
+        specially) is still reused as-is.
+
+        A plain DB read/write, not a network call (`resolve_sample_target`
+        never touches `capture_client`) -- run inline, no worker, mirroring
+        `BenchEditor._on_save_pressed`'s own synchronous `save_bench` call
+        just one pane over.
+        """
+        event.stop()
+        db = self._view_model.db
+        if db is None:
+            return
+        model_row = sample_bench.resolve_sample_target(
+            self._view_model,
+            self._current_app_config(),
+            create=True,
+            name=sample_bench.BENCH_EDITOR_TARGET_NAME,
+        )
+        if model_row is None:
+            self.app_instance.notify(
+                "No llama.cpp server is configured; set one in Settings "
+                "first.",
+                severity="error",
+                markup=False,
+            )
+            return
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            editor = self.query_one(BenchEditor)
+        except QueryError:
+            # Defensive only: this handler only ever runs from a press on
+            # a button the mounted BenchEditor itself composed.
+            return
+        await editor.stage_target(model_row)
 
     @on(LibraryRail.SampleBenchRequested)
     def _on_sample_bench_requested(
@@ -259,10 +379,23 @@ class EvalsScreen(LabScreen):
         never awaited``). Textual only calls the callable when the worker
         actually starts, so in the very race this docstring describes no
         orphan coroutine is created.
+
+        ``self._selection`` is also snapshotted into
+        ``self._sample_bench_launch_selection`` HERE, before ``run_worker``
+        is even called -- not re-read from ``self._selection`` inside the
+        worker, mirroring ``_on_primary_action_pressed``'s own
+        ``_bench_run_task_id`` capture and for the identical reason: the
+        selection can move before the scheduled worker's first line
+        actually runs. The completing worker reads this snapshot to decide
+        whether it is still safe to move the selection to the new run
+        group, or whether the user has navigated elsewhere and a recompose
+        there would yank them (see ``_selection_unmoved_since_launch``,
+        task-1482 Task 2).
         """
         event.stop()
         if self._sample_bench_running or self._bench_run_running:
             return
+        self._sample_bench_launch_selection = self._selection
         self.run_worker(
             self._create_sample_bench_worker,
             exclusive=True,
@@ -270,6 +403,20 @@ class EvalsScreen(LabScreen):
         )
 
     async def _create_sample_bench_worker(self) -> None:
+        """Creates and runs the one-click sample bench (see
+        ``sample_bench.create_and_run_sample_bench``).
+
+        On success, ``select(run_group)`` ONLY when
+        ``_selection_unmoved_since_launch`` says the screen's current
+        selection is still ``self._sample_bench_launch_selection`` (the
+        selection snapshotted in ``_on_sample_bench_requested`` at press
+        time) or has since moved into the freshly created bench's own run
+        groups. Otherwise the run/creation is not lost -- it is still in
+        the DB and the Runs section -- but a completing background worker
+        must not force a recompose that would yank the user from wherever
+        they navigated to mid-flight, e.g. into a half-edited bench editor
+        form (task-1482 Task 2's own motivation).
+        """
         app_config = self._current_app_config()
         cancel_token = CancelToken()
         self._sample_bench_running = True
@@ -315,12 +462,25 @@ class EvalsScreen(LabScreen):
             self._sample_bench_cancel_token = None
             self._reset_sample_bench_running_ui()
         if result is not None:
-            self.app_instance.notify(
-                "Sample bench created and run.",
-                severity="information",
-                markup=False,
-            )
-            self.select(kind="run_group", id=result.run_group_id)
+            if self._selection_unmoved_since_launch(
+                self._sample_bench_launch_selection, result.task_id
+            ):
+                self.app_instance.notify(
+                    "Sample bench created and run.",
+                    severity="information",
+                    markup=False,
+                )
+                self.select(kind="run_group", id=result.run_group_id)
+            else:
+                # The user navigated elsewhere while the run was in flight
+                # -- see `_selection_unmoved_since_launch`'s own docstring.
+                # The bench and run group both still exist; only the
+                # auto-navigate is skipped.
+                self.app_instance.notify(
+                    "Sample bench created and run — see the Runs section.",
+                    severity="information",
+                    markup=False,
+                )
 
     def _on_sample_bench_progress(self, done: int, total: int) -> None:
         """``sample_bench.ProgressFn`` -- called synchronously from within
@@ -439,7 +599,13 @@ class EvalsScreen(LabScreen):
         """Runs ``self._bench_run_task_id`` via
         ``sample_bench.run_existing_bench``. Mirrors
         ``_create_sample_bench_worker`` structure exactly -- see that
-        method's own comments for the parts not re-explained here.
+        method's own comments for the parts not re-explained here,
+        including the "does not auto-select on completion once the user
+        has navigated elsewhere" rule (``_selection_unmoved_since_launch``,
+        task-1482 Task 2): here the launch selection to compare against is
+        always ``EvalsSelection(kind="bench", id=task_id)``, since
+        ``_on_primary_action_pressed`` only ever dispatches this worker
+        for a selected bench.
         """
         app_config = self._current_app_config()
         task_id = self._bench_run_task_id
@@ -493,13 +659,26 @@ class EvalsScreen(LabScreen):
             self._bench_run_cancel_token = None
             self._reset_bench_run_running_ui()
         if result is not None:
-            # markup=False for uniformity with the error toast above -- this
-            # string is static today, but pinning it keeps the pair
-            # consistent if it ever starts interpolating the bench name.
-            self.app_instance.notify(
-                "Bench run finished.", severity="information", markup=False
-            )
-            self.select(kind="run_group", id=result.run_group_id)
+            launch_selection = EvalsSelection(kind="bench", id=task_id)
+            if self._selection_unmoved_since_launch(launch_selection, task_id):
+                # markup=False for uniformity with the error toast above --
+                # this string is static today, but pinning it keeps the
+                # pair consistent if it ever starts interpolating the
+                # bench name.
+                self.app_instance.notify(
+                    "Bench run finished.", severity="information", markup=False
+                )
+                self.select(kind="run_group", id=result.run_group_id)
+            else:
+                # The user navigated elsewhere while the run was in flight
+                # -- see `_selection_unmoved_since_launch`'s own docstring.
+                # The run group still exists; only the auto-navigate is
+                # skipped.
+                self.app_instance.notify(
+                    "Bench run finished — see the Runs section.",
+                    severity="information",
+                    markup=False,
+                )
 
     def _on_bench_run_progress(self, done: int, total: int) -> None:
         """``sample_bench.ProgressFn`` -- called synchronously from within
@@ -544,6 +723,216 @@ class EvalsScreen(LabScreen):
         button.disabled = disabled
         button.label = label
         button.tooltip = tooltip
+
+    def _bench_delete_disabled_reason(self, bench_id: Optional[str]) -> Optional[str]:
+        """Why ``#evals-delete-bench`` should be disabled for ``bench_id``,
+        or ``None`` when it's safe to delete.
+
+        Gated ONLY on ``_bench_run_running`` for THIS bench -- unlike
+        ``_primary_action_state``, which also blocks while the SAMPLE
+        bench worker is running. That extra gate exists there because a
+        completing sample-bench worker eventually selects a brand-new
+        bench the primary action could otherwise race a second run
+        against; the sample-bench worker never touches an *existing*
+        bench id (it creates its own, not-yet-selected one) until it
+        finishes, so it must not block deleting some OTHER, unrelated,
+        already-selected bench here.
+        """
+        if bench_id and self._bench_run_running and self._bench_run_task_id == bench_id:
+            return "A run of this bench is in flight."
+        return None
+
+    @on(Button.Pressed, "#evals-duplicate-bench")
+    def _on_duplicate_bench_pressed(self, event: Button.Pressed) -> None:
+        """Duplicates the selected bench via ``storage.duplicate_bench``
+        (Task 3) -- a plain ``eval_tasks`` insert, never a network call, so
+        this runs in-widget with no worker, mirroring ``library_rail.py``'s
+        ``_create_new_bench``/``_create_new_dataset`` (the same "no worker
+        for a bare DB write" convention).
+
+        Catches broad ``Exception``, not ``duplicate_bench``'s own
+        narrower ``RuntimeError`` (which it raises only for a missing/
+        soft-deleted source) -- controller ruling from Task 3's review: a
+        CORRUPT legacy bench (task-1132's lenient ``load_bench`` still
+        loads it, but ``BenchConfig``/``save_bench`` downstream can raise
+        their own native diagnostic exception for a shape ``load_bench``
+        never normalised) must still toast here rather than crash this
+        screen, matching every other DB-write handler in this file (see
+        ``_run_bench_worker``'s own broad catch above).
+        """
+        event.stop()
+        selection = self._selection
+        if selection.kind != "bench" or not selection.id:
+            # Defensive only: this button is composed only inside the
+            # resolved-bench branch of `_compose_inspector_pane`.
+            return
+        db = self._view_model.db
+        if db is None:
+            self.app_instance.notify(
+                "The evaluation service is unavailable.", severity="error"
+            )
+            return
+        try:
+            new_id = duplicate_bench(db, selection.id)
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not duplicate bench.")
+            # markup=False: `exc` can carry the source bench's own
+            # free-text name -- same hazard `_run_bench_worker`'s own
+            # error toast documents.
+            self.app_instance.notify(
+                f"Could not duplicate the bench: {exc}",
+                severity="error",
+                markup=False,
+            )
+            return
+        new_bench = self._view_model.bench_by_id(new_id)
+        new_name = str(new_bench.get("name")) if new_bench else "the new bench"
+        self.select(kind="bench", id=new_id)
+        self.app_instance.notify(
+            f"Duplicated as {new_name}.", severity="information", markup=False
+        )
+
+    @on(Button.Pressed, "#evals-delete-bench")
+    def _on_delete_bench_pressed(self, event: Button.Pressed) -> None:
+        """Starts the confirm-then-delete flow for the selected bench.
+
+        Dispatches a worker: ``push_screen_wait`` raises ``NoActiveWorker``
+        outside one (see ``ConsoleShellScreen.confirm_navigation``'s
+        identical note in ``chat_screen.py``). The bench id and name are
+        resolved here, before the worker's first line runs -- mirrors
+        ``_on_primary_action_pressed``'s own capture-outside-the-worker
+        rationale (the selection can move while the confirm dialog is
+        still up).
+
+        ``_bench_delete_pending`` guards a race review reproduced directly
+        (screen stack depth 2 -> 4): two ``Button.Pressed`` messages queued
+        with no intervening ``await`` both reach this synchronous handler
+        before either's ``run_worker`` call has taken its first step, so
+        without a check-and-set flag BOTH calls pass the (unrelated)
+        in-flight-run guard above and each starts its own
+        ``_delete_bench_flow`` worker -- pushing two ``ConfirmationDialog``s
+        onto the screen stack.
+
+        This is deliberately a plain flag, NOT ``exclusive=True`` on the
+        worker below, unlike ``_on_primary_action_pressed``'s identical-
+        looking double-press race (see that handler's own docstring for the
+        contrast). There, ``exclusive=True`` is correct: Textual cancels a
+        superseded worker's ``Task`` before its first step, so only one
+        worker body -- and the DB write it performs -- ever runs. Here that
+        would be actively wrong: ``_delete_bench_flow`` awaits
+        ``self.app.push_screen_wait(...)``, which internally awaits
+        ``asyncio.shield(future)`` -- shielding the WAIT itself from
+        cancellation, not the widget it already pushed. Cancelling this
+        worker's Task via an exclusive group after it has already pushed
+        its ``ConfirmationDialog`` would tear down the coroutine waiting on
+        that dialog's result while leaving the dialog itself mounted on the
+        screen stack -- a user's Confirm/Cancel click would land on a
+        dialog whose owning code no longer exists to act on it, a silent
+        no-op indistinguishable from a hang. A synchronous flag, checked
+        and set here before the FIRST worker is ever dispatched, avoids
+        needing to cancel anything: the second queued press sees the flag
+        already set and returns before calling ``run_worker`` at all, so
+        only one worker -- and one dialog -- is ever created. Cleared in a
+        ``finally`` inside ``_apply_bench_deletion`` (see that method's own
+        docstring) once the flow fully resolves, whichever way it resolves.
+        """
+        event.stop()
+        selection = self._selection
+        if selection.kind != "bench" or not selection.id:
+            return
+        if self._bench_delete_disabled_reason(selection.id):
+            # Defensive only: `_compose_inspector_pane` already disables
+            # the button for this case, and a disabled Textual `Button`
+            # never emits `Pressed`.
+            return
+        if self._bench_delete_pending:
+            return
+        self._bench_delete_pending = True
+        bench = self._view_model.bench_by_id(selection.id)
+        name = str(bench.get("name")) if bench else "Untitled bench"
+        self.run_worker(
+            self._delete_bench_flow(selection.id, name),
+            group="evals-delete-bench",
+        )
+
+    async def _delete_bench_flow(self, task_id: str, name: str) -> None:
+        """Confirms, then applies (via ``_apply_bench_deletion`` below)
+        deleting ``task_id``.
+
+        ``escape_markup(name)``: ``ConfirmationDialog.compose`` renders
+        ``message`` through a plain ``Label`` (``markup`` left at its
+        Textual-matching default of ``True``), so an unescaped bench name
+        here would hit the same bare-``[/]``-crashes-the-app hazard
+        ``_primary_action_state``'s own ``name`` computation documents.
+        """
+        confirmed = await self.app.push_screen_wait(
+            ConfirmationDialog(
+                title="Delete bench?",
+                message=f'Delete "{escape_markup(name)}"? This can\'t be undone.',
+                confirm_label="Delete bench",
+                cancel_label="Cancel",
+            )
+        )
+        self._apply_bench_deletion(bool(confirmed), task_id)
+
+    def _apply_bench_deletion(self, confirmed: bool, task_id: str) -> None:
+        """Applies the confirm dialog's own result.
+
+        Public-shaped (a plain ``(confirmed, task_id)`` signature, not
+        name-mangled) so tests call this directly with
+        ``confirmed=True``/``False``, bypassing the modal (and the worker
+        above) entirely -- mirrors ``snippet_editor.py``'s
+        ``_handle_import_file_selected`` (the ``FileOpen`` dialog's own
+        callback): driving a real modal in a test is expensive, and this
+        is the one place the dialog's yes/no decision reaches code.
+
+        The whole body runs inside a ``try/finally`` that clears
+        ``_bench_delete_pending`` -- the single-flight guard
+        ``_on_delete_bench_pressed`` sets before ever dispatching
+        ``_delete_bench_flow`` (see that method's own docstring for the
+        race this closes). Every return path here -- cancelled, no DB,
+        delete failed, or genuinely completed -- is "the flow is over, a
+        fresh press should be allowed again," so the reset lives in
+        ``finally`` rather than being duplicated at each ``return``. Tests
+        that call this method directly, bypassing ``_on_delete_bench_
+        pressed`` entirely, harmlessly reset a flag that was never set.
+        """
+        try:
+            if not confirmed:
+                return
+            db = self._view_model.db
+            if db is None:
+                self.app_instance.notify(
+                    "The evaluation service is unavailable.", severity="error"
+                )
+                return
+            try:
+                db.delete_task(task_id)
+            except Exception as exc:
+                logger.opt(exception=True).warning("Could not delete bench.")
+                self.app_instance.notify(
+                    f"Could not delete the bench: {exc}",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            self.select(kind="none")
+            # Provenance rule (task-1482 plan, "Delete vs runs"): deleting a
+            # bench does not cascade its run history -- `EvalsDB.delete_task`
+            # only soft-deletes the `eval_tasks` row; `list_runs`/`get_run`'s
+            # own `JOIN eval_tasks` (unfiltered on `t.deleted_at`) still
+            # resolves the runs, and `EvalsViewModel.run_groups()` reads
+            # `list_runs()` directly, never `_all_tasks()` (which DOES filter
+            # deleted tasks) -- so the Runs section keeps listing them, and
+            # opening one still renders the grid. This toast is the only
+            # place a user learns that on purpose.
+            self.app_instance.notify(
+                "Bench deleted. Its runs remain in the Runs section.",
+                severity="information",
+                markup=False,
+            )
+        finally:
+            self._bench_delete_pending = False
 
     def lab_header_state(self) -> WorkbenchHeaderState:
         """Return the Evals destination header copy.
@@ -759,6 +1148,9 @@ class EvalsScreen(LabScreen):
                     preflight,
                     id="evals-inspector-bench",
                 )
+                # Duplicate/Delete are composed further down, AFTER
+                # `#evals-primary-action` -- see the comment there (task-
+                # 1482 Task 7 fix round 1) for why.
 
         if selection.kind == "classic":
             # Classic tasks are read-only in this workbench (see the design
@@ -819,6 +1211,46 @@ class EvalsScreen(LabScreen):
             tooltip=tooltip,
         )
 
+        # task-1482 Task 7 fix round 1: composed AFTER `#evals-primary-
+        # action`, not before it -- the design spec's inspector mock
+        # orders these `[ Run bench ]` then `[ Duplicate ]` then
+        # `[ Delete ]`, and the original Task 7 placement (right after
+        # `EvalsInspector`, ahead of the primary action) inverted that.
+        # Still bench-selection-only, and still gated on a RESOLVED bench
+        # (`bench is not None`, set in the `selection.kind == "bench"`
+        # branch above): an unresolvable bench id renders no
+        # `EvalsInspector` and, per this same guard, neither of these
+        # buttons either -- there is nothing here to duplicate or delete.
+        if selection.kind == "bench" and bench is not None:
+            yield Button("Duplicate", id="evals-duplicate-bench")
+            delete_reason = self._bench_delete_disabled_reason(selection.id)
+            if delete_reason:
+                # Mirrors the primary action's own TASK-1076 convention
+                # just above (a status badge plus an always-visible
+                # callout, not a hover-only tooltip -- see that block's
+                # comment for the accessibility rationale). Not factored
+                # into one shared helper: the primary action's version
+                # also folds in the bench's own NAME (this button's label
+                # never changes).
+                yield Static(
+                    "Delete: Blocked",
+                    id="evals-delete-bench-status",
+                    classes="ds-status-badge evals-status-blocked",
+                    markup=False,
+                )
+                yield Static(
+                    delete_reason,
+                    id="evals-delete-bench-reason",
+                    classes="ds-recovery-callout",
+                    markup=False,
+                )
+            yield Button(
+                "Delete",
+                id="evals-delete-bench",
+                disabled=bool(delete_reason),
+                tooltip=delete_reason,
+            )
+
     def _primary_action_state(self) -> tuple[str, bool, str]:
         """Label, disabled, and tooltip-reason for the primary action button.
 
@@ -877,8 +1309,9 @@ class EvalsScreen(LabScreen):
                     "bench to run.",
                 )
             # escape_markup: `name` is free-text and reaches TWO markup-
-            # parsed surfaces from here -- this tooltip string, AND (via
-            # this same return value) `Button(label=...)`'s construction in
+            # parsed surfaces from here -- this tooltip string (both
+            # branches below), AND (via this same return value)
+            # `Button(label=...)`'s construction in
             # `_compose_inspector_pane` plus the live `button.label = ...`/
             # `button.tooltip = ...` reassignment in
             # `_reset_bench_run_running_ui`. `Content.from_text`'s
@@ -889,8 +1322,33 @@ class EvalsScreen(LabScreen):
             # the same hazard class task-1476 fixed for bench-run toast
             # text, and library_rail.py's `_run_group_row_label` fixed for
             # run rows; this closes the last unescaped instance of it in
-            # this file.
+            # this file. Computed once here, ahead of the target-count
+            # check below, so both the found-but-target-less and the
+            # runnable branch can name the bench in their label.
             name = escape_markup(str(bench.get("name") or "Untitled bench"))
+            # task-1482 fix round 1: a draft bench created via "+ New
+            # bench" has `target_ids=()` until the bench editor (Task 6)
+            # wires one on. Read straight from the already-loaded row's
+            # `config_data` (no extra DB call -- `list_tasks`/`bench_by_id`
+            # already parsed it) rather than `storage.load_bench`, which
+            # this function has never otherwise needed. Without this
+            # guard, pressing "Run" reached `run_existing_bench` with zero
+            # targets, which "completed" an EMPTY run group -- the exact
+            # dead-end-toast pattern this function's own naming rule
+            # exists to prevent, just reopened one step further downstream
+            # ("Bench run finished." followed by "This run could not be
+            # found"). Wording matches the readiness panel's own "No
+            # targets configured yet." (inspector.py/bench_editor.py) for
+            # the same state, so the vocabulary stays consistent across
+            # the two surfaces.
+            target_ids = (bench.get("config_data") or {}).get("target_ids") or []
+            if not target_ids:
+                return (
+                    f"Run {name}",
+                    True,
+                    "This bench has no targets yet; add one in the bench "
+                    "editor.",
+                )
             return (
                 f"Run {name}",
                 False,
@@ -906,8 +1364,14 @@ class EvalsScreen(LabScreen):
             return (
                 "Run Bench",
                 True,
-                "Datasets are run from within a bench; select a bench that "
-                "uses this dataset instead.",
+                # task-1482: names the concrete fix ("+ New bench" in the
+                # Catalog rail creates a bench bound to THIS dataset)
+                # instead of the old, more general "select a bench that
+                # uses this dataset instead" -- which presupposed one
+                # already existed, leaving a genuine dead end for a
+                # dataset with no bench yet.
+                "Datasets are run from within a bench; use + New bench in "
+                "the Catalog rail to create one against this dataset.",
             )
 
         if selection.kind == "run_group":
