@@ -2843,7 +2843,10 @@ async def test_settings_long_detail_and_inspector_panes_are_scrollable_container
         screen = _active_destination_screen(host)
 
         assert isinstance(screen.query_one("#settings-detail-pane"), VerticalScroll)
-        assert isinstance(screen.query_one("#settings-impact-pane"), VerticalScroll)
+        # task-1560/1562: the pane is now a fixed header above a scrollable body
+        assert isinstance(
+            screen.query_one("#settings-impact-pane-body"), VerticalScroll
+        )
 
         await _open_settings_category(pilot, "#settings-category-providers-models")
         detail_pane = screen.query_one("#settings-detail-pane", VerticalScroll)
@@ -2907,7 +2910,7 @@ async def test_settings_console_behavior_focus_auto_scrolls_to_field_guide():
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
 
-        pane = screen.query_one("#settings-impact-pane", VerticalScroll)
+        pane = screen.query_one("#settings-impact-pane-body", VerticalScroll)
         pane.styles.height = 6
         await pilot.pause()
         # Reset to a known baseline: opening the category already scrolls
@@ -2968,10 +2971,10 @@ async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_s
     app = _build_test_app()
     host = StyledSettingsDestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)) as pilot:
+    async with host.run_test(size=(180, 66)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        pane = screen.query_one("#settings-impact-pane", VerticalScroll)
+        pane = screen.query_one("#settings-impact-pane-body", VerticalScroll)
         field = screen.query_one("#settings-console-max-parallel-runs", Input)
         other_field = screen.query_one("#settings-console-default-streaming", Input)
         guide_ids = [f"#settings-console-behavior-field-guide-{i}" for i in range(4)]

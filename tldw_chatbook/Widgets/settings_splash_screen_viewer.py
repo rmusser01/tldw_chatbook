@@ -31,6 +31,13 @@ DEFAULT_SPLASH_CONFIG: dict[str, Any] = {
 }
 
 
+def switch_state_label(value: bool) -> str:
+    """Textual state for a Switch: the slider itself carries state by
+    position/color only, which is unreadable in reduced-color terminals and
+    violates the text-labeled-states rule (task-1561)."""
+    return "On" if value else "Off"
+
+
 class SettingsSplashScreenViewer(Vertical):
     """Splash screen gallery and defaults editor styled for Settings."""
 
@@ -114,22 +121,49 @@ class SettingsSplashScreenViewer(Vertical):
                     compact=True,
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Enabled", classes="settings-input-label")
+                label_static = Static("Enabled", classes="settings-input-label")
+                # task-1561: the shared label column truncates longer
+                # labels ("Skip on keypress" showed as "Skip on").
+                label_static.styles.width = 17
+                yield label_static
                 yield Switch(
                     value=bool(self._config.get("enabled", True)),
                     id="settings-splash-enabled",
                 )
+                yield Static(
+                    switch_state_label(bool(self._config.get("enabled", True))),
+                    id="settings-splash-enabled-state",
+                    classes="settings-toggle-state",
+                )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Show progress", classes="settings-input-label")
+                label_static = Static("Show progress", classes="settings-input-label")
+                # task-1561: the shared label column truncates longer
+                # labels ("Skip on keypress" showed as "Skip on").
+                label_static.styles.width = 17
+                yield label_static
                 yield Switch(
                     value=bool(self._config.get("show_progress", True)),
                     id="settings-splash-show-progress",
                 )
+                yield Static(
+                    switch_state_label(bool(self._config.get("show_progress", True))),
+                    id="settings-splash-show-progress-state",
+                    classes="settings-toggle-state",
+                )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Skip on keypress", classes="settings-input-label")
+                label_static = Static("Skip on keypress", classes="settings-input-label")
+                # task-1561: the shared label column truncates longer
+                # labels ("Skip on keypress" showed as "Skip on").
+                label_static.styles.width = 17
+                yield label_static
                 yield Switch(
                     value=bool(self._config.get("skip_on_keypress", True)),
                     id="settings-splash-skip-on-keypress",
+                )
+                yield Static(
+                    switch_state_label(bool(self._config.get("skip_on_keypress", True))),
+                    id="settings-splash-skip-on-keypress-state",
+                    classes="settings-toggle-state",
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Duration", classes="settings-input-label")
@@ -210,16 +244,25 @@ class SettingsSplashScreenViewer(Vertical):
 
     @on(Switch.Changed, "#settings-splash-enabled")
     def handle_enabled_changed(self, event: Switch.Changed) -> None:
+        self.query_one("#settings-splash-enabled-state", Static).update(
+            switch_state_label(bool(event.value))
+        )
         if self._save_config_value("enabled", event.value):
             self._update_status("Splash screen enabled setting saved.")
 
     @on(Switch.Changed, "#settings-splash-show-progress")
     def handle_show_progress_changed(self, event: Switch.Changed) -> None:
+        self.query_one("#settings-splash-show-progress-state", Static).update(
+            switch_state_label(bool(event.value))
+        )
         if self._save_config_value("show_progress", event.value):
             self._update_status("Show progress setting saved.")
 
     @on(Switch.Changed, "#settings-splash-skip-on-keypress")
     def handle_skip_on_keypress_changed(self, event: Switch.Changed) -> None:
+        self.query_one("#settings-splash-skip-on-keypress-state", Static).update(
+            switch_state_label(bool(event.value))
+        )
         if self._save_config_value("skip_on_keypress", event.value):
             self._update_status("Skip on keypress setting saved.")
 

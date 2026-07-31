@@ -126,6 +126,18 @@ def _template_count_line() -> str:
     )
 
 
+def switch_word(value: bool) -> str:
+    """Bare On/Off state word for width-constrained toggle rows (task-1561)."""
+    return "On" if value else "Off"
+
+
+def toggle_label(name: str, value: bool) -> str:
+    """Checkbox label that carries the state in TEXT (task-1561): the glyph
+    paints an "X" in both states and distinguishes them by color alone,
+    which reads as checked either way in reduced-color terminals."""
+    return f"{name}: on" if value else f"{name}: off"
+
+
 class ImageGenSettingsPanel(Vertical):
     """Browse + edit Image Gen backend defaults. Title is rendered by the screen."""
 
@@ -193,9 +205,10 @@ class ImageGenSettingsPanel(Vertical):
                     classes="settings-imagegen-badge",
                 )
                 yield Checkbox(
-                    "Enabled",
+                    switch_word(is_enabled),
                     value=is_enabled,
                     id=f"settings-imagegen-enabled-{row.backend_id}",
+                    tooltip="Whether this backend participates in generation.",
                 )
                 yield Static(
                     "★ Default" if row.backend_id == selected_backend else "",
@@ -283,7 +296,10 @@ class ImageGenSettingsPanel(Vertical):
 
         yield Static("Generation defaults", classes="destination-section")
         yield Checkbox(
-            "Context LLM enabled",
+            toggle_label(
+                "Context LLM",
+                bool(overlay.get("context_llm_enabled", bool(cfg.context_llm_enabled))),
+            ),
             value=overlay.get("context_llm_enabled", bool(cfg.context_llm_enabled)),
             id="settings-imagegen-context_llm_enabled",
             tooltip=(

@@ -22,3 +22,18 @@ VerticalScroll {
     scrollbar-color-active: $primary-lighten-2;
     scrollbar-size: 1 1;
 }
+
+/* task-1562: keep transient toasts off the right-hand inspector rails.
+ * The default bottom-right ToastRack stacks directly over the Scope
+ * Inspector (Settings) and Inspector (Console) -- the panes that carry
+ * recovery/boundary copy. Bottom-center floats over transient flowing
+ * content instead of persistent guidance. */
+Toast {
+    /* task-1562: keep transient toasts off the right-hand inspector rails
+     * (Scope Inspector in Settings, Inspector in Console) -- they carry
+     * recovery/boundary copy. The rack's built-in right-bottom align and
+     * its own margins resist app-tier overrides, but a margin on the
+     * Toast itself reliably offsets it from that anchor; 46 cells clears
+     * the inspector column at supported widths. */
+    margin-right: 46;
+}
