@@ -112,6 +112,37 @@ def build_settings_privacy_posture(
     )
 
 
+def env_var_summary(*, present: int, missing: int, configured: int) -> str:
+    """Summarize provider env-var readiness with the counts' relationship.
+
+    "0 present / 19 missing / 19 configured" read as contradictory (rescore
+    P3): "configured" meant env-var REFERENCES in config, not set values.
+
+    Args:
+        present: Referenced env vars that are set in the environment.
+        missing: Referenced env vars that are unset.
+        configured: Total env-var references in the provider config.
+
+    Returns:
+        A single row stating how many referenced env vars are actually set.
+    """
+    return (
+        f"{present} of {configured} referenced env vars are set ({missing} unset)"
+    )
+
+
+def skill_trust_display(status: str) -> str:
+    """Strip the raw enum prefix from a skill-trust status for display.
+
+    Args:
+        status: The stored skill-trust status (e.g. "trust_uninitialized").
+
+    Returns:
+        The user-facing form without the "trust_" prefix.
+    """
+    return status.removeprefix("trust_")
+
+
 def build_privacy_posture_rows(posture: SettingsPrivacyPosture) -> tuple[str, ...]:
     """Return stable redacted rows for visible Privacy & Security status.
 
@@ -130,14 +161,16 @@ def build_privacy_posture_rows(posture: SettingsPrivacyPosture) -> tuple[str, ..
         f"Sensitive config fields: {posture.sensitive_config_fields} present",
         (
             "Provider env vars: "
-            f"{posture.provider_env_present} present / "
-            f"{posture.provider_env_missing} missing / "
-            f"{posture.provider_env_configured} configured"
+            + env_var_summary(
+                present=posture.provider_env_present,
+                missing=posture.provider_env_missing,
+                configured=posture.provider_env_configured,
+            )
         ),
         f"Provider config secrets: {posture.provider_config_secrets} present",
         (
             "Skill trust: "
-            f"{posture.skill_trust_status if posture.skill_trust_enabled else 'disabled'}"
+            f"{skill_trust_display(posture.skill_trust_status) if posture.skill_trust_enabled else 'disabled'}"
         ),
         (
             "Skill trust keyring convenience: enabled"

@@ -3183,7 +3183,11 @@ async def test_settings_category_search_uses_plain_standard_input_widgets():
         screen = _active_destination_screen(host)
 
         search = screen.query_one("#settings-category-search", Input)
-        assert type(search) is Input
+        # task-1584: SettingsCategorySearchInput is a plain Input whose only
+        # deviation is the "/" re-arm interception -- still no suggester,
+        # markup, or custom rendering.
+        assert type(search) is settings_screen_module.SettingsCategorySearchInput
+        assert type(search).__mro__[1] is Input
         assert not screen.query_one(
             "#settings-category-search-status", Static
         )._render_markup
@@ -4537,8 +4541,11 @@ async def test_settings_non_editable_categories_disable_guided_save_revert():
             pilot,
             "Guided edits: choose Providers or Console.",
         )
-        assert screen.query_one("#settings-save-category", Button).disabled is True
-        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        # task-1585: non-editable categories no longer render the pair at
+        # all (a permanently-disabled pair was dim-on-dim noise); the
+        # guided-edits state row still explains where to act.
+        assert not screen.query("#settings-save-category")
+        assert not screen.query("#settings-revert-category")
         assert "Guided edits: choose Providers or Console." in _visible_text(screen)
 
         await _select_settings_category(
@@ -4547,8 +4554,8 @@ async def test_settings_non_editable_categories_disable_guided_save_revert():
             SettingsCategoryId.PRIVACY_SECURITY,
             expected_text="Guided edits: use Check Privacy.",
         )
-        assert screen.query_one("#settings-save-category", Button).disabled is True
-        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        assert not screen.query("#settings-save-category")
+        assert not screen.query("#settings-revert-category")
         assert "Guided edits: use Check Privacy." in _visible_text(screen)
 
 
@@ -6520,10 +6527,9 @@ async def test_settings_storage_privacy_diagnostics_label_unsupported_mutations_
             text = _visible_text(screen)
 
             assert expected in text
-            assert screen.query_one("#settings-save-category", Button).disabled is True
-            assert (
-                screen.query_one("#settings-revert-category", Button).disabled is True
-            )
+            # task-1585: non-draft categories no longer render the pair.
+            assert not screen.query("#settings-save-category")
+            assert not screen.query("#settings-revert-category")
 
 
 @pytest.mark.asyncio
@@ -6556,7 +6562,10 @@ async def test_settings_privacy_security_renders_guided_redacted_posture(monkeyp
         assert "Data boundary" in text
         assert "Config encryption: disabled" in text
         assert "Sensitive config fields: 2 present" in text
-        assert "Provider env vars: 1 present / 1 missing / 2 configured" in text
+        assert (
+            "Provider env vars: 1 of 2 referenced env vars are set (1 unset)"
+            in text
+        )
         assert "Provider config secrets: 1 present" in text
         assert "Preferred source: environment variables" in text
         assert (
@@ -6569,8 +6578,9 @@ async def test_settings_privacy_security_renders_guided_redacted_posture(monkeyp
         assert DUMMY_REDACTION_ENV_VALUE not in text
         assert DUMMY_REDACTION_CONFIG_VALUE not in text
         assert DUMMY_REDACTION_SERVER_VALUE not in text
-        assert screen.query_one("#settings-save-category", Button).disabled is True
-        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        # task-1585: non-draft categories no longer render the pair.
+        assert not screen.query("#settings-save-category")
+        assert not screen.query("#settings-revert-category")
 
 
 @pytest.mark.asyncio
@@ -6919,7 +6929,9 @@ def test_settings_privacy_check_reports_redacted_secret_status(monkeypatch):
     assert result[0] == "Privacy check: complete"
     assert "Config encryption: disabled" in result
     assert "Sensitive config fields: 2 present" in result
-    assert "Provider env vars: 1 present / 1 missing / 2 configured" in result
+    assert (
+        "Provider env vars: 1 of 2 referenced env vars are set (1 unset)" in result
+    )
     assert "Redaction: active; raw secret values hidden" in result
     assert DUMMY_REDACTION_ENV_VALUE not in text
     assert DUMMY_REDACTION_CONFIG_VALUE not in text
@@ -7044,20 +7056,24 @@ async def test_settings_privacy_security_test_shortcut_runs_privacy_check(monkey
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-check-privacy")
-        assert screen.query_one("#settings-save-category", Button).disabled is True
-        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        # task-1585: non-draft categories no longer render the pair.
+        assert not screen.query("#settings-save-category")
+        assert not screen.query("#settings-revert-category")
 
         await pilot.press("t")
         await _wait_for_settings_text(screen, pilot, "Privacy check: complete")
         text = _visible_text(screen)
 
-        assert "Provider env vars: 1 present / 0 missing / 1 configured" in text
+        assert (
+            "Provider env vars: 1 of 1 referenced env vars are set (0 unset)" in text
+        )
         assert "Sensitive config fields: 1 present" in text
         assert DUMMY_REDACTION_ENV_VALUE not in text
         assert DUMMY_REDACTION_CONFIG_VALUE not in text
         assert "No test action is available" not in text
-        assert screen.query_one("#settings-save-category", Button).disabled is True
-        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        # task-1585: non-draft categories no longer render the pair.
+        assert not screen.query("#settings-save-category")
+        assert not screen.query("#settings-revert-category")
 
 
 @pytest.mark.asyncio
@@ -7691,3 +7707,249 @@ async def test_theme_user_edit_does_not_remount_editor():
         assert screen.theme_editor_modified is True
         note = screen.query_one("#settings-theme-unsaved-note", Static)
         assert "Yes" in str(note.renderable)
+
+
+# ---- task-1584: filter correctness (ranking, refocus, placeholder) ----
+
+
+def test_filter_word_boundary_match_outranks_substring():
+    """'rag' must surface Library/RAG first, not Storage (live-confirmed:
+    the bare substring 'sto-RAG-e' tied on rank tier and won on list index).
+    Word-boundary matches in the primary haystack outrank mid-word ones."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    matches = screen._filtered_category_summaries("rag")
+
+    assert matches, "no matches for 'rag'"
+    assert matches[0].category is SettingsCategoryId.LIBRARY_RAG
+    assert any(s.category is SettingsCategoryId.STORAGE for s in matches), (
+        "substring matches must still be findable, just ranked later"
+    )
+
+
+def test_filter_rank_tiers_keep_relative_order():
+    """Primary (id/title) matches still beat description matches, which beat
+    owned-config-key matches, regardless of the word-boundary sub-ranking."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    primary = screen._category_search_rank(
+        screen._category_summary_by_id(SettingsCategoryId.THEME), "theme"
+    )
+    owned = screen._category_search_rank(
+        screen._category_summary_by_id(SettingsCategoryId.CONSOLE_BEHAVIOR),
+        "paste_collapse_threshold",
+    )
+    assert primary is not None and owned is not None
+    assert primary < owned
+
+
+@pytest.mark.asyncio
+async def test_slash_refocus_selects_existing_filter_text():
+    """Pressing '/' while the filter already has focus must select the stale
+    text instead of inserting a literal slash, so the next keystroke starts
+    a fresh query (live-confirmed trap: repeat searches concatenated)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-category-search", Input).focus()
+        await pilot.pause()
+        for ch in "theme":
+            await pilot.press(ch)
+        await pilot.pause()
+
+        await pilot.press("/")
+        await pilot.pause()
+        search = screen.query_one("#settings-category-search", Input)
+        assert search.value == "theme", "literal slash was inserted"
+
+        await pilot.press("s")
+        await pilot.pause()
+        assert screen.query_one("#settings-category-search", Input).value == "s", (
+            "typing after '/' must replace the stale query"
+        )
+
+
+@pytest.mark.asyncio
+async def test_filter_placeholder_names_categories():
+    """The placeholder must promise what Enter actually does: open a
+    category (the old 'Filter settings (/)' oversold field-level search)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-category-search", Input)
+        assert search.placeholder == "Filter categories (/)"
+
+
+# ---- task-1583: inspector clipping + mid-token wraps ----
+
+
+def test_fold_long_tokens_breaks_at_separators_not_mid_word():
+    """Over-long dotted keys break at their separators, never inside a word
+    (the 34-char inspector column rendered "crede/ntial_source")."""
+    folded = settings_screen_module._fold_long_tokens(
+        "api_settings.<provider>.credential_source"
+    )
+    assert "\n" in folded
+    for line in folded.splitlines():
+        assert len(line.strip()) <= 26, line
+    rejoined = "".join(part.strip() for part in folded.splitlines())
+    assert rejoined == "api_settings.<provider>.credential_source"
+
+
+def test_fold_long_tokens_leaves_short_values_alone():
+    """Values that fit the narrow column pass through untouched."""
+    assert settings_screen_module._fold_long_tokens("Console") == "Console"
+    assert (
+        settings_screen_module._fold_long_tokens("chat_defaults.provider")
+        == "chat_defaults.provider"
+    )
+    assert (
+        settings_screen_module._fold_long_tokens("no separators here at all")
+        == "no separators here at all"
+    )
+
+
+def test_detail_row_folds_long_config_keys():
+    """_detail_row values with pathological tokens gain fold points."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    row = screen._detail_row("Owns", "api_settings.<provider>.credential_source")
+
+    text = str(row.renderable)
+    assert "\n" in text
+    assert "credential_source" in text.replace("\n", "").replace(" ", "")
+
+
+@pytest.mark.asyncio
+async def test_local_scope_note_is_pinned_outside_scrollable_body():
+    """The standing local-scope reassurance must live in the pinned header
+    region, not as the scroll body's clip-bait last row (8 of 20 critique
+    captures cut it mid-sentence: 'Nothing is sent to')."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        note = screen.query_one("#settings-local-scope-note", Static)
+        body = screen.query_one("#settings-impact-pane-body")
+        assert body not in note.ancestors, (
+            "local-scope note is inside the scrollable body"
+        )
+
+
+# ---- task-1585: hygiene batch ----
+
+
+def test_env_var_summary_reads_unambiguously():
+    """'0 present / 19 missing / 19 configured' read as contradictory
+    (rescore P3); the summary states the relationship between the counts."""
+    from tldw_chatbook.UI.Screens.settings_privacy_security import env_var_summary
+
+    assert (
+        env_var_summary(present=0, missing=19, configured=19)
+        == "0 of 19 referenced env vars are set (19 unset)"
+    )
+    assert (
+        env_var_summary(present=3, missing=1, configured=4)
+        == "3 of 4 referenced env vars are set (1 unset)"
+    )
+
+
+def test_skill_trust_display_drops_raw_enum_prefix():
+    """'Skill trust: trust_uninitialized' leaked a raw enum value."""
+    from tldw_chatbook.UI.Screens.settings_privacy_security import skill_trust_display
+
+    assert skill_trust_display("trust_uninitialized") == "uninitialized"
+    assert skill_trust_display("trusted") == "trusted"
+
+
+def test_internal_prompts_group_headers_use_display_titles():
+    """Raw snake_case group headers (rag_reranker (6)) render as titles."""
+    from tldw_chatbook.Widgets.settings_internal_prompts_panel import (
+        subsystem_display_title,
+    )
+
+    assert subsystem_display_title("rag_reranker") == "RAG reranker"
+    assert subsystem_display_title("websearch") == "Web search"
+    assert subsystem_display_title("agents") == "Agents"
+    assert subsystem_display_title("console") == "Console"
+
+
+def test_mode_line_disclaimer_only_on_overview():
+    """'Runtime controls stay in MCP and ACP' repeated verbatim on all 17
+    categories; it orients once on Overview, not as standing noise."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    overview = screen._mode_line_text(
+        screen._category_summary_by_id(SettingsCategoryId.OVERVIEW)
+    )
+    theme = screen._mode_line_text(
+        screen._category_summary_by_id(SettingsCategoryId.THEME)
+    )
+    assert overview == "Mode: Overview | Runtime controls stay in MCP and ACP"
+    assert theme == "Mode: Theme"
+
+
+@pytest.mark.asyncio
+async def test_save_revert_pair_hidden_on_non_draft_categories():
+    """Read-only categories showed a permanently-disabled Save/Revert pair
+    while Workspaces alone omitted it; the pair now renders only where the
+    draft model acts (consistent with the task-1580 footer gating)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-artifacts")
+        screen = _active_destination_screen(host)
+        assert not screen.query("#settings-save-category")
+        assert not screen.query("#settings-revert-category")
+
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        assert screen.query("#settings-save-category")
+        assert screen.query("#settings-revert-category")
+
+
+@pytest.mark.asyncio
+async def test_workspaces_unselected_card_shows_hint_not_blank():
+    """With no workspace selected the card area rendered nothing -- a
+    near-empty center pane. An instructional hint fills the void."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen = _active_destination_screen(host)
+        hint = screen.query_one("#settings-workspace-card-hint", Static)
+        assert "Select a workspace" in str(hint.renderable)
+
+
+# ---- task-1582: text-carried interactive-state affordances ----
+
+
+@pytest.mark.asyncio
+async def test_disabled_save_revert_carry_text_annotation():
+    """Disabled Save/Revert differed from enabled only by dimming (rescore
+    P2: low-vision users lose the affordance). The clean-state labels say
+    why they are inert; the dirty-state labels return to the plain form."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        save = screen.query_one("#settings-save-category", Button)
+        assert save.disabled is True
+        assert "no changes" in str(save.label)
+
+        screen._stage_console_default_value("paste_collapse_threshold", 503)
+        screen._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        await pilot.pause()
+        save = screen.query_one("#settings-save-category", Button)
+        assert save.disabled is False
+        assert str(save.label) == "Save (s)"

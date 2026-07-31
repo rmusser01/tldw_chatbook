@@ -188,6 +188,8 @@ from .settings_privacy_security import (
     SettingsPrivacyPosture,
     build_privacy_posture_rows,
     build_settings_privacy_posture,
+    env_var_summary,
+    skill_trust_display,
 )
 from .settings_storage_defaults import (
     STORAGE_FIELD_LABELS,
@@ -1150,6 +1152,70 @@ class ProviderEndpointURLValidator(Validator):
         return self.failure(
             "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1."
         )
+
+
+#: task-1583: widest token the ~26-34 cell Scope Inspector column shows
+#: without folding mid-word.
+_FOLD_TOKEN_LIMIT = 26
+
+
+def _fold_long_tokens(text: str, limit: int = _FOLD_TOKEN_LIMIT) -> str:
+    """Break over-long dotted keys and slashed paths at their separators.
+
+    Rich wraps at spaces and folds longer tokens mid-word, so the narrow
+    Scope Inspector rendered "crede/ntial_source" and "config.tom/l"
+    (critique rescore P2). Tokens beyond ``limit`` that contain ``.`` or
+    ``/`` separators gain newline break points after separators instead,
+    continuation-indented; tokens without separators pass through.
+
+    Args:
+        text: The detail-row value, possibly multi-token or multi-line.
+        limit: Maximum kept token length before folding.
+
+    Returns:
+        The text with pathological tokens folded at separator boundaries.
+    """
+
+    def fold_token(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if len(token) <= limit or not re.search(r"[./]", token):
+            return token
+        segments = re.split(r"(?<=[./])", token)
+        lines: list[str] = []
+        current = ""
+        for segment in segments:
+            if current and len(current) + len(segment) > limit:
+                lines.append(current)
+                current = segment
+            else:
+                current += segment
+        if current:
+            lines.append(current)
+        return "\n  ".join(lines)
+
+    return re.sub(r"\S+", fold_token, text)
+
+
+class SettingsCategorySearchInput(Input):
+    """Category filter input where "/" re-arms the query instead of typing.
+
+    "/" is the screen-wide focus-the-filter key; once the filter itself has
+    focus the screen's on_key never sees printable keys, so a second "/"
+    would insert a literal slash into the query (task-1584's live trap).
+    Intercept it here: select-all so the next keystroke replaces the stale
+    text. Every other Input keeps literal "/" typing (endpoint URLs).
+    """
+
+    async def _on_key(self, event: Key) -> None:
+        # Same slash representations the screen-level handler accepts --
+        # some platforms/layouts emit key="slash" without character="/"
+        # (Qodo review; the Playwright driver hit the "slash" name too).
+        if event.key in {"/", "slash"} or event.character == "/":
+            self.select_all()
+            event.stop()
+            event.prevent_default()
+            return
+        await super()._on_key(event)
 
 
 class SettingsURLInput(Input):
@@ -3721,17 +3787,41 @@ class SettingsScreen(BaseAppScreen):
             and self._category_has_unsaved_changes(category)
         )
 
+    @staticmethod
+    def _guided_action_label(base: str, *, dirty: bool) -> str:
+        """Save/Revert label with a text-carried inert-state annotation.
+
+        Disabled buttons differed from enabled ones only by dimming
+        (task-1582); in the clean state the label itself says why the pair
+        is inert. A dirty-but-invalid draft keeps the plain label -- the
+        guided-action state row explains the validation block there.
+
+        Args:
+            base: The plain label, e.g. "Save (s)".
+            dirty: Whether the active category has unsaved changes.
+
+        Returns:
+            The plain label when dirty, otherwise the annotated form.
+        """
+        return base if dirty else f"{base} — no changes"
+
     def _update_guided_action_widgets(self) -> None:
         category = self._active_category_id()
         actions_enabled = self._guided_actions_enabled(category)
+        dirty = self._category_has_unsaved_changes(category)
         self._set_static_text(
             "#settings-guided-action-state", self._guided_action_message(category)
         )
-        for selector in ("#settings-save-category", "#settings-revert-category"):
+        for selector, base in (
+            ("#settings-save-category", "Save (s)"),
+            ("#settings-revert-category", "Revert (r)"),
+        ):
             try:
-                self.query_one(selector, Button).disabled = not actions_enabled
+                button = self.query_one(selector, Button)
             except QueryError:
-                pass
+                continue
+            button.disabled = not actions_enabled
+            button.label = self._guided_action_label(base, dirty=dirty)
 
     def _category_status(self, summary: SettingsCategorySummary) -> str:
         if self._category_has_unsaved_changes(summary.category):
@@ -3855,7 +3945,13 @@ class SettingsScreen(BaseAppScreen):
             return 0
         primary_haystack = " ".join((summary.category.value, summary.title)).lower()
         if query in primary_haystack:
-            return 0
+            # task-1584: a match starting at a word boundary outranks a
+            # mid-word substring hit -- "rag" must surface Library/RAG
+            # before Storage (sto-RAG-e), which previously tied on tier
+            # and won on list index.
+            if re.search(rf"(?<![a-z0-9]){re.escape(query)}", primary_haystack):
+                return 0
+            return 1
         secondary_haystack = " ".join(
             (
                 summary.description,
@@ -3863,8 +3959,8 @@ class SettingsScreen(BaseAppScreen):
             )
         ).lower()
         if query in secondary_haystack:
-            return 1
-        # task-1564: rank 2 -- the category's owned config keys. The Scope
+            return 2
+        # task-1564: last tier -- the category's owned config keys. The Scope
         # Inspector already publishes them; indexing them lets "/" find the
         # category that OWNS a setting instead of forcing a 22-item scan.
         try:
@@ -3874,7 +3970,7 @@ class SettingsScreen(BaseAppScreen):
         except Exception:
             owned = ""
         if owned and query in owned:
-            return 2
+            return 3
         return None
 
     def _category_matches_search(
@@ -3936,9 +4032,11 @@ class SettingsScreen(BaseAppScreen):
                     button.display = is_visible
                     button.remove_class("settings-primary-search-match")
                     button.remove_class("settings-secondary-search-match")
-                    if query and rank == 0:
+                    # task-1584 rescaled tiers: 0/1 are both primary
+                    # (word-boundary vs substring); 2 is description/status.
+                    if query and rank in (0, 1):
                         button.add_class("settings-primary-search-match")
-                    elif query and rank == 1:
+                    elif query and rank == 2:
                         button.add_class("settings-secondary-search-match")
                 except QueryError:
                     pass
@@ -7879,6 +7977,9 @@ class SettingsScreen(BaseAppScreen):
     def _detail_row(
         self, label: str, value: object, *, identifier: str | None = None
     ) -> Static:
+        if isinstance(value, str):
+            # task-1583: dotted keys/paths fold at separators, never mid-word.
+            value = _fold_long_tokens(value)
         return Static(
             f"{label}: {value}",
             id=identifier,
@@ -8370,9 +8471,10 @@ class SettingsScreen(BaseAppScreen):
                     button.add_class("settings-active-section")
                 if self._category_search_text() and is_visible:
                     rank = self._category_search_rank(summary)
-                    if rank == 0:
+                    # task-1584 rescaled tiers: 0/1 primary, 2 secondary.
+                    if rank in (0, 1):
                         button.add_class("settings-primary-search-match")
-                    elif rank == 1:
+                    elif rank == 2:
                         button.add_class("settings-secondary-search-match")
                 button.display = is_visible
                 yield button
@@ -10589,6 +10691,14 @@ class SettingsScreen(BaseAppScreen):
         """
         workspace_id = self._settings_selected_workspace_id
         if not workspace_id:
+            # task-1585: rendering nothing here left the center pane a
+            # near-empty box -- say what selecting does instead.
+            yield Static(
+                "Select a workspace above to rename it, set it active, "
+                "archive it, or bind folders.",
+                id="settings-workspace-card-hint",
+                classes="settings-detail-row",
+            )
             return
         record = registry.get_workspace(workspace_id)
         if record is None:
@@ -11007,10 +11117,10 @@ class SettingsScreen(BaseAppScreen):
                 yield Static("Credential sources", classes="destination-section")
                 yield self._detail_row(
                     "Provider env vars",
-                    (
-                        f"{posture.provider_env_present} present / "
-                        f"{posture.provider_env_missing} missing / "
-                        f"{posture.provider_env_configured} configured"
+                    env_var_summary(
+                        present=posture.provider_env_present,
+                        missing=posture.provider_env_missing,
+                        configured=posture.provider_env_configured,
                     ),
                 )
                 yield self._detail_row("Preferred source", "environment variables")
@@ -11023,7 +11133,7 @@ class SettingsScreen(BaseAppScreen):
                 )
                 yield self._detail_row(
                     "Skill trust",
-                    posture.skill_trust_status
+                    skill_trust_display(posture.skill_trust_status)
                     if posture.skill_trust_enabled
                     else "disabled",
                 )
@@ -11201,6 +11311,25 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-advanced-config-editor",
                 )
 
+    def _mode_line_text(self, summary: SettingsCategorySummary) -> str:
+        """Mode-line text for the category strip.
+
+        The MCP/ACP runtime disclaimer orients once on Overview; repeating
+        it verbatim on all 17 categories made it standing noise the eye
+        learns to skip (rescore P3).
+
+        Args:
+            summary: The active category's summary.
+
+        Returns:
+            "Mode: <title>", with the runtime disclaimer only on Overview.
+        """
+        if summary.category is SettingsCategoryId.OVERVIEW:
+            return (
+                f"Mode: {summary.title} | Runtime controls stay in MCP and ACP"
+            )
+        return f"Mode: {summary.title}"
+
     def _render_impact_pane_header(self) -> ComposeResult:
         """Fixed (non-scrolling) inspector header (task-1560/task-1562).
 
@@ -11228,27 +11357,35 @@ class SettingsScreen(BaseAppScreen):
             id="settings-guided-action-state",
             classes="settings-status-row",
         )
-        if summary.category not in (
-            SettingsCategoryId.THEME,
-            SettingsCategoryId.SPLASH_SCREEN,
-            SettingsCategoryId.INTERNAL_PROMPTS,
-            SettingsCategoryId.IMAGE_GENERATION,
-            SettingsCategoryId.WORKSPACES,
-        ):
+        # task-1585: render the pair ONLY where the draft model acts --
+        # previously read-only categories showed it permanently disabled
+        # (dim-on-dim noise) while five own-persistence categories omitted
+        # it, with no stated rule. Mirrors the task-1580 footer gating.
+        if summary.category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+            dirty = self._category_has_unsaved_changes(summary.category)
             save_button = Button(
-                "Save (s)",
+                self._guided_action_label("Save (s)", dirty=dirty),
                 id="settings-save-category",
                 tooltip="Save changes for the selected Settings category.",
             )
             save_button.disabled = not self._guided_actions_enabled(summary.category)
             yield save_button
             revert_button = Button(
-                "Revert (r)",
+                self._guided_action_label("Revert (r)", dirty=dirty),
                 id="settings-revert-category",
                 tooltip="Discard unsaved changes for the selected Settings category.",
             )
             revert_button.disabled = not self._guided_actions_enabled(summary.category)
             yield revert_button
+        # task-181 copy, task-1583 placement: this reassurance line used to
+        # close the SCROLLABLE body, where 8 of 20 critique captures cut it
+        # mid-sentence ("Nothing is sent to" reads ominous truncated).
+        # Pinned here it is always fully visible.
+        yield Static(
+            "Saves apply to your local config file. Nothing is sent to a server "
+            "unless you run Manual sync yourself.",
+            id="settings-local-scope-note",
+        )
 
     def _render_impact_pane_body(self) -> ComposeResult:
         """Scrollable inspector remainder: guides, ownership, boundaries."""
@@ -11466,13 +11603,6 @@ class SettingsScreen(BaseAppScreen):
                 value,
                 identifier="settings-boundary-note" if label == "Boundary" else None,
             )
-        # task-181: keep this in user language and consistent with the
-        # "Writes allowed" row above; saves are local-config only.
-        yield Static(
-            "Saves apply to your local config file. Nothing is sent to a server "
-            "unless you run Manual sync yourself.",
-            id="settings-local-scope-note",
-        )
         if summary.category is SettingsCategoryId.OVERVIEW:
             yield Button(
                 "Open Theme",
@@ -11492,7 +11622,7 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-category-strip", classes="destination-mode-strip"
             ):
                 yield Static(
-                    f"Mode: {active_summary.title} | Runtime controls stay in MCP and ACP",
+                    self._mode_line_text(active_summary),
                     id="settings-category-label",
                     classes="destination-section",
                 )
@@ -11506,9 +11636,9 @@ class SettingsScreen(BaseAppScreen):
                         "Settings Sections",
                         classes="destination-section settings-column-title",
                     )
-                    yield Input(
+                    yield SettingsCategorySearchInput(
                         value=self.category_search_query,
-                        placeholder="Filter settings (/)",
+                        placeholder="Filter categories (/)",
                         id="settings-category-search",
                         classes="settings-category-search",
                     )
@@ -11593,9 +11723,15 @@ class SettingsScreen(BaseAppScreen):
 
     def _focus_category_search(self) -> None:
         try:
-            self.query_one("#settings-category-search", Input).focus()
+            search = self.query_one("#settings-category-search", Input)
         except QueryError:
             logger.debug("Unable to focus Settings category search")
+            return
+        search.focus()
+        # task-1584: refocusing must not resume the stale query -- select it
+        # so the next keystroke starts fresh (repeat searches concatenated
+        # before, silently poisoning the next filter).
+        search.select_all()
 
     def _focus_category(self, category_value: str) -> None:
         try:
@@ -15406,9 +15542,18 @@ class SettingsScreen(BaseAppScreen):
 
     def on_key(self, event: Key) -> None:
         focused = self._focused_widget()
-        if (
+        is_slash = (
             event.key in {"/", "slash"} or getattr(event, "character", None) == "/"
-        ) and not isinstance(focused, (Input, TextArea)):
+        )
+        if is_slash and self._category_search_has_focus():
+            # task-1584: "/" on the already-focused filter re-arms it
+            # (select-all so typing replaces) instead of inserting a
+            # literal slash into the query.
+            self._focus_category_search()
+            event.stop()
+            event.prevent_default()
+            return
+        if is_slash and not isinstance(focused, (Input, TextArea)):
             self._focus_category_search()
             event.stop()
             event.prevent_default()
