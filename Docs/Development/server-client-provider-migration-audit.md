@@ -54,7 +54,7 @@ Pending audit delta
 Generated with:
 
 ```bash
-rg -n "build_runtime_api_client_from_config|build_runtime_api_client\(|build_tldw_api_client_from_config|build_server_chatbook_service|build_server_chatbook_service_from_config|Server[A-Za-z]+Service\.from_config" tldw_chatbook
+rg -n "build_runtime_api_client_from_config|build_runtime_api_client\(|build_tldw_api_client_from_config|build_server_chatbook_service|build_server_chatbook_service_from_config|Server[A-Za-z0-9]+Service\.from_config" tldw_chatbook
 ```
 
 ## Audit Key Contract
@@ -80,7 +80,7 @@ These `from_config(...)` call sites continue to use public compatibility APIs, b
 | `tldw_chatbook/app.py` | 1871, 4417, 1899, 4447 | App wiring compatibility adapter uses. Semantic matches: `self.server_translation_service = ServerTranslationService.from_config(`, `ServerVoiceAssistantService.from_config(`, `self.server_companion_service = ServerCompanionService.from_config(`, `ServerPersonalizationService.from_config(`. |
 | `tldw_chatbook/app.py` | 1927, 1988, 2007, 4563 | App wiring compatibility adapter uses. Semantic matches: `self.server_outputs_service = ServerOutputsService.from_config(`, `self.server_chat_grammars_service = ServerChatGrammarsService.from_config(`, `self.server_feedback_service = ServerFeedbackService.from_config(`, `ServerCollectionsFeedsService.from_config(`. |
 | `tldw_chatbook/app.py` | 2037, 2051, 2065, 2079 | App wiring compatibility adapter uses. Semantic matches: `self.server_connectors_service = ServerConnectorsService.from_config(`, `self.server_skills_service = ServerSkillsService.from_config(`, `self.server_tools_service = ServerToolsService.from_config(`, `self.server_mcp_governance_service = ServerMCPGovernanceService.from_config(`. |
-| `tldw_chatbook/app.py` | 2144, 4777, 2198 | App wiring compatibility adapter uses. Semantic matches: `self.server_sync_service = ServerSyncService.from_config(`, `ServerLLMProviderCatalogService.from_config(`, `self.server_audio_services_service = ServerAudioServicesService.from_config(`. |
+| `tldw_chatbook/app.py` | 5134, 5148, 5209, 5236 | App wiring compatibility adapter uses. Semantic matches: `self.server_text2sql_service = ServerText2SQLService.from_config(`, `self.server_sync_service = ServerSyncService.from_config(`, `ServerLLMProviderCatalogService.from_config(`, `self.server_audio_services_service = ServerAudioServicesService.from_config(`. |
 | `tldw_chatbook/app.py` | 4831, 2236, 2250, 2264 | App wiring compatibility adapter uses. Semantic matches: `ServerUserGovernanceService.from_config(`, `self.server_sharing_service = ServerSharingService.from_config(`, `self.server_web_clipper_service = ServerWebClipperService.from_config(`, `self.server_web_scraping_service = ServerWebScrapingService.from_config(`. |
 | `tldw_chatbook/Prompt_Management/prompt_scope_service.py` | 691 | Lazy prompt scope compatibility adapter use when no app provider is passed. Semantic match: `return ServerPromptService.from_config(app_config or {})`. |
 | `tldw_chatbook/UI/Study_Modules/flashcards_handler.py` | 199 | Fallback study handler compatibility adapter use when the app scope service is not already available. Semantic match: `server_service = ServerStudyService.from_config(`. |
