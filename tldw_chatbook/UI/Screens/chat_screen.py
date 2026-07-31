@@ -1102,6 +1102,11 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ("Enter", "send"),
             ("Ctrl+J", "insert a newline (works in any terminal)"),
             ("Shift+Enter", "insert a newline (where the terminal delivers it)"),
+            ("Ctrl+Z", "undo the last draft edit"),
+            (
+                "Ctrl+Shift+Z / Ctrl+Y",
+                "redo (Ctrl+Y also works where the terminal can't send Ctrl+Shift+Z)",
+            ),
             ("Alt+V", "paste an image from the clipboard"),
             (
                 "Attach",
@@ -18614,6 +18619,20 @@ class ChatScreen(BaseAppScreen):
             # (and this project's existing `ctrl+shift+p/c/a` bindings) use
             # the lowercase form, which is the primary/expected token; the
             # uppercase alias is defensive.
+            self._console_composer_redo()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "ctrl+y":
+            # TASK-1500: terminals without the Kitty keyboard protocol
+            # (Terminal.app, stock iTerm2) collapse ctrl+shift+z to plain
+            # ctrl+z at the wire, making redo unreachable there. ctrl+y is
+            # the C0 control EM (0x19) -- textual's `_ansi_sequences` maps
+            # it to "ctrl+y" unconditionally, Kitty or not, so it survives
+            # every terminal. Same composer-owns-keystroke conditions and
+            # same always-consume shape as ctrl+shift+z above (including on
+            # an empty redo stack, where `_console_composer_redo` is a
+            # silent no-op) -- an addition alongside it, not a replacement.
             self._console_composer_redo()
             event.stop()
             event.prevent_default()
