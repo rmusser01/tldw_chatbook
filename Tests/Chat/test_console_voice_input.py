@@ -2439,3 +2439,19 @@ def test_mishear_prefix_aliases_do_not_apply_to_a_custom_prefix(monkeypatch):
     assert isinstance(cvi.classify_segment("Consoles. Stop."), cvi.VoiceFinal)
     result = cvi.classify_segment("Jarvis, dot.")
     assert isinstance(result, cvi.VoiceCommand) and result.name == "stop"
+
+
+def test_punctuation_normalizes_to_a_space_not_deletion(monkeypatch):
+    """parakeet ITN writes 'Console.com' with no spaces; deletion glued it
+    into 'consolecom', unmatchable by any grammar or alias entry."""
+    _stub_settings(monkeypatch, {})
+    assert cvi.normalize_spoken("Console.com") == "console com"
+    assert cvi.normalize_spoken("Console, send.") == "console send"
+
+
+def test_the_observed_console_dot_com_mishear_fires_stop(monkeypatch):
+    """parakeet-mlx live 2026-07-31 (app run): spoken 'console stop' surfaced
+    in the draft as 'Console.com'."""
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Console.com")
+    assert isinstance(result, cvi.VoiceCommand) and result.name == "stop"

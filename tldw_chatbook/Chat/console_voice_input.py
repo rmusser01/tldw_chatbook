@@ -627,6 +627,12 @@ MISHEARD_PHRASES: dict[str, str] = {
     # parakeet-mlx, live 2026-07-31: the user's spoken "stop" repeatedly
     # transcribed as "dot" ("Console dot.").
     "dot": "stop",
+    # parakeet-mlx, live 2026-07-31 (app run): spoken "console stop" heard as
+    # "console dot", then parakeet's LM auto-completed the familiar pattern to
+    # "Console.com" -- which normalizes to "console com". "stop"'s false-fire
+    # cost is low (it just ends the capture), unlike e.g. "send".
+    "dot com": "stop",
+    "com": "stop",
 }
 
 #: Mis-heard prefix variants, same evidence rule as `MISHEARD_PHRASES`.
@@ -664,10 +670,17 @@ def normalize_spoken(text: str) -> str:
         `"Console… send"` -> `"console send"`.
     """
     lowered = text.lower()
+    # Punctuation becomes a SPACE, never plain deletion: parakeet's inverse
+    # text normalization writes patterns like "Console.com" with no spaces
+    # (live 2026-07-31, spoken "console stop"), and deleting the period glued
+    # the words into "consolecom" -- a token no grammar entry or mis-hear
+    # alias could ever match. Splitting on the space and re-collapsing keeps
+    # every previously-matching form matching.
     kept = [
-        ch
+        " "
+        if (unicodedata.category(ch).startswith("P") or ch in string.punctuation)
+        else ch
         for ch in lowered
-        if not (unicodedata.category(ch).startswith("P") or ch in string.punctuation)
     ]
     return " ".join("".join(kept).split())
 
