@@ -997,6 +997,19 @@ class ModelArtifactService:
 
         return self._staging_path
 
+    @property
+    def locks_path(self) -> Path:
+        """Return the managed lock-file root used by artifact operation leases.
+
+        Exposed (TASK-595 Task 6) so ``ArtifactAcquisitionService`` -- a
+        composed caller in a different module -- can acquire its own
+        reserved-namespace leases (e.g. ``ACQUISITION_SESSION_LEASE_KEY``)
+        against the exact same lock root this service uses internally,
+        without reaching into a private attribute.
+        """
+
+        return self._locks_path
+
     def artifact_path(self, reference: ArtifactRef) -> Path:
         """Return the contained final path for one validated reference."""
 

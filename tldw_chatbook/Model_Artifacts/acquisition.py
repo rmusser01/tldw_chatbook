@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterable, Literal, Protocol
 
@@ -11,7 +12,13 @@ import httpx
 
 from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise_async
 
-from .service import ArtifactError, ArtifactRef, closure_fingerprint
+from .leases import ArtifactLeaseTimeoutError, ArtifactOperationLease, LeaseMode
+from .service import (
+    ACQUISITION_SESSION_LEASE_KEY,
+    ArtifactError,
+    ArtifactRef,
+    closure_fingerprint,
+)
 
 if TYPE_CHECKING:
     from .service import ArtifactDescriptor, ModelArtifactService
@@ -23,6 +30,12 @@ MAX_FILE_REFETCHES = 1
 
 # Bounded timeout for the preflight repository-gating HEAD probe (Task 5).
 _PREFLIGHT_PROBE_TIMEOUT_SECONDS = 10.0
+
+# Non-blocking acquisition-session-lease timeout (Task 6): an immediate,
+# typed AcquisitionBusyError beats a hang -- another process or in-process
+# caller already holding the session lease means "busy right now", not
+# "worth waiting for".
+_SESSION_LEASE_TIMEOUT_SECONDS = 0.1
 
 # Credential hint named in gating_errors -- never a token value. Matches the
 # existing env precedence this codebase already documents (config.py's
@@ -140,6 +153,33 @@ class AcquisitionProgress:
     file: str | None
     bytes_done: int
     bytes_total: int
+
+
+@dataclass
+class _ProvisionProgressState:
+    """Mutable closure-wide byte accounting threaded through provision's phases.
+
+    Task 6 only constructs one instance per ``provision()`` call and threads
+    it, unchanged, into ``_fetch_artifact`` and ``_preverify_artifact`` for
+    every artifact in the closure. Tasks 7-8 read and update ``bytes_done``
+    as each declared file streams or is pre-verified, and call ``callback``
+    with an ``AcquisitionProgress`` event carrying these CLOSURE-WIDE totals
+    -- per the design spec, fetch/pre-verify progress is reported summed
+    across the whole closure, not reset per artifact or per file.
+
+    Args:
+        callback: The caller's optional progress sink, forwarded unchanged
+            from ``provision()``'s own ``progress`` keyword argument.
+        bytes_total: Total bytes still to download across the whole
+            closure (``PreflightReport.download_bytes``), computed once
+            before the per-artifact loop starts.
+        bytes_done: Running total of bytes fetched so far across every
+            artifact already processed in this run; starts at zero.
+    """
+
+    callback: Callable[[AcquisitionProgress], None] | None
+    bytes_total: int
+    bytes_done: int = 0
 
 
 @dataclass(frozen=True)
@@ -279,6 +319,15 @@ class ArtifactAcquisitionService:
         self._credential_resolver = credential_resolver
         self._free_bytes_probe = free_bytes_probe
         self._trusted_origins = trusted_origins
+        # In-process serialization for provision() (Task 6): queues same-
+        # process concurrent callers so only one at a time ever attempts the
+        # OS-backed acquisition-session lease below -- without this, two
+        # concurrent in-process calls would race each other for that
+        # exclusive lease and one would see AcquisitionBusyError even though
+        # no OTHER process is involved, which is the wrong signal in-process
+        # (queue and proceed, not "busy"). Safe to construct without a
+        # running loop on Python >= 3.10.
+        self._lock = asyncio.Lock()
 
     async def preflight(self, root: ArtifactRef, catalog: ArtifactCatalog) -> PreflightReport:
         """Aggregate space, staged-credit, and repository-gating checks.
@@ -298,6 +347,44 @@ class ArtifactAcquisitionService:
         Returns:
             A frozen ``PreflightReport``; call ``.grant()`` on it to obtain
             an ``AcquisitionConsent``.
+
+        Raises:
+            CatalogError: Propagated from an unknown ref, a dependency
+                cycle, or a conflicting-revision closure.
+        """
+        _closure, report, gating_targets = self._aggregate_closure(root, catalog)
+        gating_errors = await self._probe_gating(gating_targets.values())
+        return replace(report, gating_errors=tuple(gating_errors))
+
+    def _aggregate_closure(
+        self,
+        root: ArtifactRef,
+        catalog: ArtifactCatalog,
+    ) -> tuple[tuple[ArtifactDescriptor, ...], PreflightReport, dict[str, ArtifactPreflightEntry]]:
+        """Resolve the catalog closure and aggregate space/staged-credit math.
+
+        Pure and network-free: the only I/O is ``core.list_installed()`` and
+        ``core.disk_usage()`` (or the injected ``free_bytes_probe``), the
+        same fast synchronous calls ``preflight()`` already made directly
+        (Task 5) without an executor hop. Extracted (Task 6) so
+        ``preflight()`` and ``provision()`` share one aggregation instead of
+        two copies that could silently drift apart: ``preflight()`` layers
+        its own network gating probe on top of the returned report;
+        ``provision()`` re-runs this exact aggregation, still network-free,
+        to recheck the closure fingerprint and free space against a
+        possibly-drifted catalog without repeating the gating probe a
+        second time per run (gating already passed at grant time).
+
+        Args:
+            root: The root artifact reference to resolve and aggregate.
+            catalog: Catalog supplying descriptors for the closure walk.
+
+        Returns:
+            A tuple of: the closure descriptors in stable sorted order; a
+            ``PreflightReport`` with ``gating_errors`` deliberately left
+            empty (the caller decides whether and how to probe); and the
+            per-repository gating-probe targets, for a caller that wants to
+            hand them to ``_probe_gating``.
 
         Raises:
             CatalogError: Propagated from an unknown ref, a dependency
@@ -387,9 +474,7 @@ class ArtifactAcquisitionService:
             else self._core.disk_usage().free_bytes
         )
 
-        gating_errors = await self._probe_gating(gating_targets.values())
-
-        return PreflightReport(
+        report = PreflightReport(
             root=root,
             closure_fingerprint=fingerprint,
             entries=tuple(entries),
@@ -401,8 +486,206 @@ class ArtifactAcquisitionService:
             free_bytes=free_bytes,
             required_bytes=required_bytes,
             sufficient_space=free_bytes >= required_bytes,
-            gating_errors=tuple(gating_errors),
+            gating_errors=(),
         )
+        return closure, report, gating_targets
+
+    async def provision(
+        self,
+        root: ArtifactRef,
+        consent: AcquisitionConsent,
+        catalog: ArtifactCatalog,
+        *,
+        progress: Callable[[AcquisitionProgress], None] | None = None,
+    ) -> ArtifactRef:
+        """Acquire and activate one consented closure, resuming idempotently.
+
+        Serializes against every other ``provision()`` call twice over: an
+        in-process ``asyncio.Lock`` queues same-process callers first (so
+        two concurrent calls in this process never race the OS-backed lease
+        against each other and see a spurious busy error), then a single
+        exclusive, non-blocking ``ACQUISITION_SESSION_LEASE_KEY`` lease
+        serializes against every other OS process. The session lease is
+        held for this call's ENTIRE run -- acquired before any phase runs,
+        released only in a ``finally`` after activation succeeds or any step
+        raises -- because ``reconcile()``'s managed-staging GC
+        (``service.py``'s ``_gc_managed_staging``) treats a free session
+        lease as permission to delete orphaned download staging; releasing
+        early would let a reconcile pass race a live download the same way
+        an early Task 2 draft let it race a live ``install()``.
+
+        Re-walks ``catalog`` from ``root`` independently of ``consent``: the
+        closure fingerprint is recomputed via the same network-free
+        aggregation ``preflight()`` uses and compared against
+        ``consent.closure_fingerprint`` -- a changed dependency set since
+        ``preflight()`` raises ``ConsentMismatchError``, since consent to
+        the old content no longer applies to the new one. Free space is
+        rechecked from that same aggregation; this recheck deliberately
+        skips the network gating probe (gating already passed at grant
+        time, and repeating it here would add a per-provision network round
+        trip for no benefit at this phase).
+
+        Artifacts already present in ``core.list_installed()`` are skipped
+        entirely, bypassing the fetch/pre-verify/install phases -- this is
+        both the idempotent-completion path for a fully provisioned closure
+        and the crash-after-install recovery path (Tasks 7-8 exercise the
+        latter with a mid-closure crash).
+
+        Args:
+            root: The root artifact reference to provision.
+            consent: Consent obtained from a prior ``preflight().grant()``
+                call.
+            catalog: Catalog supplying descriptors for the closure re-walk.
+                Not carried by ``consent`` itself -- re-walking is what
+                makes the fingerprint drift check meaningful, and the
+                freshly resolved descriptors supply the file URLs the
+                fetch phase needs.
+            progress: Optional sink for ``AcquisitionProgress`` events
+                emitted by the fetch and pre-verify phases (Tasks 7-8).
+
+        Returns:
+            The activated root artifact reference.
+
+        Raises:
+            AcquisitionBusyError: Another acquisition session -- in this
+                process or another -- already holds the session lease.
+            ConsentMismatchError: The re-walked closure fingerprint no
+                longer matches ``consent`` (the catalog changed since
+                ``preflight()``).
+            InsufficientSpaceError: Free space no longer covers the
+                required bytes for this closure.
+            CatalogError: Propagated from an unknown ref, a dependency
+                cycle, or a conflicting-revision closure during the
+                re-walk.
+            NotImplementedError: A not-yet-installed artifact reached the
+                fetch, pre-verify, or install phase stub (Tasks 7-8 fill
+                these in).
+        """
+        async with self._lock:
+            loop = asyncio.get_running_loop()
+            lease = ArtifactOperationLease(
+                self._core.locks_path,
+                ACQUISITION_SESSION_LEASE_KEY,
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=_SESSION_LEASE_TIMEOUT_SECONDS,
+            )
+            try:
+                await loop.run_in_executor(None, lease.acquire)
+            except ArtifactLeaseTimeoutError as error:
+                raise AcquisitionBusyError(
+                    "another managed acquisition session is already active"
+                ) from error
+            try:
+                closure, report, _gating_targets = self._aggregate_closure(root, catalog)
+                if report.closure_fingerprint != consent.closure_fingerprint:
+                    raise ConsentMismatchError(
+                        "closure fingerprint changed since consent was granted; "
+                        "re-run preflight and obtain new consent"
+                    )
+                if not report.sufficient_space:
+                    raise InsufficientSpaceError(
+                        f"required {report.required_bytes} bytes but only "
+                        f"{report.free_bytes} free"
+                    )
+
+                installed = self._core.list_installed()
+                installed_refs = {
+                    item.descriptor.reference
+                    for item in installed
+                    if item.descriptor is not None
+                }
+
+                progress_state = _ProvisionProgressState(
+                    callback=progress,
+                    bytes_total=report.download_bytes,
+                )
+
+                for descriptor in closure:
+                    if descriptor.reference in installed_refs:
+                        continue
+                    staging_dir = (
+                        self._core.staging_path
+                        / "managed"
+                        / descriptor.reference.artifact_id
+                        / descriptor.reference.revision
+                        / descriptor.reference.variant
+                    )
+                    await self._fetch_artifact(descriptor, staging_dir, progress_state)
+                    await self._preverify_artifact(descriptor, staging_dir, progress_state)
+                    await self._install_artifact(descriptor, staging_dir)
+
+                return await loop.run_in_executor(None, self._core.activate, root)
+            finally:
+                await loop.run_in_executor(None, lease.release)
+
+    async def _fetch_artifact(
+        self,
+        descriptor: ArtifactDescriptor,
+        staging_dir: Path,
+        progress_state: _ProvisionProgressState,
+    ) -> None:
+        """Stream every declared file into durable staging with resume support.
+
+        Stub (Task 6); Task 7 implements this phase. The signature is final
+        -- ``provision()``'s call site will not change when it does.
+
+        Args:
+            descriptor: The artifact whose declared files to fetch.
+            staging_dir: The durable ``staging/managed/<id>/<rev>/<variant>``
+                directory for this artifact.
+            progress_state: Closure-wide progress accounting to read and
+                update as bytes stream in.
+
+        Raises:
+            NotImplementedError: Always, until Task 7 implements this phase.
+        """
+
+        raise NotImplementedError("fetch phase is implemented in a later task")
+
+    async def _preverify_artifact(
+        self,
+        descriptor: ArtifactDescriptor,
+        staging_dir: Path,
+        progress_state: _ProvisionProgressState,
+    ) -> None:
+        """Streaming-verify every staged file's SHA-256 before install.
+
+        Stub (Task 6); Task 8 implements this phase. The signature is final
+        -- ``provision()``'s call site will not change when it does.
+
+        Args:
+            descriptor: The artifact whose staged files to verify.
+            staging_dir: The durable staging directory holding the fetched
+                files.
+            progress_state: Closure-wide progress accounting to read and
+                update as bytes are verified.
+
+        Raises:
+            NotImplementedError: Always, until Task 8 implements this phase.
+        """
+
+        raise NotImplementedError("pre-verify phase is implemented in a later task")
+
+    async def _install_artifact(
+        self,
+        descriptor: ArtifactDescriptor,
+        staging_dir: Path,
+    ) -> None:
+        """Promote one pre-verified staged directory into the immutable store.
+
+        Stub (Task 6); Task 8 implements this phase. The signature is final
+        -- ``provision()``'s call site will not change when it does.
+
+        Args:
+            descriptor: The artifact to install.
+            staging_dir: The durable staging directory holding the verified
+                files.
+
+        Raises:
+            NotImplementedError: Always, until Task 8 implements this phase.
+        """
+
+        raise NotImplementedError("install phase is implemented in a later task")
 
     def _staged_bytes_for(self, ref: ArtifactRef) -> int:
         """Best-effort resumable-byte credit from a fetch-state sidecar.
