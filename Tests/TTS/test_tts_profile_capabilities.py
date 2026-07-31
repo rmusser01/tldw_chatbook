@@ -325,6 +325,12 @@ class _AvailabilityRepository:
     async def assignment_count(self, *_args: Any, **_kwargs: Any) -> Any:
         raise AssertionError("availability must not count assignments")
 
+    async def get_assigned_profile(
+        self,
+        character_ref: CharacterRef,
+    ) -> Any:
+        raise AssertionError(character_ref)
+
     async def set_assignment(
         self,
         character_ref: CharacterRef,
