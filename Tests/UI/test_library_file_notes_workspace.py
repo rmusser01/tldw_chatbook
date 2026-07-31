@@ -119,11 +119,25 @@ def test_reconcile_tolerates_projection_disappearing_during_unmount(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = LibraryFileNotesWorkspace(root=None, replica=None)
+    workspace._active = True
+    projection_attempts: list[bool | None] = []
 
     def missing_root_surface(*, offline: bool | None = None) -> None:
-        del offline
+        projection_attempts.append(offline)
         raise NoMatches("root surface was removed during unmount")
 
+    # Reproduce the teardown window itself: the initial lifecycle guard has
+    # passed, but descendants disappear before the first projection query.
+    monkeypatch.setattr(
+        LibraryFileNotesWorkspace,
+        "is_mounted",
+        property(lambda _workspace: True),
+    )
+    monkeypatch.setattr(
+        LibraryFileNotesWorkspace,
+        "children",
+        property(lambda _workspace: (object(),)),
+    )
     monkeypatch.setattr(workspace, "_update_root_surface", missing_root_surface)
 
     applied = workspace._apply_reconcile(
@@ -132,6 +146,7 @@ def test_reconcile_tolerates_projection_disappearing_during_unmount(
     )
 
     assert applied is False
+    assert projection_attempts == [False]
     assert workspace.entries == {}
     assert workspace._deleted_paths == ("deleted.md",)
 
