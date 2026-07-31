@@ -232,6 +232,7 @@ from .config import (
 )
 from .Event_Handlers import worker_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+    TTSGlobalOverrideDecisionEvent,
     TTSMessageSpeechRequestEvent,
     TTSRequestEvent,
     TTSCompleteEvent,
@@ -290,6 +291,7 @@ from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
 from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from .Widgets.AppFooterStatus import AppFooterStatus
 from .Widgets.splash_screen import SplashScreen
 from .LLM_Calls.LLM_API_Calls import (
@@ -6533,6 +6535,57 @@ class TldwCli(
                 )
             )
 
+    @on(TTSGlobalOverrideDecisionEvent)
+    async def handle_tts_global_override_decision_event(
+        self,
+        event: TTSGlobalOverrideDecisionEvent,
+    ) -> None:
+        """Route one opaque character-speech fallback decision.
+
+        Args:
+            event: The accepted or rejected message-scoped fallback decision.
+        """
+        handler = await self._ensure_tts_handler()
+        if handler:
+            await handler.handle_tts_global_override_decision(event)
+        else:
+            self.loguru_logger.error(
+                "TTS handler not initialized "
+                "(operation=global_voice_fallback, "
+                "outcome_code=handler_unavailable)"
+            )
+
+    async def _offer_tts_global_override(self, token: str) -> None:
+        """Prompt for one message-scoped global-voice fallback."""
+        decision = False
+        try:
+            result = await self.push_screen_wait(
+                ConfirmationDialog(
+                    title="Use global voice?",
+                    message=(
+                        "The assigned character voice could not be resolved. "
+                        "Use the current global TTS voice for this message?"
+                    ),
+                    confirm_label="Use global",
+                    cancel_label="Cancel",
+                )
+            )
+            decision = result is True
+        except asyncio.CancelledError:
+            self.post_message(
+                TTSGlobalOverrideDecisionEvent(token, accepted=False)
+            )
+            raise
+        except Exception as error:
+            self.loguru_logger.warning(
+                "TTS global fallback prompt failed "
+                "(exception_category={})",
+                type(error).__name__,
+            )
+        self.post_message(
+            TTSGlobalOverrideDecisionEvent(token, accepted=decision)
+        )
+
     @on(TTSCompleteEvent)
     async def handle_tts_complete_event(self, event: TTSCompleteEvent) -> None:
         """Handle TTS generation completion."""
@@ -6562,6 +6615,13 @@ class TldwCli(
                             break
             except Exception as e:
                 self.loguru_logger.error(f"Error updating message UI: {e}")
+            if event.global_override_token is not None:
+                self.run_worker(
+                    self._offer_tts_global_override(
+                        event.global_override_token
+                    ),
+                    name="tts_global_voice_confirmation",
+                )
         else:
             # Update widget state to ready with audio file
             if event.audio_file and event.audio_file.exists():
@@ -7732,7 +7792,9 @@ class TldwCli(
         phase_start = time.perf_counter()
         try:
             self.loguru_logger.info("Initializing TTS service...")
-            handler = TTSEventHandler()
+            handler = TTSEventHandler(
+                profile_service_loader=self._ensure_tts_profile_service
+            )
             handler.app = self
             await handler.initialize_tts()
             self._tts_handler = handler

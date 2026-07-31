@@ -17,6 +17,7 @@ from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, Static
 
 from .personas_pane_messages import EditCharacterRequested
+from .personas_character_tts_widget import PersonasCharacterTTSWidget
 
 
 class PersonasCharacterCardWidget(Container):
@@ -102,6 +103,7 @@ class PersonasCharacterCardWidget(Container):
             yield Static(
                 "", id="personas-character-card-greeting-preview", markup=False
             )
+            yield PersonasCharacterTTSWidget(context="card")
             yield Static("Avatar: none", id="personas-card-avatar-status")
         with Horizontal(classes="ds-toolbar"):
             yield Button(

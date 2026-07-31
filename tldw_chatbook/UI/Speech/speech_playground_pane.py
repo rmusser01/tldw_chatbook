@@ -32,7 +32,10 @@ from textual.containers import Horizontal, Vertical
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
 )
-from tldw_chatbook.TTS import TTSPreferencesSnapshot
+from tldw_chatbook.TTS import (
+    TTSPlaygroundSelectionPreset,
+    TTSPreferencesSnapshot,
+)
 from tldw_chatbook.UI.stts_playground_catalog import (
     SERVER_DEFAULT_VOICE_ID,
 )
@@ -420,7 +423,7 @@ class SpeechPlaygroundPane(
 
         try:
             group = self.query_one("#speech-param-group")
-            text_pane = self.query_one("#speech-text-pane")
+            _text_pane = self.query_one("#speech-text-pane")
         except NoMatches:
             return
 
@@ -522,11 +525,42 @@ class SpeechPlaygroundPane(
         # discovery runs, rather than showing a catalog the user did not ask
         # for and then replacing it.
         if self._profile_preset is not None:
+            self.call_after_refresh(self._finish_profile_preset_mount)
+        else:
+            self._sync_profile_preview_status()
+            self._load_provider_catalog(initialize=True)
+
+    def _finish_profile_preset_mount(self) -> None:
+        """Prime an exact preset after nested Select children are mounted."""
+
+        if not self.is_mounted:
+            return
+        if self._profile_preset is not None:
             self._prime_profile_preset_controls()
             self.query_one("#tts-text-input", TextArea).focus()
         else:
             self._sync_profile_preview_status()
         self._load_provider_catalog(initialize=True)
+
+    def apply_profile_preset(
+        self,
+        preset: TTSPlaygroundSelectionPreset,
+    ) -> None:
+        """Apply one exact process-local preset to this mounted Playground.
+
+        Args:
+            preset: Exact profile selection to apply to the Playground.
+
+        Raises:
+            TypeError: If ``preset`` is not a selection preset.
+        """
+
+        if type(preset) is not TTSPlaygroundSelectionPreset:
+            raise TypeError("preset must be TTSPlaygroundSelectionPreset")
+        self._retire_profile_playback_context()
+        self.init_profile_state(preset)
+        if self.is_mounted:
+            self.call_after_refresh(self._finish_profile_preset_mount)
 
     def _sync_split_layout(self) -> None:
         """Toggle the stacked class from the pane's measured width."""

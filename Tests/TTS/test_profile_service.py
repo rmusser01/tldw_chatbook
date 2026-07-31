@@ -31,6 +31,7 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileValidationError,
 )
 from tldw_chatbook.TTS.profile_service import (
+    LoadedCharacterTTSAssignment,
     LoadedTTSProfile,
     TTSPlaygroundSelectionPreset,
     TTSProfileAvailability,
@@ -39,6 +40,7 @@ from tldw_chatbook.TTS.profile_service import (
     TTSProfileService,
 )
 from tldw_chatbook.TTS.profile_types import (
+    AssignedTTSProfileSnapshot,
     CharacterRef,
     CharacterTTSAssignment,
     ProfileStoreResult,
@@ -177,6 +179,25 @@ def _forged_assignment(
             updates.get(
                 assignment_field.name,
                 getattr(assignment, assignment_field.name),
+            ),
+        )
+    return forged
+
+
+def _forged_assigned_snapshot(
+    snapshot: AssignedTTSProfileSnapshot,
+    **updates: object,
+) -> AssignedTTSProfileSnapshot:
+    """Build an adversarial joined snapshot without domain revalidation."""
+
+    forged = object.__new__(AssignedTTSProfileSnapshot)
+    for snapshot_field in fields(AssignedTTSProfileSnapshot):
+        object.__setattr__(
+            forged,
+            snapshot_field.name,
+            updates.get(
+                snapshot_field.name,
+                getattr(snapshot, snapshot_field.name),
             ),
         )
     return forged
@@ -414,6 +435,7 @@ class _FakeRepository:
         self.delete_error: BaseException | None = None
         self.set_error: BaseException | None = None
         self.remove_error: BaseException | None = None
+        self.get_assignment_error: BaseException | None = None
         self.count_value = 0
         self.count_generation: int | None = None
         self.advance_generation_during_count = False
@@ -425,10 +447,12 @@ class _FakeRepository:
         self.delete_result: object = _UNSET
         self.set_result: object = _UNSET
         self.remove_result: object = _UNSET
+        self.get_assignment_result: object = _UNSET
         self.count_result: object = _UNSET
         self.create_boundary: _AsyncBoundary | None = None
         self.set_boundary: _AsyncBoundary | None = None
         self.remove_boundary: _AsyncBoundary | None = None
+        self.advance_generation_after_get_assignment = False
 
     def _record_coordinator_state(self) -> None:
         self.coordinator_active_at_repository_calls.append(
@@ -626,6 +650,25 @@ class _FakeRepository:
         if self.remove_result is not _UNSET:
             return cast(ProfileStoreResult[None], self.remove_result)
         return ProfileStoreResult(generation=self.generation, value=None)
+
+    async def get_assigned_profile(
+        self,
+        character_ref: CharacterRef,
+    ) -> ProfileStoreResult[AssignedTTSProfileSnapshot | None]:
+        self._record_coordinator_state()
+        self.calls.append(("get_assigned_profile", character_ref))
+        if self.get_assignment_error is not None:
+            raise self.get_assignment_error
+        if self.get_assignment_result is not _UNSET:
+            result = cast(
+                ProfileStoreResult[AssignedTTSProfileSnapshot | None],
+                self.get_assignment_result,
+            )
+        else:
+            result = ProfileStoreResult(generation=self.generation, value=None)
+        if self.advance_generation_after_get_assignment:
+            self.generation += 1
+        return result
 
 
 class _AsyncBoundary:
@@ -2703,9 +2746,180 @@ async def test_delete_rejects_stale_loaded_generation_before_repository_work() -
     assert tts_service.revision_decisions == []
 
 
+@pytest.mark.asyncio
+async def test_get_assigned_profile_returns_one_exact_immutable_joined_read() -> None:
+    service, repository, tts_service = _service()
+    character_ref = _character_ref()
+    persisted = AssignedTTSProfileSnapshot(
+        assignment=_assignment(character_ref=character_ref),
+        profile=_profile(voice_id="voice-a", revision=6),
+    )
+    repository.get_assignment_result = ProfileStoreResult(
+        generation=repository.generation,
+        value=persisted,
+    )
+
+    loaded = await service.get_assigned_profile(character_ref)
+
+    assert type(loaded) is LoadedCharacterTTSAssignment
+    assert loaded.repository_generation == repository.generation
+    assert loaded.snapshot == persisted
+    assert loaded.snapshot is not persisted
+    assert loaded.snapshot is not None
+    assert loaded.snapshot.assignment is not persisted.assignment
+    assert loaded.snapshot.assignment.character_ref is not character_ref
+    assert loaded.snapshot.profile is not persisted.profile
+    assert loaded.snapshot.profile.revision == 6
+    assert len(repository.calls) == 1
+    call_name, forwarded_ref = repository.calls[0]
+    assert call_name == "get_assigned_profile"
+    assert type(forwarded_ref) is CharacterRef
+    assert forwarded_ref == character_ref
+    assert forwarded_ref is not character_ref
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_reads == []
+    assert tts_service.revision_decisions == []
+
+
+@pytest.mark.asyncio
+async def test_get_assigned_profile_preserves_exact_unassigned_generation() -> None:
+    service, repository, tts_service = _service()
+
+    loaded = await service.get_assigned_profile(_character_ref())
+
+    assert loaded == LoadedCharacterTTSAssignment(
+        repository_generation=repository.generation,
+        snapshot=None,
+    )
+    assert [name for name, _value in repository.calls] == ["get_assigned_profile"]
+    assert tts_service.capability_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    (
+        "snapshot-subclass",
+        "other-character",
+        "profile-mismatch",
+        "hostile-envelope",
+    ),
+)
+async def test_get_assigned_profile_rejects_nonexact_repository_success(
+    case: str,
+) -> None:
+    class SnapshotSubclass(AssignedTTSProfileSnapshot):
+        pass
+
+    repository = _FakeRepository()
+    character_ref = _character_ref()
+    exact = AssignedTTSProfileSnapshot(
+        assignment=_assignment(character_ref=character_ref),
+        profile=_profile(),
+    )
+    if case == "snapshot-subclass":
+        value: object = SnapshotSubclass(
+            assignment=exact.assignment,
+            profile=exact.profile,
+        )
+    elif case == "other-character":
+        value = AssignedTTSProfileSnapshot(
+            assignment=_assignment(
+                character_ref=_character_ref(character_id="different-character"),
+            ),
+            profile=exact.profile,
+        )
+    elif case == "profile-mismatch":
+        value = _forged_assigned_snapshot(
+            exact,
+            profile=_profile(profile_id=_DUPLICATE_ID),
+        )
+    else:
+        assert case == "hostile-envelope"
+        repository.get_assignment_result = _HostileResult()
+        value = None
+    if case != "hostile-envelope":
+        repository.get_assignment_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=cast(AssignedTTSProfileSnapshot, value),
+        )
+    service, repository, tts_service = _service(repository=repository)
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.get_assigned_profile(character_ref)
+
+    _assert_safe_service_error(
+        caught.value,
+        "operation_failed",
+        "different-character",
+        "credential",
+        "example.test",
+        "/private/path",
+        "submitted text",
+    )
+    assert [name for name, _value in repository.calls] == ["get_assigned_profile"]
+    assert tts_service.capability_calls == []
+
+
+@pytest.mark.asyncio
+async def test_get_assigned_profile_rejects_generation_change_before_publication() -> (
+    None
+):
+    repository = _FakeRepository()
+    repository.get_assignment_result = ProfileStoreResult(
+        generation=repository.generation,
+        value=None,
+    )
+    repository.advance_generation_after_get_assignment = True
+    service, repository, tts_service = _service(repository=repository)
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await service.get_assigned_profile(_character_ref())
+
+    assert caught.value.code == "stale"
+    assert [name for name, _value in repository.calls] == ["get_assigned_profile"]
+    assert tts_service.capability_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "expected_type", "expected_code"),
+    (
+        (
+            ProfileRepositoryError("unavailable"),
+            ProfileRepositoryError,
+            "unavailable",
+        ),
+        (
+            RuntimeError("https://user:credential@example.test/private/path"),
+            ProfileServiceError,
+            "operation_failed",
+        ),
+    ),
+)
+async def test_get_assigned_profile_maps_repository_failures_safely(
+    error: BaseException,
+    expected_type: type[BaseException],
+    expected_code: str,
+) -> None:
+    repository = _FakeRepository()
+    repository.get_assignment_error = error
+    service, repository, tts_service = _service(repository=repository)
+
+    with pytest.raises(expected_type) as caught:
+        await service.get_assigned_profile(_character_ref())
+
+    assert getattr(caught.value, "code", None) == expected_code
+    assert "credential" not in str(caught.value)
+    assert "example.test" not in str(caught.value)
+    assert [name for name, _value in repository.calls] == ["get_assigned_profile"]
+    assert tts_service.capability_calls == []
+
+
 @pytest.mark.parametrize(
     ("method_name", "required_sections"),
     (
+        ("get_assigned_profile", ("Args:", "Returns:", "Raises:")),
         ("set_assignment", ("Args:", "Returns:", "Raises:")),
         ("detach_assignment", ("Args:", "Raises:")),
     ),

@@ -718,6 +718,12 @@ def test_profile_service_owns_only_existing_app_dependencies() -> None:
         async def assignment_count(self, *args: Any, **kwargs: Any) -> Any:
             raise AssertionError("not used")
 
+        async def get_assigned_profile(
+            self,
+            character_ref: tts_package.CharacterRef,
+        ) -> Any:
+            raise AssertionError(character_ref)
+
         async def set_assignment(
             self,
             character_ref: tts_package.CharacterRef,

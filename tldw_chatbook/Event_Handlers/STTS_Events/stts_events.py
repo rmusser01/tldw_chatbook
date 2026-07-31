@@ -410,6 +410,7 @@ class STTSEventHandler:
         self._active_tasks: set[asyncio.Task[Any]] = set()
         self._generation_task: asyncio.Task[None] | None = None
         self._active_playground_operation_id: str | None = None
+        self._retired_playground_operation_id: str | None = None
         self._playground_audio_files: set[Path] = set()
         self._playground_operation_files: dict[str, set[Path]] = {}
         self._playground_file_leases: dict[Path, int] = {}
@@ -432,6 +433,23 @@ class STTSEventHandler:
             artifact=self._current_playground_artifact,
             generation_active=self._is_generating,
         )
+
+    def retire_playground_context(self) -> None:
+        """Discard audio and fence completion from the current Playground context."""
+
+        artifact = self._current_playground_artifact
+        if artifact is not None:
+            self._current_playground_artifact = None
+            if self._current_audio_file == artifact.path:
+                self._current_audio_file = None
+            self._delete_operation_files(artifact.operation_id)
+
+        operation_id = self._active_playground_operation_id
+        if operation_id is not None:
+            self._retired_playground_operation_id = operation_id
+        task = self._generation_task
+        if task is not None and not task.done():
+            task.cancel()
 
     def start_playground_generation(
         self,
@@ -799,6 +817,9 @@ class STTSEventHandler:
                     snapshot,
                     progress_callback,
                 )
+            if self._retired_playground_operation_id == snapshot.operation_id:
+                self._delete_operation_files(snapshot.operation_id)
+                return
             self._accept_playground_artifact(artifact)
             self._deliver_generation_success(
                 snapshot.operation_id,
@@ -810,6 +831,8 @@ class STTSEventHandler:
             raise
         except Exception as error:
             self._delete_operation_files(snapshot.operation_id)
+            if self._retired_playground_operation_id == snapshot.operation_id:
+                return
             message = self._generation_error_copy(error)
             if isinstance(error, TTSOperationError):
                 logger.error(
@@ -830,6 +853,8 @@ class STTSEventHandler:
         finally:
             if self._active_playground_operation_id == snapshot.operation_id:
                 self._is_generating = False
+                if self._retired_playground_operation_id == snapshot.operation_id:
+                    self._retired_playground_operation_id = None
                 self._finish_generation_ui(snapshot.operation_id)
                 self._active_playground_operation_id = None
 
@@ -947,7 +972,10 @@ class STTSEventHandler:
         self._invoke_playground(playground, finish)
 
     def _mounted_playground(self, operation_id: str) -> Any | None:
-        if operation_id != self._active_playground_operation_id:
+        if (
+            operation_id != self._active_playground_operation_id
+            or operation_id == self._retired_playground_operation_id
+        ):
             return None
         # Both playgrounds can be mounted: dev's widget still owns the
         # `playground` view while its profile presets and the rebuilt pane's
@@ -1593,6 +1621,7 @@ class STTSEventHandler:
         if self._generation_task is not None and self._generation_task.done():
             self._generation_task = None
         self._active_playground_operation_id = None
+        self._retired_playground_operation_id = None
         self._is_generating = False
 
     def on_stts_playground_generate_event(
@@ -1610,10 +1639,6 @@ class STTSEventHandler:
         event: STTSProviderConfigurationChanged,
     ) -> None:
         """Invalidate any mounted Playground for the changed provider."""
-        from tldw_chatbook.UI.Speech.speech_playground_pane import (
-            SpeechPlaygroundPane,
-        )
-
         for widget in self.app.query("SpeechPlaygroundPane, TTSPlaygroundWidget"):
             callback = getattr(widget, "mark_provider_configuration_changed", None)
             if callable(callback):

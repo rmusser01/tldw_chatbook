@@ -31,6 +31,7 @@ path the legacy play button drives today), not new logic introduced here.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -40,6 +41,7 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSCompleteEvent,
+    TTSGlobalOverrideDecisionEvent,
     TTSMessageSpeechRequestEvent,
     TTSPlaybackEvent,
 )
@@ -54,6 +56,8 @@ class _FakeApp:
         self.loguru_logger = MagicMock()
         self.notify = MagicMock()
         self.posted: list = []
+        self.push_screen_wait = AsyncMock(return_value=False)
+        self.worker_tasks: list[asyncio.Task] = []
 
     def query(self, widget_type):
         return [w for w in self._widgets if isinstance(w, widget_type)]
@@ -61,6 +65,14 @@ class _FakeApp:
     def post_message(self, message) -> bool:
         self.posted.append(message)
         return True
+
+    def run_worker(self, awaitable, **_kwargs):
+        task = asyncio.create_task(awaitable)
+        self.worker_tasks.append(task)
+        return task
+
+    async def _offer_tts_global_override(self, token: str) -> None:
+        await TldwCli._offer_tts_global_override(self, token)
 
 
 @pytest.mark.asyncio
@@ -133,6 +145,19 @@ async def test_app_snapshot_handler_unavailable_logs_only_safe_context():
     assert isinstance(completion, TTSCompleteEvent)
     assert completion.message_id == message.id
     assert completion.error == "TTS service not available"
+
+
+@pytest.mark.asyncio
+async def test_app_routes_global_override_decision_to_existing_handler() -> None:
+    handler = MagicMock()
+    handler.handle_tts_global_override_decision = AsyncMock()
+    fake_app = _FakeApp()
+    fake_app._ensure_tts_handler = AsyncMock(return_value=handler)
+    event = TTSGlobalOverrideDecisionEvent("b" * 32, accepted=True)
+
+    await TldwCli.handle_tts_global_override_decision_event(fake_app, event)
+
+    handler.handle_tts_global_override_decision.assert_awaited_once_with(event)
 
 
 @pytest.mark.asyncio
@@ -226,3 +251,58 @@ async def test_no_autoplay_and_no_click_notify_on_tts_error(tmp_path):
     fake_app.notify.assert_called_once_with(
         "TTS failed: synthesis failed", severity="error"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accepted", (True, False))
+async def test_resolution_error_prompts_and_returns_exact_override_decision(
+    accepted: bool,
+) -> None:
+    fake_app = _FakeApp(widgets=())
+    fake_app.push_screen_wait.return_value = accepted
+    token = "a" * 32
+    event = TTSCompleteEvent(
+        message_id="console-msg-override",
+        error="Character voice profiles are unavailable.",
+        global_override_token=token,
+    )
+
+    await TldwCli.handle_tts_complete_event(fake_app, event)
+    await asyncio.gather(*fake_app.worker_tasks)
+
+    decisions = [
+        message
+        for message in fake_app.posted
+        if isinstance(message, TTSGlobalOverrideDecisionEvent)
+    ]
+    assert len(decisions) == 1
+    assert decisions[0].token == token
+    assert decisions[0].accepted is accepted
+    fake_app.push_screen_wait.assert_awaited_once()
+    assert not any(isinstance(message, TTSPlaybackEvent) for message in fake_app.posted)
+
+
+@pytest.mark.asyncio
+async def test_resolution_prompt_failure_returns_decline_without_disclosure() -> None:
+    fake_app = _FakeApp(widgets=())
+    secret = "PRIVATE_DIALOG_FAILURE"
+    fake_app.push_screen_wait.side_effect = RuntimeError(secret)
+    token = "c" * 32
+    event = TTSCompleteEvent(
+        message_id="console-msg-override",
+        error="Character voice profiles are unavailable.",
+        global_override_token=token,
+    )
+
+    await TldwCli.handle_tts_complete_event(fake_app, event)
+    await asyncio.gather(*fake_app.worker_tasks)
+
+    decisions = [
+        message
+        for message in fake_app.posted
+        if isinstance(message, TTSGlobalOverrideDecisionEvent)
+    ]
+    assert [(decision.token, decision.accepted) for decision in decisions] == [
+        (token, False)
+    ]
+    assert secret not in repr(fake_app.loguru_logger.method_calls)

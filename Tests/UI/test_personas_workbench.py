@@ -1,17 +1,20 @@
 # Tests/UI/test_personas_workbench.py
 """Mounted tests for the destination-native Personas workbench."""
 
+import asyncio
 from copy import deepcopy
+from datetime import UTC, datetime
 import inspect
 import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
+from uuid import UUID
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Input, Select, Static, TextArea
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
@@ -26,6 +29,20 @@ from tldw_chatbook.Constants import (
     TAB_LIBRARY,
 )
 from tldw_chatbook.tldw_api import PersonaProfileCreate
+from tldw_chatbook.TTS import (
+    AssignedTTSProfileSnapshot,
+    CharacterRef,
+    CharacterTTSAssignment,
+    LoadedCharacterTTSAssignment,
+    LoadedTTSProfile,
+    ProfileRepositoryError,
+    TTSGenerationProfile,
+    TTSPlaygroundSelectionPreset,
+    TTSProfileAvailability,
+    TTSProfileAvailabilitySnapshot,
+    TTSProfileDraft,
+    TTSProfilePageSnapshot,
+)
 from tldw_chatbook.tldw_api.character_persona_schemas import (
     LocalPersonaProfileCreate,
     LocalPersonaProfileUpdate,
@@ -44,7 +61,13 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
+from tldw_chatbook.Widgets.Persona_Widgets.personas_character_tts_widget import (
+    CharacterTTSProfileOption,
+    CharacterTTSPresentationState,
+    PersonasCharacterTTSWidget,
+)
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+    CharacterTTSActionRequested,
     CharacterImageUploadRequested,
     EditPersonaProfileRequested,
     PersonaProfileSaveRequested,
@@ -157,6 +180,19 @@ class PersonasTestApp(App):
         # so this default-screen widget is only kept around as a foil (the
         # tests below assert the registration does NOT land here).
         yield AppFooterStatus(id="app-footer-status")
+
+    async def _ensure_tts_profile_service(self):
+        """Delegate the real app's private lazy loader when a test provides it."""
+
+        loader = self.__dict__["_mock"].__dict__.get(
+            "_ensure_tts_profile_service"
+        )
+        if not callable(loader):
+            return None
+        result = loader()
+        if inspect.isawaitable(result):
+            result = await result
+        return result
 
     def on_mount(self) -> None:
         self.push_screen(PersonasScreen(self))
@@ -8462,3 +8498,925 @@ async def test_debounced_validation_does_not_erase_a_blocked_save_message(
 
         footer = screen.query_one("#personas-char-editor-validation", Static)
         assert "name: required" in str(footer.renderable)
+
+
+# --- Character Voice & Speech assignment controls (TASK-617.5) ---
+
+
+def _character_tts_profile(index: int) -> TTSGenerationProfile:
+    timestamp = datetime(2026, 7, 31, tzinfo=UTC)
+    display_name = f"Roleplay Voice {index}"
+    return TTSGenerationProfile(
+        profile_id=UUID(int=index),
+        display_name=display_name,
+        normalized_name=display_name.casefold(),
+        provider_id="audio_cpp",
+        model_id=f"model-{index}",
+        voice_id=f"voice-{index}",
+        response_format="wav",
+        speed=1.0,
+        options={},
+        revision=1,
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+
+
+def _character_tts_availability(
+    page: TTSProfilePageSnapshot,
+    *,
+    state: str = "available",
+    configuration_revision: int = 4,
+    catalog_revision: int | None = 8,
+) -> TTSProfileAvailabilitySnapshot:
+    recovery = {
+        "available": "none",
+        "unavailable": "edit",
+        "unverified": "refresh",
+    }[state]
+    return TTSProfileAvailabilitySnapshot(
+        repository_generation=page.repository_generation,
+        configuration_revision=configuration_revision,
+        catalog_revision=catalog_revision,
+        profiles=tuple(
+            TTSProfileAvailability(
+                profile_id=profile.profile_id,
+                state=state,  # type: ignore[arg-type]
+                recovery_action=recovery,  # type: ignore[arg-type]
+            )
+            for profile in page.profiles
+        ),
+    )
+
+
+class _CharacterTTSProfileService:
+    def __init__(
+        self,
+        *,
+        page: TTSProfilePageSnapshot,
+        assigned: LoadedCharacterTTSAssignment,
+        availability_state: str = "available",
+    ) -> None:
+        self.page = page
+        self.assigned = assigned
+        self.availability_state = availability_state
+        self.assignment_count_value = 1
+        self.get_calls: list[CharacterRef] = []
+        self.availability_calls: list[TTSProfilePageSnapshot] = []
+        self.set_calls: list[
+            tuple[CharacterRef, LoadedTTSProfile, CharacterTTSAssignment | None]
+        ] = []
+        self.detach_calls: list[tuple[CharacterTTSAssignment, int]] = []
+        self.update_calls: list[tuple[LoadedTTSProfile, TTSProfileDraft]] = []
+        self.set_error: BaseException | None = None
+
+    async def get_assigned_profile(
+        self, character_ref: CharacterRef
+    ) -> LoadedCharacterTTSAssignment:
+        self.get_calls.append(character_ref)
+        return self.assigned
+
+    async def list_profiles(
+        self, *, search: str | None = None, offset: int = 0
+    ) -> TTSProfilePageSnapshot:
+        assert search is None
+        assert offset == 0
+        return self.page
+
+    async def observe_availability(
+        self, page: TTSProfilePageSnapshot
+    ) -> TTSProfileAvailabilitySnapshot:
+        self.availability_calls.append(page)
+        return _character_tts_availability(
+            page,
+            state=self.availability_state,
+        )
+
+    async def assignment_count(self, loaded: LoadedTTSProfile) -> int:
+        return self.assignment_count_value
+
+    async def set_assignment(
+        self,
+        character_ref: CharacterRef,
+        loaded: LoadedTTSProfile,
+        expected_current: CharacterTTSAssignment | None,
+    ) -> CharacterTTSAssignment:
+        self.set_calls.append((character_ref, loaded, expected_current))
+        if self.set_error is not None:
+            raise self.set_error
+        return CharacterTTSAssignment(
+            character_ref=character_ref,
+            profile_id=loaded.profile.profile_id,
+        )
+
+    async def detach_assignment(
+        self,
+        assignment: CharacterTTSAssignment,
+        repository_generation: int,
+    ) -> None:
+        self.detach_calls.append((assignment, repository_generation))
+
+    async def update_profile(
+        self,
+        loaded: LoadedTTSProfile,
+        draft: TTSProfileDraft,
+    ) -> LoadedTTSProfile:
+        self.update_calls.append((loaded, draft))
+        return loaded
+
+    def preview_preset(
+        self,
+        loaded: LoadedTTSProfile,
+        availability: TTSProfileAvailability,
+    ) -> TTSPlaygroundSelectionPreset:
+        profile = loaded.profile
+        return TTSPlaygroundSelectionPreset(
+            provider_id=profile.provider_id,
+            model_id=profile.model_id,
+            voice_id=profile.voice_id,
+            response_format=profile.response_format,
+            speed=profile.speed,
+            options=profile.options,
+            availability=availability.state,
+        )
+
+
+class _CharacterTTSWidgetHost(App[None]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.actions: list[CharacterTTSActionRequested] = []
+
+    def compose(self):
+        yield PersonasCharacterTTSWidget(context="card")
+
+    def on_character_ttsaction_requested(
+        self, message: CharacterTTSActionRequested
+    ) -> None:
+        self.actions.append(message)
+
+
+async def test_character_tts_widget_renders_disabled_global_and_broken_assignment() -> (
+    None
+):
+    profile = _character_tts_profile(1)
+    available = CharacterTTSProfileOption(
+        profile_id=profile.profile_id,
+        display_name=profile.display_name,
+        availability="available",
+    )
+    unavailable = CharacterTTSProfileOption(
+        profile_id=profile.profile_id,
+        display_name=profile.display_name,
+        availability="unavailable",
+    )
+    app = _CharacterTTSWidgetHost()
+    async with app.run_test() as pilot:
+        widget = app.query_one(PersonasCharacterTTSWidget)
+        selector = widget.query_one(Select)
+
+        widget.apply_state(CharacterTTSPresentationState.disabled())
+        await pilot.pause()
+        assert selector.disabled is True
+        assert "Save/reopen before assigning" in str(
+            widget.query_one(".personas-character-tts-status", Static).renderable
+        )
+
+        widget.apply_state(
+            CharacterTTSPresentationState(
+                profiles=(available,),
+                selected_profile_id=None,
+                status="Using the global speech default.",
+                controls_enabled=True,
+            )
+        )
+        await pilot.pause()
+        assert selector.value == "__global__"
+        assert selector.disabled is False
+
+        widget.apply_state(
+            CharacterTTSPresentationState(
+                profiles=(unavailable,),
+                selected_profile_id=profile.profile_id,
+                status="Unavailable · repair the profile or remove this assignment.",
+                controls_enabled=True,
+                assignment_count=3,
+            )
+        )
+        await pilot.pause()
+        assert selector.value == str(profile.profile_id)
+        assert profile.display_name in str(
+            selector.query_one("#label", Static).renderable
+        )
+        assert "Unavailable" in str(
+            widget.query_one(".personas-character-tts-status", Static).renderable
+        )
+        assert widget.query_one(
+            ".personas-character-tts-remove", Button
+        ).disabled is False
+        assert str(
+            widget.query_one(".personas-character-tts-edit", Button).label
+        ) == "Repair"
+
+
+async def test_character_tts_widget_emits_id_only_intents_for_available_profiles() -> (
+    None
+):
+    available = _character_tts_profile(1)
+    unavailable = _character_tts_profile(2)
+    app = _CharacterTTSWidgetHost()
+    async with app.run_test() as pilot:
+        widget = app.query_one(PersonasCharacterTTSWidget)
+        widget.apply_state(
+            CharacterTTSPresentationState(
+                profiles=(
+                    CharacterTTSProfileOption(
+                        available.profile_id,
+                        available.display_name,
+                        "available",
+                    ),
+                    CharacterTTSProfileOption(
+                        unavailable.profile_id,
+                        unavailable.display_name,
+                        "unavailable",
+                    ),
+                ),
+                selected_profile_id=None,
+                status="Using the global speech default.",
+                controls_enabled=True,
+            )
+        )
+        await pilot.pause()
+        selector = widget.query_one(Select)
+
+        selector.value = str(unavailable.profile_id)
+        await pilot.pause()
+        assert app.actions == []
+        assert selector.value == "__global__"
+
+        selector.value = str(available.profile_id)
+        await pilot.pause()
+        assert len(app.actions) == 1
+        assert app.actions[0].action == "assign"
+        assert app.actions[0].profile_id == available.profile_id
+        assert vars(app.actions[0]).keys() >= {"action", "profile_id"}
+        assert "authority" not in vars(app.actions[0])
+
+
+def _configure_character_tts_app(
+    mock_app_instance: Any,
+    service: _CharacterTTSProfileService,
+) -> None:
+    mock_app_instance.runtime_backend = "local"
+    mock_app_instance.chachanotes_db = SimpleNamespace(
+        get_local_authority_id=lambda: "local-test-authority",
+        get_character_card_by_id=lambda _character_id: {
+            **CHARACTERS[0],
+            "extensions": {},
+        },
+    )
+    mock_app_instance._ensure_tts_profile_service = AsyncMock(
+        return_value=service
+    )
+
+
+async def test_character_tts_population_requires_one_generation_and_observes_off_page_assignment(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    first_page_profile = _character_tts_profile(1)
+    assigned_profile = _character_tts_profile(51)
+    character_ref = CharacterRef(
+        source="local",
+        authority_id="local-test-authority",
+        character_id="1",
+    )
+    assignment = CharacterTTSAssignment(
+        character_ref=character_ref,
+        profile_id=assigned_profile.profile_id,
+    )
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(first_page_profile,),
+            total=51,
+        ),
+        assigned=LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=AssignedTTSProfileSnapshot(
+                assignment=assignment,
+                profile=assigned_profile,
+            ),
+        ),
+        availability_state="unavailable",
+    )
+    service.assignment_count_value = 4
+    _configure_character_tts_app(mock_app_instance, service)
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+
+        assert [len(call.profiles) for call in service.availability_calls] == [1, 1]
+        assert service.availability_calls[1].profiles == (assigned_profile,)
+        assert screen._character_tts_snapshot is not None
+        assert screen._character_tts_snapshot.repository_generation == 7
+        card_control = screen.query_one("#personas-character-card-tts")
+        editor_control = screen.query_one("#personas-character-editor-tts")
+        assert card_control.presentation_state.selected_profile_id == (
+            assigned_profile.profile_id
+        )
+        assert card_control.presentation_state is editor_control.presentation_state
+        assert card_control.display is True
+        assert editor_control.display is True
+        assert screen.query_one("#ccp-character-card-view").display is True
+        assert screen.query_one("#ccp-character-editor-view").display is False
+        assert card_control.presentation_state.assignment_count == 4
+        assert "Unavailable" in card_control.presentation_state.status
+
+
+async def test_character_tts_population_rejects_mixed_repository_generations(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    profile = _character_tts_profile(1)
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=8,
+            profiles=(profile,),
+            total=1,
+        ),
+        assigned=LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=None,
+        ),
+    )
+    _configure_character_tts_app(mock_app_instance, service)
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+
+        assert screen._character_tts_snapshot is None
+        assert (
+            screen.query_one(
+                "#personas-character-card-tts"
+            ).presentation_state.controls_enabled
+            is False
+        )
+
+
+async def test_character_tts_off_page_assignment_requires_matching_capability_revisions(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    first_page_profile = _character_tts_profile(1)
+    assigned_profile = _character_tts_profile(51)
+    character_ref = CharacterRef(
+        source="local",
+        authority_id="local-test-authority",
+        character_id="1",
+    )
+
+    class _RevisionChangingService(_CharacterTTSProfileService):
+        async def observe_availability(
+            self, page: TTSProfilePageSnapshot
+        ) -> TTSProfileAvailabilitySnapshot:
+            self.availability_calls.append(page)
+            return _character_tts_availability(
+                page,
+                configuration_revision=3 + len(self.availability_calls),
+                catalog_revision=8,
+            )
+
+    service = _RevisionChangingService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(first_page_profile,),
+            total=51,
+        ),
+        assigned=LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=AssignedTTSProfileSnapshot(
+                assignment=CharacterTTSAssignment(
+                    character_ref=character_ref,
+                    profile_id=assigned_profile.profile_id,
+                ),
+                profile=assigned_profile,
+            ),
+        ),
+    )
+    _configure_character_tts_app(mock_app_instance, service)
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+
+        assert len(service.availability_calls) == 4
+        assert screen._character_tts_snapshot is None
+        assert screen._character_tts_presentation.controls_enabled is False
+
+
+@pytest.mark.parametrize("final_authority_check", ["changed", "error"])
+async def test_character_tts_server_principal_change_rejects_late_population(
+    mock_app_instance,
+    stub_characters,
+    final_authority_check: str,
+) -> None:
+    profile = _character_tts_profile(1)
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(profile,),
+            total=1,
+        ),
+        assigned=LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=None,
+        ),
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class _ServerAuthorityProvider:
+        def __init__(self) -> None:
+            self.capture = object()
+            self.current = True
+            self.raise_on_check = False
+
+        def capture_character_authority_context(
+            self, *, expected_server_id: str
+        ) -> object:
+            assert expected_server_id == "server-a"
+            return self.capture
+
+        def is_character_authority_context_current(self, capture: object) -> bool:
+            if self.raise_on_check:
+                raise RuntimeError("sensitive authority detail")
+            return capture is self.capture and self.current
+
+        async def resolve_character_authority_id(
+            self,
+            *,
+            expected_server_id: str,
+            context_capture: object,
+        ) -> str:
+            assert expected_server_id == "server-a"
+            assert context_capture is self.capture
+            started.set()
+            await release.wait()
+            return "server-user-v1:" + ("a" * 64)
+
+    provider = _ServerAuthorityProvider()
+    mock_app_instance.runtime_backend = "server"
+    mock_app_instance.active_server_id = "server-a"
+    mock_app_instance.server_context_provider = provider
+    mock_app_instance._ensure_tts_profile_service = AsyncMock(
+        return_value=service
+    )
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        screen.state.select_entity(
+            entity_kind="character",
+            entity_id="1",
+            entity_name="Detective Sam",
+        )
+        screen._selected_server_character = (
+            "server-a",
+            dict(CHARACTERS[0]),
+        )
+        screen._character_tts_request_generation += 1
+        request_generation = screen._character_tts_request_generation
+        task = asyncio.create_task(
+            screen._character_tts_refresh_worker(
+                request_generation,
+                "1",
+                "server",
+            )
+        )
+        await started.wait()
+        if final_authority_check == "error":
+            provider.raise_on_check = True
+        else:
+            provider.current = False
+            mock_app_instance.active_server_id = "server-b"
+        release.set()
+        await task
+
+        assert service.get_calls == []
+        assert screen._character_tts_snapshot is None
+        assert screen._character_tts_presentation.controls_enabled is False
+        assert (
+            screen._character_tts_presentation.status
+            == "Save/reopen before assigning."
+        )
+
+
+async def test_character_tts_local_authority_change_rejects_late_population(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    profile = _character_tts_profile(1)
+    original_ref = CharacterRef(
+        source="local",
+        authority_id="local-authority-before-restore",
+        character_id="1",
+    )
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(profile,),
+            total=1,
+        ),
+        assigned=LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=AssignedTTSProfileSnapshot(
+                assignment=CharacterTTSAssignment(
+                    character_ref=original_ref,
+                    profile_id=profile.profile_id,
+                ),
+                profile=profile,
+            ),
+        ),
+    )
+    authority_reader = Mock(
+        side_effect=(
+            "local-authority-before-restore",
+            "local-authority-after-restore",
+        )
+    )
+    mock_app_instance.runtime_backend = "local"
+    mock_app_instance.chachanotes_db = SimpleNamespace(
+        get_local_authority_id=authority_reader,
+        get_character_card_by_id=lambda _character_id: {
+            **CHARACTERS[0],
+            "extensions": {},
+        },
+    )
+    mock_app_instance._ensure_tts_profile_service = AsyncMock(
+        return_value=service
+    )
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        screen.state.select_entity(
+            entity_kind="character",
+            entity_id="1",
+            entity_name="Detective Sam",
+        )
+        screen._character_tts_request_generation += 1
+        await screen._character_tts_refresh_worker(
+            screen._character_tts_request_generation,
+            "1",
+            "local",
+        )
+
+        assert authority_reader.call_count == 2
+        assert service.get_calls == [original_ref]
+        assert screen._character_tts_snapshot is None
+        assert screen._character_tts_presentation.controls_enabled is False
+
+
+async def test_character_tts_missing_local_authority_disables_without_profile_reads(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    profile = _character_tts_profile(1)
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(profile,),
+            total=1,
+        ),
+        assigned=LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=None,
+        ),
+    )
+    mock_app_instance.runtime_backend = "local"
+    mock_app_instance.chachanotes_db = object()
+    mock_app_instance._ensure_tts_profile_service = AsyncMock(
+        return_value=service
+    )
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        screen.state.select_entity(
+            entity_kind="character",
+            entity_id="1",
+            entity_name="Detective Sam",
+        )
+        screen._character_tts_request_generation += 1
+        await screen._character_tts_refresh_worker(
+            screen._character_tts_request_generation,
+            "1",
+            "local",
+        )
+
+        assert service.get_calls == []
+        assert screen._character_tts_snapshot is None
+        assert screen._character_tts_presentation.controls_enabled is False
+        assert "Save/reopen before assigning" in (
+            screen._character_tts_presentation.status
+        )
+
+
+async def test_character_tts_assign_and_detach_use_exact_observed_tokens(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    profile = _character_tts_profile(1)
+    character_ref = CharacterRef(
+        source="local",
+        authority_id="local-test-authority",
+        character_id="1",
+    )
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(profile,),
+            total=1,
+        ),
+        assigned=LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=None,
+        ),
+    )
+    _configure_character_tts_app(mock_app_instance, service)
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+
+        screen.post_message(
+            CharacterTTSActionRequested("assign", profile.profile_id)
+        )
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        assert service.set_calls == [
+            (
+                character_ref,
+                LoadedTTSProfile(
+                    repository_generation=7,
+                    profile=profile,
+                ),
+                None,
+            )
+        ]
+
+        assignment = CharacterTTSAssignment(
+            character_ref=character_ref,
+            profile_id=profile.profile_id,
+        )
+        service.assigned = LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=AssignedTTSProfileSnapshot(
+                assignment=assignment,
+                profile=profile,
+            ),
+        )
+        screen._queue_character_tts_refresh()
+        await pilot.app.workers.wait_for_complete()
+        screen.post_message(CharacterTTSActionRequested("assign", None))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        assert service.detach_calls == [(assignment, 7)]
+
+
+async def test_character_tts_preview_create_and_edit_reuse_existing_speech_surfaces(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    profile = _character_tts_profile(1)
+    character_ref = CharacterRef(
+        source="local",
+        authority_id="local-test-authority",
+        character_id="1",
+    )
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(profile,),
+            total=1,
+        ),
+        assigned=LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=AssignedTTSProfileSnapshot(
+                assignment=CharacterTTSAssignment(
+                    character_ref=character_ref,
+                    profile_id=profile.profile_id,
+                ),
+                profile=profile,
+            ),
+        ),
+    )
+    _configure_character_tts_app(mock_app_instance, service)
+    app = _NavCaptureApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+
+        screen.post_message(
+            CharacterTTSActionRequested("preview", profile.profile_id)
+        )
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.nav_routes[-1] == "stts"
+        preset = app.nav_contexts[-1]["profile_preset"]
+        assert type(preset) is TTSPlaygroundSelectionPreset
+        assert preset.model_id == profile.model_id
+        assert preset.voice_id == profile.voice_id
+
+        screen.post_message(CharacterTTSActionRequested("create", None))
+        await pilot.pause()
+        assert app.nav_contexts[-1] == {"view": "playground"}
+
+        draft = TTSProfileDraft(
+            display_name="Edited roleplay voice",
+            provider_id=profile.provider_id,
+            model_id=profile.model_id,
+            voice_id=profile.voice_id,
+            response_format=profile.response_format,
+            speed=profile.speed,
+            options=profile.options,
+        )
+        pilot.app.push_screen_wait = AsyncMock(return_value=draft)
+        screen.post_message(
+            CharacterTTSActionRequested("edit", profile.profile_id)
+        )
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        assert service.update_calls == [
+            (
+                LoadedTTSProfile(
+                    repository_generation=7,
+                    profile=profile,
+                ),
+                draft,
+            )
+        ]
+
+
+async def test_character_tts_preview_rechecks_local_authority(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    profile = _character_tts_profile(1)
+    character_ref = CharacterRef(
+        source="local",
+        authority_id="local-test-authority",
+        character_id="1",
+    )
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(profile,),
+            total=1,
+        ),
+        assigned=LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=AssignedTTSProfileSnapshot(
+                assignment=CharacterTTSAssignment(
+                    character_ref=character_ref,
+                    profile_id=profile.profile_id,
+                ),
+                profile=profile,
+            ),
+        ),
+    )
+    _configure_character_tts_app(mock_app_instance, service)
+    authority_reader = Mock(return_value="local-test-authority")
+    mock_app_instance.chachanotes_db.get_local_authority_id = authority_reader
+    app = _NavCaptureApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+        assert screen._character_tts_snapshot is not None
+
+        authority_reader.return_value = "different-local-authority"
+        screen.post_message(
+            CharacterTTSActionRequested("preview", profile.profile_id)
+        )
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+
+        assert app.nav_contexts == []
+
+
+async def test_character_tts_conflict_refreshes_and_stale_selection_cannot_publish(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    profile = _character_tts_profile(1)
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(profile,),
+            total=1,
+        ),
+        assigned=LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=None,
+        ),
+    )
+    service.set_error = ProfileRepositoryError("conflict")
+    _configure_character_tts_app(mock_app_instance, service)
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+        reads_before = len(service.get_calls)
+
+        screen.post_message(
+            CharacterTTSActionRequested("assign", profile.profile_id)
+        )
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        assert len(service.get_calls) > reads_before
+
+        request_generation = screen._character_tts_request_generation
+        screen.state.select_entity(
+            entity_kind="character",
+            entity_id="2",
+            entity_name="Lab Assistant",
+        )
+        assert (
+            screen._character_tts_request_is_current(
+                request_generation,
+                "1",
+                "local",
+            )
+            is False
+        )
+
+
+async def test_character_soft_delete_never_detaches_tts_assignment(
+    mock_app_instance,
+    stub_characters,
+    monkeypatch,
+) -> None:
+    profile = _character_tts_profile(1)
+    character_ref = CharacterRef(
+        source="local",
+        authority_id="local-test-authority",
+        character_id="1",
+    )
+    assignment = CharacterTTSAssignment(
+        character_ref=character_ref,
+        profile_id=profile.profile_id,
+    )
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(profile,),
+            total=1,
+        ),
+        assigned=LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=AssignedTTSProfileSnapshot(
+                assignment=assignment,
+                profile=profile,
+            ),
+        ),
+        availability_state="unverified",
+    )
+    _configure_character_tts_app(mock_app_instance, service)
+    monkeypatch.setattr(character_handler_module, "delete_character", lambda *_: True)
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+        await screen._delete_entity("character", "1", 1)
+        await pilot.app.workers.wait_for_complete()
+
+        assert service.detach_calls == []

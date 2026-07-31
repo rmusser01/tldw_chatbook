@@ -23,6 +23,7 @@ from textual.widgets import Button, DataTable, Input, Label, Static, TextArea
 
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
+from .personas_character_tts_widget import PersonasCharacterTTSWidget
 from .personas_pane_messages import (
     CharacterAvatarGenerateRequested,
     CharacterEditorCancelled,
@@ -478,6 +479,7 @@ class PersonasCharacterEditorWidget(Container):
                     gen.tooltip = "Generate this field with the Console's model"
                     yield gen
                 yield TextArea(id="personas-char-editor-system-prompt")
+            yield PersonasCharacterTTSWidget(context="editor")
             yield Button(
                 "Advanced ▸",
                 id="personas-char-editor-advanced-toggle",
