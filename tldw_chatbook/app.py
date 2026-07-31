@@ -6069,9 +6069,27 @@ class TldwCli(
         return TAB_CHAT
 
     def _resolve_initial_shell_route(self) -> str:
-        """Choose the startup route while keeping first-run orientation explicit."""
+        """Choose the startup route while keeping first-run orientation explicit.
+
+        TASK-1508: the in-memory ``_first_run`` flag is routinely lost to a
+        config force-reload before routing runs, so on a real fresh install
+        the old check routed to the configured default tab (Console) and the
+        auto-offered wizard opened over the Console's own "Get started" card
+        — Esc revealed a second onboarding surface. Route from the same
+        decision the wizard offer uses: if the wizard is about to be
+        offered, land on Home beneath it.
+        """
         if self.app_config.get("_first_run", False):
             return TAB_HOME
+        try:
+            from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+                should_offer_wizard,
+            )
+
+            if should_offer_wizard(self.app_config, os.environ):
+                return TAB_HOME
+        except Exception:
+            logger.debug("Wizard-offer route check failed", exc_info=True)
         return getattr(self, "_initial_tab_value", TAB_CHAT)
 
     def _current_runtime_identity(self) -> RuntimeIdentity:

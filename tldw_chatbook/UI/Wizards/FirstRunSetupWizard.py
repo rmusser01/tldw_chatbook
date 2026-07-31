@@ -17,6 +17,31 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, RadioButton, RadioSet, Static, Switch
 
+
+class SetupRadioButton(RadioButton):
+    """RadioButton whose selected state is structural, not color-only.
+
+    TASK-1497: stock ToggleButton renders one constant BUTTON_INNER glyph and
+    conveys on/off purely through the glyph's color, which is invisible in a
+    monochrome capture and fails WCAG 1.4.1 (use of color). The inner glyph
+    itself switches here — ● selected, ○ unselected — so state survives any
+    palette; a bold text-style on the selected row (see _wizards.tcss) is the
+    second cue. BUTTON_INNER is set as an instance attribute right before the
+    parent property renders, shadowing the class attribute per-state.
+    """
+
+    @property
+    def _button(self):
+        # BUTTON_INNER is ToggleButton's documented per-instance glyph seam;
+        # super() resolves the parent property without importing Textual's
+        # private module or touching .fget. The remaining coupling (that a
+        # ``_button`` property renders the glyph at all) is pinned by
+        # test_selected_and_unselected_glyphs_differ_structurally, so a
+        # Textual upgrade that changes the mechanism fails loudly in CI
+        # instead of silently regressing to color-only state.
+        self.BUTTON_INNER = "●" if self.value else "○"
+        return super()._button
+
 from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardContainer,
     WizardNavigation,
@@ -30,11 +55,41 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 
 class SetupStep(WizardStep):
-    """Base step: adds an awaitable commit hook and an inline error line."""
+    """Base step: adds an awaitable commit hook and an inline error line.
+
+    TASK-1495: also tags every setup step with its own ``setup-step`` CSS
+    class. BaseWizard.py's shared ``.wizard-step`` rule (never modified --
+    see this module's own docstring) is ``height: 100%`` with no overflow,
+    which silently clips any step whose natural content is taller than the
+    surrounding ``.wizard-steps-container`` -- Provider's ~27-row provider
+    list plus its API-key field is the case that motivated this fix. Scoping
+    the scroll-region CSS to ``.setup-step`` (added here, in this module
+    only) rather than touching ``.wizard-step`` itself keeps the Chatbook
+    wizards -- whose steps carry no ``setup-step`` class -- byte-for-byte
+    unaffected; see ``_wizards.tcss``'s "First-run setup wizard" section for
+    the actual scroll/height rules keyed off this class.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.add_class("setup-step")
 
     async def commit(self) -> tuple[bool, str]:
         """Persist this step's data. Return (ok, error_message)."""
         return True, ""
+
+    def preferred_focus(self) -> Optional[Widget]:
+        """The widget this step wants focused on entry, or None.
+
+        Returns:
+            A displayed, focusable descendant to focus when the step is
+            shown, or None to fall back to the container's first-displayed-
+            focusable heuristic. Steps whose DOM order puts a conditional
+            affordance ahead of their primary control (ProviderStep's pinned
+            discovery button) override this so re-entry cannot land focus on
+            the secondary control.
+        """
+        return None
 
     def show_step_error(self, message: str) -> None:
         try:
@@ -88,19 +143,57 @@ class ProviderStep(SetupStep):
                 "be running — we'll look for them.",
                 classes="setup-subtitle",
             )
-            with RadioSet(id="setup-provider-choice"):
-                for entry in self._grouped(entries):
-                    yield RadioButton(
-                        entry.display_name, id=f"setup-provider-{entry.readiness_key}"
-                    )
-            yield Static("", id="setup-provider-detected", classes="setup-probe-status")
+            # TASK-1498: the discovery payoff is PINNED above the list — the
+            # subtitle promises "we'll look for them", so the found-server
+            # banner must appear where that promise was made, not below a
+            # scrolling list. Being before the RadioSet in DOM also keeps the
+            # TASK-1496 Tab order intact (radio → key input; the button is
+            # only reachable backwards or by click, and it is hidden until a
+            # server is actually found).
+            # Hidden until discovery finds something — an empty banner would
+            # otherwise burn two rows of the tight 120x40 budget that keeps
+            # the API-key input on screen (TASK-1495's row accounting).
+            yield Static(
+                "",
+                id="setup-provider-detected",
+                classes="setup-probe-status setup-detected-banner hidden",
+            )
             yield Button(
                 "Use this server", id="setup-provider-use-detected",
                 classes="hidden", variant="primary",
             )
+            with RadioSet(id="setup-provider-choice", classes="setup-choice-list"):
+                # TASK-1498: visible group headers; popular providers first so
+                # the capped list's initial window is the useful one.
+                for group_title, group in self._grouped_sections(entries):
+                    yield Static(group_title, classes="setup-choice-header")
+                    for entry in group:
+                        yield SetupRadioButton(
+                            entry.display_name,
+                            id=f"setup-provider-{entry.readiness_key}",
+                        )
+            # TASK-1496: key Input, its status line, and the Keep/Replace/
+            # Clear affordances sit BEFORE the discovered-server banner/button
+            # in both DOM and visual order now -- Tab from the RadioSet above
+            # must reach the key Input next, not a below-the-fold "Use this
+            # server" Button (Textual's focus chain follows DOM order, not
+            # rendered position). Before this reorder, a discovered local
+            # server unhid that Button ahead of the Input in DOM order, so
+            # Tab landed on it instead; a typed API key then went into a
+            # Button (which does not accept text input) and vanished
+            # silently, and Protect-keys could never activate since
+            # note_key_entered() never fired. Putting the detected-server
+            # affordance LAST (see below) makes Tab order match visual
+            # top-to-bottom order exactly: radio list -> key input ->
+            # Keep/Replace/Clear -> detected-server button.
             yield Label("API key", classes="setup-field-label")
-            yield Input(password=True, id="setup-provider-key-input",
-                        placeholder="Paste your API key")
+            # TASK-1506: the probe used to fire only on Enter inside the
+            # field — undiscoverable. A visible Test button shares the
+            # input's row so the 1495 row budget is unchanged.
+            with Horizontal(classes="setup-key-row"):
+                yield Input(password=True, id="setup-provider-key-input",
+                            placeholder="Paste your API key")
+                yield Button("Test", id="setup-provider-test")
             yield Static("", id="setup-provider-key-status", classes="setup-probe-status")
             with Horizontal(id="setup-provider-key-actions", classes="hidden"):
                 yield Button("Keep current", id="setup-provider-key-keep")
@@ -109,18 +202,67 @@ class ProviderStep(SetupStep):
             yield Static("", id="setup-provider-probe-status", classes="setup-probe-status")
             yield Static("", classes="setup-step-error")
 
-    @staticmethod
-    def _grouped(entries):
+    # TASK-1498: providers most first-time users are actually looking for, in
+    # display order. Filtered against the live catalog, so a missing key
+    # simply doesn't render.
+    _POPULAR_PROVIDER_KEYS = ("openai", "anthropic", "ollama", "llama_cpp")
+
+    @classmethod
+    def _grouped_sections(cls, entries):
+        """Sectioned provider list: Popular, then Cloud, Local, Other.
+
+        Args:
+            entries: ConsoleProviderCatalogEntry sequence from the catalog.
+
+        Returns:
+            List of (section_title, entries) pairs, empty sections dropped.
+        """
         from tldw_chatbook.Chat.provider_catalog import (
             PROVIDER_CUSTOM_GROUP_KEYS,
         )
 
-        def group_rank(entry):
-            if entry.readiness_key in PROVIDER_CUSTOM_GROUP_KEYS:
-                return 2
-            return 0 if entry.requires_api_key else 1
+        by_key = {e.readiness_key: e for e in entries}
+        popular = [
+            by_key[key] for key in cls._POPULAR_PROVIDER_KEYS if key in by_key
+        ]
+        popular_keys = {e.readiness_key for e in popular}
+        rest = [e for e in entries if e.readiness_key not in popular_keys]
+        alpha = lambda e: e.display_name.lower()  # noqa: E731
+        cloud = sorted(
+            (e for e in rest
+             if e.requires_api_key
+             and e.readiness_key not in PROVIDER_CUSTOM_GROUP_KEYS),
+            key=alpha,
+        )
+        local = sorted(
+            (e for e in rest
+             if not e.requires_api_key
+             and e.readiness_key not in PROVIDER_CUSTOM_GROUP_KEYS),
+            key=alpha,
+        )
+        other = sorted(
+            (e for e in rest if e.readiness_key in PROVIDER_CUSTOM_GROUP_KEYS),
+            key=alpha,
+        )
+        sections = [
+            ("Popular", popular),
+            ("Cloud", cloud),
+            ("Local", local),
+            ("Other", other),
+        ]
+        return [(title, group) for title, group in sections if group]
 
-        return sorted(entries, key=lambda e: (group_rank(e), e.display_name.lower()))
+    def preferred_focus(self) -> Optional[Widget]:
+        """Focus the provider list on entry, even when the pinned discovery
+        button is visible (it precedes the list in DOM order).
+
+        Returns:
+            The provider RadioSet, or None if it is not queryable yet.
+        """
+        try:
+            return self.query_one("#setup-provider-choice", RadioSet)
+        except Exception:
+            return None
 
     def on_show(self) -> None:
         super().on_show()
@@ -140,10 +282,12 @@ class ProviderStep(SetupStep):
         if not servers:
             return
         self.detected_server = servers[0]
-        self.query_one("#setup-provider-detected", Static).update(
+        banner = self.query_one("#setup-provider-detected", Static)
+        banner.update(
             f"Found a local server at {self.detected_server.base_url} "
             f"({self.detected_server.provider_key})."
         )
+        banner.remove_class("hidden")
         use_button = self.query_one("#setup-provider-use-detected", Button)
         use_button.remove_class("hidden")
 
@@ -279,6 +423,13 @@ class ProviderStep(SetupStep):
         """Live-but-never-blocking verification: probe on Enter in the key field."""
         if event.value.strip():
             self._launch_probe(api_key=event.value.strip())
+
+    @on(Button.Pressed, "#setup-provider-test")
+    def _on_test_pressed(self, event: Button.Pressed) -> None:
+        """TASK-1506: same probe as Enter-in-field, behind a visible control."""
+        event.stop()
+        typed = self.query_one("#setup-provider-key-input", Input).value.strip()
+        self._launch_probe(api_key=typed or None)
 
     def _launch_probe(self, *, api_key: str | None = None) -> None:
         self.probe_generation += 1
@@ -473,7 +624,7 @@ class ModelStep(SetupStep):
         with Vertical(classes="setup-model"):
             yield Static("Pick a default model", classes="setup-title")
             yield Static("", id="setup-model-provider-line", classes="setup-subtitle")
-            with RadioSet(id="setup-model-choice"):
+            with RadioSet(id="setup-model-choice", classes="setup-choice-list"):
                 # disabled=True: an un-disabled placeholder is a real,
                 # toggleable RadioButton -- pressing Enter/Space while it is
                 # the only/highlighted option (e.g. an impatient user, or
@@ -481,7 +632,7 @@ class ModelStep(SetupStep):
                 # and commit the literal placeholder text as the model id
                 # (see _on_model_chosen). Same reasoning applies to the two
                 # other placeholders this step ever mounts, below.
-                yield RadioButton(
+                yield SetupRadioButton(
                     "(loading models…)", id="setup-model-loading", disabled=True
                 )
             yield Label("Or enter a model name", classes="setup-field-label")
@@ -524,8 +675,13 @@ class ModelStep(SetupStep):
             except Exception:
                 pass
         try:
+            # TASK-1503: display-case the provider in user copy — raw keys
+            # like "anthropic"/"llama_cpp" are internals, not UI language.
+            from tldw_chatbook.Chat.provider_catalog import provider_display_name
+
+            display = provider_display_name(provider_key) if provider_key else ""
             self.query_one("#setup-model-provider-line", Static).update(
-                f"Models for {provider_value or 'your provider'}."
+                f"Models for {display or 'your provider'}."
             )
         except Exception:
             pass
@@ -599,13 +755,22 @@ class ModelStep(SetupStep):
         # ones are still present, raising DuplicateIds.
         await radio_set.remove_children()
         if models:
+            # TASK-1503: the first entry (curated-default / top discovery hit)
+            # carries a "recommended" tag in its LABEL only; the clean model
+            # id lives on the button as `_model_id` so selection and commits
+            # never round-trip display decoration into config.
+            def _button(index: int, model_id: str) -> SetupRadioButton:
+                label = f"{model_id}   (recommended)" if index == 0 else model_id
+                button = SetupRadioButton(label, id=f"setup-model-option-{index}")
+                button._model_id = model_id
+                return button
+
             await radio_set.mount_all(
-                RadioButton(model_id, id=f"setup-model-option-{index}")
-                for index, model_id in enumerate(models)
+                _button(index, model_id) for index, model_id in enumerate(models)
             )
         elif no_provider:
             await radio_set.mount(
-                RadioButton(
+                SetupRadioButton(
                     "Pick a provider first — or type a model name below",
                     id="setup-model-no-provider",
                     disabled=True,
@@ -613,13 +778,25 @@ class ModelStep(SetupStep):
             )
         else:
             await radio_set.mount(
-                RadioButton("(no models found — enter one below)", disabled=True)
+                SetupRadioButton("(no models found — enter one below)", disabled=True)
             )
 
     @on(RadioSet.Changed, "#setup-model-choice")
     def _on_model_chosen(self, event: RadioSet.Changed) -> None:
         if event.pressed is not None:
-            self.set_selected_model(str(event.pressed.label))
+            self.set_selected_model_from_button(event.pressed)
+
+    def set_selected_model_from_button(self, button: RadioButton) -> None:
+        """Select via a radio row, reading the clean id, not the label.
+
+        TASK-1503: labels may carry display decoration ("(recommended)");
+        the undecorated model id is stored on the button as ``_model_id``.
+
+        Args:
+            button: The pressed radio row; its ``_model_id`` attribute (or
+                label when absent) supplies the model id to select.
+        """
+        self.set_selected_model(getattr(button, "_model_id", str(button.label)))
 
     @on(Input.Changed, "#setup-model-custom")
     def _on_custom_model(self, event: Input.Changed) -> None:
@@ -639,7 +816,12 @@ class ModelStep(SetupStep):
         elif self._model_id_from_custom_input:
             self._model_id_from_custom_input = False
             pressed = self._live_pressed_radio()
-            self.selected_model_id = str(pressed.label) if pressed is not None else ""
+            # TASK-1503: clean id, never the (possibly decorated) label.
+            self.selected_model_id = (
+                str(getattr(pressed, "_model_id", pressed.label))
+                if pressed is not None
+                else ""
+            )
 
     def set_selected_model(self, model_id: str) -> None:
         self.selected_model_id = model_id
@@ -690,7 +872,10 @@ class ModelStep(SetupStep):
         if self.selected_model_id:
             return self.selected_model_id
         pressed = self._live_pressed_radio()
-        return str(pressed.label) if pressed is not None else ""
+        if pressed is None:
+            return ""
+        # TASK-1503: read the clean id, never the (possibly decorated) label.
+        return str(getattr(pressed, "_model_id", pressed.label))
 
     async def commit(self) -> tuple[bool, str]:
         _, provider_value = self._current_provider()
@@ -726,9 +911,9 @@ class RagStep(SetupStep):
         with Vertical(classes="setup-rag"):
             yield Static("Search & RAG", classes="setup-title")
             yield Static("", id="setup-rag-status", classes="setup-subtitle")
-            with RadioSet(id="setup-rag-model-choice"):
+            with RadioSet(id="setup-rag-model-choice", classes="setup-choice-list"):
                 for model_id in self._embedding_model_ids():
-                    yield RadioButton(model_id)
+                    yield SetupRadioButton(model_id)
             yield Static("", classes="setup-step-error")
 
     def _embedding_model_ids(self) -> list[str]:
@@ -746,12 +931,17 @@ class RagStep(SetupStep):
                 # Static.update() treats [..] as Rich markup by default, so the
                 # extras-package brackets must be escaped or "[embeddings_rag]"
                 # silently vanishes from the rendered text instead of showing.
+                # TASK-1502: quoted plainly — backticks are markdown idiom and
+                # render literally in a TUI.
                 "RAG needs optional dependencies that aren't installed. Install the "
-                "extras package `tldw_chatbook\\[embeddings_rag]` with your package "
+                "extras package \"tldw_chatbook\\[embeddings_rag]\" with your package "
                 "manager, then revisit Settings ▸ RAG. Skipping for now is fine."
             )
             try:
-                self.query_one("#setup-rag-model-choice", RadioSet).disabled = True
+                # TASK-1502: hide the model list outright — a wall of disabled
+                # options under a "not installed" message reads as breakage
+                # and adds nothing the user can act on.
+                self.query_one("#setup-rag-model-choice", RadioSet).display = False
             except Exception:
                 pass
 
@@ -808,13 +998,39 @@ class ToolsStep(SetupStep):
                 classes="setup-subtitle",
             )
             for entry in self._entries:
+                title, desc = self._TOOL_COPY.get(
+                    entry.tool_name,
+                    (entry.tool_name.replace("_", " ").capitalize(), ""),
+                )
                 with Horizontal(classes="setup-tool-row"):
                     yield Switch(
                         value=gate_values.get(entry.gate_key, False),
                         id=f"setup-tool-{entry.tool_name}",
                     )
-                    yield Label(entry.tool_name.replace("_", " "))
+                    with Vertical(classes="setup-tool-text"):
+                        yield Label(title, classes="setup-tool-name")
+                        yield Static(
+                            desc,
+                            id=f"setup-tool-desc-{entry.tool_name}",
+                            classes="setup-tool-desc",
+                            markup=False,
+                        )
             yield Static("", classes="setup-step-error")
+
+    # TASK-1501: plain-language names and one-line descriptions per built-in
+    # tool. The ⚠ marks tools that create or change data on disk — a static
+    # judgment mirroring each tool's risk_tags without importing the tool
+    # modules at compose time. An unknown (future) tool degrades to its
+    # capitalized name with no description rather than breaking the step.
+    _TOOL_COPY = {
+        "read_file": ("Read file", "Read a file you point the assistant at."),
+        "list_directory": ("List directory", "Browse the contents of a folder."),
+        "write_file": ("Write file", "⚠ Creates or overwrites files on disk."),
+        "create_note": ("Create note", "⚠ Adds new notes to your notebook."),
+        "update_note": ("Update note", "⚠ Edits your existing notes."),
+        "glob_files": ("Find files", "Match file names by pattern (like *.md)."),
+        "grep_files": ("Search in files", "Search inside files for text."),
+    }
 
     def gate_key_for(self, switch: Switch) -> str:
         tool_name = (switch.id or "").removeprefix("setup-tool-")
@@ -946,23 +1162,73 @@ class AppearanceStep(SetupStep):
         with Vertical(classes="setup-appearance"):
             yield Static("Appearance", classes="setup-title")
             yield Label("Theme", classes="setup-field-label")
-            with RadioSet(id="setup-theme-choice"):
-                for theme_name in self._theme_names():
-                    yield RadioButton(
-                        theme_name, value=(theme_name == prefill.default_theme)
-                    )
+            with RadioSet(id="setup-theme-choice", classes="setup-choice-list"):
+                yield from self._theme_buttons(self._theme_shortlist())
+            yield Button(
+                "Show all themes…",
+                id="setup-theme-show-all",
+                classes="setup-tertiary-button",
+            )
             yield Label("Splash screen card", classes="setup-field-label")
-            with RadioSet(id="setup-splash-choice"):
-                yield RadioButton("Surprise me (random)", value=True)
+            with RadioSet(id="setup-splash-choice", classes="setup-choice-list"):
+                yield SetupRadioButton("Surprise me (random)", value=True)
                 for card_name in self._card_names()[:10]:
-                    yield RadioButton(card_name)
+                    yield SetupRadioButton(card_name)
             yield Static("", classes="setup-step-error")
+
+    def _theme_buttons(self, names: list[str]):
+        """Radio rows for theme names, marking the persisted one "(current)".
+
+        TASK-1500: like the model rows, the label may carry decoration; the
+        clean theme name rides on the button as ``_theme_name`` so previews
+        and commits never see display text.
+        """
+        for theme_name in names:
+            label = (
+                f"{theme_name}   (current)"
+                if theme_name == self.selected_theme and theme_name
+                else theme_name
+            )
+            button = SetupRadioButton(label, value=(theme_name == self.selected_theme))
+            button._theme_name = theme_name
+            yield button
+
+    # TASK-1500: flagship candidates for the shortlist, in preference order.
+    # Filtered against what this Textual build actually registers; the two
+    # stock themes are always present.
+    _FLAGSHIP_THEMES = ("nord", "gruvbox", "tokyo-night", "catppuccin-mocha")
 
     def _theme_names(self) -> list[str]:
         try:
             return sorted(self.app.available_themes)
         except Exception:
             return ["textual-dark", "textual-light"]
+
+    def _theme_shortlist(self) -> list[str]:
+        """Curated first screen: current + stock defaults + a few flagships.
+
+        The full alphabetical wall (novelty themes first) buried the sane
+        choices; "Show all themes…" swaps in the complete list on demand.
+        """
+        available = self._theme_names()
+        shortlist: list[str] = []
+        for name in (
+            self.selected_theme,
+            "textual-dark",
+            "textual-light",
+            *self._FLAGSHIP_THEMES,
+        ):
+            if name and name in available and name not in shortlist:
+                shortlist.append(name)
+        return shortlist or available[:6]
+
+    @on(Button.Pressed, "#setup-theme-show-all")
+    async def _on_show_all_themes(self, event: Button.Pressed) -> None:
+        event.stop()
+        radio_set = self.query_one("#setup-theme-choice", RadioSet)
+        await radio_set.remove_children()
+        await radio_set.mount_all(self._theme_buttons(self._theme_names()))
+        self.query_one("#setup-theme-show-all", Button).display = False
 
     @staticmethod
     def _card_names() -> list[str]:
@@ -975,9 +1241,44 @@ class AppearanceStep(SetupStep):
         except Exception:
             return []
 
+    #: Theme active before the first preview; None = nothing to revert.
+    _preview_original: Optional[str] = None
+
     @on(RadioSet.Changed, "#setup-theme-choice")
     def _on_theme(self, event: RadioSet.Changed) -> None:
-        self.selected_theme = str(event.pressed.label)
+        if event.pressed is None:
+            return
+        # Clean value, never the "(current)"-decorated label.
+        self.selected_theme = str(
+            getattr(event.pressed, "_theme_name", event.pressed.label)
+        )
+        self._preview_theme(self.selected_theme)
+
+    def _preview_theme(self, theme_name: str) -> None:
+        """TASK-1500: selecting a theme applies it immediately as a preview.
+
+        The pre-preview theme is remembered once so `revert_preview` can
+        restore it if the user backs out (finish-later) without committing.
+        A successful commit clears the revert obligation — the new theme is
+        then the persisted one.
+        """
+        if not theme_name:
+            return
+        try:
+            if self._preview_original is None:
+                self._preview_original = str(self.app.theme)
+            self.app.theme = theme_name
+        except Exception:
+            logger.debug("Theme preview failed for %s", theme_name, exc_info=True)
+
+    def revert_preview(self) -> None:
+        """Restore the pre-preview theme (no-op when nothing was previewed)."""
+        if self._preview_original is not None:
+            try:
+                self.app.theme = self._preview_original
+            except Exception:
+                logger.debug("Theme preview revert failed", exc_info=True)
+            self._preview_original = None
 
     @on(RadioSet.Changed, "#setup-splash-choice")
     def _on_card(self, event: RadioSet.Changed) -> None:
@@ -1031,6 +1332,9 @@ class AppearanceStep(SetupStep):
                 self.app.theme = self.selected_theme
             except Exception:
                 logger.debug("Live theme apply failed; persisted value still wins")
+            # TASK-1500: the commit made the previewed theme real — nothing
+            # to revert on cancel any more.
+            self._preview_original = None
         return (True, "") if ok else (False, "Saving appearance settings failed.")
 
     def get_step_data(self) -> Dict[str, Any]:
@@ -1048,15 +1352,20 @@ class WelcomeStep(SetupStep):
                 "changed later in Settings, and every step can be skipped.",
                 classes="setup-subtitle",
             )
-            with RadioSet(id="setup-track-choice"):
-                yield RadioButton(
+            with RadioSet(id="setup-track-choice", classes="setup-choice-list"):
+                yield SetupRadioButton(
                     "Quick setup — provider & model (recommended)",
                     value=True,
                     id="setup-track-quick",
                 )
-                yield RadioButton("Full setup — configure everything", id="setup-track-full")
+                yield SetupRadioButton("Full setup — configure everything", id="setup-track-full")
+            # TASK-1507: tertiary treatment — quiet, link-like, clearly a
+            # control but visually subordinate to the track choice above.
             yield Button(
-                "Skip — explore on my own", id="setup-skip-entirely", variant="default"
+                "Skip — explore on my own",
+                id="setup-skip-entirely",
+                variant="default",
+                classes="setup-tertiary-button",
             )
             yield Static("", classes="setup-step-error")
 
@@ -1196,13 +1505,20 @@ class SummaryStep(SetupStep):
             yield Static("", id="setup-summary-rows", markup=False)
             yield Static("", id="setup-summary-footer", classes="setup-subtitle",
                         markup=False)
-            with Horizontal(classes="setup-summary-actions"):
-                if getattr(self.wizard, "rerun", False):
-                    yield Button("Done", id="setup-exit-done", variant="primary")
-                    yield Button("Go to Chat", id="setup-exit-chat")
-                else:
-                    yield Button("Start chatting", id="setup-exit-chat", variant="primary")
-                    yield Button("Explore on my own", id="setup-exit-home")
+        # The exit actions are a DIRECT child of the step (the .setup-step
+        # scroll container), not of the scrolling .setup-summary Vertical:
+        # Textual docks position against the container's visible frame and
+        # never scroll with content, which is what keeps the wizard's final
+        # CTAs on screen no matter how tall the read-back matrix gets
+        # (TASK-1495 AC #3 -- full-track content previously pushed them
+        # below the fold at 120x40).
+        with Horizontal(classes="setup-summary-actions"):
+            if getattr(self.wizard, "rerun", False):
+                yield Button("Done", id="setup-exit-done", variant="primary")
+                yield Button("Go to Chat", id="setup-exit-chat")
+            else:
+                yield Button("Start chatting", id="setup-exit-chat", variant="primary")
+                yield Button("Explore on my own", id="setup-exit-home")
 
     def on_show(self) -> None:
         super().on_show()
@@ -1239,7 +1555,7 @@ class SummaryStep(SetupStep):
         # bracketed literal in a label/detail (e.g. a package extra name)
         # must be escaped or it silently vanishes from the rendered text.
         lines = [
-            f"{'✓' if row.ok else '✗'} {row.label}"
+            f"{row.glyph} {row.label}"
             + (f" — {row.detail}" if row.detail else "")
             for row in rows
         ]
@@ -1313,7 +1629,11 @@ class SetupWizardContainer(WizardContainer):
     def __init__(self, app_instance, rerun: bool = False, **kwargs):
         self.rerun = rerun
         self.key_entered = False
-        self.track = wizard_state.TRACK_FULL
+        # TASK-1499: default to the QUICK track — it is the preselected
+        # (recommended) Welcome option, so the progress row anchors at
+        # "Step 1 of 4" instead of front-loading all nine steps before
+        # the user has chosen anything. Picking Full expands it.
+        self.track = wizard_state.TRACK_QUICK
         steps = self._create_steps()
         super().__init__(
             app_instance=app_instance,
@@ -1329,6 +1649,15 @@ class SetupWizardContainer(WizardContainer):
         # F3 hardening: guards _dismiss_screen/_finalize against ever
         # dismissing the screen twice -- see those methods' docstrings.
         self._finalized = False
+
+    def on_mount(self) -> None:
+        """TASK-1499: base on_mount renders the progress row from the FULL
+        step list; rebuild it immediately so the initial render honors the
+        quick-track default (4 dots, "Step 1 of 4") instead of front-loading
+        all nine steps before the user has chosen anything."""
+        super().on_mount()
+        self._rebuild_progress()
+        self.update_progress()
 
     # -- step construction -------------------------------------------------
     def _create_steps(self) -> List[WizardStep]:
@@ -1347,12 +1676,12 @@ class SetupWizardContainer(WizardContainer):
             ModelStep(wizard=self, config=cfg(wizard_state.STEP_MODEL, "Model", 3)),
             RagStep(wizard=self, config=cfg(wizard_state.STEP_RAG, "RAG", 4)),
             ToolsStep(wizard=self, config=cfg(wizard_state.STEP_TOOLS, "Tools", 5)),
-            NotesSyncStep(wizard=self, config=cfg(wizard_state.STEP_NOTES, "Notes sync", 6)),
+            NotesSyncStep(wizard=self, config=cfg(wizard_state.STEP_NOTES, "Notes", 6)),
             AppearanceStep(
-                wizard=self, config=cfg(wizard_state.STEP_APPEARANCE, "Appearance", 7)
+                wizard=self, config=cfg(wizard_state.STEP_APPEARANCE, "Style", 7)
             ),
             ProtectKeysStep(
-                wizard=self, config=cfg(wizard_state.STEP_PROTECT, "Protect keys", 8)
+                wizard=self, config=cfg(wizard_state.STEP_PROTECT, "Protect", 8)
             ),
             SummaryStep(wizard=self, config=cfg(wizard_state.STEP_SUMMARY, "Summary", 9)),
         ]
@@ -1444,10 +1773,31 @@ class SetupWizardContainer(WizardContainer):
         super().show_step(step_index)
         try:
             current_step = self.steps[self.current_step]
-            target = next(
-                (widget for widget in current_step.walk_children(Widget) if widget.focusable),
-                None,
-            )
+            # TASK-1496/1498: "focusable" alone is not enough — a widget
+            # hidden via display:none (e.g. the pinned "Use this server"
+            # button before discovery finds anything) must never be the
+            # focus target, or keyboard input lands on an invisible control.
+            target = None
+            if isinstance(current_step, SetupStep):
+                preferred = current_step.preferred_focus()
+                if (
+                    preferred is not None
+                    and preferred.focusable
+                    and preferred.display
+                    and not preferred.has_class("hidden")
+                ):
+                    target = preferred
+            if target is None:
+                target = next(
+                    (
+                        widget
+                        for widget in current_step.walk_children(Widget)
+                        if widget.focusable
+                        and widget.display
+                        and not widget.has_class("hidden")
+                    ),
+                    None,
+                )
             if target is None:
                 next_button = self.query_one("#wizard-next", Button)
                 target = (
@@ -1728,6 +2078,13 @@ class FirstRunSetupWizard(WizardScreen):
 
     def compose(self) -> ComposeResult:
         yield SetupWizardContainer(self.app_instance, rerun=self.rerun)
+        # TASK-1505: the wizard's keys are otherwise undiscoverable — one
+        # quiet, always-visible line names them.
+        yield Static(
+            "Ctrl+N next · Ctrl+B back · Esc finish later",
+            id="setup-key-hints",
+            classes="setup-key-hints",
+        )
 
     def on_mount(self) -> None:
         if not self.rerun:
@@ -1763,4 +2120,10 @@ class FirstRunSetupWizard(WizardScreen):
 
     def _handle_cancel_confirm(self, confirmed: bool | None) -> None:
         if confirmed:
+            # TASK-1500: an uncommitted theme preview must not outlive the
+            # wizard — finish-later restores whatever the user had before.
+            try:
+                self.query_one(AppearanceStep).revert_preview()
+            except Exception:
+                pass
             self.dismiss(None)

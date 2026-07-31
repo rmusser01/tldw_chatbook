@@ -574,3 +574,63 @@ class TestProviderSummaryConfigured:
 
     def test_pristine_config_does_not_count(self):
         assert provider_summary_configured({}, {}) is False
+
+
+class TestSummaryThreeState:
+    """TASK-1504: matrix distinguishes configured / default / attention."""
+
+    def test_untouched_defaults_are_not_claimed_as_configured(self):
+        """Template values render as – default, never as ✓ configured."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            ROW_DEFAULT,
+            build_summary_rows,
+        )
+
+        rows = {r.label: r for r in build_summary_rows(
+            {"general": {"default_theme": "textual-dark"}}, {}, rag_deps_installed=False
+        )}
+        assert rows["Theme"].state == ROW_DEFAULT
+        assert rows["Theme"].glyph == "–"
+        assert rows["Tools"].state == ROW_DEFAULT
+        assert rows["RAG"].state == ROW_DEFAULT  # optional, not an error
+
+    def test_plaintext_keys_flag_encryption_as_attention(self):
+        """Unencrypted stored keys make the encryption row a ✗ call to action."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            ROW_ATTENTION,
+            build_summary_rows,
+        )
+
+        cfg = {"api_settings": {"openai": {"api_key": "wizard-test-key-tri"}}}
+        rows = {r.label: r for r in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        assert rows["Key encryption"].state == ROW_ATTENTION
+        assert rows["Key encryption"].glyph == "✗"
+
+    def test_provider_without_model_is_attention_but_default_when_unconfigured(self):
+        """A half-finished provider setup flags the model row; a pristine config does not."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            ROW_ATTENTION,
+            ROW_DEFAULT,
+            build_summary_rows,
+        )
+
+        unconfigured = {r.label: r for r in build_summary_rows({}, {}, rag_deps_installed=False)}
+        assert unconfigured["Default model"].state == ROW_DEFAULT
+        cfg = {
+            "api_settings": {"openai": {"api_key": "wizard-test-key-tri"}},
+            "first_run": {"setup_started": True},
+        }
+        configured = {r.label: r for r in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        assert configured["Default model"].state == ROW_ATTENTION
+
+    def test_custom_theme_earns_configured(self):
+        """Only a user-changed theme earns the ✓ configured state."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            ROW_CONFIGURED,
+            build_summary_rows,
+        )
+
+        rows = {r.label: r for r in build_summary_rows(
+            {"general": {"default_theme": "nord"}}, {}, rag_deps_installed=False
+        )}
+        assert rows["Theme"].state == ROW_CONFIGURED

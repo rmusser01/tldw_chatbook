@@ -1,9 +1,10 @@
 ---
 id: TASK-1375
 title: Wizard Summary exit buttons can render below the fold
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-30 10:03'
+updated_date: '2026-07-31 00:23'
 labels: []
 dependencies: []
 ---
@@ -18,3 +19,9 @@ With tall summary content (e.g. a long wrapped config path) the Done/Start-chatt
 <!-- AC:BEGIN -->
 - [ ] #1 Summary exit buttons visible at 120x40 with a 200-char config path
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Superseded by TASK-1495: root cause is the non-scrolling step viewport (affects key input and discovery too, not just long config paths).
+<!-- SECTION:NOTES:END -->

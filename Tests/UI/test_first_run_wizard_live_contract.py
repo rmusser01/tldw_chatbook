@@ -42,7 +42,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from textual.widgets import Button, RadioButton, Static
+from textual.widgets import Button, Input, RadioButton, Static
 
 from Tests.UI.test_product_maturity_phase1_first_run import (
     _prepare_clean_environment,
@@ -499,6 +499,287 @@ async def test_wizard_navigation_visible_at_80x24(
                 assert expected in rendered_text, (
                     f"{expected!r} button text missing from the rendered frame"
                 )
+
+
+# ---------------------------------------------------------------------------
+# 5b. TASK-1495: Provider's own step viewport clipped its content with no
+#     scrollbar -- the API-key Input (and everything after the RadioSet)
+#     rendered below a hard, non-scrolling fold at 120x40. Root cause:
+#     BaseWizard.py's shared ".wizard-step" is "height: 100%" with no
+#     overflow (never modified -- see FirstRunSetupWizard.py's own
+#     docstring), and each step's own content wrapper inherited Textual's
+#     Vertical default of "height: 1fr; overflow: hidden hidden", so
+#     anything taller than the step's fixed viewport was clipped by that
+#     INNER wrapper before ".wizard-steps-container"'s own
+#     "overflow-y: auto" ever got a chance to scroll anything. The fix scopes
+#     new CSS to ".setup-step" (added by SetupStep.__init__, this module
+#     only) and caps each step's internal RadioSet ("setup-choice-list") --
+#     both are scoped to the setup wizard's own classes, so the Chatbook
+#     wizards (whose steps carry neither class) are unaffected; see
+#     Tests/Chatbooks/ in the full suite gate for that invariant.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_provider_key_input_visible_at_120x40_without_scrolling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """TASK-1495 AC #1: the Provider step's API-key field must be visible
+    at 120x40 with NO scrolling -- not merely reachable by scrolling (that
+    weaker guarantee is covered by the ".setup-step" scroll region itself,
+    exercised by the 80x24/100x30 tests below). Capping the provider
+    RadioSet ("setup-choice-list", max-height: 5) and trimming this step's
+    own padding/margins (see _wizards.tcss's "First-run setup wizard"
+    section) reclaims just enough of the step's fixed ~15-row viewport for
+    the Input to fit un-scrolled alongside it.
+    """
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            await pilot.pause(0.2)
+
+            _press(app.screen, "#wizard-next")  # Welcome -> Provider
+            await pilot.pause(0.3)
+            container = app.screen.query_one(SetupWizardContainer)
+            assert container.steps[container.current_step].config.id == STEP_PROVIDER
+
+            key_input = app.screen.query_one("#setup-provider-key-input", Input)
+            region = key_input.region
+            assert region.width > 0 and region.height > 0, (
+                f"key Input has an empty region at 120x40: {region}"
+            )
+            assert region.y >= 0, f"key Input clipped above row 0: {region}"
+            assert region.bottom <= 40, f"key Input clipped past row 40: {region}"
+            assert region.right <= 120, f"key Input clipped past column 120: {region}"
+
+            # Cross-check against the actual compositor output: a widget
+            # nested inside a scrollable ancestor can report a perfectly
+            # plausible on-screen `region` while still being scrolled out of
+            # that ancestor's visible clip window -- `region` alone does not
+            # prove the compositor actually painted it (see this suite's own
+            # docstring, and backlog/docs/lessons-live-verification.md).
+            assert key_input in app.screen._compositor.visible_widgets, (
+                "key Input's region looked on-screen, but the compositor "
+                "never actually painted it -- it is scrolled out of view"
+            )
+            strips = app.screen._compositor.render_strips()
+            rendered_text = "\n".join(
+                "".join(segment.text for segment in strip) for strip in strips
+            )
+            assert "Paste your API key" in rendered_text, (
+                "key Input's placeholder never reached the rendered frame"
+            )
+
+
+@pytest.mark.asyncio
+async def test_summary_exit_buttons_visible_at_120x40_full_track(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """TASK-1495 AC #3: the Full-track Summary step's exit buttons ("Start
+    chatting" / "Explore on my own") must be on screen at 120x40 after
+    walking the entire 8-step full track -- these could previously render
+    below the same non-scrolling fold as the Provider step's key Input,
+    just reached via a longer path (more accumulated summary rows).
+    SetupWizardContainer.show_step() (unrelated to this fix) auto-focuses
+    the incoming step's first focusable descendant -- Summary's first exit
+    Button -- and Textual's own Screen.set_focus(scroll_visible=True) then
+    scrolls it into view, but only because ".setup-step" is now an actual
+    scroll region at all (TASK-1495's CSS change); before the fix nothing
+    under the step was scrollable, so focus-follows-into-view had nothing
+    to work with.
+    """
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            await pilot.pause(0.2)
+
+            _select_radio(app.screen, "#setup-track-full")
+            await pilot.pause(0.1)
+            _press(app.screen, "#wizard-next")  # Welcome -> Provider, track=full
+            await pilot.pause(0.2)
+
+            for _ in range(10):
+                step = container.steps[container.current_step]
+                if step.config.id == STEP_SUMMARY:
+                    break
+                _press(app.screen, "#wizard-next")
+                await pilot.pause(0.2)
+            else:
+                raise AssertionError("never reached the summary step")
+
+            # SummaryStep._render_rows() is an async worker that fills in
+            # "#setup-summary-rows" after the step is shown; wait for it to
+            # actually finish (rather than a fixed sleep) so the layout has
+            # settled to its FINAL height before measuring anything below it.
+            await _wait_until(
+                pilot,
+                lambda: bool(
+                    str(
+                        app.screen.query_one("#setup-summary-rows", Static).render()
+                    ).strip()
+                ),
+            )
+            await pilot.pause(0.2)
+
+            exit_chat = app.screen.query_one("#setup-exit-chat", Button)
+            exit_home = app.screen.query_one("#setup-exit-home", Button)
+            from textual.widgets import Button as _B
+            all_buttons = [w for w in app.screen._compositor.visible_widgets if isinstance(w, _B)]
+            strips = app.screen._compositor.render_strips()
+            rendered_text = "\n".join(
+                "".join(segment.text for segment in strip) for strip in strips
+            )
+            for button, label in (
+                (exit_chat, "Start chatting"),
+                (exit_home, "Explore on my own"),
+            ):
+                region = button.region
+                assert region.width > 0 and region.height > 0, (
+                    f"{label!r} exit button has an empty region: {region}"
+                )
+                assert region.y >= 0 and region.bottom <= 40 and region.right <= 120, (
+                    f"{label!r} exit button clipped at 120x40: {region}"
+                )
+                assert button in app.screen._compositor.visible_widgets, (
+                    f"{label!r} exit button's region looked on-screen but the "
+                    "compositor never painted it"
+                )
+            assert "Start chatting" in rendered_text
+            assert "Explore on my own" in rendered_text
+
+
+# ---------------------------------------------------------------------------
+# 5c. TASK-1495/1496 at small terminals. Investigating this fix surfaced a
+#     SEPARATE, pre-existing constraint (confirmed present before this fix
+#     too, by stashing it and re-measuring): at 80x24 the wizard's own
+#     fixed-height chrome -- the title (3 rows), WizardProgress (~8 rows),
+#     and the navigation bar (5 rows), none of it touched by this fix, all
+#     shared with the Chatbook wizards via BaseWizard.py/its DEFAULT_CSS and
+#     _wizards.tcss's ".wizard-title"/".wizard-progress"/".wizard-navigation"
+#     classes -- leaves ".wizard-steps-container" only ~3 rows, less than
+#     ".wizard-step"'s own shared "padding: 2" alone consumes. Every step's
+#     content box therefore measures ZERO height at exactly 80x24,
+#     independent of which step is showing and independent of this fix
+#     (filed as TASK-1509 -- compressing that shared chrome needs its own
+#     design decision and cannot be done by scoping CSS to the setup
+#     wizard's own classes alone). The first test below pins what THIS fix
+#     must not regress at that floor: the nav bar and keyboard focus stay
+#     stable. The second test proves the actual scroll-into-view mechanism
+#     TASK-1496 adds, at a size just past that chrome floor (100x30) where
+#     Provider's own content genuinely has a non-zero viewport to overflow.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_navigation_and_focus_stay_stable_at_80x24(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(80, 24)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            await pilot.pause(0.2)
+
+            _press(app.screen, "#wizard-next")  # Welcome -> Provider
+            await pilot.pause(0.3)
+            container = app.screen.query_one(SetupWizardContainer)
+            assert container.steps[container.current_step].config.id == STEP_PROVIDER
+
+            for widget_id in ("#wizard-back", "#wizard-next", "#wizard-cancel"):
+                button = app.screen.query_one(widget_id, Button)
+                assert button.visible, f"{widget_id} is not visible at 80x24"
+                region = button.region
+                assert region.width > 0 and region.height > 0
+                assert region.right <= 80 and region.bottom <= 24
+
+            # Focusing a widget deep inside the step (whose own content box
+            # measures zero height at this exact size -- see this section's
+            # docstring) must not crash the wizard or break the focus chain,
+            # even though there is currently no room to actually show it.
+            key_input = app.screen.query_one("#setup-provider-key-input", Input)
+            key_input.focus()
+            await pilot.pause(0.2)
+            assert container.is_running, "focusing an off-screen widget crashed the wizard"
+            assert app.focused is key_input
+
+
+@pytest.mark.asyncio
+async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """TASK-1496 AC #1: "focusing any wizard widget scrolls it into view."
+
+    100x30 keeps the wizard's fixed chrome overhead (see this section's
+    docstring) from swallowing the ENTIRE step viewport the way it does at
+    80x24, while staying small enough that Provider's own content (even
+    capped per TASK-1495) still overflows the step's ~5-row box -- exactly
+    the condition this fix's ".setup-step { overflow-y: auto }" targets.
+    Textual's own Screen.set_focus (invoked by Widget.focus(), the default
+    for both a real Tab press and this test's explicit call) already
+    scrolls a newly-focused widget into view once some ancestor is
+    genuinely scrollable; before this fix ".setup-step" was not one, so
+    nothing could.
+    """
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(100, 30)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            await pilot.pause(0.2)
+
+            _select_radio(app.screen, "#setup-track-full")
+            await pilot.pause(0.1)
+            _press(app.screen, "#wizard-next")  # Welcome -> Provider, track=full
+            await pilot.pause(0.3)
+            container = app.screen.query_one(SetupWizardContainer)
+            assert container.steps[container.current_step].config.id == STEP_PROVIDER
+
+            key_input = app.screen.query_one("#setup-provider-key-input", Input)
+            region_before = key_input.region
+            fits_before = (
+                region_before.y >= 0
+                and region_before.bottom <= 30
+                and region_before.right <= 100
+            )
+            assert not fits_before, (
+                "test assumption broken: key Input already fits at 100x30 "
+                f"without any scroll ({region_before}) -- this test needs "
+                "genuine overflow to prove the scroll-into-view fix"
+            )
+
+            key_input.focus()
+            await pilot.pause(0.3)
+
+            region_after = key_input.region
+            assert region_after.width > 0 and region_after.height > 0
+            assert region_after.y >= 0 and region_after.bottom <= 30, (
+                f"key Input still clipped after focusing it: {region_after}"
+            )
+            assert region_after.right <= 100
+            assert key_input in app.screen._compositor.visible_widgets, (
+                "focusing the key Input did not actually scroll it into the "
+                "compositor's visible set"
+            )
+
+            for widget_id in ("#wizard-back", "#wizard-next", "#wizard-cancel"):
+                button = app.screen.query_one(widget_id, Button)
+                region = button.region
+                assert region.width > 0 and region.height > 0
+                assert region.right <= 100 and region.bottom <= 30
 
 
 # ---------------------------------------------------------------------------
