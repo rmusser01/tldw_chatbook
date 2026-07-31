@@ -13,6 +13,22 @@ the project owner (2026-07-30):
   constraint -- see the Artifacts section). Links-into-reader and pruned-item degradation,
   including the named `citation-to-pruned-item-degrades` invariant test, move to phase 2.
 
+**Phase 2a delivery notes (2026-07-31):** presets, script casting, the selection-mode picker, and
+citations shipped on `feat/briefings-phase-2` -- both phase-1 deferrals above are retired. Audio
+synthesis split out to phase 2b (task-1630) after the adapter reality below surfaced at plan time
+(this design's own "verified against the real adapters at plan time" caveat, see "Casting and
+audio" below):
+
+1. `synthesize()` returns a byte-stream `TTSAudioResponse` the caller must drain and `aclose()`.
+2. Legacy adapters (kokoro/openai/elevenlabs/chatterbox/higgs/alltalk) reject a plain
+   `TTSRequest` -- per-call synthesis goes through `generate_audio_stream(OpenAISpeechRequest,
+   internal_model_id)`.
+3. `text_processing`'s chunking has zero live callers -- callers must chunk AND stitch themselves.
+4. The only existing stitcher is naive byte-concat (wrong for WAV headers) -- a real pydub
+   decode-and-concat primitive must be written.
+5. `private_paths` has no binary append/stream/move helper -- storage is buffer-whole-then-
+   `atomic_private_write_bytes` or a new helper.
+
 **Predecessor:** `2026-07-25-watchlists-console-rebuild-design.md` (spec #1), which deferred this
 slice: *"Spec #2 covers artifact generation (briefings, 2-speaker podcasts) and its scheduled
 delivery."* One correction to that charter, from the user directly: podcasts are **not** fixed at
