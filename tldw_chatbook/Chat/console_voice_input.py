@@ -214,14 +214,20 @@ class EffectiveConfig:
     configured_provider: str
     was_overridden: bool
     #: True when `model` is NOT what `transcription.default_model` would have
-    #: produced -- either an explicit `dictation.model` override, or (when
-    #: that key is unset and `provider` resolved to
-    #: `DICTATION_FAST_MODEL_PROVIDER`) the dictation-specific fast default.
-    #: Mirrors `was_overridden`'s provenance role, scoped to the model rather
-    #: than the provider: `was_overridden` means "the configured provider
-    #: wasn't available," this means "dictation chose a different model than
-    #: the transcription stack on purpose," which is a distinct reason and
-    #: never itself a failure.
+    #: produced -- an explicit `dictation.model` override; (when that key is
+    #: unset and `provider` resolved to `DICTATION_FAST_MODEL_PROVIDER`) the
+    #: dictation-specific fast default; or (when that key is unset and
+    #: `provider` resolved to anything else) `configured_model` naming
+    #: something that is being deliberately discarded in favor of `None` --
+    #: see the `model` block in `resolve()`: a non-faster-whisper provider
+    #: never inherits `transcription.default_model`, since that value may
+    #: name a model belonging to an entirely different provider (a Whisper
+    #: model handed to parakeet-mlx 404s trying to load it as a HuggingFace
+    #: repo). Mirrors `was_overridden`'s provenance role, scoped to the model
+    #: rather than the provider: `was_overridden` means "the configured
+    #: provider wasn't available," this means "dictation chose a different
+    #: model than the transcription stack on purpose," which is a distinct
+    #: reason and never itself a failure.
     model_overridden_for_dictation: bool = False
     #: `transcription.default_model`'s raw configured value, independent of
     #: what `model` ended up being -- the transcription stack's own answer to
@@ -282,13 +288,26 @@ def resolve() -> EffectiveConfig | None:
     three -- the Console warmed and announced one model, then transcribed with
     another. Both now read `Utils/local_stt_providers.LOCAL_STT_PROVIDERS`.
 
-    The model is resolved separately from -- and takes priority over -- the
-    transcription stack's own `transcription.default_model`: `dictation.model`
-    wins when set, and otherwise a `DICTATION_FAST_MODEL_PROVIDER` resolution
-    defaults to `DICTATION_FAST_MODEL_DEFAULT` rather than inheriting whatever
-    (potentially much slower) model the transcription stack is configured
-    with. See `_dictation_model_override`'s docstring for the measured numbers
-    behind that default.
+    Model resolution is provider-scoped and never inherits
+    `transcription.default_model` across providers: `dictation.model` wins
+    when set (for any provider); failing that, a `DICTATION_FAST_MODEL_PROVIDER`
+    (`faster-whisper`) resolution defaults to `DICTATION_FAST_MODEL_DEFAULT`
+    rather than inheriting whatever (potentially much slower) model the
+    transcription stack is configured with (see `_dictation_model_override`'s
+    docstring for the measured numbers behind that default); and every other
+    provider gets `None`, letting that provider's own transcription path load
+    its own default. `transcription.default_model` is a single, provider-
+    agnostic config key, so its value belongs to whichever provider the
+    transcription stack itself is configured for -- handing that name to a
+    *different* resolved provider is not a fallback, it is a wrong argument:
+    parakeet-mlx asked to load a Whisper model name (e.g. `distil-large-v3`)
+    tries to fetch it as a HuggingFace repo and 404s, which previously killed
+    the capture outright (live-reproduced). `None` flows through
+    `warm_transcription_model()`/`LazyLiveDictationService` to
+    `TranscriptionService.transcribe_buffer()`/`create_streaming_transcriber()`
+    unchanged -- both already do `model or <their own default>`, which is
+    exactly the "no model given" case they use for direct calls, so this
+    needs no matching change on that side.
 
     Returns:
         The settings to run with, or None when no local provider is installed.
@@ -323,12 +342,15 @@ def resolve() -> EffectiveConfig | None:
     # `faster-whisper` resolution gets a dictation-specific fast default
     # rather than inheriting `transcription.default_model` (typically
     # distil-large-v3, measured ~11.5s per short segment on a loaded machine
-    # -- see `DICTATION_FAST_MODEL_DEFAULT`). Every other provider is
-    # unaffected: it keeps reading the transcription stack's own model,
-    # exactly as before this function drew a distinction.
+    # -- see `DICTATION_FAST_MODEL_DEFAULT`). Every OTHER provider gets
+    # `None`: `transcription.default_model` is not scoped to any particular
+    # provider, so it may well name a model that belongs to a provider other
+    # than the one that just resolved (see the `model` docstring block above
+    # `resolve()` and `EffectiveConfig.model_overridden_for_dictation`).
     #
-    # Read once, up front: needed both as the `else` branch's own `model`
-    # and, in the fast-default branch, to tell "displaced a value the user
+    # Read once, up front: needed both to decide whether the `else` branch's
+    # `None` is itself a displacement (`model_overridden_for_dictation`) and,
+    # in the fast-default branch, to tell "displaced a value the user
     # actually configured" apart from "there was nothing there to displace"
     # (`fast_default_displaced_configured_model`, review finding L1).
     configured_model_raw = get_cli_setting("transcription", "default_model", None)
@@ -346,8 +368,13 @@ def resolve() -> EffectiveConfig | None:
             configured_model and configured_model != DICTATION_FAST_MODEL_DEFAULT
         )
     else:
-        model = configured_model
-        model_overridden_for_dictation = False
+        # Not `configured_model`: see the provider-scoping note above. `None`
+        # lets the provider's own transcription path pick its own default
+        # (`TranscriptionService.transcribe_buffer()`/
+        # `create_streaming_transcriber()` both already do
+        # `model or <their own default>`).
+        model = None
+        model_overridden_for_dictation = configured_model is not None
 
     language = get_cli_setting("transcription", "default_language", DEFAULT_LANGUAGE)
 

@@ -139,8 +139,22 @@ def test_unset_dictation_model_defaults_to_the_fast_model_when_faster_whisper_is
     assert effective.model_overridden_for_dictation is True
 
 
-def test_unset_dictation_model_leaves_other_providers_unchanged(monkeypatch):
-    """A resolved provider that is NOT faster-whisper keeps the old behavior."""
+def test_unset_dictation_model_is_none_for_a_non_fast_provider(monkeypatch):
+    """Model resolution is provider-scoped: only faster-whisper gets a fast
+    default carved from `transcription.default_model`. Every other resolved
+    provider -- parakeet-mlx here -- must NOT inherit
+    `transcription.default_model` when `dictation.model` is unset: that key
+    names a model for whichever provider the transcription stack is
+    configured with (often a Whisper model, e.g. `distil-large-v3`), and
+    handing a Whisper model name to parakeet-mlx makes it try to load that
+    name as a HuggingFace repo and 404 -- live-reproduced, this kills the
+    capture. `model` must stay `None` so the provider's own transcription
+    path loads its own default (for parakeet-mlx,
+    `mlx-community/parakeet-tdt-0.6b-v2`) instead.
+
+    This used to assert the opposite (`model == "v2"`, the bug this pins
+    against) under the name `..._leaves_other_providers_unchanged`.
+    """
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("parakeet-mlx",))
     _stub_settings(
         monkeypatch,
@@ -154,8 +168,13 @@ def test_unset_dictation_model_leaves_other_providers_unchanged(monkeypatch):
 
     assert effective is not None
     assert effective.provider == "parakeet-mlx"
-    assert effective.model == "v2"
-    assert effective.model_overridden_for_dictation is False
+    assert effective.model is None
+    # `configured_model` ("v2") is still reported for diagnostics/advisories;
+    # only `model` -- what dictation actually runs with -- changes.
+    assert effective.configured_model == "v2"
+    # A configured model that CANNOT be used is exactly dictation choosing a
+    # different model than the transcription stack on purpose.
+    assert effective.model_overridden_for_dictation is True
 
 
 def test_unset_dictation_model_and_unset_transcription_model_stays_none_for_other_providers(
