@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path, PurePosixPath
 from threading import Lock, RLock
 from typing import Any, Literal, Protocol, cast
@@ -33,7 +34,10 @@ from tldw_chatbook.Notes.file_notes_git_service import (
     GitActionResult,
     GitMutationAdmissionError,
     GitStatusAdmissionError,
+    PushExecutionResult,
+    PushPreflightResult,
     RetainedCommitOperation,
+    RetainedPushOperation,
     coalesce_session_changes,
 )
 from tldw_chatbook.Notes.file_notes_git_commit import (
@@ -42,9 +46,18 @@ from tldw_chatbook.Notes.file_notes_git_commit import (
     CommitReviewHandle,
     CommitReviewResult,
 )
+from tldw_chatbook.Notes.file_notes_git_push import (
+    PushAuthorizationProjection,
+    PushCandidateProjection,
+    PushDestinationPolicyResult,
+    PushReviewHandle,
+    PushRecoveryProjection,
+)
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
 from tldw_chatbook.Notes.file_notes_session_owner import (
     FileNotesSessionOwner,
+    FileNotesSessionSnapshot,
+    PushCandidateAvailability,
     RepositoryIdentity,
     SequencedSessionChange,
     SessionBinding,
@@ -69,6 +82,12 @@ from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
     CommitResultProjection,
     CommitReviewNoteProjection,
     LibraryFileNotesGitPanel,
+    PushDestinationAuthorizationDialog,
+    PushEndpointDetailsDialog,
+    PushPanelPhase,
+    PushPanelResultProjection,
+    PushPanelReviewProjection,
+    PushResultAction,
     SessionGitTrustDialog,
     _middle_elide_cells,
 )
@@ -108,6 +127,15 @@ class _CommitBindingKey:
 
     binding: SessionBinding
     repository: RepositoryIdentity
+
+
+@dataclass(frozen=True, slots=True)
+class _PushBindingKey:
+    """Exact process-only owner candidate identity for push presentation."""
+
+    binding: SessionBinding
+    generation: int
+    candidate: PushCandidateProjection
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +219,46 @@ class _SessionGitService(Protocol):
         self,
         binding: SessionBinding,
     ) -> RetainedCommitOperation | None: ...
+
+    def retained_push_operation(
+        self,
+        binding: SessionBinding,
+    ) -> RetainedPushOperation | None: ...
+
+    def start_push_review(
+        self,
+        binding: SessionBinding,
+    ) -> asyncio.Task[PushDestinationPolicyResult]: ...
+
+    def authorize_and_check_push(
+        self,
+        binding: SessionBinding,
+        operation: RetainedPushOperation,
+    ) -> asyncio.Task[PushPreflightResult]: ...
+
+    def start_push(
+        self,
+        binding: SessionBinding,
+        handle: PushReviewHandle,
+    ) -> asyncio.Task[PushExecutionResult]: ...
+
+    def cancel_push(
+        self,
+        binding: SessionBinding,
+        operation: RetainedPushOperation,
+    ) -> bool: ...
+
+    def authorize_push_recovery(
+        self,
+        binding: SessionBinding,
+        operation: RetainedPushOperation,
+    ) -> bool: ...
+
+    def check_push_again(
+        self,
+        binding: SessionBinding,
+        operation: RetainedPushOperation,
+    ) -> asyncio.Task[PushRecoveryProjection]: ...
 
     def cancel_commit(
         self,
@@ -520,6 +588,31 @@ class LibraryFileNotesWorkspace(Vertical):
         self._git_refresh_timer: Timer | None = None
         self._git_refresh_after_mutation = False
         self._git_last_action: _GitLastAction | None = None
+        self._push_availability: PushCandidateAvailability | None = None
+        self._push_key: _PushBindingKey | None = None
+        self._push_operation: RetainedPushOperation | None = None
+        self._push_operation_key: _PushBindingKey | None = None
+        self._push_operation_admitted = False
+        self._push_service_identity: object | None = None
+        self._push_latest_service_operation_id = 0
+        self._push_operation_id = 0
+        self._push_phase: Literal[
+            "idle",
+            "checking",
+            "pushing",
+            "needs_attention",
+        ] = "idle"
+        self._push_view_phase: PushPanelPhase = "list"
+        self._push_authorization_projection: (
+            PushAuthorizationProjection | None
+        ) = None
+        self._push_review_handle: PushReviewHandle | None = None
+        self._push_review_projection: PushPanelReviewProjection | None = None
+        self._push_result: object | None = None
+        self._push_result_projection: PushPanelResultProjection | None = None
+        self._push_authorization_dialog_operation_id: int | None = None
+        self._push_observer_task: asyncio.Task[None] | None = None
+        self._push_settlement_tasks: set[asyncio.Task[None]] = set()
         self._commit_availability: CommitDraftProjection | None = None
         self._commit_draft: _CommitDraftState | None = None
         self._commit_view_phase: Literal[
@@ -1363,12 +1456,13 @@ class LibraryFileNotesWorkspace(Vertical):
         binding = self._session_binding
         changes: tuple[SequencedSessionChange, ...] = ()
         if binding is not None:
-            changes = self._session_owner.snapshot(binding).changes
+            snapshot = self._session_owner.snapshot(binding)
+            changes = snapshot.changes
+            service = self._session_git_service()
+            self._rehydrate_push_state(service, binding, snapshot)
         self._sync_git_last_action()
         count = len(coalesce_session_changes(changes))
-        self.query_one("#file-notes-session-changes", Button).label = (
-            f"Session Git ({count})"
-        )
+        self._render_session_git_label(count)
         prior = self._git_observed_changes
         self._git_observed_changes = changes
         if prior is None or prior == changes or binding is None:
@@ -1397,6 +1491,980 @@ class LibraryFileNotesWorkspace(Vertical):
     def _session_git_service(self) -> _SessionGitService | None:
         service = self._session_owner.attached_git_service()
         return None if service is None else cast(_SessionGitService, service)
+
+    def _render_session_git_label(self, count: int | None = None) -> None:
+        """Compose the persistent Session Git label from independent state."""
+        if not self._active or not self.is_mounted:
+            return
+        if count is None:
+            binding = self._session_binding
+            changes = (
+                ()
+                if binding is None
+                else self._session_owner.snapshot(binding).changes
+            )
+            count = len(coalesce_session_changes(changes))
+        suffix = {
+            "checking": " — Push checking",
+            "pushing": " — Pushing",
+            "needs_attention": " — Push needs attention",
+        }.get(self._push_phase, "")
+        try:
+            entry = self.query_one("#file-notes-session-changes", Button)
+        except NoMatches:
+            return
+        entry.label = f"Session Git ({count}){suffix}"
+
+    def _clear_push_presentation(self) -> None:
+        """Retire visible push state without canceling service-owned work."""
+        self._push_operation_id += 1
+        self._push_availability = None
+        self._push_operation = None
+        self._push_operation_key = None
+        self._push_operation_admitted = False
+        self._push_observer_task = None
+        self._push_key = None
+        self._push_result = None
+        self._push_view_phase = "list"
+        self._push_authorization_projection = None
+        self._push_review_handle = None
+        self._push_review_projection = None
+        self._push_result_projection = None
+        self._push_authorization_dialog_operation_id = None
+        self._push_phase = "idle"
+        if self._git_panel_widget.is_attached:
+            self._git_panel_widget.clear_push_availability()
+            self._git_panel_widget.return_to_push_list()
+        self._render_session_git_label()
+
+    @staticmethod
+    def _push_key_for_availability(
+        binding: SessionBinding,
+        availability: PushCandidateAvailability | None,
+    ) -> _PushBindingKey | None:
+        """Build the push key without consulting commit draft or status state."""
+        if availability is None:
+            return None
+        return _PushBindingKey(
+            binding,
+            availability.generation,
+            availability.candidate,
+        )
+
+    @classmethod
+    def _push_key_for_operation(
+        cls,
+        operation: RetainedPushOperation,
+    ) -> _PushBindingKey:
+        """Build the immutable identity carried by one retained operation."""
+        key = cls._push_key_for_availability(
+            operation.binding,
+            operation.candidate,
+        )
+        assert key is not None
+        return key
+
+    def _push_operation_is_current(
+        self,
+        operation: RetainedPushOperation,
+        key: _PushBindingKey,
+        operation_id: int,
+    ) -> bool:
+        """Reject callbacks from any other binding, candidate, or operation."""
+        return (
+            self._push_operation is operation
+            and self._push_operation_admitted
+            and self._push_operation_id == operation_id
+            and self._push_operation_key == key
+            and self._push_key == key
+            and operation.binding == key.binding
+            and key.binding == self._session_binding
+            and key.binding == self._session_owner.current_binding()
+        )
+
+    @staticmethod
+    def _settled_push_phase(result: object) -> Literal[
+        "idle", "needs_attention"
+    ]:
+        """Map typed service outcomes to the persistent indicator."""
+        if isinstance(result, PushDestinationPolicyResult):
+            return "needs_attention" if result.state != "ready" else "idle"
+        if isinstance(result, PushPreflightResult):
+            return "needs_attention" if result.state == "blocked" else "idle"
+        if isinstance(result, PushExecutionResult):
+            return (
+                "needs_attention"
+                if result.state
+                in {"blocked", "failed_no_update_observed", "uncertain"}
+                else "idle"
+            )
+        if isinstance(result, PushRecoveryProjection):
+            return "idle" if result.state == "succeeded" else "needs_attention"
+        return "needs_attention"
+
+    def _sync_push_availability_projection(self) -> None:
+        """Render only the current owner projection at the list-level seam."""
+        if not self._active or not self._git_panel_widget.is_attached:
+            return
+        if self._push_availability is None:
+            self._git_panel_widget.clear_push_availability()
+        else:
+            self._git_panel_widget.render_push_availability(
+                self._push_availability
+            )
+
+    @staticmethod
+    def _push_view_for_operation(
+        operation: RetainedPushOperation,
+    ) -> PushPanelPhase:
+        if operation.kind == "local_proof":
+            return "checking_candidate"
+        if operation.kind == "recovery":
+            return "checking_uncertain"
+        if operation.kind == "push" and operation.child_started:
+            return "pushing"
+        return "checking_remote"
+
+    def _render_current_push_view(self) -> None:
+        """Render cached push state only when its Prepare panel is visible."""
+        if (
+            not self._active
+            or not self._git_panel_widget.is_attached
+            or self._navigator_mode != "git"
+        ):
+            return
+        operation_id = self._push_operation_id
+        phase = self._push_view_phase
+        if phase == "list":
+            self._git_panel_widget.return_to_push_list()
+        elif phase in {
+            "checking_candidate",
+            "checking_remote",
+            "checking_uncertain",
+            "pushing",
+        }:
+            self._git_panel_widget.render_push_progress(
+                phase,
+                operation_id=operation_id
+            )
+        elif phase == "review" and self._push_review_projection is not None:
+            self._git_panel_widget.render_push_review(
+                self._push_review_projection,
+                operation_id=operation_id,
+            )
+        elif phase == "result" and self._push_result_projection is not None:
+            self._git_panel_widget.render_push_result(
+                self._push_result_projection,
+                operation_id=operation_id,
+            )
+
+    def _start_push_observer(
+        self,
+        operation: RetainedPushOperation,
+        key: _PushBindingKey,
+    ) -> None:
+        """Attach one process-lifetime observer without transferring ownership."""
+        self._push_operation_id += 1
+        operation_id = self._push_operation_id
+        self._push_operation = operation
+        self._push_operation_key = key
+        self._push_operation_admitted = True
+        self._push_key = key
+        self._push_result = None
+        self._push_result_projection = None
+        self._push_view_phase = self._push_view_for_operation(operation)
+        if operation.kind == "local_proof":
+            self._push_authorization_projection = None
+            self._push_review_handle = None
+            self._push_review_projection = None
+        elif operation.kind == "preflight":
+            self._push_authorization_projection = None
+            self._push_review_handle = None
+            self._push_review_projection = None
+        elif operation.kind == "push":
+            self._push_review_handle = None
+        self._push_phase = (
+            "pushing"
+            if operation.kind == "push" and operation.child_started
+            else "checking"
+        )
+        self._render_session_git_label()
+        task = asyncio.create_task(
+            self._observe_push_operation(operation, key, operation_id)
+        )
+        self._push_observer_task = task
+        self._push_settlement_tasks.add(task)
+        task.add_done_callback(self._push_settlement_tasks.discard)
+        self._render_current_push_view()
+
+    async def _observe_push_operation(
+        self,
+        operation: RetainedPushOperation,
+        key: _PushBindingKey,
+        operation_id: int,
+    ) -> None:
+        """Cache exact push settlement even while its panel is hidden."""
+        try:
+            if operation.kind == "push" and not operation.settled:
+                child_started = await operation.wait_child_started()
+                if (
+                    child_started
+                    and not operation.settled
+                    and self._push_operation_is_current(
+                        operation,
+                        key,
+                        operation_id,
+                    )
+                ):
+                    self._push_phase = "pushing"
+                    self._push_view_phase = "pushing"
+                    self._render_session_git_label()
+                    self._render_current_push_view()
+            result = await operation.wait()
+        except (asyncio.CancelledError, Exception):
+            self._publish_push_observer_failure(operation, key, operation_id)
+            return
+        if not self._push_operation_is_current(operation, key, operation_id):
+            return
+        self._push_result = result
+        self._push_phase = self._settled_push_phase(result)
+        snapshot = self._session_owner.snapshot(key.binding)
+        self._push_availability = snapshot.push_candidate
+        self._sync_push_availability_projection()
+        self._render_session_git_label()
+        self._publish_push_settlement(
+            operation,
+            key,
+            operation_id,
+            result,
+            snapshot,
+        )
+
+    def _publish_push_observer_failure(
+        self,
+        operation: RetainedPushOperation,
+        key: _PushBindingKey,
+        operation_id: int,
+    ) -> None:
+        """Replace progress with sanitized copy for one exact observer fault."""
+        if not self._push_operation_is_current(operation, key, operation_id):
+            return
+        pre_network = operation.kind in {"local_proof", "preflight"}
+        self._push_phase = "needs_attention"
+        self._set_push_result_projection(
+            PushPanelResultProjection(
+                title=(
+                    "Push check needs attention"
+                    if pre_network
+                    else "Push outcome needs attention"
+                ),
+                message=(
+                    "Chatbook could not complete the exact push check. "
+                    "Review the candidate again."
+                    if pre_network
+                    else "Chatbook could not observe the exact operation "
+                    "result. Inspect the configured destination externally "
+                    "before taking further action."
+                ),
+                action=(
+                    "review_again" if pre_network else "back_to_session"
+                ),
+            )
+        )
+        self._render_session_git_label()
+
+    def _publish_push_settlement(
+        self,
+        operation: RetainedPushOperation,
+        key: _PushBindingKey,
+        operation_id: int,
+        result: (
+            PushDestinationPolicyResult
+            | PushPreflightResult
+            | PushExecutionResult
+            | PushRecoveryProjection
+        ),
+        snapshot: FileNotesSessionSnapshot,
+    ) -> None:
+        """Project one already-typed settlement through the existing observer."""
+        if not self._push_operation_is_current(operation, key, operation_id):
+            return
+        if isinstance(result, PushDestinationPolicyResult):
+            if result.state == "ready" and result.authorization is not None:
+                self._push_authorization_projection = result.authorization
+                self._push_view_phase = "checking_candidate"
+                self._render_current_push_view()
+                self._open_push_authorization(operation, key, operation_id)
+                return
+            self._set_push_result_projection(
+                PushPanelResultProjection(
+                    title="Blocked",
+                    message=result.message,
+                    action="review_again",
+                )
+            )
+            return
+        if isinstance(result, PushPreflightResult):
+            if (
+                result.state == "review"
+                and result.handle is not None
+                and result.review is not None
+                and result.review.candidate == operation.candidate.candidate
+            ):
+                try:
+                    projection = PushPanelReviewProjection(
+                        review=result.review,
+                        availability=operation.candidate,
+                    )
+                except ValueError:
+                    projection = None
+                if projection is not None:
+                    self._push_review_handle = result.handle
+                    self._push_review_projection = projection
+                    self._push_view_phase = "review"
+                    self._render_current_push_view()
+                    return
+            if result.state == "cancelled":
+                self._return_push_to_list()
+                return
+            if result.outcome is not None:
+                self._set_push_result_projection(
+                    self._push_outcome_result_projection(
+                        result.outcome.title,
+                        result.outcome.message,
+                        result.outcome.state,
+                        snapshot,
+                    )
+                )
+                return
+            self._set_push_result_projection(
+                PushPanelResultProjection(
+                    title="Blocked",
+                    message=(
+                        "The configured destination could not be proved ready "
+                        "for this reviewed commit."
+                    ),
+                    action="review_again",
+                )
+            )
+            return
+        if isinstance(result, PushExecutionResult):
+            if result.state == "cancelled":
+                self._return_push_to_list()
+                return
+            if result.outcome is None:
+                self._set_push_result_projection(
+                    PushPanelResultProjection(
+                        title="Blocked",
+                        message=(
+                            "The reviewed push was blocked before Chatbook "
+                            "could prove a remote update."
+                        ),
+                        action="review_again",
+                    )
+                )
+                return
+            self._set_push_result_projection(
+                self._push_outcome_result_projection(
+                    result.outcome.title,
+                    result.outcome.message,
+                    result.outcome.state,
+                    snapshot,
+                )
+            )
+            return
+        action_enabled = (
+            snapshot.push_recovery_available and result.can_check_again
+        )
+        self._set_push_result_projection(
+            PushPanelResultProjection(
+                title=result.title,
+                message=result.message,
+                action=(
+                    "back_to_session"
+                    if result.state == "succeeded"
+                    else "check_remote_again"
+                ),
+                action_enabled=(
+                    True if result.state == "succeeded" else action_enabled
+                ),
+                disabled_reason=(
+                    None
+                    if result.state == "succeeded" or action_enabled
+                    else self._push_recovery_not_ready_copy()
+                ),
+            )
+        )
+
+    def _push_outcome_result_projection(
+        self,
+        title: str,
+        message: str,
+        state: str,
+        snapshot: FileNotesSessionSnapshot,
+    ) -> PushPanelResultProjection:
+        if state in {"already_published", "succeeded"}:
+            return PushPanelResultProjection(
+                title=title,
+                message=message,
+                action="back_to_session",
+            )
+        if state == "failed_no_update_observed":
+            return PushPanelResultProjection(
+                title=title,
+                message=message,
+                action="review_again",
+            )
+        recovery = snapshot.push_recovery
+        available = (
+            snapshot.push_recovery_available
+            and recovery is not None
+            and recovery.can_check_again
+        )
+        return PushPanelResultProjection(
+            title=title,
+            message=message,
+            action="check_remote_again",
+            action_enabled=available,
+            disabled_reason=(
+                None if available else self._push_recovery_not_ready_copy()
+            ),
+        )
+
+    def _refresh_push_recovery_readiness(
+        self,
+        snapshot: FileNotesSessionSnapshot,
+    ) -> bool:
+        """Reproject only a changed query-readiness bit on owner refresh."""
+        projection = self._push_result_projection
+        recovery = snapshot.push_recovery
+        if projection is None or projection.action != "check_remote_again":
+            return False
+        available = (
+            snapshot.push_recovery_available
+            and recovery is not None
+            and recovery.can_check_again
+        )
+        updated = replace(
+            projection,
+            action_enabled=available,
+            disabled_reason=(
+                None if available else self._push_recovery_not_ready_copy()
+            ),
+        )
+        if updated == projection:
+            return False
+        self._set_push_result_projection(updated)
+        return True
+
+    @staticmethod
+    def _push_recovery_not_ready_copy() -> str:
+        return (
+            "Owned push descendants are still settling; checking becomes "
+            "available after every owned process ends."
+        )
+
+    def _set_push_result_projection(
+        self,
+        projection: PushPanelResultProjection,
+    ) -> None:
+        self._push_review_handle = None
+        self._push_result_projection = projection
+        self._push_view_phase = "result"
+        self._render_current_push_view()
+
+    def _publish_push_review_admission_failure(self) -> None:
+        """Replace a silent local-review start failure with safe copy."""
+        if self._push_view_phase == "list":
+            self._push_operation_id += 1
+            self._push_operation = None
+            self._push_operation_key = None
+            self._push_operation_admitted = False
+            self._push_observer_task = None
+            self._push_result = None
+        self._push_phase = "needs_attention"
+        self._set_push_result_projection(
+            PushPanelResultProjection(
+                title="Push review unavailable",
+                message=(
+                    "Chatbook could not start the exact push review. "
+                    "Return to the session and try again later."
+                ),
+                action="back_to_session",
+            )
+        )
+        self._render_session_git_label()
+
+    def _publish_push_recovery_admission_failure(self) -> None:
+        """Replace a refused query-only recovery with safe terminal copy."""
+        self._push_authorization_projection = None
+        self._push_phase = "needs_attention"
+        self._set_push_result_projection(
+            PushPanelResultProjection(
+                title="Remote check unavailable",
+                message=(
+                    "Chatbook could not start another exact check of the "
+                    "configured destination. Inspect it externally before "
+                    "taking further action."
+                ),
+                action="back_to_session",
+            )
+        )
+        self._render_session_git_label()
+
+    def _return_push_to_list(self) -> None:
+        self._push_view_phase = "list"
+        self._push_authorization_projection = None
+        self._push_authorization_dialog_operation_id = None
+        self._push_review_handle = None
+        self._push_review_projection = None
+        self._push_result_projection = None
+        if self._git_panel_widget.is_attached:
+            self._git_panel_widget.return_to_push_list()
+
+    def _current_push_result_context(
+        self,
+        operation_id: int,
+        action: PushResultAction,
+    ) -> tuple[_SessionGitService, RetainedPushOperation, _PushBindingKey] | None:
+        """Resolve one exact, enabled result intent to retained authority."""
+        operation = self._push_operation
+        key = self._push_operation_key
+        projection = self._push_result_projection
+        service = self._session_git_service()
+        if (
+            operation is None
+            or key is None
+            or projection is None
+            or service is None
+            or self._push_view_phase != "result"
+            or operation_id != self._push_operation_id
+            or projection.action != action
+            or not projection.action_enabled
+            or not self._push_operation_is_current(
+                operation,
+                key,
+                operation_id,
+            )
+        ):
+            return None
+        return service, operation, key
+
+    def _retained_push_after_start(
+        self,
+        service: _SessionGitService,
+        key: _PushBindingKey,
+        expected_kind: Literal[
+            "local_proof",
+            "preflight",
+            "push",
+            "recovery",
+        ],
+    ) -> RetainedPushOperation:
+        """Resolve exact service identity after a start method returns."""
+        operation = service.retained_push_operation(key.binding)
+        if (
+            operation is None
+            or operation.kind != expected_kind
+            or self._push_key_for_operation(operation) != key
+        ):
+            raise RuntimeError(
+                f"retained {expected_kind} push operation is unavailable"
+            )
+        return operation
+
+    def _adopt_push_operation(
+        self,
+        operation: RetainedPushOperation,
+        key: _PushBindingKey,
+    ) -> None:
+        """Attach the sole workspace observer to service-owned identity."""
+        self._push_latest_service_operation_id = max(
+            self._push_latest_service_operation_id,
+            operation.operation_id,
+        )
+        self._start_push_observer(operation, key)
+
+    def _open_push_authorization(
+        self,
+        operation: RetainedPushOperation,
+        key: _PushBindingKey,
+        operation_id: int,
+        *,
+        recovery: bool = False,
+    ) -> None:
+        projection = self._push_authorization_projection
+        if (
+            projection is None
+            or self._push_authorization_dialog_operation_id == operation_id
+            or not self._push_operation_is_current(operation, key, operation_id)
+            or not self._active
+            or not self.is_mounted
+            or self._navigator_mode != "git"
+        ):
+            return
+        self._push_authorization_dialog_operation_id = operation_id
+        self.app.push_screen(
+            PushDestinationAuthorizationDialog(
+                operation.candidate.candidate,
+                projection,
+            ),
+            callback=partial(
+                (
+                    self._push_recovery_authorization_resolved
+                    if recovery
+                    else self._push_authorization_resolved
+                ),
+                operation,
+                key,
+                operation_id,
+            ),
+        )
+
+    def _push_authorization_resolved(
+        self,
+        operation: RetainedPushOperation,
+        key: _PushBindingKey,
+        operation_id: int,
+        authorized: bool | None,
+    ) -> None:
+        self._push_authorization_dialog_operation_id = None
+        if not self._push_operation_is_current(operation, key, operation_id):
+            return
+        service = self._session_git_service()
+        if service is None:
+            return
+        if authorized is not True:
+            if service.cancel_push(key.binding, operation):
+                self._return_push_to_list()
+            return
+        try:
+            service.authorize_and_check_push(key.binding, operation)
+            next_operation = self._retained_push_after_start(
+                service,
+                key,
+                "preflight",
+            )
+        except (GitMutationAdmissionError, RuntimeError):
+            self._set_push_result_projection(
+                PushPanelResultProjection(
+                    title="Blocked",
+                    message=(
+                        "The configured destination could not be checked. "
+                        "Review the exact candidate again."
+                    ),
+                    action="review_again",
+                )
+            )
+            return
+        self._adopt_push_operation(next_operation, key)
+
+    def _push_recovery_authorization_resolved(
+        self,
+        operation: RetainedPushOperation,
+        key: _PushBindingKey,
+        operation_id: int,
+        authorized: bool | None,
+    ) -> None:
+        """Authorize and query only the exact retained uncertain endpoint."""
+        self._push_authorization_dialog_operation_id = None
+        if authorized is not True or not self._push_operation_is_current(
+            operation,
+            key,
+            operation_id,
+        ):
+            return
+        service = self._session_git_service()
+        if service is None:
+            self._publish_push_recovery_admission_failure()
+            return
+        try:
+            accepted = service.authorize_push_recovery(
+                key.binding,
+                operation,
+            )
+        except (GitMutationAdmissionError, RuntimeError):
+            self._publish_push_recovery_admission_failure()
+            return
+        if not accepted:
+            self._publish_push_recovery_admission_failure()
+            return
+        self._start_push_recovery_query(
+            service,
+            operation,
+            key,
+            operation_id,
+        )
+
+    def _start_push_recovery_query(
+        self,
+        service: _SessionGitService,
+        operation: RetainedPushOperation,
+        key: _PushBindingKey,
+        operation_id: int,
+    ) -> None:
+        """Start one query-only cycle and adopt only service-retained identity."""
+        try:
+            service.check_push_again(key.binding, operation)
+            next_operation = self._retained_push_after_start(
+                service,
+                key,
+                "recovery",
+            )
+        except GitMutationAdmissionError as error:
+            if error.reason == "authorization_required":
+                snapshot = self._session_owner.snapshot(key.binding)
+                recovery = snapshot.push_recovery
+                if (
+                    recovery is not None
+                    and snapshot.push_recovery_candidate
+                    == operation.candidate
+                ):
+                    self._push_authorization_projection = (
+                        PushAuthorizationProjection(recovery.destination)
+                    )
+                    self._open_push_authorization(
+                        operation,
+                        key,
+                        operation_id,
+                        recovery=True,
+                    )
+                    return
+                self._publish_push_recovery_admission_failure()
+                return
+            if error.reason == "recovery_not_ready":
+                projection = self._push_result_projection
+                if projection is not None:
+                    self._set_push_result_projection(
+                        replace(
+                            projection,
+                            action_enabled=False,
+                            disabled_reason=(
+                                self._push_recovery_not_ready_copy()
+                            ),
+                        )
+                    )
+                return
+            self._publish_push_recovery_admission_failure()
+            return
+        except RuntimeError:
+            self._publish_push_recovery_admission_failure()
+            return
+        self._push_authorization_projection = None
+        self._adopt_push_operation(next_operation, key)
+
+    def _rehydrate_push_state(
+        self,
+        service: _SessionGitService | None,
+        binding: SessionBinding,
+        snapshot: FileNotesSessionSnapshot,
+    ) -> bool:
+        """Reattach to exact retained push state without starting Git work."""
+        if (
+            binding != self._session_binding
+            or binding != self._session_owner.current_binding()
+        ):
+            self._clear_push_presentation()
+            return False
+        availability = snapshot.push_candidate
+        self._push_availability = availability
+        self._sync_push_availability_projection()
+        candidate_key = self._push_key_for_availability(binding, availability)
+        if service is not self._push_service_identity:
+            self._push_operation_id += 1
+            self._push_service_identity = service
+            self._push_latest_service_operation_id = 0
+            self._push_operation = None
+            self._push_operation_key = None
+            self._push_operation_admitted = False
+            self._push_observer_task = None
+            self._push_result = None
+            self._return_push_to_list()
+        retained_push = (
+            None if service is None else getattr(service, "retained_push_operation", None)
+        )
+        operation = None if retained_push is None else retained_push(binding)
+        if operation is None:
+            if self._push_operation is not None:
+                self._push_operation_id += 1
+                self._push_operation = None
+                self._push_operation_key = None
+                self._push_operation_admitted = False
+                self._push_observer_task = None
+                self._push_result = None
+                self._return_push_to_list()
+            self._push_key = candidate_key
+            self._push_phase = (
+                "needs_attention"
+                if snapshot.push_recovery is not None
+                else "idle"
+            )
+            self._render_session_git_label()
+            return availability is not None or snapshot.push_recovery is not None
+        operation_key = self._push_key_for_operation(operation)
+        current_operation = self._push_operation
+        if (
+            current_operation is not None
+            and self._push_operation_admitted
+            and (
+                (candidate_key is not None and candidate_key != self._push_operation_key)
+                or (
+                    candidate_key is None
+                    and current_operation.kind not in {"push", "recovery"}
+                )
+            )
+        ):
+            self._push_operation_id += 1
+            self._push_operation_admitted = False
+            self._push_result = None
+            self._push_phase = (
+                "needs_attention"
+                if snapshot.push_recovery is not None
+                else "idle"
+            )
+            self._push_key = candidate_key
+            self._return_push_to_list()
+        if operation is self._push_operation:
+            if not self._push_operation_admitted:
+                self._push_key = candidate_key
+                self._push_phase = (
+                    "needs_attention"
+                    if snapshot.push_recovery is not None
+                    else "idle"
+                )
+                self._return_push_to_list()
+                self._render_session_git_label()
+                return (
+                    availability is not None
+                    or snapshot.push_recovery is not None
+                )
+            if (
+                self._push_operation_admitted
+                and self._push_operation_key == operation_key
+                and self._push_result is None
+                and not operation.settled
+            ):
+                self._push_key = operation_key
+                self._push_phase = (
+                    "pushing"
+                    if operation.kind == "push" and operation.child_started
+                    else "checking"
+                )
+                self._push_view_phase = self._push_view_for_operation(
+                    operation
+                )
+            refreshed = self._refresh_push_recovery_readiness(snapshot)
+            if (
+                not refreshed
+                and self._git_panel_widget.push_phase
+                != self._push_view_phase
+            ):
+                self._render_current_push_view()
+            if (
+                self._push_authorization_projection is not None
+                and self._push_view_phase == "checking_candidate"
+                and self._push_operation_key is not None
+            ):
+                self._open_push_authorization(
+                    operation,
+                    self._push_operation_key,
+                    self._push_operation_id,
+                )
+            self._render_session_git_label()
+            return True
+        if operation.operation_id <= self._push_latest_service_operation_id:
+            if not self._push_operation_admitted:
+                self._push_key = candidate_key
+                self._push_phase = (
+                    "needs_attention"
+                    if snapshot.push_recovery is not None
+                    else "idle"
+                )
+                self._return_push_to_list()
+            self._render_session_git_label()
+            return True
+        self._push_latest_service_operation_id = operation.operation_id
+        exact_live_candidate = (
+            operation.binding == binding
+            and operation.kind != "recovery"
+            and operation_key == candidate_key
+        )
+        exact_recovery = (
+            operation.binding == binding
+            and operation.kind == "recovery"
+            and snapshot.push_recovery is not None
+            and operation_key
+            == self._push_key_for_availability(
+                binding,
+                snapshot.push_recovery_candidate,
+            )
+        )
+        if exact_live_candidate or exact_recovery:
+            self._start_push_observer(operation, operation_key)
+        else:
+            self._push_operation_id += 1
+            self._push_operation = operation
+            self._push_operation_key = operation_key
+            self._push_operation_admitted = False
+            self._push_observer_task = None
+            self._push_key = candidate_key
+            self._push_result = None
+            self._return_push_to_list()
+            self._push_phase = (
+                "needs_attention"
+                if snapshot.push_recovery is not None
+                else "idle"
+            )
+        self._render_session_git_label()
+        return True
+
+    def _restore_dismissed_push_result(
+        self,
+        binding: SessionBinding,
+        snapshot: FileNotesSessionSnapshot,
+    ) -> bool:
+        """Restore exact cached result presentation without starting work."""
+        operation = self._push_operation
+        operation_key = self._push_operation_key
+        cached_result = self._push_result
+        if (
+            operation is None
+            or operation_key is None
+            or not operation.settled
+            or self._push_result_projection is not None
+            or self._push_view_phase != "list"
+            or snapshot.push_recovery is None
+            or self._push_key_for_availability(
+                binding,
+                snapshot.push_recovery_candidate,
+            )
+            != operation_key
+            or not self._push_operation_is_current(
+                operation,
+                operation_key,
+                self._push_operation_id,
+            )
+        ):
+            return False
+        exact_result = (
+            operation.kind == "push"
+            and isinstance(cached_result, PushExecutionResult)
+            and cached_result.state == "uncertain"
+        ) or (
+            operation.kind == "recovery"
+            and isinstance(cached_result, PushRecoveryProjection)
+            and cached_result == snapshot.push_recovery
+        )
+        if not exact_result:
+            return False
+        self._publish_push_settlement(
+            operation,
+            operation_key,
+            self._push_operation_id,
+            cached_result,
+            snapshot,
+        )
+        return self._push_view_phase == "result"
 
     def _git_binding_is_current(self, binding: SessionBinding) -> bool:
         return (
@@ -1503,15 +2571,27 @@ class LibraryFileNotesWorkspace(Vertical):
         self._commit_review_handle = None
         self._commit_review_projection = None
         self._commit_result_projection = None
+        binding = self._session_binding
+        snapshot = (
+            None
+            if binding is None
+            else self._session_owner.snapshot(binding)
+        )
+        if binding is not None and snapshot is not None:
+            self._rehydrate_push_state(
+                self._session_git_service(),
+                binding,
+                snapshot,
+            )
         if not self._active or not self.is_mounted:
             self._commit_availability = None
             return
         self._git_panel_widget.invalidate_commit_binding()
-        binding = self._session_binding
         if binding is None:
             self._commit_availability = None
             return
-        status = self._session_owner.snapshot(binding).git_status
+        assert snapshot is not None
+        status = snapshot.git_status
         if status is None:
             self._commit_availability = None
             return
@@ -1704,21 +2784,30 @@ class LibraryFileNotesWorkspace(Vertical):
         )
         return True
 
-    def _rehydrate_git_presentation(self) -> bool:
+    def _rehydrate_git_presentation(
+        self,
+        *,
+        restore_dismissed_push_result: bool = False,
+    ) -> bool:
         """Render retained owner/task state without starting hidden Git work."""
-        if (
-            not self._active
-            or not self.is_mounted
-            or self._navigator_mode != "git"
-        ):
+        if not self._active or not self.is_mounted:
             return False
         binding = self._session_binding
         if binding is None or not self._git_binding_matches_session(binding):
             self._clear_git_last_action()
+            self._clear_push_presentation()
             return False
         snapshot = self._session_owner.snapshot(binding)
-        self._sync_git_last_action()
         service = self._session_git_service()
+        push_retained = self._rehydrate_push_state(service, binding, snapshot)
+        if self._navigator_mode != "git":
+            return push_retained
+        if restore_dismissed_push_result:
+            self._restore_dismissed_push_result(binding, snapshot)
+        if self._push_view_phase != "list":
+            self._render_current_push_view()
+            return True
+        self._sync_git_last_action()
         if service is not None and self._rehydrate_commit_presentation(
             service, binding
         ):
@@ -1896,7 +2985,9 @@ class LibraryFileNotesWorkspace(Vertical):
             self._start_git_refresh()
             self.call_after_refresh(self._focus_session_git_panel)
             return
-        if self._rehydrate_git_presentation():
+        if self._rehydrate_git_presentation(
+            restore_dismissed_push_result=True,
+        ):
             self.call_after_refresh(self._focus_session_git_panel)
             return
         self._start_git_refresh()
@@ -2970,6 +4061,272 @@ class LibraryFileNotesWorkspace(Vertical):
             name="file-notes-git-trust",
             group="file-notes-git-open",
             exclusive=True,
+        )
+
+    @on(LibraryFileNotesGitPanel.ReviewPushRequested)
+    def _session_git_review_push(
+        self,
+        event: LibraryFileNotesGitPanel.ReviewPushRequested,
+    ) -> None:
+        """Start local proof and adopt only the service-retained operation."""
+        event.stop()
+        binding = self._session_binding
+        availability = self._push_availability
+        service = self._session_git_service()
+        key = (
+            None
+            if binding is None or availability is None
+            else self._push_key_for_availability(binding, availability)
+        )
+        if (
+            binding is None
+            or availability is None
+            or event.availability != availability
+            or service is None
+            or key is None
+            or key != self._push_key
+        ):
+            return
+        try:
+            service.start_push_review(binding)
+            operation = self._retained_push_after_start(
+                service,
+                key,
+                "local_proof",
+            )
+        except (GitMutationAdmissionError, RuntimeError):
+            self._publish_push_review_admission_failure()
+            return
+        self._adopt_push_operation(operation, key)
+
+    @on(LibraryFileNotesGitPanel.PushOperationRequested)
+    def _session_git_push_operation(
+        self,
+        event: LibraryFileNotesGitPanel.PushOperationRequested,
+    ) -> None:
+        """Dispatch one typed action for an exact push operation ID."""
+        event.stop()
+        handler = {
+            "endpoint_details": self._session_git_push_endpoint_details,
+            "back_from_review": self._session_git_back_from_push_review,
+            "push_reviewed_commit": self._session_git_push_reviewed_commit,
+            "cancel_check": self._session_git_cancel_push_check,
+            "back_to_files": self._session_git_back_to_files_push_continues,
+            "back_to_session": self._session_git_back_to_push_session,
+            "review_again": self._session_git_review_push_again,
+            "check_remote_again": self._session_git_check_remote_again,
+        }[event.action]
+        handler(event.operation_id)
+
+    def _session_git_push_endpoint_details(self, operation_id: int) -> None:
+        """Open exact review details only for the current operation ID."""
+        projection = self._push_review_projection
+        if (
+            projection is None
+            or self._push_view_phase != "review"
+            or operation_id != self._push_operation_id
+        ):
+            return
+        self.app.push_screen(
+            PushEndpointDetailsDialog(projection.review.destination),
+            callback=partial(
+                self._restore_push_review_details_focus,
+                operation_id,
+            ),
+        )
+
+    def _restore_push_review_details_focus(
+        self,
+        operation_id: int,
+        _result: None,
+    ) -> None:
+        self._git_panel_widget.restore_push_focus(
+            "review",
+            operation_id,
+            "#file-notes-git-push-review-details",
+        )
+
+    def _session_git_back_from_push_review(self, operation_id: int) -> None:
+        """Discard only the exact ready review selected by the user."""
+        operation = self._push_operation
+        key = self._push_operation_key
+        service = self._session_git_service()
+        if (
+            operation is None
+            or key is None
+            or service is None
+            or self._push_view_phase != "review"
+            or operation_id != self._push_operation_id
+            or not self._push_operation_is_current(
+                operation,
+                key,
+                operation_id,
+            )
+            or not service.cancel_push(key.binding, operation)
+        ):
+            return
+        self._push_operation_id += 1
+        self._push_operation = None
+        self._push_operation_key = None
+        self._push_operation_admitted = False
+        self._push_observer_task = None
+        self._push_key = self._push_key_for_availability(
+            key.binding,
+            self._push_availability,
+        )
+        self._return_push_to_list()
+
+    def _session_git_push_reviewed_commit(self, operation_id: int) -> None:
+        """Consume one workspace-held review and adopt the retained push."""
+        operation = self._push_operation
+        key = self._push_operation_key
+        handle = self._push_review_handle
+        service = self._session_git_service()
+        if (
+            operation is None
+            or key is None
+            or handle is None
+            or service is None
+            or self._push_view_phase != "review"
+            or operation_id != self._push_operation_id
+            or not self._push_operation_is_current(
+                operation,
+                key,
+                operation_id,
+            )
+        ):
+            return
+        try:
+            service.start_push(key.binding, handle)
+            next_operation = self._retained_push_after_start(
+                service,
+                key,
+                "push",
+            )
+        except (GitMutationAdmissionError, RuntimeError):
+            self._set_push_result_projection(
+                PushPanelResultProjection(
+                    title="Blocked",
+                    message=(
+                        "The reviewed push could not start. Review the exact "
+                        "candidate again."
+                    ),
+                    action="review_again",
+                )
+            )
+            return
+        self._push_review_handle = None
+        self._adopt_push_operation(next_operation, key)
+
+    def _session_git_cancel_push_check(self, operation_id: int) -> None:
+        """Request cancellation only before the exact push child starts."""
+        operation = self._push_operation
+        key = self._push_operation_key
+        service = self._session_git_service()
+        if (
+            operation is None
+            or key is None
+            or service is None
+            or self._push_view_phase
+            not in {"checking_candidate", "checking_remote"}
+            or operation_id != self._push_operation_id
+            or not self._push_operation_is_current(
+                operation,
+                key,
+                operation_id,
+            )
+        ):
+            return
+        accepted = service.cancel_push(key.binding, operation)
+        if accepted:
+            self._push_operation_id += 1
+            self._push_operation_admitted = False
+            self._push_result = None
+            self._push_phase = "idle"
+            self._return_push_to_list()
+            self._render_session_git_label()
+        elif not accepted and operation.child_started:
+            self._push_phase = "pushing"
+            self._push_view_phase = "pushing"
+            self._render_session_git_label()
+            self._render_current_push_view()
+
+    def _session_git_back_to_files_push_continues(
+        self,
+        operation_id: int,
+    ) -> None:
+        """Hide an admitted push while retaining the one existing observer."""
+        operation = self._push_operation
+        key = self._push_operation_key
+        if (
+            operation is None
+            or key is None
+            or self._push_view_phase not in {"checking_uncertain", "pushing"}
+            or operation_id != self._push_operation_id
+            or (
+                operation.kind != "recovery"
+                and (operation.kind != "push" or not operation.child_started)
+            )
+            or not self._push_operation_is_current(
+                operation,
+                key,
+                operation_id,
+            )
+        ):
+            return
+        self._navigator_mode = self._navigator_mode_before_git
+        self._sync_navigator_mode()
+        self.call_after_refresh(
+            self.query_one("#file-notes-session-changes", Button).focus
+        )
+
+    def _session_git_back_to_push_session(self, operation_id: int) -> None:
+        """Leave one proven result without disturbing retained service state."""
+        if (
+            self._push_view_phase == "result"
+            and operation_id == self._push_operation_id
+            and self._push_result_projection is not None
+        ):
+            self._return_push_to_list()
+
+    def _session_git_review_push_again(self, operation_id: int) -> None:
+        """Begin fresh local proof after one definite failed attempt."""
+        context = self._current_push_result_context(
+            operation_id,
+            "review_again",
+        )
+        availability = self._push_availability
+        if context is None or availability is None:
+            return
+        service, _operation, key = context
+        if self._push_key_for_availability(key.binding, availability) != key:
+            return
+        try:
+            service.start_push_review(key.binding)
+            next_operation = self._retained_push_after_start(
+                service,
+                key,
+                "local_proof",
+            )
+        except (GitMutationAdmissionError, RuntimeError):
+            self._publish_push_review_admission_failure()
+            return
+        self._adopt_push_operation(next_operation, key)
+
+    def _session_git_check_remote_again(self, operation_id: int) -> None:
+        """Query only the retained uncertain destination; never push again."""
+        context = self._current_push_result_context(
+            operation_id,
+            "check_remote_again",
+        )
+        if context is None:
+            return
+        service, operation, key = context
+        self._start_push_recovery_query(
+            service,
+            operation,
+            key,
+            operation_id,
         )
 
     @on(LibraryFileNotesGitPanel.CommitStagedRequested)

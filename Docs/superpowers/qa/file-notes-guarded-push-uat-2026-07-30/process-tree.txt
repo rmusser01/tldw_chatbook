@@ -1,0 +1,13 @@
+FOCUSED NATIVE PROCESS-CONTAINMENT EVIDENCE
+
+Lane: automated native macOS; this is not claimed as terminal-observed proof.
+
+Command:
+python -m pytest Tests/Notes/test_git_process_containment.py \
+  Tests/Notes/test_file_notes_git_push_service.py -q \
+  -k 'process_tree or child_spawn or containment or descendant'
+
+Result:
+62 passed, 1 skipped, 246 deselected in 1.22s
+
+The single skip is the Windows Job Object proof on a non-Windows host.
