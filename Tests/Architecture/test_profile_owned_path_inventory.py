@@ -147,6 +147,7 @@ def test_reconcile_rejects_a_scanner_detected_duplicate_literal() -> None:
     occurrences = scan_source(
         '''def profile_path():
     return "~/.config/tldw_cli/chatterbox_voices"
+    return "~/.config/tldw_cli/chatterbox_voices"
 ''',
         "tldw_chatbook/example.py",
     )
@@ -159,7 +160,8 @@ def test_reconcile_rejects_a_scanner_detected_duplicate_literal() -> None:
         "reusable Chatterbox voice profiles",
     )
 
-    problems = reconcile_inventory(occurrences + occurrences, (rule,))
+    assert len(occurrences) == 2
+    problems = reconcile_inventory(occurrences, (rule,))
 
     assert [problem.reason for problem in problems] == [
         "expected 1 occurrence(s), found 2"
@@ -222,6 +224,77 @@ def test_shared_asset_exceptions_are_explicit() -> None:
     assert embedding_rule.disposition is Disposition.PERSISTED_DEFAULT
 
 
+def _dotted_name(node: ast.AST) -> str | None:
+    """Return a dotted source name for a simple attribute expression."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _dotted_name(node.value)
+        return f"{parent}.{node.attr}" if parent else None
+    return None
+
+
+def _base_data_dir_cli_consumer_lines(tree: ast.AST) -> tuple[int, ...]:
+    """Return source lines that consume the compatibility data-dir constant."""
+    direct_names = {"BASE_DATA_DIR_CLI"}
+    config_module_names: set[str] = set()
+    package_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "tldw_chatbook.config":
+                    if alias.asname:
+                        config_module_names.add(alias.asname)
+                    else:
+                        package_names.add("tldw_chatbook")
+                elif alias.name == "tldw_chatbook":
+                    package_names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "tldw_chatbook.config":
+                direct_names.update(
+                    alias.asname or alias.name
+                    for alias in node.names
+                    if alias.name == "BASE_DATA_DIR_CLI"
+                )
+            elif node.module == "tldw_chatbook":
+                config_module_names.update(
+                    alias.asname or alias.name
+                    for alias in node.names
+                    if alias.name == "config"
+                )
+
+    config_module_names.update(
+        f"{package_name}.config" for package_name in package_names
+    )
+    consumers: list[int] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id in direct_names:
+                consumers.append(node.lineno)
+        elif (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, ast.Load)
+            and node.attr == "BASE_DATA_DIR_CLI"
+            and _dotted_name(node.value) in config_module_names
+        ):
+            consumers.append(node.lineno)
+    return tuple(sorted(consumers))
+
+
+def test_base_data_dir_census_detects_qualified_and_aliased_consumers() -> None:
+    """Compatibility-constant consumers include qualified import access."""
+    tree = ast.parse(
+        '''import tldw_chatbook.config as config
+from tldw_chatbook.config import BASE_DATA_DIR_CLI as data_dir
+
+config.BASE_DATA_DIR_CLI / "export"
+data_dir / "export"
+'''
+    )
+
+    assert _base_data_dir_cli_consumer_lines(tree) == (4, 5)
+
+
 def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners() -> None:
     """Legacy constants remain isolated from normal profile resolution."""
     base_data_consumers: list[tuple[str, int]] = []
@@ -229,10 +302,11 @@ def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners()
     for source_path in sorted(REPO_ROOT.rglob("*.py")):
         relative_path = source_path.relative_to(REPO_ROOT).as_posix()
         tree = ast.parse(source_path.read_text(encoding="utf-8"), relative_path)
+        base_data_consumers.extend(
+            (relative_path, line)
+            for line in _base_data_dir_cli_consumer_lines(tree)
+        )
         for node in ast.walk(tree):
-            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-                if node.id == "BASE_DATA_DIR_CLI":
-                    base_data_consumers.append((relative_path, node.lineno))
             if isinstance(node, (ast.Assign, ast.AnnAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
                 if any(
