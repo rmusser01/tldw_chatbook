@@ -1,7 +1,7 @@
 # Watchlists Briefings & Podcasts — design (spec #2)
 
 **Date:** 2026-07-30
-**Status:** phase 1 implemented (2026-07-30); phases 2-4 pending
+**Status:** phases 1-2 implemented (2026-07-31); phases 3-4 pending
 
 **Phase 1 delivery notes (2026-07-30):** two deferrals from the phase 1 plan, both confirmed by
 the project owner (2026-07-30):
@@ -73,6 +73,45 @@ one new constraint that bounds what phase 2b can promise:
    target-length notes" the entity table below promises: target-length guidance ships folded into
    that same free-text field for 2a, with no dedicated field of its own; a dedicated field is 2b's
    call if audio pacing turns out to need one.
+
+**Phase 2b delivery notes (2026-07-31):** the audio half (task-1630) shipped on
+`feat/briefings-phase-2b` -- phase 2 is now complete. `briefing_audio` table + CRUD; a per-turn
+`synthesize_turn` reached through either `TTSService.synthesize_exact` (the `audio_cpp` path) or a
+newly-public `TTS/legacy_request_builder.build_legacy_speech_request` (every other provider); a
+real pydub decode-and-concat stitcher (`TTS/audio_stitch.concat_wav_segments`, WAV-first); the
+`generate_script_audio` orchestrator plus a `fail_interrupted_audio` zombie sweep matching
+`briefing_cast`'s own; and Synthesize/Play/Stop wired into the Artifacts pane's existing audio
+player. Two decisions the plan left open, made explicit:
+
+- **All-providers.** The owner chose per-speaker voices on every configured TTS provider, not
+  scoped to `audio_cpp` alone. This has one real consequence worth stating plainly: per-speaker
+  *exact-provenance* synthesis -- the guarantee that the voice you asked for is the voice you
+  got, backed by a response snapshot to check it against -- remains `audio_cpp`-only at the
+  platform level; `synthesize_exact` is the only call with that contract, and every legacy
+  provider is reached through `generate_audio_stream`, which returns a bare byte stream with
+  nothing to validate against. Phase 2b does not change that platform fact -- it validates legacy
+  responses itself instead: non-empty bytes and a payload that decodes as WAV, both raising a
+  `TurnSynthesisError` naming the speaker and turn on failure. That is the honest statement of
+  what the guarantee is on each provider -- field-for-field provenance on `audio_cpp`, "it
+  produced *some* well-formed audio" everywhere else -- not a claim that legacy providers now
+  carry the same assurance `audio_cpp` does.
+- **Buffer-whole storage.** A correct decode-and-concat must already hold every turn's decoded
+  audio in memory to join it, so the whole finished payload exists in memory before there is
+  anything to write at all -- a streaming append would still need a full re-encode pass over
+  everything written so far, and gains nothing. `Utils/private_paths` also has no binary append
+  call (`open_private_binary` is `O_RDONLY`); only a text append stream exists. The payload is
+  therefore written once, atomically, via `atomic_private_write_bytes`, with cleanup on any
+  failure that lands after the write succeeds.
+
+Two smaller findings worth recording: `audioop-lts` is now a declared dependency
+(`pyproject.toml`, three optional-extra groups) -- pydub needs it once the stdlib `audioop` module
+is removed on Python 3.13+, and phase 2b's stitcher is 2b's first real caller of pydub in this
+codebase. And `Event_Handlers/STTS_Events/stts_events.py`'s `_legacy_internal_model_id` --  the
+live playground's own copy of the id-derivation logic `legacy_request_builder` promotes --
+continues to diverge by design (it derives kokoro's onnx/pytorch suffix from live playground
+options and alltalk's from the requested model id, where the builder uses fixed constants); both
+sides carry a cross-reference comment (the TASK-1393 pact convention) so the two are never mistaken
+for interchangeable and never converged without updating both call sites' expectations.
 
 **Predecessor:** `2026-07-25-watchlists-console-rebuild-design.md` (spec #1), which deferred this
 slice: *"Spec #2 covers artifact generation (briefings, 2-speaker podcasts) and its scheduled
