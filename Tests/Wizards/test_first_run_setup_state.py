@@ -100,6 +100,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_PROTECT,
     STEP_PROVIDER,
     STEP_RAG,
+    STEP_SPEECH,
     STEP_SUMMARY,
     STEP_TOOLS,
     STEP_WELCOME,
@@ -122,9 +123,11 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
 
 class TestActiveStepIds:
     def test_full_track_without_key(self):
+        """TASK-1301: the Speech step joins the FULL track only, right after
+        RAG (also model-setup-shaped) and before Tools."""
         assert active_step_ids(TRACK_FULL, key_entered=False) == (
-            STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_RAG, STEP_TOOLS,
-            STEP_NOTES, STEP_APPEARANCE, STEP_SUMMARY,
+            STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_RAG, STEP_SPEECH,
+            STEP_TOOLS, STEP_NOTES, STEP_APPEARANCE, STEP_SUMMARY,
         )
 
     def test_full_track_with_key_includes_protect(self):
@@ -291,6 +294,10 @@ class TestDependencyInvalidation:
 
 class TestSectionAllowlist:
     def test_all_builders_stay_in_allowlist(self):
+        from tldw_chatbook.UI.Wizards.first_run_speech_step_state import (
+            build_speech_transcription_commit,
+        )
+
         commits = [
             build_provider_commit(provider_key="openai", api_key="sk", api_url=None),
             build_model_commit(provider_value="OpenAI", model_id="m"),
@@ -299,6 +306,11 @@ class TestSectionAllowlist:
             build_notes_commit(sync_directory="~/n", auto_sync_enabled=False),
             build_appearance_commit(default_theme="t", splash_card="c"),
             build_wizard_state_commit(started=True),
+            build_speech_transcription_commit(
+                provider_id="parakeet-onnx",
+                model_id="nemo-parakeet-tdt-0.6b-v2",
+                language="en",
+            ),
         ]
         for commit in commits:
             assert commit_sections_allowed(commit), commit
@@ -535,6 +547,79 @@ class TestSummaryRows:
         }
         rows = {row.label: row for row in build_summary_rows(cfg, {}, rag_deps_installed=False)}
         assert rows["Provider"].ok is False
+
+
+class TestSpeechSummaryRow:
+    """TASK-1301 AC#6: Summary reports PERSISTED transcription config plus
+    installed readiness -- never transient widget state. build_summary_rows
+    stays pure, so "installed readiness" is a plain bool the caller (real
+    SummaryStep) resolves off-loop and passes in, exactly like
+    rag_deps_installed."""
+
+    def test_never_configured_by_the_wizard_is_default(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_DEFAULT
+
+        rows = {r.label: r for r in build_summary_rows({}, {}, rag_deps_installed=False)}
+        assert rows["Speech transcription"].state == ROW_DEFAULT
+
+    def test_shipped_template_defaults_do_not_count_as_configured(self):
+        """The [transcription] template ships default_provider="faster-whisper"
+        (or a platform MLX provider) and default_model="distil-large-v3" on
+        every fresh install -- neither is ever blank. Reading "configured"
+        off model_id alone would resurrect the exact template-poisoning bug
+        any_provider_configured's own docstring warns about."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_DEFAULT
+
+        cfg = {
+            "transcription": {
+                "default_provider": "faster-whisper",
+                "default_model": "distil-large-v3",
+                "default_language": "en",
+            }
+        }
+        rows = {r.label: r for r in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        assert rows["Speech transcription"].state == ROW_DEFAULT
+
+    def test_configured_and_installed_is_configured(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_CONFIGURED
+
+        cfg = {
+            "transcription": {
+                "default_provider": "parakeet-onnx",
+                "default_model": "nemo-parakeet-tdt-0.6b-v2",
+                "default_language": "en",
+            }
+        }
+        rows = {
+            r.label: r
+            for r in build_summary_rows(
+                cfg, {}, rag_deps_installed=False, speech_installed=True
+            )
+        }
+        row = rows["Speech transcription"]
+        assert row.state == ROW_CONFIGURED
+        assert "nemo-parakeet-tdt-0.6b-v2" in row.detail
+        assert "en" in row.detail
+
+    def test_configured_but_not_installed_is_attention(self):
+        """AC#5/#6: persisted config surviving a later deletion of the
+        artifact must be flagged, not silently reported as ready."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_ATTENTION
+
+        cfg = {
+            "transcription": {
+                "default_provider": "parakeet-onnx",
+                "default_model": "nemo-parakeet-tdt-0.6b-v2",
+                "default_language": "en",
+            }
+        }
+        rows = {
+            r.label: r
+            for r in build_summary_rows(
+                cfg, {}, rag_deps_installed=False, speech_installed=False
+            )
+        }
+        assert rows["Speech transcription"].state == ROW_ATTENTION
 
 
 class TestProviderSummaryConfigured:

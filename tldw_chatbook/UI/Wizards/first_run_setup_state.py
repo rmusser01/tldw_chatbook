@@ -230,21 +230,25 @@ STEP_WELCOME = "welcome"
 STEP_PROVIDER = "provider"
 STEP_MODEL = "model"
 STEP_RAG = "rag"
+STEP_SPEECH = "speech"
 STEP_TOOLS = "tools"
 STEP_NOTES = "notes"
 STEP_APPEARANCE = "appearance"
 STEP_PROTECT = "protect-keys"
 STEP_SUMMARY = "summary"
 
+# TASK-1301: Speech transcription joins the FULL track only, right after RAG
+# (both are optional model-setup steps) -- QUICK_TRACK stays byte-identical
+# on purpose, see AC#1.
 _FULL_TRACK = (
-    STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_RAG, STEP_TOOLS,
-    STEP_NOTES, STEP_APPEARANCE, STEP_PROTECT, STEP_SUMMARY,
+    STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_RAG, STEP_SPEECH,
+    STEP_TOOLS, STEP_NOTES, STEP_APPEARANCE, STEP_PROTECT, STEP_SUMMARY,
 )
 _QUICK_TRACK = (STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_PROTECT, STEP_SUMMARY)
 
 WIZARD_OWNED_SECTIONS = frozenset(
     {"chat_defaults", "embedding_config", "tools", "notes", "general",
-     "splash_screen", WIZARD_STATE_SECTION}
+     "splash_screen", "transcription", WIZARD_STATE_SECTION}
 )
 _API_SETTINGS_PREFIX = "api_settings."
 
@@ -668,6 +672,7 @@ def build_summary_rows(
     environ: Mapping[str, str],
     *,
     rag_deps_installed: bool,
+    speech_installed: bool = False,
 ) -> tuple[SummaryRow, ...]:
     """Build the summary matrix strictly from persisted config.
 
@@ -680,6 +685,12 @@ def build_summary_rows(
         app_config: The persisted (re-loaded) config mapping.
         environ: Process environment, for env-var key detection.
         rag_deps_installed: Whether the embeddings extras are importable.
+        speech_installed: TASK-1301 AC#6 -- whether the managed Parakeet v2
+            artifact is currently installed and active. Resolved off-loop by
+            the caller (SummaryStep), exactly like ``rag_deps_installed`` --
+            this function stays pure/I/O-free. Defaults to False so every
+            existing caller that doesn't yet resolve this stays correct
+            (an unconfigured/uninstalled row either way).
 
     Returns:
         Ordered tuple of SummaryRow for the Summary step to render.
@@ -723,6 +734,36 @@ def build_summary_rows(
     else:
         encryption_row = SummaryRow("Key encryption", ROW_DEFAULT, "off")
 
+    # TASK-1301 AC#6: read PERSISTED transcription config, never transient
+    # widget state. "Configured by the wizard" is keyed off provider_id
+    # matching the Parakeet ONNX provider specifically -- the shipped
+    # [transcription] template always defaults to faster-whisper (or a
+    # platform MLX provider) with model "distil-large-v3", which are never
+    # blank, so a naive "model_id is set" check would resurrect the exact
+    # template-poisoning bug any_provider_configured's own docstring warns
+    # about.
+    from tldw_chatbook.UI.Wizards.first_run_speech_step_state import (
+        read_speech_prefill,
+        routing_policy,
+    )
+
+    speech_prefill = read_speech_prefill(app_config)
+    speech_configured = speech_prefill.provider_id == routing_policy().parakeet_provider_id
+    if not speech_configured:
+        speech_row = SummaryRow("Speech transcription", ROW_DEFAULT, "not set up (optional)")
+    elif speech_installed:
+        speech_row = SummaryRow(
+            "Speech transcription",
+            ROW_CONFIGURED,
+            f"{speech_prefill.model_id} ({speech_prefill.language})",
+        )
+    else:
+        speech_row = SummaryRow(
+            "Speech transcription",
+            ROW_ATTENTION,
+            "configured but not installed — revisit Settings",
+        )
+
     return (
         SummaryRow(
             "Provider",
@@ -731,6 +772,7 @@ def build_summary_rows(
         ),
         model_row,
         rag_row,
+        speech_row,
         SummaryRow(
             "Tools",
             ROW_CONFIGURED if tools_on else ROW_DEFAULT,
