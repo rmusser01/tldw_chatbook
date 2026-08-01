@@ -5,7 +5,7 @@
 **Task:** TASK-1601
 **Decision:** [ADR-036](../../../backlog/decisions/036-application-service-composition-lifecycle.md)
 **Related follow-up:** [TASK-1602](../../../backlog/tasks/task-1602%20-%20Define-production-local-apply-store-ownership-for-manual-Sync-v2.md)
-**Final reviewed baseline:** `origin/dev` at `949e2ef73`
+**Final reviewed baseline:** `origin/dev` at `64ebed833`
 
 ## Purpose
 
@@ -453,18 +453,21 @@ policy, so it will be amended instead of duplicating the decision.
 ## Verification Evidence
 
 - Full repository suite before the final dev rebase: `24,932 passed, 170 skipped, 114 warnings` in `13,767.16s` with exit code 0.
-- Final post-rebase combined Sync, provider-audit, ProductionApp, and Packaging gate: `143 passed, 5 warnings` in `224.22s`; this includes the offline installed-wheel production-app probe.
+- Final post-rebase Sync, Manual Sync, RuntimePolicy, ProductionApp, and Packaging gate: `501 passed, 5 warnings` in `248.39s`; this includes the offline installed-wheel production-app probe.
 - Final focused Sync services: `60 passed`; Manual Sync control: `9 passed`.
 - Complete RuntimePolicy suite: `360 passed, 1 warning`.
 - Latest-dev contract reconciliation nodes: `12 passed, 2 warnings`; Briefings privacy and TTS export slice: `50 passed, 1 warning`.
-- Persistent diagnostic inventory: `3 passed`, covering 432 diagnostic-owner files, 1,068 TASK-492 calls, 6,659 TASK-494 calls, and four persistent-sink files.
+- Independent PR review and Qodo identified one material installed-wheel child-environment reliability defect plus annotation/docstring compliance gaps. The child now preserves an explicit safe OS/runtime allowlist while still excluding credentials and proxy settings; all six cited test callables have concrete annotations and Google-style contracts. The combined review gate passed `11 tests`, including the real installed wheel and the no-surrogate sentinel.
+- Latest-dev Parakeet/STT overlap: `73 passed, 2 warnings`; the localhost fixture required normal loopback permission outside the filesystem sandbox.
+- Persistent diagnostic inventory: `3 passed`, covering 432 diagnostic-owner files, 1,068 TASK-492 calls, 6,660 TASK-494 calls, and four unchanged persistent-sink files. The one new Parakeet preflight diagnostic has a fixed message and remains excluded from the persistent sink by the metadata-only admission filter; the supporting persistent-privacy matrix passed `16 tests`.
 - ProductionApp no-surrogate sentinel: `1 passed`; no test, surrogate, simplified, or locally redefined application was added or used by this tranche.
 - Numeric-safe AST inventory: `{'total': 31, 'sync': 0}` on the final source; the final `origin/dev` baseline independently reports `{'total': 32, 'sync': 1}` before this migration.
 - Changed Sync/app Python files compile; Ruff lint and format checks pass; `git diff --check` passes.
 
 The full suite preceded the final rebase by design. After rebasing onto
-`origin/dev@949e2ef73`, all affected Sync, RuntimePolicy, ProductionApp,
+`origin/dev@64ebed833`, all affected Sync, RuntimePolicy, ProductionApp,
 Packaging, installed-wheel, privacy, diagnostic, static, and formatting gates
 were rerun. Concurrent dev merges also created Backlog identity collisions;
 TASK-1652 was reopened and reconciled before closeout so the task sentinel
-remained trustworthy.
+remained trustworthy; the later File Notes documentation claimant now owns
+TASK-1721 while the earlier Settings claimant retains TASK-1713.

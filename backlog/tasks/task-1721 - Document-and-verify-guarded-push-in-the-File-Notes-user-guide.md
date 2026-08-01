@@ -1,5 +1,5 @@
 ---
-id: TASK-1713
+id: TASK-1721
 title: Document and verify guarded push in the File Notes user guide
 status: Done
 assignee:
@@ -55,7 +55,7 @@ Updated the File Notes overview, layout, Session Git workflow, common task, keyb
 
 Modified files: Docs/User_Guide/library/file-notes.md and this Backlog task record. The existing overview SVG remains accurate because it depicts the unchanged pre-link File Notes workspace rather than the Session Git workflow.
 
-Verification against origin/dev 949e2ef73: Tests/UI/test_library_file_notes_git_push.py passed 59 tests (one pre-existing requests dependency warning); the focused guide check found 21/21 shipped labels, zero broken local links, 11/11 scope/recovery boundaries, a matching dev stamp, no placeholders, and one unique TASK-1713 ID; git diff --check passed. Independent guarded-push documentation review returned APPROVED.
+Verification against origin/dev 949e2ef73: Tests/UI/test_library_file_notes_git_push.py passed 59 tests (one pre-existing requests dependency warning); the focused guide check found 21/21 shipped labels, zero broken local links, 11/11 scope/recovery boundaries, a matching dev stamp, no placeholders, and one unique task identity (now TASK-1721 after the later merge reconciliation); git diff --check passed. Independent guarded-push documentation review returned APPROVED.
 
 ADR required: no. This documentation-only closeout implements no architecture or behavior change and remains governed by ADR-039.
 <!-- SECTION:NOTES:END -->

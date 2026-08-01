@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-01 00:50'
-updated_date: '2026-08-01 10:54'
+updated_date: '2026-08-01 15:54'
 labels: []
 dependencies: []
 priority: high
@@ -39,6 +39,10 @@ Reason: This is task-ledger and reference hygiene; it does not change a runtime,
 4. Update references according to domain ownership; preserve all canonical File Notes TASK-1711 and Settings TASK-1712 references plus unrelated Settings TASK-1713 through TASK-1716.
 5. Run the Backlog identity sentinel, the complete product-maturity harness, an independent filename/frontmatter parser, targeted searches, lint, and diff hygiene.
 6. Record implementation evidence and mark TASK-1652 Done only after all gates pass.
+7. After rebasing PR #1168 onto `origin/dev@64ebed833`, preserve the earlier
+   Settings TASK-1713 claimant, move the later File Notes documentation claimant
+   to the next free ID (TASK-1721), update only its self-references, and repeat
+   the complete identity verification before closing this task again.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -49,6 +53,17 @@ The initial reconciliation moved the six colliding Settings tasks out of TASK-16
 ADR required: no (ledger/reference hygiene only). Verification: the Backlog identity sentinel passed; the complete product-maturity harness passed (`2 passed`); an independent numeric-segment parser validated 1,164 task files with 1,164 unique filename/frontmatter identities and zero malformed IDs, mismatches, or duplicates; scoped searches and `git diff --check` passed. Ruff lint passed. Ruff format still reports the same pre-existing drift in three files; the touched Python diffs are comment-only task-reference substitutions, so no unrelated formatter churn was introduced.
 
 A subsequent rebase exposed two new three-way collisions created by independently merged branches. Commit history established the canonical earlier claimants: File Notes retains TASK-1711 and Settings filter/overflow retains TASK-1712. The later tasks moved in creation order: Settings persistence to TASK-1717, Briefings transaction residual to TASK-1718, Briefings coverage residual to TASK-1719, and artifact source fingerprint to TASK-1720. References were updated only in their owning Settings, Briefings, or Model Artifacts files. Backlog CLI resolves all six retained/new IDs to the intended files. Verification: the complete product-maturity harness passed (`2 passed`); an independent dotted-numeric filename/frontmatter parser validated 1,173 task files with 1,173 unique matching IDs and no malformed or duplicate identities; scoped reference review, Ruff lint, and `git diff --check` passed. Ruff format reports inherited upstream drift in seven comment-only-touched Python files; their diffs contain task-reference substitutions only, so they were not mechanically reformatted.
+
+Rebasing PR #1168 onto `origin/dev@64ebed833` exposed one further collision:
+the newly merged File Notes documentation task reused the already canonical
+Settings TASK-1713 ID. Git history proved the Settings claimant was earlier
+(`7d463cc7a`, 2026-07-31 23:57 -0700) and the File Notes claimant later
+(`52d315c04`, 2026-08-01 02:20 -0700), so the latter moved to the next free
+identity, TASK-1721; only its filename, frontmatter, and self-reference changed.
+The complete product-maturity/identity harness passed, Backlog CLI resolves
+TASK-1721 to the intended File Notes task, an independent parser validated
+1,174 task files with 1,174 unique matching identities, and targeted search
+plus `git diff --check` passed.
 <!-- SECTION:NOTES:END -->
 
 ## Definition of Done
