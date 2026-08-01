@@ -631,6 +631,22 @@ class ConsoleSubmitResult:
     visible_copy: str = ""
 
 
+@dataclass(frozen=True)
+class ImpersonateResult:
+    """Outcome of an Impersonate draft request (task-1683 / Qodo #1160).
+
+    Attributes:
+        text: The drafted user reply, or "" when nothing was produced.
+        reason: "" on success, else one of ``provider-not-ready``,
+            ``empty-transcript``, ``provider-error``, ``empty-completion``.
+        detail: Optional provider-supplied copy for the blocked case.
+    """
+
+    text: str
+    reason: str = ""
+    detail: str = ""
+
+
 class ConsoleChatController:
     """Coordinate native Console chat state between store and provider gateway."""
 
@@ -4024,6 +4040,138 @@ class ConsoleChatController:
             rows = rows[1:]
             body = assemble(rows)
         return body
+
+    async def impersonate_user_reply(
+        self, session_id: str
+    ) -> "ImpersonateResult":
+        """Draft the USER's next message with the session's current model.
+
+        task-1683: "Impersonate" writes a candidate reply *as the user*,
+        for review in the composer -- it never sends and never appends to
+        the transcript. Reuses the same resolve + collect path as
+        ``summarize_up_to``.
+
+        Qodo PR #1160: returns a reason alongside the text so the caller
+        can say WHY nothing came back; a bare "" made "provider not
+        ready" and "empty transcript" indistinguishable.
+
+        Args:
+            session_id: The session whose transcript and provider to use.
+
+        Returns:
+            An ``ImpersonateResult`` carrying the drafted text, or an empty
+            text plus a machine-readable ``reason``.
+
+        Raises:
+            asyncio.CancelledError: Propagated unchanged when the caller's
+                task is cancelled, so cancellation is never swallowed.
+        """
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection()
+        )
+        if not getattr(resolution, "ready", False):
+            return ImpersonateResult(
+                "",
+                "provider-not-ready",
+                self._blocked_visible_copy(
+                    getattr(resolution, "visible_copy", "")
+                ),
+            )
+        session_messages = self.store.messages_for_session(session_id)
+        # Mirror _provider_message_payloads' rules exactly (cubic PR #1160):
+        # drop failed rows, and drop every ASSISTANT turn before the first
+        # USER turn -- strict providers reject an assistant-first array
+        # (task-427). A seeded character greeting therefore travels in the
+        # system row instead, via _seeded_greeting_text (task-1531).
+        transcript: list[dict[str, Any]] = []
+        seen_user = False
+        for message in session_messages:
+            role = getattr(message, "role", None)
+            if role not in (ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT):
+                continue
+            if getattr(message, "status", None) == "failed":
+                continue
+            if not seen_user and role is ConsoleMessageRole.ASSISTANT:
+                continue
+            content = str(getattr(message, "content", "") or "").strip()
+            if not content:
+                continue
+            if role is ConsoleMessageRole.USER:
+                seen_user = True
+            transcript.append({"role": role.value, "content": content})
+        if not transcript:
+            return ImpersonateResult("", "empty-transcript", "")
+        # Keep the newest turns within the same budget summarize uses, so a
+        # long thread degrades by dropping OLD context rather than by
+        # blowing the provider's window (cubic PR #1160).
+        transcript = self._trim_transcript_to_budget(transcript)
+        instruction = (
+            "You are helping the USER write their next message in the "
+            "conversation below. Reply with that message only -- their "
+            "words, in their voice, no quotation marks, no narration, no "
+            "preamble, and never as the assistant."
+        )
+        greeting = self._seeded_greeting_text(session_messages)
+        if greeting:
+            instruction = (
+                f"{instruction}\n\nThe conversation opened with this "
+                f"assistant message, which the user has seen:\n{greeting}"
+            )
+        messages = [
+            {"role": ConsoleMessageRole.SYSTEM.value, "content": instruction},
+            *transcript,
+        ]
+        # Providers that require a user-final array reject a request ending
+        # on an assistant turn, which is the normal state after a completed
+        # reply (cubic PR #1160).
+        if messages[-1]["role"] != ConsoleMessageRole.USER.value:
+            messages.append(
+                {
+                    "role": ConsoleMessageRole.USER.value,
+                    "content": (
+                        "Write my next message in this conversation. "
+                        "Reply with that message only."
+                    ),
+                }
+            )
+        try:
+            text = (
+                await self._collect_summary_completion(resolution, messages)
+            ).strip()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.opt(exception=True).warning("Impersonate completion failed.")
+            return ImpersonateResult("", "provider-error", "")
+        if not text:
+            return ImpersonateResult("", "empty-completion", "")
+        return ImpersonateResult(text, "", "")
+
+    def _trim_transcript_to_budget(
+        self, transcript: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Keep the newest turns within ``_SUMMARY_SPAN_TOKEN_BUDGET``.
+
+        Args:
+            transcript: Ordered provider rows, oldest first.
+
+        Returns:
+            The newest rows that fit the budget (at least the final row, so
+            a single huge turn still produces a request).
+        """
+        kept: list[dict[str, Any]] = []
+        total = 0
+        for row in reversed(transcript):
+            cost = max(1, len(str(row.get("content", ""))) // 4)
+            if kept and total + cost > self._SUMMARY_SPAN_TOKEN_BUDGET:
+                break
+            kept.append(row)
+            total += cost
+        kept.reverse()
+        # Never lead with an assistant row after trimming (task-427).
+        while kept and kept[0]["role"] != ConsoleMessageRole.USER.value:
+            kept.pop(0)
+        return kept or transcript[-1:]
 
     async def _collect_summary_completion(
         self, resolution: Any, messages: list[dict[str, Any]]

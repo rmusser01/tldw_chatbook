@@ -2119,9 +2119,9 @@ class ConsoleComposerBar(Horizontal):
             indicator.styles.width = "auto"
             indicator.styles.max_width = 28
             clear_button.styles.display = "block"
-            actions.styles.width = 50
-            actions.styles.min_width = 50
-            actions.styles.max_width = 50
+            actions.styles.width = 55
+            actions.styles.min_width = 55
+            actions.styles.max_width = 55
             # TASK-380: keep the action verb (the old "📎✓" read as a status,
             # "attached OK", not a control), and make the tooltips count-accurate
             # now that staging appends up to `total` files (task-217).
@@ -2141,9 +2141,9 @@ class ConsoleComposerBar(Horizontal):
             indicator.styles.display = "none"
             indicator.styles.width = 0
             clear_button.styles.display = "none"
-            actions.styles.width = 45
-            actions.styles.min_width = 45
-            actions.styles.max_width = 45
+            actions.styles.width = 50
+            actions.styles.min_width = 50
+            actions.styles.max_width = 50
             attach_button.label = "Attach"
             attach_button.tooltip = (
                 "Attach files or context through the active Console session."
@@ -2316,13 +2316,23 @@ class ConsoleComposerBar(Horizontal):
             actions = Horizontal(
                 id="console-composer-actions", classes="console-composer-actions"
             )
-            actions.styles.width = 45
-            actions.styles.min_width = 45
-            actions.styles.max_width = 45
+            actions.styles.width = 50
+            actions.styles.min_width = 50
+            actions.styles.max_width = 50
             actions.styles.height = 1
             actions.styles.min_height = 1
             actions.styles.max_height = 1
             with actions:
+                # task-1680: the ☰ overflow menu sits BEFORE Send, per the
+                # requested layout; new composer actions go behind it
+                # rather than growing this width-bounded row.
+                yield self._bounded_button(
+                    "☰",
+                    width=4,
+                    id="console-composer-menu",
+                    classes="destination-action-button console-composer-menu-button",
+                    tooltip="More composer actions (image, caption, impersonate).",
+                )
                 yield self._bounded_button(
                     "Send",
                     width=8,

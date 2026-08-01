@@ -367,6 +367,16 @@ from ...Widgets.Console.console_character_picker_modal import (
     ConsoleCharacterOption,
     ConsoleCharacterPickerModal,
 )
+from ...Widgets.Console.console_composer_menu_modal import (
+    ACTION_GENERATE_CAPTION,
+    ACTION_GENERATE_IMAGE,
+    ACTION_IMPERSONATE,
+    ACTION_NARRATE_CONVERSATION,
+    ConsoleComposerMenuModal,
+)
+from ...Widgets.Console.console_generate_image_modal import (
+    ConsoleGenerateImageModal,
+)
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 from ...Widgets.Console.console_model_popover import (
     CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
@@ -542,6 +552,15 @@ CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
 # P3c Task 3: the "Character" rail avatar box's fitted cell size (mirrors
 # the transcript inline-image row's `fit_image_cell_size` usage, sized
 # smaller for the rail's narrower column).
+#: task-1682: pre-canned caption request. Pasted into the composer for
+#: review rather than sent, matching how Generate Image hands back a
+#: command the user can still edit.
+CONSOLE_CAPTION_PROMPT = (
+    "Describe the attached image in detail. Write one caption paragraph "
+    "covering the subject, setting, action, and mood, then a single "
+    "alt-text line under 125 characters."
+)
+
 CHARACTER_AVATAR_COLS = 16
 CHARACTER_AVATAR_LINES = 8
 #: task-1661: the rail avatar used to paint into the fixed box above no
@@ -5080,6 +5099,252 @@ class ChatScreen(BaseAppScreen):
         self._console_dictation_elapsed_timer = self.set_interval(
             1.0, self._tick_console_dictation_elapsed
         )
+
+    #: task-1683: the exact Impersonate text last inserted into the draft,
+    #: so a second click REPLACES it instead of stacking drafts. Keyed by
+    #: session id -- two tabs can each hold their own pending suggestion.
+    _console_impersonate_last: dict[str, str]
+
+    async def _open_console_composer_menu(self) -> None:
+        """Open the composer overflow menu (task-1680)."""
+        self.app.push_screen(
+            ConsoleComposerMenuModal(
+                attachment_kind=self._console_pending_attachment_kind()
+            ),
+            callback=self._handle_console_composer_menu_choice,
+        )
+
+    def _console_pending_attachment_kind(self) -> str:
+        """Classify the active session's staged attachment.
+
+        task-1682 follow-up: Generate Caption used to enable for ANY
+        attachment, so a PDF got an image-caption prompt. Reads the real
+        staged records rather than guessing from the composer's label.
+
+        Returns:
+            ``"image"`` when at least one staged attachment is an image,
+            ``"other"`` when something is staged but none are images, or
+            ``"none"`` when nothing is staged.
+        """
+        store = self._ensure_console_chat_store()
+        session_id = getattr(store, "active_session_id", None)
+        if not session_id:
+            return "none"
+        try:
+            pendings = store.pending_attachments(session_id)
+        except KeyError:
+            return "none"
+        if not pendings:
+            return "none"
+        for attachment in pendings:
+            mime = str(getattr(attachment, "mime_type", "") or "").lower()
+            file_type = str(getattr(attachment, "file_type", "") or "").lower()
+            if mime.startswith("image/") or file_type == "image":
+                return "image"
+        return "other"
+
+    def _handle_console_composer_menu_choice(self, action_id: str | None) -> None:
+        """Route the chosen menu action (task-1680)."""
+        if not action_id:
+            return
+        if action_id == ACTION_GENERATE_IMAGE:
+            self.run_worker(
+                self._open_console_generate_image_modal(), exclusive=False
+            )
+        elif action_id == ACTION_GENERATE_CAPTION:
+            self._insert_console_caption_prompt()
+        elif action_id == ACTION_NARRATE_CONVERSATION:
+            # Placeholder by request: per-speaker narration is not built yet.
+            self.app.notify(
+                "Narrate Entire Conversation is not implemented yet.",
+                severity="information",
+            )
+        elif action_id == ACTION_IMPERSONATE:
+            self.run_worker(
+                self._run_console_impersonate(),
+                exclusive=True,
+                group="console-impersonate",
+            )
+
+    async def _open_console_generate_image_modal(self) -> None:
+        """Collect image options, then paste the command into the draft."""
+        backends: tuple[str, ...] = ()
+        styles: dict[str, str] = {}
+        try:
+            from ...UI.Screens.settings_image_gen_defaults import BACKEND_IDS
+
+            backends = tuple(BACKEND_IDS)
+        except Exception:
+            logger.opt(exception=True).debug("Image modal: backend list failed.")
+        try:
+            from ...Media_Creation.generation_templates import get_all_templates
+
+            styles = {
+                sid: getattr(tpl, "name", sid)
+                for sid, tpl in (await asyncio.to_thread(get_all_templates)).items()
+            }
+        except Exception:
+            logger.opt(exception=True).debug("Image modal: style list failed.")
+        self.app.push_screen(
+            ConsoleGenerateImageModal(backends=backends, styles=styles),
+            callback=self._paste_console_generate_image_command,
+        )
+
+    def _paste_console_generate_image_command(self, command: str | None) -> None:
+        """Paste the composed /generate-image command into the draft."""
+        if not command:
+            return
+        self._append_to_console_draft(command)
+
+    def _insert_console_caption_prompt(self) -> None:
+        """Insert the pre-canned caption prompt for the attached image."""
+        self._append_to_console_draft(CONSOLE_CAPTION_PROMPT)
+
+    @staticmethod
+    def _draft_addition(current: str, text: str) -> str:
+        """Return ``text`` prefixed by a newline only when one is needed.
+
+        Qodo PR #1160: a draft that already ends with a newline gained a
+        SECOND one, so inserted text landed after a blank line.
+
+        Args:
+            current: The existing draft text.
+            text: The text being appended.
+
+        Returns:
+            The exact string to concatenate onto ``current``.
+        """
+        if not current.strip() or current.endswith("\n"):
+            return text
+        return f"\n{text}"
+
+    def _append_to_console_draft(self, text: str) -> str:
+        """Append ``text`` to the active draft on its own line.
+
+        Existing draft text is never replaced (task-1683).
+
+        Args:
+            text: The text to append.
+
+        Returns:
+            The exact string appended (including any leading newline), so
+            callers that need to replace it later can match on it.
+        """
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        composer = self._console_composer_or_none()
+        if composer is not None and not (
+            getattr(self, "_console_visible_draft_session_id", None)
+            in (None, session_id)
+        ):
+            composer = None
+        if composer is not None:
+            current = composer.draft_text()
+            addition = self._draft_addition(current, text)
+            composer.load_draft(current + addition)
+            if session_id:
+                # Qodo PR #1160: a stale/closed active_session_id raises
+                # KeyError from the store during tab transitions; the
+                # composer already holds the text, so this is best-effort.
+                try:
+                    store.set_session_draft(session_id, composer.draft_text())
+                except KeyError:
+                    logger.debug("Composer action: session gone before draft save.")
+            return addition
+        if session_id:
+            try:
+                current = store.session_draft(session_id)
+                addition = self._draft_addition(current, text)
+                store.set_session_draft(session_id, current + addition)
+                return addition
+            except KeyError:
+                logger.debug("Composer action: session gone before draft write.")
+                return ""
+        return ""
+
+    async def _run_console_impersonate(self) -> None:
+        """Draft the USER's next message with the current model (task-1683)."""
+        controller = self._ensure_console_chat_controller()
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        if not session_id:
+            return
+        self.app.notify("Impersonate: drafting a reply…", severity="information")
+        try:
+            result = await controller.impersonate_user_reply(session_id)
+        except Exception:
+            logger.opt(exception=True).warning("Impersonate failed.")
+            self.app.notify("Impersonate failed.", severity="error")
+            return
+        suggestion = (result.text or "").strip()
+        if not suggestion:
+            # Qodo PR #1160: name the actual cause instead of reporting
+            # every empty result as "the model returned nothing".
+            message = {
+                "provider-not-ready": result.detail
+                or "Impersonate needs a ready provider and model.",
+                "empty-transcript": (
+                    "Impersonate needs at least one message to work from."
+                ),
+                "provider-error": "Impersonate: the provider call failed.",
+                "empty-completion": "Impersonate: the model returned nothing.",
+            }.get(result.reason, "Impersonate produced nothing.")
+            self.app.notify(message, severity="warning")
+            return
+        self._replace_console_impersonate_text(session_id, suggestion)
+
+    def _replace_console_impersonate_text(
+        self, session_id: str, suggestion: str
+    ) -> None:
+        """Insert ``suggestion``, replacing a previous one when still present.
+
+        Clicking Impersonate twice must not stack two drafts; the prior
+        insertion is swapped out when the draft still ends with it, and
+        otherwise the new text is simply appended (the user edited or moved
+        it, so silently rewriting their text would be wrong).
+        """
+        previous = getattr(self, "_console_impersonate_last", {}).get(session_id)
+        store = self._ensure_console_chat_store()
+        # cubic PR #1160: the user can switch tabs while the draft is
+        # generating. Only touch the MOUNTED composer when it still shows
+        # this session -- otherwise write the stored draft and let the
+        # normal tab sync render it. Same guard _insert_console_dictation
+        # already uses for the identical race.
+        composer = self._console_composer_or_none()
+        if composer is not None and not (
+            store.active_session_id == session_id
+            and getattr(self, "_console_visible_draft_session_id", session_id)
+            == session_id
+        ):
+            composer = None
+        try:
+            current = (
+                composer.draft_text()
+                if composer is not None
+                else store.session_draft(session_id)
+            )
+        except KeyError:
+            logger.debug("Impersonate: session gone before insertion.")
+            return
+        if previous and current.endswith(previous):
+            trimmed = current[: len(current) - len(previous)]
+            replacement = self._draft_addition(trimmed, suggestion)
+            new_draft = trimmed + replacement
+            if composer is not None:
+                composer.load_draft(new_draft)
+            try:
+                store.set_session_draft(session_id, new_draft)
+            except KeyError:
+                logger.debug("Impersonate: session gone before draft save.")
+            self._remember_console_impersonate(session_id, replacement)
+            return
+        appended = self._append_to_console_draft(suggestion)
+        self._remember_console_impersonate(session_id, appended)
+
+    def _remember_console_impersonate(self, session_id: str, text: str) -> None:
+        if not hasattr(self, "_console_impersonate_last"):
+            self._console_impersonate_last = {}
+        self._console_impersonate_last[session_id] = text
 
     @staticmethod
     def _dictation_insertion(
@@ -18143,6 +18408,10 @@ class ChatScreen(BaseAppScreen):
         # Log for debugging
         logger.info(f"ChatScreen on_button_pressed called with button: {button_id}")
 
+        if button_id == "console-composer-menu":
+            event.stop()
+            await self._open_console_composer_menu()
+            return
         if button_id == "console-send-message":
             await self.handle_console_send_message(event)
             return
