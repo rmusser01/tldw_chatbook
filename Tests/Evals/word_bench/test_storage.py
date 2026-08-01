@@ -474,6 +474,67 @@ def test_load_run_preflight_raises_for_an_unknown_run_group(db):
 
 
 # ---------------------------------------------------------------------------
+# task-1691 -- preflight.continuation round-trips through the snapshot
+# ---------------------------------------------------------------------------
+
+
+def test_snapshot_round_trips_a_captured_continuation(db, config, targets, snippets):
+    """A grid reopened next week must still show the continuation preflight
+    captured, without re-contacting the provider."""
+    from tldw_chatbook.Evals.word_bench.models import PreflightResult
+
+    task_id = save_bench(db, config)
+    continuation_text = "<|channel><|channel>thought\n<channel|>The sky is **blue"
+    preflight = {
+        targets[0].id: PreflightResult(
+            state="ok", k_returned=20, canary="degenerate",
+            continuation=continuation_text,
+        ),
+    }
+    group_id, _ = create_run_group(
+        db, task_id, config, targets, snippets, preflight=preflight
+    )
+
+    grid = load_grid(db, group_id)
+    assert grid["preflight"][targets[0].id].continuation == continuation_text
+
+    from_preflight = load_run_preflight(db, group_id)
+    assert from_preflight[targets[0].id].continuation == continuation_text
+
+
+def test_load_run_preflight_defaults_continuation_for_runs_recorded_before_this_change(
+    db, config, targets, snippets
+):
+    """A run group's preflight entries recorded before continuation capture
+    existed carry no "continuation" key inside each per-target dict -- unlike
+    test_load_run_preflight_defaults_for_run_groups_written_before_this_change
+    above, which covers the "preflight" key being entirely absent, this
+    covers a stored preflight entry that predates only this one new sub-key.
+    Both must still load, defaulting to ""."""
+    from tldw_chatbook.Evals.word_bench.models import PreflightResult
+
+    task_id = save_bench(db, config)
+    preflight = {
+        targets[0].id: PreflightResult(state="ok", k_returned=20, canary="pass"),
+    }
+    group_id, run_ids = create_run_group(
+        db, task_id, config, targets, snippets, preflight=preflight
+    )
+
+    # Simulate a run group recorded before this change: strip "continuation"
+    # out of the stored per-target preflight dict, leaving every other key
+    # (including "preflight" itself) untouched.
+    for run_id in run_ids.values():
+        overrides = db.get_run(run_id)["config_overrides"]
+        for entry in overrides["snapshot"]["preflight"].values():
+            entry.pop("continuation", None)
+        db.update_run(run_id, {"config_overrides": overrides})
+
+    loaded = load_run_preflight(db, group_id)
+    assert loaded[targets[0].id].continuation == ""
+
+
+# ---------------------------------------------------------------------------
 # task-1611 -- model_steering: eval_models.config is the storage home for a
 # target's steering (prefix/system_prompt).
 # ---------------------------------------------------------------------------

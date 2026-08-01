@@ -423,6 +423,7 @@ def _snapshot(
                 "canary": result.canary,
                 "detail": result.detail,
                 "checked_at": result.checked_at,
+                "continuation": result.continuation,
             }
             for target_id, result in (preflight or {}).items()
         },
@@ -576,6 +577,12 @@ def _preflight_from_snapshot(snapshot: dict[str, Any]) -> dict[str, PreflightRes
             canary=result.get("canary", "unchecked"),
             detail=result.get("detail", ""),
             checked_at=result.get("checked_at", ""),
+            # task-1691: absent for every run group recorded before this
+            # field existed (and for the "preflight" key being entirely
+            # absent, per `.get("preflight") or {}` above) -- same
+            # additive-default contract as `PreflightResult.continuation`
+            # itself.
+            continuation=result.get("continuation", ""),
         )
         for target_id, result in (snapshot.get("preflight") or {}).items()
     }

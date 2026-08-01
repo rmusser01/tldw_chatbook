@@ -252,13 +252,24 @@ class CellError:
 
 @dataclass(frozen=True)
 class PreflightResult:
-    """One target's readiness, resolved before a run."""
+    """One target's readiness, resolved before a run.
+
+    ``continuation`` (task-1691) is a short, best-effort generated
+    continuation of ``capture_client.CANARY_PROMPT``, captured through the
+    same steering the run itself uses -- see
+    ``WordBenchCaptureClient.preflight``'s own docstring for how it is
+    produced and why a failure to capture it degrades to ``""`` rather than
+    blocking preflight. It is additive and defaults to ``""`` so every
+    pre-existing construction, and every historical run snapshot recorded
+    before this field existed, keeps working unchanged.
+    """
 
     state: str
     k_returned: Optional[int]
     canary: CanaryVerdict
     detail: str = ""
     checked_at: str = ""
+    continuation: str = ""
 
     @property
     def status_label(self) -> str:
