@@ -106,6 +106,34 @@ def test_shutdown_persistence_uses_only_effective_path(tmp_path, monkeypatch):
     assert not ignored_default.exists()
 
 
+@pytest.mark.parametrize("failure", ["malformed_toml", "decryption"])
+def test_shutdown_persistence_preserves_unreadable_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    target = tmp_path / "override" / "config.toml"
+    target.parent.mkdir(mode=0o700)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    if failure == "malformed_toml":
+        target.write_text("[broken\nvalue = 1", encoding="utf-8")
+    else:
+        encrypted = config.encrypt_api_keys_in_config(
+            {
+                "encryption": {"enabled": True},
+                "API": {"openai_api_key": "preserve-SENTINEL"},
+            },
+            "correct-password",
+        )
+        target.write_text(toml.dumps(encrypted), encoding="utf-8")
+        config.set_encryption_password("wrong-password")
+    original = target.read_bytes()
+
+    assert config.persist_cli_config_for_shutdown() is False
+
+    assert target.read_bytes() == original
+
+
 def test_production_config_persistence_has_one_owner_and_no_mutable_imports():
     package_root = Path(config.__file__).parent
     config_source = Path(config.__file__).read_text(encoding="utf-8")

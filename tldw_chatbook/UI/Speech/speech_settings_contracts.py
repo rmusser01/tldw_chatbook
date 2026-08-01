@@ -16,19 +16,8 @@ from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
 
+from tldw_chatbook.TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
 from tldw_chatbook.UI.Speech.speech_settings_model import ALL_SETTINGS_CONTROLS
-
-
-BUILT_IN_TTS_PROVIDER_IDS: tuple[str, ...] = (
-    "audio_cpp",
-    "openai",
-    "elevenlabs",
-    "kokoro",
-    "chatterbox",
-    "higgs",
-    "alltalk",
-)
-"""Canonical IDs for the seven built-in TTS providers."""
 
 SHARED_TTS_DEFAULTS_OWNER_ID = "defaults"
 """Inventory owner used for application-wide shared selection controls."""

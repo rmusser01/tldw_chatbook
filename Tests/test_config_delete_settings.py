@@ -1,8 +1,12 @@
 """Tests for config_module.delete_settings_from_cli_config."""
 
+import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import threading
+import time
 import tomllib
 
 import pytest
@@ -600,6 +604,338 @@ def test_shared_lock_prevents_lost_concurrent_set_and_delete_updates(
         "shared": {"preserved": "keep-me"},
         "new_section": {"value": "set"},
     }
+
+
+def test_revisioned_section_replace_is_atomic_and_preserves_other_sections(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(
+        config_path,
+        {
+            "speech_studio": {
+                "schema_version": 1,
+                "revision": 2,
+                "selection": {"provider_id": "openai"},
+            },
+            "global": {"credential": "preserved", "enabled": True},
+        },
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    result = config_module.replace_revisioned_settings_section_to_cli_config(
+        "speech_studio",
+        {
+            "schema_version": 1,
+            "revision": 3,
+            "selection": {"provider_id": "audio_cpp"},
+        },
+        expected_revision=2,
+    )
+
+    assert result == config_module.ConfigMutationResult(True, True, None)
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved == {
+        "speech_studio": {
+            "schema_version": 1,
+            "revision": 3,
+            "selection": {"provider_id": "audio_cpp"},
+        },
+        "global": {"credential": "preserved", "enabled": True},
+    }
+
+
+def test_revisioned_section_replace_reports_conflict_without_writing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(
+        config_path,
+        {"speech_studio": {"schema_version": 1, "revision": 4}},
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    original = config_path.read_bytes()
+
+    result = config_module.replace_revisioned_settings_section_to_cli_config(
+        "speech_studio",
+        {"schema_version": 1, "revision": 4},
+        expected_revision=3,
+    )
+
+    assert result == config_module.ConfigMutationResult(
+        False,
+        False,
+        None,
+        conflict=True,
+    )
+    assert result.fully_applied is False
+    assert config_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("second_writer", ["revisioned", "generic"])
+def test_config_writes_serialize_across_processes(
+    tmp_path: Path,
+    second_writer: str,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    data_path = tmp_path / "data"
+    user_data_path = data_path / "cross_process_writer"
+    user_data_path.mkdir(parents=True)
+    data_path.chmod(0o700)
+    user_data_path.chmod(0o700)
+    _write_config(
+        config_path,
+        {
+            "general": {"users_name": "cross_process_writer"},
+            "paths": {"data_dir": str(data_path)},
+            "speech_studio": {"schema_version": 1, "revision": 0},
+        },
+    )
+    go_path = tmp_path / "go"
+    ready_paths = (tmp_path / "ready-1", tmp_path / "ready-2")
+    write_paths = (tmp_path / "write-1", tmp_path / "write-2")
+    script = r"""
+import json
+from pathlib import Path
+import sys
+import time
+
+from tldw_chatbook import config as config_module
+
+ready_path = Path(sys.argv[1])
+go_path = Path(sys.argv[2])
+write_path = Path(sys.argv[3])
+other_write_path = Path(sys.argv[4])
+provider_id = sys.argv[5]
+writer_kind = sys.argv[6]
+real_write = config_module._write_raw_cli_config_unlocked
+
+def coordinated_write(config_path, config_data):
+    write_path.write_text("ready", encoding="utf-8")
+    deadline = time.monotonic() + 0.75
+    while not other_write_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    real_write(config_path, config_data)
+
+config_module._write_raw_cli_config_unlocked = coordinated_write
+ready_path.write_text("ready", encoding="utf-8")
+while not go_path.exists():
+    time.sleep(0.01)
+
+if writer_kind == "revisioned":
+    result = config_module.replace_revisioned_settings_section_to_cli_config(
+        "speech_studio",
+        {
+            "schema_version": 1,
+            "revision": 1,
+            "selection": {"provider_id": provider_id},
+        },
+        expected_revision=0,
+    )
+else:
+    result = config_module.apply_settings_mutation_to_cli_config(
+        {"global": {"ordinary_writer": True}},
+    )
+print(json.dumps({
+    "replaced": result.file_replaced,
+    "conflict": result.conflict,
+    "failure_phase": result.failure_phase,
+}))
+"""
+    environment = os.environ.copy()
+    environment["TLDW_CONFIG_PATH"] = str(config_path)
+    repository_root = Path(__file__).resolve().parents[1]
+    environment["PYTHONPATH"] = os.pathsep.join(
+        filter(None, (str(repository_root), environment.get("PYTHONPATH", "")))
+    )
+    processes = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                script,
+                str(ready_paths[index]),
+                str(go_path),
+                str(write_paths[index]),
+                str(write_paths[1 - index]),
+                provider_id,
+                "revisioned" if index == 0 else second_writer,
+            ],
+            cwd=repository_root,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for index, provider_id in enumerate(("openai", "alltalk"))
+    ]
+    try:
+        deadline = time.monotonic() + 20.0
+        while not all(path.exists() for path in ready_paths):
+            exited = next(
+                (process for process in processes if process.poll() is not None),
+                None,
+            )
+            if exited is not None:
+                stdout, stderr = exited.communicate()
+                pytest.fail(
+                    "cross-process writer exited before readiness: "
+                    f"stdout={stdout!r}, stderr={stderr!r}"
+                )
+            if time.monotonic() >= deadline:
+                pytest.fail("cross-process writers did not become ready")
+            time.sleep(0.01)
+        go_path.write_text("go", encoding="utf-8")
+        completed = [process.communicate(timeout=30.0) for process in processes]
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+
+    outcomes = []
+    for process, (stdout, stderr) in zip(processes, completed, strict=True):
+        assert process.returncode == 0, stderr
+        outcome = json.loads(stdout.strip().splitlines()[-1])
+        outcomes.append(outcome)
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["speech_studio"]["revision"] == 1
+    if second_writer == "revisioned":
+        assert sorted(
+            (outcome["replaced"], outcome["conflict"]) for outcome in outcomes
+        ) == [(False, True), (True, False)], outcomes
+        assert saved["speech_studio"]["selection"]["provider_id"] in {
+            "openai",
+            "alltalk",
+        }
+    else:
+        assert all(outcome["replaced"] for outcome in outcomes), outcomes
+        assert not any(outcome["conflict"] for outcome in outcomes), outcomes
+        assert saved["speech_studio"]["selection"] == {"provider_id": "openai"}
+        assert saved["global"] == {"ordinary_writer": True}
+
+
+@pytest.mark.parametrize("current", [None, "corrupt", {"revision": "bad"}])
+def test_revisioned_section_replace_recovers_missing_or_corrupt_revision_zero(
+    tmp_path: Path,
+    monkeypatch,
+    current: object,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    raw = {"global": {"keep": True}}
+    if current is not None:
+        raw["speech_studio"] = current
+    _write_config(config_path, raw)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    result = config_module.replace_revisioned_settings_section_to_cli_config(
+        "speech_studio",
+        {"schema_version": 1, "revision": 1},
+        expected_revision=0,
+    )
+
+    assert result == config_module.ConfigMutationResult(True, True, None)
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["speech_studio"] == {"schema_version": 1, "revision": 1}
+    assert saved["global"] == {"keep": True}
+
+
+@pytest.mark.parametrize("operation", ["set", "delete"])
+def test_generic_mutation_cannot_bypass_revisioned_section_owner(
+    tmp_path: Path,
+    monkeypatch,
+    operation: str,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(
+        config_path,
+        {"speech_studio": {"schema_version": 1, "revision": 4}},
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    original = config_path.read_bytes()
+
+    result = config_module.apply_settings_mutation_to_cli_config(
+        ({"speech_studio": {"revision": 1}} if operation == "set" else {}),
+        delete_keys=(
+            {"speech_studio": ["revision"]} if operation == "delete" else None
+        ),
+    )
+
+    assert result == config_module.ConfigMutationResult(
+        False,
+        False,
+        "before_replace",
+    )
+    assert config_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("serialized", [False, True])
+def test_whole_config_replacement_preserves_revisioned_owned_section(
+    tmp_path: Path,
+    monkeypatch,
+    serialized: bool,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    current_studio = {
+        "schema_version": 1,
+        "revision": 4,
+        "selection": {"provider_id": "audio_cpp"},
+    }
+    _write_config(
+        config_path,
+        {
+            "speech_studio": current_studio,
+            "global": {"old": True},
+        },
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    stale_replacement = {
+        "speech_studio": {"schema_version": 1, "revision": 1},
+        "global": {"new": True},
+    }
+
+    if serialized:
+        config_module.replace_cli_config_serialized(
+            toml.dumps(stale_replacement),
+            create_backup=False,
+        )
+    else:
+        config_module.replace_cli_config(stale_replacement)
+
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["speech_studio"] == current_studio
+    assert saved["global"] == {"new": True}
+
+
+@pytest.mark.parametrize(
+    ("expected_revision", "replacement_revision"),
+    [(0, 0), (0, 2), (-1, 0), (True, 2)],
+)
+def test_revisioned_section_replace_rejects_invalid_revision_transition(
+    tmp_path: Path,
+    monkeypatch,
+    expected_revision: object,
+    replacement_revision: int,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, {"global": {"keep": True}})
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    original = config_path.read_bytes()
+
+    result = config_module.replace_revisioned_settings_section_to_cli_config(
+        "speech_studio",
+        {"schema_version": 1, "revision": replacement_revision},
+        expected_revision=expected_revision,  # type: ignore[arg-type]
+    )
+
+    assert result == config_module.ConfigMutationResult(
+        False,
+        False,
+        "before_replace",
+    )
+    assert config_path.read_bytes() == original
 
 
 def test_delete_wrapper_performs_one_atomic_write_for_actual_mutation(
