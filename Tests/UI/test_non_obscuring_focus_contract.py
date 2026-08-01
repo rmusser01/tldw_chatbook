@@ -911,7 +911,7 @@ def test_settings_detail_and_inspector_panes_scroll_long_content():
     """Both panes' scroll BODIES carry the scroll + scrollbar contract.
 
     Qodo PR #1147: each pane is a fixed header over a scrollable body
-    (detail since task-1642, inspector since task-1560), so the theming
+    (detail since task-1665, inspector since task-1560), so the theming
     belongs on the -body children that actually scroll; the outer panes
     only hold their column width and clip.
     """

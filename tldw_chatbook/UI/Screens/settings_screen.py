@@ -756,7 +756,7 @@ _RAG_FIELD_GROUP_BY_ID: dict[str, str] = {
 
 
 def _rag_field_search_label(field_id: str) -> str:
-    """Human label for a RAG field id (task-1641 field-level search).
+    """Human label for a RAG field id (task-1664 field-level search).
 
     Args:
         field_id: A ``settings-library-rag-*`` widget id.
@@ -767,7 +767,7 @@ def _rag_field_search_label(field_id: str) -> str:
     return field_id.removeprefix("settings-library-rag-").replace("-", " ")
 
 
-#: task-1641: field-level search index -- "/" previously matched only
+#: task-1664: field-level search index -- "/" previously matched only
 #: category names/descriptions/owned keys, so "threshold" found nothing
 #: on a 22-category screen (critique r4 P1). Labels mirror the visible
 #: row labels; Enter focuses the matched field.
@@ -1620,7 +1620,7 @@ class SettingsScreen(BaseAppScreen):
         }
     )
 
-    #: task-1640: the footer's generic "t test category" named an
+    #: task-1663: the footer's generic "t test category" named an
     #: abstraction while the on-page buttons say Check/Validate/Test --
     #: the hint now uses each category's real verb.
     TEST_ACTION_LABELS = {
@@ -4052,7 +4052,7 @@ class SettingsScreen(BaseAppScreen):
         ).lower()
         if query in secondary_haystack:
             return 2
-        # task-1641: field labels -- typing a setting's visible name
+        # task-1664: field labels -- typing a setting's visible name
         # ("threshold") surfaces its category with an Enter-focuses-field
         # promise (see _top_field_match / _submit_category_search).
         if self._top_field_match(query, summary.category) is not None:
@@ -4123,7 +4123,7 @@ class SettingsScreen(BaseAppScreen):
         match_label = "match" if len(matches) == 1 else "matches"
         if matches:
             target = matches[0].title
-            # task-1641: when the top hit is (or contains) a matching
+            # task-1664: when the top hit is (or contains) a matching
             # field, promise the field-level landing in the echo line.
             field = self._top_field_match(query, matches[0].category)
             if field is not None:
@@ -4195,7 +4195,7 @@ class SettingsScreen(BaseAppScreen):
         category_values = self._filtered_category_values(query_text)
         if category_values:
             self._select_category(category_values[0], restore_focus=True)
-            # task-1641: if the query named a field, land ON the field --
+            # task-1664: if the query named a field, land ON the field --
             # focusing it also fires its inspector guidance.
             opened = SettingsCategoryId(category_values[0])
             field = self._top_field_match(query_text, opened)
@@ -4209,7 +4209,7 @@ class SettingsScreen(BaseAppScreen):
                         pass
 
                 self.call_after_refresh(_focus_matched_field)
-            # task-1621: the filter has done its job -- clear it so the
+            # task-1661: the filter has done its job -- clear it so the
             # rail returns to the full category map. Residue used to prune
             # the rail to the last search's matches for the rest of the
             # session, with no clear-filter affordance advertised.
@@ -4246,7 +4246,7 @@ class SettingsScreen(BaseAppScreen):
             return (
                 "State: Unsaved changes | Save (s) or Revert (r) — switching categories keeps this draft."
             )
-        # task-1620: lead with the persistence badge -- the footer hints
+        # task-1660: lead with the persistence badge -- the footer hints
         # already honestly come and go with each category's save model,
         # but nothing NAMED the model, so users trained on Save/Revert got
         # silent contract changes (five models coexist on this screen).
@@ -4254,7 +4254,7 @@ class SettingsScreen(BaseAppScreen):
         return f"State: {badge} | {self._category_state_scope_text(category)}"
 
     def _persistence_badge(self, category: SettingsCategoryId) -> str:
-        """Name the save model the active category uses (task-1620).
+        """Name the save model the active category uses (task-1660).
 
         Args:
             category: The active Settings category.
@@ -4667,7 +4667,7 @@ class SettingsScreen(BaseAppScreen):
         ):
             self._set_static_text(
                 f"#settings-console-behavior-field-guide-{index}",
-                # task-1642: compose-time rows fold via _detail_row; this
+                # task-1665: compose-time rows fold via _detail_row; this
                 # in-place path must fold too or dotted keys break mid-word.
                 f"{label}: {_fold_long_tokens(value)}",
             )
@@ -5617,7 +5617,7 @@ class SettingsScreen(BaseAppScreen):
             self.call_after_refresh(self._restore_focus_after_sync_rows, focused_id)
 
     def _restore_focus_after_sync_rows(self, widget_id: str | None) -> None:
-        # task-1642 (critique r4): the sync-rows recompose mints a fresh,
+        # task-1665 (critique r4): the sync-rows recompose mints a fresh,
         # hidden fold indicator AFTER on_mount's evaluation ran -- Overview
         # (the only category whose pane recomposes on these rows) showed a
         # mid-sentence inspector cut with no indicator.
@@ -11580,7 +11580,7 @@ class SettingsScreen(BaseAppScreen):
             revert_button.disabled = not self._guided_actions_enabled(summary.category)
             yield revert_button
         elif summary.category is SettingsCategoryId.OVERVIEW:
-            # task-1640 (critique r4 P1): this was a bare "Theme" noun-chip
+            # task-1663 (critique r4 P1): this was a bare "Theme" noun-chip
             # whose verb lived in a mouse-only tooltip; the label now names
             # the action. It stays in the pinned header because the 32-row
             # compact contract requires a painted recovery action
@@ -11590,7 +11590,7 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-open-appearance",
                 tooltip="Open the dedicated Theme editor.",
             )
-        # task-181 copy, task-1583 placement, task-1640 length: the full
+        # task-181 copy, task-1583 placement, task-1663 length: the full
         # reassurance paragraph reads once on Overview; everywhere else a
         # single line keeps the promise without eating three pinned rows
         # on all 22 categories (critique r4: "the cozy reassurance decays
@@ -11880,7 +11880,7 @@ class SettingsScreen(BaseAppScreen):
                         "Preference Detail",
                         classes="destination-section settings-column-title",
                     )
-                    # task-1642 (critique r4): ONE pinned State banner --
+                    # task-1665 (critique r4): ONE pinned State banner --
                     # previously each category composed its own inside the
                     # scrollable content, so the persistence badge (the
                     # save-contract carrier) scrolled away mid-task (RAG

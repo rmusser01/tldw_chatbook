@@ -1,5 +1,5 @@
 ---
-id: task-1622
+id: TASK-1622
 title: 'Console /rewind: cancelling the menu leaves "/rewind" in the composer'
 status: To Do
 assignee: []

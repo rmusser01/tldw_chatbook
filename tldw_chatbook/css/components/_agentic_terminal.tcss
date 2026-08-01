@@ -760,7 +760,7 @@ ConsoleRunLogModal {
     overflow-x: hidden;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    /* task-1621: $ds-grid-line blended into the panel, hiding that four
+    /* task-1661: $ds-grid-line blended into the panel, hiding that four
        categories sit below the fold on common heights -- the overflow
        cue must actually read as one. */
     scrollbar-color: $ds-text-muted;
@@ -769,7 +769,7 @@ ConsoleRunLogModal {
 }
 
 /* Qodo PR #1147: both panes are fixed-header-over-scroll-body now (the
-   detail pane since task-1642, the impact pane since task-1560) -- the
+   detail pane since task-1665, the impact pane since task-1560) -- the
    scrollbar theming has to sit on the -body children that actually
    scroll, or the real scroll containers render stock scrollbars. The
    outer panes keep only their column width and clip. */
@@ -4025,7 +4025,7 @@ Button.settings-category-button.settings-secondary-search-match {
     margin: 0 0 1 0;
     /* task-1625: the State strip reads as a raised status surface (the
        task-345 focus steel at low alpha), not another flat prose row --
-       it now leads with the persistence badge (task-1620), so it earns
+       it now leads with the persistence badge (task-1660), so it earns
        the emphasis. */
     background: $ds-focus-bg 30%;
     color: $ds-text-primary;
@@ -4056,7 +4056,7 @@ Button.settings-category-button.settings-secondary-search-match {
 }
 
 .settings-input-label {
-    /* task-1622: 12 cells truncated most labels ("Palette limit" ->
+    /* task-1662: 12 cells truncated most labels ("Palette limit" ->
        "Palette", "Tool result display cap" -> "Tool result"), which read
        as unit-less mystery numerics in the critique. */
     width: 24;
@@ -5667,7 +5667,7 @@ ConsoleScopePickerModal {
    them by color alone -- it read as checked either way in the critique.
    Hide the glyph while off so its presence carries the state; the On/Off
    word beside it (switch_word) stays the text carrier. */
-/* task-1622 counterweight: the widened shared label column (24) does not
+/* task-1662 counterweight: the widened shared label column (24) does not
    fit the Image Gen backend rows' five controls at 120 cols -- the
    geometry guard test pins that width. Backend-row labels are short
    backend names; 12 never truncated them. */

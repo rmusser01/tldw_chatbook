@@ -1,5 +1,5 @@
 ---
-id: task-1650
+id: TASK-1650
 title: 'Lore: a deleted world book keeps its name reserved forever, with no way to see or recover it'
 status: To Do
 assignee: []
