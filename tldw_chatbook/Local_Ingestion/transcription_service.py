@@ -3847,15 +3847,41 @@ class _LegacyTranscriptionBackend:
             pcm = np.clip(
                 np.round(audio_array * 32768.0), -32768, 32767
             ).astype(np.int16)
+            # `prefix` identifies these files as ours in a temp-dir listing;
+            # review Finding 3 (PR #1171): a crash between here and the
+            # `finally` below leaves raw microphone audio on disk, so a
+            # recognizable name is what makes a future stale-file sweep (out
+            # of scope for this fix) possible at all.
             with tempfile.NamedTemporaryFile(
-                suffix=".wav", delete=False
+                prefix="parakeet_mlx_", suffix=".wav", delete=False
             ) as tmp_file:
                 tmp_path = tmp_file.name
-            with wave.open(tmp_path, "wb") as wav_file:
-                wav_file.setnchannels(1)
-                wav_file.setsampwidth(2)
-                wav_file.setframerate(16000)
-                wav_file.writeframes(pcm.tobytes())
+                # Best-effort: restrict to owner-only before any audio is
+                # written, not after. POSIX-only concern -- `chmod` can raise
+                # on Windows (no POSIX mode bits), so a failure here must
+                # never abort a transcription that would otherwise succeed.
+                try:
+                    os.chmod(tmp_path, 0o600)
+                except OSError:
+                    logger.debug(
+                        f"Could not chmod temporary Parakeet MLX WAV "
+                        f"{tmp_path} to 0o600 (non-POSIX filesystem?)"
+                    )
+                # Write through the SAME handle the file was created with,
+                # rather than closing it and reopening by path -- the old
+                # code did exactly that (create+close, then a separate
+                # `wave.open(tmp_path, "wb")`), leaving an empty file at a
+                # predictable, default-permission path for the gap between
+                # the two calls. `wave.open` accepts a file object directly
+                # and does not close it (only a path-opened `Wave_write`
+                # does), so this `tmp_file` is still ours to flush and close
+                # via the enclosing `with`.
+                with wave.open(tmp_file, "wb") as wav_file:
+                    wav_file.setnchannels(1)
+                    wav_file.setsampwidth(2)
+                    wav_file.setframerate(16000)
+                    wav_file.writeframes(pcm.tobytes())
+                tmp_file.flush()
 
             result = self._parakeet_mlx_model.transcribe(tmp_path)
 

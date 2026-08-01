@@ -27,11 +27,11 @@ from __future__ import annotations
 
 import importlib
 import os
+import stat
 import struct
 import sys
 import wave
 from types import ModuleType
-from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -46,23 +46,64 @@ np.clip(np.round(np.zeros(1, dtype=np.float32)), -32768, 32767).astype(np.int16)
 SERVICE_MODULE = "tldw_chatbook.Local_Ingestion.transcription_service"
 
 
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def service_module():
-    """Import fresh, faking out the optional mlx/parakeet_mlx packages."""
+    """Import fresh, faking out the optional mlx/parakeet_mlx packages.
+
+    Module-scoped, and installs the fake stub packages with a plain
+    `sys.modules[...] = ...` assignment rather than `patch.dict`/
+    `monkeypatch.setitem` -- both of those revert `sys.modules` to its exact
+    pre-entry snapshot on exit, which deletes every module newly added
+    during that window, not just the ones explicitly listed. Verified
+    directly: importing a stdlib module inside
+    `patch.dict(sys.modules, {...})` and checking membership immediately
+    after the block exits shows it gone. `importlib.import_module
+    (SERVICE_MODULE)` used to run *inside* that reverting block, so the
+    revert took `SERVICE_MODULE` down with it -- and everything it
+    transitively imports at module level (`tldw_chatbook.config`,
+    `...DB.ChaChaNotes_DB`, `...Metrics.metrics_logger`, torch,
+    ctranslate2, ...).
+
+    This file previously had exactly one test using this fixture, so the
+    corruption was invisible: nothing ever asked twice. Adding a second and
+    third test (Finding 3, PR #1171 review) surfaced it two different ways
+    depending on the exact fix tried, both confirming the same root cause:
+    * function-scoped + reverting: the second invocation's
+      `SERVICE_MODULE in sys.modules` fast path missed (wiped by the first
+      invocation's own revert), forcing a real second `import torch` in
+      -process, which crashed with `RuntimeError: function
+      '_has_torch_function' already has a docstring` (torch registers
+      docstrings on process-global C functions at import time; not
+      idempotent against a second "logical" import).
+    * module-scoped + still reverting: `SERVICE_MODULE` itself was cached
+      correctly (module scope only runs this body once), but
+      `tldw_chatbook.config` and friends -- newly imported for the first
+      time in this process as a side effect of importing `SERVICE_MODULE`,
+      via a route this fixture's revert did not know it needed to protect
+      -- were still wiped, and a LATER, unrelated autouse fixture
+      (`isolate_test_environment` in `Tests/conftest.py`) re-importing
+      `tldw_chatbook.config` fresh crashed with `ValueError: Level 'METRIC'
+      already exists` (loguru's custom level registration in
+      `Metrics/metrics_logger.py` is not idempotent either).
+
+    Not reverting at all -- this fixture's own `if SERVICE_MODULE in
+    sys.modules` fast path already assumes `sys.modules` correctly and
+    permanently caches the real import -- fixes both: nothing this fixture
+    imports is ever removed again, so every module it pulls in for the
+    first time (transitively or not) stays exactly as correctly cached as
+    a normal, unpatched `import` would leave it. The two fake stub entries
+    left behind are harmless: nothing else in the suite tries to use the
+    real `lightning_whisper_mlx`/`parakeet_mlx` packages for real work.
+    """
     if SERVICE_MODULE in sys.modules:
         return sys.modules[SERVICE_MODULE]
     lightning_module = ModuleType("lightning_whisper_mlx")
     lightning_module.LightningWhisperMLX = object()
     parakeet_module = ModuleType("parakeet_mlx")
     parakeet_module.from_pretrained = object()
-    with patch.dict(
-        sys.modules,
-        {
-            "lightning_whisper_mlx": lightning_module,
-            "parakeet_mlx": parakeet_module,
-        },
-    ):
-        return importlib.import_module(SERVICE_MODULE)
+    sys.modules["lightning_whisper_mlx"] = lightning_module
+    sys.modules["parakeet_mlx"] = parakeet_module
+    return importlib.import_module(SERVICE_MODULE)
 
 
 def _service(service_module, monkeypatch: pytest.MonkeyPatch):
@@ -146,3 +187,111 @@ def test_parakeet_buffer_transcription_writes_a_wav_and_passes_the_path(
     # Cleaned up: the "must work" stop/tail path cannot leak a temp WAV per
     # segment over a long dictation session.
     assert not os.path.exists(recorded_paths[0])
+
+
+# --------------------------------------------------------------------------
+# Review Finding 3, PR #1171: the temp WAV must be identifiable, private
+# while it exists, and cleaned up even when transcription itself fails.
+# --------------------------------------------------------------------------
+
+
+def test_parakeet_buffer_temp_file_has_an_identifying_prefix_and_owner_only_perms(
+    service_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`prefix="parakeet_mlx_"` and best-effort `0o600` before any audio is written.
+
+    A crash between file creation and the `finally` cleanup below leaves raw
+    microphone audio on disk; the prefix makes that leftover recognizable in
+    a temp-dir listing (a future stale-file sweep is out of scope for this
+    fix, but needs a name to look for), and owner-only permissions keep that
+    audio from being group/world-readable for however long it survives.
+    Both must be true *before* cleanup runs, so this reads them from inside
+    the fake model's `transcribe()` -- the only point with a live path.
+    """
+    pcm = struct.pack("<4h", 0, 1, -1, 32767)
+    recorded_paths: list[str] = []
+    captured_modes: list[int] = []
+
+    class _FakeParakeetModel:
+        def transcribe(self, path):
+            path = str(path)
+            recorded_paths.append(path)
+            if os.name == "posix":
+                captured_modes.append(stat.S_IMODE(os.stat(path).st_mode))
+            return _FakeResult()
+
+    service = _service(service_module, monkeypatch)
+    _install_fake_mlx(monkeypatch)
+    monkeypatch.setattr(service_module, "PARAKEET_MLX_AVAILABLE", True)
+    monkeypatch.setattr(
+        service_module,
+        "_ensure_parakeet_mlx_import",
+        lambda: (lambda model, dtype=None: _FakeParakeetModel()),
+    )
+
+    service._transcribe_buffer_with_parakeet_mlx(
+        pcm,
+        sample_rate=16000,
+        channels=1,
+        sample_width=2,
+        model=None,
+        language=None,
+    )
+
+    assert len(recorded_paths) == 1
+    basename = os.path.basename(recorded_paths[0])
+    assert basename.startswith("parakeet_mlx_"), (
+        f"expected an identifying prefix on the temp WAV, got {basename!r}"
+    )
+    if os.name == "posix":
+        assert captured_modes[0] == 0o600, (
+            f"expected owner-only permissions (0o600) on the temp WAV "
+            f"while it existed, got {oct(captured_modes[0])}"
+        )
+    # Still cleaned up on the success path.
+    assert not os.path.exists(recorded_paths[0])
+
+
+def test_parakeet_buffer_temp_file_is_removed_even_when_transcribe_raises(
+    service_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `finally` cleanup path must run when `transcribe()` itself fails.
+
+    Before this fix the file was created, closed, and reopened by path to
+    write the audio -- a crash anywhere in that window (or afterward, in
+    `transcribe()`) still relied on the same `finally`/`os.unlink`, but this
+    pins that the rewritten write-through-the-same-handle path preserved
+    that guarantee rather than accidentally dropping it.
+    """
+    pcm = struct.pack("<4h", 0, 1, -1, 32767)
+    recorded_paths: list[str] = []
+
+    class _FakeParakeetModel:
+        def transcribe(self, path):
+            recorded_paths.append(str(path))
+            raise RuntimeError("simulated transcription failure")
+
+    service = _service(service_module, monkeypatch)
+    _install_fake_mlx(monkeypatch)
+    monkeypatch.setattr(service_module, "PARAKEET_MLX_AVAILABLE", True)
+    monkeypatch.setattr(
+        service_module,
+        "_ensure_parakeet_mlx_import",
+        lambda: (lambda model, dtype=None: _FakeParakeetModel()),
+    )
+
+    with pytest.raises(service_module.TranscriptionError):
+        service._transcribe_buffer_with_parakeet_mlx(
+            pcm,
+            sample_rate=16000,
+            channels=1,
+            sample_width=2,
+            model=None,
+            language=None,
+        )
+
+    assert len(recorded_paths) == 1
+    assert not os.path.exists(recorded_paths[0]), (
+        "the temp WAV survived a raise from transcribe() -- the finally "
+        "cleanup did not run (or ran against the wrong path)"
+    )
