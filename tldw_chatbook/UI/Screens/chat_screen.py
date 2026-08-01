@@ -2211,6 +2211,23 @@ class ChatScreen(BaseAppScreen):
         # "selected" row indicator picks up the new active session promptly.
         self._invalidate_console_persisted_rows_cache()
         await self._sync_native_console_chat_ui()
+        # Task-7: this is the shared activation path for every "new session"
+        # entry point (plain Ctrl+T, "New Temporary"/Alt+T, and the other
+        # internal callers below) -- `_sync_native_console_chat_ui()` above
+        # never touches `#console-temporary-chip` (same reason it never
+        # touches the scope chip; see `_sync_console_retrieval_scope_row`).
+        # Without this push a freshly created temporary tab would render
+        # with no marker at all until some unrelated event (a tab switch
+        # away and back) happened to resync it -- the chip's entire purpose
+        # is to be visible the moment the tab exists. It also clears a
+        # stale "Temporary" chip left over when a new ordinary chat is
+        # created right after a temporary one.
+        try:
+            status_chips = self.query_one("#console-status-chips", ConsoleStatusChips)
+        except QueryError:
+            pass
+        else:
+            status_chips.sync_temporary_chip(self._console_active_session_is_ephemeral())
         self._focus_console_composer_if_needed(force=True)
 
     @on(Button.Pressed, "#console-change-workspace")
@@ -5796,7 +5813,7 @@ class ChatScreen(BaseAppScreen):
         return state.item_count if state.is_scoped else None
 
     def _sync_console_retrieval_scope_row(self) -> None:
-        """Refresh the mounted retrieval-scope row AND status-strip chip.
+        """Refresh the mounted retrieval-scope row AND status-strip chips.
 
         Task-10: the status-pills strip's ``#console-scope-chip`` (above the
         composer) renders from the
@@ -5806,6 +5823,13 @@ class ChatScreen(BaseAppScreen):
         refresh triggers identical to the row's (this method's own two
         call sites: after a scope-picker save, and the first-send
         persist-flush hook).
+
+        Task-7 (temporary chip): this is also the one place ``#console-
+        temporary-chip`` is refreshed for every session-switch trigger this
+        method already covers (resume, tab activation, scope-picker save,
+        first-persist flush) -- see ``ConsoleTemporaryChip``/
+        ``sync_temporary_chip`` for why it is kept off the general
+        control-bar sync tick, same as the scope chip.
         """
         state = self._build_console_retrieval_scope_state()
         try:
@@ -5821,6 +5845,7 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         status_chips.sync_scope_chip(state)
+        status_chips.sync_temporary_chip(self._console_active_session_is_ephemeral())
 
     async def _resolve_console_effective_scope_state(
         self, session: "ConsoleChatSession"
@@ -9226,6 +9251,24 @@ class ChatScreen(BaseAppScreen):
         if console_store is not None and console_store.active_session_id is not None:
             return str(console_store.active_session_id)
         return None
+
+    def _console_active_session_is_ephemeral(self) -> bool:
+        """Return whether the active Console session is temporary.
+
+        Public-API only (`sessions()` + `active_session_id`): the store has
+        no single-session getter that is not private. The scan is over open
+        tabs, so it is a handful of items.
+        """
+        store = self._console_chat_store
+        if store is None:
+            return False
+        active_id = store.active_session_id
+        if not active_id:
+            return False
+        return any(
+            session.id == active_id and session.ephemeral
+            for session in store.sessions()
+        )
 
     def _console_rail_available_columns(self) -> int | None:
         """Return available screen width for responsive rail state."""

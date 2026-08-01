@@ -403,3 +403,67 @@ def test_controller_new_session_can_be_born_temporary():
     store = ConsoleChatStore()
     assert store.create_session(title="A").ephemeral is False
     assert store.create_session(title="B", ephemeral=True).ephemeral is True
+
+
+@pytest.mark.unit
+def test_temporary_chip_is_hidden_outside_a_temporary_chat():
+    """The chip says one thing; when it does not apply it vanishes."""
+    from tldw_chatbook.Chat.console_ephemeral import TEMPORARY_LABEL
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleStatusChips,
+    )
+
+    label, tooltip, hidden = ConsoleStatusChips._temporary_chip_render(True)
+    assert label == TEMPORARY_LABEL
+    assert hidden is False
+    assert "not saved" in tooltip.lower()
+
+    _label, _tooltip, hidden_normal = ConsoleStatusChips._temporary_chip_render(False)
+    assert hidden_normal is True
+
+
+@pytest.mark.unit
+def test_console_active_session_is_ephemeral_reads_the_active_flag():
+    """The shared accessor Task 8/9 build on: store-only, no widget needed.
+
+    ``ConsoleChatStore`` has no public single-session getter, so this reads
+    ``sessions()`` + ``active_session_id`` -- the same public surface any
+    other caller has.
+    """
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._console_chat_store = None
+    assert screen._console_active_session_is_ephemeral() is False
+
+    store = ConsoleChatStore()
+    screen._console_chat_store = store
+    normal = store.create_session(title="Normal")
+    temp = store.create_session(title="Temp", ephemeral=True)
+
+    store.switch_session(normal.id)
+    assert screen._console_active_session_is_ephemeral() is False
+
+    store.switch_session(temp.id)
+    assert screen._console_active_session_is_ephemeral() is True
+
+
+@pytest.mark.unit
+def test_temporary_chip_posts_save_requested_on_activation():
+    """The chip is the save affordance: activating it posts ``SaveRequested``.
+
+    Mirrors ``ConsoleApprovalsChip``'s own activation contract test -- Task 8
+    wires the handler for this message.
+    """
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleTemporaryChip,
+    )
+
+    chip = ConsoleTemporaryChip.__new__(ConsoleTemporaryChip)
+    posted: list[object] = []
+    chip.post_message = lambda message: posted.append(message)  # type: ignore[assignment]
+
+    chip.action_save_chat()
+
+    assert any(isinstance(m, ConsoleTemporaryChip.SaveRequested) for m in posted)

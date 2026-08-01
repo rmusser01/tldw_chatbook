@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleControlState,
     ConsoleRetrievalScopeState,
 )
+from tldw_chatbook.Chat.console_ephemeral import TEMPORARY_LABEL, TEMPORARY_TOOLTIP
 from tldw_chatbook.Chat.rag_scope import SCOPE_EMPTY_NOTICE_TEMPLATE, SCOPE_REASON_EMPTY
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from tldw_chatbook.Widgets.Console.console_retrieval_scope_row import (
@@ -142,6 +143,29 @@ class ConsoleScopeChip(ConsoleChip):
         self.post_message(self.OpenRequested())
 
 
+class ConsoleTemporaryChip(ConsoleChip):
+    """Temporary-chat chip that doubles as the "Save this chat" action.
+
+    Same activation contract as the sibling action chips: Enter/Space while
+    focused, or a click. The chip is the marker AND the escape hatch, so the
+    user never has to remember where saving lives.
+    """
+
+    BINDINGS = [
+        Binding("enter", "save_chat", "Save this chat", show=False),
+        Binding("space", "save_chat", "Save this chat", show=False),
+    ]
+
+    class SaveRequested(Message):
+        """Posted when the temporary chip is activated."""
+
+    def action_save_chat(self) -> None:
+        self.post_message(self.SaveRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.SaveRequested())
+
+
 class ConsoleStatusChips(Horizontal):
     """Full-width strip of Console readiness pills (provider/model/assistant/
     RAG/source/tool/approval plus the retrieval-scope chip).
@@ -175,6 +199,7 @@ class ConsoleStatusChips(Horizontal):
         )
         self.state = state
         self.scope_state = scope_state
+        self.ephemeral = False
         self.styles.height = 1
         self.styles.min_height = 1
         self.styles.max_height = 1
@@ -201,6 +226,8 @@ class ConsoleStatusChips(Horizontal):
         return chip
 
     def compose(self) -> ComposeResult:
+        # First: this is a property of the whole chat, not one setting.
+        yield self._temporary_chip()
         yield self._chip(
             self.state.provider_label,
             id="console-provider-chip",
@@ -237,6 +264,56 @@ class ConsoleStatusChips(Horizontal):
         # hidden entirely when unscoped rather than showing a
         # "Scope: everything" default (see ``_scope_chip_render``).
         yield self._scope_chip()
+
+    def _temporary_chip(self) -> ConsoleTemporaryChip:
+        label, tooltip, hidden = self._temporary_chip_render(self.ephemeral)
+        chip = self._chip(
+            label,
+            id="console-temporary-chip",
+            chip_class=ConsoleTemporaryChip,
+        )
+        chip.tooltip = tooltip
+        chip.display = not hidden
+        return chip
+
+    @staticmethod
+    def _temporary_chip_render(ephemeral: bool) -> tuple[str, str, bool]:
+        """Pure ``(label, tooltip, hidden)`` render for the temporary chip.
+
+        Args:
+            ephemeral: Whether the active session is temporary.
+
+        Returns:
+            ``label``: chip text. ``tooltip``: hover/focus text, which is
+            where the save affordance is spelled out. ``hidden``: ``True``
+            for a normal chat -- a "Saved" chip on every ordinary
+            conversation would be noise, and the strip is width-bounded.
+        """
+        if not ephemeral:
+            return TEMPORARY_LABEL, TEMPORARY_TOOLTIP, True
+        return TEMPORARY_LABEL, TEMPORARY_TOOLTIP, False
+
+    def sync_temporary_chip(self, ephemeral: bool) -> None:
+        """Refresh the temporary chip from the active session's flag.
+
+        Separate from ``sync_state`` for the same reason ``sync_scope_chip``
+        is: this is pushed from the screen when the active session changes,
+        not on every control-bar sync tick.
+
+        Args:
+            ephemeral: Whether the active session is temporary.
+        """
+        if ephemeral == self.ephemeral:
+            return
+        self.ephemeral = ephemeral
+        try:
+            chip = self.query_one("#console-temporary-chip", ConsoleTemporaryChip)
+        except NoMatches:
+            return
+        label, tooltip, hidden = self._temporary_chip_render(ephemeral)
+        chip.update(label)
+        chip.tooltip = tooltip
+        chip.display = not hidden
 
     def _scope_chip(self) -> ConsoleScopeChip:
         label, tooltip, hidden, alert = self._scope_chip_render(self.scope_state)
