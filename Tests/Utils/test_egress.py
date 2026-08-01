@@ -161,6 +161,56 @@ def test_kill_switch_short_circuits_before_dns(monkeypatch):
     assert d.allowed and d.reason == "disabled"
 
 
+def test_egress_block_log_redacts_url_credentials(monkeypatch):
+    messages = []
+    monkeypatch.setattr(egress.logger, "warning", messages.append)
+    monkeypatch.setattr(egress, "_resolve", lambda host: ["10.0.0.1"])
+
+    decision = evaluate_url_policy(
+        "https://user:password@example.test:8443/models/parakeet.gguf"
+        "?token=secret#download"
+    )
+
+    assert decision.allowed is False
+    assert len(messages) == 1
+    assert "https://example.test:8443" in messages[0]
+    for sensitive_value in (
+        "user:password@",
+        "/models/parakeet.gguf",
+        "token=secret",
+        "secret",
+        "#download",
+    ):
+        assert sensitive_value not in messages[0]
+
+
+def test_disabled_egress_log_redacts_url_credentials(monkeypatch):
+    messages = []
+    monkeypatch.setattr(egress.logger, "debug", messages.append)
+    monkeypatch.setattr(
+        egress,
+        "get_cli_setting",
+        lambda section, key=None, default=None: False if key == "enabled" else default,
+    )
+
+    decision = evaluate_url_policy(
+        "https://user:password@example.test:8443/models/parakeet.gguf"
+        "?token=secret#download"
+    )
+
+    assert decision.allowed is True
+    assert len(messages) == 1
+    assert "https://example.test:8443" in messages[0]
+    for sensitive_value in (
+        "user:password@",
+        "/models/parakeet.gguf",
+        "token=secret",
+        "secret",
+        "#download",
+    ):
+        assert sensitive_value not in messages[0]
+
+
 def test_check_url_or_raise_raises_with_remedy(monkeypatch):
     _resolve_to(monkeypatch, ["127.0.0.1"])
     with pytest.raises(EgressBlockedError) as exc:
