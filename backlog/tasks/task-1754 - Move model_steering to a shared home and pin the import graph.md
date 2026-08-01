@@ -1,7 +1,7 @@
 ---
 id: TASK-1754
 title: Move model_steering to a shared home and pin the import graph
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-01 12:45'
 labels:
