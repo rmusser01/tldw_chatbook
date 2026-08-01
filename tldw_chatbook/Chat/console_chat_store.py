@@ -271,6 +271,15 @@ class ConsoleChatSession:
     #: IDs remain opaque in ``assistant_id`` and never populate this field.
     character_id: int | None = None
     character_name: str | None = None
+    #: Temporary conversation (spec 2026-07-31): this session is never written
+    #: to local storage. Enforced in exactly one place --
+    #: ``persist_session_if_needed`` refuses to mint a
+    #: ``persisted_conversation_id`` -- so every durable write downstream
+    #: no-ops along the branch it already takes with no persistence adapter.
+    #: A write site that forgets about this flag therefore fails toward NOT
+    #: writing, which is the whole reason the guard lives at the id and not
+    #: at the 43 sites that consult ``self.persistence``.
+    ephemeral: bool = False
 
     def local_character_id(self) -> int | None:
         """Return the exact validated local character projection, if any."""
@@ -422,8 +431,15 @@ class ConsoleChatStore:
         assistant_authority_id: str | None = None,
         character_id: int | None = None,
         character_name: str | None = None,
+        ephemeral: bool = False,
     ) -> ConsoleChatSession:
-        """Create and activate a new native Console session."""
+        """Create and activate a new native Console session.
+
+        Args:
+            ephemeral: When True the session is temporary -- never written to
+                local storage until ``promote_ephemeral_session`` clears the
+                flag.
+        """
         session = ConsoleChatSession(
             title=title,
             workspace_id=workspace_id or self.workspace_context.active_workspace_id,
@@ -434,6 +450,7 @@ class ConsoleChatStore:
             assistant_authority_id=assistant_authority_id,
             character_id=character_id,
             character_name=character_name,
+            ephemeral=ephemeral,
         )
         self._sessions[session.id] = session
         self._messages_by_session[session.id] = []
@@ -459,6 +476,7 @@ class ConsoleChatStore:
         assistant_authority_id: str | None = None,
         character_id: int | None = None,
         character_name: str | None = None,
+        ephemeral: bool = False,
     ) -> ConsoleChatSession:
         """Create and activate a native session from persisted conversation data.
 
@@ -498,6 +516,15 @@ class ConsoleChatStore:
         Returns:
             The newly created and activated Console session.
         """
+        # A restored session comes FROM durable storage, so it is by
+        # definition not temporary. Refuse rather than silently produce a
+        # session that is both temporary and persisted -- the one state the
+        # gate's invariant does not allow.
+        if ephemeral:
+            raise ValueError(
+                "Cannot restore a persisted session as temporary: a temporary "
+                "session has no persisted conversation."
+            )
         session = self.create_session(
             title=title,
             workspace_id=workspace_id,
@@ -2188,14 +2215,21 @@ class ConsoleChatStore:
         """Persist a session once, returning its persisted conversation ID.
 
         Returns:
-            The persisted conversation ID, or ``None`` when no persistence
-            adapter is configured.
+            The persisted conversation ID; ``None`` when no persistence
+            adapter is configured, or when the session is temporary.
 
         Raises:
             ValueError: If ``runtime_backend`` is not exactly ``"local"`` or
                 ``"server"``.
         """
         session = self._session_or_raise(session_id)
+        # Temporary conversations (spec 2026-07-31) stop here, BEFORE the
+        # already-persisted check and before the adapter is consulted. This
+        # single early return is the entire durability mechanism: with no
+        # conversation id, `persist_message_if_needed` and every other
+        # conversation-scoped write returns early on its own.
+        if session.ephemeral:
+            return None
         if session.persisted_conversation_id is not None:
             return session.persisted_conversation_id
         if self.persistence is None:
