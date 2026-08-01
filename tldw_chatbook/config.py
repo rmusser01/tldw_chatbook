@@ -90,6 +90,28 @@ def _optional_package_available(module_name: str) -> bool:
         return False
 
 
+def _default_stt_provider_for_platform() -> str:
+    """Return the speech-to-text provider this platform prefers, unconfigured.
+
+    macOS prefers the Apple-Silicon-native engines when installed --
+    parakeet-mlx first, then lightning-whisper-mlx -- and every other
+    platform (and macOS with neither installed) falls back to
+    faster-whisper. This is the single source of truth for that
+    preference: `load_settings()` uses it for `STT_settings.default_stt_provider`,
+    and `CONFIG_TOML_CONTENT` is interpolated with it so the
+    `[transcription] default_provider` line a fresh install ships never
+    contradicts what this function computes (task-867 -- the template used
+    to hardcode "faster-whisper" unconditionally, so the darwin preference
+    could never engage on a normal install).
+    """
+    if sys.platform == "darwin":
+        if _optional_package_available("parakeet_mlx"):
+            return "parakeet-mlx"
+        if _optional_package_available("lightning_whisper_mlx"):
+            return "lightning-whisper-mlx"
+    return "faster-whisper"
+
+
 def application_owned_config_directory(config_path: Path) -> Path | None:
     """Return the app-owned default config parent, never a custom parent."""
 
@@ -965,22 +987,11 @@ def load_settings(force_reload: bool = False) -> Dict:
     elevenlabs_api_key = get_api_key("elevenlabs_api_key", "ELEVENLABS_API_KEY")
 
     # Determine platform-specific default STT provider
-    default_stt_provider = "faster-whisper"
+    default_stt_provider = _default_stt_provider_for_platform()
     if sys.platform == "darwin":
-        if _optional_package_available("parakeet_mlx"):
-            default_stt_provider = "parakeet-mlx"
-            logger.debug(
-                "Detected parakeet-mlx available on macOS, setting as default STT provider"
-            )
-        elif _optional_package_available("lightning_whisper_mlx"):
-            default_stt_provider = "lightning-whisper-mlx"
-            logger.debug(
-                "Detected lightning-whisper-mlx available on macOS, setting as default STT provider"
-            )
-        else:
-            logger.debug(
-                "No macOS-specific STT providers found, using faster-whisper as default"
-            )
+        logger.debug(
+            f"Darwin platform-preferred STT provider resolved to: {default_stt_provider}"
+        )
 
     config_dict = {
         # General App
@@ -3385,8 +3396,11 @@ temp_dir = ""  # Empty means use system temp
 [transcription]
 # Default transcription provider
 # Options: "faster-whisper", "parakeet-onnx", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "lightning-whisper-mlx", "remote-whisper"
-# Note: On macOS, defaults to parakeet-mlx or lightning-whisper-mlx if available
-default_provider = "faster-whisper"
+# Resolved for this install when this file was first created: parakeet-mlx or
+# lightning-whisper-mlx on macOS when installed, otherwise faster-whisper.
+# Edit this line to pin a different provider yourself -- your choice always
+# wins over the platform preference.
+default_provider = "__DEFAULT_TRANSCRIPTION_PROVIDER__"
 
 # Default model for transcription
 # For faster-whisper: large-v1, large-v2, large-v3, large, distil-large-v2, distil-large-v3,
@@ -3671,6 +3685,17 @@ title = "tldw chatbook"  # Title for the web page
 font_size = 12  # Browser terminal font size; 12 keeps Textual Web close to native terminal density
 debug = false  # Enable debug mode for development
 """
+
+# Resolve the `[transcription] default_provider` placeholder to this platform's
+# preferred engine before the template is parsed or ever written to disk
+# (task-867). `CONFIG_TOML_CONTENT` feeds both `DEFAULT_CONFIG_FROM_TOML`
+# below -- the baseline every config load merges the user's file on top of --
+# and the literal bytes a fresh install writes to `config.toml`, so this one
+# substitution fixes both without any reader needing to special-case an
+# absent key.
+CONFIG_TOML_CONTENT = CONFIG_TOML_CONTENT.replace(
+    "__DEFAULT_TRANSCRIPTION_PROVIDER__", _default_stt_provider_for_platform()
+)
 
 try:
     DEFAULT_CONFIG_FROM_TOML: Dict[str, Any] = tomllib.loads(CONFIG_TOML_CONTENT)
@@ -4408,7 +4433,14 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
 
 
 # --- CLI Setting Getter ---
-def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
+# Sentinel distinguishing "no default argument was supplied at all" from an
+# explicitly-passed `None` -- see the dotted-form disambiguation below.
+_CLI_SETTING_DEFAULT_UNSET = object()
+
+
+def get_cli_setting(
+    section: str, key: str = None, default: Any = _CLI_SETTING_DEFAULT_UNSET
+) -> Any:
     """Helper to get a specific setting from the loaded CLI configuration.
 
     Can be called in two ways:
@@ -4418,6 +4450,18 @@ def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
     Dotted sections/keys that miss the flat top-level lookup are resolved
     against the nested TOML tree (``[chat.images]`` loads as
     ``config["chat"]["images"]``); a flat top-level hit always wins.
+
+    Disambiguating form 1 from form 2 when exactly two positional
+    arguments are supplied and ``section`` contains a dot: an explicit
+    third argument (even ``None``) always means "traditional form,
+    honour this default". Without one, ``section`` is the complete
+    dotted path and ``key`` is really the default -- for a default of
+    *any* type, not just non-string ones. (TASK-1771: the previous
+    heuristic keyed off ``isinstance(key, str)``, so a string default --
+    the common case for provider/model/language/device names -- was
+    misread as one more path segment to walk, which always missed and
+    silently returned ``None`` instead of either the configured value or
+    the caller's own fallback.)
 
     Args:
         section: Top-level section name, or a dotted path into nested tables.
@@ -4431,6 +4475,9 @@ def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
     """
     config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
 
+    default_was_given = default is not _CLI_SETTING_DEFAULT_UNSET
+    resolved_default = default if default_was_given else None
+
     # Handle dotted notation when key is None (called with positional args)
     if key is None and "." in section:
         # Split on first dot only to handle nested keys
@@ -4439,18 +4486,33 @@ def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
         key = parts[1]
     elif key is None:
         # No dot found and no key provided - invalid call
-        return default
-
-    # Handle the case where default was passed as second argument in dotted notation
-    # e.g., get_cli_setting("section.key", 500) where 500 is the default
-    if not isinstance(key, str) and default is None:
-        default = key
-        if "." in section:
-            parts = section.split(".", 1)
-            section = parts[0]
-            key = parts[1]
-        else:
-            return default
+        return resolved_default
+    elif not default_was_given and "." in section:
+        # Pure 2-arg dotted form: get_cli_setting("a.b[.c...]", default).
+        # `key` is really the caller's default (whatever its type) --
+        # reclaim it before re-splitting `section` the same way the
+        # 1-arg branch above does.
+        resolved_default = key
+        parts = section.split(".", 1)
+        section = parts[0]
+        key = parts[1]
+    elif not default_was_given and not isinstance(key, str):
+        # 2-arg call on an UNDOTTED section whose second positional is a
+        # default, not a key -- `get_cli_setting("database", {})`. Keys are
+        # always strings, so a non-string here can only be a default. This
+        # shape never resolved anything (it returned the default and ignored
+        # config), and it must keep returning that default rather than
+        # reaching `dict.get()` with an unhashable key, which would raise
+        # TypeError -- turning a long-lived silent misread into a crash for
+        # callers like Helper_Scripts/Mass-Ingestion (found reviewing the
+        # TASK-1771 fix).
+        logger.warning(
+            "get_cli_setting({!r}, <{}>) has no key; returning the default. "
+            "Use get_cli_setting(section, key, default).",
+            section,
+            type(key).__name__,
+        )
+        return key
 
     # Flat lookup first: preserves every previously-working shape bit-for-bit
     # (a literal dotted top-level key, while impossible from TOML, wins).
@@ -4468,13 +4530,29 @@ def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
         node: Any = config
         for part in (*section.split("."), *key.split(".")):
             if not isinstance(node, dict) or part not in node:
-                return default
+                return resolved_default
             node = node[part]
         return node
-    if isinstance(section_data, dict):
-        return section_data.get(key, default)
+    if isinstance(section_data, dict) and isinstance(key, str):
+        return section_data.get(key, resolved_default)
+    # A non-string `key` reaches here from a caller that passed a whole default
+    # as the second positional argument while meaning "give me this section"
+    # -- e.g. `get_cli_setting("database", {})`. That shape never worked (it
+    # silently returned the default and ignored config), but it must not
+    # CRASH: `dict.get()` on an unhashable key raises TypeError, which would
+    # turn a long-standing silent misread into a hard failure in callers that
+    # have lived with it for a long time (Helper_Scripts/Mass-Ingestion, found
+    # in review of the TASK-1771 fix). Return the caller's default, exactly as
+    # before, and let the misuse stay visible in the warning below.
+    if not isinstance(key, str):
+        logger.warning(
+            "get_cli_setting({!r}, ...) was called with a non-string key ({}); "
+            "returning the default. Use get_cli_setting(section, key, default).",
+            section,
+            type(key).__name__,
+        )
     # If section is not a dict or not found, return default
-    return default
+    return resolved_default
 
 
 def get_chat_defaults_streaming(default: bool = True) -> bool:

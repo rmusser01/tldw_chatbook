@@ -12112,7 +12112,7 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             A directory path suitable for ``FileOpen(location=...)``.
         """
-        remembered = get_cli_setting("library.ingest", "last_directory")
+        remembered = get_cli_setting("library.ingest", "last_directory", None)
         if remembered:
             try:
                 candidate = Path(str(remembered)).expanduser()

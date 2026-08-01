@@ -1,7 +1,7 @@
 ---
 id: TASK-1734
 title: Retire dormant Audio/voice_commands.py
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-29 16:13'
 labels:
@@ -65,7 +65,21 @@ either module (`grep -rl` over `Tests/` for both module names returns only the u
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `tldw_chatbook/Audio/voice_commands.py` and `tldw_chatbook/Widgets/voice_command_dialog.py` are either deleted, or explicitly rebound to a real production caller if a maintainer decides app-wide voice navigation (V3+) should reuse this grammar instead of retiring it
-- [ ] #2 A repo-wide grep for `voice_commands`, `VoiceCommandProcessor`, `voice_command_dialog`, and `VoiceCommandDialog` (excluding `__pycache__` and the unrelated `Voice_Assistant_Interop`/`tldw_api` REST usage) turns up no references once the decision above is carried out
-- [ ] #3 The full test suite (excluding the two known-hanging real-hardware audio test files) passes with the change in place
+- [x] #1 `tldw_chatbook/Audio/voice_commands.py` and `tldw_chatbook/Widgets/voice_command_dialog.py` are either deleted, or explicitly rebound to a real production caller if a maintainer decides app-wide voice navigation (V3+) should reuse this grammar instead of retiring it
+- [x] #2 A repo-wide grep for `voice_commands`, `VoiceCommandProcessor`, `voice_command_dialog`, and `VoiceCommandDialog` (excluding `__pycache__` and the unrelated `Voice_Assistant_Interop`/`tldw_api` REST usage) turns up no references once the decision above is carried out
+- [x] #3 The full test suite (excluding the two known-hanging real-hardware audio test files) passes with the change in place
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Deleted `Audio/voice_commands.py` (380 lines) and its sole importer
+`Widgets/voice_command_dialog.py` (439 lines) -- 819 lines total, no production caller and no
+tests. Re-verified the dead-code claim against current dev before deleting: the dialog is
+imported by nothing, and the module's only other grep hits belong to an unrelated feature
+(`Voice_Assistant_Interop`/`tldw_api` server-side voice-assistant commands), which was left
+untouched. Console dictation's own grammar lives in `Chat/console_voice_input.py` (V2, PR #1171).
+Verified app/Audio/Widgets import cleanly post-deletion and the voice suites stay green (138).
+Two historical TTS design docs still name the dialog; left as-is, they are dated records rather
+than live documentation.
+<!-- SECTION:NOTES:END -->
