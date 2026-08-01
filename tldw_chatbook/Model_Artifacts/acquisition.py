@@ -1040,8 +1040,9 @@ class ArtifactAcquisitionService:
         *,
         sources: ArtifactSourceMap | None = None,
         progress: Callable[[AcquisitionProgress], None] | None = None,
+        activate: bool = True,
     ) -> ArtifactRef:
-        """Acquire and activate one consented closure, resuming idempotently.
+        """Acquire one consented closure and optionally activate it, resuming idempotently.
 
         Serializes against every other ``provision()`` call twice over: an
         in-process ``asyncio.Lock`` queues same-process callers first (so
@@ -1050,7 +1051,7 @@ class ArtifactAcquisitionService:
         exclusive, non-blocking ``ACQUISITION_SESSION_LEASE_KEY`` lease
         serializes against every other OS process. The session lease is
         held for this call's ENTIRE run -- acquired before any phase runs,
-        released only in a ``finally`` after activation succeeds or any step
+        released only in a ``finally`` after provision completes or any step
         raises -- because ``reconcile()``'s managed-staging GC
         (``service.py``'s ``_gc_managed_staging``) treats a free session
         lease as permission to delete orphaned download staging; releasing
@@ -1077,8 +1078,9 @@ class ArtifactAcquisitionService:
         phases strictly in order -- fetch (Task 7), pre-verify (Task 8),
         install (Task 8) -- before the loop moves to the next artifact; a
         ``verify-install`` progress event follows each artifact's install.
-        Once every artifact is installed, the whole closure is activated
-        (``core.activate``) and a final ``activate`` progress event fires.
+        When ``activate`` is true, once every artifact is installed, the
+        whole closure is activated (``core.activate``) and a final
+        ``activate`` progress event fires.
 
         Args:
             root: The root artifact reference to provision.
@@ -1099,10 +1101,14 @@ class ArtifactAcquisitionService:
             progress: Optional sink for ``AcquisitionProgress`` events
                 emitted by every phase: real byte detail for ``fetch`` and
                 ``pre-verify``, indeterminate per-artifact events for
-                ``verify-install`` and ``activate``.
+                ``verify-install``, and an indeterminate ``activate`` event
+                when activation is requested.
+            activate: Whether to select the provisioned root for use after
+                installing its closure. Defaults to ``True`` for existing
+                callers.
 
         Returns:
-            The activated root artifact reference.
+            The provisioned root artifact reference.
 
         Raises:
             AcquisitionBusyError: Another acquisition session -- in this
@@ -1117,11 +1123,10 @@ class ArtifactAcquisitionService:
                 re-walk.
             TransferError: A file failed to fetch, a staged file failed
                 pre-verify a second time after one automatic refetch, or
-                ``core.install``/``core.activate`` raised a core
-                ``ArtifactError`` (integrity, conflict, or state/lease
+                ``core.install`` or requested ``core.activate`` raised a
+                core ``ArtifactError`` (integrity, conflict, or state/lease
                 contention -- see ``_run_core_call``). Nothing further is
-                installed or activated for that artifact once this is
-                raised.
+                installed or activated for that artifact once this is raised.
         """
         async with self._lock:
             loop = asyncio.get_running_loop()
@@ -1234,6 +1239,8 @@ class ArtifactAcquisitionService:
                         progress_state, "verify-install", descriptor.reference
                     )
 
+                if not activate:
+                    return root
                 activated = await self._run_core_call(
                     "activate", root, functools.partial(self._core.activate, root)
                 )

@@ -193,6 +193,8 @@ async def stream_fetch(
                 if not location:
                     raise FetchTransportError("redirect without location")
                 current = current.join(location)
+                if origin.scheme == "https" and current.scheme != "https":
+                    raise FetchTransportError("HTTPS redirect downgrade")
                 continue
             if resume_from and response.status_code != 206:
                 # Server ignored Range (200 full body / no support).

@@ -8,6 +8,7 @@ from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 from tldw_chatbook.Model_Artifacts.fetch import (
     FetchRestartRequired,
     FetchTooLargeError,
+    FetchTransportError,
     FetchValidators,
     stream_fetch,
 )
@@ -266,3 +267,40 @@ def test_strip_headers_mirror_matches_egress():
     from tldw_chatbook.Model_Artifacts import fetch
 
     assert set(fetch._STRIP_HEADERS) == set(egress._STRIP_HEADERS)
+
+
+@pytest.mark.asyncio
+async def test_https_redirect_downgrade_stops_before_second_request(tmp_path, monkeypatch):
+    """An HTTPS-to-HTTP redirect must fail before the HTTP hop is requested.
+
+    This catches a missing downgrade guard: without it, the redirect loop
+    makes a second request to the HTTP storage URL below.
+    """
+    requests: list[str] = []
+
+    async def allow_egress(_url: str, *, trusted_origins: frozenset[str]) -> None:
+        """Keep this transport-only test independent of DNS/egress policy."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        if request.url == httpx.URL("https://catalog.example/model.gguf"):
+            return httpx.Response(
+                302,
+                headers={"Location": "http://storage.example/model.gguf"},
+                request=request,
+            )
+        pytest.fail(f"downgraded redirect made a second request: {request.url}")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Model_Artifacts.fetch.check_url_or_raise_async", allow_egress
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(FetchTransportError, match="HTTPS redirect downgrade"):
+            await stream_fetch(
+                "https://catalog.example/model.gguf",
+                tmp_path / "model.gguf",
+                client=client,
+                max_bytes=1024,
+            )
+
+    assert requests == ["https://catalog.example/model.gguf"]
