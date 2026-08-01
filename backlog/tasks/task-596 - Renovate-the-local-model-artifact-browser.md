@@ -2,9 +2,10 @@
 id: TASK-596
 title: Renovate the local model artifact browser
 status: In Progress
-assignee: []
+assignee:
+  - '@codex'
 created_date: '2026-07-24 01:02'
-updated_date: '2026-08-01 16:42'
+updated_date: '2026-08-01 19:05'
 labels:
   - stt
   - artifacts
@@ -36,8 +37,22 @@ Replace the existing downloader-oriented GGUF browser with a provider-neutral ar
 - [ ] #8 The model picker, install confirmation, progress, activation, and installed-state controls are reusable by Settings and onboarding without duplicating artifact or download logic.
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. ADR required: no
+ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
+Reason: ADR-025 already governs the shared model store, trust labels, acquisition, activation, and deletion boundaries.
+2. Implement Phase 1 Tasks 1-4 test-first: neutral store access, curated registry, preflight provenance, and pure state mapping.
+3. Implement the minimum shared install plan/progress/modal controls and migrate the existing Library Parakeet flow.
+4. Add offline Curated and Installed Lab views, preserving lazy I/O and lease-safe activation/deletion behavior.
+5. Run focused regression tests, static checks, and code review; leave Remote, GGUF import, legacy-browser retirement, and idle-worker recycle for their approved later phases.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Claimed 2026-08-01 (ppqq clone). Design approved section-by-section; spec at Docs/superpowers/specs/2026-08-01-task-596-model-artifact-browser-design.md. Phased: Phase 1 = curated registry + pure view-model + shared widgets + Curated/Installed views + Library modal refactored onto the shared modal (AC 1 partial, 2, 3, 4, 6 local, 7, 8). Phase 2 = Remote search with resolve-on-select. Phase 3 = GGUF import + server path resolution + retire Widgets/HuggingFace. AC 5's idle heavy-worker recycle is DEFERRED: no mechanism exists to ask a worker to unload a resident model; Phase 1 reports lease blockers honestly. Claiming per the TASK-595 duplicate-implementation guard -- check this note and the spec filename before starting parallel work.
+Claimed 2026-08-01 (ppqq clone). Design approved section-by-section; spec at Docs/superpowers/specs/2026-08-01-task-596-model-artifact-browser-design.md. Phased: Phase 1 = curated registry + pure view-model + shared widgets + Curated/Installed views + Library modal refactored onto the shared modal (AC 1 partial, 2, 3, 4, 6 local, 7, 8). Phase 2 = Remote search with resolve-on-select. Phase 3 = GGUF import + server path resolution + retire Widgets/HuggingFace. AC 5 idle heavy-worker recycle is deferred because no pool-owner unload mechanism exists; Phase 1 reports blockers without bypassing leases.
+
+Recovery 2026-08-01: the stale ppqq claim was exhaustively checked before resuming. No corresponding local/remote branch, worktree, GitHub PR, or visible Codex task was found. Recovery continues Phase 1 in codex/task-596-model-browser-phase-1 from origin/dev; no duplicate implementation was located.
 <!-- SECTION:NOTES:END -->
