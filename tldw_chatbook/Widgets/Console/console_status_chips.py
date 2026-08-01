@@ -65,6 +65,54 @@ class ConsoleApprovalsChip(ConsoleChip):
         self.post_message(self.ReviewRequested())
 
 
+class ConsoleModelChip(ConsoleChip):
+    """Provider/model chip that opens the quick model popover when activated.
+
+    task-1670: mirrors ``ConsoleApprovalsChip``/``ConsoleScopeChip`` exactly
+    -- Enter/Space while focused, or a click, opens the same popover Alt+M
+    opens (``ChatScreen.action_open_console_model_popover``). Both the
+    Provider and Model chips use this class; they are two views of one
+    setting, so either is a reasonable place to click.
+    """
+
+    BINDINGS = [
+        Binding("enter", "open_model_popover", "Open model settings", show=False),
+        Binding("space", "open_model_popover", "Open model settings", show=False),
+    ]
+
+    class OpenRequested(Message):
+        """Posted when a provider/model chip is activated."""
+
+    def action_open_model_popover(self) -> None:
+        self.post_message(self.OpenRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.OpenRequested())
+
+
+class ConsoleAssistantChip(ConsoleChip):
+    """Character/persona chip that opens the character picker when activated.
+
+    task-1672: same activation contract as the sibling action chips. The
+    chip stays actionable even when it reads "Assistant: General" -- that
+    is precisely when a user most wants to pick a character.
+    """
+
+    BINDINGS = [
+        Binding("enter", "open_character_picker", "Choose character", show=False),
+        Binding("space", "open_character_picker", "Choose character", show=False),
+    ]
+
+    class OpenRequested(Message):
+        """Posted when the assistant/character chip is activated."""
+
+    def action_open_character_picker(self) -> None:
+        self.post_message(self.OpenRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.OpenRequested())
+
+
 class ConsoleScopeChip(ConsoleChip):
     """Retrieval-scope chip that opens the scope picker when activated.
 
@@ -153,9 +201,21 @@ class ConsoleStatusChips(Horizontal):
         return chip
 
     def compose(self) -> ComposeResult:
-        yield self._chip(self.state.provider_label, id="console-provider-chip")
-        yield self._chip(self.state.model_label, id="console-model-chip")
-        yield self._chip(self.state.assistant_label, id="console-assistant-chip")
+        yield self._chip(
+            self.state.provider_label,
+            id="console-provider-chip",
+            chip_class=ConsoleModelChip,
+        )
+        yield self._chip(
+            self.state.model_label,
+            id="console-model-chip",
+            chip_class=ConsoleModelChip,
+        )
+        yield self._chip(
+            self.state.assistant_label,
+            id="console-assistant-chip",
+            chip_class=ConsoleAssistantChip,
+        )
         yield self._chip(self.state.rag_label, id="console-rag-chip")
         yield self._chip(
             self.state.sources_label,
