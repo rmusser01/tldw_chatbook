@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -18,6 +20,7 @@ from tldw_chatbook.Model_Artifacts.service import (
     ArtifactNotReadyError,
     ArtifactRef,
     ModelArtifactService,
+    ReconcileReport,
 )
 from tldw_chatbook.Model_Artifacts.store import managed_service
 from tldw_chatbook.UI.Screens.model_browser_state import (
@@ -30,9 +33,15 @@ from tldw_chatbook.Widgets.ModelArtifacts.activation_controls import (
     DeletionRequested,
     ModelActivationControls,
 )
+from tldw_chatbook.Widgets.ModelArtifacts.install_progress import (
+    ModelInstallProgress,
+)
 from tldw_chatbook.Widgets.delete_confirmation_dialog import (
     DeleteConfirmationDialog,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
 
 MAX_UNMANAGED_MODELS = 500
 _MODEL_EXTENSIONS = frozenset({".gguf", ".bin", ".safetensors", ".pt", ".pth", ".onnx"})
@@ -54,6 +63,24 @@ def lifecycle_failure_message(exc: BaseException, *, operation: str) -> str:
     if isinstance(exc, ArtifactNotReadyError):
         return "This model is not ready and cannot be activated."
     return f"Model {operation} failed. See the application log for details."
+
+
+def reconcile_result_message(report: ReconcileReport) -> str:
+    """Summarize every reconciliation outcome without exposing local paths.
+
+    Args:
+        report: Completed managed-store reconciliation report.
+
+    Returns:
+        Sanitized user-visible repair summary.
+    """
+    return (
+        "Repair completed: "
+        f"{report.readiness_created} readiness records restored · "
+        f"{report.state_removed} stale state records removed · "
+        f"{len(report.staging_removed)} staging entries removed · "
+        f"{len(report.corrupt_artifacts)} corrupt models found."
+    )
 
 
 class InstalledView(Widget):
@@ -114,7 +141,10 @@ class InstalledView(Widget):
         self._usage: ArtifactDiskUsage | None = None
         self._loaded = False
         self._loading = False
+        self._reload_after_load = False
         self._load_error: str | None = None
+        self._install_active = False
+        self._install_progress: AcquisitionProgress | None = None
         self._operation_reference: ArtifactRef | None = None
         self._operation_name: str | None = None
         self._pending_delete_reference: ArtifactRef | None = None
@@ -122,9 +152,31 @@ class InstalledView(Widget):
 
     def compose(self) -> ComposeResult:
         """Compose from retained in-memory state without performing I/O."""
+        lifecycle_pending = (
+            self._loading
+            or self._operation_reference is not None
+            or self._operation_name is not None
+            or self._pending_delete_reference is not None
+        )
         with Horizontal(classes="installed-header"):
-            yield Button("Refresh", id="installed-models-refresh", variant="primary")
-            yield Button("Repair", id="installed-models-repair", variant="default")
+            yield Button(
+                "Refresh",
+                id="installed-models-refresh",
+                variant="primary",
+                disabled=lifecycle_pending,
+            )
+            yield Button(
+                "Repair",
+                id="installed-models-repair",
+                variant="default",
+                disabled=lifecycle_pending,
+            )
+        progress = ModelInstallProgress(
+            self._install_progress,
+            id="installed-model-install-progress",
+        )
+        progress.display = self._install_active
+        yield progress
         if self._loading:
             yield Static("Loading installed models…", markup=False)
         elif self._load_error:
@@ -151,6 +203,25 @@ class InstalledView(Widget):
             f"{self._format_bytes(self._usage.free_bytes)} free",
             markup=False,
         )
+
+    def set_install_state(
+        self,
+        progress: AcquisitionProgress | None,
+        *,
+        active: bool,
+    ) -> None:
+        """Mirror the current managed install into this persistent view.
+
+        Args:
+            progress: Latest worker progress, when one has been emitted.
+            active: Whether provisioning is still running.
+        """
+        self._install_active = active
+        if progress is not None:
+            self._install_progress = progress
+        if not active:
+            self._install_progress = None
+        self.refresh(recompose=True)
 
     def _row_widget(self, row: InventoryRow) -> Vertical:
         """Build one inventory row from pure render state."""
@@ -186,7 +257,9 @@ class InstalledView(Widget):
                     active=row.active,
                     ready=row.ready,
                     pending=(
-                        self._operation_reference is not None
+                        self._loading
+                        or self._operation_reference is not None
+                        or self._operation_name is not None
                         or self._pending_delete_reference is not None
                     ),
                 )
@@ -245,7 +318,11 @@ class InstalledView(Widget):
         Args:
             force: Reload even when a prior inventory is retained.
         """
-        if self._loading or (self._loaded and not force):
+        if self._loading:
+            if force:
+                self._reload_after_load = True
+            return
+        if self._loaded and not force:
             return
         self._loading = True
         self._load_error = None
@@ -268,6 +345,7 @@ class InstalledView(Widget):
             unmanaged = self.scan_unmanaged(self._legacy_dir)
             rows = inventory_rows(installed, usage, unmanaged)
         except Exception:
+            logger.opt(exception=True).error("Managed model inventory load failed")
             self.app.call_from_thread(
                 self._apply_inventory,
                 (),
@@ -289,16 +367,29 @@ class InstalledView(Widget):
         self._loading = False
         self._loaded = error is None
         self._load_error = error
-        self.refresh(recompose=True)
+        reload_after_load = self._reload_after_load
+        self._reload_after_load = False
+        if reload_after_load:
+            self.ensure_loaded(force=True)
+        else:
+            self.refresh(recompose=True)
 
     @on(Button.Pressed, "#installed-models-refresh")
     def _refresh_pressed(self) -> None:
+        if (
+            self._loading
+            or self._operation_reference is not None
+            or self._operation_name is not None
+            or self._pending_delete_reference is not None
+        ):
+            return
         self.ensure_loaded(force=True)
 
     @on(Button.Pressed, "#installed-models-repair")
     def _repair_pressed(self) -> None:
         if (
-            self._operation_reference is not None
+            self._loading
+            or self._operation_reference is not None
             or self._operation_name is not None
             or self._pending_delete_reference is not None
         ):
@@ -315,7 +406,8 @@ class InstalledView(Widget):
     def _request_activation(self, reference: ArtifactRef) -> None:
         """Start activation unless another lifecycle operation is pending."""
         if (
-            self._operation_reference is not None
+            self._loading
+            or self._operation_reference is not None
             or self._operation_name is not None
             or self._pending_delete_reference is not None
         ):
@@ -329,7 +421,8 @@ class InstalledView(Widget):
     def _deletion_requested(self, event: DeletionRequested) -> None:
         event.stop()
         if (
-            self._operation_reference is not None
+            self._loading
+            or self._operation_reference is not None
             or self._operation_name is not None
             or self._pending_delete_reference is not None
         ):
@@ -372,6 +465,12 @@ class InstalledView(Widget):
         try:
             self._service_for_worker().activate(reference)
         except Exception as exc:
+            logger.opt(exception=True).error(
+                "Managed model activation failed for {}@{}/{}",
+                reference.artifact_id,
+                reference.revision,
+                reference.variant,
+            )
             self.app.call_from_thread(
                 self._apply_lifecycle_result,
                 "activate",
@@ -386,6 +485,12 @@ class InstalledView(Widget):
         try:
             self._service_for_worker().delete(reference)
         except Exception as exc:
+            logger.opt(exception=True).error(
+                "Managed model deletion failed for {}@{}/{}",
+                reference.artifact_id,
+                reference.revision,
+                reference.variant,
+            )
             self.app.call_from_thread(
                 self._apply_lifecycle_result,
                 "delete",
@@ -400,6 +505,7 @@ class InstalledView(Widget):
         try:
             report = self._service_for_worker().reconcile()
         except Exception as exc:
+            logger.opt(exception=True).error("Managed model repair failed")
             self.app.call_from_thread(
                 self._apply_lifecycle_result,
                 "repair",
@@ -410,7 +516,7 @@ class InstalledView(Widget):
             self._apply_lifecycle_result,
             "repair",
             None,
-            f"Repair completed: {report.readiness_created} readiness records restored.",
+            reconcile_result_message(report),
         )
 
     def _apply_lifecycle_result(

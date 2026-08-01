@@ -12,6 +12,7 @@ from textual.widgets import ProgressBar, Static
 
 if TYPE_CHECKING:
     from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
 
 
 class InstallProgressed(Message):
@@ -25,6 +26,29 @@ class InstallProgressed(Message):
         """
         super().__init__()
         self.progress = progress
+
+
+class InstallStatusChanged(Message):
+    """Report the start or completion of one managed-model install."""
+
+    def __init__(
+        self,
+        reference: ArtifactRef,
+        *,
+        active: bool,
+        succeeded: bool | None = None,
+    ) -> None:
+        """Create a cross-view install-state message.
+
+        Args:
+            reference: Root model being installed.
+            active: Whether provisioning is still running.
+            succeeded: Completion result, or ``None`` while active.
+        """
+        super().__init__()
+        self.reference = reference
+        self.active = active
+        self.succeeded = succeeded
 
 
 def make_progress_callback(

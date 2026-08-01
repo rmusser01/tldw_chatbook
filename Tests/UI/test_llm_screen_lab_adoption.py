@@ -149,6 +149,63 @@ async def test_the_status_row_reports_running_servers():
 
 
 @pytest.mark.asyncio
+async def test_model_install_progress_survives_switch_to_installed():
+    """Curated progress remains visible in Installed and in the Lab status row."""
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+    from tldw_chatbook.Widgets.ModelArtifacts import (
+        InstallProgressed,
+        InstallStatusChanged,
+    )
+
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        await pilot.pause()
+        await pilot.pause()
+        window = screen.query_one(LLMManagementWindow)
+        curated = window.query_one(CuratedView)
+        installed = window.query_one(InstalledView)
+        installed.ensure_loaded = MagicMock()
+        reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+        progress = AcquisitionProgress(
+            "fetch",
+            reference,
+            "encoder.onnx",
+            512,
+            1024,
+        )
+
+        curated.post_message(InstallStatusChanged(reference, active=True))
+        curated.post_message(InstallProgressed(progress))
+        await pilot.pause()
+
+        installed_row = next(
+            row for row in _rail_rows(screen) if row.lab_view_key == "installed"
+        )
+        installed_row.press()
+        await pilot.pause()
+
+        text = "\n".join(str(item.renderable) for item in installed.query(Static))
+        chip = screen.query_one("#lab-status-chip-model-install", Static)
+        assert "Downloading" in text
+        assert "Model install: downloading" in str(chip.renderable)
+
+        installed.ensure_loaded.reset_mock()
+        curated.post_message(
+            InstallStatusChanged(reference, active=False, succeeded=True)
+        )
+        await pilot.pause()
+
+        installed.ensure_loaded.assert_called_once_with(force=True)
+        assert "Model install: idle" in str(chip.renderable)
+
+
+@pytest.mark.asyncio
 async def test_the_inspector_rows_refresh_alongside_the_status_chip():
     """Regression test: `refresh_lab_status` used to update only the chip.
 

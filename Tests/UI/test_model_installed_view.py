@@ -116,6 +116,76 @@ def test_lease_blocked_deletion_message_is_specific_and_sanitized() -> None:
     assert marker not in message
 
 
+def test_repair_summary_reports_every_reconciliation_outcome(tmp_path: Path) -> None:
+    """Repair copy names state/staging cleanup and corruption without paths."""
+    from tldw_chatbook.Model_Artifacts.service import ReconcileReport
+    from tldw_chatbook.UI.Screens.model_installed_view import (
+        reconcile_result_message,
+    )
+
+    marker = "PRIVATE-MODEL-PATH"
+    report = ReconcileReport(
+        readiness_created=2,
+        state_removed=3,
+        corrupt_artifacts=(tmp_path / marker,),
+        staging_entries=(tmp_path / "staged-a", tmp_path / "staged-b"),
+        staging_removed=("staged-a", "staged-b"),
+    )
+
+    message = reconcile_result_message(report)
+
+    assert "2 readiness" in message
+    assert "3 stale state" in message
+    assert "2 staging" in message
+    assert "1 corrupt model" in message
+    assert marker not in message
+
+
+@pytest.mark.parametrize(
+    ("worker_name", "service_method", "worker_args"),
+    (
+        ("_load_inventory", "list_installed", ()),
+        (
+            "_activate_model",
+            "activate",
+            (ArtifactRef("parakeet-v2", "rev", "int8"),),
+        ),
+        (
+            "_delete_model",
+            "delete",
+            (ArtifactRef("parakeet-v2", "rev", "int8"),),
+        ),
+        ("_repair_store", "reconcile", ()),
+    ),
+)
+def test_installed_worker_failures_are_logged_and_sanitized(
+    monkeypatch,
+    tmp_path: Path,
+    worker_name: str,
+    service_method: str,
+    worker_args: tuple,
+) -> None:
+    """Every background failure retains diagnostics without exposing them in UI."""
+    from tldw_chatbook.UI.Screens import model_installed_view as module
+
+    marker = "PRIVATE-WORKER-DETAIL"
+    service = MagicMock()
+    getattr(service, service_method).side_effect = RuntimeError(marker)
+    fake_app = MagicMock()
+    fake_logger = MagicMock()
+    fake_logger.opt.return_value = fake_logger
+    monkeypatch.setattr(module.InstalledView, "app", property(lambda self: fake_app))
+    monkeypatch.setattr(module, "logger", fake_logger)
+    view = module.InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+
+    worker = getattr(module.InstalledView, worker_name).__wrapped__
+    worker(view, *worker_args)
+
+    fake_logger.opt.assert_called_once_with(exception=True)
+    fake_logger.error.assert_called_once()
+    assert marker not in str(fake_app.call_from_thread.call_args)
+
+
 def test_deletion_requires_confirmation_before_starting_worker(monkeypatch) -> None:
     """The destructive service call starts only after explicit confirmation."""
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
@@ -163,6 +233,27 @@ async def test_empty_inventory_still_reports_managed_and_staging_space(
 
     assert "2.0 KiB staging" in text
     assert "4.0 KiB free" in text
+
+
+def test_forced_refresh_queues_behind_an_inflight_inventory_load(tmp_path: Path) -> None:
+    """A lifecycle completion cannot lose its mandatory post-operation refresh."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactDiskUsage
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    view._loading = True
+    view._load_inventory = MagicMock()
+    view.refresh = MagicMock()
+
+    view.ensure_loaded(force=True)
+    view._apply_inventory(
+        (),
+        ArtifactDiskUsage(installed_bytes=0, staging_bytes=0, free_bytes=4096),
+        None,
+    )
+
+    view._load_inventory.assert_called_once_with()
+    assert view._loading is True
 
 
 @pytest.mark.asyncio

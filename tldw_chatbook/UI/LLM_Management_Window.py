@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Callable
 
 #
 # 3rd-Party Imports
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.css.query import QueryError
@@ -38,6 +39,7 @@ from ..Event_Handlers.LLM_Management_Events.server_lifecycle import (
     server_is_active,
 )
 from ..Utils.log_widget_manager import LogWidgetManager
+from ..Widgets.ModelArtifacts import InstallProgressed, InstallStatusChanged
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -249,6 +251,8 @@ class LLMManagementWindow(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self._async_presentation_generations: dict[str, int] = {}
+        self._managed_install_active = False
+        self._managed_install_progress = None
 
         # Map navigation button IDs to view IDs
         self.view_mapping = {
@@ -929,6 +933,38 @@ class LLMManagementWindow(Container):
                 yield HuggingFaceModelBrowser(
                     self.app_instance, id="huggingface-model-browser"
                 )
+
+    @on(InstallProgressed)
+    def _managed_install_progressed(self, event: InstallProgressed) -> None:
+        """Mirror Curated progress into the persistent Installed view."""
+        from .Screens.model_installed_view import InstalledView
+
+        self._managed_install_active = True
+        self._managed_install_progress = event.progress
+        try:
+            installed = self.query_one("#installed-models-view", InstalledView)
+        except QueryError:
+            return
+        installed.set_install_state(event.progress, active=True)
+
+    @on(InstallStatusChanged)
+    def _managed_install_status_changed(self, event: InstallStatusChanged) -> None:
+        """Synchronize install lifecycle state and refresh completed inventory."""
+        from .Screens.model_installed_view import InstalledView
+
+        self._managed_install_active = event.active
+        if not event.active:
+            self._managed_install_progress = None
+        try:
+            installed = self.query_one("#installed-models-view", InstalledView)
+        except QueryError:
+            return
+        installed.set_install_state(
+            self._managed_install_progress,
+            active=event.active,
+        )
+        if not event.active:
+            installed.ensure_loaded(force=True)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Route allowlisted actions inside this destination."""

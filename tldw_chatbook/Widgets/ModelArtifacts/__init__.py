@@ -9,6 +9,7 @@ from .activation_controls import (
 from .install_modal import ModelInstallModal
 from .install_progress import (
     InstallProgressed,
+    InstallStatusChanged,
     ModelInstallProgress,
     make_progress_callback,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "ActivationRequested",
     "DeletionRequested",
     "InstallProgressed",
+    "InstallStatusChanged",
     "ModelActivationControls",
     "ModelInstallModal",
     "ModelInstallProgress",

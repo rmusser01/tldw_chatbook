@@ -29,6 +29,7 @@ from tldw_chatbook.UI.Screens.model_browser_state import (
 )
 from tldw_chatbook.Widgets.ModelArtifacts import (
     InstallProgressed,
+    InstallStatusChanged,
     ModelInstallModal,
     ModelInstallProgress,
     make_progress_callback,
@@ -289,6 +290,10 @@ class CuratedView(Widget):
             self._operation_reference = None
             self.refresh(recompose=True)
             return
+        if self._operation_reference is not None:
+            self.post_message(
+                InstallStatusChanged(self._operation_reference, active=True)
+            )
         self._provision_model()
 
     async def _provision(self, report):
@@ -331,7 +336,6 @@ class CuratedView(Widget):
     @on(InstallProgressed)
     def _install_progressed(self, event: InstallProgressed) -> None:
         """Retain and render worker progress outside the modal."""
-        event.stop()
         self._progress = event.progress
         progress = self.query_one(
             "#curated-model-install-progress",
@@ -342,6 +346,7 @@ class CuratedView(Widget):
 
     def _apply_provision_result(self, error: str | None) -> None:
         """Finish an installation and refresh curated installed-state."""
+        reference = self._operation_reference
         self._pending_report = None
         self._operation_reference = None
         self._progress = None
@@ -354,4 +359,12 @@ class CuratedView(Widget):
             self.notify(error, severity="error")
         else:
             self.notify("Model installed and activated.", severity="information")
+        if reference is not None:
+            self.post_message(
+                InstallStatusChanged(
+                    reference,
+                    active=False,
+                    succeeded=error is None,
+                )
+            )
         self.ensure_loaded(force=True)

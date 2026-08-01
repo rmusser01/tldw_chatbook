@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:02'
-updated_date: '2026-08-01 19:05'
+updated_date: '2026-08-01 19:56'
 labels:
   - stt
   - artifacts
@@ -16,6 +16,8 @@ references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
 documentation:
   - Docs/superpowers/specs/2026-07-23-stt-parakeet-onnx-transcribe-cpp-design.md
+  - Docs/superpowers/specs/2026-08-01-task-596-model-artifact-browser-design.md
+  - Docs/superpowers/plans/2026-08-01-task-596-model-browser-phase-1.md
 priority: high
 ---
 
@@ -28,13 +30,13 @@ Replace the existing downloader-oriented GGUF browser with a provider-neutral ar
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 The browser exposes distinct Curated, Remote, and Installed views backed only by ModelArtifactService and catalog interfaces.
-- [ ] #2 Curated, Integrity verified, and Local integrity recorded provenance labels are displayed precisely and never imply malware safety.
-- [ ] #3 Install confirmation shows the full dependency closure, immutable source revision, license, precision, download bytes, staging requirement, destination, and free-space result.
+- [x] #2 Curated, Integrity verified, and Local integrity recorded provenance labels are displayed precisely and never imply malware safety.
+- [x] #3 Install confirmation shows the full dependency closure, immutable source revision, license, precision, download bytes, staging requirement, destination, and free-space result.
 - [ ] #4 Installed inventory shows active and retained revisions, dependencies, installed versus staging space, and deletion blockers including idle resident models.
 - [ ] #5 Deletion can request an idle heavy-worker recycle but cannot bypass an active lease or silently cancel an active job.
 - [ ] #6 Remote search, inventory refresh, install progress, and deletion run off the Textual event loop with bounded results and focused UI tests.
-- [ ] #7 Users can select and persist the active installed artifact revision and precision; unavailable or unverified versions cannot be selected.
-- [ ] #8 The model picker, install confirmation, progress, activation, and installed-state controls are reusable by Settings and onboarding without duplicating artifact or download logic.
+- [x] #7 Users can select and persist the active installed artifact revision and precision; unavailable or unverified versions cannot be selected.
+- [x] #8 The model picker, install confirmation, progress, activation, and installed-state controls are reusable by Settings and onboarding without duplicating artifact or download logic.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -55,4 +57,6 @@ Reason: ADR-025 already governs the shared model store, trust labels, acquisitio
 Claimed 2026-08-01 (ppqq clone). Design approved section-by-section; spec at Docs/superpowers/specs/2026-08-01-task-596-model-artifact-browser-design.md. Phased: Phase 1 = curated registry + pure view-model + shared widgets + Curated/Installed views + Library modal refactored onto the shared modal (AC 1 partial, 2, 3, 4, 6 local, 7, 8). Phase 2 = Remote search with resolve-on-select. Phase 3 = GGUF import + server path resolution + retire Widgets/HuggingFace. AC 5 idle heavy-worker recycle is deferred because no pool-owner unload mechanism exists; Phase 1 reports blockers without bypassing leases.
 
 Recovery 2026-08-01: the stale ppqq claim was exhaustively checked before resuming. No corresponding local/remote branch, worktree, GitHub PR, or visible Codex task was found. Recovery continues Phase 1 in codex/task-596-model-browser-phase-1 from origin/dev; no duplicate implementation was located.
+
+Phase 1 implementation (2026-08-01): centralized the shared managed model store, added the offline curated registry and preflight provenance, introduced pure browser state plus reusable consent/progress/activation controls, migrated Library Parakeet installation to the shared flow, and added lazy Curated and Installed Lab views. Installed includes bounded legacy-file discovery, managed/staging/free-space totals, lease-safe activation/deletion, explicit deletion confirmation, and user-triggered repair. Download Models remains available until Phase 3. Verification: focused affected suite 1184 passed, 1 expected skip; Installed/shared-widget safety follow-up 16 passed; Ruff passed on all changed Python files; mypy passed on the 10 new shared/browser modules; py_compile and git diff --check passed. The attempted repository-wide UI-inclusive run was stopped after 316 passing tests because the unrelated UI corpus projected an excessive local runtime; the scoped gate covers all changed modules plus Model_Artifacts, Local_Ingestion, STT, and console dictation. Remaining TASK-596 work: Phase 2 Remote and Phase 3 GGUF adoption/legacy browser retirement; AC #5 idle heavy-worker recycle remains deferred to a pool-owner unload mechanism.
 <!-- SECTION:NOTES:END -->
