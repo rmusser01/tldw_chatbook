@@ -19,6 +19,7 @@ APP_SOURCE = (
 ).read_text(encoding="utf-8")
 
 
+@pytest.mark.unit
 def test_warm_up_loads_the_protocol_selecting_submodule():
     """The helper must import the submodule where selection actually happens.
 
@@ -29,13 +30,23 @@ def test_warm_up_loads_the_protocol_selecting_submodule():
     pytest.importorskip("textual_image")
     from tldw_chatbook.Utils.terminal_utils import warm_up_image_protocol
 
-    sys.modules.pop("textual_image.renderable", None)
-    sys.modules.pop("textual_image.widget", None)
+    # Restore whatever we evict: sys.modules is global, and leaking these
+    # removals can perturb any later test that inspects import state
+    # (cubic PR #1150 P3).
+    saved = {
+        name: sys.modules.pop(name, None)
+        for name in ("textual_image.renderable", "textual_image.widget")
+    }
+    try:
+        assert warm_up_image_protocol() is True
+        assert "textual_image.renderable" in sys.modules
+    finally:
+        for name, module in saved.items():
+            if module is not None:
+                sys.modules[name] = module
 
-    assert warm_up_image_protocol() is True
-    assert "textual_image.renderable" in sys.modules
 
-
+@pytest.mark.unit
 def test_warm_up_is_safe_without_the_optional_dependency(monkeypatch):
     """A missing optional dependency must not break startup.
 
@@ -51,6 +62,7 @@ def test_warm_up_is_safe_without_the_optional_dependency(monkeypatch):
     assert terminal_utils.warm_up_image_protocol() is False
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "entry",
     [
@@ -75,6 +87,7 @@ def test_every_entry_point_warms_up_before_running_the_app(entry):
     assert warm < run, f"{entry} warms up AFTER app.run() -- too late to query"
 
 
+@pytest.mark.unit
 def test_no_lazy_first_import_of_textual_image_widget_without_warmup():
     """Lazy import sites are fine, but only because startup warmed up first.
 
@@ -90,6 +103,7 @@ def test_no_lazy_first_import_of_textual_image_widget_without_warmup():
     assert re.search(r"import_module\(\s*[\"']textual_image\.widget[\"']", helper)
 
 
+@pytest.mark.unit
 def test_missing_dependency_is_distinguished_from_a_failed_query(monkeypatch):
     """ImportError and terminal-query failure must be told apart.
 
@@ -129,6 +143,7 @@ def test_missing_dependency_is_distinguished_from_a_failed_query(monkeypatch):
     assert seen[-1]["result"] == "query_failed"
 
 
+@pytest.mark.unit
 def test_successful_warm_up_reports_the_selected_protocol(monkeypatch):
     """A successful warm-up names the protocol it resolved.
 

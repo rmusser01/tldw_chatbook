@@ -49,7 +49,18 @@ def warm_up_image_protocol() -> bool:
         optional dependency is absent or its terminal query failed (both
         leave the app on its mosaic/pixels fallbacks, which always work).
     """
+    # Qodo PR #1150: availability goes through the central helper so
+    # DEPENDENCIES_AVAILABLE stays consistent with the rest of the
+    # codebase. The submodule import below is still done directly and
+    # deliberately -- check_dependency() imports only the TOP-LEVEL
+    # package, which never loads textual_image.renderable where the
+    # protocol is chosen, so routing the whole thing through it would
+    # silently reinstate the bug this function exists to fix.
+    from .optional_deps import check_dependency
+
     try:
+        if not check_dependency("textual_image"):
+            raise ImportError("textual_image unavailable")
         importlib.import_module("textual_image.widget")
     except ImportError:
         # Optional dependency absent -- expected, not a defect.
