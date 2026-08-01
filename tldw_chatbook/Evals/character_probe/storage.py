@@ -9,13 +9,13 @@ directly; every call goes through ``EvalsDB``.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Optional
 
 from ...DB.Evals_DB import EvalsDB
 from ...Evaluations_Interop.evaluation_normalizers import (
     RESERVED_LOCAL_DATASET_SAMPLES_KEY,
 )
-from .models import Probe, ProbeSet
+from .models import CharacterProbeConfig, Probe, ProbeSet
 
 #: Marks a dataset row as holding probes rather than snippets.
 PROBE_DATASET_TYPE = "character_probe"
@@ -120,3 +120,133 @@ def load_probe_set(db: EvalsDB, dataset_id: str) -> ProbeSet:
         raise ValueError(f"Dataset {dataset_id!r} is not a probe set.")
     metadata = row.get("metadata") or {}
     return _samples_to_probe_set(metadata.get(RESERVED_LOCAL_DATASET_SAMPLES_KEY))
+
+
+#: Discriminates a character probe bench from a word bench in ``eval_tasks``.
+BENCH_TYPE = "character_probe"
+
+
+def is_character_bench(task_row: Mapping[str, Any]) -> bool:
+    """Whether an ``eval_tasks`` row is a character probe bench.
+
+    Args:
+        task_row: A row as returned by ``EvalsDB.get_task``/``list_tasks``.
+
+    Returns:
+        bool: True when the row carries this bench type.
+    """
+    return (task_row.get("config_data") or {}).get("bench_type") == BENCH_TYPE
+
+
+def save_character_bench(
+    db: EvalsDB, config: CharacterProbeConfig, task_id: Optional[str] = None
+) -> str:
+    """Persist a character probe bench.
+
+    Mirrors ``word_bench.storage.save_bench``: a new bench creates an
+    ``eval_tasks`` row, an existing one updates in place. ``task_type`` is
+    ``"generation"`` because ``EvalsDB.create_task``'s ``CHECK`` constraint
+    permits only a small fixed set of DB-level literals, none of which name
+    this eval type; ``config_data.bench_type`` is the real discriminator,
+    the same convention word_bench uses for its own ``task_type`` literal.
+    ``config_format`` is ``"custom"`` for the same reason word_bench passes
+    it explicitly -- ``create_task`` has no default for that parameter, and
+    omitting it (as an earlier draft of this function did) raises a
+    ``TypeError`` before a single row is written.
+
+    ``probe_set_id`` lives only in ``config_data``, never passed through as
+    ``create_task``'s ``dataset_id``: that column carries a real ``FOREIGN
+    KEY`` to ``eval_datasets(id)``, and a probe set is only sometimes an
+    ``eval_datasets`` row (see ``save_probe_set`` above) -- forcing every
+    bench to reference one there would reject a bench referencing a probe
+    set by a not-yet-persisted or external id.
+
+    Args:
+        db: The evals database handle.
+        config: The bench to persist.
+        task_id: An existing bench to update; omit to create.
+
+    Returns:
+        str: The bench's ``eval_tasks`` id.
+
+    Raises:
+        ConflictError: If the name collides with another task's (including a
+            soft-deleted one -- the UNIQUE index has no ``deleted_at``
+            exemption).
+        ValueError: If ``task_id`` is given (the edit path) and
+            ``update_task`` matched no row -- the bench was deleted (by this
+            process or another) between whenever the caller loaded it and
+            this call. ``update_task`` itself only returns ``False`` here,
+            never raises; silently returning ``task_id`` anyway would tell
+            the caller "saved" for a write that persisted nothing, the same
+            failure mode ``save_probe_set`` above already guards against for
+            ``update_dataset``.
+    """
+    config_data = {
+        "bench_type": BENCH_TYPE,
+        "probe_set_id": config.probe_set_id,
+        "character_ids": list(config.character_ids),
+        "target_ids": list(config.target_ids),
+        "concurrency": config.concurrency,
+        "samples_per_cell": config.samples_per_cell,
+        "seed": config.seed,
+        "temperature": config.temperature,
+        "max_tokens": config.max_tokens,
+        "extra_tags": list(config.extra_tags),
+    }
+    if task_id is not None:
+        updated = db.update_task(
+            task_id,
+            name=config.name,
+            description=config.description,
+            config_data=config_data,
+        )
+        if not updated:
+            raise ValueError(
+                f"Bench {task_id!r} could not be updated; it may have been "
+                "deleted."
+            )
+        return task_id
+    return db.create_task(
+        name=config.name,
+        description=config.description,
+        task_type="generation",
+        config_format="custom",
+        config_data=config_data,
+    )
+
+
+def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
+    """Read a character probe bench back.
+
+    Args:
+        db: The evals database handle.
+        task_id: The bench to read.
+
+    Returns:
+        CharacterProbeConfig: The stored bench.
+
+    Raises:
+        ValueError: If the task does not exist or is not a character probe
+            bench -- loading a word bench here would otherwise produce a
+            config with empty characters and look like data loss.
+    """
+    row = db.get_task(task_id)
+    if row is None:
+        raise ValueError(f"Bench {task_id!r} could not be found.")
+    if not is_character_bench(row):
+        raise ValueError(f"Bench {task_id!r} is not a character probe bench.")
+    data = row.get("config_data") or {}
+    return CharacterProbeConfig(
+        name=row.get("name") or "",
+        description=row.get("description") or "",
+        probe_set_id=str(data.get("probe_set_id") or ""),
+        character_ids=tuple(int(cid) for cid in data.get("character_ids") or ()),
+        target_ids=tuple(str(tid) for tid in data.get("target_ids") or ()),
+        concurrency=int(data.get("concurrency") or 1),
+        samples_per_cell=int(data.get("samples_per_cell") or 1),
+        seed=data.get("seed"),
+        temperature=float(data.get("temperature", 0.8)),
+        max_tokens=int(data.get("max_tokens") or 512),
+        extra_tags=tuple(data.get("extra_tags") or ()),
+    )
