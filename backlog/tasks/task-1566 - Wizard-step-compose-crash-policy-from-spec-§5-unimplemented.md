@@ -1,7 +1,7 @@
 ---
 id: TASK-1566
 title: Wizard step compose() crash policy from spec §5 unimplemented
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-29 22:10'
 updated_date: '2026-07-29 22:11'
@@ -18,11 +18,11 @@ Docs/superpowers/specs/2026-07-28-first-run-setup-wizard-design.md section 5 (Er
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 SetupWizardContainer catches a step's compose()-time crash, advances past that step automatically instead of leaving the wizard stuck, and shows a one-line notice that a step was skipped due to an error
-- [ ] #2 SummaryStep's read-back matrix (build_summary_rows in first_run_setup_state.py, or an equivalent reasoned row) reflects the crashed step with a reason rather than silently omitting it
-- [ ] #3 A test drives a step whose compose() deliberately raises and asserts the wizard survives, auto-skips it, and the Summary reflects it
-- [ ] #4 Full Tests/Wizards/ and Tests/UI/test_first_run_wizard_live_contract.py suites stay green
-- [ ] #5 BaseWizard.py is not modified (per this project's established constraint that the wizard framework is subclassed, never edited)
+- [x] #1 SetupWizardContainer catches a step's compose()-time crash, advances past that step automatically instead of leaving the wizard stuck, and shows a one-line notice that a step was skipped due to an error
+- [x] #2 SummaryStep's read-back matrix (build_summary_rows in first_run_setup_state.py, or an equivalent reasoned row) reflects the crashed step with a reason rather than silently omitting it
+- [x] #3 A test drives a step whose compose() deliberately raises and asserts the wizard survives, auto-skips it, and the Summary reflects it
+- [x] #4 Full Tests/Wizards/ and Tests/UI/test_first_run_wizard_live_contract.py suites stay green
+- [x] #5 BaseWizard.py is not modified (per this project's established constraint that the wizard framework is subclassed, never edited)
 <!-- AC:END -->
 
 ## Implementation Notes
