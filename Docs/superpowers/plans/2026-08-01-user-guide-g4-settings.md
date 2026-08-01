@@ -43,8 +43,9 @@ controller.
   has focus. Probe-verified: `s` in the category filter typed a literal "s".
 - `/` focuses the category filter from anywhere and *re-arms* (select-all)
   rather than typing a slash when the filter already has focus.
-- **Settings has no `Ctrl+<digit>`** — it is the 12th of 13 destinations and the
-  digits run out. Reach it by clicking `Settings` or via `Ctrl+P`.
+- **Settings has no `Ctrl+<digit>`** — it is the last of the 13 destinations in
+  `SHELL_DESTINATION_ORDER` and the ten hotkey digits run out before it. Reach
+  it by clicking `Settings` or via `Ctrl+P`.
 - `F6` does nothing on this screen (no pane-cycle target).
 
 ## Global constraints
