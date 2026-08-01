@@ -4507,6 +4507,35 @@ def test_console_save_as_destinations_gate_on_runtime_services_and_role():
     assert all("WIP" not in reason for reason in reasons.values())
 
 
+def test_console_save_as_destinations_are_blocked_in_a_temporary_chat():
+    """A temporary chat blocks every Save as... destination, regardless of
+    service readiness -- the write itself is the problem, not the wiring.
+
+    The control: the same screen with the same services wired, but a
+    non-ephemeral session, returns the pre-existing availability.
+    """
+    from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    _install_console_save_service_fakes(app)
+    assistant = SimpleNamespace(role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    screen._console_active_session_is_ephemeral = lambda: True
+    blocked = screen._console_save_as_destinations(assistant)
+    assert all(d.available is False for d in blocked)
+    reasons = {d.label: d.reason for d in blocked}
+    assert reasons["Note"] == blocked_reason("save-as-note", ephemeral=True)
+    assert reasons["Media"] == blocked_reason("save-as-media", ephemeral=True)
+    assert reasons["Prompt"] == blocked_reason("save-as-prompt", ephemeral=True)
+    assert reasons["Chatbook"] == blocked_reason("save-as-chatbook", ephemeral=True)
+
+    screen._console_active_session_is_ephemeral = lambda: False
+    wired = screen._console_save_as_destinations(assistant)
+    assert [d.label for d in wired] == ["Chatbook", "Note", "Media", "Prompt"]
+    assert all(d.available for d in wired)
+
+
 @pytest.mark.asyncio
 async def test_console_selected_message_save_as_note_creates_note_from_message():
     app = _build_test_app()

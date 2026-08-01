@@ -220,7 +220,7 @@ from ...Chat.local_server_discovery import (
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
-from ...Chat.console_ephemeral import ACTION_SAVE_CHAT
+from ...Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
 from ...Chat.console_message_actions import (
     ConsoleActionResult,
     ConsoleMessageActionService,
@@ -2078,6 +2078,7 @@ class ChatScreen(BaseAppScreen):
                 token_estimate=token_estimate,
                 estimate_factory=_estimate_factory,
                 in_progress=in_progress,
+                ephemeral=self._console_active_session_is_ephemeral(),
             )
         )
 
@@ -16820,9 +16821,24 @@ class ChatScreen(BaseAppScreen):
         return f"{normalized[: max(0, max_length - 1)].rstrip()}…"
 
     def _console_save_as_destinations(self, message: Any) -> list[Any]:
-        """Return Save-as destinations available in the current app runtime."""
+        """Return Save-as destinations available in the current app runtime.
+
+        A temporary session blocks every destination outright: the write
+        itself is the problem, so service readiness is moot and is never
+        even checked in that case.
+        """
         available_destinations: set[str] = set()
         unavailable_reasons: dict[str, str] = {}
+
+        if self._console_active_session_is_ephemeral():
+            for label in ("Chatbook", "Note", "Media", "Prompt"):
+                unavailable_reasons[label] = blocked_reason(
+                    f"save-as-{label.lower()}", ephemeral=True
+                )
+            return ConsoleMessageActionService(
+                available_save_destinations=set(),
+                unavailable_save_reasons=unavailable_reasons,
+            ).save_as_destinations(message)
 
         notes_scope_service = getattr(self.app_instance, "notes_scope_service", None)
         if callable(getattr(notes_scope_service, "save_note", None)):
