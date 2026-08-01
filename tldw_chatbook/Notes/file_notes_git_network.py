@@ -325,21 +325,30 @@ def _authorize_network_config_snapshot(
     """Select supported credential facts from a proved complete snapshot.
 
     Unsupported credential-helper shapes are deliberately selected and then
-    rejected by the strict issuer rather than silently dropped.
+    rejected by the strict issuer rather than silently dropped. Credential
+    facts affect the complete configuration fingerprint for every transport,
+    but only HTTPS copies them into the private network Git context.
     """
     if type(facts) is not tuple or any(
         type(fact) is not _GitConfigFact for fact in facts
     ):
         raise NetworkContextError("invalid_configuration")
-    selected = tuple(
-        fact
-        for fact in facts
-        if (
-            fact.key.lower().startswith("credential.")
-            and fact.key.lower().endswith(
-                ("helper", "usehttppath")
+    selected = (
+        tuple(
+            fact
+            for fact in facts
+            if (
+                fact.key.lower().startswith("credential.")
+                and fact.key.lower().endswith(
+                    ("helper", "usehttppath")
+                )
             )
         )
+        if (
+            type(destination) is PushDestinationProjection
+            and destination.scheme == "https"
+        )
+        else ()
     )
     return _authorize_network_config_facts(
         selected,

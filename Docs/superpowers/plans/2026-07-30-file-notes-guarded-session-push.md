@@ -989,8 +989,10 @@ corrections to them.
 **Files:**
 
 - Create: `Tests/Notes/test_file_notes_git_push_transport.py`
-- Modify: `Tests/Notes/test_file_notes_git_push_service.py`
-- Modify: `Tests/Notes/test_file_notes_git_push_integration.py`
+- Modify `Tests/Notes/test_file_notes_git_push_service.py` or
+  `Tests/Notes/test_file_notes_git_push_integration.py` only if one missing
+  assertion belongs in an existing reusable fixture rather than the new
+  transport module.
 - Modify production push/network/containment files only if these tests expose a
   contract defect.
 
@@ -1000,25 +1002,33 @@ corrections to them.
   prompt sentinels, and independent connection/receive counters. It must never
   access the user's SSH config, agent, keys, or credential state.
 - [ ] Write SSH tests proving zero connections/helper calls before
-  authorization, one read-only connection after authorization, no mutating
-  request before final Confirm, one exact push, hostile live user SSH
-  HostName/ProxyCommand/IdentityFile config ignored, unknown/wrong host key
-  fails without prompting, bad authentication fails promptly, and provider
-  canaries do not enter the child environment.
+  authorization, one read-only connection at the post-authorization preflight
+  checkpoint, no mutating request before final Confirm, one exact push, hostile
+  live user SSH HostName/ProxyCommand/IdentityFile config ignored,
+  unknown/wrong host key fails without prompting, bad authentication fails
+  promptly, and provider canaries do not enter the child environment. Count
+  Confirm revalidation and postflight reads separately instead of claiming the
+  complete successful flow makes only one read connection.
 - [ ] Add a hermetic smart-Git HTTPS fixture using stdlib TLS/HTTP around
   `git http-backend`, a capability-probed ephemeral CA/leaf, isolated fixture
-  trust store injected only through `NetworkContextFactory`, and a fake
-  credential helper.
+  trust store injected only by the test runner after production transport
+  admission, and a fake credential helper. Do not add a production custom-CA
+  setting or authority-bearing test seam.
 - [ ] Write HTTPS tests for certificate/hostname verification,
   noninteractive-helper behavior, prompt suppression, environment isolation,
   and raw credential/helper/server-output redaction. Do not claim support for
   every public hosting provider or credential manager.
-- [ ] Add one end-to-end redaction-canary journey that injects unique canaries
-  into endpoint userinfo/query rejection, environment, copied helper
-  configuration, raw stdout/stderr, and hostile server text. Assert every
-  canary is absent from classifier exceptions, Loguru capture, retained
-  service/owner objects, public projections, UI text, accessibility
-  announcements, and serialized evidence projections.
+- [ ] Add one transport-boundary redaction-canary journey covering child
+  environment, copied helper credentials/output, raw stdout/stderr, hostile
+  server text, Loguru capture, push-derived retained service fields, owner
+  state, and public projections. The caller-supplied ambient environment is an
+  existing local-Git input, not transport-result evidence; prove that its
+  provider canaries are absent from the frozen network-context allowlist and
+  child environments and are never copied into push-derived state. Keep
+  credential-bearing endpoint userinfo/query rejection as a separate
+  pre-contact case because a rejected endpoint cannot continue into a
+  successful journey. Reuse the existing pure and Task 11 UI/accessibility
+  redaction proofs rather than reopening those layers in this transport file.
 - [ ] Add a deterministic loopback response-drop fixture for:
   - server accepts the exact update then the client loses the result:
     `Uncertain`, zero retry, query-only recovery observes candidate; and
@@ -1027,12 +1037,16 @@ corrections to them.
 - [ ] Run:
 
 ```bash
-python3 -m pytest Tests/Notes/test_file_notes_git_push_transport.py Tests/Notes/test_file_notes_git_push_service.py Tests/Notes/test_file_notes_git_push_integration.py -q -k "ssh or https or authorization or prompt or redaction or dropped_response or no_retry"
+python3 -m pytest Tests/Notes/test_file_notes_git_push_transport.py -q
 ```
 
 Expected: FAIL until fixture-backed transport, redaction, and ambiguity
 contracts hold. Capability-unavailable lanes must be explicit skips, not false
 passes or substituted local-transport claims.
+
+Run exact existing service/integration selectors only when a shared seam or
+production file changes; do not use a broad `-k authorization` sweep that
+selects unrelated policy tests.
 
 - [ ] Fix only defects within the approved production policy. Do not add custom
   CA, credential, SSH-routing, or local-transport user settings.

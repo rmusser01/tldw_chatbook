@@ -1351,6 +1351,37 @@ def test_network_context_config_copy_is_https_only() -> None:
         )
 
 
+def test_ssh_config_snapshot_omits_transport_irrelevant_credential_facts() -> None:
+    destination = _network_destination(
+        "ssh://git@push.example.test:22/team/notes.git"
+    )
+    fingerprint = "f" * 64
+    snapshot = git_network._authorize_network_config_snapshot(
+        (
+            _fact(
+                "credential.helper",
+                "osxkeychain",
+                scope="system",
+            ),
+            _fact(
+                "credential.useHttpPath",
+                "true",
+                scope="global",
+            ),
+        ),
+        configuration_fingerprint=fingerprint,
+        destination=destination,
+    )
+    empty_copy = git_network._authorize_network_config_facts(
+        (),
+        configuration_fingerprint=fingerprint,
+        destination=destination,
+    )
+
+    assert snapshot.configuration_fingerprint == fingerprint
+    assert snapshot.copy_fingerprint == empty_copy.copy_fingerprint
+
+
 def test_network_context_config_snapshot_rejects_scoped_use_http_path() -> None:
     destination = _network_destination()
 
