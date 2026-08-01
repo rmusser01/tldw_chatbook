@@ -78,6 +78,7 @@ def test_package_exports_the_complete_public_artifact_api() -> None:
         "ArtifactPreflightEntry",
         "ArtifactRef",
         "ArtifactRole",
+        "ArtifactSourceMap",
         "ArtifactStateError",
         "CatalogError",
         "ConsentMismatchError",

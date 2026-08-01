@@ -25,6 +25,7 @@ Four things this file pins down that no earlier task's tests cover:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import subprocess
@@ -177,6 +178,144 @@ async def test_gated_repo_with_resolver_provisions_and_never_leaks_token(tmp_pat
     #    state/ subtree, never inside payload/ (see acquisition.py's
     #    _fetch_sidecar_path).
     assert core._download_stage_for(desc, create=False) is None
+
+
+# ---------------------------------------------------------------------------
+# (e) TASK-1695: per-file source-map URLs never leak into manifests, resume
+# state, errors, or logs -- extends (b) above to the new source-map path.
+# ---------------------------------------------------------------------------
+
+
+def _two_file_descriptor_for_hygiene(ref: ArtifactRef, source_url: str) -> "ArtifactDescriptor":
+    """A genuine 2-file descriptor, duplicated locally per this suite's
+    convention of not cross-importing test-private helpers (see
+    ``test_source_map.py``'s identical-purpose ``_two_file_descriptor``)."""
+
+    from tldw_chatbook.Model_Artifacts import (
+        ArtifactDescriptor,
+        ArtifactFile,
+        ArtifactFormat,
+        ArtifactRole,
+        ProvenanceClass,
+    )
+
+    files = (
+        ArtifactFile("a.bin", 4, hashlib.sha256(b"aaaa").hexdigest()),
+        ArtifactFile("b.bin", 4, hashlib.sha256(b"bbbb").hexdigest()),
+    )
+    return ArtifactDescriptor(
+        reference=ref,
+        model_id="test/model",
+        role=ArtifactRole.ROOT,
+        format=ArtifactFormat.ONNX,
+        consumer="test",
+        model_family="test-family",
+        upstream_repository="test/repo",
+        upstream_revision="main",
+        source_url=source_url,
+        precision=ref.variant,
+        license_id="test-license",
+        license_url="https://example.test/license",
+        usage_notice="Test model",
+        runtime_name="test-runtime",
+        runtime_version_constraint="==1.0.0",
+        supported_os=("linux",),
+        supported_architectures=("x86-64",),
+        provenance=(ProvenanceClass.CHATBOOK_CURATED,),
+        files=files,
+        expected_installed_bytes=8,
+        dependencies=(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_multi_file_source_map_urls_never_leak_into_state_manifests_or_errors(
+    tmp_path, caplog
+):
+    """TASK-1695: per-file source-map URLs are credential-free by
+    construction (rejected at ``preflight()`` otherwise -- see
+    ``test_source_map.py``), but this proves the mechanism doesn't
+    accidentally start PERSISTING url text anywhere either: the fetch-state
+    sidecar, the installed manifest, and any raised error stay exactly as
+    opaque to per-file origin identity as the single-file ``source_url``
+    path always was.
+
+    Structural guarantee behind this, not just an incidental test result:
+    TASK-1695's AC #2 forbids adding a ``url`` field to ``ArtifactFile``/
+    ``ArtifactDescriptor``, so there is nowhere in the manifest schema a
+    per-file URL COULD be serialized into even if this test were absent.
+    This is the regression guard that keeps that true.
+    """
+    MARKER = "sourcemarkxyz789"
+    root_dir = tmp_path / "root"
+    core = ModelArtifactService(root_dir)
+    root = ArtifactRef("multi-file-hygiene", "r1", "int8")
+
+    with caplog.at_level(logging.DEBUG):
+        with FixtureArtifactServer() as srv:
+            srv.serve(f"/{MARKER}/a.bin", b"aaaa", etag='"va"', support_range=True)
+            srv.serve(f"/{MARKER}/b.bin", b"bbbb", etag='"vb"', support_range=True)
+            svc = ArtifactAcquisitionService(
+                core,
+                free_bytes_probe=lambda p: 10**12,
+                trusted_origins=_trusted(srv),
+            )
+            # Deliberately NOT marker-bearing: descriptor.source_url is a
+            # pre-existing, unrelated field that manifest.json has ALWAYS
+            # persisted (it is credential-free by its own validation, so
+            # that persistence is expected and fine) -- keeping it marker-
+            # free isolates this test to what TASK-1695 actually adds: the
+            # PER-FILE source-map entries below, which must never appear
+            # anywhere a plain descriptor field legitimately does.
+            desc = _two_file_descriptor_for_hygiene(root, srv.url("/hygiene-descriptor-source"))
+            catalog = DictCatalog({root: desc})
+            sources = {
+                root: {
+                    "a.bin": srv.url(f"/{MARKER}/a.bin"),
+                    "b.bin": srv.url(f"/{MARKER}/b.bin"),
+                }
+            }
+
+            report = await svc.preflight(root, catalog, sources=sources)
+            consent = report.grant()
+            activated = await svc.provision(root, consent, catalog, sources=sources)
+            assert activated == root
+
+    installed_refs = {
+        item.descriptor.reference for item in core.list_installed() if item.descriptor is not None
+    }
+    assert root in installed_refs
+
+    # 1. No THIS-APPLICATION log record carries the marker. httpx/httpcore's
+    #    own DEBUG/INFO request tracing is deliberately excluded: it
+    #    legitimately logs the exact (credential-free, by construction --
+    #    see test_source_map.py's preflight-time rejection tests) URL it
+    #    requests, which is expected operational visibility, not a secret
+    #    leak -- the design spec forbids bearer tokens, cookies, signed
+    #    redirect targets, and query strings from ever appearing anywhere,
+    #    not the credential-free URL identity itself (which the spec's own
+    #    "Resume metadata is credential-free and contains only ... a
+    #    credential-free origin source identity" explicitly allows). What
+    #    this DOES catch: any accidental ``logger.info(f"...{url}...")``
+    #    this task's own new code (``_resolve_file_sources``,
+    #    ``_closure_fingerprint_with_sources``, the ``_fetch_*`` threading)
+    #    might have introduced.
+    app_records = [
+        record
+        for record in caplog.records
+        if not record.name.startswith(("httpx", "httpcore"))
+    ]
+    for record in app_records:
+        assert MARKER not in record.getMessage()
+
+    # 2. Nothing under the artifact store's root -- staging sidecars,
+    #    installed payloads, manifests, lease files -- contains the marker.
+    scanned = 0
+    for path in root_dir.rglob("*"):
+        if path.is_file():
+            scanned += 1
+            assert MARKER.encode() not in path.read_bytes(), f"source-map URL leaked into {path}"
+    assert scanned > 0, "sanity: the artifact store must contain files to scan"
 
 
 # ---------------------------------------------------------------------------

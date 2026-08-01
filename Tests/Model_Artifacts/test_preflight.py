@@ -330,11 +330,14 @@ async def test_preflight_stale_sidecar_credit_capped_by_actual_file_size(tmp_pat
 
 
 def _two_file_descriptor(ref: ArtifactRef) -> ArtifactDescriptor:
-    """A 2-file descriptor -- real per-file URLs are undefined until the
-    catalog work (TASK-596/1301) specifies them; only the file COUNT
-    matters here (mirrors test_provision_fetch.py's identical-purpose
-    ``_make_two_file_descriptor``, duplicated locally per this suite's
-    convention of not cross-importing test-private helpers)."""
+    """A 2-file descriptor with no ``ArtifactSourceMap`` entries anywhere
+    in this file's tests -- TASK-1695 defines per-file URLs via an explicit
+    caller-supplied source map (see ``test_source_map.py`` for the
+    end-to-end multi-file coverage); this fixture instead exercises the
+    "resolution still fails when no map is supplied" path, so only the
+    file COUNT matters here (mirrors test_provision_fetch.py's identical-
+    purpose ``_make_two_file_descriptor``, duplicated locally per this
+    suite's convention of not cross-importing test-private helpers)."""
 
     files = (
         ArtifactFile("a.bin", 4, hashlib.sha256(b"aaaa").hexdigest()),
@@ -367,15 +370,22 @@ def _two_file_descriptor(ref: ArtifactRef) -> ArtifactDescriptor:
 
 @pytest.mark.asyncio
 async def test_preflight_multi_file_descriptor_raises_catalog_error(tmp_path):
-    """A 2-file descriptor fails ``preflight()`` itself, before any report
-    or consent exists -- not just later at ``provision()``'s fetch phase.
+    """A 2-file descriptor with no ``sources`` map fails ``preflight()``
+    itself, before any report or consent exists -- not just later at
+    ``provision()``'s fetch phase.
 
-    Regression test for the review finding: previously only
-    ``_fetch_artifact`` guarded this shape, so a preflight report could be
-    built and consent granted for a closure that ``provision()`` would
-    ALWAYS reject with ``CatalogError`` -- after already taking the
-    exclusive session lease. The spec requires catalog problems to surface
-    at preflight. No network fixture is needed: ``_aggregate_closure``
+    TASK-1695 note: multi-file descriptors are no longer refused outright
+    (see ``test_source_map.py`` for the now-supported end-to-end path via
+    an explicit ``ArtifactSourceMap``) -- this test's ``CatalogError`` now
+    comes from ``_resolve_file_sources`` finding no resolvable URL for a
+    declared file (no map entry, and no single-file fallback since this
+    descriptor declares two), not from a blanket multi-file refusal.
+    Original regression rationale still holds: previously only
+    ``_fetch_artifact`` guarded resolution failures of this shape, so a
+    preflight report could be built and consent granted for a closure that
+    ``provision()`` would ALWAYS reject -- after already taking the
+    exclusive session lease. The spec requires catalog/source problems to
+    surface at preflight. No network fixture is needed: ``_aggregate_closure``
     raises before ``preflight()`` ever reaches its gating probe.
     """
     core = ModelArtifactService(tmp_path / "root")

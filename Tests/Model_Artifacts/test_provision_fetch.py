@@ -60,10 +60,12 @@ def _trusted(srv: FixtureArtifactServer) -> frozenset:
 def _make_two_file_descriptor(source_url: str) -> ArtifactDescriptor:
     """A 2-file descriptor -- ``make_descriptor`` only ever builds one file.
 
-    Only the file COUNT matters for the CatalogError coverage below: real
-    per-file URLs for a multi-file descriptor don't exist yet (that's
-    TASK-596/1301's job), so there is nothing meaningful to make these
-    URLs resolve to.
+    Only the file COUNT matters for the direct-call CatalogError coverage
+    below: this file's tests call ``_fetch_artifact`` directly with no
+    ``resolved_sources`` argument, so TASK-1695's per-file
+    ``ArtifactSourceMap`` never enters the picture and there is nothing to
+    make these files' URLs resolve to (see ``test_source_map.py`` for the
+    end-to-end multi-file path via an explicit source map).
     """
 
     ref = ArtifactRef("multi-file-model", "r" * 40, "int8")
@@ -296,11 +298,17 @@ async def test_fetch_zero_byte_file_creates_empty_destination_and_skips_network(
 async def test_fetch_multi_file_descriptor_raises_catalog_error_without_touching_anything(
     tmp_path,
 ):
-    """Per-file URLs for a multi-file descriptor are undefined until the
-    catalog work (TASK-596/1301) specifies them. ``_fetch_artifact`` must
-    fail loudly with a typed CatalogError instead of silently guessing a
-    joined URL and fetching the wrong bytes -- and must do so before
-    touching staging, the sidecar, or the network at all."""
+    """TASK-1695: calling ``_fetch_artifact`` directly (bypassing
+    ``preflight()``/``provision()``) with NO ``resolved_sources`` argument
+    for a multi-file descriptor leaves every declared file unresolved --
+    there is no single-file ``source_url`` fallback for more than one file,
+    and nothing was passed to supply per-file URLs. ``_fetch_artifact``
+    must fail loudly with a typed ``CatalogError`` instead of silently
+    guessing a joined URL and fetching the wrong bytes -- and must do so
+    before touching staging, the sidecar, or the network at all. See
+    ``test_source_map.py`` for the same descriptor shape actually
+    provisioning successfully once a real ``ArtifactSourceMap`` is
+    supplied."""
 
     with FixtureArtifactServer() as srv:
         core = ModelArtifactService(tmp_path / "root")

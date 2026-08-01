@@ -276,10 +276,10 @@ async def test_provision_preverify_total_ignores_fetch_phases_netted_staged_cred
 
     captured: list[_ProvisionProgressState] = []
 
-    async def fake_fetch(descriptor, staging_dir, progress_state):
+    async def fake_fetch(descriptor, staging_dir, progress_state, resolved_sources=None):
         captured.append(progress_state)
 
-    async def fake_preverify(descriptor, staging_dir, progress_state):
+    async def fake_preverify(descriptor, staging_dir, progress_state, resolved_sources=None):
         captured.append(progress_state)
 
     async def fake_install(descriptor, staging_dir):

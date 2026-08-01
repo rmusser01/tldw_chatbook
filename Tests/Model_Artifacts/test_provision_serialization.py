@@ -116,13 +116,13 @@ async def test_provision_serializes_concurrent_calls_in_process(tmp_path, monkey
     entered = asyncio.Event()
     gate = asyncio.Event()
 
-    async def fake_fetch(descriptor, staging_dir, progress_state):
+    async def fake_fetch(descriptor, staging_dir, progress_state, resolved_sources=None):
         events.append("enter")
         entered.set()
         await gate.wait()
         events.append("exit")
 
-    async def fake_preverify(descriptor, staging_dir, progress_state):
+    async def fake_preverify(descriptor, staging_dir, progress_state, resolved_sources=None):
         pass
 
     async def fake_install(descriptor, staging_dir):
@@ -263,10 +263,10 @@ async def test_provision_fully_installed_closure_skips_stubs(tmp_path, monkeypat
 
     calls = {"fetch": 0, "preverify": 0, "install": 0}
 
-    async def counting_fetch(descriptor, staging_dir, progress_state):
+    async def counting_fetch(descriptor, staging_dir, progress_state, resolved_sources=None):
         calls["fetch"] += 1
 
-    async def counting_preverify(descriptor, staging_dir, progress_state):
+    async def counting_preverify(descriptor, staging_dir, progress_state, resolved_sources=None):
         calls["preverify"] += 1
 
     async def counting_install(descriptor, staging_dir):
@@ -309,7 +309,7 @@ async def test_provision_holds_session_lease_across_phase_stub(tmp_path, monkeyp
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def paused_fetch(descriptor, staging_dir, progress_state):
+    async def paused_fetch(descriptor, staging_dir, progress_state, resolved_sources=None):
         entered.set()
         await release.wait()
         raise NotImplementedError("stop here; only the pause matters")
