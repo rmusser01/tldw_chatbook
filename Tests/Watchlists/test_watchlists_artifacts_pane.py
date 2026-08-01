@@ -35,7 +35,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from rich.console import Console
@@ -52,7 +52,9 @@ from tldw_chatbook.Subscriptions import briefing_cast, briefing_service
 import tldw_chatbook.Subscriptions.briefing_audio as briefing_audio
 from tldw_chatbook.Subscriptions.briefing_audio import AudioGenerationError
 from tldw_chatbook.Subscriptions.briefing_cast import dump_roster
+from tldw_chatbook.Subscriptions.briefing_export import default_briefing_filename
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+from tldw_chatbook.Third_Party.textual_fspicker import FileSave
 from tldw_chatbook.TTS import audio_player as audio_player_module
 from tldw_chatbook.UI.Screens import watchlists_collections_screen as screen_module
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
@@ -63,6 +65,7 @@ from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import (
     BriefingSelected,
     CastScriptRequested,
     CitationActivated,
+    ExportBriefingRequested,
     GenerateBriefingRequested,
     PlayAudioRequested,
     StopAudioRequested,
@@ -3614,3 +3617,230 @@ async def test_handle_play_audio_requested_still_plays_a_normal_in_dir_path(
         await pilot.pause()
 
         assert play_calls == [audio_file]
+
+
+# --- Task 1 (phase 3): exporting a briefing as markdown --------------------
+#
+# `ArtifactsPane`'s Export button lives in the EXISTING `#artifacts-toolbar`
+# (no new `Horizontal` -- see that compose()-site comment); its disabled
+# state, the `FileSave` push it triggers, and the write-path's honest
+# toasts are exercised below. `_write_briefing_export_file` is called
+# directly for the write-path tests, the same directness `library_screen`'s
+# own `_write_library_note_export_file` tests use -- it is a plain async
+# method the `FileSave` callback resolves to, not something that needs a
+# real dialog driven through the UI to exercise.
+
+
+def _seed_complete_briefing(app, watchlist_id: int, *, body: str = "Body text") -> int:
+    """A `complete` briefing with a real body, seeded directly (no fake
+    chat needed -- these tests are about the export flow, not generation).
+    """
+    db = app.watchlist_bundle_service.db
+    briefing_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(
+        briefing_id,
+        status="complete",
+        body_markdown=body,
+        covers_from_ts="2026-07-25T00:00:00+00:00",
+        covers_through_item_id=5,
+    )
+    return briefing_id
+
+
+@pytest.mark.asyncio
+async def test_export_button_is_disabled_without_a_complete_selection():
+    """Export starts disabled with nothing selected, stays disabled for a
+    `failed` row, and enables only once a `complete` briefing is selected.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    failed_id = db.insert_briefing(watchlist_id)
+    db.update_briefing(failed_id, status="failed", error="boom")
+    complete_id = _seed_complete_briefing(app, watchlist_id)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        export_button = pane.query_one("#artifacts-export-button", Button)
+        assert export_button.disabled is True, "no selection -> disabled"
+        assert export_button.compact, "a bordered button costs 3 rows in a height:1 strip"
+
+        pane.select_briefing_by_id(str(failed_id))
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert (
+            pane.query_one("#artifacts-export-button", Button).disabled is True
+        ), "a failed briefing has no body worth exporting"
+
+        pane.select_briefing_by_id(str(complete_id))
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert (
+            pane.query_one("#artifacts-export-button", Button).disabled is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_pressing_export_pushes_a_file_save_dialog_seeded_with_the_default_filename(
+    monkeypatch,
+):
+    """Pressing Export posts `ExportBriefingRequested`, which the screen's
+    handler answers by pushing a `FileSave` dialog pre-filled with a
+    sanitized default filename -- proven here by its only observable
+    effect (the push), the same way `test_presets_button_opens_the_preset_
+    manager` proves `ManagePresetsRequested` through ITS handler's effect
+    rather than by intercepting the message object.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+
+    push_screen_mock = AsyncMock()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        # `host` (the `DestinationHarness`) is the real Textual `App`
+        # subclass driving this pilot -- `screen.app` resolves to IT, not
+        # to the `app` (`TldwCli`) fixture, which this screen only reads
+        # as `self.app_instance` (see `_notify_watchlists`). The dialog
+        # must be patched on the object `self.app.push_screen` actually
+        # resolves through.
+        monkeypatch.setattr(host, "push_screen", push_screen_mock)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_briefing_by_id(str(briefing_id))
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.query_one("#artifacts-export-button", Button).press()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert push_screen_mock.await_count == 1, "Export must push exactly one dialog"
+    args, kwargs = push_screen_mock.call_args
+    dialog = args[0]
+    assert isinstance(dialog, FileSave)
+    briefing_row = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
+    expected_filename = default_briefing_filename(
+        {**briefing_row, "watchlist_name": "Morning AI Brief"},
+        watchlist_name="Morning AI Brief",
+    )
+    assert dialog._default_file == expected_filename
+    assert callable(kwargs.get("callback"))
+
+
+@pytest.mark.asyncio
+async def test_write_briefing_export_file_writes_the_document_and_toasts_success(
+    tmp_path,
+):
+    """The write-path (bypassing the dialog UI, exercised separately above)
+    writes `briefing_markdown_document`'s output and notifies on success,
+    with `markup=False` since the destination's own filename is
+    interpolated into the toast.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id, body="Body text")
+    briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
+    briefing["watchlist_name"] = "Morning AI Brief"
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        destination = tmp_path / "export.md"
+        await screen._write_briefing_export_file(destination, briefing)
+
+    written = destination.read_text(encoding="utf-8")
+    assert "Body text" in written
+    assert "Morning AI Brief" in written
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "exported successfully" in args[0]
+    assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_write_briefing_export_file_cancelled_writes_nothing():
+    """A `None` path (the user cancelled the dialog) writes nothing and
+    toasts a cancellation, not an error. There is no destination to check
+    for a stray write against -- `None` means the dialog never returned
+    one -- so this only pins the toast.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
+    briefing["watchlist_name"] = "Morning AI Brief"
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await screen._write_briefing_export_file(None, briefing)
+
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "cancelled" in args[0].lower()
+    assert kwargs.get("severity") == "information"
+
+
+@pytest.mark.asyncio
+async def test_write_briefing_export_file_rejects_an_invalid_path(monkeypatch, tmp_path):
+    """A `FileSave`-returned path that fails `validate_path_simple` is
+    rejected with a quiet warning toast -- no write, no crash -- rather
+    than trusting the dialog's returned path unconditionally.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
+    briefing["watchlist_name"] = "Morning AI Brief"
+
+    def _reject_path(*_args, **_kwargs):
+        raise ValueError("rejected for test")
+
+    monkeypatch.setattr(screen_module, "validate_path_simple", _reject_path)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        destination = tmp_path / "export.md"
+        await screen._write_briefing_export_file(destination, briefing)
+
+    assert not destination.exists()
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "Rejected export path" in args[0]
+    assert kwargs.get("severity") == "warning"
+    assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_write_briefing_export_file_write_failure_toasts_the_exception_type(
+    monkeypatch, tmp_path
+):
+    """An `OSError` from the write itself toasts `type(exc).__name__` --
+    never the briefing body, never a raw traceback -- and leaves no file
+    behind.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
+    briefing["watchlist_name"] = "Morning AI Brief"
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        destination = tmp_path / "export.md"
+        with monkeypatch.context() as ctx:
+            ctx.setattr(Path, "write_text", _boom)
+            await screen._write_briefing_export_file(destination, briefing)
+
+    assert not destination.exists()
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "OSError" in args[0]
+    assert kwargs.get("severity") == "error"
+    assert kwargs.get("markup") is False

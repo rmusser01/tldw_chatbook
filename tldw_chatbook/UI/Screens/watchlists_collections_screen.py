@@ -42,8 +42,14 @@ from ...Subscriptions.briefing_cast import (
     fail_interrupted_scripts,
     generate_script,
 )
+from ...Subscriptions.briefing_export import (
+    BriefingExportError,
+    briefing_markdown_document,
+    default_briefing_filename,
+)
 from ...Subscriptions.briefing_selection import MODE_AUTO_FEATURED, VALID_MODES
 from ...Subscriptions.briefing_service import (
+    STATUS_COMPLETE,
     STATUS_GENERATING,
     extract_citation_ids,
     fail_interrupted_briefings,
@@ -51,8 +57,10 @@ from ...Subscriptions.briefing_service import (
 )
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from ...Subscriptions.watchlist_normalizers import normalize_watchlist_item
+from ...Third_Party.textual_fspicker import FileSave
 from ...TTS.audio_player import play_audio_file
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.path_validation import validate_path_simple
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -79,6 +87,7 @@ from ..Watchlists_Modules.artifacts_pane import (
     BriefingSelected,
     CastScriptRequested,
     CitationActivated,
+    ExportBriefingRequested,
     GenerateBriefingRequested,
     ManagePresetsRequested,
     PlayAudioRequested,
@@ -3779,6 +3788,138 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         event.stop()
         self.run_worker(
             self._load_briefings(), exclusive=True, group="wl-briefings-load"
+        )
+
+    # --- Exporting a briefing as markdown (spec #2 phase 3, Task 1) --------
+
+    @on(ExportBriefingRequested)
+    def handle_export_briefing_requested(
+        self, event: ExportBriefingRequested
+    ) -> None:
+        """Answer from memory, then dispatch the `FileSave` flow.
+
+        `ArtifactsPane.compose` already disables Export for no-selection
+        and any non-`complete` status, but this handler re-checks both
+        anyway: the button's disabled state and the message it posts are
+        two different frames, and (unlike a keyboard-only affordance) a
+        press already in flight when the selection changes underneath it
+        must not be trusted just because it once passed a disabled check.
+        No in-flight guard here, unlike Generate/Cast/Synthesize: exporting
+        touches no database and starts no generation, only a dialog and,
+        once a path is chosen, one file write -- there is nothing for a
+        second press to race against except the same `FileSave` dialog
+        Textual already refuses to stack twice.
+        """
+        event.stop()
+        briefing = self._selected_briefing
+        if briefing is None or str(briefing.get("status") or "").strip().lower() != (
+            STATUS_COMPLETE
+        ):
+            self._notify_watchlists(
+                "Select a completed briefing to export.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        watchlist_id = briefing.get("watchlist_id")
+        watchlist_name = (
+            self._watchlist_display_name(watchlist_id)
+            if watchlist_id is not None
+            else "this watchlist"
+        )
+        self.run_worker(
+            self._push_export_briefing_dialog(dict(briefing), watchlist_name),
+            group="wl-briefing-export",
+        )
+
+    async def _push_export_briefing_dialog(
+        self, briefing: dict[str, Any], watchlist_name: str
+    ) -> None:
+        """Push `FileSave`, seeded with a sanitized default filename.
+
+        Mirrors `_export_library_note`'s flow (`library_screen.py:6428`):
+        a `FileSave` prompt pre-filled with a sanitized default filename,
+        whose callback writes the export once a path is chosen. Imports
+        the VENDORED picker (`Third_Party.textual_fspicker.FileSave`,
+        keyword `default_file`) -- not the enhanced picker in `Widgets/
+        enhanced_file_picker.py`, a different class whose keyword is
+        `default_filename` and which also takes `context=`; mixing the two
+        raises `TypeError`.
+
+        `briefing["watchlist_name"]` is merged in here, once, rather than
+        threaded through as a separate parameter to every downstream
+        function: `briefing_markdown_document`/`default_briefing_filename`
+        both read it directly off the mapping they are given.
+        """
+        enriched = {**briefing, "watchlist_name": watchlist_name}
+        default_filename = default_briefing_filename(
+            enriched, watchlist_name=watchlist_name
+        )
+        await self.app.push_screen(
+            FileSave(
+                location=str(Path.home()),
+                title="Export Briefing as Markdown",
+                default_file=default_filename,
+            ),
+            callback=lambda path: self._write_briefing_export_file(path, enriched),
+        )
+
+    async def _write_briefing_export_file(
+        self, selected_path: Path | None, briefing: Mapping[str, Any]
+    ) -> None:
+        """Validate the chosen path, build the document, and write it.
+
+        Mirrors `_write_library_note_export_file`'s validate -> write ->
+        honest-toasts shape (`library_screen.py:6445`), with two
+        deliberate differences this feature's own rules require: the write
+        itself runs in `asyncio.to_thread` (a `FileSave`-chosen destination
+        can be anywhere, including a slow or network-mounted path, so the
+        write must never block the event loop), and exception logging is
+        type-only -- never `logger.opt(exception=True)`, and never the
+        briefing body.
+
+        Args:
+            selected_path: The chosen destination, or `None` if the
+                dialog was cancelled.
+            briefing: The briefing row, with `watchlist_name` merged in by
+                `_push_export_briefing_dialog`.
+        """
+        if not selected_path:
+            self._notify_watchlists(
+                "Briefing export cancelled.", severity="information"
+            )
+            return
+        try:
+            validated_path = validate_path_simple(selected_path, require_exists=False)
+        except ValueError as exc:
+            logger.warning(
+                f"Rejected briefing export path: {type(exc).__name__}"
+            )
+            self._notify_watchlists(
+                f"Rejected export path: {exc}", severity="warning", markup=False,
+            )
+            return
+        try:
+            document = briefing_markdown_document(briefing)
+        except BriefingExportError as exc:
+            self._notify_watchlists(str(exc), severity="warning", markup=False)
+            return
+        try:
+            await asyncio.to_thread(
+                validated_path.write_text, document, encoding="utf-8"
+            )
+        except OSError as exc:
+            logger.warning(f"Briefing export write failed: {type(exc).__name__}")
+            self._notify_watchlists(
+                f"Error exporting briefing: {type(exc).__name__}",
+                severity="error",
+                markup=False,
+            )
+            return
+        self._notify_watchlists(
+            f"Briefing exported successfully to {validated_path.name}",
+            severity="information",
+            markup=False,
         )
 
     # --- Briefing selection-mode and default-preset pickers (Task 4) -------

@@ -122,6 +122,17 @@ class RefreshBriefingsRequested(Message):
     """Posted when the user asks to re-read the briefing list."""
 
 
+class ExportBriefingRequested(Message):
+    """Posted when the user asks to export the selected briefing as markdown.
+
+    Carries nothing, same shape as `GenerateBriefingRequested`/`CastScript
+    Requested` and for the same reason: the briefing to export is the
+    screen's own `_selected_briefing`, already mirrored there by `handle_
+    briefing_selected` -- there is nothing this message needs to carry that
+    the screen does not already hold.
+    """
+
+
 class BriefingModeChanged(Message):
     """Posted when the user picks a different selection mode.
 
@@ -687,6 +698,31 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 compact=True,
                 tooltip="Re-read this watchlist's briefings.",
             )
+            # Task 1 (phase 3): exporting is an action on THE SELECTED
+            # briefing, so -- unlike Generate/Refresh, which are
+            # watchlist-wide -- it is disabled with nothing selected, and
+            # ALSO disabled for any non-`complete` row: a `failed`/`empty`/
+            # `generating` briefing has no body worth exporting (`empty`
+            # writes no body by design, `failed` recorded none, and
+            # `generating` has not finished). Placed in this SAME toolbar
+            # rather than a new `Horizontal` -- adding a row here would cost
+            # height this pane's budget cannot spare (see the module
+            # docstring's own note on the pane's fixed `fr` split).
+            export_disabled = (
+                self.selected_briefing is None
+                or _status_text(self.selected_briefing) != STATUS_COMPLETE
+            )
+            yield Button(
+                "Export…",
+                id="artifacts-export-button",
+                compact=True,
+                disabled=export_disabled,
+                tooltip=(
+                    "Select a completed briefing to export it."
+                    if export_disabled
+                    else "Export this briefing as a markdown file."
+                ),
+            )
 
         if self.can_generate:
             # Task 4: the selection-mode and default-preset pickers, plus
@@ -1159,6 +1195,8 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             self.post_message(GenerateBriefingRequested())
         elif button_id == "artifacts-refresh-button":
             self.post_message(RefreshBriefingsRequested())
+        elif button_id == "artifacts-export-button":
+            self.post_message(ExportBriefingRequested())
         elif button_id == "artifacts-presets-button":
             self.post_message(ManagePresetsRequested())
         elif button_id == "artifacts-cast-button":
