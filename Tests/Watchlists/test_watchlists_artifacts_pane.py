@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -3998,10 +3999,16 @@ async def test_write_briefing_export_file_cancelled_error_propagates_uncaught(
 
 # --- Task 5 (phase 3): exporting a watchlist's podcast feed directory ------
 #
-# `ArtifactsPane`'s Export Feed button lives in the EXISTING `#artifacts-
-# audio-toolbar` (no new `Horizontal` -- see that compose()-site comment);
-# its disabled state, the `SelectDirectory` push it triggers, and the
-# write-path's honest toasts (including an honest partial-export count) are
+# `ArtifactsPane`'s Export Feed button lives in `#artifacts-toolbar` (no
+# new `Horizontal` -- see that compose()-site comment) -- the SAME
+# watchlist-scoped toolbar Generate/Refresh/Task 1's markdown Export
+# already live in, which renders unconditionally once a watchlist is in
+# scope. Review round 1, Important #1: an earlier draft placed it in
+# `#artifacts-audio-toolbar` instead, which only renders once a SCRIPT is
+# selected -- but the feed export is WATCHLIST-scoped, so that button was
+# unreachable without first selecting some unrelated script. Its disabled
+# state, the `SelectDirectory` push it triggers, and the write-path's
+# honest toasts (including an honest, capped partial-export count) are
 # exercised below. Mirrors the Task 1 markdown-export section immediately
 # above in almost every respect -- same guard shape, same push-then-
 # callback split, same re-arm discipline -- so most docstrings below only
@@ -4048,19 +4055,17 @@ async def test_export_feed_button_is_disabled_without_any_complete_audio_episode
     ANYWHERE in it -- a dead control offering to export nothing is a spec
     violation (phase 2b shipped a disabled Play for exactly this reason).
 
-    Deliberately watchlist-scoped, not script-scoped: the button's
-    disabled state must not depend on which script happens to be
-    currently selected, since the export itself covers the whole
-    watchlist's audio.
+    Deliberately watchlist-scoped, not script-scoped: no briefing or
+    script is ever selected in this test, proving the button's disabled
+    state depends only on the watchlist's own audio, never on a
+    selection this pane may or may not have.
     """
     _patch_audio_dir(monkeypatch, tmp_path)
     app = _build_test_app()
     watchlist_id = _seed_watchlist(app)
-    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+    _briefing_id, script_id = _seed_complete_script(app, watchlist_id)
 
-    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
-        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
-
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         export_feed_button = pane.query_one("#artifacts-export-feed-button", Button)
         assert export_feed_button.disabled is True, "no audio anywhere -> disabled"
@@ -4085,6 +4090,42 @@ async def test_export_feed_button_is_disabled_without_any_complete_audio_episode
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         assert (
             pane.query_one("#artifacts-export-feed-button", Button).disabled is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_export_feed_button_is_visible_and_enabled_with_no_script_selected(
+    monkeypatch, tmp_path
+):
+    """Review round 1, Important #1: pins the discoverability property
+    directly. The feed export is WATCHLIST-scoped -- it exports every
+    complete episode in the watchlist -- so it must be reachable with
+    NOTHING selected at all, not just once a user has happened to click
+    into some unrelated script. `#artifacts-toolbar` (where this button
+    now lives) renders unconditionally once a watchlist is in scope,
+    unlike `#artifacts-audio-toolbar` (gated on `selected_script is not
+    None`), where an earlier draft wrongly placed it -- a user could not
+    have found it there without first selecting a script that has
+    nothing to do with the export.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    _seed_exportable_audio_episode(app, watchlist_id)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        assert screen._selected_briefing is None, (
+            "the fixture must start with nothing selected"
+        )
+        assert screen._selected_script is None
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.selected_briefing is None
+        assert pane.selected_script is None
+        export_feed_button = pane.query_one("#artifacts-export-feed-button", Button)
+        assert export_feed_button.disabled is False, (
+            "Export Feed must be reachable without selecting a briefing "
+            "or script first"
         )
 
 
@@ -4135,20 +4176,21 @@ async def test_pressing_export_feed_pushes_a_select_directory_dialog(
     proven here by its only observable effect (the push), the same way
     Task 1's own `test_pressing_export_pushes_a_file_save_dialog...`
     proves `ExportBriefingRequested` through ITS handler's effect.
+
+    Deliberately selects nothing (review round 1, Important #1): the
+    button lives in the watchlist-scoped `#artifacts-toolbar`, reachable
+    the moment a watchlist is in scope, not gated on any briefing/script
+    selection.
     """
     _patch_audio_dir(monkeypatch, tmp_path)
     app = _build_test_app()
     watchlist_id = _seed_watchlist(app)
-    briefing_id, script_id, _audio_id, _audio_file = _seed_exportable_audio_episode(
-        app, watchlist_id
-    )
+    _seed_exportable_audio_episode(app, watchlist_id)
 
     push_screen_mock = AsyncMock()
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         monkeypatch.setattr(host, "push_screen", push_screen_mock)
-
-        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
 
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         assert pane.has_audio_episodes, "the fixture needs an exportable episode"
@@ -4175,21 +4217,21 @@ async def test_a_second_export_feed_press_while_the_dialog_is_open_is_refused_th
     after the first dialog resolves (exercised both via a real path and
     via a cancel), must work again -- the re-arm assertion that catches a
     flag stuck `True` forever.
+
+    Deliberately selects nothing (review round 1, Important #1) -- see
+    `test_pressing_export_feed_pushes_a_select_directory_dialog`'s own
+    note.
     """
     _patch_audio_dir(monkeypatch, tmp_path)
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
-    briefing_id, script_id, _audio_id, _audio_file = _seed_exportable_audio_episode(
-        app, watchlist_id
-    )
+    _seed_exportable_audio_episode(app, watchlist_id)
 
     push_screen_mock = AsyncMock()
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         monkeypatch.setattr(host, "push_screen", push_screen_mock)
-
-        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
 
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         export_feed_button = pane.query_one("#artifacts-export-feed-button", Button)
@@ -4307,6 +4349,12 @@ async def test_export_feed_directory_partial_export_toasts_the_honest_count(
     since vanished) toasts "N of M episodes exported" -- never a plain
     success -- per `FeedExportResult.skipped`'s own named invariant
     (`briefing_export.py`'s module docstring, decision 3).
+
+    Review round 1, Minor #2: the inlined reason must read as plain
+    prose, not a raw `audio {id}:` prefix that means nothing to a user --
+    `export_feed_directory` writes reasons naming an internal `audio_id`
+    for support/debugging, but the TOAST strips that id
+    (`_user_facing_skip_reasons`).
     """
     _patch_audio_dir(monkeypatch, tmp_path)
     app = _build_test_app()
@@ -4340,6 +4388,69 @@ async def test_export_feed_directory_partial_export_toasts_the_honest_count(
     args, kwargs = app.notify.call_args
     assert "Exported 1 of 2 episodes" in args[0]
     assert "successfully" not in args[0], "a partial export must never claim success"
+    assert "source file no longer exists" in args[0], (
+        "the reason itself must still read as plain prose"
+    )
+    assert re.search(r"audio \d+:", args[0]) is None, (
+        "the internal `audio {id}:` prefix must never reach the user-facing toast"
+    )
+    assert kwargs.get("severity") == "warning"
+    assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_export_feed_directory_partial_export_caps_inlined_reasons(
+    monkeypatch, tmp_path
+):
+    """Review round 1, Minor #2: five skipped episodes must not produce a
+    toast quoting all five -- `export_feed_directory` can skip
+    arbitrarily many, and a toast that inlines every one of them is
+    unreadable well before it gets there. Only the first `_MAX_INLINE_
+    SKIP_REASONS` (3) are shown, followed by an honest "…and N more"
+    trailer; the headline "N of M" count itself is never capped or
+    approximated.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    _briefing_id, script_id, _audio_id, _audio_file = _seed_exportable_audio_episode(
+        app, watchlist_id
+    )
+    db = app.watchlist_bundle_service.db
+    # Five more complete audio rows whose source files were never written
+    # -- each one skipped by `export_feed_directory` with its own "source
+    # file no longer exists" reason, naming a distinct `audio_id`.
+    for index in range(5):
+        missing_file = briefing_audio.briefing_audio_dir() / f"missing-{index}.wav"
+        missing_audio_id = db.create_briefing_audio(
+            script_id, voice_snapshot_json="[]"
+        )
+        db.update_briefing_audio(
+            missing_audio_id,
+            status="complete",
+            file_path=str(missing_file),
+            duration_seconds=1.0,
+            turn_count=1,
+        )
+    destination = tmp_path / "export_dest"
+    destination.mkdir()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await screen._export_feed_directory(
+            db, watchlist_id, "Morning AI Brief", destination
+        )
+
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "Exported 1 of 6 episodes" in args[0], (
+        "the headline count is never capped, only the inlined reasons are"
+    )
+    assert args[0].count("source file no longer exists") == 3, (
+        "only the first 3 reasons are inlined"
+    )
+    assert "…and 2 more" in args[0]
+    assert re.search(r"audio \d+:", args[0]) is None
     assert kwargs.get("severity") == "warning"
     assert kwargs.get("markup") is False
 
@@ -4390,14 +4501,16 @@ async def test_export_feed_press_survives_an_os_error_from_the_service(
     Exception` is what stands between it and the whole app going down --
     exactly the phase-2b app-death lesson (an unwrapped worker with the
     default `exit_on_error=True` took the app down for real, once).
+
+    Deliberately selects nothing (review round 1, Important #1) -- see
+    `test_pressing_export_feed_pushes_a_select_directory_dialog`'s own
+    note.
     """
     _patch_audio_dir(monkeypatch, tmp_path)
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
-    briefing_id, script_id, _audio_id, _audio_file = _seed_exportable_audio_episode(
-        app, watchlist_id
-    )
+    _seed_exportable_audio_episode(app, watchlist_id)
     destination = tmp_path / "export_dest"
     destination.mkdir()
 
@@ -4407,8 +4520,6 @@ async def test_export_feed_press_survives_an_os_error_from_the_service(
     monkeypatch.setattr(screen_module, "export_feed_directory", _boom)
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
-        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
-
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         pane.query_one("#artifacts-export-feed-button", Button).press()
         await pilot.pause()

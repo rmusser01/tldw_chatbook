@@ -226,12 +226,17 @@ class ExportFeedRequested(Message):
     export is the screen's own scope (`_briefing_watchlist_id`), and
     whether there is anything worth exporting is already mirrored onto
     this pane's own `has_audio_episodes` reactive -- there is nothing this
-    message needs to carry that the screen does not already hold. Posted
-    from the button living in `#artifacts-audio-toolbar` (see the
-    module docstring's placement rationale on `compose`), NOT from a
-    watchlist-wide toolbar, even though the export itself is watchlist-
-    scoped rather than script-scoped -- the pane's height budget has no
-    room for a dedicated row of its own (phase 2b's own measured lesson).
+    message needs to carry that the screen does not already hold.
+
+    Posted from the button living in `#artifacts-toolbar` -- the SAME
+    watchlist-scoped toolbar Generate/Refresh/Task 1's markdown Export
+    already live in, and (review round 1, Important #1) NOT `#artifacts-
+    audio-toolbar`, where an earlier draft placed it: that toolbar only
+    renders once a SCRIPT is selected, but this export is WATCHLIST-
+    scoped (every complete episode across the whole watchlist), so a
+    button hidden behind an unrelated script selection is a button a
+    user cannot find at all -- see `compose`'s own comment at the
+    button's new site.
     """
 
 
@@ -727,6 +732,37 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                     else "Export this briefing as a markdown file."
                 ),
             )
+            # Task 5 (phase 3): review round 1, Important #1. The brief
+            # originally placed this button in `#artifacts-audio-toolbar`,
+            # which only renders once a SCRIPT is selected -- but the feed
+            # export itself is WATCHLIST-scoped (every complete episode
+            # across the whole watchlist), not script-scoped, so a user
+            # could not find it without first selecting some unrelated
+            # script. Moved to THIS toolbar instead: it is the one Task 1's
+            # own watchlist-scoped markdown Export already lives in, and it
+            # renders unconditionally (see `compose`'s own top-level
+            # structure -- unlike the picker/scripts/audio sections below,
+            # nothing gates this `Horizontal` at all), so the button is
+            # discoverable the moment a watchlist is in scope, exactly like
+            # Generate/Refresh/Export are. Still costs zero rows: both are
+            # EXISTING `.destination-filter-strip` toolbars, `height: 1`
+            # either way -- see the pinned geometry tests re-run for this
+            # move (`test_the_list_the_button_and_the_body_are_all_on_
+            # screen`, `test_the_briefings_table_keeps_at_least_three_
+            # usable_rows`).
+            yield Button(
+                "Export Feed…",
+                id="artifacts-export-feed-button",
+                compact=True,
+                disabled=not self.has_audio_episodes,
+                tooltip=(
+                    "This watchlist has no complete audio episodes to "
+                    "export."
+                    if not self.has_audio_episodes
+                    else "Export this watchlist's audio episodes as a "
+                    "podcast feed directory."
+                ),
+            )
 
         if self.can_generate:
             # Task 4: the selection-mode and default-preset pickers, plus
@@ -937,28 +973,6 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                         id="artifacts-stop-button",
                         compact=True,
                         tooltip="Stop this script's audio playback.",
-                    )
-                    # Task 5 (phase 3): watchlist-scoped, not script-scoped
-                    # -- disabled purely on `has_audio_episodes` (the
-                    # WHOLE watchlist's export-ready audio), regardless of
-                    # which script happens to be selected right now. Lives
-                    # in THIS toolbar rather than a new one because the
-                    # pane's height budget is pinned (see the module
-                    # docstring's Task 7 note and this method's own
-                    # comments above); adding a button to an EXISTING
-                    # `.destination-filter-strip` costs zero rows.
-                    yield Button(
-                        "Export Feed…",
-                        id="artifacts-export-feed-button",
-                        compact=True,
-                        disabled=not self.has_audio_episodes,
-                        tooltip=(
-                            "This watchlist has no complete audio episodes "
-                            "to export."
-                            if not self.has_audio_episodes
-                            else "Export this watchlist's audio episodes as "
-                            "a podcast feed directory."
-                        ),
                     )
                 # No separate audio-detail `Static`: its status/duration/
                 # error is folded into `_script_detail_renderable`'s own

@@ -8,6 +8,7 @@ handoffs keep working while Collections moves under Library.
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -4084,17 +4085,29 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # before `run_worker` for the identical reason
     # `handle_export_briefing_requested`'s docstring gives, and a picker
     # pushed via `push_screen(..., callback=...)` rather than `push_
-    # screen_wait` -- NOT `exclusive=True` on the worker either, for the
-    # same reason `_start_tree_write`'s own docstring gives for its five
-    # tree-write verbs: this worker owns a live modal
-    # (`SelectDirectory`), and `exclusive=True` cancels the *previous*
-    # worker in its group rather than refusing the new one -- cancelling
-    # one mid-picker would leave that dialog on the screen stack with
-    # nothing left to dismiss it. The boolean guard below already makes a
-    # second dispatch impossible while one is in flight, so `exclusive`
-    # would only ever fire on a bug in that guard -- and if it ever did,
-    # stranding a modal is a worse failure than the one it would be
-    # "fixing".
+    # screen_wait` -- NOT `exclusive=True` on the worker either.
+    #
+    # Review round 1: the durable reason, confirmed by the reviewer, is
+    # structural rather than just "the guard already prevents a second
+    # dispatch." `Screen._push_result_callback` wraps the callback in a
+    # `ResultCallback`, and `ResultCallback.__call__` -- what `Screen.
+    # dismiss` invokes -- schedules it via `requester.call_next(...)`,
+    # i.e. onto the REQUESTER's (this screen's) own message pump, never
+    # back inside the `wl-feed-export` worker. `_push_export_feed_dialog`'s
+    # entire life is therefore the single `await self.app.push_screen(...)`
+    # that returns once `SelectDirectory` MOUNTS -- by the time a user
+    # could ever pick a path or cancel, that worker has already finished
+    # and exited; `_export_feed_directory` (where the guard actually
+    # clears) never runs inside it at all. `exclusive=True` cancelling a
+    # "previous" worker in this group is therefore a no-op on every
+    # reachable path: there is nothing long-lived left to cancel, and the
+    # `_start_tree_write`-style zombie-modal failure mode (a live worker
+    # still awaiting a picker's dismissal, cancelled out from under it) is
+    # structurally impossible here -- not merely guarded against. Left
+    # here anyway as belt-and-suspenders should a future refactor route
+    # the guard differently: the boolean check below still makes a second
+    # dispatch impossible while one is in flight, so `exclusive` would
+    # only ever fire on a bug in THAT guard.
     #
     # Two differences from the markdown flow, both Task 4's own contract:
     # the destination must already EXIST (`export_feed_directory`'s own
@@ -4188,6 +4201,41 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if not pushed:
                 self._feed_export_in_flight = False
 
+    #: Task 5 (phase 3), review round 1, Minor #2: the ceiling on how many
+    #: of `FeedExportResult.skipped`'s reasons are inlined into the
+    #: partial-export toast. `export_feed_directory` can skip arbitrarily
+    #: many episodes, and a toast quoting every one of them is unreadable
+    #: long before it gets there -- the headline "N of M" count already
+    #: states the honest outcome; these are just the first few reasons,
+    #: for a user who wants to know why.
+    _MAX_INLINE_SKIP_REASONS = 3
+
+    #: Every reason `export_feed_directory` writes is `f"audio {audio_id}:
+    #: ..."` (that module's own docstring, decision 3) -- the id is
+    #: load-bearing for support/debugging (kept in the log line in
+    #: `_export_feed_directory` below) but means nothing to a user reading
+    #: a toast, so it is stripped before any reason reaches one.
+    _SKIP_REASON_ID_PREFIX = re.compile(r"^audio \d+: ")
+
+    @classmethod
+    def _user_facing_skip_reasons(cls, reasons: list[str]) -> str:
+        """The first `_MAX_INLINE_SKIP_REASONS` of `reasons`, id-stripped
+        and joined for a toast.
+
+        Args:
+            reasons: `FeedExportResult.skipped`, verbatim.
+
+        Returns:
+            `"reason one; reason two; reason three; …and 4 more"` -- or
+            just the id-stripped reasons, joined, with no trailer, when
+            `len(reasons) <= _MAX_INLINE_SKIP_REASONS`.
+        """
+        stripped = [cls._SKIP_REASON_ID_PREFIX.sub("", reason, count=1) for reason in reasons]
+        shown = stripped[: cls._MAX_INLINE_SKIP_REASONS]
+        remaining = len(stripped) - len(shown)
+        text = "; ".join(shown)
+        return f"{text}; …and {remaining} more" if remaining > 0 else text
+
     async def _export_feed_directory(
         self,
         db: Any,
@@ -4204,12 +4252,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         and copies, and the atomic `feed.xml` write.
 
         A partial export (`result.skipped` non-empty) is reported as
-        exactly that -- "N of M episodes exported", plus the reasons
-        `export_feed_directory` already wrote in plain language -- never
-        collapsed into a plain success toast. `_feed_export_in_flight` is
-        cleared in `finally`, on every exit path (cancelled, rejected
-        destination, export-error, or success alike), mirroring `_write_
-        briefing_export_file`'s own re-arm guarantee.
+        exactly that -- "N of M episodes exported", plus up to `_MAX_
+        INLINE_SKIP_REASONS` of the reasons `export_feed_directory` wrote
+        (id-stripped -- see `_user_facing_skip_reasons`), with an honest
+        "…and N more" trailer past that cap -- never collapsed into a
+        plain success toast. `_feed_export_in_flight` is cleared in
+        `finally`, on every exit path (cancelled, rejected destination,
+        export-error, or success alike), mirroring `_write_briefing_
+        export_file`'s own re-arm guarantee.
 
         Args:
             db: Snapshotted by the handler at dispatch time.
@@ -4260,7 +4310,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 # at the UI boundary -- a user who exported ten episodes and
                 # got eight must be told, in the reasons `export_feed_
                 # directory` already wrote in plain language.
-                reasons = "; ".join(result.skipped)
+                #
+                # Review round 1, Minor #2: the FULL list (with each
+                # episode's `audio_id`, useful for support) is logged
+                # here -- these are already-benign, app-generated reason
+                # strings, never model/user content, so this is not the
+                # "type only" rule `logger.warning` calls elsewhere on this
+                # screen apply to an exception. The TOAST gets a separate,
+                # user-facing rendering: capped to `_MAX_INLINE_SKIP_
+                # REASONS` (with an honest "…and N more" trailer) and with
+                # the internal `audio {id}:` prefix stripped, since a raw
+                # database id means nothing to a user.
+                logger.info(
+                    f"Feed export for watchlist {watchlist_id} skipped "
+                    f"{len(result.skipped)} of {total} episode(s): "
+                    f"{'; '.join(result.skipped)}"
+                )
+                reasons = self._user_facing_skip_reasons(result.skipped)
                 self._notify_watchlists(
                     f"Exported {result.episode_count} of {total} episodes "
                     f"to {result.directory.name} ({reasons}).",
