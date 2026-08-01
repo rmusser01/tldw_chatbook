@@ -63,8 +63,25 @@ steering text) differs from ``self._loaded_config`` -- read by
 ``evals_screen.py``'s ``_selection_unmoved_since_launch`` so a run/sample-
 bench worker completing while this editor holds unsaved edits degrades to
 a toast instead of calling ``select()``, which would otherwise recompose
-this whole widget
-and silently discard everything not yet Saved.
+this whole widget and silently discard everything not yet Saved.
+
+Task-1611 whole-branch review fix round (documented, not fixed -- judged
+not to stay cleanly contained): a SUCCESSFUL Save is the one place this
+protection does not reach. ``Saved`` triggers ``evals_screen.py``'s own
+``select()``, which builds a genuinely NEW ``BenchEditor`` instance from
+storage -- the mini-form's own ``self._pending_target_*`` has no path
+from the old instance to the new one, so any typed-but-never-created
+Name/steering text is silently gone the moment Save succeeds, even
+though ``is_dirty()`` itself would have called that exact text worth
+protecting one line earlier. Threading it through ``Saved`` -> the
+screen -> the next ``BenchEditor``'s constructor was considered and
+rejected: ``select()`` is this screen's GENERIC recompose entry point,
+shared by every selection-kind change, not a Save-specific hook, and
+correctly scoping carried state to only the bench just saved (never
+leaking into a later, unrelated selection) is real surface area for a
+strange, hard-to-notice bug in exchange for a minor convenience. This is
+a deliberate boundary: Revert discarding unsaved state IS what "revert"
+means; this is the one place a genuine SUCCESS does the same thing.
 
 Task-1611 T2: a target's STEERING (``storage.model_steering`` -- a raw-
 mode ``prefix`` or a chat-mode ``system_prompt``, read out of the target's
@@ -496,6 +513,17 @@ class BenchEditor(Vertical):
         try:
             mini_form_name = self.query_one("#evals-target-name", Input).value
         except QueryError:
+            # Defensive only, structurally unreachable (whole-branch
+            # review): unlike the two steering `Input`s below, `#evals-
+            # target-name` is unconditionally part of `_build_create_
+            # target_control`'s own output in BOTH prompt modes -- there
+            # is no mode in which the mini-form renders at all (which is
+            # already guaranteed by this point, see this method's own
+            # earlier `loaded is None` early return) without it. Kept for
+            # the same reason the outer five-field `QueryError` handler
+            # above is kept: the conservative direction if that invariant
+            # is ever broken by a future change is treating an unreadable
+            # field as dirty, not silently reading it as unchanged.
             mini_form_name = self._pending_target_name
         try:
             mini_form_prefix = self.query_one("#evals-target-prefix", Input).value
@@ -1216,15 +1244,26 @@ class BenchEditor(Vertical):
         if invalid_target is not None:
             # Steering is IMMUTABLE per row (see `model_steering`'s own
             # docstring -- no `update_model` exists), so this target
-            # cannot be "fixed" in place; the two real options are
-            # removing it from this bench, or creating a differently-
-            # steered NEW target via this same section's "+ New target"
-            # mini-form.
-            needed = "a system prompt" if config.prompt_mode == "chat" else "a prefix"
+            # cannot be "fixed" in place. Removal is the one NECESSARY
+            # step -- creating an additional target via this same
+            # section's "+ New target" mini-form, without also removing
+            # this one, leaves the offending target still staged and this
+            # exact error still blocking the NEXT Save (whole-branch
+            # review, Minor: an earlier revision of this copy offered
+            # "create a new target ... instead" as if it were an
+            # alternative to removal, which does not unblock anything on
+            # its own). A replacement is optional, phrased as such, and
+            # deliberately names no specific steering -- an UNSTEERED
+            # replacement target is just as valid for either mode as a
+            # steered one (`Target.is_valid_for_mode`: raw only rejects a
+            # `system_prompt`, chat only rejects a `prefix`; neither
+            # requires the other field be set), so naming one over the
+            # other here would over-prescribe.
             self._show_form_error(
                 f"{invalid_target.name} is not valid for {config.prompt_mode} mode; "
-                "steering cannot be edited on an existing target -- remove it from "
-                f"this bench, or create a new target with {needed} instead."
+                "steering cannot be edited on an existing target -- remove it "
+                "from this bench (optionally replacing it with a new target "
+                "instead)."
             )
             return
 
@@ -1254,6 +1293,33 @@ class BenchEditor(Vertical):
             self._show_form_error(str(exc))
             return
 
+        # Whole-branch review, Minor (judged, documented, not fixed): a
+        # successful Save discards the "+ New target" mini-form's own
+        # typed-but-not-yet-created Name/steering text -- `Saved` triggers
+        # `evals_screen.py`'s `select()`, a full recompose that builds a
+        # BRAND NEW `BenchEditor` (see `Saved`'s own docstring: "always an
+        # edit, never a create" refers to the BENCH, not this widget
+        # instance), and `self._pending_target_*` resets to blank in that
+        # fresh instance's `__init__` -- there is no path from here to it.
+        # This contradicts `is_dirty()`'s own premise one specific way:
+        # that state IS worth protecting from an involuntary recompose
+        # (a completing background worker), yet a VOLUNTARY one the user
+        # just triggered themselves (pressing Save) silently drops it
+        # anyway. Considered threading the mini-form's pending state
+        # through `Saved` -> `evals_screen.py` -> the next `BenchEditor`'s
+        # constructor (mirroring how `save_bench`'s own cleaned name/
+        # description already round-trip through this exact recompose);
+        # rejected as not staying cleanly contained: `select()` is this
+        # screen's GENERIC recompose entry point, shared by every
+        # selection-kind change, not a Save-specific hook -- carrying
+        # state through it correctly requires it be scoped to the EXACT
+        # bench just saved and unconditionally cleared after one use, or
+        # a stray value could leak into an unrelated LATER selection's
+        # freshly-composed editor, a worse and stranger bug than today's
+        # simple, well-understood loss. Documented here, and in the module
+        # docstring's Task-1610 paragraph, as a deliberate boundary:
+        # Revert discarding unsaved state is what "revert" MEANS: this is
+        # the one place Save (a success, not a discard) does too.
         self.post_message(self.Saved(self._bench_id))
 
     @on(Button.Pressed, "#evals-bench-revert")

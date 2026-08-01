@@ -1930,8 +1930,10 @@ async def test_prompt_mode_switch_with_a_real_steered_target_blocks_save_with_re
     target through the UI, saves it onto the bench, then flips to chat
     mode and confirms `_resolve_bench_targets`'s new `model_steering`
     wiring catches it for real AND that the reworded copy (steering is
-    immutable -- offer to create a new target instead of a nonexistent
-    "change its settings" affordance) actually renders.
+    immutable -- REMOVE the target, a new one is only an OPTIONAL
+    replacement, never a nonexistent "change its settings" affordance,
+    and never a claim about which steering the replacement needs --
+    whole-branch review, Minor) actually renders.
     """
     task_id = bench_with_zero_llama_models  # raw mode
     async with evals_app_configured.run_test(size=_REALISTIC_SIZE) as pilot:
@@ -1959,7 +1961,16 @@ async def test_prompt_mode_switch_with_a_real_steered_target_blocks_save_with_re
         assert "raw-only-target" in text
         assert "chat" in text
         assert "cannot be edited" in text
-        assert "create a new target" in text
+        # "remove it" is the NECESSARY step -- whole-branch review, Minor:
+        # an earlier revision offered "create a new target instead" as if
+        # a replacement alone unblocked Save, which it does not (the
+        # offending target stays staged either way).
+        assert "remove it" in text
+        assert "optionally replacing it" in text
+        # Never over-prescribes which steering a replacement needs -- an
+        # unsteered target is equally valid for either mode.
+        assert "with a prefix" not in text
+        assert "with a system prompt" not in text
 
 
 @pytest.mark.asyncio
@@ -2081,28 +2092,49 @@ async def test_is_dirty_flips_true_on_typed_but_uncreated_mini_form_steering(
 async def test_is_dirty_stays_true_for_a_pending_steering_value_after_a_mode_flip(
     evals_app, bench_with_mixed_readiness
 ):
-    """A raw-mode prefix typed, then the mode flips to chat -- the prefix
-    ``Input`` is no longer mounted (``_build_create_target_control`` only
-    ever mounts one steering field at a time), but the text is not gone:
-    ``_capture_pending_target_form`` (already run by ``_on_prompt_mode_
-    changed``) stashed it in ``self._pending_target_prefix``, and
-    ``is_dirty()`` must still count it -- it is exactly as real and
+    """Genuinely exercises `is_dirty()`'s pending-steering FALLBACK branch
+    in isolation (whole-branch review, Minor): an earlier version of this
+    test flipped to chat and LEFT it flipped before asserting, so
+    `prompt_mode != loaded.prompt_mode` alone already made `is_dirty()`
+    True regardless of whether the pending-fallback branch worked at all
+    -- reviewer proved, in an isolated clone, that stubbing
+    `mini_form_prefix`/`mini_form_system_prompt` to `""` left this test
+    (and all 115 others) green.
+
+    This flips to chat, types into `#evals-target-system-prompt`, then
+    flips BACK to raw -- `bench_with_mixed_readiness` loads in raw mode,
+    and the `Select`'s CURRENT value is raw again too by the time
+    `is_dirty()` is called, so the prompt-mode branch cannot fire and
+    every other loaded field is untouched. Only the pending-steering
+    fallback (`#evals-target-system-prompt` is not mounted in raw mode,
+    so `is_dirty()` falls back to `self._pending_target_system_prompt`,
+    stashed by `_capture_pending_target_form` during the flip back) can
+    make this True -- the abandoned chat-mode text is exactly as real and
     exactly as destroyable by a recompose as it was before the flip."""
-    task_id, _ = bench_with_mixed_readiness
+    task_id, _ = bench_with_mixed_readiness  # raw mode
     async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
         await pilot.pause()
         evals_app.screen.select(kind="bench", id=task_id)
         await pilot.pause()
         screen = evals_app.screen
         editor = screen.query_one(BenchEditor)
+        prompt_mode = screen.query_one("#evals-bench-prompt-mode", Select)
 
-        screen.query_one("#evals-target-prefix", Input).value = "Continue: "
-        assert editor.is_dirty() is True
+        prompt_mode.value = "chat"
+        await pilot.pause()
+        screen.query_one("#evals-target-system-prompt", Input).value = (
+            "typed-system-prompt"
+        )
 
-        screen.query_one("#evals-bench-prompt-mode", Select).value = "chat"
+        prompt_mode.value = "raw"
         await pilot.pause()
 
-        assert not screen.query("#evals-target-prefix")
+        # The prompt-mode branch cannot be what makes this dirty: the
+        # Select is back to matching `loaded.prompt_mode` exactly.
+        assert prompt_mode.value == "raw"
+        assert not screen.query("#evals-target-system-prompt")
+        assert screen.query_one("#evals-target-prefix", Input)
+
         assert editor.is_dirty() is True
 
 
@@ -2272,6 +2304,42 @@ async def test_is_dirty_is_false_again_after_save_and_reload(
         await pilot.pause()
 
         editor = screen.query_one(BenchEditor)
+        assert editor.is_dirty() is False
+
+
+@pytest.mark.asyncio
+async def test_save_discards_typed_but_uncreated_mini_form_text(
+    evals_app, bench_with_mixed_readiness
+):
+    """Whole-branch review, Minor (judged, documented, NOT fixed -- see
+    the module docstring's own paragraph, right after its Task-1610 one,
+    for the full reasoning): a successful Save is the one place `is_
+    dirty()`'s own "this text is worth protecting" premise does not hold
+    -- `Saved` triggers a genuine recompose (`evals_screen.py`'s
+    `select()`), which builds a brand-new `BenchEditor` whose `self.
+    _pending_target_*` starts blank again, with no path from the old
+    instance's typed-but-never-created mini-form text to it. Pins the
+    CURRENT, deliberately-accepted behavior so a future change to it (in
+    either direction -- fixing it, or a regression making it WORSE, e.g.
+    losing the mini-form's state even on a Save FAILURE) is a conscious
+    decision, not an accident nobody noticed."""
+    task_id, _ = bench_with_mixed_readiness  # raw mode
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        screen.query_one("#evals-target-name", Input).value = "typed-not-created"
+        screen.query_one("#evals-target-prefix", Input).value = "typed-prefix"
+        assert screen.query_one(BenchEditor).is_dirty() is True
+
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        editor = screen.query_one(BenchEditor)
+        assert screen.query_one("#evals-target-name", Input).value == ""
+        assert screen.query_one("#evals-target-prefix", Input).value == ""
         assert editor.is_dirty() is False
 
 

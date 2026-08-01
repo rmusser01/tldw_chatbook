@@ -34,72 +34,65 @@
 
 #evals-bench-target-table {
     /* `height: auto` (task-1611 T2 fix round 1), overriding Vertical's
-       own DEFAULT_CSS `height: 1fr` -- this lets the table size to its
-       FULL natural row count (every staged target, not a squeezed
-       fraction of one) inside `#evals-bench-targets-body` below, which is
-       what actually clips/scrolls the combined total now. See that
-       selector's own comment for the two-line story (a `min-height`
-       tried first here, alone, made things WORSE). No `overflow-y: auto`
-       of its own anymore either -- same reason, one level up. */
+       own DEFAULT_CSS `height: 1fr` -- lets the table size to its FULL
+       natural row count (every staged target, not a squeezed fraction of
+       one). See `#evals-bench-editor`'s own comment (below the "Task 5"
+       banner further down this file) for where the resulting overflow
+       actually gets absorbed now -- NOT here, and (task-1611 whole-branch
+       review fix round) no longer at `#evals-bench-targets-body` either;
+       see that selector's own comment for why the one-level-down
+       scrollable body this comment used to describe was replaced by ONE
+       scroll level higher up. */
     height: auto;
 }
 
 /* Task 6 (task-1482): `#evals-bench-targets-section` wraps the heading and
-   (task-1611 T2 fix round 1) ONE shared scrollable body together (see
+   the row table / Add picker / "+ New target" mini-form together (see
    bench_editor.py's own `_build_targets_section` docstring for why the
-   row table, the Add picker, and the "+ New target" mini-form all became
-   children of that ONE body, rather than three separate fixed siblings
-   of the heading). It deliberately keeps its DEFAULT_CSS `height: 1fr`
-   (unlike `#evals-inspector-bench`'s own `height: auto` override one
-   section up in this file) -- `#evals-detail-pane` gives BenchEditor a
-   REAL bounded height (not an ambiguous `auto`-measuring one), so `1fr`
-   here resolves the same way it always did for the pre-Task-6 target
-   table alone: EVERYTHING below the heading claims "whatever's left"
-   after that one FIXED sibling is subtracted from the section's own
-   `1fr` share of BenchEditor.
+   latter three are all children of ONE shared `#evals-bench-targets-body`
+   `Vertical`, not siblings of the heading directly).
 
-   Confirmed live both ways the OLD (pre-T2-fix-round-1) two-fixed-
-   siblings-plus-the-table shape could go wrong: `height: auto` on either
-   the table or the whole section (tried first, task-1482) let one of them
-   claim its full, UNCAPPED natural content height instead, overflowing
-   `#evals-detail-pane`'s clip rectangle by several rows at a realistic
-   160x45 size (`test_every_pane_descendant_stays_within_its_pane`);
-   PLAIN `1fr` with no other change left the per-row `Static` squeezed to
-   a literal `region.height == 0` at the harness's cramped default 80x24
-   size (`test_bench_with_duplicate_target_id_composes_without_raising`)
-   -- that second failure was fixed separately, by narrowing the per-row
-   `Remove` button below (`.evals-bench-target-remove`). And task-1611
-   T2's OWN two live failures (the mini-form's own layout, and the Add
-   picker's phantom extra row) are documented on `#evals-bench-targets-
-   body` and `#evals-bench-add-target-row` below.
+   `height: auto` (task-1611 whole-branch review fix round) -- this
+   section and its body used to be the ONE place in this whole editor
+   that scrolled its own overflow locally (`1fr` + `overflow-y: auto`,
+   the "shrinking, scrolling `1fr` child" pattern this comment used to
+   describe at length, added in task-1611 T2 fix round 1 after `min-
+   height` alone made a 4+-target bench WORSE -- see git history / the
+   task-1611 report for that full story if it matters again). Whole-
+   branch review then found a SEPARATE, worse failure this local scroll
+   could not fix at all: a tall `#evals-bench-form-error` callout (this
+   task's own reworded mode-revalidation copy, wrapping to 5+ lines at a
+   realistic 160x45/120x40 terminal) lives ABOVE this section entirely,
+   and no scrolling existed ANYWHERE in `BenchEditor` to reach past it --
+   `#evals-bench-editor` itself was still plain `Vertical` `overflow:
+   hidden hidden`. The two remedies that same error text NAMES (this
+   section's own offending row `Remove` button, and the create-target
+   mini-form) got pushed off the bottom of the SCREEN, unreachable by any
+   means but flipping the mode back or resizing the terminal.
 
-   `#evals-bench-targets-body` is the CURRENT version of the "shrinking,
-   scrolling `1fr` child" this whole comment describes -- see its own
-   comment for why the table/Add-picker/mini-form split into fixed
-   competing siblings (this comment's ORIGINAL shape) had to change
-   again, at 4+ targets, for task-1611 T2. */
+   Rather than layer a THIRD scroll level on top of the pre-existing one
+   here, `#evals-bench-editor` (below) became the SOLE scrollable region
+   for the whole form, and this section (and its body) gave up their own
+   independent `1fr`/`overflow-y: auto` for plain `auto` -- letting their
+   true content height propagate up to the one place that now actually
+   absorbs it. Confirmed live this was the right call, not merely the
+   simpler one: an EARLIER attempt kept BOTH this section's own scroll
+   AND made `#evals-bench-editor` scrollable, and the two DISAGREED --
+   `BenchEditor.virtual_size` was computed from this section's own
+   COLLAPSED `1fr` box height, not its true (possibly much taller)
+   content, so scrolling the outer editor to ITS OWN `max_scroll_y` still
+   left the create-target button several rows below the visible screen
+   (`Screen.get_widget_at` found nothing there at all -- off the edge of
+   the TERMINAL, not merely clipped). See `#evals-bench-editor`'s own
+   comment for the single-scroll-level fix that actually holds, verified
+   at both 160x45/120x40 (the tall-callout case) and 4/8 targets (the
+   fix-round-1 case this replaces). */
+#evals-bench-targets-section {
+    height: auto;
+}
+
 #evals-bench-targets-body {
-    height: 1fr;
-    overflow-y: auto;
-    /* Confirmed live (task-1611 T2 fix round 1): giving `#evals-bench-
-       target-table` ALONE a floor (`min-height: 3`) while it, the Add
-       picker, and the create-target mini-form stayed THREE SEPARATE
-       fixed siblings of the heading did not fix a 4+-target bench's
-       `test_every_pane_descendant_stays_within_its_pane` failure -- this
-       whole section's own `1fr` share (driven purely by the FIXED/auto
-       fields ABOVE it, none of which this fix touches) stayed a fixed 4
-       rows regardless; forcing the table to 3 of those 4 just evicted
-       the Add picker and mini-form off the BOTTOM of the section's own
-       box entirely (confirmed via the same live walk: they moved from
-       "squeezed but present" to simply not being part of the `1fr`
-       layout's accounting at all). Wrapping all three in ONE shared
-       scrollable body instead means the row table -- listed FIRST inside
-       it, see `_build_targets_section` -- claims as much of the body's
-       available space as there genuinely IS (not a leftover AFTER two
-       other fixed rows are subtracted), and the Add picker / mini-form
-       scroll into view after it: lower priority than seeing your own
-       already-staged targets, but still genuinely reachable, not simply
-       gone from the layout. */
+    height: auto;
 }
 
 #evals-inspector-bench,
@@ -448,6 +441,67 @@
 
 #evals-inspector-bench .ds-recovery-callout {
     margin: 0 0 1 0;
+}
+
+/* Whole-branch review, task-1611 fix round (final): `BenchEditor` itself
+   (`#evals-bench-editor`) is now vertically scrollable -- the ONE and
+   ONLY scroll level in this whole widget now (see `#evals-bench-targets-
+   section`'s own comment for why its ONE-level-down scroll, added just
+   one fix round earlier, was removed rather than kept alongside this
+   one). Unstyled before this fix, it inherited `Vertical`'s own
+   `overflow: hidden hidden` DEFAULT_CSS -- content taller than its
+   `1fr`-computed box (see `#evals-detail-pane`'s own `height: 100%` in
+   `_lab.tcss`, which is what gives this widget a REAL bounded height to
+   overflow at all) was simply clipped, with no way to reach it: confirmed
+   live that a `#evals-bench-form-error` callout tall enough to need it
+   (this task's own reworded mode-revalidation copy, 5+ wrapped lines at
+   a realistic 160x45/120x40 terminal) pushed BOTH remedies the error
+   text itself names -- the offending target row's own `Remove` button
+   AND the "+ New target" mini-form -- off the bottom of the SCREEN
+   entirely, with `editor.scroll_to()` moving nothing (`allow_vertical_
+   scroll` was `False`). The user was told to do two things they could
+   neither see nor reach; only flipping the mode `Select` back or
+   resizing the terminal escaped. Pre-existing (the Top-K error callout
+   already did this at 160x45, unrelated to this task -- confirmed live
+   that at 120x40 even the plain, no-error form already needed scrolling
+   just to reach `#evals-bench-save` at all), but this task's own copy --
+   which explicitly instructs "remove it" / "create a new target", both
+   now-hidden controls -- walks a user straight into it, so it is fixed
+   here rather than left as a known gap.
+
+   Tried FIRST, and rejected on live evidence, not merely reasoned about:
+   keeping `#evals-bench-targets-section`'s own local `1fr` +
+   `overflow-y: auto` scroll (task-1611 T2 fix round 1's fix for the
+   4+-target case) AND adding this outer scroll on top of it. The two
+   disagreed: `BenchEditor.virtual_size` is computed from each child's own
+   COMPUTED box, and that section's box stayed its old, small `1fr` share
+   regardless of how tall its OWN (separately scrolling) content actually
+   was -- so scrolling THIS outer container to its own `max_scroll_y`
+   still left the create-target button several rows below the visible
+   terminal (`Screen.get_widget_at` found NOTHING there, not merely a
+   clipped widget -- off the edge of the screen the harness itself was
+   sized to). Removing that inner scroll (`#evals-bench-targets-section`/
+   `#evals-bench-targets-body` are now plain `height: auto`, letting their
+   TRUE content height propagate all the way up) so this ONE outer scroll
+   is the sole place anything gets absorbed fixed it -- confirmed live at
+   both 160x45 and 120x40 for the tall-callout case this fix targets, AND
+   at 4/8 targets (fix round 1's own case) with no separate mechanism
+   needed for it anymore: the row table, listed first inside the targets
+   body, simply contributes more to THIS container's virtual height, and
+   scrolling reaches it exactly the same way it reaches the "+ New
+   target" mini-form below it.
+
+   `overflow-y: auto` here is a near-NO-OP in the steady (no tall
+   callout, few targets) state -- confirmed live: this widget's virtual
+   content height sits at or just under its box height in that case, so
+   `max_scroll_y` stays `0` and nothing scrolls that didn't already fit.
+   A `min-height`-only alternative was NOT tried here: this pane's own
+   history (see `#evals-bench-targets-section`'s comment) already proved
+   that lever wrong twice for a materially similar "content taller than
+   its `1fr` box" shape, and there is no fixed floor to reserve for an
+   error callout whose height is itself variable, unbounded prose. */
+#evals-bench-editor {
+    overflow-y: auto;
 }
 
 /* Task 5 (task-1482): the bench editor's own form fields (name,
