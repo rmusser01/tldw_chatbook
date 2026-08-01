@@ -643,9 +643,10 @@ class TTSService:
         model_id: str,
         generation: int,
     ) -> bool:
-        return self._native_voice_request_generations.get(
-            (provider_id, model_id)
-        ) == generation
+        return (
+            self._native_voice_request_generations.get((provider_id, model_id))
+            == generation
+        )
 
     def _publish_native_capability_snapshot(
         self,
@@ -721,8 +722,7 @@ class TTSService:
             or not catalog.health.fresh
             or result.provider_id != provider_id
             or result.catalog_revision != catalog.revision
-            or result.model_id
-            not in {model.model_id for model in catalog.models}
+            or result.model_id not in {model.model_id for model in catalog.models}
         ):
             return
         voice_results = dict(snapshot.voice_results)
@@ -1181,6 +1181,22 @@ class TTSService:
             The provider's monotonically increasing configuration revision.
         """
         return self.registry.configuration_revision(provider_id)
+
+    def saved_configuration_revision(self, provider_id: str) -> int:
+        """Return the latest durably published configuration generation.
+
+        A provider starts at generation zero. Persistence advances this value
+        before a runtime handoff, so a failed handoff cannot make evidence
+        from the prior adapter configuration appear current.
+        """
+
+        self.registry.configuration_revision(provider_id)
+        return self._settings_persisted_provider_generations.get(provider_id, 0)
+
+    def applied_configuration_revision(self, provider_id: str) -> int:
+        """Return the saved generation currently applied by the adapter slot."""
+
+        return self.registry.configuration_generation(provider_id)
 
     async def get_catalog(
         self,

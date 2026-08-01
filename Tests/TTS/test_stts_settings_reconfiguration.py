@@ -188,12 +188,19 @@ PROVIDER_SETTING_KEYS = {
 class SettingsResultRecorder:
     def __init__(self) -> None:
         self.results: list[STTSSettingsSaveResult] = []
+        self.runtime_results: list[STTSSettingsSaveResult] = []
 
     def receive_stts_settings_save_result(
         self,
         result: STTSSettingsSaveResult,
     ) -> None:
         self.results.append(result)
+
+    def receive_stts_settings_runtime_result(
+        self,
+        result: STTSSettingsSaveResult,
+    ) -> None:
+        self.runtime_results.append(result)
 
 
 def test_settings_save_event_copies_mapping_and_carries_preferences() -> None:
@@ -301,6 +308,8 @@ async def test_explicit_credential_clear_is_atomic_targeted_and_reports_separate
             request_id=9,
             persisted=True,
             provider_statuses={"openai": "applied"},
+            provider_configuration_revisions={"openai": 1},
+            provider_runtime_revisions={"openai": 2},
         )
     ]
 
@@ -1082,6 +1091,8 @@ async def test_changed_audio_cpp_config_retires_only_audio_cpp(
     for provider_id in ("audio_cpp", "openai"):
         lease = await registry.acquire(provider_id)
         await lease.release()
+    assert service.saved_configuration_revision("audio_cpp") == 0
+    assert service.applied_configuration_revision("audio_cpp") == 0
 
     app = RecordingApp()
     handler = STTSEventHandler(app)
@@ -1107,6 +1118,8 @@ async def test_changed_audio_cpp_config_retires_only_audio_cpp(
     assert legacy_factory.instances[0].close_calls == 0
     assert registry.configuration_revision("audio_cpp") == 2
     assert registry.configuration_revision("openai") == 1
+    assert service.saved_configuration_revision("audio_cpp") == 1
+    assert service.applied_configuration_revision("audio_cpp") == 1
     assert len(app.messages) == 1
     assert isinstance(app.messages[0], STTSProviderConfigurationChanged)
 
@@ -1278,6 +1291,7 @@ async def test_audio_cpp_pending_save_returns_without_cancelling_active_response
     app = RecordingApp()
     handler = STTSEventHandler(app)
     handler._stts_service = service
+    recorder = SettingsResultRecorder()
     captured_ticket: TTSSettingsPublicationTicket | None = None
     original_begin = service.begin_preferences_publication
 
@@ -1303,6 +1317,8 @@ async def test_audio_cpp_pending_save_returns_without_cancelling_active_response
         STTSSettingsSaveEvent(
             {"audio_cpp": replacement},
             preferences=preferences,
+            request_id=17,
+            reply_to=recorder,
         )
     )
 
@@ -1310,6 +1326,8 @@ async def test_audio_cpp_pending_save_returns_without_cancelling_active_response
         ("Saved — applying after current speech", "information")
     ]
     assert app.messages == []
+    assert recorder.results[0].provider_statuses == {"audio_cpp": "pending"}
+    assert recorder.runtime_results == []
     assert factory.instances[0].close_calls == 0
     assert [chunk async for chunk in response.byte_stream] == [b"audio"]
     await response.aclose()
@@ -1321,6 +1339,12 @@ async def test_audio_cpp_pending_save_returns_without_cancelling_active_response
     assert factory.instances[0].close_calls == 1
     assert len(app.messages) == 1
     assert isinstance(app.messages[0], STTSProviderConfigurationChanged)
+    assert recorder.runtime_results[0].request_id == 17
+    assert recorder.runtime_results[0].provider_statuses == {"audio_cpp": "applied"}
+    assert recorder.runtime_results[0].provider_configuration_revisions == {
+        "audio_cpp": 1
+    }
+    assert recorder.runtime_results[0].provider_runtime_revisions == {"audio_cpp": 2}
     await service.close()
     await service.wait_closed()
 

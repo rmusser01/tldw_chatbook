@@ -10,12 +10,17 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     CredentialIntent,
     CredentialSource,
     GLOBAL_TTS_PROVIDER_FIELD_IDS,
+    GlobalSpeechTTSEffectiveSource,
     GlobalSpeechTTSCredentialMutation,
     GlobalSpeechTTSValidationError,
     build_credential_mutation,
     build_global_speech_tts_save_proposal,
+    global_speech_tts_provider_configuration_state,
     load_global_speech_tts_state,
     restore_non_secret_defaults,
+)
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSConfigurationState,
 )
 
 
@@ -130,6 +135,73 @@ def test_load_state_keeps_credentials_out_of_editable_provider_values() -> None:
     assert state.credentials["openai"].local_saved is True
     assert state.credentials["openai"].local_shadowed is True
     assert state.credentials["elevenlabs"].source is CredentialSource.SAVED_LOCAL
+
+
+def test_load_state_marks_legacy_environment_owned_paths_without_copying_values() -> (
+    None
+):
+    state = load_global_speech_tts_state(
+        _settings(),
+        environment={
+            "KOKORO_MODEL_PATH": "/environment/private-kokoro-model",
+            "KOKORO_VOICES_PATH": "/environment/private-kokoro-voices",
+            "HIGGS_MODEL_PATH": "/environment/private-higgs-model",
+        },
+    )
+
+    assert state.provider_sources["kokoro"] is (
+        GlobalSpeechTTSEffectiveSource.ENVIRONMENT
+    )
+    assert state.provider_sources["higgs"] is (
+        GlobalSpeechTTSEffectiveSource.ENVIRONMENT
+    )
+    assert state.provider_field_sources["kokoro"] == {
+        "onnx_model_path": GlobalSpeechTTSEffectiveSource.ENVIRONMENT,
+        "voices_json_path": GlobalSpeechTTSEffectiveSource.ENVIRONMENT,
+    }
+    assert state.provider_field_sources["higgs"] == {
+        "model_path": GlobalSpeechTTSEffectiveSource.ENVIRONMENT,
+    }
+    rendered = repr(state)
+    assert "/environment/private-kokoro-model" not in rendered
+    assert "/environment/private-kokoro-voices" not in rendered
+    assert "/environment/private-higgs-model" not in rendered
+
+
+@pytest.mark.parametrize("provider_id", ("openai", "elevenlabs"))
+def test_credential_provider_is_incomplete_until_a_safe_source_exists(
+    provider_id: str,
+) -> None:
+    missing = load_global_speech_tts_state({}, environment={})
+    environment = load_global_speech_tts_state(
+        {},
+        environment={
+            missing.credentials[provider_id].environment_variable: "synthetic-secret"
+        },
+    )
+    local = load_global_speech_tts_state(_settings(), environment={})
+
+    assert (
+        global_speech_tts_provider_configuration_state(
+            missing,
+            provider_id=provider_id,
+        )
+        is SpeechTTSConfigurationState.INCOMPLETE
+    )
+    assert (
+        global_speech_tts_provider_configuration_state(
+            environment,
+            provider_id=provider_id,
+        )
+        is SpeechTTSConfigurationState.SAVED
+    )
+    assert (
+        global_speech_tts_provider_configuration_state(
+            local,
+            provider_id=provider_id,
+        )
+        is SpeechTTSConfigurationState.SAVED
+    )
 
 
 @pytest.mark.parametrize(

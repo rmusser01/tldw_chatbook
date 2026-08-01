@@ -23,6 +23,9 @@ from urllib.parse import urlsplit
 from tldw_chatbook.TTS.adapter_types import TTSNativeCapabilityObservation
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSConfigurationState,
+)
 from tldw_chatbook.Utils.input_validation import (
     provider_api_key_validation_error,
     validate_url,
@@ -223,6 +226,29 @@ class CredentialSource(StrEnum):
     MISSING = "Missing"
 
 
+class GlobalSpeechTTSEffectiveSource(StrEnum):
+    """Bounded provenance labels used by the global configuration inspector."""
+
+    ENVIRONMENT = "Environment"
+    SAVED_LOCAL = "Saved local config"
+    DEFAULT = "Default"
+    INHERITED = "Inherited"
+
+
+GLOBAL_TTS_PROVIDER_ENVIRONMENT_FIELDS = MappingProxyType(
+    {
+        "kokoro": MappingProxyType(
+            {
+                "onnx_model_path": "KOKORO_MODEL_PATH",
+                "voices_json_path": "KOKORO_VOICES_PATH",
+            }
+        ),
+        "higgs": MappingProxyType({"model_path": "HIGGS_MODEL_PATH"}),
+    }
+)
+"""Legacy initialization fields whose process environment wins at runtime."""
+
+
 class CredentialIntent(StrEnum):
     """Explicit local credential mutations accepted by ADR-012."""
 
@@ -397,6 +423,9 @@ class GlobalSpeechTTSState:
     defaults: GlobalSpeechTTSDefaults
     providers: dict[str, dict[str, object]]
     credentials: dict[str, GlobalSpeechTTSCredentialState]
+    defaults_source: GlobalSpeechTTSEffectiveSource
+    provider_sources: dict[str, GlobalSpeechTTSEffectiveSource]
+    provider_field_sources: dict[str, dict[str, GlobalSpeechTTSEffectiveSource]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -648,6 +677,74 @@ def load_global_speech_tts_state(
             "language": _value(app_tts, "ALLTALK_TTS_LANGUAGE_DEFAULT", "en"),
         }
     )
+    credentials = _credential_states(settings, environment)
+    raw = _raw_settings(settings)
+    raw_app_tts = raw.get("app_tts")
+    raw_app_tts = raw_app_tts if isinstance(raw_app_tts, Mapping) else {}
+    raw_tts_settings = raw.get("tts_settings")
+    raw_tts_settings = raw_tts_settings if isinstance(raw_tts_settings, Mapping) else {}
+    raw_higgs = raw.get("HiggsSettings")
+    raw_higgs = raw_higgs if isinstance(raw_higgs, Mapping) else {}
+    default_keys = {
+        "default_provider",
+        "default_model_mode",
+        "default_model",
+        "default_voice_mode",
+        "default_voice",
+        "default_format",
+        "default_speed",
+    }
+    defaults_saved = bool(default_keys.intersection(raw_app_tts)) or bool(
+        {
+            "default_tts_provider",
+            "default_openai_tts_model",
+            "default_tts_voice",
+            "default_openai_tts_output_format",
+            "default_openai_tts_speed",
+        }.intersection(raw_tts_settings)
+    )
+    provider_prefixes = {
+        "openai": ("OPENAI_",),
+        "elevenlabs": ("ELEVENLABS_",),
+        "kokoro": ("KOKORO_",),
+        "chatterbox": ("CHATTERBOX_",),
+        "alltalk": ("ALLTALK_",),
+    }
+    provider_sources = {
+        provider_id: GlobalSpeechTTSEffectiveSource.DEFAULT
+        for provider_id in BUILT_IN_TTS_PROVIDER_ORDER
+    }
+    if isinstance(raw_app_tts.get("audio_cpp"), Mapping):
+        provider_sources["audio_cpp"] = GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
+    if raw_higgs:
+        provider_sources["higgs"] = GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
+    for provider_id, prefixes in provider_prefixes.items():
+        if any(
+            any(key.startswith(prefix) for prefix in prefixes)
+            for key in raw_app_tts
+            if isinstance(key, str)
+        ):
+            provider_sources[provider_id] = GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
+    for provider_id, credential in credentials.items():
+        if credential.source is CredentialSource.ENVIRONMENT:
+            provider_sources[provider_id] = GlobalSpeechTTSEffectiveSource.ENVIRONMENT
+        elif (
+            credential.source is CredentialSource.SAVED_LOCAL
+            and provider_sources[provider_id] is GlobalSpeechTTSEffectiveSource.DEFAULT
+        ):
+            provider_sources[provider_id] = GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
+    provider_field_sources: dict[str, dict[str, GlobalSpeechTTSEffectiveSource]] = {
+        provider_id: {} for provider_id in BUILT_IN_TTS_PROVIDER_ORDER
+    }
+    for provider_id, field_variables in GLOBAL_TTS_PROVIDER_ENVIRONMENT_FIELDS.items():
+        for field_id, variable in field_variables.items():
+            if variable in environment:
+                provider_field_sources[provider_id][field_id] = (
+                    GlobalSpeechTTSEffectiveSource.ENVIRONMENT
+                )
+                provider_sources[provider_id] = (
+                    GlobalSpeechTTSEffectiveSource.ENVIRONMENT
+                )
     return GlobalSpeechTTSState(
         defaults=GlobalSpeechTTSDefaults(
             provider_id=preferences.provider_id,
@@ -659,7 +756,14 @@ def load_global_speech_tts_state(
             speed=preferences.speed,
         ),
         providers=providers,
-        credentials=_credential_states(settings, environment),
+        credentials=credentials,
+        defaults_source=(
+            GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
+            if defaults_saved
+            else GlobalSpeechTTSEffectiveSource.DEFAULT
+        ),
+        provider_sources=provider_sources,
+        provider_field_sources=provider_field_sources,
     )
 
 
@@ -693,9 +797,7 @@ def audio_cpp_transport_warning(value: object) -> str | None:
 
 
 def _pinned_option(identifier: str, state: AudioCppExactChoiceState) -> tuple[str, str]:
-    suffix = (
-        "Missing" if state is AudioCppExactChoiceState.MISSING else "Unverified"
-    )
+    suffix = "Missing" if state is AudioCppExactChoiceState.MISSING else "Unverified"
     return (f"{identifier} ({suffix})", identifier)
 
 
@@ -714,6 +816,8 @@ def project_audio_cpp_global_choices(
     *,
     observation: TTSNativeCapabilityObservation | None,
     current_configuration_revision: int | None,
+    saved_configuration_revision: int | None = None,
+    applied_configuration_revision: int | None = None,
 ) -> AudioCppGlobalChoices:
     """Project cached audio.cpp choices without performing provider work."""
     pinned_model = (
@@ -751,8 +855,14 @@ def project_audio_cpp_global_choices(
 
     snapshot = observation.snapshot
     catalog = snapshot.catalog
+    applied_matches_saved = (
+        saved_configuration_revision is None
+        or applied_configuration_revision is None
+        or applied_configuration_revision == saved_configuration_revision
+    )
     same_configuration = (
-        current_configuration_revision is not None
+        applied_matches_saved
+        and current_configuration_revision is not None
         and snapshot.configuration_revision == current_configuration_revision
     )
     fresh = same_configuration and catalog.health.fresh
@@ -795,7 +905,9 @@ def project_audio_cpp_global_choices(
     voice_options: tuple[tuple[str, str], ...] = ()
     voice_state = AudioCppExactChoiceState.UNVERIFIED
     selected_model_is_known = pinned_model is not None and pinned_model in model_ids
-    result = snapshot.voice_results.get(pinned_model) if selected_model_is_known else None
+    result = (
+        snapshot.voice_results.get(pinned_model) if selected_model_is_known else None
+    )
     if (
         result is not None
         and result.state == "complete"
@@ -1423,6 +1535,54 @@ def build_global_speech_tts_save_proposal(
     )
 
 
+def global_speech_tts_provider_configuration_changed(
+    original: GlobalSpeechTTSState,
+    draft: GlobalSpeechTTSState,
+    *,
+    provider_id: str,
+) -> bool:
+    """Validate and compare only one provider's adapter configuration."""
+
+    if provider_id not in BUILT_IN_TTS_PROVIDER_ORDER:
+        raise ValueError("Unknown built-in TTS provider")
+    return _validated_provider_values(
+        provider_id,
+        draft.providers[provider_id],
+    ) != _validated_provider_values(
+        provider_id,
+        original.providers[provider_id],
+    )
+
+
+def global_speech_tts_provider_configuration_state(
+    state: GlobalSpeechTTSState,
+    *,
+    provider_id: str,
+) -> SpeechTTSConfigurationState:
+    """Project one provider adapter's saved/default validity and provenance."""
+
+    if provider_id not in BUILT_IN_TTS_PROVIDER_ORDER:
+        raise ValueError("Unknown built-in TTS provider")
+    try:
+        _validated_provider_values(provider_id, state.providers[provider_id])
+    except GlobalSpeechTTSValidationError as error:
+        if "required" in str(error).lower():
+            return SpeechTTSConfigurationState.INCOMPLETE
+        return SpeechTTSConfigurationState.INVALID
+    credential = state.credentials.get(provider_id)
+    if credential is not None and credential.source is CredentialSource.MISSING:
+        return SpeechTTSConfigurationState.INCOMPLETE
+    source = state.provider_sources.get(
+        provider_id,
+        GlobalSpeechTTSEffectiveSource.DEFAULT,
+    )
+    if source is GlobalSpeechTTSEffectiveSource.DEFAULT:
+        return SpeechTTSConfigurationState.DEFAULT
+    if source is GlobalSpeechTTSEffectiveSource.INHERITED:
+        return SpeechTTSConfigurationState.INHERITED
+    return SpeechTTSConfigurationState.SAVED
+
+
 def restore_non_secret_defaults(
     state: GlobalSpeechTTSState,
     *,
@@ -1442,9 +1602,17 @@ def restore_non_secret_defaults(
         response_format=default_preferences.response_format,
         speed=default_preferences.speed,
     )
+    environment_owned_values = {
+        field_id: deepcopy(state.providers[configure_provider][field_id])
+        for field_id, source in state.provider_field_sources.get(
+            configure_provider, {}
+        ).items()
+        if source is GlobalSpeechTTSEffectiveSource.ENVIRONMENT
+    }
     restored.providers[configure_provider] = deepcopy(
         _PROVIDER_NON_SECRET_DEFAULTS[configure_provider]
     )
+    restored.providers[configure_provider].update(environment_owned_values)
     return restored
 
 

@@ -194,6 +194,7 @@ class SpeechAxisRow(Grid):
                 id=axis,
                 classes="speech-axis-control",
                 allow_blank=False,
+                value=LOADING_SELECT_VALUE,
                 prompt=AXIS_EMPTY_PROMPTS[axis],
             )
         select: Select[str] = Select(

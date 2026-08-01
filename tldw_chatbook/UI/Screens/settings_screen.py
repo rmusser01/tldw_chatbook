@@ -138,6 +138,14 @@ from ...Widgets.settings_image_gen_panel import (
 from ...Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
 )
+from ..Speech.speech_runtime_status import (
+    speech_tts_navigation_target_from_context,
+    speech_tts_runtime_status_store,
+)
+from ..Speech.speech_settings_contracts import (
+    SpeechTTSNavigationIntent,
+    SpeechTTSNavigationTarget,
+)
 from ...Internal_Prompts import authoring as internal_prompts_authoring
 from .settings_image_gen_defaults import (
     BACKEND_IDS as IMAGE_GEN_BACKEND_IDS,
@@ -1848,8 +1856,11 @@ class SettingsScreen(BaseAppScreen):
         self._navigation_model: str | None = None
         self._navigation_field: str | None = None
         self._speech_tts_configure_provider: str | None = None
+        self._speech_tts_navigation_target: SpeechTTSNavigationTarget | None = None
         self._speech_tts_draft_state: GlobalSpeechTTSState | None = None
         self._speech_tts_original_state: GlobalSpeechTTSState | None = None
+        self._speech_tts_leave_in_progress = False
+        self._speech_tts_leave_bypass = False
         #: One-shot focus intent (task-290): `Widget.focus()` defers its
         #: set_focus via call_later, so a storm recompose can destroy the
         #: target between intent and processing. Recorded when navigation
@@ -4301,11 +4312,15 @@ class SettingsScreen(BaseAppScreen):
         self._apply_category_search_filter()
         category_values = self._filtered_category_values(query_text)
         if category_values:
+            speech_target: SpeechTTSNavigationTarget | None = None
             if category_values[0] == SettingsCategoryId.SPEECH_TTS.value:
                 provider_id = self._speech_tts_provider_from_search(query_text)
                 if provider_id in BUILT_IN_TTS_PROVIDER_ORDER:
-                    self._speech_tts_configure_provider = provider_id
+                    speech_target = SpeechTTSNavigationTarget(provider_id)
+                    self._stage_speech_tts_navigation_target(speech_target)
             self._select_category(category_values[0], restore_focus=True)
+            if speech_target is not None:
+                self.call_after_refresh(self._apply_speech_tts_navigation_context)
             # task-1715: if the query named a field, land ON the field --
             # focusing it also fires its inspector guidance.
             opened = SettingsCategoryId(category_values[0])
@@ -11163,10 +11178,15 @@ class SettingsScreen(BaseAppScreen):
         """
         self.mutate_reactive(SettingsScreen.active_category)
 
-    def _audio_cpp_cached_settings_observation(
+    def _speech_tts_cached_runtime_state(
         self,
-    ) -> tuple[TTSNativeCapabilityObservation | None, int | None]:
-        """Read existing service state without initializing or contacting it."""
+    ) -> tuple[
+        TTSNativeCapabilityObservation | None,
+        dict[str, int],
+        dict[str, int],
+        dict[str, int],
+    ]:
+        """Read all provider revisions without initializing or contacting them."""
         service = getattr(self.app_instance, "tts_service", None)
         observation_reader = getattr(
             service,
@@ -11174,21 +11194,54 @@ class SettingsScreen(BaseAppScreen):
             None,
         )
         revision_reader = getattr(service, "configuration_revision", None)
-        if not callable(observation_reader) or not callable(revision_reader):
-            return None, None
-        try:
-            observation = observation_reader("audio_cpp")
-            revision = revision_reader("audio_cpp")
-        except (KeyError, RuntimeError, TypeError, ValueError):
-            return None, None
+        saved_revision_reader = getattr(
+            service,
+            "saved_configuration_revision",
+            None,
+        )
+        applied_revision_reader = getattr(
+            service,
+            "applied_configuration_revision",
+            None,
+        )
+        if not callable(revision_reader):
+            return None, {}, {}, {}
+        observation = None
+        if callable(observation_reader):
+            try:
+                observation = observation_reader("audio_cpp")
+            except (KeyError, RuntimeError, TypeError, ValueError):
+                observation = None
         if (
             observation is not None
             and type(observation) is not TTSNativeCapabilityObservation
         ):
             observation = None
-        if type(revision) is not int or revision < 0:
-            revision = None
-        return observation, revision
+        runtime_revisions: dict[str, int] = {}
+        saved_revisions: dict[str, int] = {}
+        applied_revisions: dict[str, int] = {}
+        for provider_id in BUILT_IN_TTS_PROVIDER_ORDER:
+            try:
+                runtime_revision = revision_reader(provider_id)
+                saved_revision = (
+                    saved_revision_reader(provider_id)
+                    if callable(saved_revision_reader)
+                    else runtime_revision
+                )
+                applied_revision = (
+                    applied_revision_reader(provider_id)
+                    if callable(applied_revision_reader)
+                    else saved_revision
+                )
+            except (KeyError, RuntimeError, TypeError, ValueError):
+                continue
+            if type(runtime_revision) is int and runtime_revision >= 0:
+                runtime_revisions[provider_id] = runtime_revision
+            if type(saved_revision) is int and saved_revision >= 0:
+                saved_revisions[provider_id] = saved_revision
+            if type(applied_revision) is int and applied_revision >= 0:
+                applied_revisions[provider_id] = applied_revision
+        return observation, saved_revisions, runtime_revisions, applied_revisions
 
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
@@ -11199,8 +11252,10 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.SPEECH_TTS:
             (
                 audio_cpp_observation,
-                audio_cpp_configuration_revision,
-            ) = self._audio_cpp_cached_settings_observation()
+                provider_configuration_revisions,
+                provider_runtime_revisions,
+                provider_applied_configuration_revisions,
+            ) = self._speech_tts_cached_runtime_state()
             try:
                 app_config = get_runtime_config_snapshot().values
                 speech_tts_state = load_global_speech_tts_state(
@@ -11213,7 +11268,15 @@ class SettingsScreen(BaseAppScreen):
                 original_state=self._speech_tts_original_state,
                 configure_provider=self._speech_tts_configure_provider,
                 audio_cpp_observation=audio_cpp_observation,
-                audio_cpp_configuration_revision=audio_cpp_configuration_revision,
+                audio_cpp_configuration_revision=provider_runtime_revisions.get(
+                    "audio_cpp"
+                ),
+                provider_configuration_revisions=provider_configuration_revisions,
+                provider_runtime_revisions=provider_runtime_revisions,
+                provider_applied_configuration_revisions=(
+                    provider_applied_configuration_revisions
+                ),
+                runtime_status_store=speech_tts_runtime_status_store(self.app_instance),
                 id="settings-speech-tts-panel",
             )
         elif category is SettingsCategoryId.CONSOLE_BEHAVIOR:
@@ -12199,6 +12262,26 @@ class SettingsScreen(BaseAppScreen):
                 "Ignoring unknown Settings navigation category: %s", category_value
             )
             return
+        if category_value == SettingsCategoryId.SPEECH_TTS.value:
+            allowed_keys = {"category", "provider", "intent"}
+            if not set(context).issubset(allowed_keys):
+                logger.debug("Ignoring unsafe Speech Settings navigation context")
+                return
+            navigation_target: SpeechTTSNavigationTarget | None = None
+            if "provider" in context or "intent" in context:
+                navigation_target = speech_tts_navigation_target_from_context(
+                    {key: value for key, value in context.items() if key != "category"}
+                )
+                if navigation_target is None:
+                    logger.debug("Ignoring invalid Speech Settings navigation target")
+                    return
+                self._stage_speech_tts_navigation_target(navigation_target)
+            else:
+                self._speech_tts_navigation_target = None
+            self._clear_navigation_provider_context()
+            self._select_category(category_value, restore_focus=True)
+            self.call_after_refresh(self._apply_speech_tts_navigation_context)
+            return
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._clear_navigation_provider_context()
             self._select_category(category_value, restore_focus=True)
@@ -12226,6 +12309,48 @@ class SettingsScreen(BaseAppScreen):
         self.call_after_refresh(
             self._apply_navigation_provider_context, provider, model, field
         )
+
+    def _stage_speech_tts_navigation_target(
+        self,
+        target: SpeechTTSNavigationTarget,
+    ) -> None:
+        """Cache a target only when no mounted panel can guard the switch."""
+
+        self._speech_tts_navigation_target = target
+        try:
+            self.query_one(
+                "#settings-speech-tts-panel",
+                SpeechTTSSettingsPanel,
+            )
+        except QueryError:
+            self._speech_tts_configure_provider = target.provider_id
+
+    def _apply_speech_tts_navigation_context(self) -> None:
+        """Restore a bounded Speech provider/intent without invoking work."""
+
+        target = self._speech_tts_navigation_target
+        if (
+            target is None
+            or self.active_category != SettingsCategoryId.SPEECH_TTS.value
+        ):
+            return
+        try:
+            provider_select = self.query_one(
+                "#settings-speech-configure-provider",
+                Select,
+            )
+            if provider_select.value != target.provider_id:
+                provider_select.value = target.provider_id
+            focus_selector = (
+                "#settings-speech-audio_cpp-base-url"
+                if target.provider_id == "audio_cpp"
+                and target.intent is SpeechTTSNavigationIntent.CONFIGURE
+                else "#settings-speech-configure-provider"
+            )
+            self.query_one(focus_selector).focus()
+        except QueryError:
+            return
+        self._speech_tts_navigation_target = None
 
     def _apply_navigation_provider_context(
         self,
@@ -12283,9 +12408,86 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
 
+    async def flush_pending_work(self) -> bool:
+        """Protect a mounted global Speech/TTS draft before dismissal."""
+
+        if self.active_category != SettingsCategoryId.SPEECH_TTS.value:
+            return True
+        try:
+            panel = self.query_one(
+                "#settings-speech-tts-panel",
+                SpeechTTSSettingsPanel,
+            )
+        except QueryError:
+            return True
+        allowed = await panel.confirm_leave()
+        if allowed:
+            self._clear_speech_tts_draft_cache()
+        return allowed
+
+    def _clear_speech_tts_draft_cache(self) -> None:
+        """Forget a logically resolved Speech draft before its pane is removed."""
+
+        category = SettingsCategoryId.SPEECH_TTS
+        self._speech_tts_draft_state = None
+        self._speech_tts_original_state = None
+        self._settings_drafts.pop(category, None)
+        self._update_draft_status_widgets(category)
+
+    async def _confirm_speech_tts_category_leave(
+        self,
+        category_value: str,
+        restore_focus: bool,
+    ) -> None:
+        """Resolve the Speech draft before replacing its category pane."""
+
+        try:
+            panel = self.query_one(
+                "#settings-speech-tts-panel",
+                SpeechTTSSettingsPanel,
+            )
+        except QueryError:
+            self._speech_tts_leave_in_progress = False
+            return
+        try:
+            if not await panel.confirm_leave():
+                return
+            self._clear_speech_tts_draft_cache()
+            self._speech_tts_leave_bypass = True
+            self._select_category(category_value, restore_focus=restore_focus)
+        finally:
+            self._speech_tts_leave_bypass = False
+            self._speech_tts_leave_in_progress = False
+
     def _select_category(
         self, category_value: str, *, restore_focus: bool = False
     ) -> None:
+        if (
+            self.active_category == SettingsCategoryId.SPEECH_TTS.value
+            and category_value != SettingsCategoryId.SPEECH_TTS.value
+            and getattr(self, "is_mounted", False)
+            and not self._speech_tts_leave_bypass
+        ):
+            try:
+                panel = self.query_one(
+                    "#settings-speech-tts-panel",
+                    SpeechTTSSettingsPanel,
+                )
+            except QueryError:
+                panel = None
+            if panel is not None and panel.has_unsaved_changes():
+                if not self._speech_tts_leave_in_progress:
+                    self._speech_tts_leave_in_progress = True
+                    self.run_worker(
+                        self._confirm_speech_tts_category_leave(
+                            category_value,
+                            restore_focus,
+                        ),
+                        group="settings-speech-category-leave",
+                        exclusive=True,
+                        exit_on_error=False,
+                    )
+                return
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._active_settings_field_id = None
         # Task 3 (541 v2 UX AC3): the remembered "last-expanded RAG group"

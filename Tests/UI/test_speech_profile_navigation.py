@@ -9,9 +9,13 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Select, Static
 
+from Tests.UI.test_stts_playground_audio_cpp import FakeTTSService, _resolved
 from tldw_chatbook.TTS import STTSGeneratedAudio, TTSPlaygroundSelectionPreset
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSNavigationIntent,
+)
 from tldw_chatbook.UI.stts_profile_library import STTSProfileLibrary
 
 
@@ -133,7 +137,7 @@ async def test_exact_preset_applies_to_an_already_open_playground() -> None:
 
 
 @pytest.mark.asyncio
-async def test_exact_preset_retires_existing_playground_audio(tmp_path) -> None:
+async def test_exact_preset_preserves_existing_playground_audio(tmp_path) -> None:
     app = _SpeechHost()
     screen = app.screen_under_test
     artifact = _artifact(tmp_path, "old-complete-operation")
@@ -146,20 +150,23 @@ async def test_exact_preset_retires_existing_playground_audio(tmp_path) -> None:
         )
         playground = screen.query_one(SpeechPlaygroundPane)
         playground._store_delivered_artifact(artifact, announce=False)
-        app._stts_handler = SimpleNamespace(retire_playground_context=retire)
+        app._stts_handler = SimpleNamespace(retire_playground_generation=retire)
 
         screen.apply_navigation_context(
             {"view": "playground", "profile_preset": _preset()}
         )
-        await _wait_until(pilot, lambda: retire.call_count == 1)
+        await _wait_until(
+            pilot,
+            lambda: playground._profile_preset is not None,
+        )
 
-        assert playground.current_audio_artifact is None
-        assert playground.current_audio_file is None
-        assert playground.query_one("#audio-play-btn", Button).disabled is True
-        assert playground.query_one("#audio-export-btn", Button).disabled is True
-        assert (
-            str(playground.query_one("#audio-player-status", Static).renderable)
-            == "Nothing loaded"
+        assert retire.call_count == 0
+        assert playground.current_audio_artifact is artifact
+        assert playground.current_audio_file == artifact.path
+        assert playground.query_one("#audio-play-btn", Button).disabled is False
+        assert playground.query_one("#audio-export-btn", Button).disabled is False
+        assert "ready to play" in str(
+            playground.query_one("#audio-player-status", Static).renderable
         )
 
 
@@ -177,7 +184,7 @@ async def test_exact_preset_rejects_late_prior_generation_completion(tmp_path) -
         )
         playground = screen.query_one(SpeechPlaygroundPane)
         playground._generation_operation_id = artifact.operation_id
-        app._stts_handler = SimpleNamespace(retire_playground_context=retire)
+        app._stts_handler = SimpleNamespace(retire_playground_generation=retire)
 
         screen.apply_navigation_context(
             {"view": "playground", "profile_preset": _preset()}
@@ -191,6 +198,70 @@ async def test_exact_preset_rejects_late_prior_generation_completion(tmp_path) -
         assert playground.query_one("#audio-export-btn", Button).disabled is True
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("intent", "focused_id"),
+    (
+        (SpeechTTSNavigationIntent.CONFIGURE, "tts-provider-select"),
+        (SpeechTTSNavigationIntent.TEST, "tts-refresh-catalog-btn"),
+        (SpeechTTSNavigationIntent.REFRESH_MODELS, "tts-refresh-catalog-btn"),
+        (SpeechTTSNavigationIntent.REFRESH_VOICES, "tts-voice-select"),
+    ),
+)
+async def test_bounded_lab_navigation_restores_provider_and_focus_without_action(
+    monkeypatch,
+    intent: SpeechTTSNavigationIntent,
+    focused_id: str,
+) -> None:
+    service = FakeTTSService()
+    catalog_calls: list[bool] = []
+    original_load = SpeechPlaygroundPane._load_provider_catalog
+    generate = Mock()
+
+    def record_catalog_load(self, *args, **kwargs) -> None:
+        catalog_calls.append(bool(kwargs.get("refresh", False)))
+        original_load(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        record_catalog_load,
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_check_higgs_installation",
+        lambda self: None,
+    )
+    monkeypatch.setattr(SpeechPlaygroundPane, "_generate_tts", generate)
+    app = _SpeechHost(
+        {
+            "view": "playground",
+            "provider": "audio_cpp",
+            "intent": intent.value,
+        }
+    )
+    screen = app.screen_under_test
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: (
+                _playground_ready(screen)
+                and screen.query_one("#tts-provider-select", Select).value
+                == "audio_cpp"
+                and getattr(app.focused, "id", None) == focused_id
+            ),
+        )
+
+    generate.assert_not_called()
+    assert True not in catalog_calls
+
+
 @pytest.mark.parametrize(
     "context",
     [
@@ -199,6 +270,17 @@ async def test_exact_preset_rejects_late_prior_generation_completion(tmp_path) -
         {"view": "unknown"},
         {"view": "playground", "profile_preset": object()},
         {"view": "profiles", "profile_preset": _preset()},
+        {
+            "view": "playground",
+            "provider": "audio_cpp",
+            "intent": "test",
+            "text": "private",
+        },
+        {
+            "view": "playground",
+            "provider": "audio_cpp",
+            "intent": "generate",
+        },
     ],
 )
 def test_malformed_speech_navigation_context_is_rejected(

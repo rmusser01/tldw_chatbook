@@ -10,11 +10,13 @@ legacy values remain global until a real request-scoped contract exists.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
+import unicodedata
 
 from tldw_chatbook.TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
 from tldw_chatbook.UI.Speech.speech_settings_model import ALL_SETTINGS_CONTROLS
@@ -101,6 +103,20 @@ def _validate_revision(
         raise ValueError(f"{label} must be nonnegative")
 
 
+def speech_tts_model_scope(model_id: str | None) -> str | None:
+    """Return a stable non-secret identity for an optional exact model ID."""
+
+    if model_id is None:
+        return None
+    if type(model_id) is not str or not model_id:
+        raise TypeError("Speech TTS model ID must be a non-empty string")
+    if len(model_id) > 512 or any(
+        unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in model_id
+    ):
+        raise ValueError("Speech TTS model ID is invalid")
+    return f"sha256:{hashlib.sha256(model_id.encode('utf-8')).hexdigest()}"
+
+
 @dataclass(frozen=True, slots=True)
 class SpeechTTSNavigationTarget:
     """A minimal, non-sensitive Settings/Lab navigation value."""
@@ -110,7 +126,10 @@ class SpeechTTSNavigationTarget:
 
     def __post_init__(self) -> None:
         _validate_provider_id(self.provider_id)
-        if self.intent is not None and type(self.intent) is not SpeechTTSNavigationIntent:
+        if (
+            self.intent is not None
+            and type(self.intent) is not SpeechTTSNavigationIntent
+        ):
             raise TypeError("Speech TTS navigation intent is invalid")
 
 
@@ -122,6 +141,7 @@ class SpeechTTSRuntimeStatus:
     saved_configuration_revision: int
     runtime_revision: int | None
     catalog_revision: int | None
+    model_scope: str | None
     runtime_state: SpeechTTSRuntimeState
     observed_at: datetime
     freshness: SpeechTTSStatusFreshness
@@ -144,6 +164,16 @@ class SpeechTTSRuntimeStatus:
             "Speech TTS catalog revision",
             optional=True,
         )
+        if self.model_scope is not None and (
+            type(self.model_scope) is not str
+            or len(self.model_scope) != 71
+            or not self.model_scope.startswith("sha256:")
+            or any(
+                character not in "0123456789abcdef"
+                for character in self.model_scope.removeprefix("sha256:")
+            )
+        ):
+            raise ValueError("Speech TTS status model scope is invalid")
         if type(self.runtime_state) is not SpeechTTSRuntimeState:
             raise TypeError("Speech TTS runtime state is invalid")
         if type(self.observed_at) is not datetime:
@@ -152,9 +182,9 @@ class SpeechTTSRuntimeStatus:
             raise ValueError("Speech TTS observation time must be timezone-aware")
         if type(self.freshness) is not SpeechTTSStatusFreshness:
             raise TypeError("Speech TTS status freshness is invalid")
-        if (
-            self.runtime_state is SpeechTTSRuntimeState.STALE
-        ) is not (self.freshness is SpeechTTSStatusFreshness.STALE):
+        if (self.runtime_state is SpeechTTSRuntimeState.STALE) is not (
+            self.freshness is SpeechTTSStatusFreshness.STALE
+        ):
             raise ValueError(
                 "Stale runtime observations must use the Stale runtime state"
             )
@@ -386,13 +416,14 @@ def _build_ownership_index(
 
     if duplicates:
         raise ValueError(
-            "Speech TTS controls have multiple classifications: "
-            f"{sorted(duplicates)}"
+            f"Speech TTS controls have multiple classifications: {sorted(duplicates)}"
         )
 
     unknown = set(index) - ALL_SETTINGS_CONTROLS
     if unknown:
-        raise ValueError(f"Speech TTS ownership contains unknown controls: {sorted(unknown)}")
+        raise ValueError(
+            f"Speech TTS ownership contains unknown controls: {sorted(unknown)}"
+        )
 
     missing = ALL_SETTINGS_CONTROLS - set(index)
     if missing:
@@ -431,7 +462,6 @@ def validate_speech_tts_ownership_inventory(
     )
     if contradictory:
         raise ValueError(
-            "Speech TTS ownership contradicts ADR-039 for controls: "
-            f"{contradictory}"
+            f"Speech TTS ownership contradicts ADR-039 for controls: {contradictory}"
         )
     return candidate

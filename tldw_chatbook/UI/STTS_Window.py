@@ -31,7 +31,7 @@ from loguru import logger
 from rich.text import Text
 
 # Local imports
-from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.config import get_cli_setting, get_runtime_config_snapshot
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSPlaygroundGenerateEvent,
     STTSAudioBookGenerateEvent,
@@ -87,6 +87,18 @@ from tldw_chatbook.UI.Speech.speech_playground_pane import (
 )
 from tldw_chatbook.UI.Speech.speech_profile_mixin import (
     AdoptStudioPreferencesRequested,
+)
+from tldw_chatbook.UI.Speech.speech_runtime_status import (
+    speech_tts_runtime_status_store,
+)
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSConfigurationState,
+    SpeechTTSNavigationTarget,
+)
+from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    BUILT_IN_TTS_PROVIDER_ORDER,
+    global_speech_tts_provider_configuration_state,
+    load_global_speech_tts_state,
 )
 from tldw_chatbook.UI.Speech.speech_settings_pane import (
     SpeechSettingsPane,
@@ -4422,6 +4434,7 @@ class STTSWindow(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self._pending_playground_preset: TTSPlaygroundSelectionPreset | None = None
+        self._pending_playground_navigation: SpeechTTSNavigationTarget | None = None
         self._pending_adopted_preset: TTSPlaygroundSelectionPreset | None = None
         self._studio_store = StudioTTSPreferenceStore()
         self._global_preferences = SpeechSettingsPane._read_global_preferences()
@@ -4523,6 +4536,7 @@ class STTSWindow(Container):
         view: str,
         *,
         profile_preset: TTSPlaygroundSelectionPreset | None = None,
+        navigation_target: SpeechTTSNavigationTarget | None = None,
     ) -> None:
         """Select an existing view and apply an exact one-shot preset."""
 
@@ -4533,27 +4547,42 @@ class STTSWindow(Container):
             or type(profile_preset) is not TTSPlaygroundSelectionPreset
         ):
             raise ValueError("invalid Speech profile preset")
+        if navigation_target is not None and (
+            view != "playground"
+            or type(navigation_target) is not SpeechTTSNavigationTarget
+        ):
+            raise ValueError("invalid Speech navigation target")
         if view == "playground":
             self._pending_playground_preset = profile_preset
+            self._pending_playground_navigation = navigation_target
         else:
             self._pending_playground_preset = None
+            self._pending_playground_navigation = None
         if self.current_view != view:
             self.current_view = view
             return
         if profile_preset is not None:
             self._mount_view(view, force=True)
+            return
+        if navigation_target is not None:
+            self.call_after_refresh(self._apply_pending_playground_navigation)
 
     async def request_view(
         self,
         view: str,
         *,
         profile_preset: TTSPlaygroundSelectionPreset | None = None,
+        navigation_target: SpeechTTSNavigationTarget | None = None,
     ) -> bool:
         """Select a view after resolving any dirty Studio preference draft."""
 
         if view != "settings" and not await self.confirm_studio_preferences_leave():
             return False
-        self.select_view(view, profile_preset=profile_preset)
+        self.select_view(
+            view,
+            profile_preset=profile_preset,
+            navigation_target=navigation_target,
+        )
         return True
 
     async def confirm_studio_preferences_leave(self) -> bool:
@@ -4566,6 +4595,27 @@ class STTSWindow(Container):
         except QueryError:
             return True
         return await pane.confirm_leave()
+
+    @staticmethod
+    def _global_provider_configuration_states() -> dict[
+        str, SpeechTTSConfigurationState
+    ]:
+        """Return safe provider setup states without contacting a provider."""
+
+        try:
+            values = get_runtime_config_snapshot().values
+            state = load_global_speech_tts_state(
+                values if isinstance(values, Mapping) else {}
+            )
+        except (OSError, TypeError, ValueError):
+            state = load_global_speech_tts_state({})
+        return {
+            provider_id: global_speech_tts_provider_configuration_state(
+                state,
+                provider_id=provider_id,
+            )
+            for provider_id in BUILT_IN_TTS_PROVIDER_ORDER
+        }
 
     def _mount_view(self, new_view: str, *, force: bool = False) -> None:
         """Replace the mounted content when a view change requires it."""
@@ -4608,6 +4658,7 @@ class STTSWindow(Container):
         self._mounted_view = new_view
         if new_view == "playground":
             preset = self._pending_playground_preset
+            navigation_target = self._pending_playground_navigation
             content_container.mount(
                 SpeechPlaygroundPane(
                     id="speech-playground-pane",
@@ -4618,10 +4669,19 @@ class STTSWindow(Container):
                     ),
                     studio_preferences=load_result.snapshot,
                     global_preferences=self._global_preferences,
+                    navigation_target=navigation_target,
+                    provider_configuration_states=(
+                        self._global_provider_configuration_states()
+                    ),
+                    runtime_status_store=speech_tts_runtime_status_store(
+                        self.app_instance
+                    ),
                 )
             )
             if self._pending_playground_preset is preset:
                 self._pending_playground_preset = None
+            if self._pending_playground_navigation is navigation_target:
+                self._pending_playground_navigation = None
         elif new_view == "profiles":
             content_container.mount(STTSProfileLibrary(self._load_profile_service))
         elif new_view == "settings":
@@ -4680,6 +4740,22 @@ class STTSWindow(Container):
         playground.apply_profile_preset(preset)
         if self._pending_playground_preset is preset:
             self._pending_playground_preset = None
+
+    def _apply_pending_playground_navigation(self) -> None:
+        """Apply a same-view provider/intent target without invoking it."""
+
+        if not self.is_mounted or self.current_view != "playground":
+            return
+        target = self._pending_playground_navigation
+        if target is None:
+            return
+        try:
+            playground = self.query_one(SpeechPlaygroundPane)
+        except QueryError:
+            return
+        playground.apply_navigation_target(target)
+        if self._pending_playground_navigation is target:
+            self._pending_playground_navigation = None
 
     @on(ProfilePreviewRequested)
     def on_profile_preview_requested(

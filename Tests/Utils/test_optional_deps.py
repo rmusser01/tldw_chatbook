@@ -283,9 +283,7 @@ def test_audio_dependency_inventory_does_not_import_native_mlx_backends(monkeypa
     monkeypatch.setattr(optional_deps.sys, "platform", "darwin")
     monkeypatch.setattr(optional_deps, "check_dependency", fake_check_dependency)
     monkeypatch.setattr(optional_deps.importlib.util, "find_spec", fake_find_spec)
-    monkeypatch.setattr(
-        optional_deps, "DEPENDENCIES_AVAILABLE", dependency_registry
-    )
+    monkeypatch.setattr(optional_deps, "DEPENDENCIES_AVAILABLE", dependency_registry)
 
     assert optional_deps.check_audio_processing_deps() is True
 
@@ -375,6 +373,22 @@ def test_tts_deps():
     assert "tts_processing" in DEPENDENCIES_AVAILABLE
     # Individual dependencies are checked within the function
     # We just verify the main key is set
+
+
+def test_tts_deps_probes_higgs_import_under_the_higgs_feature_key(monkeypatch):
+    """The installable module and the capability registry key are not reversed."""
+    from tldw_chatbook.Utils import optional_deps
+
+    calls = []
+
+    def check_dependency(module_name, feature_name=None):
+        calls.append((module_name, feature_name))
+        return module_name == "boson_multimodal"
+
+    monkeypatch.setattr(optional_deps, "check_dependency", check_dependency)
+
+    assert optional_deps.check_tts_deps() is True
+    assert ("boson_multimodal", "higgs_tts") in calls
 
 
 def test_stt_deps():

@@ -23,6 +23,7 @@ from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSRuntimeState,
     SpeechTTSRuntimeStatus,
     SpeechTTSStatusFreshness,
+    speech_tts_model_scope,
     validate_speech_tts_ownership_inventory,
 )
 from tldw_chatbook.UI.Speech.speech_settings_model import ALL_SETTINGS_CONTROLS
@@ -183,9 +184,7 @@ def test_studio_partition_is_limited_to_current_end_to_end_request_values() -> N
 @pytest.mark.unit
 def test_every_provider_and_shared_defaults_are_represented() -> None:
     actual = {record.owner_id for record in SPEECH_TTS_OWNERSHIP_INVENTORY}
-    assert actual == set(BUILT_IN_TTS_PROVIDER_IDS) | {
-        SHARED_TTS_DEFAULTS_OWNER_ID
-    }
+    assert actual == set(BUILT_IN_TTS_PROVIDER_IDS) | {SHARED_TTS_DEFAULTS_OWNER_ID}
 
 
 @pytest.mark.unit
@@ -246,9 +245,7 @@ def test_default_provider_and_configure_provider_have_distinct_ids() -> None:
 @pytest.mark.unit
 def test_validator_rejects_an_unclassified_current_control() -> None:
     with pytest.raises(ValueError, match="unclassified"):
-        validate_speech_tts_ownership_inventory(
-            SPEECH_TTS_OWNERSHIP_INVENTORY[:-1]
-        )
+        validate_speech_tts_ownership_inventory(SPEECH_TTS_OWNERSHIP_INVENTORY[:-1])
 
 
 @pytest.mark.unit
@@ -420,6 +417,7 @@ def _status(**updates: object) -> SpeechTTSRuntimeStatus:
         "saved_configuration_revision": 4,
         "runtime_revision": 7,
         "catalog_revision": 11,
+        "model_scope": speech_tts_model_scope("model-a"),
         "runtime_state": SpeechTTSRuntimeState.READY,
         "observed_at": datetime(2026, 7, 31, 22, 0, tzinfo=timezone.utc),
         "freshness": SpeechTTSStatusFreshness.FRESH,
@@ -443,6 +441,7 @@ def test_safe_status_is_revisioned_frozen_and_has_no_free_form_payload() -> None
     assert status.saved_configuration_revision == 4
     assert status.runtime_revision == 7
     assert status.catalog_revision == 11
+    assert status.model_scope == speech_tts_model_scope("model-a")
     assert status.diagnostic_category is SpeechTTSDiagnosticCategory.CONNECTION
     assert status.recovery_action is SpeechTTSNavigationIntent.TEST
     assert {field.name for field in fields(status)} == {
@@ -450,6 +449,7 @@ def test_safe_status_is_revisioned_frozen_and_has_no_free_form_payload() -> None
         "saved_configuration_revision",
         "runtime_revision",
         "catalog_revision",
+        "model_scope",
         "runtime_state",
         "observed_at",
         "freshness",
@@ -508,6 +508,8 @@ def test_safe_status_rejects_contradictory_state_and_freshness(
         {"runtime_revision": 1.5},
         {"catalog_revision": -1},
         {"catalog_revision": False},
+        {"model_scope": ""},
+        {"model_scope": "https://secret.invalid/model?token=x"},
         {"runtime_state": "Ready"},
         {"observed_at": datetime(2026, 7, 31, 22, 0)},
         {"freshness": "fresh"},
@@ -520,6 +522,17 @@ def test_safe_status_rejects_malformed_or_free_form_values(
 ) -> None:
     with pytest.raises((TypeError, ValueError)):
         _status(**updates)
+
+
+@pytest.mark.unit
+def test_safe_status_never_retains_a_raw_or_url_shaped_model_id() -> None:
+    raw_model_id = "https://user:secret@example.invalid/model?token=private"
+    status = _status(model_scope=speech_tts_model_scope(raw_model_id))
+
+    assert status.model_scope is not None
+    assert raw_model_id not in repr(status)
+    assert "secret" not in repr(status)
+    assert "example.invalid" not in repr(status)
 
 
 @pytest.mark.unit

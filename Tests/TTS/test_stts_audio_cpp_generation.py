@@ -1259,6 +1259,74 @@ async def test_retiring_playground_context_fences_in_flight_completion() -> None
 
 
 @pytest.mark.asyncio
+async def test_retiring_only_generation_preserves_completed_artifact() -> None:
+    app = _DeliveryApp()
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = _NativeService(
+        _Response(_CountingStream((b"RIFF", b"completed")))
+    )
+    await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(_snapshot()))
+    completed = handler.playground_state().artifact
+    assert completed is not None
+
+    release = asyncio.Event()
+    handler._stts_service = _NativeService(
+        _Response(_CountingStream((b"RIFF", b"replacement"), blocked=release))
+    )
+    replacement = STTSPlaygroundRequest(
+        operation_id="replacement-in-flight",
+        provider_id="audio_cpp",
+        model_id="model-2",
+        text="replacement",
+        voice_id=None,
+        response_format="wav",
+    )
+    handler.start_playground_generation(STTSPlaygroundGenerateEvent(replacement))
+    await asyncio.sleep(0)
+    generation_task = handler._generation_task
+    assert generation_task is not None
+
+    handler.retire_playground_generation()
+    release.set()
+    await asyncio.gather(generation_task, return_exceptions=True)
+
+    state = handler.playground_state()
+    assert state.artifact is completed
+    assert completed.path.exists()
+    assert handler._current_audio_file == completed.path
+
+    await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_retiring_queued_generation_before_first_task_turn_fences_it() -> None:
+    app = _DeliveryApp()
+    handler = STTSEventHandler(app=app)
+    service = _NativeService(_Response(_CountingStream((b"RIFF", b"queued"))))
+    handler._stts_service = service
+    event = STTSPlaygroundGenerateEvent(
+        STTSPlaygroundRequest(
+            operation_id="queued-profile-generation",
+            provider_id="audio_cpp",
+            model_id="model-2",
+            text="queued",
+            voice_id=None,
+            response_format="wav",
+        )
+    )
+
+    handler.start_playground_generation(event)
+    generation_task = handler._generation_task
+    assert generation_task is not None
+    handler.retire_playground_generation("queued-profile-generation")
+    await generation_task
+
+    assert service.requests == []
+    assert handler.playground_state().artifact is None
+    assert handler._playground_audio_files == set()
+
+
+@pytest.mark.asyncio
 async def test_leased_artifact_survives_replacement_until_release() -> None:
     app = _DeliveryApp()
     handler = STTSEventHandler(app=app)

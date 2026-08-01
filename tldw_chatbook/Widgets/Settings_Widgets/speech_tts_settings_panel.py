@@ -7,11 +7,12 @@ change rather than a dynamic schema side effect.
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from dataclasses import replace
-from datetime import timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from rich.text import Text
 from textual import on
@@ -19,9 +20,11 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
+from textual.events import DescendantFocus
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Input, Select, Static, Switch
+from textual.worker import NoActiveWorker, get_current_worker
 
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
@@ -34,19 +37,41 @@ from tldw_chatbook.Third_Party.textual_fspicker import (
     SelectDirectory,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Lab_Modules.lab_speech_status import (
+    speech_local_dependency_availability,
+)
+from tldw_chatbook.UI.Speech.speech_runtime_status import (
+    SpeechTTSRuntimeStatusStore,
+    newest_speech_tts_status,
+    project_speech_tts_status,
+    speech_tts_navigation_context,
+)
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSConfigurationState,
+    SpeechTTSDiagnosticCategory,
+    SpeechTTSNavigationIntent,
+    SpeechTTSNavigationTarget,
+    SpeechTTSRuntimeState,
+    SpeechTTSRuntimeStatus,
+    SpeechTTSStatusFreshness,
+)
 from tldw_chatbook.UI.Screens.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
+    GLOBAL_TTS_PROVIDER_ENVIRONMENT_FIELDS,
     GLOBAL_TTS_PROVIDER_FIELD_IDS,
     TTS_PROVIDER_LABELS,
     AudioCppGlobalChoices,
     CredentialIntent,
     CredentialSource,
+    GlobalSpeechTTSEffectiveSource,
     GlobalSpeechTTSCredentialMutation,
     GlobalSpeechTTSState,
     GlobalSpeechTTSValidationError,
     audio_cpp_transport_warning,
     build_credential_mutation,
     build_global_speech_tts_save_proposal,
+    global_speech_tts_provider_configuration_changed,
+    global_speech_tts_provider_configuration_state,
     project_audio_cpp_global_choices,
     restore_non_secret_defaults,
 )
@@ -67,6 +92,8 @@ _LANGUAGE_OPTIONS = [
     ("Japanese", "ja"),
     ("Korean", "ko"),
 ]
+
+LeaveChoice = Literal["save", "discard", "cancel"]
 
 
 class _CredentialEditorModal(ModalScreen[str | None]):
@@ -164,6 +191,57 @@ class _CredentialClearModal(ModalScreen[bool]):
         self.dismiss(True)
 
 
+class _GlobalSpeechTTSLeaveModal(ModalScreen[LeaveChoice]):
+    """Protect a dirty global Speech/TTS draft before changing its owner."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(
+            id="global-speech-tts-leave-modal",
+            classes="settings-rag-profile-modal",
+        ):
+            yield Static(
+                "Unsaved global Speech & TTS settings",
+                classes="destination-section",
+            )
+            yield Static(
+                "Save these application-wide changes before continuing, or "
+                "discard them?",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            with Horizontal(classes="settings-action-row"):
+                yield Button("Cancel", id="global-speech-tts-leave-cancel")
+                yield Button(
+                    "Discard and continue",
+                    id="global-speech-tts-leave-discard",
+                )
+                yield Button(
+                    "Save and continue",
+                    id="global-speech-tts-leave-save",
+                    variant="primary",
+                )
+
+    def action_cancel(self) -> None:
+        self.dismiss("cancel")
+
+    @on(Button.Pressed, "#global-speech-tts-leave-cancel")
+    def handle_cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss("cancel")
+
+    @on(Button.Pressed, "#global-speech-tts-leave-discard")
+    def handle_discard(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss("discard")
+
+    @on(Button.Pressed, "#global-speech-tts-leave-save")
+    def handle_save(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss("save")
+
+
 class SpeechTTSSettingsPanel(Vertical):
     """Edit application-wide Speech/TTS defaults and one provider at a time."""
 
@@ -191,13 +269,53 @@ class SpeechTTSSettingsPanel(Vertical):
         configure_provider: str | None = None,
         audio_cpp_observation: TTSNativeCapabilityObservation | None = None,
         audio_cpp_configuration_revision: int | None = None,
+        audio_cpp_saved_configuration_revision: int | None = None,
+        audio_cpp_applied_configuration_revision: int | None = None,
+        provider_configuration_revisions: dict[str, int] | None = None,
+        provider_runtime_revisions: dict[str, int] | None = None,
+        provider_applied_configuration_revisions: dict[str, int] | None = None,
+        runtime_status_store: SpeechTTSRuntimeStatusStore | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.original_state = deepcopy(original_state or state)
         self.state = deepcopy(state)
+        self._local_dependencies = speech_local_dependency_availability(refresh=True)
         self._audio_cpp_observation = audio_cpp_observation
-        self._audio_cpp_configuration_revision = audio_cpp_configuration_revision
+        self._runtime_status_store = (
+            runtime_status_store or SpeechTTSRuntimeStatusStore()
+        )
+        self._audio_cpp_runtime_revision = audio_cpp_configuration_revision
+        saved_revision = (
+            audio_cpp_configuration_revision
+            if audio_cpp_saved_configuration_revision is None
+            else audio_cpp_saved_configuration_revision
+        )
+        applied_revision = (
+            saved_revision
+            if audio_cpp_applied_configuration_revision is None
+            else audio_cpp_applied_configuration_revision
+        )
+        self._provider_configuration_revisions = dict(
+            provider_configuration_revisions or {}
+        )
+        self._provider_runtime_revisions = dict(provider_runtime_revisions or {})
+        self._provider_applied_configuration_revisions = dict(
+            provider_applied_configuration_revisions or {}
+        )
+        if saved_revision is not None:
+            self._provider_configuration_revisions["audio_cpp"] = saved_revision
+        if audio_cpp_configuration_revision is not None:
+            self._provider_runtime_revisions["audio_cpp"] = (
+                audio_cpp_configuration_revision
+            )
+        if applied_revision is not None:
+            self._provider_applied_configuration_revisions["audio_cpp"] = (
+                applied_revision
+            )
+        self._runtime_statuses: dict[str, SpeechTTSRuntimeStatus] = {}
+        self._provider_runtime_request_ids: dict[str, int] = {}
+        self._provider_runtime_request_observed_at: dict[tuple[str, int], datetime] = {}
         self.configure_provider = (
             configure_provider
             if configure_provider in BUILT_IN_TTS_PROVIDER_ORDER
@@ -216,6 +334,8 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_defaults = None
         self._pending_saved_provider_id: str | None = None
         self._pending_saved_provider_values: dict[str, object] | None = None
+        self._leave_save_waiters: dict[int, asyncio.Future[bool]] = {}
+        self._last_focused_control_id: str | None = None
 
     @staticmethod
     def _field_dom_id(provider_id: str, field_id: str) -> str:
@@ -342,13 +462,20 @@ class SpeechTTSSettingsPanel(Vertical):
         placeholder: str,
     ) -> Horizontal:
         dom_id = self._field_dom_id(provider_id, field_id)
-        return self._row(
-            label,
+        environment_variable = GLOBAL_TTS_PROVIDER_ENVIRONMENT_FIELDS.get(
+            provider_id, {}
+        ).get(field_id)
+        environment_owned = (
+            self.state.provider_field_sources.get(provider_id, {}).get(field_id)
+            is GlobalSpeechTTSEffectiveSource.ENVIRONMENT
+        )
+        controls: list[Horizontal | Static] = [
             Horizontal(
                 Input(
                     value=str(self.state.providers[provider_id].get(field_id, "")),
                     id=dom_id,
                     placeholder=placeholder,
+                    disabled=environment_owned,
                     classes=(
                         "settings-compact-input settings-speech-field "
                         "settings-speech-draft-field"
@@ -358,12 +485,32 @@ class SpeechTTSSettingsPanel(Vertical):
                     "Browse…",
                     id=f"{dom_id}-browse",
                     compact=True,
+                    disabled=environment_owned,
                     classes="settings-speech-path-picker",
-                    tooltip=f"Choose {label.lower()} without initializing a provider.",
+                    tooltip=(
+                        f"Choose {label.lower()} without initializing a provider."
+                    ),
                 ),
                 classes="settings-speech-path-control",
+            )
+        ]
+        if environment_owned and environment_variable is not None:
+            controls.append(
+                Static(
+                    "Effective source: Environment "
+                    f"({environment_variable}, read-only). The displayed value is "
+                    "the saved local fallback and does not override the environment.",
+                    classes="settings-detail-row",
+                    markup=False,
+                )
+            )
+        controls.append(self._error(provider_id, field_id))
+        return self._row(
+            label,
+            Vertical(
+                *controls,
+                classes="settings-speech-control-stack",
             ),
-            error=self._error(provider_id, field_id),
         )
 
     def _credential(self, provider_id: str) -> Vertical:
@@ -409,7 +556,13 @@ class SpeechTTSSettingsPanel(Vertical):
         return project_audio_cpp_global_choices(
             self.state.defaults,
             observation=self._audio_cpp_observation,
-            current_configuration_revision=self._audio_cpp_configuration_revision,
+            current_configuration_revision=self._audio_cpp_runtime_revision,
+            saved_configuration_revision=(
+                self._provider_configuration_revisions.get("audio_cpp")
+            ),
+            applied_configuration_revision=(
+                self._provider_applied_configuration_revisions.get("audio_cpp")
+            ),
         )
 
     @staticmethod
@@ -455,7 +608,211 @@ class SpeechTTSSettingsPanel(Vertical):
                 "Catalog and runtime observations apply to the saved server "
                 "configuration, not this unsaved Server URL draft."
             )
-        return "Catalog and runtime observations apply to the saved server configuration."
+        return (
+            "Catalog and runtime observations apply to the saved server configuration."
+        )
+
+    def _configuration_state(self) -> SpeechTTSConfigurationState:
+        """Derive only the selected provider's local configuration state."""
+
+        try:
+            changed = global_speech_tts_provider_configuration_changed(
+                self.original_state,
+                self.state,
+                provider_id=self.configure_provider,
+            )
+        except GlobalSpeechTTSValidationError as error:
+            if "required" in str(error).lower():
+                return SpeechTTSConfigurationState.INCOMPLETE
+            return SpeechTTSConfigurationState.INVALID
+        saved_state = global_speech_tts_provider_configuration_state(
+            self.state,
+            provider_id=self.configure_provider,
+        )
+        if saved_state in {
+            SpeechTTSConfigurationState.INCOMPLETE,
+            SpeechTTSConfigurationState.INVALID,
+        }:
+            return saved_state
+        if changed:
+            return SpeechTTSConfigurationState.UNSAVED
+        return saved_state
+
+    def _model_id_for_provider(self, provider_id: str) -> str | None:
+        defaults = self.state.defaults
+        if (
+            defaults.provider_id == provider_id
+            and defaults.model_mode == "exact"
+            and defaults.model_id
+        ):
+            return defaults.model_id
+        return None
+
+    def _provider_connection_draft_dirty(self, provider_id: str) -> bool:
+        try:
+            return global_speech_tts_provider_configuration_changed(
+                self.original_state,
+                self.state,
+                provider_id=provider_id,
+            )
+        except GlobalSpeechTTSValidationError:
+            return (
+                self.state.providers[provider_id]
+                != self.original_state.providers[provider_id]
+            )
+        return False
+
+    def _defaults_configuration_state(self) -> SpeechTTSConfigurationState:
+        """Return the global-selection draft state independently of setup."""
+
+        try:
+            changed = (
+                self.state.defaults.snapshot()
+                != self.original_state.defaults.snapshot()
+            )
+        except GlobalSpeechTTSValidationError as error:
+            if "required" in str(error).lower():
+                return SpeechTTSConfigurationState.INCOMPLETE
+            return SpeechTTSConfigurationState.INVALID
+        if changed:
+            return SpeechTTSConfigurationState.UNSAVED
+        if self.state.defaults_source is GlobalSpeechTTSEffectiveSource.DEFAULT:
+            return SpeechTTSConfigurationState.DEFAULT
+        if self.state.defaults_source is GlobalSpeechTTSEffectiveSource.INHERITED:
+            return SpeechTTSConfigurationState.INHERITED
+        return SpeechTTSConfigurationState.SAVED
+
+    def _draft_impact_copy(self) -> str:
+        """Describe only the global owners an unsaved draft would change."""
+
+        defaults_dirty = self._defaults_configuration_state() in {
+            SpeechTTSConfigurationState.UNSAVED,
+            SpeechTTSConfigurationState.INCOMPLETE,
+            SpeechTTSConfigurationState.INVALID,
+        }
+        provider_dirty = self._provider_connection_draft_dirty(self.configure_provider)
+        if defaults_dirty and provider_dirty:
+            impact = "global selection defaults and selected provider setup"
+        elif defaults_dirty:
+            impact = "global selection defaults"
+        elif provider_dirty:
+            impact = "selected provider setup"
+        else:
+            impact = "none"
+        return f"Unsaved draft impact: {impact}. Studio preferences are separate."
+
+    def _refresh_configuration_metadata(self) -> None:
+        """Refresh source and draft-impact copy without provider work."""
+
+        updates = {
+            "#settings-speech-default-source": (
+                "Global default selection: "
+                f"{self._defaults_configuration_state().value} — effective source "
+                f"{self.state.defaults_source.value}."
+            ),
+            "#settings-speech-provider-source": (
+                "Selected provider setup source: "
+                f"{self.state.provider_sources[self.configure_provider].value}."
+            ),
+            "#settings-speech-draft-impact": self._draft_impact_copy(),
+        }
+        for selector, copy in updates.items():
+            try:
+                self.query_one(selector, Static).update(copy)
+            except QueryError:
+                continue
+
+    def _status_projection(self):
+        provider_id = self.configure_provider
+        runtime_status = self._latest_status(
+            self._runtime_statuses.get(provider_id),
+            self._runtime_status_store.runtime_status(provider_id),
+            catalog_axis=False,
+        )
+        projection = project_speech_tts_status(
+            provider_id=provider_id,
+            configuration_state=self._configuration_state(),
+            current_configuration_revision=self._provider_configuration_revisions.get(
+                provider_id
+            ),
+            current_runtime_revision=self._provider_runtime_revisions.get(provider_id),
+            applied_configuration_revision=(
+                self._provider_applied_configuration_revisions.get(provider_id)
+            ),
+            model_id=self._model_id_for_provider(provider_id),
+            observation=(
+                self._audio_cpp_observation if provider_id == "audio_cpp" else None
+            ),
+            local_dependencies=self._local_dependencies,
+            runtime_status=runtime_status,
+        )
+        shared_catalog = self._runtime_status_store.catalog_status(
+            provider_id,
+            self._model_id_for_provider(provider_id),
+        )
+        catalog_status = self._latest_status(
+            projection.catalog_status,
+            shared_catalog,
+            catalog_axis=True,
+        )
+        if catalog_status is not None:
+            projection = project_speech_tts_status(
+                provider_id=provider_id,
+                configuration_state=self._configuration_state(),
+                current_configuration_revision=(
+                    self._provider_configuration_revisions.get(provider_id)
+                ),
+                current_runtime_revision=self._provider_runtime_revisions.get(
+                    provider_id
+                ),
+                applied_configuration_revision=(
+                    self._provider_applied_configuration_revisions.get(provider_id)
+                ),
+                model_id=self._model_id_for_provider(provider_id),
+                observation=(
+                    self._audio_cpp_observation if provider_id == "audio_cpp" else None
+                ),
+                local_dependencies=self._local_dependencies,
+                runtime_status=runtime_status,
+                catalog_status=catalog_status,
+            )
+        if projection.runtime_status is not None:
+            self._runtime_status_store.publish_runtime(projection.runtime_status)
+        if projection.catalog_status is not None:
+            self._runtime_status_store.publish_catalog(projection.catalog_status)
+        return projection
+
+    @staticmethod
+    def _latest_status(
+        first: SpeechTTSRuntimeStatus | None,
+        second: SpeechTTSRuntimeStatus | None,
+        *,
+        catalog_axis: bool,
+    ) -> SpeechTTSRuntimeStatus | None:
+        """Return the newest revision-bound status without merging payloads."""
+
+        return newest_speech_tts_status(
+            first,
+            second,
+            catalog_axis=catalog_axis,
+        )
+
+    def _refresh_status_rows(self) -> None:
+        """Refresh mounted status rows without contacting any provider."""
+
+        projection = self._status_projection()
+        dirty_connection = self._provider_connection_draft_dirty(
+            self.configure_provider
+        )
+        for row in projection.rows(dirty_draft=dirty_connection):
+            try:
+                self.query_one(
+                    f"#settings-speech-status-{row.row_id}",
+                    Static,
+                ).update(row.copy)
+            except QueryError:
+                continue
+        self._refresh_configuration_metadata()
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -499,6 +856,14 @@ class SpeechTTSSettingsPanel(Vertical):
             id="settings-speech-global-defaults", classes="settings-focus-card"
         ):
             yield Static("Global defaults", classes="destination-section")
+            yield Static(
+                "Global default selection: "
+                f"{self._defaults_configuration_state().value} — effective source "
+                f"{self.state.defaults_source.value}.",
+                id="settings-speech-default-source",
+                classes="settings-status-row",
+                markup=False,
+            )
             yield self._row(
                 "Default TTS Provider",
                 Select(
@@ -545,9 +910,7 @@ class SpeechTTSSettingsPanel(Vertical):
                         allow_blank=defaults.model_mode != "exact",
                         compact=True,
                         disabled=defaults.model_mode != "exact",
-                        classes=(
-                            "settings-compact-select settings-speech-draft-field"
-                        ),
+                        classes=("settings-compact-select settings-speech-draft-field"),
                     ),
                     classes="settings-select-row",
                     error=self._default_error(
@@ -600,9 +963,7 @@ class SpeechTTSSettingsPanel(Vertical):
                         allow_blank=defaults.voice_mode != "exact",
                         compact=True,
                         disabled=defaults.voice_mode != "exact",
-                        classes=(
-                            "settings-compact-select settings-speech-draft-field"
-                        ),
+                        classes=("settings-compact-select settings-speech-draft-field"),
                     ),
                     classes="settings-select-row",
                     error=self._default_error(
@@ -716,12 +1077,35 @@ class SpeechTTSSettingsPanel(Vertical):
         with Vertical(id="settings-speech-inspector", classes="settings-focus-card"):
             yield Static("Configuration inspector", classes="destination-section")
             yield Static(
-                f"Selected setup: {TTS_PROVIDER_LABELS[self.configure_provider]} | "
-                "Configuration: Saved or local draft | Runtime: Not checked",
+                f"Selected setup: {TTS_PROVIDER_LABELS[self.configure_provider]}",
                 id="settings-speech-inspector-summary",
                 classes="settings-status-row",
                 markup=False,
             )
+            yield Static(
+                "Selected provider setup source: "
+                f"{self.state.provider_sources[self.configure_provider].value}.",
+                id="settings-speech-provider-source",
+                classes="settings-status-row",
+                markup=False,
+            )
+            yield Static(
+                self._draft_impact_copy(),
+                id="settings-speech-draft-impact",
+                classes="settings-status-row",
+                markup=False,
+            )
+            projection = self._status_projection()
+            dirty_connection = self._provider_connection_draft_dirty(
+                self.configure_provider
+            )
+            for row in projection.rows(dirty_draft=dirty_connection):
+                yield Static(
+                    row.copy,
+                    id=f"settings-speech-status-{row.row_id}",
+                    classes="settings-status-row",
+                    markup=False,
+                )
             yield Static(
                 "Ordinary Save validates and persists locally. Use Speech Lab for "
                 "connection tests, discovery, generation, and playback.",
@@ -1107,6 +1491,7 @@ class SpeechTTSSettingsPanel(Vertical):
     def _announce_draft_state(self) -> None:
         """Publish the latest safe draft snapshot to the Settings shell."""
         is_modified = self.has_unsaved_changes()
+        self._refresh_status_rows()
         self.post_message(
             self.DraftModified(
                 is_modified,
@@ -1174,12 +1559,12 @@ class SpeechTTSSettingsPanel(Vertical):
             pass
         self._set_result(str(error), severity="error")
 
-    def request_save(self) -> None:
+    def request_save(self) -> int | None:
         """Validate locally and post one atomic ordinary-save proposal."""
         self._collect_visible_state()
         if self._latest_request_id is not None:
             self._set_result("A global Speech & TTS save is already in progress.")
-            return
+            return None
         self._clear_validation_errors()
         try:
             proposal = build_global_speech_tts_save_proposal(
@@ -1192,7 +1577,8 @@ class SpeechTTSSettingsPanel(Vertical):
             )
         except GlobalSpeechTTSValidationError as error:
             self._show_validation_error(error)
-            return
+            self._refresh_status_rows()
+            return None
 
         if (
             not defaults_changed
@@ -1200,7 +1586,7 @@ class SpeechTTSSettingsPanel(Vertical):
             and not proposal.delete_setting_keys
         ):
             self._set_result("No global Speech & TTS changes to save.")
-            return
+            return None
         request_id = self._next_request_id
         self._next_request_id += 1
         self._latest_request_id = request_id
@@ -1229,6 +1615,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 reply_to=self,
             )
         )
+        return request_id
 
     def submit_credential_mutation(
         self,
@@ -1268,6 +1655,77 @@ class SpeechTTSSettingsPanel(Vertical):
             )
         )
 
+    def _record_save_runtime_statuses(
+        self,
+        result: STTSSettingsSaveResult,
+        *,
+        saved_provider_id: str | None,
+    ) -> None:
+        """Record bounded publication facts without claiming reachability."""
+
+        providers = set(result.provider_statuses)
+        if result.failure_phase == "cache_reload" and saved_provider_id is not None:
+            providers.add(saved_provider_id)
+        for provider_id in providers:
+            observation_key = (provider_id, result.request_id)
+            observed_at = self._provider_runtime_request_observed_at.setdefault(
+                observation_key,
+                datetime.now(timezone.utc),
+            )
+            configuration_revision = result.provider_configuration_revisions.get(
+                provider_id
+            )
+            if configuration_revision is None:
+                self._provider_configuration_revisions.pop(provider_id, None)
+                self._provider_runtime_revisions.pop(provider_id, None)
+                self._runtime_statuses.pop(provider_id, None)
+                continue
+            self._provider_configuration_revisions[provider_id] = configuration_revision
+            runtime_revision = result.provider_runtime_revisions.get(provider_id)
+            if runtime_revision is None:
+                self._provider_runtime_revisions.pop(provider_id, None)
+            else:
+                self._provider_runtime_revisions[provider_id] = runtime_revision
+            publication_state = result.provider_statuses.get(provider_id)
+            if result.failure_phase == "cache_reload":
+                runtime_state = SpeechTTSRuntimeState.UNAVAILABLE
+                category = SpeechTTSDiagnosticCategory.CONFIGURATION
+                recovery = SpeechTTSNavigationIntent.CONFIGURE
+            elif publication_state == "pending":
+                runtime_state = SpeechTTSRuntimeState.RECONFIGURING
+                category = SpeechTTSDiagnosticCategory.CONFIGURATION
+                recovery = SpeechTTSNavigationIntent.TEST
+            elif publication_state == "unavailable":
+                runtime_state = SpeechTTSRuntimeState.UNAVAILABLE
+                category = SpeechTTSDiagnosticCategory.CONNECTION
+                recovery = SpeechTTSNavigationIntent.TEST
+            else:
+                # Applying configuration is not itself a reachability check.
+                runtime_state = SpeechTTSRuntimeState.NOT_CHECKED
+                category = None
+                recovery = SpeechTTSNavigationIntent.TEST
+            if publication_state in {"applied", "unchanged"}:
+                self._provider_applied_configuration_revisions[provider_id] = (
+                    configuration_revision
+                )
+            self._runtime_statuses[provider_id] = SpeechTTSRuntimeStatus(
+                provider_id=provider_id,
+                saved_configuration_revision=configuration_revision,
+                runtime_revision=runtime_revision,
+                catalog_revision=None,
+                model_scope=None,
+                runtime_state=runtime_state,
+                observed_at=observed_at,
+                freshness=SpeechTTSStatusFreshness.FRESH,
+                diagnostic_category=category,
+                recovery_action=recovery,
+            )
+            if publication_state != "pending":
+                self._provider_runtime_request_observed_at.pop(
+                    observation_key,
+                    None,
+                )
+
     def receive_stts_settings_save_result(
         self,
         result: STTSSettingsSaveResult,
@@ -1275,6 +1733,7 @@ class SpeechTTSSettingsPanel(Vertical):
         """Apply only the latest bounded persistence/reconfiguration result."""
         if result.request_id != self._latest_request_id:
             return
+        leave_waiter = self._leave_save_waiters.pop(result.request_id, None)
         self._latest_request_id = None
         self._set_save_pending(False)
         mutation = self._pending_credential_mutation
@@ -1297,6 +1756,9 @@ class SpeechTTSSettingsPanel(Vertical):
                 f"Global Speech & TTS settings were not saved{failure}.",
                 severity="error",
             )
+            self._refresh_status_rows()
+            if leave_waiter is not None and not leave_waiter.done():
+                leave_waiter.set_result(False)
             return
 
         if mutation is not None:
@@ -1318,17 +1780,46 @@ class SpeechTTSSettingsPanel(Vertical):
             )
             self.state.credentials[mutation.provider_id] = updated
             self.original_state.credentials[mutation.provider_id] = updated
+            if environment_effective or local_saved:
+                provider_source = (
+                    GlobalSpeechTTSEffectiveSource.ENVIRONMENT
+                    if environment_effective
+                    else GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
+                )
+                self.state.provider_sources[mutation.provider_id] = provider_source
+                self.original_state.provider_sources[mutation.provider_id] = (
+                    provider_source
+                )
         else:
             if saved_defaults is not None:
                 self.original_state.defaults = saved_defaults
+                self.state.defaults_source = GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
+                self.original_state.defaults_source = (
+                    GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
+                )
             if saved_provider_id is not None and saved_provider_values is not None:
                 self.original_state.providers[saved_provider_id] = saved_provider_values
-                if saved_provider_id == "audio_cpp":
-                    # The retained observation describes the pre-save registry
-                    # revision. Until a later explicit Lab operation publishes
-                    # another one, it must render stale rather than proving the
-                    # newly saved server draft.
-                    self._audio_cpp_configuration_revision = None
+                if (
+                    self.state.provider_sources[saved_provider_id]
+                    is not GlobalSpeechTTSEffectiveSource.ENVIRONMENT
+                ):
+                    self.state.provider_sources[saved_provider_id] = (
+                        GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
+                    )
+                    self.original_state.provider_sources[saved_provider_id] = (
+                        GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
+                    )
+
+        self._record_save_runtime_statuses(
+            result,
+            saved_provider_id=saved_provider_id,
+        )
+        for provider_id in result.provider_statuses:
+            self._provider_runtime_request_ids[provider_id] = result.request_id
+        if saved_provider_id == "audio_cpp":
+            self._audio_cpp_runtime_revision = self._provider_runtime_revisions.get(
+                "audio_cpp"
+            )
 
         cache_reload_failed = result.failure_phase == "cache_reload"
         if result.provider_statuses:
@@ -1355,11 +1846,68 @@ class SpeechTTSSettingsPanel(Vertical):
             ),
         )
         self._announce_draft_state()
+        if leave_waiter is not None and not leave_waiter.done():
+            leave_waiter.set_result(result.failure_phase is None)
         if mutation is not None or saved_provider_id == "audio_cpp":
             # Credential controls derive their affordances from safe metadata,
             # while a saved audio.cpp connection invalidates prior capability
             # provenance. Repaint either bounded presentation state.
             self.call_later(self.recompose)
+
+    def receive_stts_settings_runtime_result(
+        self,
+        result: STTSSettingsSaveResult,
+    ) -> None:
+        """Land only a final handoff matching each provider's newest save."""
+
+        matching_statuses = {
+            provider_id: status
+            for provider_id, status in result.provider_statuses.items()
+            if (
+                self._provider_runtime_request_ids.get(provider_id) == result.request_id
+                and result.provider_configuration_revisions.get(provider_id)
+                == self._provider_configuration_revisions.get(provider_id)
+            )
+        }
+        if not result.persisted or not matching_statuses:
+            return
+        matching_configuration_revisions = {
+            provider_id: revision
+            for provider_id, revision in (
+                result.provider_configuration_revisions.items()
+            )
+            if provider_id in matching_statuses
+        }
+        matching_runtime_revisions = {
+            provider_id: revision
+            for provider_id, revision in result.provider_runtime_revisions.items()
+            if provider_id in matching_statuses
+        }
+        bounded_result = STTSSettingsSaveResult(
+            request_id=result.request_id,
+            persisted=True,
+            provider_statuses=matching_statuses,
+            failure_phase=result.failure_phase,
+            provider_configuration_revisions=(matching_configuration_revisions),
+            provider_runtime_revisions=matching_runtime_revisions,
+        )
+        self._record_save_runtime_statuses(
+            bounded_result,
+            saved_provider_id=None,
+        )
+        handoff = ", ".join(
+            f"{TTS_PROVIDER_LABELS[provider_id]}: {status}"
+            for provider_id, status in matching_statuses.items()
+        )
+        self._set_result(
+            f"Saved locally. Runtime reconfiguration completed: {handoff}.",
+            severity=(
+                "error"
+                if "unavailable" in matching_statuses.values()
+                else "information"
+            ),
+        )
+        self._refresh_status_rows()
 
     def _credential_editor_result(
         self,
@@ -1394,16 +1942,120 @@ class SpeechTTSSettingsPanel(Vertical):
         except QueryError:
             return
 
+    async def _ask_leave_choice(self) -> LeaveChoice:
+        return await self.app.push_screen_wait(_GlobalSpeechTTSLeaveModal())
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Remember the draft control even if a navigation click takes focus."""
+
+        control = event.control
+        if control is not None and control.id:
+            self._last_focused_control_id = control.id
+
+    def _focused_id(self) -> str | None:
+        focused = self.app.focused
+        if focused is not None and focused.id and self in focused.ancestors_with_self:
+            self._last_focused_control_id = focused.id
+        return self._last_focused_control_id
+
+    def _restore_focus(self, control_id: str | None) -> None:
+        if not control_id or not self.is_mounted:
+            return
+        try:
+            control = self.query_one(f"#{control_id}")
+            control.screen.set_focus(control)
+        except QueryError:
+            return
+
+    async def confirm_leave(self) -> bool:
+        """Resolve the global draft before its owner or surface changes."""
+
+        focus_id = self._focused_id()
+        if self._latest_request_id is not None:
+            request_id = self._latest_request_id
+            waiter = self._leave_save_waiters.get(request_id)
+            if waiter is None:
+                waiter = asyncio.get_running_loop().create_future()
+                self._leave_save_waiters[request_id] = waiter
+            saved = await waiter
+            if not saved:
+                self.call_later(self._restore_focus, focus_id)
+                return False
+        if not self.has_unsaved_changes():
+            return True
+        choice = await self._ask_leave_choice()
+        if choice == "discard":
+            self._reset_to_saved()
+            self.post_message(
+                self.DraftModified(
+                    False,
+                    self.state,
+                    self.original_state,
+                    self.configure_provider,
+                )
+            )
+            return True
+        if choice == "save":
+            request_id = self.request_save()
+            if request_id is None:
+                self._restore_focus(focus_id)
+                return False
+            waiter: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+            self._leave_save_waiters[request_id] = waiter
+            saved = await waiter
+            if not saved:
+                self.call_later(self._restore_focus, focus_id)
+            return saved
+        self._restore_focus(focus_id)
+        return False
+
     @on(Select.Changed, "#settings-speech-configure-provider")
     async def handle_configure_provider_changed(self, event: Select.Changed) -> None:
         if self._syncing or not isinstance(event.value, str):
             return
+        if event.value != event.select.value:
+            return
         if event.value == self.configure_provider:
             return
         self._collect_visible_state()
-        self.configure_provider = event.value
+        requested_provider = event.value
+        draft_dirty = self.has_unsaved_changes()
+        if not draft_dirty:
+            await self._apply_configure_provider(requested_provider)
+            return
+        try:
+            selector = self.query_one(
+                "#settings-speech-configure-provider",
+                Select,
+            )
+            self._syncing = True
+            selector.value = self.configure_provider
+        finally:
+            self._syncing = False
+        self.run_worker(
+            self._change_configure_provider(
+                requested_provider,
+                confirm_dirty=draft_dirty,
+            ),
+            group="settings-speech-provider-leave",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _apply_configure_provider(self, requested_provider: str) -> None:
+        self.configure_provider = requested_provider
         await self.recompose()
         self._announce_draft_state()
+
+    async def _change_configure_provider(
+        self,
+        requested_provider: str,
+        *,
+        confirm_dirty: bool,
+    ) -> None:
+        if confirm_dirty and not await self.confirm_leave():
+            return
+        await self._apply_configure_provider(requested_provider)
 
     @on(Select.Changed, "#settings-speech-default-provider")
     async def handle_default_provider_changed(self, event: Select.Changed) -> None:
@@ -1501,13 +2153,27 @@ class SpeechTTSSettingsPanel(Vertical):
         if not self._syncing:
             self._announce_draft_state()
 
-    async def revert_to_saved(self) -> None:
-        """Restore the last successfully loaded or published snapshot."""
+    def _reset_to_saved(self) -> None:
+        """Reset the draft model without starting a competing recompose."""
+
         self._clear_validation_errors()
         self.state = deepcopy(self.original_state)
         self.result_text = "Reverted to the last successfully loaded global values."
-        await self.recompose()
-        self._announce_draft_state()
+
+    async def revert_to_saved(self) -> None:
+        """Restore the last successfully loaded or published snapshot."""
+
+        self._reset_to_saved()
+        try:
+            get_current_worker()
+        except NoActiveWorker:
+            await self.recompose()
+            self._announce_draft_state()
+        else:
+            # A worker awaiting recompose can deadlock against the same
+            # message pump that owns guarded navigation. Schedule that path.
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._announce_draft_state)
 
     @on(Button.Pressed, "#settings-speech-revert")
     async def handle_revert(self, event: Button.Pressed) -> None:
@@ -1539,7 +2205,31 @@ class SpeechTTSSettingsPanel(Vertical):
     @on(Button.Pressed, "#settings-speech-audio-cpp-open-lab")
     def handle_open_lab(self, event: Button.Pressed) -> None:
         event.stop()
-        self.post_message(NavigateToScreen("stts", {"view": "playground"}))
+        intent = (
+            SpeechTTSNavigationIntent.REFRESH_MODELS
+            if event.button.id == "settings-speech-audio-cpp-open-lab"
+            else SpeechTTSNavigationIntent.TEST
+        )
+        provider_id = (
+            "audio_cpp"
+            if event.button.id == "settings-speech-audio-cpp-open-lab"
+            else self.configure_provider
+        )
+        self.run_worker(
+            self._open_lab(
+                SpeechTTSNavigationTarget(provider_id, intent),
+            ),
+            group="settings-speech-open-lab",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _open_lab(self, target: SpeechTTSNavigationTarget) -> None:
+        context = {
+            "view": "playground",
+            **speech_tts_navigation_context(target),
+        }
+        self.post_message(NavigateToScreen("stts", context))
 
     @on(Button.Pressed, ".settings-speech-credential Button")
     def handle_credential_action(self, event: Button.Pressed) -> None:

@@ -14,12 +14,17 @@ reason the body mount is deferred.
 
 from __future__ import annotations
 
+from importlib.util import find_spec
+
 from tldw_chatbook.Utils.optional_deps import (
     DEPENDENCIES_AVAILABLE,
     check_stt_deps,
     check_tts_deps,
 )
 from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_state
+from tldw_chatbook.UI.Speech.speech_runtime_status import (
+    SpeechLocalDependencyAvailability,
+)
 
 #: Stable selector the recovery state reports against, unchanged from when
 #: this rendered inside the sidebar.
@@ -35,6 +40,52 @@ def speech_dependencies_available() -> bool:
     return bool(DEPENDENCIES_AVAILABLE.get("tts_processing", False)) and bool(
         DEPENDENCIES_AVAILABLE.get("stt_processing", False)
     )
+
+
+def speech_local_dependency_availability(
+    *,
+    refresh: bool = False,
+) -> SpeechLocalDependencyAvailability:
+    """Return independent local dependency facts without provider inference.
+
+    Args:
+        refresh: Re-run non-importing local module-presence probes.
+
+    Returns:
+        A four-capability snapshot. External provider readiness is deliberately
+        absent because local imports cannot prove it.
+    """
+
+    if refresh:
+        return SpeechLocalDependencyAvailability(
+            stt=any(
+                _speech_dependency_installed(module_name)
+                for module_name in (
+                    "nemo_toolkit",
+                    "faster_whisper",
+                    "lightning_whisper_mlx",
+                    "parakeet_mlx",
+                )
+            ),
+            kokoro=_speech_dependency_installed("kokoro_onnx"),
+            chatterbox=_speech_dependency_installed("chatterbox"),
+            higgs=_speech_dependency_installed("boson_multimodal"),
+        )
+    return SpeechLocalDependencyAvailability(
+        stt=bool(DEPENDENCIES_AVAILABLE.get("stt_processing", False)),
+        kokoro=bool(DEPENDENCIES_AVAILABLE.get("kokoro_onnx", False)),
+        chatterbox=bool(DEPENDENCIES_AVAILABLE.get("chatterbox", False)),
+        higgs=bool(DEPENDENCIES_AVAILABLE.get("higgs_tts", False)),
+    )
+
+
+def _speech_dependency_installed(module_name: str) -> bool:
+    """Check module presence without importing or initializing a runtime."""
+
+    try:
+        return find_spec(module_name) is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
 
 
 def speech_dependency_recovery_state():

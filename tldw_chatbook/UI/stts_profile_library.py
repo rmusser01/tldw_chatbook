@@ -818,7 +818,9 @@ class STTSProfileLibrary(Widget):
             "Revision",
         )
         self._availability_column = columns[3]
-        self._queue_page_request(None, 0)
+        # Dynamic Speech navigation can mount this parent before the trailing
+        # action buttons have completed their own mount cycle.
+        self.call_after_refresh(self._queue_page_request, None, 0)
 
     async def on_unmount(self) -> None:
         self._live = False

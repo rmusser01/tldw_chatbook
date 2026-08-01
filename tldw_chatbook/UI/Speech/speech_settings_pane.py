@@ -42,7 +42,12 @@ from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
 from ..Workbench.workbench_state import WorkbenchAction
 from .speech_action_strip import SpeechActionStrip
+from .speech_runtime_status import speech_tts_navigation_context
 from .speech_settings_mixin import SpeechSettingsMixin
+from .speech_settings_contracts import (
+    SpeechTTSNavigationIntent,
+    SpeechTTSNavigationTarget,
+)
 
 _INHERIT = "__inherit__"
 _PROVIDER_LABELS: Mapping[str, str] = {
@@ -1261,8 +1266,12 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
                 "settings",
                 {
                     "category": "speech-tts",
-                    "provider": provider_id,
-                    "intent": "configure",
+                    **speech_tts_navigation_context(
+                        SpeechTTSNavigationTarget(
+                            provider_id,
+                            SpeechTTSNavigationIntent.CONFIGURE,
+                        )
+                    ),
                 },
             )
         )

@@ -22,6 +22,9 @@ old widgets carry the old rhythm with them.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import replace
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from textual import on
@@ -35,6 +38,9 @@ from tldw_chatbook.TTS import (
     TTSPreferencesSnapshot,
 )
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
+from tldw_chatbook.UI.Lab_Modules.lab_speech_status import (
+    speech_local_dependency_availability,
+)
 
 from textual.widgets import (
     Button,
@@ -63,6 +69,22 @@ from .speech_profile_mixin import (
 from .speech_synthesis_mixin import SpeechSynthesisMixin
 from .speech_param_group import SpeechParamGroup
 from .speech_result_history import SpeechResultHistory, SpeechTake
+from .speech_runtime_status import (
+    SpeechTTSRuntimeStatusStore,
+    newest_speech_tts_status,
+    project_speech_tts_status,
+    speech_tts_runtime_status_from_catalog,
+)
+from .speech_settings_contracts import (
+    SpeechTTSConfigurationState,
+    SpeechTTSDiagnosticCategory,
+    SpeechTTSNavigationIntent,
+    SpeechTTSNavigationTarget,
+    SpeechTTSRuntimeState,
+    SpeechTTSRuntimeStatus,
+    SpeechTTSStatusFreshness,
+    speech_tts_model_scope,
+)
 
 if TYPE_CHECKING:
     pass
@@ -191,6 +213,10 @@ class SpeechPlaygroundPane(
         capability_line: str = "",
         studio_preferences: StudioTTSPreferencesSnapshot | None = None,
         global_preferences: TTSPreferencesSnapshot | None = None,
+        navigation_target: SpeechTTSNavigationTarget | None = None,
+        provider_configuration_states: Mapping[str, SpeechTTSConfigurationState]
+        | None = None,
+        runtime_status_store: SpeechTTSRuntimeStatusStore | None = None,
         **kwargs: Any,
     ) -> None:
         """Create the pane.
@@ -230,6 +256,22 @@ class SpeechPlaygroundPane(
             raise TypeError("global_preferences must be a TTS preferences snapshot")
         self.studio_preferences = studio_preferences
         self.global_preferences = global_preferences
+        if navigation_target is not None and (
+            type(navigation_target) is not SpeechTTSNavigationTarget
+        ):
+            raise TypeError("navigation_target must be a Speech TTS target")
+        self._navigation_target = navigation_target
+        self._navigation_focus_pending = navigation_target is not None
+        self._navigation_seed_active = navigation_target is not None
+        self._provider_configuration_states = dict(provider_configuration_states or {})
+        if any(
+            type(state) is not SpeechTTSConfigurationState
+            for state in self._provider_configuration_states.values()
+        ):
+            raise TypeError("provider configuration states are invalid")
+        self._runtime_status_store = (
+            runtime_status_store or SpeechTTSRuntimeStatusStore()
+        )
         self.init_synthesis_state()
         self.init_catalog_state()
         self.init_playback_state()
@@ -246,6 +288,13 @@ class SpeechPlaygroundPane(
         studio = self.studio_preferences
         global_preferences = self.global_preferences
         if (
+            section == "app_tts"
+            and key == "default_provider"
+            and self._navigation_target is not None
+            and self._navigation_seed_active
+        ):
+            return self._navigation_target.provider_id
+        if (
             section != "app_tts"
             or type(studio) is not StudioTTSPreferencesSnapshot
             or type(global_preferences) is not TTSPreferencesSnapshot
@@ -253,11 +302,23 @@ class SpeechPlaygroundPane(
             return super()._cli_setting(section, key, default)
 
         selection = studio.selection
-        provider_id = selection.provider_id or global_preferences.provider_id
+        saved_provider_id = selection.provider_id or global_preferences.provider_id
+        navigation_provider_id = (
+            self._navigation_target.provider_id
+            if self._navigation_target is not None and self._navigation_seed_active
+            else None
+        )
+        provider_id = navigation_provider_id or saved_provider_id
         if key == "default_provider":
             return provider_id
+        navigation_changes_provider = (
+            navigation_provider_id is not None
+            and navigation_provider_id != saved_provider_id
+        )
         global_applies = provider_id == global_preferences.provider_id
         if key == "default_model":
+            if navigation_changes_provider:
+                return None
             if selection.model_mode == "exact":
                 return selection.model_id
             if selection.model_mode == "first_available":
@@ -268,6 +329,8 @@ class SpeechPlaygroundPane(
                 else None
             )
         if key == "default_voice":
+            if navigation_changes_provider:
+                return None
             if selection.voice_mode == "exact":
                 return selection.voice_id
             if selection.voice_mode == "server_default":
@@ -292,6 +355,76 @@ class SpeechPlaygroundPane(
                 else (global_preferences.speed if global_applies else default)
             )
         return super()._cli_setting(section, key, default)
+
+    def apply_navigation_target(self, target: SpeechTTSNavigationTarget) -> None:
+        """Restore provider and focus only; never execute the requested action."""
+
+        if type(target) is not SpeechTTSNavigationTarget:
+            raise TypeError("target must be a Speech TTS navigation target")
+        self._navigation_target = target
+        self._navigation_focus_pending = True
+        self._navigation_seed_active = True
+        if not self.is_mounted:
+            return
+        try:
+            provider_select = self.query_one("#tts-provider-select", Select)
+        except NoMatches:
+            return
+        options = getattr(provider_select, "_options", ()) or ()
+        provider_ids = {value for _label, value in options if isinstance(value, str)}
+        if target.provider_id in provider_ids:
+            provider_select.value = target.provider_id
+        self.call_after_refresh(self._focus_navigation_target)
+
+    def _consume_navigation_target_on_provider_change(
+        self,
+        provider_id: str,
+    ) -> None:
+        """Drop one-shot deep-link overrides when the user leaves its provider."""
+
+        target = self._navigation_target
+        if target is None or provider_id == target.provider_id:
+            return
+        self._navigation_target = None
+        self._navigation_focus_pending = False
+        self._navigation_seed_active = False
+
+    def _consume_navigation_target_after_catalog(self, provider_id: str) -> None:
+        """Retire the one-shot selection seed after its first projection."""
+
+        target = self._navigation_target
+        if target is None or provider_id != target.provider_id:
+            return
+        self._navigation_seed_active = False
+        if not self._navigation_focus_pending:
+            self._navigation_target = None
+
+    def _focus_navigation_target(self, retries_remaining: int = 4) -> None:
+        target = self._navigation_target
+        if target is None or not self._navigation_focus_pending or not self.is_mounted:
+            return
+        selector = (
+            "#tts-provider-select"
+            if target.intent in {None, SpeechTTSNavigationIntent.CONFIGURE}
+            else "#tts-voice-select"
+            if target.intent is SpeechTTSNavigationIntent.REFRESH_VOICES
+            else "#tts-refresh-catalog-btn"
+        )
+        try:
+            control = self.query_one(selector)
+            control.focus()
+        except NoMatches:
+            return
+        if getattr(self.app.focused, "id", None) == control.id:
+            self._navigation_focus_pending = False
+            if not self._navigation_seed_active:
+                self._navigation_target = None
+            return
+        if retries_remaining > 0:
+            self.call_after_refresh(
+                self._focus_navigation_target,
+                retries_remaining - 1,
+            )
 
     @on(Button.Pressed, "#tts-adopt-studio-preferences-btn")
     def _on_adopt_studio_preferences(self, event: Button.Pressed) -> None:
@@ -574,6 +707,366 @@ class SpeechPlaygroundPane(
             value for _label, value in options if isinstance(value, str)
         )
 
+    def _selected_configuration_state(
+        self, provider_id: str
+    ) -> SpeechTTSConfigurationState:
+        return self._provider_configuration_states.get(
+            provider_id,
+            SpeechTTSConfigurationState.DEFAULT,
+        )
+
+    def _provider_revision(
+        self,
+        provider_id: str,
+        reader_name: str,
+        fallback: int | None,
+    ) -> int | None:
+        service = self._tts_service
+        revision_reader = getattr(service, reader_name, None)
+        if not callable(revision_reader):
+            return fallback
+        try:
+            revision = revision_reader(provider_id)
+        except (KeyError, RuntimeError, TypeError, ValueError):
+            return fallback
+        return revision if type(revision) is int and revision >= 0 else fallback
+
+    def _current_runtime_revision(self, provider_id: str) -> int | None:
+        return self._provider_revision(
+            provider_id,
+            "configuration_revision",
+            self._catalog_configuration_revisions.get(provider_id),
+        )
+
+    def _current_saved_configuration_revision(
+        self,
+        provider_id: str,
+        runtime_revision: int | None,
+    ) -> int | None:
+        return self._provider_revision(
+            provider_id,
+            "saved_configuration_revision",
+            runtime_revision,
+        )
+
+    def _current_applied_configuration_revision(
+        self,
+        provider_id: str,
+        saved_configuration_revision: int | None,
+    ) -> int | None:
+        return self._provider_revision(
+            provider_id,
+            "applied_configuration_revision",
+            saved_configuration_revision,
+        )
+
+    @staticmethod
+    def _newest_status(
+        first: SpeechTTSRuntimeStatus | None,
+        second: SpeechTTSRuntimeStatus | None,
+        *,
+        catalog_axis: bool,
+    ) -> SpeechTTSRuntimeStatus | None:
+        return newest_speech_tts_status(
+            first,
+            second,
+            catalog_axis=catalog_axis,
+        )
+
+    def _operation_status(
+        self,
+        provider_id: str,
+        *,
+        saved_configuration_revision: int,
+        runtime_revision: int | None,
+        catalog_revision: int | None,
+        model_id: str | None,
+        runtime_state: SpeechTTSRuntimeState,
+        diagnostic_category: SpeechTTSDiagnosticCategory | None = None,
+        recovery_action: SpeechTTSNavigationIntent | None = None,
+        observed_at: datetime | None = None,
+    ) -> SpeechTTSRuntimeStatus:
+        return SpeechTTSRuntimeStatus(
+            provider_id=provider_id,
+            saved_configuration_revision=saved_configuration_revision,
+            runtime_revision=runtime_revision,
+            catalog_revision=catalog_revision,
+            model_scope=speech_tts_model_scope(model_id),
+            runtime_state=runtime_state,
+            observed_at=(
+                observed_at
+                or self._catalog_runtime_observed_at.get(
+                    provider_id,
+                    datetime.now(timezone.utc),
+                )
+            ),
+            freshness=(
+                SpeechTTSStatusFreshness.STALE
+                if runtime_state is SpeechTTSRuntimeState.STALE
+                else SpeechTTSStatusFreshness.FRESH
+            ),
+            diagnostic_category=diagnostic_category,
+            recovery_action=recovery_action,
+        )
+
+    def _runtime_status_for_selected(
+        self,
+        provider_id: str,
+        *,
+        saved_configuration_revision: int | None,
+        current_runtime_revision: int | None,
+        applied_configuration_revision: int | None,
+    ) -> SpeechTTSRuntimeStatus | None:
+        shared = self._runtime_status_store.runtime_status(provider_id)
+        if saved_configuration_revision is None:
+            return shared
+        local: SpeechTTSRuntimeStatus | None = None
+        if provider_id in self._catalog_checking_providers:
+            local = self._operation_status(
+                provider_id,
+                saved_configuration_revision=saved_configuration_revision,
+                runtime_revision=current_runtime_revision,
+                catalog_revision=None,
+                model_id=None,
+                runtime_state=SpeechTTSRuntimeState.CHECKING,
+            )
+        elif provider_id in self._catalog_unavailable_providers:
+            local = self._operation_status(
+                provider_id,
+                saved_configuration_revision=saved_configuration_revision,
+                runtime_revision=current_runtime_revision,
+                catalog_revision=None,
+                model_id=None,
+                runtime_state=SpeechTTSRuntimeState.UNAVAILABLE,
+                diagnostic_category=SpeechTTSDiagnosticCategory.CONNECTION,
+                recovery_action=SpeechTTSNavigationIntent.TEST,
+            )
+        else:
+            observed_runtime_revision = self._catalog_configuration_revisions.get(
+                provider_id
+            )
+            catalog = self._catalogs.get(provider_id)
+            if (
+                observed_runtime_revision is not None
+                and current_runtime_revision is not None
+                and applied_configuration_revision is not None
+                and catalog is not None
+            ):
+                observed_at = self._catalog_observed_at.get(
+                    provider_id,
+                    self._catalog_runtime_observed_at.get(
+                        provider_id,
+                        datetime.now(timezone.utc),
+                    ),
+                )
+                local = speech_tts_runtime_status_from_catalog(
+                    provider_id=provider_id,
+                    saved_configuration_revision=saved_configuration_revision,
+                    applied_configuration_revision=applied_configuration_revision,
+                    observed_runtime_revision=observed_runtime_revision,
+                    current_runtime_revision=current_runtime_revision,
+                    catalog=catalog,
+                    model_id=None,
+                    observed_at=observed_at,
+                )
+        return self._newest_status(local, shared, catalog_axis=False)
+
+    def _catalog_status_for_selected(
+        self,
+        provider_id: str,
+        *,
+        saved_configuration_revision: int | None,
+        current_runtime_revision: int | None,
+        applied_configuration_revision: int | None,
+        model_id: str | None,
+    ) -> SpeechTTSRuntimeStatus | None:
+        shared = self._runtime_status_store.catalog_status(provider_id, model_id)
+        if saved_configuration_revision is None:
+            return shared
+        local: SpeechTTSRuntimeStatus | None = None
+        catalog = self._catalogs.get(provider_id)
+        observed_runtime_revision = self._catalog_configuration_revisions.get(
+            provider_id
+        )
+        catalog_revision = catalog.revision if catalog is not None else None
+        if provider_id in self._catalog_checking_providers:
+            local = self._operation_status(
+                provider_id,
+                saved_configuration_revision=saved_configuration_revision,
+                runtime_revision=current_runtime_revision,
+                catalog_revision=catalog_revision,
+                model_id=model_id,
+                runtime_state=SpeechTTSRuntimeState.CHECKING,
+            )
+        elif provider_id in self._catalog_unavailable_providers:
+            if (
+                catalog is not None
+                and observed_runtime_revision is not None
+                and current_runtime_revision is not None
+                and applied_configuration_revision is not None
+            ):
+                local = speech_tts_runtime_status_from_catalog(
+                    provider_id=provider_id,
+                    saved_configuration_revision=saved_configuration_revision,
+                    applied_configuration_revision=applied_configuration_revision,
+                    observed_runtime_revision=observed_runtime_revision,
+                    current_runtime_revision=current_runtime_revision,
+                    catalog=catalog,
+                    model_id=model_id,
+                    observed_at=self._catalog_runtime_observed_at.get(
+                        provider_id,
+                        self._catalog_observed_at.get(
+                            provider_id,
+                            datetime.now(timezone.utc),
+                        ),
+                    ),
+                    catalog_axis=True,
+                )
+                if (
+                    provider_id in self._stale_providers
+                    and local.runtime_state is not SpeechTTSRuntimeState.STALE
+                ):
+                    local = replace(
+                        local,
+                        runtime_state=SpeechTTSRuntimeState.STALE,
+                        freshness=SpeechTTSStatusFreshness.STALE,
+                        diagnostic_category=SpeechTTSDiagnosticCategory.CATALOG,
+                        recovery_action=SpeechTTSNavigationIntent.REFRESH_MODELS,
+                    )
+            else:
+                local = self._operation_status(
+                    provider_id,
+                    saved_configuration_revision=saved_configuration_revision,
+                    runtime_revision=current_runtime_revision,
+                    catalog_revision=None,
+                    model_id=model_id,
+                    runtime_state=SpeechTTSRuntimeState.UNAVAILABLE,
+                    diagnostic_category=SpeechTTSDiagnosticCategory.CONNECTION,
+                    recovery_action=SpeechTTSNavigationIntent.TEST,
+                )
+        elif not (
+            catalog is None
+            or observed_runtime_revision is None
+            or current_runtime_revision is None
+            or applied_configuration_revision is None
+        ):
+            local = speech_tts_runtime_status_from_catalog(
+                provider_id=provider_id,
+                saved_configuration_revision=saved_configuration_revision,
+                applied_configuration_revision=applied_configuration_revision,
+                observed_runtime_revision=observed_runtime_revision,
+                current_runtime_revision=current_runtime_revision,
+                catalog=catalog,
+                model_id=model_id,
+                observed_at=self._catalog_observed_at.get(
+                    provider_id,
+                    datetime.now(timezone.utc),
+                ),
+                catalog_axis=True,
+            )
+            voice_scope = (provider_id, model_id or "")
+            voice_observed_at = self._voice_runtime_observed_at.get(voice_scope)
+            if voice_observed_at is not None:
+                local = replace(local, observed_at=voice_observed_at)
+            if voice_scope in self._voice_checking_scopes:
+                local = replace(
+                    local,
+                    runtime_state=SpeechTTSRuntimeState.CHECKING,
+                    freshness=SpeechTTSStatusFreshness.FRESH,
+                    diagnostic_category=None,
+                    recovery_action=None,
+                )
+            elif (
+                provider_id in self._stale_providers
+                and local.runtime_state is not SpeechTTSRuntimeState.STALE
+            ):
+                local = replace(
+                    local,
+                    runtime_state=SpeechTTSRuntimeState.STALE,
+                    freshness=SpeechTTSStatusFreshness.STALE,
+                    diagnostic_category=SpeechTTSDiagnosticCategory.CATALOG,
+                    recovery_action=SpeechTTSNavigationIntent.REFRESH_MODELS,
+                )
+            elif (
+                voice_scope in self._voice_unavailable_scopes
+                and local.runtime_state is not SpeechTTSRuntimeState.STALE
+            ):
+                local = replace(
+                    local,
+                    runtime_state=SpeechTTSRuntimeState.STALE,
+                    freshness=SpeechTTSStatusFreshness.STALE,
+                    diagnostic_category=SpeechTTSDiagnosticCategory.CATALOG,
+                    recovery_action=SpeechTTSNavigationIntent.REFRESH_VOICES,
+                )
+        return self._newest_status(local, shared, catalog_axis=True)
+
+    def _truthful_status_rows(self):
+        provider_id = self._selected_provider_id
+        if provider_id is None:
+            configured = self._cli_setting(
+                "app_tts",
+                "default_provider",
+                "audio_cpp",
+            )
+            provider_id = configured if isinstance(configured, str) else "audio_cpp"
+        try:
+            model_value = self._current_select_value("#tts-model-select")
+        except NoMatches:
+            model_value = None
+        model_id = model_value if isinstance(model_value, str) else None
+        current_runtime_revision = self._current_runtime_revision(provider_id)
+        saved_configuration_revision = self._current_saved_configuration_revision(
+            provider_id,
+            current_runtime_revision,
+        )
+        applied_configuration_revision = self._current_applied_configuration_revision(
+            provider_id,
+            saved_configuration_revision,
+        )
+        runtime_status = self._runtime_status_for_selected(
+            provider_id,
+            saved_configuration_revision=saved_configuration_revision,
+            current_runtime_revision=current_runtime_revision,
+            applied_configuration_revision=applied_configuration_revision,
+        )
+        catalog_status = self._catalog_status_for_selected(
+            provider_id,
+            saved_configuration_revision=saved_configuration_revision,
+            current_runtime_revision=current_runtime_revision,
+            applied_configuration_revision=applied_configuration_revision,
+            model_id=model_id,
+        )
+        projection = project_speech_tts_status(
+            provider_id=provider_id,
+            configuration_state=self._selected_configuration_state(provider_id),
+            current_configuration_revision=saved_configuration_revision,
+            current_runtime_revision=current_runtime_revision,
+            applied_configuration_revision=applied_configuration_revision,
+            model_id=model_id,
+            observation=None,
+            local_dependencies=speech_local_dependency_availability(),
+            runtime_status=runtime_status,
+            catalog_status=catalog_status,
+        )
+        if projection.runtime_status is not None:
+            self._runtime_status_store.publish_runtime(projection.runtime_status)
+        if projection.catalog_status is not None:
+            self._runtime_status_store.publish_catalog(projection.catalog_status)
+        return projection.rows()
+
+    def _sync_truthful_status_rows(self) -> None:
+        """Render independent bounded rows from accepted in-memory facts."""
+
+        if not self.is_mounted:
+            return
+        for row in self._truthful_status_rows():
+            try:
+                self.query_one(f"#speech-status-{row.row_id}", Static).update(row.copy)
+            except NoMatches:
+                continue
+        if self._navigation_focus_pending:
+            self.call_after_refresh(self._focus_navigation_target)
+
     def on_resize(self) -> None:
         """Stack the split when the pane is too narrow to hold two columns."""
         self._sync_split_layout()
@@ -588,6 +1081,7 @@ class SpeechPlaygroundPane(
         self._sync_split_layout()
         self._refresh_provider_ids()
         self._rehydrate_handler_state()
+        self._sync_truthful_status_rows()
         # dev's mount sequence for the profile preset, kept in order: a pane
         # opened on an exact profile shows that profile immediately, before
         # discovery runs, rather than showing a catalog the user did not ask
@@ -596,7 +1090,12 @@ class SpeechPlaygroundPane(
             self.call_after_refresh(self._finish_profile_preset_mount)
         else:
             self._sync_profile_preview_status()
-            self._load_provider_catalog(initialize=True)
+            self.call_after_refresh(
+                self._load_provider_catalog,
+                initialize=True,
+            )
+        if self._navigation_target is not None:
+            self.call_after_refresh(self._focus_navigation_target)
 
     def _finish_profile_preset_mount(self) -> None:
         """Prime an exact preset after nested Select children are mounted."""
@@ -625,7 +1124,7 @@ class SpeechPlaygroundPane(
 
         if type(preset) is not TTSPlaygroundSelectionPreset:
             raise TypeError("preset must be TTSPlaygroundSelectionPreset")
-        self._retire_profile_playback_context()
+        self._retire_profile_generation_context()
         self.init_profile_state(preset)
         if self.is_mounted:
             self.call_after_refresh(self._finish_profile_preset_mount)
@@ -721,6 +1220,13 @@ class SpeechPlaygroundPane(
             classes="speech-status-line",
             markup=False,
         )
+        for row in self._truthful_status_rows():
+            yield Static(
+                row.copy,
+                id=f"speech-status-{row.row_id}",
+                classes="speech-status-line",
+                markup=False,
+            )
         yield Static(
             "audio.cpp returns one complete WAV and currently uses speed 1.0.",
             id="tts-audio-cpp-restrictions",

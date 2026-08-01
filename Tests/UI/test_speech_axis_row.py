@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Static
+from textual.widgets import Select, Static
 
 from tldw_chatbook.UI.Speech.speech_axis_row import (
     AXIS_LABELS,
@@ -12,6 +12,7 @@ from tldw_chatbook.UI.Speech.speech_axis_row import (
     axis_chip_id,
 )
 from tldw_chatbook.UI.Speech.speech_playground_model import AXIS_CONTROLS
+from tldw_chatbook.UI.stts_playground_catalog import LOADING_SELECT_VALUE
 
 
 class _Harness(App[None]):
@@ -21,6 +22,17 @@ class _Harness(App[None]):
 
     def compose(self) -> ComposeResult:
         yield SpeechAxisRow(values=self._values, defaults=self._defaults)
+
+
+def test_loading_selects_are_seeded_before_mount() -> None:
+    row = SpeechAxisRow(values={}, defaults={})
+
+    for axis in AXIS_CONTROLS:
+        if axis == "tts-speed-input":
+            continue
+        control = row._control_for(axis)
+        assert isinstance(control, Select)
+        assert control._value is LOADING_SELECT_VALUE
 
 
 @pytest.mark.asyncio
@@ -60,9 +72,11 @@ async def test_the_override_is_not_signalled_by_colour_alone():
     )
     async with app.run_test(size=(120, 10)) as pilot:
         await pilot.pause()
-        rendered = app.query_one(
-            f"#{axis_chip_id('tts-voice-select')}", Static
-        ).render_line(0).text
+        rendered = (
+            app.query_one(f"#{axis_chip_id('tts-voice-select')}", Static)
+            .render_line(0)
+            .text
+        )
         assert "*" in rendered, "override carried by colour only"
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
@@ -15,10 +17,15 @@ from Tests.UI.test_stts_playground_audio_cpp import (
     _resolved,
     _wait_until,
 )
+from tldw_chatbook.TTS.adapter_types import TTSProviderCatalog
 from tldw_chatbook.UI.Speech.speech_axis_row import axis_chip_id
 from tldw_chatbook.UI.Speech.speech_playground_model import AXIS_CONTROLS
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSNavigationIntent,
+)
 from tldw_chatbook.UI.stts_playground_catalog import PlaygroundControls
+from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 
 class _PaneScreen(Screen):
@@ -220,6 +227,223 @@ def faked_service(monkeypatch: pytest.MonkeyPatch) -> FakeTTSService:
         SpeechPlaygroundPane, "_check_higgs_installation", lambda self: None
     )
     return service
+
+
+@pytest.mark.asyncio
+async def test_playground_status_keeps_external_provider_and_local_deps_independent(
+    faked_service: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for dependency in (
+        "stt_processing",
+        "kokoro_onnx",
+        "chatterbox",
+        "higgs_tts",
+    ):
+        monkeypatch.setitem(DEPENDENCIES_AVAILABLE, dependency, False)
+    app = _AxisHarness()
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: (
+                "Ready"
+                in str(
+                    app.query_one("#speech-status-provider-runtime", Static).renderable
+                )
+                and "Ready"
+                in str(
+                    app.query_one(
+                        "#speech-status-catalog-freshness",
+                        Static,
+                    ).renderable
+                )
+            ),
+        )
+
+        assert "Ready" in str(
+            app.query_one("#speech-status-provider-runtime", Static).renderable
+        )
+        assert "Ready" in str(
+            app.query_one("#speech-status-catalog-freshness", Static).renderable
+        )
+        for row_id in (
+            "stt-dependency",
+            "kokoro-dependency",
+            "chatterbox-dependency",
+            "higgs-dependency",
+        ):
+            assert "Unavailable" in str(
+                app.query_one(f"#speech-status-{row_id}", Static).renderable
+            )
+
+
+@pytest.mark.asyncio
+async def test_cancelled_old_catalog_worker_cannot_clear_new_checking_state(
+    faked_service: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _AxisHarness()
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: "audio_cpp" in app.query_one(SpeechPlaygroundPane)._catalogs,
+        )
+        pane = app.query_one(SpeechPlaygroundPane)
+        first_started = asyncio.Event()
+        first_cancelled = asyncio.Event()
+        second_started = asyncio.Event()
+        release_second = asyncio.Event()
+        call_count = 0
+
+        async def get_catalog(
+            provider_id: str,
+            refresh: bool = False,
+        ) -> TTSProviderCatalog:
+            nonlocal call_count
+            del refresh
+            assert provider_id == "audio_cpp"
+            call_count += 1
+            if call_count == 1:
+                first_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    first_cancelled.set()
+                    raise
+            second_started.set()
+            await release_second.wait()
+            return faked_service.catalogs[provider_id]
+
+        monkeypatch.setattr(faked_service, "get_catalog", get_catalog)
+
+        pane._load_provider_catalog("audio_cpp", refresh=True)
+        await first_started.wait()
+        pane._load_provider_catalog("audio_cpp", refresh=True)
+        await first_cancelled.wait()
+        await second_started.wait()
+
+        assert "audio_cpp" in pane._catalog_checking_providers
+
+        release_second.set()
+        await _wait_until(
+            pilot,
+            lambda: "audio_cpp" not in pane._catalog_checking_providers,
+        )
+
+
+@pytest.mark.asyncio
+async def test_failed_refresh_retains_catalog_as_stale_with_model_recovery(
+    faked_service: FakeTTSService,
+) -> None:
+    app = _AxisHarness()
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: (
+                "Ready"
+                in str(
+                    app.query_one(
+                        "#speech-status-catalog-freshness",
+                        Static,
+                    ).renderable
+                )
+            ),
+        )
+        pane = app.query_one(SpeechPlaygroundPane)
+        faked_service.catalog_error = RuntimeError("private catalog detail")
+
+        pane._load_provider_catalog("audio_cpp", refresh=True)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert "Unavailable" in str(
+            app.query_one("#speech-status-provider-runtime", Static).renderable
+        )
+        assert "Stale" in str(
+            app.query_one("#speech-status-catalog-freshness", Static).renderable
+        )
+        model_id = pane._current_select_value("#tts-model-select")
+        assert isinstance(model_id, str)
+        status = pane._runtime_status_store.catalog_status("audio_cpp", model_id)
+        assert status is not None
+        assert status.recovery_action is SpeechTTSNavigationIntent.REFRESH_MODELS
+
+
+@pytest.mark.asyncio
+async def test_initial_service_failure_is_unavailable_not_loading_or_not_checked(
+    faked_service: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del faked_service
+
+    async def fail_service() -> object:
+        raise RuntimeError("private initialization detail")
+
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: fail_service(),
+    )
+    app = _AxisHarness()
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert "Unavailable" in str(
+            app.query_one("#speech-status-provider-runtime", Static).renderable
+        )
+        assert "Unavailable" in str(
+            app.query_one("#speech-status-catalog-freshness", Static).renderable
+        )
+        provider_copy = str(app.query_one("#tts-provider-status", Static).renderable)
+        assert "Loading" not in provider_copy
+        assert "private initialization detail" not in provider_copy
+
+
+@pytest.mark.asyncio
+async def test_voice_failure_is_stale_with_voice_recovery(
+    faked_service: FakeTTSService,
+) -> None:
+    app = _AxisHarness()
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: (
+                "Ready"
+                in str(
+                    app.query_one(
+                        "#speech-status-catalog-freshness",
+                        Static,
+                    ).renderable
+                )
+            ),
+        )
+        pane = app.query_one(SpeechPlaygroundPane)
+        catalog = pane._catalogs["audio_cpp"]
+        model_id = pane._current_select_value("#tts-model-select")
+        assert isinstance(model_id, str)
+        faked_service.voice_error = RuntimeError("private voice detail")
+
+        pane._load_provider_voices(
+            "audio_cpp",
+            model_id,
+            catalog.revision,
+            refresh=True,
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert "Stale" in str(
+            app.query_one("#speech-status-catalog-freshness", Static).renderable
+        )
+        status = pane._runtime_status_store.catalog_status("audio_cpp", model_id)
+        assert status is not None
+        assert status.recovery_action is SpeechTTSNavigationIntent.REFRESH_VOICES
 
 
 @pytest.mark.asyncio

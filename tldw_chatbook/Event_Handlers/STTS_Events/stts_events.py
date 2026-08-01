@@ -5,7 +5,7 @@
 import asyncio
 from collections.abc import Coroutine, Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
@@ -416,6 +416,8 @@ class STTSSettingsSaveResult:
     persisted: bool
     provider_statuses: Mapping[str, str]
     failure_phase: str | None = None
+    provider_configuration_revisions: Mapping[str, int] = field(default_factory=dict)
+    provider_runtime_revisions: Mapping[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if type(self.request_id) is not int or self.request_id < 0:
@@ -430,12 +432,40 @@ class STTSSettingsSaveResult:
             if provider_id not in _TTS_PROVIDER_ORDER or status not in allowed_statuses:
                 raise ValueError("TTS settings provider result is invalid")
             copied_statuses[provider_id] = status
+        copied_configuration_revisions: dict[str, int] = {}
+        for provider_id, revision in self.provider_configuration_revisions.items():
+            if provider_id not in _TTS_PROVIDER_ORDER:
+                raise ValueError("TTS saved provider revision is invalid")
+            if type(revision) is not int or revision < 0:
+                raise ValueError("TTS saved provider revision is invalid")
+            copied_configuration_revisions[provider_id] = revision
+        copied_runtime_revisions: dict[str, int] = {}
+        for provider_id, revision in self.provider_runtime_revisions.items():
+            if provider_id not in _TTS_PROVIDER_ORDER:
+                raise ValueError("TTS runtime provider revision is invalid")
+            if type(revision) is not int or revision < 0:
+                raise ValueError("TTS runtime provider revision is invalid")
+            copied_runtime_revisions[provider_id] = revision
+        if self.persisted and not set(copied_statuses).issubset(
+            copied_configuration_revisions
+        ):
+            raise ValueError("Persisted TTS provider results require saved revisions")
         if self.failure_phase not in {None, "before_replace", "cache_reload"}:
             raise ValueError("TTS settings failure phase is invalid")
         object.__setattr__(
             self,
             "provider_statuses",
             MappingProxyType(copied_statuses),
+        )
+        object.__setattr__(
+            self,
+            "provider_configuration_revisions",
+            MappingProxyType(copied_configuration_revisions),
+        )
+        object.__setattr__(
+            self,
+            "provider_runtime_revisions",
+            MappingProxyType(copied_runtime_revisions),
         )
 
 
@@ -534,6 +564,22 @@ class STTSEventHandler:
         if task is not None and not task.done():
             task.cancel()
 
+    def retire_playground_generation(
+        self,
+        expected_operation_id: str | None = None,
+    ) -> None:
+        """Fence only in-flight generation while preserving completed audio."""
+
+        operation_id = expected_operation_id or self._active_playground_operation_id
+        if operation_id is None:
+            return
+        self._retired_playground_operation_id = operation_id
+        if self._active_playground_operation_id != operation_id:
+            return
+        task = self._generation_task
+        if task is not None and not task.done():
+            task.cancel()
+
     def start_playground_generation(
         self,
         event: STTSPlaygroundGenerateEvent,
@@ -541,6 +587,9 @@ class STTSEventHandler:
         """Start and retain exactly one handler-owned Playground task."""
         if self._cleanup_task is not None:
             logger.debug("Ignoring TTS generation after STTS cleanup started")
+            return
+        if self._retired_playground_operation_id == event.request.operation_id:
+            self._retired_playground_operation_id = None
             return
         if self._generation_task is not None and not self._generation_task.done():
             self.app.notify("TTS generation already in progress", severity="warning")
@@ -943,6 +992,9 @@ class STTSEventHandler:
         """Run playground TTS inside the handler's retained event task."""
         if self._cleanup_task is not None:
             logger.debug("Ignoring TTS generation after STTS cleanup started")
+            return
+        if self._retired_playground_operation_id == event.request.operation_id:
+            self._retired_playground_operation_id = None
             return
         if self._is_generating:
             self.app.notify("TTS generation already in progress", severity="warning")
@@ -1376,13 +1428,18 @@ class STTSEventHandler:
                 publication,
             )
             if "pending" in publication.provider_statuses.values():
-                self._observe_pending_settings_publication(service, ticket)
+                self._observe_pending_settings_publication(service, ticket, event)
             self._notify_settings_publication(publication)
             self._reply_settings_save(
                 event,
                 persisted=publication.persistence.file_replaced,
                 provider_statuses=publication.provider_statuses,
                 failure_phase=publication.persistence.failure_phase,
+                provider_configuration_revisions={
+                    provider_id: publication.generation
+                    for provider_id in publication.provider_statuses
+                },
+                provider_runtime_revisions=publication.provider_revisions,
             )
         except asyncio.CancelledError:
             raise
@@ -1404,6 +1461,8 @@ class STTSEventHandler:
         persisted: bool,
         provider_statuses: Mapping[str, str],
         failure_phase: str | None,
+        provider_configuration_revisions: Mapping[str, int] = MappingProxyType({}),
+        provider_runtime_revisions: Mapping[str, int] = MappingProxyType({}),
     ) -> None:
         """Deliver a bounded result to an optional mounted requester."""
         if event.request_id is None or event.reply_to is None:
@@ -1422,6 +1481,8 @@ class STTSEventHandler:
                     persisted=persisted,
                     provider_statuses=provider_statuses,
                     failure_phase=failure_phase,
+                    provider_configuration_revisions=(provider_configuration_revisions),
+                    provider_runtime_revisions=provider_runtime_revisions,
                 )
             )
         except Exception:
@@ -1429,12 +1490,10 @@ class STTSEventHandler:
 
     def _post_applied_settings_changes(
         self,
-        service: TTSService,
+        _service: TTSService,
         publication: TTSSettingsPublication,
     ) -> None:
-        """Post only applied results from the latest published generation."""
-        if service.preferences_generation() != publication.generation:
-            return
+        """Post every provider-scoped handoff that definitively applied."""
         for provider_id, status in publication.provider_statuses.items():
             if status != "applied":
                 continue
@@ -1449,8 +1508,9 @@ class STTSEventHandler:
         self,
         service: TTSService,
         ticket: TTSSettingsPublicationTicket,
+        event: STTSSettingsSaveEvent,
     ) -> None:
-        """Observe a service-owned completion without assuming task ownership."""
+        """Publish a bounded final handoff for the still-current save."""
 
         async def observe() -> None:
             try:
@@ -1460,6 +1520,10 @@ class STTSEventHandler:
             except BaseException:
                 return
             self._post_applied_settings_changes(service, completion)
+            self._reply_settings_runtime(
+                event,
+                completion,
+            )
             if "unavailable" in completion.provider_statuses.values():
                 self.app.notify(
                     "TTS settings are unavailable. Retry/Reconnect.",
@@ -1467,6 +1531,39 @@ class STTSEventHandler:
                 )
 
         self._start_event_task(observe())
+
+    @staticmethod
+    def _reply_settings_runtime(
+        event: STTSSettingsSaveEvent,
+        publication: TTSSettingsPublication,
+    ) -> None:
+        """Deliver one safe final runtime result to the original requester."""
+
+        if event.request_id is None or event.reply_to is None:
+            return
+        callback = getattr(
+            event.reply_to,
+            "receive_stts_settings_runtime_result",
+            None,
+        )
+        if not callable(callback):
+            return
+        try:
+            callback(
+                STTSSettingsSaveResult(
+                    request_id=event.request_id,
+                    persisted=publication.persistence.file_replaced,
+                    provider_statuses=publication.provider_statuses,
+                    failure_phase=publication.persistence.failure_phase,
+                    provider_configuration_revisions={
+                        provider_id: publication.generation
+                        for provider_id in publication.provider_statuses
+                    },
+                    provider_runtime_revisions=publication.provider_revisions,
+                )
+            )
+        except Exception:
+            logger.debug("TTS settings runtime result delivery failed")
 
     def _notify_settings_publication(
         self,

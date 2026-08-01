@@ -17,10 +17,13 @@ from ..Lab_Modules.lab_speech_status import (
     speech_capability_detail,
     speech_capability_text,
     speech_capability_tooltip,
-    speech_dependencies_available,
 )
 from ..Lab_Modules.lab_workbench import LAB_RAIL_ROW_CLASS
 from ..STTS_Window import STTS_VIEW_KEYS, STTSWindow
+from ..Speech.speech_runtime_status import (
+    speech_tts_navigation_target_from_context,
+)
+from ..Speech.speech_settings_contracts import SpeechTTSNavigationTarget
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from .lab_frame import LabScreen
 
@@ -80,21 +83,25 @@ class STTSScreen(LabScreen):
         super().__init__(app_instance, "stts", **kwargs)
         self.stts_window: STTSWindow | None = None
         self._pending_navigation_context: (
-            tuple[str, TTSPlaygroundSelectionPreset | None] | None
+            tuple[
+                str,
+                TTSPlaygroundSelectionPreset | None,
+                SpeechTTSNavigationTarget | None,
+            ]
+            | None
         ) = None
 
     def lab_header_state(self) -> WorkbenchHeaderState:
         """Return the Speech header copy and derived readiness.
 
         Returns:
-            Header state reading ``ready`` only when both local speech
-            dependency groups import -- the same condition the rail's
-            capability line states in words, rather than a constant.
+            Ready destination state. Individual local capabilities report
+            their own availability and do not gate external providers.
         """
         return WorkbenchHeaderState(
             title="Speech",
             subtitle="Speech-to-text and text-to-speech tools.",
-            status="ready" if speech_dependencies_available() else "blocked",
+            status="ready",
         )
 
     def compose_lab_rail(self) -> ComposeResult:
@@ -186,17 +193,35 @@ class STTSScreen(LabScreen):
 
         if not isinstance(context, Mapping):
             return
+        keys = set(context)
         view = context.get("view")
         if type(view) is not str or view not in STTS_VIEW_KEYS:
             return
         has_preset = "profile_preset" in context
         preset = context.get("profile_preset")
         if has_preset and (
-            view != "playground" or type(preset) is not TTSPlaygroundSelectionPreset
+            keys != {"view", "profile_preset"}
+            or view != "playground"
+            or type(preset) is not TTSPlaygroundSelectionPreset
         ):
             return
+        navigation_target: SpeechTTSNavigationTarget | None = None
+        if not has_preset and keys != {"view"}:
+            if view != "playground" or not keys.issubset(
+                {"view", "provider", "intent"}
+            ):
+                return
+            navigation_target = speech_tts_navigation_target_from_context(
+                {key: value for key, value in context.items() if key != "view"}
+            )
+            if navigation_target is None:
+                return
         exact_preset = preset if has_preset else None
-        self._pending_navigation_context = (view, exact_preset)
+        self._pending_navigation_context = (
+            view,
+            exact_preset,
+            navigation_target,
+        )
         self._apply_pending_navigation_context()
 
     def _apply_pending_navigation_context(self) -> None:
@@ -205,9 +230,13 @@ class STTSScreen(LabScreen):
         if window is None or context is None:
             return
         self._pending_navigation_context = None
-        view, preset = context
+        view, preset, navigation_target = context
         self.run_worker(
-            window.request_view(view, profile_preset=preset),
+            window.request_view(
+                view,
+                profile_preset=preset,
+                navigation_target=navigation_target,
+            ),
             group="speech-view-navigation",
             exclusive=True,
             exit_on_error=False,
