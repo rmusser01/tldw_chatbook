@@ -3275,3 +3275,55 @@ async def test_real_toggle_key_flips_the_checkbox_value(
         await pilot.press("enter")
         await pilot.pause()
         assert checkbox.value is False
+
+
+@pytest.mark.asyncio
+async def test_create_target_control_stays_hit_testable_across_many_staged_targets(
+    evals_app_configured, evals_db, bench_with_zero_llama_models
+):
+    """TASK-1764 regression: pressing "+ New target" repeatedly must leave
+    ``#evals-bench-create-target`` HIT-TESTABLE, not merely present in the
+    DOM -- ``Screen.get_widget_at`` resolving its own region's center to
+    itself, the exact check `pilot.click` (and a real mouse) performs
+    before a press does anything.
+
+    Every row `stage_target`/`_on_add_target_pressed` mints lands ABOVE
+    this mini-form (see `_keep_create_control_in_view`'s own docstring),
+    pushing the button just pressed further down each time. This pane's
+    history is three separate regressions of exactly that shape, each
+    previously "fixed" by finding one more row of vertical slack
+    elsewhere in the pane -- which only holds for however many targets
+    happen to fit, and silently breaks again the next time a row is
+    added anywhere above it (task-1710's checkbox was the third: see
+    `_keep_create_control_in_view`'s docstring). A slack-based fix passes
+    at whatever target count the fix author tried and no further; this
+    drives SIX presses -- well past the two
+    `test_evals_steering_e2e.py::
+    test_two_ui_authored_targets_one_steered_light_up_column_mode_delta`
+    (this bug's own closing E2E) exercises -- at the SAME realistic
+    160x45 viewport every other reachability check in this module uses,
+    to prove the fix is viewport/count-independent rather than re-tuned
+    slack.
+    """
+    task_id = bench_with_zero_llama_models
+    async with evals_app_configured.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app_configured.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app_configured.screen
+
+        for i in range(6):
+            screen.query_one("#evals-target-name", Input).value = f"target {i}"
+            await pilot.click("#evals-bench-create-target")
+            await pilot.pause()
+
+            control = screen.query_one("#evals-bench-create-target", Button)
+            center = control.region.center
+            hit, _ = screen.get_widget_at(int(center[0]), int(center[1]))
+            assert hit is control, (
+                f"create-target control not hit-testable after {i + 1} staged "
+                f"target(s) -- landed on {hit!r} instead"
+            )
+
+        models = evals_db.list_models(provider="llama_cpp")
+        assert len(models) == 6, "each reachable press must mint one additional row"

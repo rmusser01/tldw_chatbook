@@ -122,6 +122,20 @@ convention, reusing ``snippet_editor.render_snippet_cell``) or
 `` · system prompt set`` -- so a bench with multiple, differently-steered
 variants of the same underlying model can actually be told apart at a
 glance; an unsteered row's label is unchanged.
+
+TASK-1764: pressing "+ New target" a SECOND time minted no row -- the
+first create's own rebuild grows the targets section by a row (and, once
+a real ``llama_cpp`` model exists, ``_build_target_add_control``'s Add
+picker row too), both mounted ABOVE the mini-form, pushing the just-
+pressed button down and out of ``#evals-bench-editor``'s viewport; the
+next click landed on nothing reachable. This is the THIRD time a row
+added above this mini-form has pushed it out of reach (see
+``_keep_create_control_in_view``'s own docstring for the first two, both
+during this same mini-form's task-1611 T2 development) -- each prior fix
+bought back exactly one row of slack, which holds only until the next
+row. Fixed generally instead: ``_keep_create_control_in_view`` scrolls
+the mini-form back into view after any rebuild that grows the targets
+list, independent of target count or viewport size.
 """
 
 from __future__ import annotations
@@ -1019,6 +1033,57 @@ class BenchEditor(Vertical):
         await section.mount_all(self._build_targets_section())
         self._clear_form_error()
 
+    def _keep_create_control_in_view(self) -> None:
+        """Scrolls ``#evals-bench-create-target-form`` back into
+        ``#evals-bench-editor``'s viewport after a rebuild that GREW the
+        targets list (TASK-1764) -- called by ``stage_target`` and
+        ``_on_add_target_pressed``, the two paths that add a row ABOVE this
+        mini-form and so push it down by one.
+
+        Without this, pressing "+ New target" moves the very button just
+        pressed out from under the pointer: the new target row (and, on the
+        first create, `_build_target_add_control`'s Add picker, which only
+        renders once a `llama_cpp` row exists at all) both land above it.
+        This pane's own history says that is not a hypothetical -- the
+        create control has now been pushed out of reach THREE separate
+        times by a row added above it (twice while task-1611 T2 was being
+        written, see `_build_create_target_control`'s own docstring, and
+        again by task-1710's checkbox, the TASK-1764 regression). Each of
+        those was answered by finding one more row of vertical slack, which
+        buys exactly one more feature; this scrolls instead, so the control
+        stays reachable at ANY target count and ANY viewport rather than
+        only while the arithmetic happens to work out.
+
+        `call_after_refresh`, not a direct call: `_refresh_targets_section`
+        has only just `mount_all`ed the new rows, so the mini-form's own
+        `region` is still the pre-rebuild one until Textual's next layout
+        pass -- scrolling against that stale geometry computes the wrong
+        offset (or, when the section grew, no offset at all).
+
+        Deliberately NOT called from `_on_remove_target_pressed` (the list
+        SHRANK -- nothing was pushed anywhere) or `_on_prompt_mode_changed`
+        (the user is at the TOP of the form, at the prompt-mode `Select`;
+        yanking the viewport to the bottom of the targets section would
+        move a control they are still reading).
+        """
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        def _scroll() -> None:
+            try:
+                control = self.query_one("#evals-bench-create-target-form", Horizontal)
+            except QueryError:
+                # Defensive only: this mini-form renders unconditionally
+                # (see `_build_create_target_control`), but a rebuild that
+                # raced an unmount must not crash the handler that queued
+                # this callback.
+                return
+            # `animate=False`: the very next thing a user does here is press
+            # this button again, and an in-flight scroll animation would
+            # leave the button under the pointer only after it lands.
+            self.scroll_to_widget(control, animate=False)
+
+        self.call_after_refresh(_scroll)
+
     def _capture_pending_target_form(self) -> None:
         """Stashes whatever is currently typed into the "+ New target"
         mini-form's Name/steering ``Input``s onto ``self._pending_target_
@@ -1092,6 +1157,7 @@ class BenchEditor(Vertical):
         self._staged_target_ids.append(target_id)
         self._reset_pending_target_form()
         await self._refresh_targets_section()
+        self._keep_create_control_in_view()
 
     def _show_form_error(self, message: str) -> None:
         """Renders ``message`` in ``#evals-bench-form-error`` IN PLACE --
@@ -1154,6 +1220,7 @@ class BenchEditor(Vertical):
         self._staged_target_ids.append(target_id)
         self._capture_pending_target_form()
         await self._refresh_targets_section()
+        self._keep_create_control_in_view()
 
     @on(Button.Pressed, ".evals-bench-target-remove")
     async def _on_remove_target_pressed(self, event: Button.Pressed) -> None:
