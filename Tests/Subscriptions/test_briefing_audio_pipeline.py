@@ -318,6 +318,77 @@ async def test_script_with_unparsable_turns_json_is_refused_with_no_row(
     assert db.list_briefing_audio(script_id) == []
 
 
+# --- pydub preflight (Qodo review round 1, FIX A): a failed row, synthesize
+# never called -----------------------------------------------------------------
+
+
+async def test_pydub_unavailable_is_a_failed_row_and_synthesize_is_never_called(
+    tmp_path, monkeypatch
+) -> None:
+    """The whole point of the preflight: without it, every turn is
+    synthesized (real provider calls, real cost, real wait) before
+    `concat_wav_segments`/`wav_duration_seconds` ever get a chance to refuse
+    for lack of pydub. Patching `PYDUB_AVAILABLE` False and asserting the
+    fake `synthesize` seam's call count is 0 is the direct proof that no
+    synthesis is attempted at all.
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(briefing_audio, "PYDUB_AVAILABLE", False)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [
+        {"speaker": "Host", "text": "Welcome back."},
+        {"speaker": "Host", "text": "Here is what happened."},
+    ]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+    synth = _RecordingSynthesize()
+
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=synth,
+    )
+
+    assert row["status"] == STATUS_FAILED
+    assert "pydub" in row["error"]
+    assert "pip install pydub" in row["error"]
+    assert row["file_path"] is None
+    assert len(synth.calls) == 0, "synthesize must never be called without pydub"
+    # Exactly one row -- created directly, mirroring the voice-resolution
+    # failure's own "no generating row a caller could see" invariant.
+    assert [audio_row["id"] for audio_row in db.list_briefing_audio(script_id)] == [
+        row["id"]
+    ]
+
+
+async def test_pydub_unavailable_never_touches_the_script(tmp_path, monkeypatch) -> None:
+    """Mirrors `test_a_failed_synthesis_never_touches_the_script`: the
+    parent `briefing_scripts` row must be untouched by this failure too."""
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(briefing_audio, "PYDUB_AVAILABLE", False)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    before = db.get_briefing_script(script_id)
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=_RecordingSynthesize(),
+    )
+    after = db.get_briefing_script(script_id)
+
+    assert row["status"] == STATUS_FAILED
+    assert before == after
+
+
 # --- In-band failures: a `failed` row, never a raise ---------------------------
 
 

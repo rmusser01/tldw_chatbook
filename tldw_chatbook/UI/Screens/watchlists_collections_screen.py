@@ -86,6 +86,7 @@ from ..Watchlists_Modules.artifacts_pane import (
     ScriptSelected,
     StopAudioRequested,
     SynthesizeAudioRequested,
+    audio_file_path_is_safe,
 )
 from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
 from ..Watchlists_Modules.content_pane import ContentPane, UnreadToggleRequested
@@ -4694,11 +4695,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         file, or a file since deleted, means the disk state changed
         between that render and this press -- an honest race, not a bug
         to silently swallow.
+
+        Qodo review round 1, FIX B: `audio_file_path_is_safe` is checked
+        BEFORE any filesystem access -- a path that resolves outside
+        `briefing_audio_dir()` (a tampered or corrupted row) is treated
+        exactly like the "no file at all" case: a silent return, no
+        `.exists()` probe, no exception. `ArtifactsPane.compose` already
+        disables Play for this case too (`_audio_file_is_playable` uses the
+        same helper), so reaching here with an unsafe path is the same kind
+        of race as the missing-file case above, not a new failure mode.
         """
         event.stop()
         row = self._loaded_script_audio
         file_path = row.get("file_path") if row else None
         if not file_path:
+            return
+        if not audio_file_path_is_safe(file_path):
             return
         path = Path(str(file_path))
         if not path.exists():

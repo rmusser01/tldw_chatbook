@@ -199,3 +199,32 @@ def test_module_imports_successfully_without_pydub_installed(
     reloaded = importlib.import_module("tldw_chatbook.TTS.audio_stitch")
 
     assert reloaded.PYDUB_AVAILABLE is False
+
+
+def test_pydub_available_is_sourced_from_check_dependency_not_a_second_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Qodo review round 1, FIX D: `PYDUB_AVAILABLE` must be the project-
+    wide `Utils.optional_deps.check_dependency("pydub")` answer, not a
+    second, independently-computed boolean that merely happens to agree
+    with it today.
+
+    Proof: replace `check_dependency` with a fake that always answers
+    `False` (regardless of whether pydub genuinely imports), force a fresh
+    import of `audio_stitch` (which does its own module-scope `from
+    ...optional_deps import check_dependency`, so the fresh import binds
+    THIS fake), and confirm `PYDUB_AVAILABLE` follows the fake, not the
+    real, currently-installed pydub. A module that computed its own
+    availability independently (a bespoke `try`/`except ImportError`) would
+    still see real pydub and report `True` here regardless of the fake --
+    that is exactly the regression this test catches.
+    """
+    from tldw_chatbook.Utils import optional_deps
+
+    monkeypatch.setattr(optional_deps, "check_dependency", lambda *args, **kwargs: False)
+    monkeypatch.delitem(sys.modules, "tldw_chatbook.TTS.audio_stitch", raising=False)
+
+    reloaded = importlib.import_module("tldw_chatbook.TTS.audio_stitch")
+
+    assert reloaded.PYDUB_AVAILABLE is False
+    assert reloaded.AudioSegment is None

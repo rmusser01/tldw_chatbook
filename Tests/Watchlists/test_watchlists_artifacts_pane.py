@@ -49,6 +49,7 @@ from Tests.UI.test_destination_visual_parity_correction import (
 )
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Subscriptions import briefing_cast, briefing_service
+import tldw_chatbook.Subscriptions.briefing_audio as briefing_audio
 from tldw_chatbook.Subscriptions.briefing_audio import AudioGenerationError
 from tldw_chatbook.Subscriptions.briefing_cast import dump_roster
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
@@ -66,6 +67,8 @@ from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import (
     PlayAudioRequested,
     StopAudioRequested,
     SynthesizeAudioRequested,
+    _audio_file_is_playable,
+    audio_file_path_is_safe,
 )
 from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
@@ -2589,6 +2592,20 @@ class _FakePlayer:
         self._current = None
 
 
+def _patch_audio_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Redirect `briefing_audio_dir()` into `tmp_path` (Qodo review round 1,
+    FIX B): `_audio_file_is_playable`/`handle_play_audio_requested` now
+    validate a row's `file_path` against `briefing_audio_dir()`, which
+    calls `briefing_audio.get_user_data_dir()` -- a DIFFERENT name binding
+    than `tldw_chatbook.app.get_user_data_dir` (which `_build_test_app`
+    already patches), so tests that need a file to validate as safely
+    "inside" the audio dir must patch this one too, mirroring `Tests/
+    Subscriptions/test_briefing_audio_pipeline.py`'s own `_patch_user_data_
+    dir` helper exactly.
+    """
+    monkeypatch.setattr(briefing_audio, "get_user_data_dir", lambda: tmp_path)
+
+
 def _seed_complete_script(app, watchlist_id, *, roster=None) -> tuple[int, int]:
     """A `complete` briefing and a `complete` cast script, built directly
     via the DB rather than a real Generate+Cast pass -- these tests fake
@@ -3273,12 +3290,13 @@ async def test_a_failed_audio_rows_error_text_paints_literally_never_as_markup(
 async def test_play_calls_the_player_with_the_rows_path_and_stop_stops_it(
     monkeypatch, tmp_path
 ):
+    _patch_audio_dir(monkeypatch, tmp_path)
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
     briefing_id, script_id = _seed_complete_script(app, watchlist_id)
     db = app.watchlist_bundle_service.db
-    audio_file = tmp_path / "clip.wav"
+    audio_file = briefing_audio.briefing_audio_dir() / "clip.wav"
     audio_file.write_bytes(b"RIFF....WAVEfmt ")
     audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
     db.update_briefing_audio(
@@ -3358,7 +3376,7 @@ async def test_stop_does_not_silence_a_different_currently_playing_file(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_play_is_disabled_when_the_file_is_null_or_missing(tmp_path):
+async def test_play_is_disabled_when_the_file_is_null_or_missing(monkeypatch, tmp_path):
     """The spec's honest-degradation rule: an artifact whose file was
     deleted underneath us -- or was never written at all (no row yet, or
     a `failed` row) -- must not offer a control that can never do
@@ -3366,7 +3384,13 @@ async def test_play_is_disabled_when_the_file_is_null_or_missing(tmp_path):
     on_screen`'s own naming for the lesson): Play really can be enabled,
     so the disabled assertions above are not trivially true because Play
     is simply never enabled at all.
+
+    Also covers Qodo review round 1, FIX B: a `file_path` outside
+    `briefing_audio_dir()` must leave Play disabled exactly like a missing
+    file, never treated as playable just because SOME file happens to
+    exist at that location on disk.
     """
+    _patch_audio_dir(monkeypatch, tmp_path)
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
@@ -3398,7 +3422,7 @@ async def test_play_is_disabled_when_the_file_is_null_or_missing(tmp_path):
 
         # Case 3: a row claims a `file_path`, but the file has since been
         # deleted from disk.
-        missing_file = tmp_path / "deleted.wav"
+        missing_file = briefing_audio.briefing_audio_dir() / "deleted.wav"
         assert not missing_file.exists()
         db.update_briefing_audio(
             db.create_briefing_audio(script_id, voice_snapshot_json="[]"),
@@ -3413,8 +3437,28 @@ async def test_play_is_disabled_when_the_file_is_null_or_missing(tmp_path):
         assert pane.script_audio["file_path"] == str(missing_file)
         assert pane.query_one("#artifacts-play-button", Button).disabled is True
 
-        # Positive control: a REAL file makes Play enabled.
-        real_file = tmp_path / "clip.wav"
+        # Case 4 (Qodo review round 1, FIX B): a row claims a `file_path`
+        # OUTSIDE `briefing_audio_dir()` -- a tampered/corrupted row -- even
+        # though a real file exists right there on disk.
+        outside_file = tmp_path / "outside" / "clip.wav"
+        outside_file.parent.mkdir(parents=True, exist_ok=True)
+        outside_file.write_bytes(b"RIFF....WAVEfmt ")
+        db.update_briefing_audio(
+            db.create_briefing_audio(script_id, voice_snapshot_json="[]"),
+            status="complete",
+            file_path=str(outside_file),
+            duration_seconds=5.0,
+            turn_count=1,
+        )
+        await screen._load_briefings()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.script_audio["file_path"] == str(outside_file)
+        assert pane.query_one("#artifacts-play-button", Button).disabled is True
+
+        # Positive control: a REAL file, INSIDE briefing_audio_dir(), makes
+        # Play enabled.
+        real_file = briefing_audio.briefing_audio_dir() / "clip.wav"
         real_file.write_bytes(b"RIFF....WAVEfmt ")
         db.update_briefing_audio(
             db.create_briefing_audio(script_id, voice_snapshot_json="[]"),
@@ -3427,3 +3471,146 @@ async def test_play_is_disabled_when_the_file_is_null_or_missing(tmp_path):
         await pilot.pause()
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         assert pane.query_one("#artifacts-play-button", Button).disabled is False
+
+
+# --- Path validation (Qodo review round 1, FIX B) -----------------------------
+#
+# `audio_file_path_is_safe`/`_audio_file_is_playable` must confirm a row's
+# `file_path` resolves inside `briefing_audio_dir()` BEFORE any `.exists()`
+# call or playback -- the DB row is trusted today, but CLAUDE.md requires
+# every file path to go through `Utils/path_validation.py`, and a tampered
+# or corrupted row must not let this screen probe or play an arbitrary
+# path.
+
+
+def test_audio_file_path_is_safe_rejects_a_path_outside_the_audio_dir(
+    monkeypatch, tmp_path
+) -> None:
+    _patch_audio_dir(monkeypatch, tmp_path)
+
+    assert audio_file_path_is_safe("/etc/passwd") is False
+
+
+def test_audio_file_path_is_safe_rejects_a_traversal_path(monkeypatch, tmp_path) -> None:
+    _patch_audio_dir(monkeypatch, tmp_path)
+    audio_dir = briefing_audio.briefing_audio_dir()
+
+    traversal = str(audio_dir / ".." / ".." / "etc" / "passwd")
+
+    assert audio_file_path_is_safe(traversal) is False
+
+
+def test_audio_file_path_is_safe_accepts_a_normal_in_dir_path(
+    monkeypatch, tmp_path
+) -> None:
+    _patch_audio_dir(monkeypatch, tmp_path)
+    audio_dir = briefing_audio.briefing_audio_dir()
+    in_dir_path = audio_dir / "script-1-audio-1.wav"
+
+    assert audio_file_path_is_safe(str(in_dir_path)) is True
+
+
+def test_audio_file_is_playable_never_probes_the_filesystem_for_an_unsafe_path(
+    monkeypatch, tmp_path
+) -> None:
+    """The safety check must run BEFORE `.exists()`: an unsafe path must
+    never even reach a filesystem probe. Wrapping the real `Path.exists`
+    (rather than registering a callback) catches a call regardless of which
+    `Path` instance makes it.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    calls: list[Path] = []
+    original_exists = Path.exists
+
+    def _spy_exists(self, *args, **kwargs):
+        calls.append(self)
+        return original_exists(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", _spy_exists)
+
+    row = {"file_path": "/etc/passwd", "status": "complete"}
+
+    assert _audio_file_is_playable(row) is False
+    assert calls == [], "an unsafe path must never be probed with .exists()"
+
+
+def test_audio_file_is_playable_true_for_a_real_in_dir_file(monkeypatch, tmp_path) -> None:
+    """Positive control: `_audio_file_is_playable` still works for the
+    ordinary case once path validation is in place."""
+    _patch_audio_dir(monkeypatch, tmp_path)
+    real_file = briefing_audio.briefing_audio_dir() / "clip.wav"
+    real_file.write_bytes(b"RIFF....WAVEfmt ")
+
+    row = {"file_path": str(real_file), "status": "complete"}
+
+    assert _audio_file_is_playable(row) is True
+
+
+@pytest.mark.asyncio
+async def test_handle_play_audio_requested_refuses_an_unsafe_path_with_no_probe_or_playback(
+    monkeypatch, tmp_path
+) -> None:
+    """Defense in depth: even if Play were somehow pressed with a row whose
+    `file_path` fails validation -- a race, or a directly-set screen state
+    bypassing the disabled button -- `handle_play_audio_requested` must
+    refuse it itself, exactly like the "no file at all" case: silently, no
+    toast, no exception, and never handing the path to the player.
+    """
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+
+    play_calls: list[Path] = []
+    monkeypatch.setattr(
+        screen_module, "play_audio_file", lambda path: play_calls.append(path)
+    )
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        screen._loaded_script_audio = {
+            "file_path": "/etc/passwd",
+            "status": "complete",
+        }
+        screen.handle_play_audio_requested(PlayAudioRequested())
+        await pilot.pause()
+
+        assert play_calls == [], "an unsafe path must never reach the player"
+        assert not app.notify.called, (
+            "an unsafe path is treated exactly like a missing file: silent, "
+            "not a toast"
+        )
+
+
+@pytest.mark.asyncio
+async def test_handle_play_audio_requested_still_plays_a_normal_in_dir_path(
+    monkeypatch, tmp_path
+) -> None:
+    """The normal case must keep working once the guard is in place."""
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+
+    audio_file = briefing_audio.briefing_audio_dir() / "clip.wav"
+    audio_file.write_bytes(b"RIFF....WAVEfmt ")
+
+    play_calls: list[Path] = []
+    monkeypatch.setattr(
+        screen_module, "play_audio_file", lambda path: play_calls.append(path)
+    )
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
+
+        screen._loaded_script_audio = {
+            "file_path": str(audio_file),
+            "status": "complete",
+        }
+        screen.handle_play_audio_requested(PlayAudioRequested())
+        await pilot.pause()
+
+        assert play_calls == [audio_file]

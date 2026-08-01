@@ -185,6 +185,8 @@ from tldw_chatbook.Subscriptions.briefing_voices import (
 )
 from tldw_chatbook.TTS.adapter_types import TTSRequest
 from tldw_chatbook.TTS.audio_stitch import (
+    PYDUB_AVAILABLE,
+    PYDUB_MISSING_MESSAGE,
     AudioStitchError,
     concat_wav_segments,
     wav_duration_seconds,
@@ -396,6 +398,77 @@ def _looks_like_wav(payload: bytes) -> bool:
         return False
 
 
+#: `(label, TTSRequest attribute, TTSRequestedSelectionSnapshot attribute)`
+#: for every scalar field `_describe_snapshot_mismatch` compares. `options`
+#: is deliberately not listed here -- it is a mapping, handled separately by
+#: `_mismatched_option_keys` so a mismatch never dumps a whole mapping into
+#: an error message (Qodo review round 1, FIX C).
+_SNAPSHOT_SCALAR_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("provider", "provider_id", "provider_id"),
+    ("model", "model_id", "model_id"),
+    ("voice", "voice", "voice_id"),
+    ("format", "response_format", "response_format"),
+    ("speed", "speed", "speed"),
+)
+
+
+def _mismatched_option_keys(
+    requested: Mapping[str, Any], returned: Mapping[str, Any]
+) -> list[str]:
+    """The option keys whose requested and returned values disagree.
+
+    Args:
+        requested: `TTSRequest.options`.
+        returned: `TTSRequestedSelectionSnapshot.options`.
+
+    Returns:
+        Every key present in either mapping whose value differs (including
+        a key present in only one of the two), sorted for a stable message.
+    """
+    missing = object()
+    keys = set(requested) | set(returned)
+    return sorted(
+        key for key in keys if requested.get(key, missing) != returned.get(key, missing)
+    )
+
+
+def _describe_snapshot_mismatch(
+    request: TTSRequest, snapshot: TTSRequestedSelectionSnapshot
+) -> str:
+    """Describe exactly which field(s) of `snapshot` disagree with `request`.
+
+    Qodo review round 1, FIX C: the caller used to report every mismatch as
+    a voice mismatch unconditionally, even when the voice matched fine and
+    a different field (format, options, ...) was the actual disagreement --
+    a false lead for whoever read it. This names every field that actually
+    differs, bounded: an `options` mismatch names only the differing keys,
+    never the whole mapping (a provider's option payload can be arbitrarily
+    large).
+
+    Args:
+        request: The `TTSRequest` this turn's chunk was submitted with.
+        snapshot: The mismatched `TTSRequestedSelectionSnapshot`.
+
+    Returns:
+        A "; "-joined description, each part naming one differing field's
+        requested and returned value (or, for `options`, its differing
+        keys). Never empty when called after an inequality has already been
+        established between the two.
+    """
+    parts: list[str] = []
+    for label, request_attr, snapshot_attr in _SNAPSHOT_SCALAR_FIELDS:
+        requested_value = getattr(request, request_attr)
+        returned_value = getattr(snapshot, snapshot_attr)
+        if requested_value != returned_value:
+            parts.append(
+                f"{label} (requested {requested_value!r}, got {returned_value!r})"
+            )
+    differing_keys = _mismatched_option_keys(request.options, snapshot.options)
+    if differing_keys:
+        parts.append(f"options key(s) {differing_keys!r} differ")
+    return "; ".join(parts)
+
+
 def _validate_exact_snapshot(
     request: TTSRequest,
     snapshot: object,
@@ -410,8 +483,9 @@ def _validate_exact_snapshot(
     difference is only in how a mismatch is reported: that handler guards
     one global chat voice, so a provider-neutral contract error is enough;
     a briefing turn is one of many synthesis calls in flight, so a caller
-    needs to know which speaker and turn misbehaved, and what voice the
-    provider actually used instead of the one requested.
+    needs to know which speaker and turn misbehaved, and which field(s) of
+    the response actually disagreed with the request (Qodo review round 1,
+    FIX C -- see `_describe_snapshot_mismatch`).
 
     Args:
         request: The `TTSRequest` this turn's chunk was submitted with.
@@ -448,9 +522,10 @@ def _validate_exact_snapshot(
         snapshot.options,
     )
     if actual != expected:
+        description = _describe_snapshot_mismatch(request, snapshot)
         raise TurnSynthesisError(
-            f"speaker {speaker!r} turn {turn_index}: TTS provider used voice "
-            f"{snapshot.voice_id!r}, requested voice {request.voice!r}"
+            f"speaker {speaker!r} turn {turn_index}: TTS provider response "
+            f"did not match the request ({description})"
         )
 
 
@@ -883,6 +958,35 @@ def _record_voice_resolution_failure(db: Any, script_id: int, message: str) -> d
     return db.get_briefing_audio(audio_id)
 
 
+def _record_missing_pydub_failure(db: Any, script_id: int) -> dict[str, Any]:
+    """Write a `failed` `briefing_audio` row when pydub is not installed.
+
+    Qodo review round 1, FIX A: without this preflight, every turn used to
+    be synthesized in full -- real provider API calls, real money on paid
+    providers, real minutes of waiting -- before `generate_script_audio`
+    ever reached `concat_wav_segments`/`wav_duration_seconds`, which are the
+    only two call sites that actually check `TTS.audio_stitch.PYDUB_
+    AVAILABLE`. An install without the audio extra therefore paid the full
+    cost of an attempt that could never finish. Checking the flag here,
+    before `resolve_roster_voices` or the first `synthesize` call, means
+    that cost is never paid.
+
+    Same shape as `_record_voice_resolution_failure`: no voices have been
+    resolved yet at this point either, so this creates its own row directly,
+    with an empty placeholder voice snapshot.
+
+    Args:
+        db: An open `SubscriptionsDB`.
+        script_id: The script this audio attempt belongs to.
+
+    Returns:
+        The finished (`failed`) `briefing_audio` row as a dict.
+    """
+    audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+    db.update_briefing_audio(audio_id, status=STATUS_FAILED, error=PYDUB_MISSING_MESSAGE)
+    return db.get_briefing_audio(audio_id)
+
+
 def _finish_audio_failure(db: Any, audio_id: int, message: str) -> dict[str, Any]:
     """Record an in-band synthesis failure on an already-existing row.
 
@@ -1013,6 +1117,16 @@ async def generate_script_audio(
     script, turns, roster_snapshot = await asyncio.to_thread(
         _load_script_for_audio, db, script_id
     )
+
+    if not PYDUB_AVAILABLE:
+        # Qodo review round 1, FIX A: this must run before
+        # `resolve_roster_voices` and before the first `synthesize` call --
+        # see `_record_missing_pydub_failure`'s own docstring for why. The
+        # pre-flight refusals above (script missing/not complete/no turns)
+        # still raise with no row at all; from here on, a `briefing_audio`
+        # row always exists for this attempt.
+        logger.warning(f"script {script_id}: pydub is not installed; audio cannot be synthesized")
+        return await asyncio.to_thread(_record_missing_pydub_failure, db, script_id)
 
     try:
         selections = await resolve_roster_voices(

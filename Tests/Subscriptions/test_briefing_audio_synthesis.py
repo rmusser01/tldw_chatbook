@@ -347,6 +347,103 @@ async def test_exact_path_rejects_a_look_alike_snapshot_object() -> None:
 
 
 # --------------------------------------------------------------------------
+# `_validate_exact_snapshot` mismatch reporting (Qodo review round 1, FIX C)
+# --------------------------------------------------------------------------
+#
+# `TTSRequestedSelectionSnapshot.__post_init__` itself enforces
+# `provider_id == "audio_cpp"`, `response_format == "wav"`, `speed == 1.0`,
+# and empty `options` -- so a REAL snapshot object can only ever disagree
+# with a request on `model_id`/`voice_id` (through the full `synthesize_
+# turn` pipeline, where `response_format` is always hard-coded `"wav"` on
+# both sides) or on `speed`/`options` (only if a caller's own `TTSRequest`
+# asks for something other than the exact path's implicit defaults). A
+# "format" or "options" disagreement can therefore only be exercised by
+# calling `_validate_exact_snapshot` directly with a mismatched `TTSRequest`
+# -- there is no way to provoke it by going through `synthesize_turn`,
+# because `_synthesize_exact_chunk` always builds `response_format="wav"`
+# itself. These tests call the private function directly for exactly that
+# reason.
+
+
+def _request_for_snapshot(
+    *,
+    voice: str | None = "voice-a",
+    response_format: str = "wav",
+    speed: float = 1.0,
+    options: dict[str, Any] | None = None,
+) -> TTSRequest:
+    return TTSRequest(
+        provider_id="audio_cpp",
+        model_id="model-a",
+        text="hello",
+        voice=voice,
+        response_format=response_format,
+        speed=speed,
+        options={} if options is None else options,
+    )
+
+
+def test_validate_exact_snapshot_voice_mismatch_still_names_the_voice() -> None:
+    request = _request_for_snapshot(voice="voice-a")
+    snapshot = _exact_snapshot(voice_id="voice-b")
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        briefing_audio._validate_exact_snapshot(
+            request, snapshot, speaker="Narrator", turn_index=3
+        )
+
+    message = str(caught.value)
+    assert "Narrator" in message
+    assert "turn 3" in message
+    assert "voice-a" in message
+    assert "voice-b" in message
+    assert "format" not in message
+
+
+def test_validate_exact_snapshot_format_mismatch_names_the_format_not_the_voice() -> None:
+    """FIX C's headline case: before this fix, ANY mismatch -- including
+    this one, where the voice matches perfectly -- was reported as "TTS
+    provider used voice 'wav', requested voice 'mp3'", a false lead.
+    """
+    request = _request_for_snapshot(voice="voice-a", response_format="mp3")
+    snapshot = _exact_snapshot(voice_id="voice-a")
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        briefing_audio._validate_exact_snapshot(
+            request, snapshot, speaker="Narrator", turn_index=3
+        )
+
+    message = str(caught.value)
+    assert "Narrator" in message
+    assert "turn 3" in message
+    assert "format" in message
+    assert "mp3" in message
+    assert "voice" not in message, "a format-only mismatch must never mention voice"
+
+
+def test_validate_exact_snapshot_options_mismatch_names_only_the_differing_keys() -> None:
+    """Bounded reporting: an options mismatch must name the differing
+    KEYS, never dump the whole (potentially large, provider-specific)
+    mapping into the error message."""
+    request = _request_for_snapshot(options={"a": 1, "b": 2, "c": 3})
+    # A real snapshot's own constructor forces `options` to `{}`, so any
+    # non-empty request `options` already disagrees with every real
+    # snapshot -- no look-alike object needed here.
+    snapshot = _exact_snapshot()
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        briefing_audio._validate_exact_snapshot(
+            request, snapshot, speaker="Host", turn_index=0
+        )
+
+    message = str(caught.value)
+    assert "options key(s)" in message
+    assert "'a'" in message
+    assert "'b'" in message
+    assert "'c'" in message
+
+
+# --------------------------------------------------------------------------
 # Legacy path (everything else)
 # --------------------------------------------------------------------------
 

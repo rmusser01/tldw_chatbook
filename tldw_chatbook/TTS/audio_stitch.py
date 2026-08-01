@@ -30,6 +30,18 @@ the established pattern in :mod:`tldw_chatbook.TTS.audio_service`
 raise :class:`AudioStitchError` at *call* time, naming the missing extra,
 rather than failing at import time.
 
+**`PYDUB_AVAILABLE` is derived from `Utils.optional_deps.check_dependency`,
+not a private, second availability check.** That module's
+``DEPENDENCIES_AVAILABLE`` registry already tracks ``"pydub"`` as the
+project-wide source of truth for optional-dependency checks (Qodo review
+round 1, FIX D) -- a bespoke ``try``/``except ImportError`` boolean here
+would be a second, independently-drifting answer to the same question. The
+actual ``from pydub import ...`` below still only runs when ``check_
+dependency`` reports pydub available, so the import-safety property this
+module depends on is unchanged: with pydub genuinely unreachable (the case
+``screen_registry.load_screen_class`` creates for a user without the audio
+extra), the guarded import is never attempted at all, exactly as before.
+
 **ffmpeg is not required for this module.** pydub has a general reputation
 for shelling out to an ffmpeg/avconv binary, but that is not true of the
 pure-WAV-in/WAV-out path used here: ``AudioSegment.from_file(..., format=
@@ -52,21 +64,28 @@ from io import BytesIO
 
 from loguru import logger
 
-try:
+from tldw_chatbook.Utils.optional_deps import check_dependency
+
+# `check_dependency` is the project-wide source of truth for optional-
+# dependency availability (Qodo review round 1, FIX D) -- see the module
+# docstring's "PYDUB_AVAILABLE is derived from ..." section for why this
+# replaces a second, bespoke try/except boolean. The actual pydub import
+# below only runs once `check_dependency` has already confirmed the
+# top-level package imports cleanly, so a genuinely missing pydub never
+# reaches an unguarded `from pydub import ...` here.
+PYDUB_AVAILABLE = check_dependency("pydub")
+if PYDUB_AVAILABLE:
     from pydub import AudioSegment
     from pydub.exceptions import CouldntDecodeError
-
-    PYDUB_AVAILABLE = True
-except ImportError:
+else:
     AudioSegment = None  # type: ignore[assignment, misc]
     CouldntDecodeError = Exception  # type: ignore[assignment, misc]
-    PYDUB_AVAILABLE = False
     logger.warning(
         "pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) "
         "will be unavailable until it is installed."
     )
 
-_PYDUB_MISSING_MESSAGE = (
+PYDUB_MISSING_MESSAGE = (
     "Audio stitching requires the optional 'pydub' dependency, which is not "
     "installed. Install it with: pip install tldw_chatbook[audio] "
     "(or: pip install pydub audioop-lts, on Python 3.13+)."
@@ -103,7 +122,7 @@ def _require_pydub() -> None:
         AudioStitchError: Always, when :data:`PYDUB_AVAILABLE` is ``False``.
     """
     if not PYDUB_AVAILABLE:
-        raise AudioStitchError(_PYDUB_MISSING_MESSAGE)
+        raise AudioStitchError(PYDUB_MISSING_MESSAGE)
 
 
 def concat_wav_segments(segments: Sequence[bytes], *, gap_ms: int = 350) -> bytes:
