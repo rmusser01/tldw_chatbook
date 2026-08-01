@@ -40,10 +40,13 @@ except ImportError:
 from ..config import get_cli_setting
 from ..STT.legacy_bridge import LegacyTranscriptionBridge
 from ..Utils.path_validation import validate_path_simple
+from .parakeet_v2_artifact import active_managed_parakeet_v2_dir
 from .parakeet_v2_installer import (
     PARAKEET_V2_REPOSITORY,
     PARAKEET_V2_REVISION,
     VERIFICATION_RECEIPT,
+    parakeet_v2_install_dir,
+    verify_parakeet_v2_bundle,
 )
 from .stt_batch_routing import (
     BatchSTTRoutingError,
@@ -769,6 +772,33 @@ class _LegacyTranscriptionBackend:
             requested_language=requested_language,
         )
 
+    @staticmethod
+    def _default_parakeet_v2_model_dir() -> str | None:
+        """Managed-first fallback when no model directory was configured.
+
+        TASK-1696: checked only when the caller passed no ``model_dir`` and
+        ``transcription.parakeet_onnx_model_dir`` is unset. Order: the
+        active managed Parakeet v2 artifact (via
+        ``Model_Artifacts.service`` only -- never the async acquisition/HTTP
+        layer, see ``parakeet_v2_artifact``'s module docstring), then the
+        verified legacy ``.tldw-verified.json`` bundle. Either result is
+        still run through this method's caller's own existing
+        ``validate_path_simple``/required-files checks below, exactly like
+        an explicitly configured directory is -- this only supplies a
+        candidate path, it does not skip validation.
+
+        Returns:
+            A candidate model directory as text, or ``None`` if neither a
+            managed nor a verified legacy bundle is available.
+        """
+        managed_dir = active_managed_parakeet_v2_dir()
+        if managed_dir is not None:
+            return str(managed_dir)
+        legacy_dir = parakeet_v2_install_dir()
+        if verify_parakeet_v2_bundle(legacy_dir):
+            return str(legacy_dir)
+        return None
+
     def _load_parakeet_onnx_model(
         self,
         *,
@@ -804,6 +834,8 @@ class _LegacyTranscriptionBackend:
             )
 
         model_dir = model_dir or self.config["parakeet_onnx_model_dir"]
+        if not model_dir:
+            model_dir = self._default_parakeet_v2_model_dir()
         if not model_dir:
             raise TranscriptionError(
                 "parakeet-onnx requires an explicit existing local model directory "
