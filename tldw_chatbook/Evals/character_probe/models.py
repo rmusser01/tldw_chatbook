@@ -92,3 +92,23 @@ class CharacterProbeConfig:
                     f"character_ids must be int (character_cards.id), got "
                     f"{cid!r} of type {type(cid).__name__}."
                 )
+
+
+@dataclass(frozen=True)
+class CardSnapshot:
+    """A character card's text, copied at run time.
+
+    Cards live in ``ChaChaNotes_DB`` while runs live in ``Evals_DB``, with no
+    foreign keys between them. Copying the text into the run means editing or
+    deleting a card later never rewrites what a past run shows -- the same
+    provenance rule word_bench applies to snippets.
+    """
+
+    id: int
+    name: str
+    system_prompt: str = ""
+    personality: str = ""
+    scenario: str = ""
+    first_message: str = ""
+    post_history_instructions: str = ""
+    message_example: str = ""
