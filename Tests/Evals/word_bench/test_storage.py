@@ -38,8 +38,12 @@ def _capture(token=" a"):
     )
 
 
-def test_schema_version_is_four():
-    assert SCHEMA_VERSION == 4
+def test_schema_version_is_five():
+    # task-1691 phase 1: bumped for the character probe annotation and
+    # review-state tables (eval_probe_turn_annotations/eval_probe_review_state)
+    # added to this same shared Evals_DB schema -- word_bench's own tables
+    # and behavior are unchanged.
+    assert SCHEMA_VERSION == 5
 
 
 def test_run_group_id_column_exists(db):
