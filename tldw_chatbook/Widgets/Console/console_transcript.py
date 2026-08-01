@@ -406,7 +406,7 @@ class ConsoleTranscriptMessage(Static):
         while transcript is not None and not isinstance(transcript, ConsoleTranscript):
             transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
-            transcript.select_message(self.message_id)
+            transcript.toggle_message_selection(self.message_id)
 
 
 class ConsoleTranscriptActionButton(Button):
@@ -577,7 +577,7 @@ class ConsoleTranscript(VerticalScroll):
     BINDINGS = [
         ("down,j", "select_next", "Next message"),
         ("up,k", "select_previous", "Previous message"),
-        ("enter", "confirm_selection", "Show actions"),
+        ("enter", "confirm_selection", "Toggle message selection"),
         ("escape", "clear_selection", "Clear selection"),
         ("c", "invoke_selected_action('copy')", "Copy"),
         ("e", "invoke_selected_action('edit')", "Edit"),
@@ -949,6 +949,19 @@ class ConsoleTranscript(VerticalScroll):
             self.call_later(self.refresh_messages)
             self.call_later(self._notify_selection_changed)
 
+    def toggle_message_selection(self, message_id: str) -> None:
+        """Toggle one message's contextual selection state.
+
+        Args:
+            message_id: Identifier of the transcript message to select or clear.
+        """
+        if self._message_by_id(message_id) is None:
+            return
+        if self.selected_message_id == message_id:
+            self.action_clear_selection()
+            return
+        self.select_message(message_id)
+
     def focus_action(self, message_id: str, action_id: str) -> None:
         """Focus a selected-message action button by message/action ID."""
         if self.selected_message_id != message_id:
@@ -1009,7 +1022,11 @@ class ConsoleTranscript(VerticalScroll):
         self._select_relative(-1)
 
     def action_confirm_selection(self) -> None:
-        if self.selected_message_id is None and self._messages:
+        """Select the first message or clear the current transcript selection."""
+        if self.selected_message_id is not None:
+            self.toggle_message_selection(self.selected_message_id)
+            return
+        if self._messages:
             self.select_message(self._messages[0].id)
 
     def action_clear_selection(self) -> None:

@@ -174,6 +174,15 @@ def save_as_modal_destinations() -> list[ConsoleSaveDestination]:
     ]
 
 
+def test_console_transcript_enter_binding_describes_selection_toggle():
+    """Keep the visible Enter hint aligned with its select-or-clear behavior."""
+    enter_binding = next(
+        binding for binding in ConsoleTranscript.BINDINGS if binding[0] == "enter"
+    )
+
+    assert enter_binding[2] == "Toggle message selection"
+
+
 def test_console_transcript_renderable_uses_full_width_rules():
     transcript = ConsoleTranscript()
     transcript.set_messages(
@@ -539,22 +548,83 @@ def test_console_transcript_failed_action_row_includes_retry_without_exceeding_b
 
 
 @pytest.mark.asyncio
-async def test_console_transcript_keyboard_selects_messages_and_enter_shows_actions():
+async def test_console_transcript_enter_selects_first_message_when_none_selected():
     app = TranscriptHarness()
 
     async with app.run_test(size=(100, 32)) as pilot:
-        await pilot.press("tab")
-        await pilot.press("down")
-        await pilot.press("enter")
-        text = _visible_text(app)
+        transcript = app.query_one(
+            "#console-native-transcript", ConsoleTranscript
+        )
+        transcript.focus()
 
-    assert "Copy" in text
-    assert "Save as..." in text
-    assert "♻" in text
-    assert "👍" in text
-    assert "👎" in text
-    assert "🗑" in text
-    assert "|" not in text
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert transcript.selected_message_id == "m1"
+        assert "Save as..." in _visible_text(app)
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_enter_clears_keyboard_selected_message():
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        transcript = app.query_one(
+            "#console-native-transcript", ConsoleTranscript
+        )
+        transcript.focus()
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert transcript.selected_message_id == "m1"
+        assert "Save as..." in _visible_text(app)
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert transcript.selected_message_id is None
+        assert "Save as..." not in _visible_text(app)
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_boundary_navigation_keeps_last_message_selected():
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        transcript = app.query_one(
+            "#console-native-transcript", ConsoleTranscript
+        )
+        transcript.focus()
+
+        await pilot.press("down")
+        await pilot.press("down")
+        await pilot.press("down")
+        await pilot.pause()
+
+        assert transcript.selected_message_id == "m2"
+        assert "Save as..." in _visible_text(app)
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_enter_on_action_button_preserves_selection():
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        transcript = app.query_one(
+            "#console-native-transcript", ConsoleTranscript
+        )
+        await pilot.click("#console-message-m2")
+        transcript.focus_action("m2", "copy")
+        await pilot.pause()
+
+        button = app.query_one("#console-message-action-copy-m2", Button)
+        assert button.has_focus
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert transcript.selected_message_id == "m2"
+        assert "Save as..." in _visible_text(app)
 
 
 @pytest.mark.asyncio
@@ -573,6 +643,27 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
     assert "🗑" in text
     assert "Guide:" in text and "r Regenerate" in text
     assert "|" not in text
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_click_selected_message_clears_selection():
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        transcript = app.query_one(
+            "#console-native-transcript", ConsoleTranscript
+        )
+
+        await pilot.click("#console-message-m2")
+        await pilot.pause()
+        assert transcript.selected_message_id == "m2"
+        assert "Save as..." in _visible_text(app)
+
+        await pilot.click("#console-message-m2")
+        await pilot.pause()
+
+        assert transcript.selected_message_id is None
+        assert "Save as..." not in _visible_text(app)
 
 
 @pytest.mark.asyncio
