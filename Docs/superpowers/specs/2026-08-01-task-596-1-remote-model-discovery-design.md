@@ -185,7 +185,7 @@ used to verify the downloaded bytes. Because the digest comes from the same
 origin as the payload metadata, it is recorded as local integrity, not
 independent publisher verification.
 
-Every standard shard member matches
+The basename of every standard shard member matches
 `^(?P<stem>.+)-(?P<index>[0-9]{5})-of-(?P<count>[0-9]{5})\.gguf$`.
 Both numeric fields are exactly five digits, with
 `1 <= index <= count <= 64`. Grouping includes the containing directory, stem,
@@ -229,7 +229,7 @@ as managed directory identity:
 - `artifact_id`: `hf-gguf-` plus the full lowercase SHA-256 of canonical JSON
   `{"repository": <exact resolved repo ID>, "paths": <exact paths sorted
   lexicographically>}`, encoded as UTF-8 with sorted keys and compact
-  separators;
+  separators and `ensure_ascii=False`;
 - `revision`: the full resolved repository commit SHA;
 - `variant` and `precision`: `not-declared`.
 
