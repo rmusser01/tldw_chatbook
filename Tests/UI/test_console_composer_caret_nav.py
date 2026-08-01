@@ -8,13 +8,15 @@ routes the "up"/"down" keys into them, consuming the event only when the
 move actually happened (the composer has no goal-column memory across
 moves, and the first/last visual row is a real boundary, not a wrap-around).
 
-All widget-level and routed tests below run at app size (120, 30), the
-exact fixture size `test_console_composer_overflow.py` establishes a
-visible-draft wrap width of 57 cells for (`ConsoleComposerBar.
-_draft_render_width()` reads the mounted Static's own region, so tests that
-call `move_cursor_up`/`move_cursor_down` -- not just the pure wrap
-classmethods -- need a real mount at a known size to get a deterministic
-width).
+All widget-level and routed tests below run at app size (120, 30).
+`ConsoleComposerBar._draft_render_width()` reads the mounted Static's own
+region, so tests that call `move_cursor_up`/`move_cursor_down` -- not just
+the pure wrap classmethods -- need a real mount at a known size AND must read
+the real render width off the mounted widget themselves: it is NOT the
+`WIDTH` pure-function literal `test_console_composer_overflow.py` uses for
+its own unmounted calls (see that module's warning on `WIDTH` -- a
+post-rebase composer width change silently broke hand-computed offsets here
+that had assumed the two always matched).
 """
 
 from __future__ import annotations
@@ -23,12 +25,11 @@ import pytest
 from textual.events import Key
 from textual.widgets import Static
 
-from Tests.UI.test_console_composer_overflow import _CssTrueConsoleHarness, WIDTH
+from Tests.UI.test_console_composer_overflow import _CssTrueConsoleHarness
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 APP_SIZE = (120, 30)
-assert WIDTH == 57  # pins the premise every hand-computed offset below relies on.
 
 
 # ---------------------------------------------------------------------------
@@ -147,15 +148,22 @@ async def test_up_across_a_soft_wrapped_line_lands_on_the_same_column():
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         # No whitespace at all -> `_cell_wrap_line` hard-breaks by width with
-        # nothing to greedily fill around, so this wraps to exactly
-        # [0,57) [57,114) [114,150) at WIDTH == 57 -- three soft-wrapped rows,
-        # no real `\n` anywhere in the source text.
+        # nothing to greedily fill around, so this wraps into several
+        # soft-wrapped rows of exactly the mounted widget's own real render
+        # width each (plus a short remainder), no real `\n` anywhere in the
+        # source text.
         text = "".join(str(i % 10) for i in range(150))
         composer = await _focused_composer(host, pilot, text)
-        assert len(ConsoleComposerBar._wrap_draft_line_slices(text, WIDTH)) == 3
+        width = composer._draft_render_width()
 
-        composer.position_cursor_from_display_index(57 + 30)
-        assert composer.cursor_index == 87
+        wrapped = ConsoleComposerBar._wrap_draft_line_slices(text, width)
+        assert len(wrapped) > 1  # needs at least two rows to move Up across.
+        assert len(wrapped[1].text) > 30, (
+            "row 1 needs to be longer than the column under test"
+        )
+
+        composer.position_cursor_from_display_index(width + 30)
+        assert composer.cursor_index == width + 30
 
         moved = composer.move_cursor_up()
         await pilot.pause()
@@ -336,8 +344,15 @@ async def test_down_across_soft_wrapped_rows_matches_painted_caret_including_col
         composer = await _focused_composer(host, pilot, text)
         width = composer._draft_render_width()
         slices = ConsoleComposerBar._wrap_draft_line_slices(text, width)
-        assert len(slices) == 3  # still soft-wrapped into 3 rows at this width.
-        row0, row1, row2 = slices
+        # Need at least a row0/row1 pair to walk Down across, plus a later
+        # short remainder row -- the exact row count depends on the mounted
+        # widget's real wrap width, so it's derived rather than pinned.
+        assert len(slices) >= 3
+        assert len(slices) <= ConsoleComposerBar.MAX_DRAFT_ROWS, (
+            "this test assumes every row is visible without scrolling, so "
+            "a row's index into `slices` is also its painted row index"
+        )
+        row0, row1 = slices[0], slices[1]
 
         visible_draft = composer.query_one("#console-command-visible-text", Static)
 
@@ -357,22 +372,27 @@ async def test_down_across_soft_wrapped_rows_matches_painted_caret_including_col
                 _painted_caret_rowcol(visible_draft) == (1, expected_column)
             ), column
 
-        # row1 -> row2: row2 is the SHORT remainder row, so a late column in
-        # row1 exercises the clamp on a genuinely soft-wrapped transition
-        # (the existing clamp test only covers explicit-`\n` rows).
-        assert len(row2.text) < len(row1.text)
-        late_column = len(row1.text) - 1
-        composer.position_cursor_from_display_index(row1.start + late_column)
+        # penultimate -> last: the last row is the SHORT remainder row, so a
+        # late column in the penultimate row exercises the clamp on a
+        # genuinely soft-wrapped transition (the existing clamp test only
+        # covers explicit-`\n` rows). Indices are derived from `slices`
+        # rather than pinned, since which row ends up short depends on the
+        # mounted widget's real wrap width.
+        penultimate_index, last_index = len(slices) - 2, len(slices) - 1
+        penultimate, last = slices[penultimate_index], slices[last_index]
+        assert len(last.text) < len(penultimate.text)  # genuinely the short remainder.
+        late_column = len(penultimate.text) - 1
+        composer.position_cursor_from_display_index(penultimate.start + late_column)
         await pilot.pause()
-        assert _painted_caret_rowcol(visible_draft) == (1, late_column)
+        assert _painted_caret_rowcol(visible_draft) == (penultimate_index, late_column)
 
         moved = composer.move_cursor_down()
         await pilot.pause()
 
-        expected_column = len(row2.text)  # clamped to row2's own length.
+        expected_column = len(last.text)  # clamped to the last row's own length.
         assert moved is True
-        assert composer.cursor_index == row2.start + expected_column
-        assert _painted_caret_rowcol(visible_draft) == (2, expected_column)
+        assert composer.cursor_index == last.start + expected_column
+        assert _painted_caret_rowcol(visible_draft) == (last_index, expected_column)
 
 
 @pytest.mark.asyncio
@@ -524,49 +544,65 @@ def test_noop_down_breaks_typed_run_coalescing_like_every_other_cursor_key():
 @pytest.mark.asyncio
 async def test_clamp_into_a_soft_wrap_contiguous_row_stays_on_that_row_not_the_next():
     """Reviewer's live reproduction (re-review), reproduced generically: a
-    column near the end of row 1 -- at or past the length of BOTH
-    neighboring rows -- used to make Up read as a no-op-that-still-consumes
-    (painted row unchanged, stuck at the boundary's column 0 instead of
-    ascending to row 0) and Down skip row 2 entirely and land on row 3's
-    column 0. Both directions must instead land on the LAST valid column
-    of the actual target row (length - 1), painted there, not bumped past
-    it onto the next row.
+    column near the end of a neighboring row -- at or past the length of a
+    short row flanked by two longer ones -- used to make Up read as a
+    no-op-that-still-consumes (painted row unchanged, stuck at the
+    boundary's column 0 instead of ascending) and Down skip the short row
+    entirely and land on the row after it. Both directions must instead
+    land on the LAST valid column of the actual target row (length - 1),
+    painted there, not bumped past it onto the next row.
+
+    The fixture is built from the mounted widget's own real render width,
+    not a hand-picked literal string: two words exactly `width` characters
+    long each fill an entire row by themselves, with a short "BB" word
+    flanked between them forced into its own short valley row -- 3 rows
+    total (well under `MAX_DRAFT_ROWS`, so no scroll window can perturb the
+    painted geometry below), soft-wrap contiguous throughout (no explicit
+    `\n` anywhere), and short enough on both sides that a boundary column
+    from EITHER neighbor lands at or past it.
     """
     app, _ = _ready_host()
     host = _CssTrueConsoleHarness(app)
     async with host.run_test(size=APP_SIZE) as pilot:
-        text = "the quick brown fox jumps over the lazy dog by the winding river " * 3
-        composer = await _focused_composer(host, pilot, text)
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        await pilot.pause()
         width = composer._draft_render_width()
+
+        text = f"{'A' * width} BB {'C' * width}"
+        composer.load_draft(text)
+        composer.focus()
+        await pilot.pause()
+        composer._cursor_blink_timer.pause()
+
         slices = ConsoleComposerBar._wrap_draft_line_slices(text, width)
-        assert len(slices) >= 4
-        row0, row1, row2, row3 = slices[:4]
-        # All soft-wrap contiguous -- this prose has no explicit `\n` at all.
+        assert len(slices) == 3
+        assert len(slices) <= ConsoleComposerBar.MAX_DRAFT_ROWS  # no scroll window.
+        row0, row1, row2 = slices
+        # All soft-wrap contiguous -- no explicit `\n` anywhere in the text.
         assert row0.end == row1.start
         assert row1.end == row2.start
-        assert row2.end == row3.start
-
-        # A column near row1's own end, at or past BOTH neighboring rows'
-        # lengths -- the shape the reviewer's live reproduction used (row1
-        # columns 51-53 of a 54-char row, flanked by two 51-char rows).
-        column = len(row1.text) - 1
-        assert column >= len(row0.text)
-        assert column >= len(row2.text)
+        # The valley premise every assertion below relies on: row1 is short
+        # enough that a boundary column from either neighbor is at or past
+        # its own length.
+        assert len(row0.text) - 1 >= len(row1.text)
+        assert len(row2.text) - 1 >= len(row1.text)
 
         visible_draft = composer.query_one("#console-command-visible-text", Static)
+        column = len(row1.text)
 
-        composer.position_cursor_from_display_index(row1.start + column)
+        composer.position_cursor_from_display_index(row2.start + column)
         await pilot.pause()
         moved_up = composer.move_cursor_up()
         await pilot.pause()
         assert moved_up is True
-        assert _painted_caret_rowcol(visible_draft)[0] == 0
-        assert composer.cursor_index == row0.start + len(row0.text) - 1
+        assert _painted_caret_rowcol(visible_draft) == (1, len(row1.text) - 1)
+        assert composer.cursor_index == row1.start + len(row1.text) - 1
 
-        composer.position_cursor_from_display_index(row1.start + column)
+        composer.position_cursor_from_display_index(row0.start + column)
         await pilot.pause()
         moved_down = composer.move_cursor_down()
         await pilot.pause()
         assert moved_down is True
-        assert _painted_caret_rowcol(visible_draft)[0] == 2
-        assert composer.cursor_index == row2.start + len(row2.text) - 1
+        assert _painted_caret_rowcol(visible_draft) == (1, len(row1.text) - 1)
+        assert composer.cursor_index == row1.start + len(row1.text) - 1

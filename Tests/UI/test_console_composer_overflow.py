@@ -49,6 +49,14 @@ class _CssTrueConsoleHarness(ConsoleHarness):
         / "tldw_cli_modular.tcss"
     )
 
+# PURE-FUNCTION width parameter only -- pass it to `_wrap_draft_line_slices`/
+# `_cell_wrap_line`/etc. below, where an explicit width argument is exactly
+# what's under test. Do NOT assume it equals the mounted widget's real
+# `_draft_render_width()`: a post-rebase composer-actions-button width change
+# (task-1680's "☰" overflow button) silently drifted the real render width
+# away from this literal (57 -> 52) and broke tests elsewhere in the suite
+# that had copied this constant to predict mounted/painted geometry. Mounted
+# tests must read `composer._draft_render_width()` themselves.
 WIDTH = 57
 
 # --- Bug 1 fixture: a whitespace-flush row landing exactly at the wrap width
