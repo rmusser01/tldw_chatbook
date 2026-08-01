@@ -10297,3 +10297,34 @@ def test_console_message_serialization_round_trips_multi_attachment_labels():
     assert len(restored.attachments) == 2
     assert [a.display_name for a in restored.attachments] == ["a.png", "b.png"]
     assert all(a.data is None for a in restored.attachments)
+
+
+def test_console_screen_state_round_trips_the_temporary_flag():
+    """A temporary chat must not become a persisting one by navigating away.
+
+    `_serialize_native_console_state` writes an explicit field list; a field
+    missing from it is silently dropped on restore. For `ephemeral` that
+    drop is not cosmetic -- the next send would write the chat to the
+    database.
+    """
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = ChatScreen.__new__(ChatScreen)
+
+    # A REAL round trip: the serializer's own output feeds the restorer.
+    # Asserting on a hand-built dict would test neither half.
+    temporary = ConsoleChatSession(title="Temporary chat", ephemeral=True)
+    payload = screen._console_session_to_state(temporary)
+    assert payload["ephemeral"] is True
+    assert screen._console_session_from_state(payload).ephemeral is True
+
+    normal = ConsoleChatSession(title="Normal chat")
+    assert screen._console_session_from_state(
+        screen._console_session_to_state(normal)
+    ).ephemeral is False
+
+    # Legacy payloads predate the key entirely.
+    assert screen._console_session_from_state(
+        {"id": normal.id, "title": normal.title}
+    ).ephemeral is False, "a payload with no key must default to saved"

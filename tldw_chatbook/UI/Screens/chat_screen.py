@@ -12566,6 +12566,34 @@ class ChatScreen(BaseAppScreen):
                 if not store.add_pending_attachment(session_id, pending):
                     break  # staging cap reached — matches live staging semantics
 
+    @staticmethod
+    def _console_session_to_state(session: ConsoleChatSession) -> dict[str, Any]:
+        """Serialize one ConsoleChatSession for screen-state restoration.
+
+        Extracted from `_serialize_native_console_state` so the round trip
+        is testable without a running app. This is an explicit field list:
+        a field missing from it is silently dropped on the way back.
+        """
+        return {
+            "id": session.id,
+            "title": session.title,
+            "workspace_id": session.workspace_id,
+            "persisted_conversation_id": session.persisted_conversation_id,
+            "draft": session.draft,
+            "settings": ChatScreen._serialize_console_settings(session.settings),
+            "updated_at": session.updated_at,
+            "runtime_backend": session.runtime_backend,
+            "assistant_kind": session.assistant_kind,
+            "assistant_id": session.assistant_id,
+            "assistant_authority_id": session.assistant_authority_id,
+            "character_id": session.local_character_id(),
+            "character_name": session.character_name,
+            # Temporary conversations: without this key a temporary chat
+            # comes back as a persisting one after any screen navigation,
+            # and the next send writes it to the DB.
+            "ephemeral": session.ephemeral,
+        }
+
     def _serialize_native_console_state(self) -> dict[str, Any] | None:
         """Return the native Console in-session state for screen restoration."""
         store = self._console_chat_store
@@ -12594,21 +12622,7 @@ class ChatScreen(BaseAppScreen):
             "active_session_id": store.active_session_id,
             "task_resume_state": self._task_resume_state.to_dict(),
             "sessions": [
-                {
-                    "id": session.id,
-                    "title": session.title,
-                    "workspace_id": session.workspace_id,
-                    "persisted_conversation_id": session.persisted_conversation_id,
-                    "draft": session.draft,
-                    "settings": self._serialize_console_settings(session.settings),
-                    "updated_at": session.updated_at,
-                    "runtime_backend": session.runtime_backend,
-                    "assistant_kind": session.assistant_kind,
-                    "assistant_id": session.assistant_id,
-                    "assistant_authority_id": session.assistant_authority_id,
-                    "character_id": session.local_character_id(),
-                    "character_name": session.character_name,
-                }
+                self._console_session_to_state(session)
                 for session in store.sessions()
             ],
             "messages_by_session": {
@@ -12620,6 +12634,102 @@ class ChatScreen(BaseAppScreen):
             },
             "image_view_modes": image_state.serialize(),
         }
+
+    def _console_session_from_state(
+        self, raw_session: dict[str, Any]
+    ) -> ConsoleChatSession:
+        """Rebuild one ConsoleChatSession from its serialized screen state.
+
+        The mirror of `_console_session_to_state`. Every legacy-payload
+        branch below exists because older saved states omit keys that newer
+        ones carry -- keep them.
+        """
+        # `getattr` (not `self._ensure_console_chat_store()`) tolerates bare
+        # screen shells that never ran `ChatScreen.__init__` (unit-level
+        # serialize/restore round trips). In the real restore path,
+        # `_restore_native_console_state` already ensured the store before
+        # this per-session helper runs, so this is the same object either way.
+        store = getattr(self, "_console_chat_store", None)
+        session_id = str(raw_session.get("id") or uuid.uuid4())
+        session_kwargs: dict[str, Any] = dict(
+            id=session_id,
+            title=str(raw_session.get("title") or DEFAULT_CONSOLE_SESSION_TITLE),
+            workspace_id=str(
+                raw_session.get("workspace_id")
+                or (
+                    store.workspace_context.active_workspace_id
+                    if store is not None
+                    else None
+                )
+                or CONSOLE_GLOBAL_WORKSPACE_ID
+            ),
+            persisted_conversation_id=(
+                str(raw_session["persisted_conversation_id"])
+                if raw_session.get("persisted_conversation_id") is not None
+                else None
+            ),
+            settings=self._restore_console_settings(raw_session.get("settings")),
+            draft=str(raw_session.get("draft") or ""),
+        )
+        # Legacy payloads saved before `updated_at` was serialized omit the
+        # key entirely; keep the ConsoleChatSession factory default (now)
+        # for those instead of forcing an empty/invalid timestamp.
+        raw_updated_at = raw_session.get("updated_at")
+        if raw_updated_at:
+            session_kwargs["updated_at"] = str(raw_updated_at)
+        identity_keys = (
+            "runtime_backend",
+            "assistant_kind",
+            "assistant_id",
+            "assistant_authority_id",
+        )
+        has_source_aware_identity = any(
+            key in raw_session for key in identity_keys
+        )
+        if has_source_aware_identity:
+            raw_runtime_backend = raw_session.get("runtime_backend")
+            session_kwargs["runtime_backend"] = (
+                raw_runtime_backend
+                if type(raw_runtime_backend) is str
+                else ""
+            )
+            for key in (
+                "assistant_kind",
+                "assistant_id",
+                "assistant_authority_id",
+            ):
+                value = raw_session.get(key)
+                session_kwargs[key] = value if type(value) is str else None
+
+        raw_character_id = raw_session.get("character_id")
+        character_id: int | None = None
+        if type(raw_character_id) is int and raw_character_id > 0:
+            if not has_source_aware_identity:
+                character_id = raw_character_id
+            elif (
+                session_kwargs.get("runtime_backend") == "local"
+                and session_kwargs.get("assistant_kind") == "character"
+                and session_kwargs.get("assistant_id") == str(raw_character_id)
+            ):
+                character_id = raw_character_id
+        if character_id is not None:
+            session_kwargs["character_id"] = character_id
+        if not has_source_aware_identity and character_id is not None:
+            # Pre-provenance screen state used the numeric local character
+            # projection as its direct-chat routing marker. Preserve that
+            # behavior without inventing a proven authority.
+            session_kwargs.update(
+                runtime_backend="local",
+                assistant_kind="character",
+                assistant_id=str(character_id),
+                assistant_authority_id=None,
+            )
+        raw_character_name = raw_session.get("character_name")
+        if raw_character_name is not None:
+            session_kwargs["character_name"] = str(raw_character_name)
+        # Legacy payloads predate the key; absent means saved, never temporary.
+        session_kwargs["ephemeral"] = raw_session.get("ephemeral") is True
+        return ConsoleChatSession(**session_kwargs)
 
     def _restore_native_console_state(self, payload: Any) -> None:
         """Restore native Console in-session state saved by ``save_state``."""
@@ -12639,80 +12749,7 @@ class ChatScreen(BaseAppScreen):
         for raw_session in raw_sessions:
             if not isinstance(raw_session, dict):
                 continue
-            session_id = str(raw_session.get("id") or uuid.uuid4())
-            session_kwargs: dict[str, Any] = dict(
-                id=session_id,
-                title=str(raw_session.get("title") or DEFAULT_CONSOLE_SESSION_TITLE),
-                workspace_id=str(
-                    raw_session.get("workspace_id")
-                    or store.workspace_context.active_workspace_id
-                    or CONSOLE_GLOBAL_WORKSPACE_ID
-                ),
-                persisted_conversation_id=(
-                    str(raw_session["persisted_conversation_id"])
-                    if raw_session.get("persisted_conversation_id") is not None
-                    else None
-                ),
-                settings=self._restore_console_settings(raw_session.get("settings")),
-                draft=str(raw_session.get("draft") or ""),
-            )
-            # Legacy payloads saved before `updated_at` was serialized omit the
-            # key entirely; keep the ConsoleChatSession factory default (now)
-            # for those instead of forcing an empty/invalid timestamp.
-            raw_updated_at = raw_session.get("updated_at")
-            if raw_updated_at:
-                session_kwargs["updated_at"] = str(raw_updated_at)
-            identity_keys = (
-                "runtime_backend",
-                "assistant_kind",
-                "assistant_id",
-                "assistant_authority_id",
-            )
-            has_source_aware_identity = any(
-                key in raw_session for key in identity_keys
-            )
-            if has_source_aware_identity:
-                raw_runtime_backend = raw_session.get("runtime_backend")
-                session_kwargs["runtime_backend"] = (
-                    raw_runtime_backend
-                    if type(raw_runtime_backend) is str
-                    else ""
-                )
-                for key in (
-                    "assistant_kind",
-                    "assistant_id",
-                    "assistant_authority_id",
-                ):
-                    value = raw_session.get(key)
-                    session_kwargs[key] = value if type(value) is str else None
-
-            raw_character_id = raw_session.get("character_id")
-            character_id: int | None = None
-            if type(raw_character_id) is int and raw_character_id > 0:
-                if not has_source_aware_identity:
-                    character_id = raw_character_id
-                elif (
-                    session_kwargs.get("runtime_backend") == "local"
-                    and session_kwargs.get("assistant_kind") == "character"
-                    and session_kwargs.get("assistant_id") == str(raw_character_id)
-                ):
-                    character_id = raw_character_id
-            if character_id is not None:
-                session_kwargs["character_id"] = character_id
-            if not has_source_aware_identity and character_id is not None:
-                # Pre-provenance screen state used the numeric local character
-                # projection as its direct-chat routing marker. Preserve that
-                # behavior without inventing a proven authority.
-                session_kwargs.update(
-                    runtime_backend="local",
-                    assistant_kind="character",
-                    assistant_id=str(character_id),
-                    assistant_authority_id=None,
-                )
-            raw_character_name = raw_session.get("character_name")
-            if raw_character_name is not None:
-                session_kwargs["character_name"] = str(raw_character_name)
-            session = ConsoleChatSession(**session_kwargs)
+            session = self._console_session_from_state(raw_session)
             restored_sessions.append(session)
             restored_messages_by_session[session.id] = []
             raw_messages = messages_by_session.get(session.id, [])
