@@ -1,5 +1,5 @@
 ---
-id: TASK-1640
+id: task-1670
 title: 'Library Prompts editor: "Copy text" button has no handler (dead button)'
 status: To Do
 assignee: []

@@ -1,5 +1,5 @@
 ---
-id: TASK-1642
+id: task-1672
 title: 'Library: an unsaved prompt silently blocks screen navigation'
 status: To Do
 assignee: []
@@ -27,7 +27,7 @@ one dirty state with no feedback.
 
 Reproduced live (G3 user-guide session, 2026-07-31): typed into a new
 prompt, clicked "5 Roleplay" in the nav bar twice — stayed on Library,
-no notification either time. Made worse by task-1641 (the editor's Save
+no notification either time. Made worse by task-1671 (the editor's Save
 button renders below the viewport at standard heights, so the fix the
 veto is asking for isn't visibly available either).
 
@@ -38,6 +38,6 @@ veto is asking for isn't visibly available either).
       dirty veto).
 - [ ] The message names the resolution (Save, or discard/leave the
       editor) and matches whatever affordances actually exist after
-      task-1641.
+      task-1671.
 - [ ] A test covers the notify-on-veto path so it cannot regress to
       silence.
