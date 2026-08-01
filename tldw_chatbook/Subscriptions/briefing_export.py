@@ -59,6 +59,21 @@ for this half specifically:
    (silence is never a state) applied to "one of many episodes broke",
    which is an honest partial success, not a reason to hand the user
    nothing at all.
+4. **Exported files get a fixed `0o644`, deliberately ignoring umask.**
+   Audio in `briefing_audio_dir()` is written `0o600` by
+   `atomic_private_write_bytes`, and `shutil.copy2` would carry that mode
+   into the user's folder -- which silently breaks the entire deliverable:
+   a folder meant to be synced, zipped, or served would be readable only
+   by the exporting account. (Review round 1 found exactly this; the test
+   that was supposed to catch it stopped at the directory, and its fixture
+   seeded permissive sources, so mode inheritance looked harmless.)
+   Umask is deliberately NOT consulted: it expresses a default for
+   arbitrary file creation, not intent for a folder the user explicitly
+   chose in order to share it, and honouring a hardened umask here would
+   hand precisely the most security-conscious users a silently unreadable
+   feed. The real access boundary is unchanged -- the destination
+   directory's own permissions, which Decision 1 leaves untouched, so a
+   `0o644` file inside a `0o700` directory remains unreachable to others.
 """
 
 from __future__ import annotations
