@@ -2,7 +2,7 @@
 id: TASK-1710
 title: >-
   Opt-in per-snippet continuations in the results grid
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-01 07:00'
 labels:
@@ -39,3 +39,11 @@ Design constraints (carried from 1691's implementation, verified in code there):
 - [ ] Measured distributions are provably unaffected by the continuation capture
 - [ ] Runs recorded without continuations still render
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Engine + storage: `BenchConfig.capture_continuations` (default False, additive); when on, each cell capture also fetches a short continuation through a SEPARATE request that never reaches `normalize_logprobs`; `CellCapture.continuation` additive, persisted per cell in the snapshot, defaulting empty for historical runs.
+2. UI: an opt-in control in the bench editor (saved with the bench, part of the form/dirty contract); the Estimate reflects the doubled call count BEFORE running; the focused-cell inspector renders the continuation beside the top-K using the established markup=False/␣/⏎/bounded-preview rules.
+3. E2E + live verification: a bench with the flag on, run against a real llama.cpp, focused cell shows both the distribution and what the model went on to say; a flag-off run is unchanged in request count.
+<!-- SECTION:PLAN:END -->
