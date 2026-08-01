@@ -11,6 +11,8 @@ from typing import Dict, Literal
 
 #
 # Local Imports
+from loguru import logger
+
 from ..Metrics.metrics_logger import log_counter, log_histogram
 #
 #######################################################################################################################
@@ -33,21 +35,58 @@ def warm_up_image_protocol() -> bool:
     possible anymore once Textual is started").
 
     Call this ONCE from each entry point before ``App.run()``. Importing
-    the top-level ``textual_image`` package is not sufficient: the choice
-    lives in the ``renderable`` submodule, which ``textual_image.widget``
+    the top-level ``textual_image`` package is not sufficient, which is
+    also why this cannot route through ``optional_deps.check_dependency``:
+    that helper imports the TOP-LEVEL package, and the protocol choice
+    lives in the ``renderable`` submodule that only ``textual_image.widget``
     pulls in.
+
+    Outcomes are logged and counted (Qodo PR #1150): a silent degrade is
+    the very symptom this function exists to remove.
 
     Returns:
         True if the protocol-selecting import completed; False when the
         optional dependency is absent or its terminal query failed (both
-        leave the app on its non-graphics fallbacks, which is correct).
+        leave the app on its mosaic/pixels fallbacks, which always work).
     """
     try:
         importlib.import_module("textual_image.widget")
-    except Exception:
-        # Optional dependency, or a terminal query that raised -- callers
-        # fall back to mosaic/pixels rendering, which always works.
+    except ImportError:
+        # Optional dependency absent -- expected, not a defect.
+        logger.debug(
+            "textual_image not installed; images use mosaic/pixels rendering."
+        )
+        log_counter(
+            "terminal_utils_image_protocol_warmup",
+            labels={"result": "missing_dependency"},
+        )
         return False
+    except Exception as exc:
+        # A terminal that does not answer the capability query raises here
+        # (observed: TerminalError under a bare pty). Rendering still
+        # degrades gracefully, but say so rather than failing silently.
+        logger.warning(
+            "Image protocol warm-up failed ({}); falling back to mosaic/pixels "
+            "rendering.",
+            type(exc).__name__,
+        )
+        log_counter(
+            "terminal_utils_image_protocol_warmup", labels={"result": "query_failed"}
+        )
+        return False
+
+    selected = "unknown"
+    try:
+        import textual_image.renderable as _renderable
+
+        selected = _renderable.Image.__module__.rsplit(".", 1)[-1]
+    except Exception:  # pragma: no cover - introspection only
+        pass
+    logger.info("Image render protocol selected: {}", selected)
+    log_counter(
+        "terminal_utils_image_protocol_warmup",
+        labels={"result": "ok", "protocol": selected},
+    )
     return True
 
 

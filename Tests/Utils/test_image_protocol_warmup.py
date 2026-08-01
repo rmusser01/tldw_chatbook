@@ -88,3 +88,68 @@ def test_no_lazy_first_import_of_textual_image_widget_without_warmup():
     ).read_text(encoding="utf-8")
     assert "def warm_up_image_protocol" in helper
     assert re.search(r"import_module\(\s*[\"']textual_image\.widget[\"']", helper)
+
+
+def test_missing_dependency_is_distinguished_from_a_failed_query(monkeypatch):
+    """ImportError and terminal-query failure must be told apart.
+
+    Qodo PR #1150: a blanket ``except Exception`` returning False masked
+    unexpected regressions. An absent optional dependency is expected
+    (debug); a terminal that refuses the capability query is not (warning).
+
+    Args:
+        monkeypatch: pytest fixture used to force each failure mode.
+    """
+    from tldw_chatbook.Utils import terminal_utils
+
+    seen: list[dict] = []
+    monkeypatch.setattr(
+        terminal_utils,
+        "log_counter",
+        lambda name, labels=None: seen.append(labels or {}),
+    )
+
+    monkeypatch.setattr(
+        terminal_utils.importlib,
+        "import_module",
+        lambda *a, **k: (_ for _ in ()).throw(ImportError("absent")),
+    )
+    assert terminal_utils.warm_up_image_protocol() is False
+    assert seen[-1]["result"] == "missing_dependency"
+
+    class _TerminalError(Exception):
+        pass
+
+    monkeypatch.setattr(
+        terminal_utils.importlib,
+        "import_module",
+        lambda *a, **k: (_ for _ in ()).throw(_TerminalError("no reply")),
+    )
+    assert terminal_utils.warm_up_image_protocol() is False
+    assert seen[-1]["result"] == "query_failed"
+
+
+def test_successful_warm_up_reports_the_selected_protocol(monkeypatch):
+    """A successful warm-up names the protocol it resolved.
+
+    Qodo PR #1150: both entry points discard the bool, so the helper
+    itself must carry the diagnostic -- otherwise a degraded render still
+    has no log line, which is the symptom this fix exists to remove.
+
+    Args:
+        monkeypatch: pytest fixture capturing emitted metrics.
+    """
+    pytest.importorskip("textual_image")
+    from tldw_chatbook.Utils import terminal_utils
+
+    seen: list[dict] = []
+    monkeypatch.setattr(
+        terminal_utils,
+        "log_counter",
+        lambda name, labels=None: seen.append(labels or {}),
+    )
+
+    assert terminal_utils.warm_up_image_protocol() is True
+    assert seen[-1]["result"] == "ok"
+    # tgp / sixel / halfcell / unicode depending on the host terminal.
+    assert seen[-1]["protocol"] in {"tgp", "sixel", "halfcell", "unicode"}
