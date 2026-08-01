@@ -491,7 +491,7 @@ class ConsoleComposerBar(Horizontal):
 
         chatbook_blocked = blocked_reason("save-chatbook", ephemeral=ephemeral)
         save_ready = can_save_chatbook and chatbook_blocked is None
-        save_button.disabled = chatbook_blocked is not None or not can_save_chatbook
+        save_button.disabled = chatbook_blocked is not None
         save_button.variant = "default"
         save_button.tooltip = (
             chatbook_blocked

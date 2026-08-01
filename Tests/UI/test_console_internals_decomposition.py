@@ -25,6 +25,7 @@ from Tests.Agents.test_mcp_tool_provider import (
     _tool_dict,
 )
 from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleControlState,
     ConsoleInspectorState,
@@ -780,6 +781,58 @@ async def test_console_composer_ranks_actions_by_current_availability():
         assert not save_button.has_class("console-action-disabled")
         assert not save_button.has_class("console-action-subdued")
         assert not save_button.has_class("console-action-primary")
+
+
+@pytest.mark.asyncio
+async def test_console_composer_save_chatbook_disabled_only_for_temporary_chats():
+    """Save Chatbook's ``disabled`` state must track the temporary-chat gate
+    alone, never chatbook availability -- this widget ranks ordinary actions
+    by availability via styling classes while keeping them enabled (see
+    ``test_console_composer_ranks_actions_by_current_availability`` above).
+    A regression once wired ``not can_save_chatbook`` into ``disabled`` too,
+    which silently disabled Save Chatbook for every non-temporary chat with
+    no chatbook artifact yet -- i.e. most of the time."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        save_button = composer.query_one("#console-save-chatbook", Button)
+
+        # Temporary chat: disabled, with the tooltip sourced verbatim from
+        # blocked_reason() -- never a retyped copy of the reason string.
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=False,
+            can_save_chatbook=True,
+            ephemeral=True,
+        )
+        await pilot.pause(0.1)
+
+        expected_reason = blocked_reason("save-chatbook", ephemeral=True)
+        assert expected_reason is not None
+        assert save_button.disabled is True
+        assert save_button.tooltip == expected_reason
+
+        # Ordinary chat with no chatbook artifact available: this is the
+        # assertion that would have caught the regression. Save Chatbook
+        # must stay enabled -- only styled as subdued/disabled-looking --
+        # because unavailability is expressed through classes, not
+        # ``disabled``.
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=False,
+            can_save_chatbook=False,
+            ephemeral=False,
+        )
+        await pilot.pause(0.1)
+
+        assert save_button.disabled is False
+        assert save_button.has_class("console-action-subdued")
+        assert save_button.has_class("console-action-disabled")
 
 
 @pytest.mark.asyncio

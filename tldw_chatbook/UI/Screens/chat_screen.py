@@ -5266,7 +5266,9 @@ class ChatScreen(BaseAppScreen):
         # the general sync tick), so without this call the chip would keep
         # showing "Temporary" on an already-saved conversation.
         self._sync_console_temporary_chip()
-        self.run_worker(self._sync_native_console_chat_ui(), exclusive=False)
+        self.run_worker(
+            self._sync_native_console_chat_ui(), exclusive=False, group="console-sync"
+        )
         self.app_instance.notify("Chat saved.", severity="information")
 
     @on(ConsoleTemporaryChip.SaveRequested)
