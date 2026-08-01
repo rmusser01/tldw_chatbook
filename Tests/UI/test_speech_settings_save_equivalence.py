@@ -1,14 +1,9 @@
-"""What Save posts must not change when the view is rebuilt.
+"""The transition Lab save must publish only its Studio-owned controls.
 
-`_save_settings` does not write config: it collects 47 values off the
-controls and posts one `STTSSettingsSaveEvent`. Persistence lives in the
-event handler, which this phase does not touch. So the exact thing to hold
-fixed is the dict that crosses that boundary -- and a snapshot of it, taken
-from the legacy widget before any code moved, is a stronger check than
-diffing a written file: it compares every key and value rather than the
-effect of some of them.
-
-If a key disappears here, a setting silently stopped being persisted.
+Global-owned controls remain mounted as effective readouts, but Settings is
+their sole write owner. Until TASK-1697 moves the remaining controls onto the
+separate Studio store, this compatibility event is deliberately limited to
+the five controls TASK-1692 proved request-scoped.
 """
 
 from __future__ import annotations
@@ -49,7 +44,7 @@ class _CapturingHost(App[None]):
         pass
 
 
-async def _settings_posted_by(widget_factory) -> dict[str, str]:
+async def _event_posted_by(widget_factory) -> STTSSettingsSaveEvent:
     app = _CapturingHost(widget_factory)
     async with app.run_test(size=(200, 80)) as pilot:
         await pilot.pause()
@@ -58,7 +53,7 @@ async def _settings_posted_by(widget_factory) -> dict[str, str]:
         pane._save_settings()
         await pilot.pause()
     assert app.saved, "Save posted no event at all"
-    return {k: repr(v) for k, v in dict(app.saved[-1].settings).items()}
+    return app.saved[-1]
 
 
 class _RebuiltFactory:
@@ -71,33 +66,34 @@ class _RebuiltFactory:
 
 
 @pytest.mark.asyncio
-async def test_save_still_posts_every_baseline_key():
-    """The guard for the rebuild: 47 keys, captured off the legacy widget
-    before any code moved, now asserted against the REBUILT pane.
-
-    A missing key is a setting that silently stopped being saved -- the user
-    changes it, presses Save, sees no error, and it does not stick.
-    """
+async def test_lab_save_posts_only_studio_owned_compatibility_keys():
     baseline = json.loads(BASELINE.read_text())
-    posted = await _settings_posted_by(_RebuiltFactory())
+    event = await _event_posted_by(_RebuiltFactory())
+    posted = {key: repr(value) for key, value in event.settings.items()}
+    expected_keys = {
+        "ELEVENLABS_DEFAULT_MODEL",
+        "CHATTERBOX_EXAGGERATION",
+        "CHATTERBOX_CFG_WEIGHT",
+        "ALLTALK_TTS_VOICE_DEFAULT",
+        "ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT",
+    }
 
-    missing = sorted(set(baseline) - set(posted))
-    assert not missing, f"no longer saved: {missing}"
+    assert set(posted) == expected_keys
+    assert posted == {key: baseline[key] for key in expected_keys}
+    assert event.preferences is None
 
 
 @pytest.mark.asyncio
-async def test_save_posts_the_same_values_as_the_baseline():
-    """Not just the same keys -- the same values.
-
-    A key that survives while its value changes is worse than one that
-    vanishes: it writes something wrong and says nothing.
-    """
-    baseline = json.loads(BASELINE.read_text())
-    posted = await _settings_posted_by(_RebuiltFactory())
-
-    changed = {
-        key: (baseline[key], posted[key])
-        for key in sorted(set(baseline) & set(posted))
-        if baseline[key] != posted[key]
+async def test_lab_save_never_posts_global_defaults_credentials_or_connections():
+    event = await _event_posted_by(_RebuiltFactory())
+    forbidden = {
+        "audio_cpp",
+        "openai_api_key",
+        "OPENAI_BASE_URL",
+        "OPENAI_ORG_ID",
+        "elevenlabs_api_key",
+        "ALLTALK_TTS_URL_DEFAULT",
     }
-    assert not changed, f"values changed: {changed}"
+
+    assert forbidden.isdisjoint(event.settings)
+    assert event.preferences is None

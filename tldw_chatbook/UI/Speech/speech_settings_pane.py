@@ -12,8 +12,10 @@ answering "which providers are set up?" meant opening each in turn. Groups
 now state their own state, and the ones that need attention -- configured or
 half-configured -- start open. The spec's rule for this view.
 
-Settings owns **persisted defaults**. It never reads Playground state; the
-Playground's overrides are session-scoped and do not write back.
+Global values remain visible here as read-only effective configuration while
+their sole editor lives in Settings > Speech & TTS. The remaining editable
+controls are the bounded request-scoped compatibility fields that TASK-1697
+moves onto the separate Studio preference store.
 """
 
 from __future__ import annotations
@@ -47,8 +49,8 @@ from .speech_settings_model import (
 SETTINGS_ACTION_SPECS: tuple[WorkbenchAction, ...] = (
     WorkbenchAction(
         id="save-settings-btn",
-        label="Save",
-        tooltip="Persist these settings",
+        label="Save Studio fields",
+        tooltip="Persist only the editable request-scoped fields",
         primary=True,
     ),
     WorkbenchAction(
@@ -111,12 +113,10 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
     def _seeded_values(self) -> dict[str, Any]:
         """Return the supplied values, with audio.cpp's filled from config.
 
-        The legacy `compose()` seeded these nine inputs from a live
+        The legacy `compose()` seeded these inputs from a live
         `_load_audio_cpp_config()` object rather than from literals, and
-        `_set_initial_values` does not cover them. Leaving them blank made
-        `_collect_audio_cpp_config` raise `float('')` the moment Save was
-        pressed -- into a catch-all that reported only "Failed to save
-        settings".
+        `_set_initial_values` does not cover them. They remain effective
+        readouts in the Lab while global editing lives in Settings.
 
         Returns:
             The pane's values, with any audio.cpp field the caller did not
@@ -168,9 +168,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             groups run.
         """
         yield Static("⚙️ TTS Settings", classes="speech-pane-title")
-        yield SpeechActionStrip(
-            SETTINGS_ACTION_SPECS, id="speech-settings-actions"
-        )
+        yield SpeechActionStrip(SETTINGS_ACTION_SPECS, id="speech-settings-actions")
 
         values = self._seeded_values()
         with VerticalScroll(id="speech-settings-groups"):

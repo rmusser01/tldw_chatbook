@@ -86,6 +86,7 @@ from ...config import (
     coerce_bool_setting,
     coerce_int_setting,
     get_cli_config_path,
+    get_runtime_config_snapshot,
     load_settings,
     save_settings_to_cli_config,
 )
@@ -132,6 +133,9 @@ from ...Widgets.settings_image_gen_panel import (
     ImageGenSettingsPanel,
     _key_source_line as _image_gen_key_source_line,
     _secret_placeholder as _image_gen_secret_placeholder,
+)
+from ...Widgets.Settings_Widgets.speech_tts_settings_panel import (
+    SpeechTTSSettingsPanel,
 )
 from ...Internal_Prompts import authoring as internal_prompts_authoring
 from .settings_image_gen_defaults import (
@@ -198,6 +202,11 @@ from .settings_storage_defaults import (
     build_storage_save_sections,
     load_storage_defaults,
     validate_storage_defaults,
+)
+from .settings_speech_tts import (
+    BUILT_IN_TTS_PROVIDER_ORDER,
+    GlobalSpeechTTSState,
+    load_global_speech_tts_state,
 )
 from ..Navigation.main_navigation import NavigateToScreen
 
@@ -458,6 +467,7 @@ PROVIDER_CREDENTIAL_ENV_VAR_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}
 GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
     {
         SettingsCategoryId.PROVIDERS_MODELS,
+        SettingsCategoryId.SPEECH_TTS,
         SettingsCategoryId.APPEARANCE,
         SettingsCategoryId.CONSOLE_BEHAVIOR,
         SettingsCategoryId.LIBRARY_RAG,
@@ -780,7 +790,7 @@ def _rag_field_search_label(field_id: str) -> str:
 
 #: task-1715: field-level search index -- "/" previously matched only
 #: category names/descriptions/owned keys, so "threshold" found nothing
-#: on a 22-category screen (critique r4 P1). Labels mirror the visible
+#: on a 23-category screen (critique r4 P1). Labels mirror the visible
 #: row labels; Enter focuses the matched field.
 FIELD_SEARCH_INDEX: dict["SettingsCategoryId", tuple[tuple[str, str], ...]] = {}
 
@@ -809,6 +819,18 @@ def _build_field_search_index() -> None:
                 ("settings-provider-endpoint-value", "Endpoint"),
                 ("settings-provider-api-key", "API key"),
                 ("settings-provider-credential-env-var", "Credential env var"),
+            ),
+            SettingsCategoryId.SPEECH_TTS: (
+                ("settings-speech-default-provider", "Default TTS Provider"),
+                ("settings-speech-model-value", "TTS model"),
+                ("settings-speech-voice-value", "TTS voice"),
+                ("settings-speech-configure-provider", "audio.cpp audio_cpp"),
+                ("settings-speech-configure-provider", "OpenAI"),
+                ("settings-speech-configure-provider", "ElevenLabs"),
+                ("settings-speech-configure-provider", "Kokoro"),
+                ("settings-speech-configure-provider", "Chatterbox"),
+                ("settings-speech-configure-provider", "Higgs"),
+                ("settings-speech-configure-provider", "AllTalk"),
             ),
             SettingsCategoryId.STORAGE: tuple(
                 (f"settings-storage-{name.replace('_', '-')}", label)
@@ -1000,6 +1022,20 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         (
             "Boundary",
             "Sampling and transport defaults are routed to Console Defaults",
+        ),
+    ),
+    SettingsCategoryId.SPEECH_TTS: (
+        (
+            "Affected config",
+            "application-wide Speech & TTS defaults and selected provider setup",
+        ),
+        (
+            "Recovery",
+            "revert the local draft or open Speech Lab for explicit runtime checks",
+        ),
+        (
+            "Boundary",
+            "Studio preferences and runtime test, discovery, generation, and playback stay in Speech Lab",
         ),
     ),
     SettingsCategoryId.APPEARANCE: (
@@ -1495,14 +1531,18 @@ class RagProfileNameModal(ModalScreen[str | None]):
 
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
 
-    def __init__(self, *, title: str, initial: str = "", confirm_label: str = "Save") -> None:
+    def __init__(
+        self, *, title: str, initial: str = "", confirm_label: str = "Save"
+    ) -> None:
         super().__init__()
         self._modal_title = title
         self._initial = initial
         self._confirm_label = confirm_label
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="settings-rag-profile-name-modal", classes="settings-rag-profile-modal"):
+        with Vertical(
+            id="settings-rag-profile-name-modal", classes="settings-rag-profile-modal"
+        ):
             yield Static(self._modal_title, classes="destination-section")
             yield Input(value=self._initial, id="settings-rag-profile-name-input")
             with Horizontal(classes="settings-action-row"):
@@ -1806,6 +1846,9 @@ class SettingsScreen(BaseAppScreen):
         self._navigation_provider: str | None = None
         self._navigation_model: str | None = None
         self._navigation_field: str | None = None
+        self._speech_tts_configure_provider: str | None = None
+        self._speech_tts_draft_state: GlobalSpeechTTSState | None = None
+        self._speech_tts_original_state: GlobalSpeechTTSState | None = None
         #: One-shot focus intent (task-290): `Widget.focus()` defers its
         #: set_focus via call_later, so a storm recompose can destroy the
         #: target between intent and processing. Recorded when navigation
@@ -1832,9 +1875,7 @@ class SettingsScreen(BaseAppScreen):
         self._library_rag_result = (
             "Library/RAG defaults have not been saved this session."
         )
-        self._library_rag_profile_result = (
-            "No RAG profile action taken this session."
-        )
+        self._library_rag_profile_result = "No RAG profile action taken this session."
         # Task 4 (SP3): index status readout + Backfill. The Static renders
         # this placeholder text at compose time -- the real state is fetched
         # off-thread (touches on-disk Chroma) on category show, after
@@ -2015,9 +2056,7 @@ class SettingsScreen(BaseAppScreen):
                 entry for entry in shortcuts if entry[0] not in {"s", "r"}
             )
         if active not in self.TESTABLE_SETTINGS_CATEGORIES:
-            shortcuts = tuple(
-                entry for entry in shortcuts if entry[0] != "t"
-            )
+            shortcuts = tuple(entry for entry in shortcuts if entry[0] != "t")
         else:
             test_label = self.TEST_ACTION_LABELS.get(active, "test category")
             shortcuts = tuple(
@@ -2092,14 +2131,12 @@ class SettingsScreen(BaseAppScreen):
         parsed_entries = (
             parts
             for entry in self.BINDINGS
-            if (parts := self._binding_entry_key_action_description(entry))
-            is not None
+            if (parts := self._binding_entry_key_action_description(entry)) is not None
         )
         shortcuts = tuple(
             (key, description)
             for key, action, description in parsed_entries
-            if show_rag_accelerators
-            or action not in self._RAG_ACCELERATOR_ACTION_NAMES
+            if show_rag_accelerators or action not in self._RAG_ACCELERATOR_ACTION_NAMES
         )
         screen_name = type(self).__name__
         state = WorkbenchHelpState(
@@ -2182,6 +2219,13 @@ class SettingsScreen(BaseAppScreen):
                 "Providers & Models",
                 "Default provider, model, and readiness shared with Console.",
                 "Shared",
+            ),
+            SettingsCategorySummary(
+                SettingsCategoryId.SPEECH_TTS,
+                "Speech & TTS",
+                "Application-wide speech, TTS, voice, audio.cpp, audio_cpp, OpenAI, "
+                "ElevenLabs, Kokoro, Chatterbox, Higgs, and AllTalk defaults and setup.",
+                "Global",
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.APPEARANCE,
@@ -2341,6 +2385,7 @@ class SettingsScreen(BaseAppScreen):
                 (
                     SettingsCategoryId.OVERVIEW,
                     SettingsCategoryId.PROVIDERS_MODELS,
+                    SettingsCategoryId.SPEECH_TTS,
                 ),
             ),
             (
@@ -2520,6 +2565,28 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 recovery_copy=(
                     "Test provider readiness, then use Console Defaults for sampling and transport settings."
+                ),
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.SPEECH_TTS,
+                owns_config_sections=(
+                    "app_tts global defaults",
+                    "app_tts provider connection and initialization",
+                    "API OpenAI and ElevenLabs credentials",
+                    "HiggsSettings initialization",
+                ),
+                reads_runtime_state_from=("TTS service configuration revisions",),
+                writes_allowed=True,
+                runtime_owner=(
+                    "Settings persisted global defaults; Speech Lab runtime operations"
+                ),
+                boundary_copy=(
+                    "Settings is the durable owner for global Speech & TTS setup; "
+                    "Studio preferences remain separate."
+                ),
+                recovery_copy=(
+                    "Revert the draft or open Speech Lab for explicit test, discovery, "
+                    "generation, and playback."
                 ),
             ),
             SettingsOwnershipRecord(
@@ -3268,9 +3335,7 @@ class SettingsScreen(BaseAppScreen):
         # declaration for the exact three invalidation points.
         if self._image_gen_raw_section_cache is None:
             raw = SettingsConfigAdapter().load().get("image_generation")
-            self._image_gen_raw_section_cache = (
-                raw if isinstance(raw, Mapping) else {}
-            )
+            self._image_gen_raw_section_cache = raw if isinstance(raw, Mapping) else {}
         return self._image_gen_raw_section_cache
 
     def _image_gen_overlay_values(self) -> dict[str, object]:
@@ -3292,7 +3357,9 @@ class SettingsScreen(BaseAppScreen):
             else Select.NULL
         )
 
-    def _queue_image_gen_select_suppression(self, overlay: Mapping[str, object]) -> None:
+    def _queue_image_gen_select_suppression(
+        self, overlay: Mapping[str, object]
+    ) -> None:
         """Record the value the about-to-(re)compose default-backend
         `Select` will mount with, if that value is non-blank -- a fresh
         `Select` only posts `Changed` on mount when constructed with a
@@ -3330,11 +3397,17 @@ class SettingsScreen(BaseAppScreen):
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
 
-    def _stage_image_gen_field(self, backend_id: str, toml_key: str, raw_value: str) -> None:
+    def _stage_image_gen_field(
+        self, backend_id: str, toml_key: str, raw_value: str
+    ) -> None:
         raw_backend = self._image_gen_raw_section().get(backend_id) or {}
-        original = raw_backend.get(toml_key) if isinstance(raw_backend, Mapping) else None
+        original = (
+            raw_backend.get(toml_key) if isinstance(raw_backend, Mapping) else None
+        )
         original_str = "" if original is None else str(original)
-        self._image_gen_stage(f"field::{backend_id}::{toml_key}", original_str, raw_value)
+        self._image_gen_stage(
+            f"field::{backend_id}::{toml_key}", original_str, raw_value
+        )
         # Typing into a field cancels a pending Clear on that SAME field --
         # otherwise diff_to_sections' documented "cleared wins" rule would
         # silently delete a key the user just retyped.
@@ -3355,7 +3428,9 @@ class SettingsScreen(BaseAppScreen):
         except ValueError:
             return None
 
-    def _refresh_image_gen_default_markers(self, effective_default_backend: str) -> None:
+    def _refresh_image_gen_default_markers(
+        self, effective_default_backend: str
+    ) -> None:
         for backend_id in IMAGE_GEN_BACKEND_IDS:
             try:
                 marker = self.query_one(
@@ -3363,7 +3438,9 @@ class SettingsScreen(BaseAppScreen):
                 )
             except QueryError:
                 continue
-            marker.update("★ Default" if backend_id == effective_default_backend else "")
+            marker.update(
+                "★ Default" if backend_id == effective_default_backend else ""
+            )
 
     def _image_gen_draft_values_for_save(
         self, panel: ImageGenSettingsPanel
@@ -3401,9 +3478,7 @@ class SettingsScreen(BaseAppScreen):
             else None
         )
         context_llm_enabled = bool(
-            panel.query_one(
-                "#settings-imagegen-context_llm_enabled", Checkbox
-            ).value
+            panel.query_one("#settings-imagegen-context_llm_enabled", Checkbox).value
         )
 
         return ImageGenDraftValues(
@@ -3497,11 +3572,11 @@ class SettingsScreen(BaseAppScreen):
         prefix = "settings-imagegen-field-"
         if input_id.startswith(prefix):
             event.stop()
-            remainder = input_id[len(prefix):]
+            remainder = input_id[len(prefix) :]
             for backend_id in IMAGE_GEN_BACKEND_IDS:
                 backend_prefix = f"{backend_id}-"
                 if remainder.startswith(backend_prefix):
-                    toml_key = remainder[len(backend_prefix):]
+                    toml_key = remainder[len(backend_prefix) :]
                     self._stage_image_gen_field(backend_id, toml_key, event.value)
                     return
             return
@@ -3524,9 +3599,7 @@ class SettingsScreen(BaseAppScreen):
             original = self._image_gen_raw_section().get("context_llm_timeout_seconds")
             coerced_float = self._image_gen_coerce_float(event.value)
             staged_value = coerced_float if coerced_float is not None else event.value
-            self._image_gen_stage(
-                "context_llm_timeout_seconds", original, staged_value
-            )
+            self._image_gen_stage("context_llm_timeout_seconds", original, staged_value)
 
     def _handle_image_gen_clear(self, backend_id: str, toml_key: str) -> None:
         self._image_gen_stage(f"cleared::{backend_id}::{toml_key}", False, True)
@@ -3671,8 +3744,7 @@ class SettingsScreen(BaseAppScreen):
             # library's error message). Log only the exception TYPE name
             # and the backend id, never str(exc).
             logger.debug(
-                f"Image Gen probe for {backend_id!r} raised "
-                f"{type(exc).__name__}"
+                f"Image Gen probe for {backend_id!r} raised {type(exc).__name__}"
             )
             badge = "Unreachable: probe error"
         finally:
@@ -3805,7 +3877,7 @@ class SettingsScreen(BaseAppScreen):
             return
         test_prefix = "settings-imagegen-test-"
         if button_id.startswith(test_prefix):
-            backend_id = button_id[len(test_prefix):]
+            backend_id = button_id[len(test_prefix) :]
             if backend_id in IMAGE_GEN_BACKEND_IDS:
                 event.stop()
                 self._handle_image_gen_test(backend_id)
@@ -3814,11 +3886,11 @@ class SettingsScreen(BaseAppScreen):
         if not button_id.startswith(prefix):
             return
         event.stop()
-        remainder = button_id[len(prefix):]
+        remainder = button_id[len(prefix) :]
         for backend_id in IMAGE_GEN_BACKEND_IDS:
             backend_prefix = f"{backend_id}-"
             if remainder.startswith(backend_prefix):
-                toml_key = remainder[len(backend_prefix):]
+                toml_key = remainder[len(backend_prefix) :]
                 self._handle_image_gen_clear(backend_id, toml_key)
                 return
 
@@ -3945,7 +4017,9 @@ class SettingsScreen(BaseAppScreen):
         dirty_marker = ""
         if self._category_has_unsaved_changes(summary.category):
             dirty_marker = " *"
-        elif summary.category == SettingsCategoryId.THEME and self.theme_editor_modified:
+        elif (
+            summary.category == SettingsCategoryId.THEME and self.theme_editor_modified
+        ):
             dirty_marker = " *"
         # task-1563: view-only stub categories are full nav peers whose whole
         # page says "edit elsewhere" -- badge them in the rail so a third of
@@ -4006,9 +4080,9 @@ class SettingsScreen(BaseAppScreen):
             # the sibling idiom rather than a parallel mechanism.
             for button_id in ("settings-imagegen-save", "settings-imagegen-revert"):
                 try:
-                    self.query_one(f"#{button_id}", Button).disabled = (
-                        not has_unsaved_changes
-                    )
+                    self.query_one(
+                        f"#{button_id}", Button
+                    ).disabled = not has_unsaved_changes
                 except QueryError:
                     pass
 
@@ -4070,7 +4144,7 @@ class SettingsScreen(BaseAppScreen):
             return 3
         # task-1564: last tier -- the category's owned config keys. The Scope
         # Inspector already publishes them; indexing them lets "/" find the
-        # category that OWNS a setting instead of forcing a 22-item scan.
+        # category that OWNS a setting instead of forcing a 23-item scan.
         try:
             owned = " ".join(
                 self._ownership_record(summary.category).owns_config_sections
@@ -4139,7 +4213,9 @@ class SettingsScreen(BaseAppScreen):
             field = self._top_field_match(query, matches[0].category)
             if field is not None:
                 target = f"{target} › {field[1]}"
-            return f"Filter: {query} | {len(matches)} {match_label} | Enter opens {target}"
+            return (
+                f"Filter: {query} | {len(matches)} {match_label} | Enter opens {target}"
+            )
         return f"Filter: {query} | 0 matches | Esc clears"
 
     @staticmethod
@@ -4199,12 +4275,35 @@ class SettingsScreen(BaseAppScreen):
         empty_state.update(f"No Settings categories match: {query}")
         empty_state.display = bool(query and visible_count == 0)
 
+    @staticmethod
+    def _speech_tts_provider_from_search(query_text: str) -> str | None:
+        """Return a canonical built-in TTS provider named by a search query."""
+        query = query_text.strip().lower()
+        aliases = {
+            "audio.cpp": "audio_cpp",
+            "audio_cpp": "audio_cpp",
+            "openai": "openai",
+            "elevenlabs": "elevenlabs",
+            "kokoro": "kokoro",
+            "chatterbox": "chatterbox",
+            "higgs": "higgs",
+            "alltalk": "alltalk",
+        }
+        for alias, provider_id in aliases.items():
+            if alias in query:
+                return provider_id
+        return None
+
     def _submit_category_search(self, query_text: str) -> None:
         query_text = self._sanitize_category_search_query(query_text)
         self.category_search_query = query_text
         self._apply_category_search_filter()
         category_values = self._filtered_category_values(query_text)
         if category_values:
+            if category_values[0] == SettingsCategoryId.SPEECH_TTS.value:
+                provider_id = self._speech_tts_provider_from_search(query_text)
+                if provider_id in BUILT_IN_TTS_PROVIDER_ORDER:
+                    self._speech_tts_configure_provider = provider_id
             self._select_category(category_values[0], restore_focus=True)
             # task-1715: if the query named a field, land ON the field --
             # focusing it also fires its inspector guidance.
@@ -4296,6 +4395,8 @@ class SettingsScreen(BaseAppScreen):
             return "Save blocked until the text validates; backup before overwrite."
         if category is SettingsCategoryId.PROVIDERS_MODELS:
             return "Shared with Console"
+        if category is SettingsCategoryId.SPEECH_TTS:
+            return "Application-wide defaults; Studio preferences remain separate."
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             return "Changes affect global Console fallbacks after save."
         if category is SettingsCategoryId.LIBRARY_RAG:
@@ -4636,7 +4737,10 @@ class SettingsScreen(BaseAppScreen):
                     "lowering it.",
                 ),
             )
-        if self._active_settings_field_id == "settings-console-tool-result-display-chars":
+        if (
+            self._active_settings_field_id
+            == "settings-console-tool-result-display-chars"
+        ):
             return (
                 (
                     "Purpose",
@@ -4651,7 +4755,7 @@ class SettingsScreen(BaseAppScreen):
                     "stays fixed regardless of this setting. Raising this display "
                     f"cap past {MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS} cannot show "
                     "more -- the engine itself only records up to that many "
-                    "characters per step. Use \"View full log\" on a run (Agent "
+                    'characters per step. Use "View full log" on a run (Agent '
                     "rail) to read everything the model actually saw, beyond any "
                     "cap here.",
                 ),
@@ -4664,7 +4768,10 @@ class SettingsScreen(BaseAppScreen):
                 ),
             )
         return (
-            ("Purpose", "Focus a Console Behavior field for setting-specific guidance."),
+            (
+                "Purpose",
+                "Focus a Console Behavior field for setting-specific guidance.",
+            ),
             ("Consequences", "No field-specific guidance is active right now."),
             ("Saved as", "varies by field"),
             ("Applies", "varies by field"),
@@ -5417,8 +5524,7 @@ class SettingsScreen(BaseAppScreen):
             )
         # TASK-719: name the concrete owning surfaces instead of a vague list.
         return (
-            "Local Default; switch in Console (Alt+W), "
-            "manage in Settings > Workspaces"
+            "Local Default; switch in Console (Alt+W), manage in Settings > Workspaces"
         )
 
     def _acp_runtime_session_state(self) -> ACPRuntimeSessionState:
@@ -7463,8 +7569,12 @@ class SettingsScreen(BaseAppScreen):
         if not provider_save_key:
             return app_config
         try:
-            endpoint = self.query_one("#settings-provider-endpoint-value", Input).value.strip()
-            env_var = self.query_one("#settings-provider-credential-env-var", Input).value.strip()
+            endpoint = self.query_one(
+                "#settings-provider-endpoint-value", Input
+            ).value.strip()
+            env_var = self.query_one(
+                "#settings-provider-credential-env-var", Input
+            ).value.strip()
             api_key = self.query_one("#settings-provider-api-key", Input).value.strip()
         except QueryError:
             values = self._provider_setting_values_mapping()
@@ -7526,9 +7636,7 @@ class SettingsScreen(BaseAppScreen):
                 "saved": "saved",
             }.get(source, source.replace("_", " "))
             capability_label = f"capabilities {capability}"
-            label = (
-                f"{model_id} · {saved_label} · {source_label} · {capability_label}"
-            )
+            label = f"{model_id} · {saved_label} · {source_label} · {capability_label}"
             options.append(
                 (
                     label,
@@ -7720,9 +7828,9 @@ class SettingsScreen(BaseAppScreen):
     def _refresh_model_field_suggester(self) -> None:
         """Point the Model field's suggester at the current discovered models."""
         try:
-            self.query_one("#settings-model-value", Input).suggester = (
-                self._model_field_suggester()
-            )
+            self.query_one(
+                "#settings-model-value", Input
+            ).suggester = self._model_field_suggester()
         except (QueryError, AttributeError):
             pass
 
@@ -7941,7 +8049,9 @@ class SettingsScreen(BaseAppScreen):
             model = str(values.get("model") or "").strip()
             draft_endpoint = str(values.get("endpoint") or "").strip()
         draft = self._provider_draft()
-        dirty = draft.dirty_keys if draft is not None else set()  # dirty_keys is a @property
+        dirty = (
+            draft.dirty_keys if draft is not None else set()
+        )  # dirty_keys is a @property
         readiness = get_provider_readiness(
             provider, self._provider_test_staged_config(provider)
         )
@@ -7980,7 +8090,9 @@ class SettingsScreen(BaseAppScreen):
         # A config-ready provider with no default model is still blocked, so it
         # must not read "<provider> is ready" next to "status=blocked".
         if readiness.ready and not model:
-            verdict_message = f"{display_name} is configured, but no default model is set."
+            verdict_message = (
+                f"{display_name} is configured, but no default model is set."
+            )
         else:
             verdict_message = readiness.user_message
         findings: list[str] = ["Provider test", verdict_message]
@@ -8042,12 +8154,12 @@ class SettingsScreen(BaseAppScreen):
             if not model:
                 summary += " Also set a default model."
         else:
-            summary = (
-                f"Provider test failed: {display_name} is ready but no default model is set."
-            )
+            summary = f"Provider test failed: {display_name} is ready but no default model is set."
         if api_key_relabelled:
             detail = " | ".join(
-                finding if finding == draft_api_key_label else redact_secret_text(finding)
+                finding
+                if finding == draft_api_key_label
+                else redact_secret_text(finding)
                 for finding in findings
             )
         else:
@@ -9336,9 +9448,7 @@ class SettingsScreen(BaseAppScreen):
             id="settings-console-behavior-card", classes="settings-secondary-card"
         ):
             if compact:
-                yield Static(
-                    "Console paste collapse", classes="destination-section"
-                )
+                yield Static("Console paste collapse", classes="destination-section")
             yield Static("Composer paste handling", classes="destination-section")
             yield Static(
                 "Collapse large pasted chunks only when they exceed the threshold.",
@@ -9383,9 +9493,7 @@ class SettingsScreen(BaseAppScreen):
             )
             yield Static("Parallel agent runs", classes="destination-section")
             with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    "Max parallel agent runs", classes="settings-input-label"
-                )
+                yield Static("Max parallel agent runs", classes="settings-input-label")
                 yield Input(
                     value=str(self._console_max_parallel_runs_value()),
                     id="settings-console-max-parallel-runs",
@@ -9393,13 +9501,9 @@ class SettingsScreen(BaseAppScreen):
                     placeholder=str(DEFAULT_CONSOLE_MAX_PARALLEL_RUNS),
                     restrict=r"^[0-9]*$",
                 )
-            yield Static(
-                "Agent tool-result display cap", classes="destination-section"
-            )
+            yield Static("Agent tool-result display cap", classes="destination-section")
             with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    "Display cap (chars)", classes="settings-input-label"
-                )
+                yield Static("Display cap (chars)", classes="settings-input-label")
                 yield Input(
                     value=str(self._tool_result_display_chars_value()),
                     id="settings-console-tool-result-display-chars",
@@ -9410,7 +9514,7 @@ class SettingsScreen(BaseAppScreen):
             yield Static(
                 "How much of an agent tool result the Console shows you here -- "
                 "distinct from max_tool_result_chars, which caps what the model "
-                "itself saw. Open a run's \"View full log\" (Agent rail) to read "
+                'itself saw. Open a run\'s "View full log" (Agent rail) to read '
                 "everything beyond this cap.",
                 id="settings-console-tool-result-display-chars-help",
                 classes="settings-detail-row",
@@ -9840,7 +9944,10 @@ class SettingsScreen(BaseAppScreen):
         return str(cache.get("state") or "unknown")
 
     def _library_rag_first_run_active(
-        self, *, info: Mapping[str, object] | None = None, grouped: Mapping[str, object] | None = None
+        self,
+        *,
+        info: Mapping[str, object] | None = None,
+        grouped: Mapping[str, object] | None = None,
     ) -> bool:
         """Whether the Library/RAG editor is currently in the first-run
         state (Task 5, 541 v2 UX AC5) -- ``info``/``grouped`` may be passed
@@ -10087,7 +10194,9 @@ class SettingsScreen(BaseAppScreen):
         # stale/deleted active-profile pointer -> synthetic "(missing)"
         # active id absent from the options).
         select_value = active_id if active_id in valid_ids else Select.NULL
-        active_label = f"{info['name']} (built-in)" if info["read_only"] else info["name"]
+        active_label = (
+            f"{info['name']} (built-in)" if info["read_only"] else info["name"]
+        )
 
         # Task 4 (541 v2 UX AC1): the "Profiles" heading is now the
         # enclosing container's border title (see `_render_library_rag_detail`)
@@ -10184,7 +10293,9 @@ class SettingsScreen(BaseAppScreen):
         with Horizontal(classes="settings-action-row"):
             yield Button("Backfill", id="settings-library-rag-index-backfill")
 
-    def _queue_rag_select_suppression(self, select: Select, expected_value: object) -> None:
+    def _queue_rag_select_suppression(
+        self, select: Select, expected_value: object
+    ) -> None:
         """Record ``expected_value`` as a ``Select.Changed`` value the NEXT
         (about-to-happen) programmatic mutation of ``select`` is expected to
         post -- see ``_rag_select_suppress_queue``'s docstring for why this
@@ -10243,7 +10354,9 @@ class SettingsScreen(BaseAppScreen):
         active profile.
         """
         info = active_profile_info()
-        active_label = f"{info['name']} (built-in)" if info["read_only"] else info["name"]
+        active_label = (
+            f"{info['name']} (built-in)" if info["read_only"] else info["name"]
+        )
         self._set_static_text(
             "#settings-library-rag-active-profile", f"Active: {active_label}"
         )
@@ -10413,9 +10526,7 @@ class SettingsScreen(BaseAppScreen):
         # transition" and skip re-expanding Search.
         self._rag_first_run_active = first_run
 
-        yield Static(
-            "RAG", classes="destination-section settings-column-title"
-        )
+        yield Static("RAG", classes="destination-section settings-column-title")
         with Vertical(id="settings-library-rag-card", classes="settings-focus-card"):
             # Task 4 (541 v2 UX AC1): manage-vs-edit split -- the picker
             # (browse/Set active/Clone/Rename/Delete) and the editor
@@ -10501,8 +10612,7 @@ class SettingsScreen(BaseAppScreen):
         # method, Distance metric) are otherwise unexplained the first
         # time a user sees one.
         yield Static(
-            "⚠ = changing this field rebuilds the index — run Backfill "
-            "after saving.",
+            "⚠ = changing this field rebuilds the index — run Backfill after saving.",
             id="settings-library-rag-warning-legend",
             classes="settings-status-row",
         )
@@ -10638,9 +10748,7 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    "Embedding model ⚠", classes="settings-input-label"
-                )
+                yield Static("Embedding model ⚠", classes="settings-input-label")
                 yield Input(
                     value=str(values["embedding_model"]),
                     id="settings-library-rag-embedding-model",
@@ -10668,9 +10776,7 @@ class SettingsScreen(BaseAppScreen):
                     disabled=field_disabled,
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    "Max length ⚠", classes="settings-input-label"
-                )
+                yield Static("Max length ⚠", classes="settings-input-label")
                 yield Input(
                     value=str(values["embedding_max_length"]),
                     id="settings-library-rag-embedding-max-length",
@@ -10690,9 +10796,7 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    "Chunk size ⚠", classes="settings-input-label"
-                )
+                yield Static("Chunk size ⚠", classes="settings-input-label")
                 yield Input(
                     value=str(values["chunk_size"]),
                     id="settings-library-rag-chunk-size",
@@ -10702,9 +10806,7 @@ class SettingsScreen(BaseAppScreen):
                     disabled=field_disabled,
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    "Chunk overlap ⚠", classes="settings-input-label"
-                )
+                yield Static("Chunk overlap ⚠", classes="settings-input-label")
                 yield Input(
                     value=str(values["chunk_overlap"]),
                     id="settings-library-rag-chunk-overlap",
@@ -10714,9 +10816,7 @@ class SettingsScreen(BaseAppScreen):
                     disabled=field_disabled,
                 )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static(
-                    "Method ⚠", classes="settings-input-label"
-                )
+                yield Static("Method ⚠", classes="settings-input-label")
                 yield Select(
                     [
                         ("Words", "words"),
@@ -10980,17 +11080,15 @@ class SettingsScreen(BaseAppScreen):
                     "Rename", id="settings-workspace-rename-apply", compact=True
                 )
             if record.workspace_id == active_id:
-                yield Static(
-                    "This workspace is active.", classes="settings-detail-row"
-                )
+                yield Static("This workspace is active.", classes="settings-detail-row")
             else:
                 yield Button(
                     "Set active", id="settings-workspace-set-active", compact=True
                 )
-            yield Button(
-                "Archive", id="settings-workspace-archive", compact=True
+            yield Button("Archive", id="settings-workspace-archive", compact=True)
+            yield from self._render_workspace_folder_bindings(
+                registry, record.workspace_id
             )
-            yield from self._render_workspace_folder_bindings(registry, record.workspace_id)
 
     def _render_workspace_folder_bindings(
         self,
@@ -11006,9 +11104,7 @@ class SettingsScreen(BaseAppScreen):
         (mirrors the conversation browser's `conversation_id` stash) so
         the handler never has to parse a uuid out of the button id.
         """
-        yield Static(
-            "Folders (agent file-tool access)", classes="destination-section"
-        )
+        yield Static("Folders (agent file-tool access)", classes="destination-section")
         for binding in registry.list_folder_bindings(workspace_id):
             access = binding.metadata.get("access", "ro")
             freshness = (
@@ -11042,9 +11138,7 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-workspace-folder-path",
                 classes="settings-compact-input",
             )
-            yield Button(
-                "Add folder", id="settings-workspace-folder-add", compact=True
-            )
+            yield Button("Add folder", id="settings-workspace-folder-add", compact=True)
 
     def _set_settings_workspaces_result(self, text: str) -> None:
         self._settings_workspaces_result = text
@@ -11074,6 +11168,20 @@ class SettingsScreen(BaseAppScreen):
             yield from self._render_overview_detail()
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
             yield from self._render_provider_detail()
+        elif category is SettingsCategoryId.SPEECH_TTS:
+            try:
+                app_config = get_runtime_config_snapshot().values
+                speech_tts_state = load_global_speech_tts_state(
+                    app_config if isinstance(app_config, Mapping) else {}
+                )
+            except (OSError, TypeError, ValueError):
+                speech_tts_state = load_global_speech_tts_state({})
+            yield SpeechTTSSettingsPanel(
+                state=self._speech_tts_draft_state or speech_tts_state,
+                original_state=self._speech_tts_original_state,
+                configure_provider=self._speech_tts_configure_provider,
+                id="settings-speech-tts-panel",
+            )
         elif category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static(
                 "Console Behavior", classes="destination-section settings-column-title"
@@ -11143,7 +11251,9 @@ class SettingsScreen(BaseAppScreen):
                         compact=True,
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Palette limit (themes)", classes="settings-input-label")
+                    yield Static(
+                        "Palette limit (themes)", classes="settings-input-label"
+                    )
                     yield Input(
                         value=str(values["palette_theme_limit"]),
                         id="settings-appearance-palette-theme-limit",
@@ -11220,13 +11330,19 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Theme", classes="destination-section settings-column-title")
             yield SettingsThemeEditor(id="settings-theme-editor")
         elif category is SettingsCategoryId.SPLASH_SCREEN:
-            yield Static("Splash Screen", classes="destination-section settings-column-title")
+            yield Static(
+                "Splash Screen", classes="destination-section settings-column-title"
+            )
             yield SettingsSplashScreenViewer(id="settings-splash-screen-viewer")
         elif category is SettingsCategoryId.INTERNAL_PROMPTS:
-            yield Static("Internal Prompts", classes="destination-section settings-column-title")
+            yield Static(
+                "Internal Prompts", classes="destination-section settings-column-title"
+            )
             yield InternalPromptsPanel(id="settings-internal-prompts-panel")
         elif category is SettingsCategoryId.IMAGE_GENERATION:
-            yield Static("Image Gen", classes="destination-section settings-column-title")
+            yield Static(
+                "Image Gen", classes="destination-section settings-column-title"
+            )
             image_gen_overlay = self._image_gen_overlay_values()
             self._queue_image_gen_select_suppression(image_gen_overlay)
             yield ImageGenSettingsPanel(
@@ -11553,9 +11669,7 @@ class SettingsScreen(BaseAppScreen):
             "Mode: <title>", with the runtime disclaimer only on Overview.
         """
         if summary.category is SettingsCategoryId.OVERVIEW:
-            return (
-                f"Mode: {summary.title} | Runtime controls stay in MCP and ACP"
-            )
+            return f"Mode: {summary.title} | Runtime controls stay in MCP and ACP"
         return f"Mode: {summary.title}"
 
     def _render_impact_pane_header(self) -> ComposeResult:
@@ -11619,7 +11733,7 @@ class SettingsScreen(BaseAppScreen):
         # task-181 copy, task-1583 placement, task-1714 length: the full
         # reassurance paragraph reads once on Overview; everywhere else a
         # single line keeps the promise without eating three pinned rows
-        # on all 22 categories (critique r4: "the cozy reassurance decays
+        # on all 23 categories (critique r4: "the cozy reassurance decays
         # into noise by the third category").
         yield Static(
             "Saves apply to your local config file. Nothing is sent to a "
@@ -11721,9 +11835,7 @@ class SettingsScreen(BaseAppScreen):
             # original prose wrapped across enough lines in this narrow rail
             # that the "Citations" row clipped mid-sentence ("...source
             # markers when") at the pane's unscrolled fold.
-            for index, (label, value) in enumerate(
-                self._rag_field_guidance_rows()
-            ):
+            for index, (label, value) in enumerate(self._rag_field_guidance_rows()):
                 yield self._detail_row(
                     label,
                     value,
@@ -11771,10 +11883,15 @@ class SettingsScreen(BaseAppScreen):
                 tooltip="Open the dedicated Theme editor.",
             )
         elif summary.category is SettingsCategoryId.THEME:
-            yield Static("Affects app colors and saved custom themes.", classes="destination-section")
+            yield Static(
+                "Affects app colors and saved custom themes.",
+                classes="destination-section",
+            )
             yield Static("Focused field guide", classes="destination-section")
             yield self._detail_row("Save target", f"{_theme_save_target()}{os.sep}")
-            yield self._detail_row("Note", "Use the editor's own Apply/Save/Reset buttons.")
+            yield self._detail_row(
+                "Note", "Use the editor's own Apply/Save/Reset buttons."
+            )
             modified = "Yes" if self.theme_editor_modified else "No"
             yield self._detail_row(
                 "Unsaved theme changes",
@@ -11782,16 +11899,23 @@ class SettingsScreen(BaseAppScreen):
                 identifier="settings-theme-unsaved-note",
             )
         elif summary.category is SettingsCategoryId.SPLASH_SCREEN:
-            yield Static("Affects startup splash screen behavior.", classes="destination-section")
+            yield Static(
+                "Affects startup splash screen behavior.", classes="destination-section"
+            )
             yield Static("Focused field guide", classes="destination-section")
             yield self._detail_row("Config section", "splash_screen")
             yield self._detail_row("Note", "Splash defaults are saved automatically.")
         elif summary.category is SettingsCategoryId.INTERNAL_PROMPTS:
-            yield Static("Edit the prompts used by internal tooling.", classes="destination-section")
+            yield Static(
+                "Edit the prompts used by internal tooling.",
+                classes="destination-section",
+            )
             yield self._detail_row(
                 "Save target", f"{_internal_prompts_save_target()}  [internal_prompts]"
             )
-            yield self._detail_row("Note", "Use each prompt's own Save / Reset buttons.")
+            yield self._detail_row(
+                "Note", "Use each prompt's own Save / Reset buttons."
+            )
             yield self._detail_row(
                 "Customized prompts",
                 str(self._get_internal_prompts_customized_count()),
@@ -11913,12 +12037,8 @@ class SettingsScreen(BaseAppScreen):
                     # scrollable content, so the persistence badge (the
                     # save-contract carrier) scrolled away mid-task (RAG
                     # showed no State line at all in evidence).
-                    yield self._render_category_state_banner(
-                        active_summary.category
-                    )
-                    detail_body = detail_pane_container(
-                        id="settings-detail-pane-body"
-                    )
+                    yield self._render_category_state_banner(active_summary.category)
+                    detail_body = detail_pane_container(id="settings-detail-pane-body")
                     detail_body.styles.height = "1fr"
                     detail_body.styles.scrollbar_size_vertical = 1
                     with detail_body:
@@ -12200,6 +12320,7 @@ class SettingsScreen(BaseAppScreen):
             # not even show (e.g. after an archive elsewhere).
             self._settings_selected_workspace_id = None
         self.active_category = category_value
+
         # task-1565: keep the selection visible -- the rail does not follow
         # the active category on its own, so deep categories (Schedules,
         # Image Gen) could be selected while entirely off-viewport.
@@ -12460,6 +12581,29 @@ class SettingsScreen(BaseAppScreen):
         self.theme_editor_modified = event.is_modified
         self._refresh_theme_modified_widgets()
 
+    @on(SpeechTTSSettingsPanel.DraftModified)
+    def handle_speech_tts_draft_modified(
+        self,
+        event: SpeechTTSSettingsPanel.DraftModified,
+    ) -> None:
+        """Mirror the self-contained Speech panel's dirty state in the shell."""
+        event.stop()
+        category = SettingsCategoryId.SPEECH_TTS
+        self._speech_tts_configure_provider = event.configure_provider
+        if event.is_modified:
+            self._speech_tts_draft_state = event.state
+            self._speech_tts_original_state = event.original_state
+            draft = self._settings_drafts.setdefault(
+                category,
+                SettingsDraft(category=category),
+            )
+            draft.set_value("speech_tts_panel", False, True)
+        else:
+            self._speech_tts_draft_state = None
+            self._speech_tts_original_state = None
+            self._settings_drafts.pop(category, None)
+        self._update_draft_status_widgets(category)
+
     def _update_inspector_overflow_hint(self) -> None:
         """Show the fold indicator only while the inspector body overflows.
 
@@ -12500,7 +12644,9 @@ class SettingsScreen(BaseAppScreen):
             row.update(f"Unsaved theme changes: {modified}")
 
     @on(InternalPromptsPanel.Modified)
-    def _on_internal_prompts_modified(self, event: InternalPromptsPanel.Modified) -> None:
+    def _on_internal_prompts_modified(
+        self, event: InternalPromptsPanel.Modified
+    ) -> None:
         # Deliberately NOT a recompose=True reactive assignment (P3
         # whole-branch review Fix 1): the panel already computed this count
         # for us, so we just cache it and push a TARGETED refresh into
@@ -12667,8 +12813,7 @@ class SettingsScreen(BaseAppScreen):
             refreshed_config = load_settings(force_reload=True)
         except Exception as exc:
             logger.warning(
-                "Saved server settings could not be loaded "
-                "(exception_category=%s).",
+                "Saved server settings could not be loaded (exception_category=%s).",
                 type(exc).__name__,
             )
             self.app.notify(
@@ -13611,7 +13756,9 @@ class SettingsScreen(BaseAppScreen):
         # reword it.
         self._set_library_rag_editing_caption_visible(False)
 
-    def _update_library_rag_editor_title(self, *, preview_name: str | None = None) -> None:
+    def _update_library_rag_editor_title(
+        self, *, preview_name: str | None = None
+    ) -> None:
         """Task 4 (541 v2 UX AC1): the editor container's border title --
         "Editing: <active name>" ordinarily, "Previewing: <selected name>"
         while browsing a different profile. Names are escaped: profile
@@ -13720,12 +13867,13 @@ class SettingsScreen(BaseAppScreen):
         # failure (nothing to report) preserves the pre-task-4 2-arg call
         # shape for `_rag_after_set_active`'s "no warning known" branch.
         new_status = fetch_index_status() if ok else None
-        self.app.call_from_thread(
-            self._rag_after_set_active, ok, reason, new_status
-        )
+        self.app.call_from_thread(self._rag_after_set_active, ok, reason, new_status)
 
     def _rag_after_set_active(
-        self, ok: bool, reason: str, new_index_status: Mapping[str, object] | None = None
+        self,
+        ok: bool,
+        reason: str,
+        new_index_status: Mapping[str, object] | None = None,
     ) -> None:
         # Task 4 (541 v2 UX AC1): either outcome ends any in-progress
         # profile-picker PREVIEW -- on success the active profile itself
@@ -13755,7 +13903,9 @@ class SettingsScreen(BaseAppScreen):
             # index" -- a false claim, since an unreadable status says
             # nothing about whether the index actually changed. That case
             # now gets its own honest, distinct notice instead.
-            state = new_index_status.get("state") if new_index_status is not None else None
+            state = (
+                new_index_status.get("state") if new_index_status is not None else None
+            )
             index_empty = state in ("absent", "empty")
             status_unknown = state == "unknown"
             if index_empty:
@@ -13773,7 +13923,9 @@ class SettingsScreen(BaseAppScreen):
                 self._apply_library_rag_index_status(new_index_status)
             self.app.notify(
                 message,
-                severity="warning" if (index_empty or status_unknown) else "information",
+                severity="warning"
+                if (index_empty or status_unknown)
+                else "information",
             )
             return
         message = f"Couldn't switch active profile: {reason}"
@@ -14506,6 +14658,20 @@ class SettingsScreen(BaseAppScreen):
                 self._guided_action_message(category), severity="information"
             )
             return
+        if category is SettingsCategoryId.SPEECH_TTS:
+            try:
+                panel = self.query_one(
+                    "#settings-speech-tts-panel",
+                    SpeechTTSSettingsPanel,
+                )
+            except QueryError:
+                self.app.notify(
+                    "Speech & TTS Settings are not available.",
+                    severity="warning",
+                )
+                return
+            panel.request_save()
+            return
         if category is SettingsCategoryId.PROVIDERS_MODELS:
             try:
                 values = self._provider_form_values_from_widgets()
@@ -15019,6 +15185,26 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
+        if category is SettingsCategoryId.SPEECH_TTS:
+            try:
+                panel = self.query_one(
+                    "#settings-speech-tts-panel",
+                    SpeechTTSSettingsPanel,
+                )
+            except QueryError:
+                self.app.notify(
+                    "Speech & TTS Settings are not available.",
+                    severity="warning",
+                )
+                return
+            if not panel.has_unsaved_changes():
+                self.app.notify(
+                    "No Settings changes to revert.",
+                    severity="information",
+                )
+                return
+            self.run_worker(panel.revert_to_saved(), exclusive=False)
+            return
         if category is SettingsCategoryId.IMAGE_GENERATION:
             # Unlike THEME/SPLASH_SCREEN/INTERNAL_PROMPTS below (which have
             # no unified revert this action could drive at all), Image Gen
@@ -15032,7 +15218,9 @@ class SettingsScreen(BaseAppScreen):
             # action itself is sync (mirrors the Button.Pressed handler,
             # which is async and awaits it directly instead).
             if not self._category_has_unsaved_changes(category):
-                self.app.notify("No Settings changes to revert.", severity="information")
+                self.app.notify(
+                    "No Settings changes to revert.", severity="information"
+                )
                 return
             self.run_worker(self._handle_image_gen_revert(), exclusive=False)
             return
@@ -15548,9 +15736,7 @@ class SettingsScreen(BaseAppScreen):
                 self._refresh_library_rag_index_status()
             return
         if reason == "builtin":
-            self._library_rag_result = (
-                "Built-in profile is read-only — Clone to edit."
-            )
+            self._library_rag_result = "Built-in profile is read-only — Clone to edit."
             self._set_static_text(
                 "#settings-library-rag-save-result", self._library_rag_result
             )

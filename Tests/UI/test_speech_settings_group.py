@@ -6,11 +6,15 @@ import pathlib
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Collapsible
+from textual.widgets import Button, Collapsible, Input, Select, Switch
 
 from tldw_chatbook.UI.Speech.speech_settings_group import (
     SETTING_LABELS,
     SpeechSettingsGroup,
+)
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SPEECH_TTS_OWNERSHIP_BY_CONTROL_ID,
+    SpeechTTSOwnershipScope,
 )
 from tldw_chatbook.UI.Speech.speech_settings_model import (
     SETTINGS_PROVIDER_ORDER,
@@ -60,7 +64,7 @@ async def test_a_collapsed_group_states_its_provider_state():
 
 @pytest.mark.asyncio
 async def test_an_incomplete_provider_says_what_is_missing():
-    """"Incomplete" alone sends the user hunting through the group."""
+    """ "Incomplete" alone sends the user hunting through the group."""
     app = _Harness("openai", {"openai-org-id-input": "org-1"})
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
@@ -118,3 +122,58 @@ async def test_every_setting_gets_a_control_and_a_label(provider):
         for setting in settings_for_provider(provider):
             assert app.query(f"#{setting}"), f"{provider}: {setting} not rendered"
             assert setting in SETTING_LABELS, f"{setting} has no label"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", SETTINGS_PROVIDER_ORDER)
+async def test_global_lab_controls_are_visible_read_only_and_scoped(provider):
+    """The Lab may display effective global values, but cannot write them."""
+    app = _Harness(provider, collapsed=False)
+    async with app.run_test(size=(200, 90)) as pilot:
+        await pilot.pause()
+        for control_id in settings_for_provider(provider):
+            record = SPEECH_TTS_OWNERSHIP_BY_CONTROL_ID[control_id]
+            control = app.query_one(f"#{control_id}")
+            if not isinstance(control, (Input, Select, Switch, Button)):
+                continue
+            if record.scope is SpeechTTSOwnershipScope.GLOBAL_CONFIGURATION:
+                assert control.disabled is True, control_id
+                assert "Settings > Speech & TTS" in str(control.tooltip), control_id
+            elif record.scope is SpeechTTSOwnershipScope.STUDIO_PREFERENCE:
+                assert control.disabled is False, control_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", (80, 120, 180))
+async def test_global_scope_copy_does_not_collapse_lab_read_only_controls(width: int):
+    app = _Harness("openai", collapsed=False)
+    async with app.run_test(size=(width, 30)) as pilot:
+        await pilot.pause()
+        control = app.query_one("#openai-base-url-input", Input)
+        scope = control.parent.query_one(".speech-setting-scope")
+
+        assert control.region.width >= 16
+        assert scope.region.width < control.parent.region.width
+
+
+@pytest.mark.asyncio
+async def test_global_path_actions_are_disabled_but_runtime_actions_remain_available():
+    global_actions = (
+        ("kokoro", "kokoro-browse-model-btn"),
+        ("kokoro", "kokoro-browse-voices-btn"),
+        ("chatterbox", "chatterbox-browse-voice-dir-btn"),
+        ("higgs", "higgs-voices-browse-btn"),
+    )
+    for provider, control_id in global_actions:
+        app = _Harness(provider, collapsed=False)
+        async with app.run_test(size=(200, 90)) as pilot:
+            await pilot.pause()
+            button = app.query_one(f"#{control_id}", Button)
+            assert button.disabled is True
+            assert "Settings > Speech & TTS" in str(button.tooltip)
+
+    app = _Harness("audio_cpp", collapsed=False)
+    async with app.run_test(size=(200, 90)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#audio-cpp-test-connection-btn", Button).disabled is False
+        assert app.query_one("#audio-cpp-refresh-models-btn", Button).disabled is False

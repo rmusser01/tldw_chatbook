@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+from dataclasses import FrozenInstanceError
+
+import pytest
+
+from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
+    STTSSettingsSaveEvent,
+    STTSSettingsSaveResult,
+    _TTS_SETTING_BINDINGS,
+)
+from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    BUILT_IN_TTS_PROVIDER_ORDER,
+    build_global_speech_tts_save_proposal,
+    load_global_speech_tts_state,
+)
+from tldw_chatbook.UI.Speech.speech_settings_mixin import (
+    LAB_STUDIO_COMPATIBILITY_SETTING_KEYS,
+)
+
+
+def test_settings_save_event_copies_bounded_delete_intent_and_reply_metadata() -> None:
+    settings = {"OPENAI_BASE_URL": "https://api.openai.com/v1/audio/speech"}
+    deletes = ["openai_api_key"]
+    reply_target = object()
+
+    event = STTSSettingsSaveEvent(
+        settings,
+        delete_setting_keys=deletes,
+        request_id=7,
+        reply_to=reply_target,
+    )
+    settings["OPENAI_BASE_URL"] = "https://mutated.invalid"
+    deletes.append("elevenlabs_api_key")
+
+    assert event.settings == {
+        "OPENAI_BASE_URL": "https://api.openai.com/v1/audio/speech"
+    }
+    assert event.delete_setting_keys == ("openai_api_key",)
+    assert event.request_id == 7
+    assert event.reply_to is reply_target
+
+
+@pytest.mark.parametrize("request_id", (True, -1, "1"))
+def test_settings_save_event_rejects_unbounded_request_ids(request_id: object) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        STTSSettingsSaveEvent({}, request_id=request_id)  # type: ignore[arg-type]
+
+
+def test_settings_save_result_is_safe_immutable_and_separates_persistence() -> None:
+    result = STTSSettingsSaveResult(
+        request_id=7,
+        persisted=True,
+        provider_statuses={"openai": "unavailable"},
+        failure_phase=None,
+    )
+
+    assert result.persisted is True
+    assert result.provider_statuses == {"openai": "unavailable"}
+    assert result.failure_phase is None
+    with pytest.raises(TypeError):
+        result.provider_statuses["openai"] = "applied"  # type: ignore[index]
+    with pytest.raises(FrozenInstanceError):
+        result.persisted = False  # type: ignore[misc]
+
+
+def test_every_global_provider_mutation_targets_exactly_its_adapter() -> None:
+    for provider_id in BUILT_IN_TTS_PROVIDER_ORDER:
+        original = load_global_speech_tts_state({})
+        draft = load_global_speech_tts_state({})
+        if provider_id == "audio_cpp":
+            draft.providers[provider_id]["connect_timeout_seconds"] = 9.0
+        elif provider_id == "openai":
+            draft.providers[provider_id]["organization_id"] = "org-new"
+        elif provider_id == "elevenlabs":
+            draft.providers[provider_id]["stability"] = 0.7
+        elif provider_id == "kokoro":
+            draft.providers[provider_id]["use_onnx"] = False
+        elif provider_id == "chatterbox":
+            draft.providers[provider_id]["temperature"] = 0.7
+        elif provider_id == "higgs":
+            draft.providers[provider_id]["dtype"] = "float32"
+        else:
+            draft.providers[provider_id]["server_url"] = "http://127.0.0.1:7852"
+
+        proposal = build_global_speech_tts_save_proposal(
+            original,
+            draft,
+            configure_provider=provider_id,
+        )
+
+        assert proposal.settings
+        assert {
+            _TTS_SETTING_BINDINGS[key].provider_id for key in proposal.settings
+        } == {provider_id}
+
+
+def test_credential_bindings_set_canonical_and_clear_all_local_aliases() -> None:
+    assert _TTS_SETTING_BINDINGS["openai_api_key"].destinations == (
+        ("api_settings.openai", "api_key"),
+    )
+    assert set(_TTS_SETTING_BINDINGS["openai_api_key"].delete_destinations) == {
+        ("api_settings.openai", "api_key"),
+        ("openai_api", "api_key"),
+        ("API", "openai_api_key"),
+    }
+    assert _TTS_SETTING_BINDINGS["elevenlabs_api_key"].destinations == (
+        ("api_settings.elevenlabs", "api_key"),
+    )
+    assert set(_TTS_SETTING_BINDINGS["elevenlabs_api_key"].delete_destinations) == {
+        ("api_settings.elevenlabs", "api_key"),
+        ("elevenlabs_api", "api_key"),
+        ("API", "elevenlabs_api_key"),
+    }
+
+
+def test_studio_compatibility_keys_do_not_request_adapter_reconfiguration() -> None:
+    assert {
+        _TTS_SETTING_BINDINGS[key].provider_id
+        for key in LAB_STUDIO_COMPATIBILITY_SETTING_KEYS
+    } == {None}

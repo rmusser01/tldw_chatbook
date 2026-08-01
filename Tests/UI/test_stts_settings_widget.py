@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import ast
-import inspect
-import textwrap
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock, call
@@ -11,7 +8,7 @@ from unittest.mock import AsyncMock, Mock, call
 import pytest
 from loguru import logger
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Collapsible, Input, Select, Static
+from textual.widgets import Button, Collapsible, Input, Select, Static, Switch
 
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
@@ -24,12 +21,19 @@ from tldw_chatbook.TTS.adapter_types import (
 )
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
-from tldw_chatbook.UI import STTS_Window
 from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SPEECH_TTS_OWNERSHIP_BY_CONTROL_ID,
+    SpeechTTSOwnershipScope,
+)
+from tldw_chatbook.UI.Speech.speech_settings_mixin import (
+    LAB_STUDIO_COMPATIBILITY_SETTING_KEYS,
+)
 from tldw_chatbook.UI.stts_playground_catalog import (
     FIRST_AVAILABLE_MODEL_ID,
     SERVER_DEFAULT_VOICE_ID,
 )
+
 
 async def _click_setting_action(pilot, selector):
     """Scroll a provider action into view, then click it.
@@ -63,6 +67,7 @@ def _patch_service(monkeypatch, factory):
     monkeypatch.setattr(
         SpeechSettingsPane, "_tts_service_factory", lambda self: factory()
     )
+
 
 _PREFERENCE_PAYLOAD_KEYS = {
     "default_provider",
@@ -101,22 +106,27 @@ class _SettingsHost(App[None]):
 
 
 def test_settings_binding_table_classifies_every_widget_payload_key() -> None:
-    tree = ast.parse(
-        textwrap.dedent(inspect.getsource(SpeechSettingsPane._save_settings))
-    )
-    payload_keys = {
-        target.slice.value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Assign)
-        for target in node.targets
-        if isinstance(target, ast.Subscript)
-        and isinstance(target.value, ast.Name)
-        and target.value.id == "settings"
-        and isinstance(target.slice, ast.Constant)
-        and isinstance(target.slice.value, str)
-    }
+    assert LAB_STUDIO_COMPATIBILITY_SETTING_KEYS <= set(_TTS_SETTING_BINDINGS)
+    assert LAB_STUDIO_COMPATIBILITY_SETTING_KEYS.isdisjoint(_PREFERENCE_PAYLOAD_KEYS)
 
-    assert payload_keys == set(_TTS_SETTING_BINDINGS) - _PREFERENCE_PAYLOAD_KEYS
+
+@pytest.mark.asyncio
+async def test_full_lab_initialization_never_reenables_global_owned_controls(
+    settings_config: None,
+) -> None:
+    app = _SettingsHost()
+    async with app.run_test(size=(200, 100)) as pilot:
+        await pilot.pause()
+
+        for control_id, ownership in SPEECH_TTS_OWNERSHIP_BY_CONTROL_ID.items():
+            if ownership.scope is not SpeechTTSOwnershipScope.GLOBAL_CONFIGURATION:
+                continue
+            matches = app.query(f"#{control_id}")
+            if not matches:
+                continue
+            control = matches.first()
+            if isinstance(control, (Input, Select, Switch, Button)):
+                assert control.disabled is True, control_id
 
 
 @pytest.fixture
@@ -204,7 +214,10 @@ async def test_audio_cpp_mount_uses_one_read_only_preference_snapshot(
         ("app_tts", "audio_cpp"): AudioCppConfig().to_mapping(),
         **{("app_tts", key): value for key, value in stored_preferences.items()},
     }
-    _patch_setting_reader(monkeypatch, lambda section, key, default=None: stored.get((section, key), default))
+    _patch_setting_reader(
+        monkeypatch,
+        lambda section, key, default=None: stored.get((section, key), default),
+    )
     monkeypatch.setattr(
         SpeechSettingsPane,
         "_load_kokoro_voice_blends",
@@ -259,7 +272,10 @@ async def test_audio_cpp_stored_defaults_mount_and_save_without_nulls(
         ("app_tts", "default_format"): "wav",
         ("app_tts", "audio_cpp"): AudioCppConfig().to_mapping(),
     }
-    _patch_setting_reader(monkeypatch, lambda section, key, default=None: stored.get((section, key), default))
+    _patch_setting_reader(
+        monkeypatch,
+        lambda section, key, default=None: stored.get((section, key), default),
+    )
     monkeypatch.setattr(
         SpeechSettingsPane,
         "_load_kokoro_voice_blends",
@@ -279,14 +295,8 @@ async def test_audio_cpp_stored_defaults_mount_and_save_without_nulls(
         await pilot.pause()
 
         event = app.saved_events[-1]
-        assert event.preferences is not None
-        assert event.preferences.provider_id == "audio_cpp"
-        assert event.preferences.model_mode == "exact"
-        assert event.preferences.model_id == "<opaque:model>"
-        assert event.preferences.voice_mode == "exact"
-        assert event.preferences.voice_id == "[voice]"
-        assert event.preferences.response_format == "wav"
-        assert event.preferences.speed == 1.0
+        assert event.preferences is None
+        assert set(event.settings) == LAB_STUDIO_COMPATIBILITY_SETTING_KEYS
         assert _PREFERENCE_PAYLOAD_KEYS.isdisjoint(event.settings)
 
 
@@ -305,7 +315,10 @@ async def test_audio_cpp_settings_preserve_sentinel_shaped_remote_defaults(
         ("app_tts", "default_format"): "wav",
         ("app_tts", "audio_cpp"): AudioCppConfig().to_mapping(),
     }
-    _patch_setting_reader(monkeypatch, lambda section, key, default=None: stored.get((section, key), default))
+    _patch_setting_reader(
+        monkeypatch,
+        lambda section, key, default=None: stored.get((section, key), default),
+    )
     monkeypatch.setattr(
         SpeechSettingsPane,
         "_load_kokoro_voice_blends",
@@ -329,11 +342,8 @@ async def test_audio_cpp_settings_preserve_sentinel_shaped_remote_defaults(
         await pilot.pause()
 
     event = app.saved_events[-1]
-    assert event.preferences is not None
-    assert event.preferences.model_mode == "exact"
-    assert event.preferences.model_id == remote_model_id
-    assert event.preferences.voice_mode == "exact"
-    assert event.preferences.voice_id == remote_voice_id
+    assert event.preferences is None
+    assert set(event.settings) == LAB_STUDIO_COMPATIBILITY_SETTING_KEYS
     assert _PREFERENCE_PAYLOAD_KEYS.isdisjoint(event.settings)
 
 
@@ -365,18 +375,14 @@ async def test_selecting_audio_cpp_defaults_uses_non_materializing_sentinels(
         await pilot.pause()
 
         event = app.saved_events[-1]
-        assert event.preferences is not None
-        assert event.preferences.provider_id == "audio_cpp"
-        assert event.preferences.model_mode == "first_available"
-        assert event.preferences.model_id is None
-        assert event.preferences.voice_mode == "server_default"
-        assert event.preferences.voice_id is None
+        assert event.preferences is None
+        assert set(event.settings) == LAB_STUDIO_COMPATIBILITY_SETTING_KEYS
         assert "default_model" not in event.settings
         assert "default_voice" not in event.settings
 
 
 @pytest.mark.asyncio
-async def test_settings_save_posts_canonical_values_and_explicit_openai_resets(
+async def test_lab_save_ignores_global_default_and_openai_readout_edits(
     settings_config: None,
 ) -> None:
     del settings_config
@@ -397,20 +403,14 @@ async def test_settings_save_posts_canonical_values_and_explicit_openai_resets(
         assert app.saved_events, app.notices
         event = app.saved_events[-1]
         settings = event.settings
-        assert event.preferences is not None
-        assert event.preferences.provider_id == "openai"
-        assert event.preferences.voice_mode == "exact"
-        assert event.preferences.voice_id == "alloy"
-        assert event.preferences.model_mode == "exact"
-        assert event.preferences.model_id == "tts-1"
-        assert event.preferences.response_format == "mp3"
-        assert event.preferences.speed == 1.0
+        assert event.preferences is None
         assert _PREFERENCE_PAYLOAD_KEYS.isdisjoint(settings)
+        assert set(settings) == LAB_STUDIO_COMPATIBILITY_SETTING_KEYS
         assert settings["ELEVENLABS_DEFAULT_MODEL"] == "eleven_multilingual_v2"
-        assert settings["KOKORO_DEVICE_DEFAULT"] == "cpu"
-        assert settings["HIGGS_DEVICE"] == "auto"
-        assert settings["OPENAI_BASE_URL"] == ("https://api.openai.com/v1/audio/speech")
-        assert settings["OPENAI_ORG_ID"] == ""
+        assert "KOKORO_DEVICE_DEFAULT" not in settings
+        assert "HIGGS_DEVICE" not in settings
+        assert "OPENAI_BASE_URL" not in settings
+        assert "OPENAI_ORG_ID" not in settings
 
 
 @pytest.mark.asyncio
@@ -439,7 +439,7 @@ async def test_settings_widget_waits_for_handler_outcome_before_notifying(
         "https://example.test/audio/speech#fragment",
     ),
 )
-async def test_settings_widget_rejects_unsafe_openai_base_urls_without_echoing_them(
+async def test_lab_save_does_not_read_or_publish_openai_base_url(
     settings_config: None,
     base_url: str,
 ) -> None:
@@ -452,10 +452,9 @@ async def test_settings_widget_rejects_unsafe_openai_base_urls_without_echoing_t
 
         app.query_one(SpeechSettingsPane)._save_settings()
 
-        assert app.saved_events == []
-        assert app.notices
-        assert app.notices[-1][1] == "error"
-        assert base_url not in app.notices[-1][0]
+        assert len(app.saved_events) == 1
+        assert "OPENAI_BASE_URL" not in app.saved_events[0].settings
+        assert app.notices == []
 
 
 @pytest.mark.asyncio
@@ -468,13 +467,13 @@ async def test_settings_widget_does_not_echo_collection_error_details(
     messages: list[str] = []
     app = _SettingsHost()
 
-    def fail_normalization(_self: SpeechSettingsPane, _value: str) -> str:
+    def fail_validation(*_args: object, **_kwargs: object) -> float:
         raise RuntimeError(f"invalid setting {secret}")
 
     monkeypatch.setattr(
         SpeechSettingsPane,
-        "_normalize_openai_base_url",
-        fail_normalization,
+        "_validate_numeric_input",
+        fail_validation,
     )
     sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
     try:
@@ -543,7 +542,7 @@ async def test_audio_cpp_settings_surface_is_external_only(
 
 
 @pytest.mark.asyncio
-async def test_audio_cpp_settings_save_posts_validated_defensive_plain_mapping(
+async def test_lab_save_does_not_publish_audio_cpp_global_readouts(
     settings_config: None,
 ) -> None:
     del settings_config
@@ -569,25 +568,9 @@ async def test_audio_cpp_settings_save_posts_validated_defensive_plain_mapping(
         await pilot.pause()
 
         assert len(app.saved_events) == 1
-        candidate = app.saved_events[0].settings["audio_cpp"]
-        assert type(candidate) is dict
-        assert candidate == {
-            "mode": "external",
-            "base_url": "https://voice.example.test:8443",
-            "connect_timeout_seconds": 2.5,
-            "synthesis_timeout_seconds": 45.0,
-            "max_input_characters": 1234,
-            "max_response_bytes": 1048576,
-            "max_metadata_bytes": 4096,
-            "max_catalog_models": 12,
-            "max_voices_per_model": 34,
-            "max_identifier_characters": 128,
-        }
-
-        app.query_one(
-            "#audio-cpp-base-url-input", Input
-        ).value = "http://changed.invalid"
-        assert candidate["base_url"] == "https://voice.example.test:8443"
+        event = app.saved_events[0]
+        assert "audio_cpp" not in event.settings
+        assert set(event.settings) == LAB_STUDIO_COMPATIBILITY_SETTING_KEYS
 
 
 @pytest.mark.asyncio
@@ -606,7 +589,7 @@ async def test_audio_cpp_settings_save_posts_validated_defensive_plain_mapping(
         ("#audio-cpp-max-identifier-characters-input", "9" * 5000),
     ),
 )
-async def test_audio_cpp_settings_reject_invalid_values_without_echo(
+async def test_lab_save_ignores_invalid_programmatic_audio_cpp_readout_changes(
     settings_config: None,
     selector: str,
     invalid_value: str,
@@ -624,8 +607,9 @@ async def test_audio_cpp_settings_reject_invalid_values_without_echo(
     finally:
         logger.remove(sink_id)
 
-    assert app.saved_events == []
-    assert app.notices == [("Failed to save settings", "error")]
+    assert len(app.saved_events) == 1
+    assert "audio_cpp" not in app.saved_events[0].settings
+    assert app.notices == []
     rendered = "\n".join(messages + [message for message, _ in app.notices])
     assert invalid_value not in rendered
 

@@ -807,6 +807,16 @@ Input.speech-axis-control {
     background: $ds-surface-panel;
 }
 
+/* Read-only global ownership stays visible without competing for the row's
+   flexible width. Static defaults to 1fr; that used to leave the actual
+   value control only two cells wide at every tested terminal width. */
+.speech-setting-scope {
+    width: auto;
+    min-width: 0;
+    margin-left: 1;
+    color: $text-muted;
+}
+
 /* `border: none` on a Select does not reach its inner SelectCurrent, which
  * keeps its own three-row box and, clipped to `height: 1`, paints only its
  * top border. */

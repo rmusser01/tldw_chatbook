@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Dict, NamedTuple, Optional
 
 from loguru import logger
@@ -58,6 +59,7 @@ from tldw_chatbook.Utils.secure_temp_files import (
 class _SettingBinding(NamedTuple):
     destinations: tuple[tuple[str, str], ...]
     provider_id: str | None = None
+    delete_destinations: tuple[tuple[str, str], ...] | None = None
 
 
 def _app_tts_binding(
@@ -103,18 +105,26 @@ _TTS_SETTING_BINDINGS = {
         )
     ),
     "openai_api_key": _SettingBinding(
-        (("API", "openai_api_key"),),
+        (("api_settings.openai", "api_key"),),
         "openai",
+        (
+            ("api_settings.openai", "api_key"),
+            ("openai_api", "api_key"),
+            ("API", "openai_api_key"),
+        ),
     ),
     "OPENAI_BASE_URL": _app_tts_binding("OPENAI_BASE_URL", "openai"),
     "OPENAI_ORG_ID": _app_tts_binding("OPENAI_ORG_ID", "openai"),
     "elevenlabs_api_key": _SettingBinding(
-        (("API", "elevenlabs_api_key"),),
+        (("api_settings.elevenlabs", "api_key"),),
         "elevenlabs",
+        (
+            ("api_settings.elevenlabs", "api_key"),
+            ("elevenlabs_api", "api_key"),
+            ("API", "elevenlabs_api_key"),
+        ),
     ),
-    "ELEVENLABS_DEFAULT_MODEL": _app_tts_binding(
-        "ELEVENLABS_DEFAULT_MODEL", "elevenlabs"
-    ),
+    "ELEVENLABS_DEFAULT_MODEL": _app_tts_binding("ELEVENLABS_DEFAULT_MODEL"),
     "ELEVENLABS_OUTPUT_FORMAT": _app_tts_binding(
         "ELEVENLABS_OUTPUT_FORMAT", "elevenlabs"
     ),
@@ -129,7 +139,7 @@ _TTS_SETTING_BINDINGS = {
         "ELEVENLABS_USE_SPEAKER_BOOST", "elevenlabs"
     ),
     "KOKORO_DEVICE_DEFAULT": _app_tts_binding("KOKORO_DEVICE_DEFAULT", "kokoro"),
-    "KOKORO_USE_ONNX": _app_tts_binding("KOKORO_USE_ONNX"),
+    "KOKORO_USE_ONNX": _app_tts_binding("KOKORO_USE_ONNX", "kokoro"),
     "KOKORO_ONNX_MODEL_PATH_DEFAULT": _app_tts_binding(
         "KOKORO_ONNX_MODEL_PATH_DEFAULT", "kokoro"
     ),
@@ -143,10 +153,8 @@ _TTS_SETTING_BINDINGS = {
     "KOKORO_TRACK_PERFORMANCE": _app_tts_binding("KOKORO_TRACK_PERFORMANCE", "kokoro"),
     "CHATTERBOX_DEVICE": _app_tts_binding("CHATTERBOX_DEVICE", "chatterbox"),
     "CHATTERBOX_VOICE_DIR": _app_tts_binding("CHATTERBOX_VOICE_DIR", "chatterbox"),
-    "CHATTERBOX_EXAGGERATION": _app_tts_binding(
-        "CHATTERBOX_EXAGGERATION", "chatterbox"
-    ),
-    "CHATTERBOX_CFG_WEIGHT": _app_tts_binding("CHATTERBOX_CFG_WEIGHT", "chatterbox"),
+    "CHATTERBOX_EXAGGERATION": _app_tts_binding("CHATTERBOX_EXAGGERATION"),
+    "CHATTERBOX_CFG_WEIGHT": _app_tts_binding("CHATTERBOX_CFG_WEIGHT"),
     "CHATTERBOX_TEMPERATURE": _app_tts_binding("CHATTERBOX_TEMPERATURE", "chatterbox"),
     "CHATTERBOX_CHUNK_SIZE": _app_tts_binding("CHATTERBOX_CHUNK_SIZE", "chatterbox"),
     "CHATTERBOX_RANDOM_SEED": _app_tts_binding("CHATTERBOX_RANDOM_SEED", "chatterbox"),
@@ -237,14 +245,12 @@ _TTS_SETTING_BINDINGS = {
         "higgs",
     ),
     "ALLTALK_TTS_URL_DEFAULT": _app_tts_binding("ALLTALK_TTS_URL_DEFAULT", "alltalk"),
-    "ALLTALK_TTS_VOICE_DEFAULT": _app_tts_binding(
-        "ALLTALK_TTS_VOICE_DEFAULT", "alltalk"
-    ),
+    "ALLTALK_TTS_VOICE_DEFAULT": _app_tts_binding("ALLTALK_TTS_VOICE_DEFAULT"),
     "ALLTALK_TTS_LANGUAGE_DEFAULT": _app_tts_binding(
         "ALLTALK_TTS_LANGUAGE_DEFAULT", "alltalk"
     ),
     "ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT": _app_tts_binding(
-        "ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT", "alltalk"
+        "ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT"
     ),
 }
 _TTS_PROVIDER_ORDER = (
@@ -256,6 +262,22 @@ _TTS_PROVIDER_ORDER = (
     "higgs",
     "alltalk",
 )
+_CREDENTIAL_CONFIG_TARGETS = {
+    "openai": frozenset(
+        {
+            ("api_settings.openai", "api_key"),
+            ("openai_api", "api_key"),
+            ("API", "openai_api_key"),
+        }
+    ),
+    "elevenlabs": frozenset(
+        {
+            ("api_settings.elevenlabs", "api_key"),
+            ("elevenlabs_api", "api_key"),
+            ("API", "elevenlabs_api_key"),
+        }
+    ),
+}
 
 _RECOVERY_ACTION_COPY = {
     "check_server": "Check the configured audio.cpp server and retry.",
@@ -319,6 +341,19 @@ def _prospective_effective_settings(
         current.update(deepcopy(dict(values)))
 
     prospective["COMPREHENSIVE_CONFIG_RAW"] = raw
+    touched_targets = {
+        (section, key) for section, values in section_values.items() for key in values
+    } | {(section, key) for section, keys in delete_keys.items() for key in keys}
+    if any(section.startswith("api_settings.") for section, _key in touched_targets):
+        raw_api_settings = raw.get("api_settings")
+        prospective["api_settings"] = (
+            deepcopy(dict(raw_api_settings))
+            if isinstance(raw_api_settings, Mapping)
+            else {}
+        )
+    for provider_id, credential_targets in _CREDENTIAL_CONFIG_TARGETS.items():
+        if touched_targets & credential_targets:
+            prospective.pop(f"{provider_id}_api", None)
     raw_app_tts = raw.get("app_tts")
     if isinstance(raw_app_tts, Mapping):
         normalized_app_tts = prospective.get("APP_TTS_CONFIG", {})
@@ -350,10 +385,57 @@ class STTSSettingsSaveEvent(Message):
         settings: Mapping[str, Any],
         *,
         preferences: TTSPreferencesSnapshot | None = None,
+        delete_setting_keys: tuple[str, ...] | list[str] = (),
+        request_id: int | None = None,
+        reply_to: object | None = None,
     ) -> None:
         super().__init__()
+        if request_id is not None:
+            if type(request_id) is not int:
+                raise TypeError("TTS settings request ID must be an integer")
+            if request_id < 0:
+                raise ValueError("TTS settings request ID must be nonnegative")
+        copied_deletes = tuple(delete_setting_keys)
+        if not all(isinstance(key, str) and key for key in copied_deletes):
+            raise ValueError("TTS setting delete keys must be non-empty strings")
+        if len(set(copied_deletes)) != len(copied_deletes):
+            raise ValueError("TTS setting delete keys must be unique")
         self.settings = deepcopy(dict(settings))
         self.preferences = preferences
+        self.delete_setting_keys = copied_deletes
+        self.request_id = request_id
+        self.reply_to = reply_to
+
+
+@dataclass(frozen=True, slots=True)
+class STTSSettingsSaveResult:
+    """Safe requester result separating persistence from runtime handoff."""
+
+    request_id: int
+    persisted: bool
+    provider_statuses: Mapping[str, str]
+    failure_phase: str | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.request_id) is not int or self.request_id < 0:
+            raise ValueError("TTS settings result request ID is invalid")
+        if type(self.persisted) is not bool:
+            raise TypeError("TTS settings persistence result must be boolean")
+        allowed_statuses = frozenset(
+            {"applied", "unchanged", "pending", "superseded", "unavailable"}
+        )
+        copied_statuses: dict[str, str] = {}
+        for provider_id, status in self.provider_statuses.items():
+            if provider_id not in _TTS_PROVIDER_ORDER or status not in allowed_statuses:
+                raise ValueError("TTS settings provider result is invalid")
+            copied_statuses[provider_id] = status
+        if self.failure_phase not in {None, "before_replace", "cache_reload"}:
+            raise ValueError("TTS settings failure phase is invalid")
+        object.__setattr__(
+            self,
+            "provider_statuses",
+            MappingProxyType(copied_statuses),
+        )
 
 
 class STTSProviderConfigurationChanged(Message):
@@ -1046,10 +1128,22 @@ class STTSEventHandler:
         """Handle settings save"""
         if self._cleanup_task is not None:
             logger.debug("Ignoring STTS settings after cleanup started")
+            self._reply_settings_save(
+                event,
+                persisted=False,
+                provider_statuses={},
+                failure_phase="before_replace",
+            )
             return
         async with self._settings_save_lock:
             if self._cleanup_task is not None:
                 logger.debug("Ignoring STTS settings after cleanup started")
+                self._reply_settings_save(
+                    event,
+                    persisted=False,
+                    provider_statuses={},
+                    failure_phase="before_replace",
+                )
                 return
             await self._persist_settings(event)
 
@@ -1060,6 +1154,7 @@ class STTSEventHandler:
 
             section_values: dict[str, dict[str, Any]] = {}
             saved_destinations: list[tuple[str, str, str]] = []
+            deleted_destinations: list[tuple[str, str, str]] = []
             candidate_provider_ids: set[str] = set()
             for key, value in event.settings.items():
                 binding = _TTS_SETTING_BINDINGS.get(key)
@@ -1073,13 +1168,34 @@ class STTSEventHandler:
                 if binding.provider_id is not None:
                     candidate_provider_ids.add(binding.provider_id)
 
+            logical_sets = set(event.settings)
+            logical_deletes = set(event.delete_setting_keys)
+            if logical_sets & logical_deletes:
+                raise ValueError("A TTS setting cannot be set and deleted together")
+            proposed_deletes: dict[str, set[str]] = {}
+            for key in event.delete_setting_keys:
+                binding = _TTS_SETTING_BINDINGS.get(key)
+                if binding is None:
+                    raise ValueError("Unknown TTS setting delete key")
+                destinations = binding.delete_destinations or binding.destinations
+                for section, setting_name in destinations:
+                    proposed_deletes.setdefault(section, set()).add(setting_name)
+                    deleted_destinations.append((key, section, setting_name))
+                if binding.provider_id is not None:
+                    candidate_provider_ids.add(binding.provider_id)
+
+            initial_delete_keys = {
+                section: tuple(sorted(keys))
+                for section, keys in proposed_deletes.items()
+            }
+
             current_settings = getattr(config_module, "settings", {})
             if not isinstance(current_settings, Mapping):
                 raise ValueError("Current settings are unavailable")
             provisional_settings = _prospective_effective_settings(
                 current_settings,
                 section_values,
-                {},
+                initial_delete_keys,
             )
             preferences = (
                 event.preferences
@@ -1090,9 +1206,11 @@ class STTSEventHandler:
                 raise TypeError("Invalid TTS preferences proposal")
             preference_mutation = preferences.config_mutation()
             _merge_section_mutations(section_values, preference_mutation.sets)
+            for section, keys in preference_mutation.deletes.items():
+                proposed_deletes.setdefault(section, set()).update(keys)
             delete_keys = {
-                section: tuple(keys)
-                for section, keys in preference_mutation.deletes.items()
+                section: tuple(sorted(keys))
+                for section, keys in proposed_deletes.items()
             }
             for section, keys in delete_keys.items():
                 values = section_values.get(section)
@@ -1148,10 +1266,21 @@ class STTSEventHandler:
                 persist,
             )
             publication = await asyncio.shield(ticket.foreground)
+            if publication.persistence.caches_reloaded and self.app is not None:
+                refreshed_settings = getattr(config_module, "settings", None)
+                if isinstance(refreshed_settings, Mapping):
+                    self.app.app_config = deepcopy(dict(refreshed_settings))
             if publication.persistence.file_replaced:
                 for key, section, setting_name in saved_destinations:
                     logger.info(
                         "Saved {} to [{}].{}",
+                        key,
+                        section,
+                        setting_name,
+                    )
+                for key, section, setting_name in deleted_destinations:
+                    logger.info(
+                        "Cleared {} from [{}].{}",
                         key,
                         section,
                         setting_name,
@@ -1164,12 +1293,54 @@ class STTSEventHandler:
             if "pending" in publication.provider_statuses.values():
                 self._observe_pending_settings_publication(service, ticket)
             self._notify_settings_publication(publication)
+            self._reply_settings_save(
+                event,
+                persisted=publication.persistence.file_replaced,
+                provider_statuses=publication.provider_statuses,
+                failure_phase=publication.persistence.failure_phase,
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
             message = "Failed to save settings"
             logger.error(message)
             self.app.notify(message, severity="error")
+            self._reply_settings_save(
+                event,
+                persisted=False,
+                provider_statuses={},
+                failure_phase="before_replace",
+            )
+
+    @staticmethod
+    def _reply_settings_save(
+        event: STTSSettingsSaveEvent,
+        *,
+        persisted: bool,
+        provider_statuses: Mapping[str, str],
+        failure_phase: str | None,
+    ) -> None:
+        """Deliver a bounded result to an optional mounted requester."""
+        if event.request_id is None or event.reply_to is None:
+            return
+        callback = getattr(
+            event.reply_to,
+            "receive_stts_settings_save_result",
+            None,
+        )
+        if not callable(callback):
+            return
+        try:
+            callback(
+                STTSSettingsSaveResult(
+                    request_id=event.request_id,
+                    persisted=persisted,
+                    provider_statuses=provider_statuses,
+                    failure_phase=failure_phase,
+                )
+            )
+        except Exception:
+            logger.debug("TTS settings requester result delivery failed")
 
     def _post_applied_settings_changes(
         self,

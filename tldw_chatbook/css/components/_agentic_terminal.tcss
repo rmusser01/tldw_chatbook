@@ -4272,6 +4272,20 @@ RagProfileSwitchConfirmModal {
     background: $ds-surface-panel;
 }
 
+_CredentialEditorModal,
+_CredentialClearModal {
+    align: center middle;
+}
+
+.settings-speech-credential-modal {
+    width: 70;
+    max-width: 90%;
+    height: auto;
+    padding: 1 2;
+    border: thick $ds-action-focus;
+    background: $ds-surface-panel;
+}
+
 .settings-focus-card {
     width: 100%;
     height: auto;
@@ -4384,6 +4398,63 @@ RagProfileSwitchConfirmModal {
 
 #settings-imagegen-editor {
     height: auto;
+}
+
+/* Settings > Speech & TTS: the Settings detail pane is the single scroll
+   owner. The panel must grow to its content instead of becoming a hidden-
+   overflow 1fr viewport that strands Save below the terminal. */
+#settings-speech-tts-panel {
+    height: auto;
+}
+
+.settings-speech-provider-form,
+.settings-speech-credential,
+.settings-speech-control-stack {
+    width: 100%;
+    height: auto;
+}
+
+/* Field errors live below their control. As a third child of a Horizontal,
+   the shared width:100% status row reduced otherwise usable controls to two
+   cells even while empty. */
+.settings-speech-input-row {
+    height: auto;
+    min-height: 1;
+    align: left top;
+}
+
+.settings-speech-input-row.settings-select-row {
+    min-height: 3;
+}
+
+.settings-speech-field-error {
+    display: none;
+    width: 100%;
+    min-height: 1;
+    margin: 0;
+    color: $ds-status-error;
+}
+
+.settings-speech-field-error-visible {
+    display: block;
+}
+
+.settings-speech-path-control {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+}
+
+.settings-speech-path-control .settings-compact-input {
+    width: 1fr;
+}
+
+.settings-speech-path-picker {
+    width: auto;
+    min-width: 9;
+    height: 1;
+    min-height: 1;
+    margin: 0 0 0 1;
 }
 
 /* One row per backend inside the Backends block -- label, status badge,

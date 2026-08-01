@@ -972,7 +972,12 @@ async def test_stts_settings_save_logs_names_and_destinations_not_secrets(
         await asyncio.wait_for(service.wait_closed(), timeout=_TEST_WAIT_SECONDS)
 
     assert len(saved_batches) == 1
-    assert saved_batches[0]["API"] == secrets
+    assert saved_batches[0]["api_settings.openai"] == {
+        "api_key": secrets["openai_api_key"]
+    }
+    assert saved_batches[0]["api_settings.elevenlabs"] == {
+        "api_key": secrets["elevenlabs_api_key"]
+    }
     assert saved_deletes == [{}]
     assert service.preferences_generation() == 1
     assert registry.configuration_revision("openai") == 2
@@ -992,8 +997,8 @@ async def test_stts_settings_save_logs_names_and_destinations_not_secrets(
     )
     assert len(posted_messages) == 2
     rendered = "\n".join(messages)
-    assert "Saved openai_api_key to [API].openai_api_key" in rendered
-    assert "Saved elevenlabs_api_key to [API].elevenlabs_api_key" in rendered
+    assert "Saved openai_api_key to [api_settings.openai].api_key" in rendered
+    assert "Saved elevenlabs_api_key to [api_settings.elevenlabs].api_key" in rendered
     assert "information: Settings saved successfully!" in rendered
     for secret in secrets.values():
         assert secret not in rendered
@@ -1063,7 +1068,9 @@ async def test_stts_settings_save_does_not_echo_secret_from_writer_error(
                 for section, values in section_values.items()
             }
         )
-        raise RuntimeError(f"could not save {section_values['API']['openai_api_key']}")
+        raise RuntimeError(
+            f"could not save {section_values['api_settings.openai']['api_key']}"
+        )
 
     monkeypatch.setattr(config_module, "settings", current_settings)
     monkeypatch.setattr(
@@ -1092,7 +1099,7 @@ async def test_stts_settings_save_does_not_echo_secret_from_writer_error(
         await asyncio.wait_for(service.wait_closed(), timeout=_TEST_WAIT_SECONDS)
 
     assert len(attempted_batches) == 1
-    assert attempted_batches[0]["API"] == {"openai_api_key": secret}
+    assert attempted_batches[0]["api_settings.openai"] == {"api_key": secret}
     assert completion is not None
     assert completion.published is False
     assert completion.persistence.file_replaced is False
@@ -1222,7 +1229,7 @@ async def test_stts_settings_save_does_not_echo_reconfiguration_error_secret(
         await asyncio.wait_for(service.wait_closed(), timeout=_TEST_WAIT_SECONDS)
 
     assert len(saved_batches) == 1
-    assert saved_batches[0]["API"] == {"openai_api_key": secret}
+    assert saved_batches[0]["api_settings.openai"] == {"api_key": secret}
     assert attempted_configs[0][0] == "openai"
     assert attempted_configs[0][1]["app_config"]["openai_api"]["api_key"] == secret
     assert completion is not None
@@ -1243,7 +1250,7 @@ async def test_stts_settings_save_does_not_echo_reconfiguration_error_secret(
             repr(completion),
         ]
     )
-    assert "Saved openai_api_key to [API].openai_api_key" in rendered
+    assert "Saved openai_api_key to [api_settings.openai].api_key" in rendered
     assert "rejected credential" not in rendered
     assert secret not in rendered
     assert secret[:12] not in rendered
