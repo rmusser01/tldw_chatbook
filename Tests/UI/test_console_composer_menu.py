@@ -380,20 +380,28 @@ def test_transcript_trimming_keeps_newest_and_stays_user_first():
 
 
 @pytest.mark.unit
-def test_temporary_tab_has_a_free_chord_and_a_palette_entry():
-    """Alt+T must not collide, and the palette path must exist regardless.
+def test_temporary_tab_has_no_chord_but_keeps_the_palette_entry():
+    """Alt+T was removed after live verification proved it doesn't work.
 
-    A chord that a terminal swallows is not a guaranteed path; the palette
-    entry is. Both are asserted so neither can quietly disappear.
+    Textual 8.2.7 reports ``Key("alt+t", "t").is_printable == True``, so a
+    focused composer ``Input`` -- where a chat user's focus almost always
+    is -- consumed the chord and inserted a literal "t" into the draft
+    instead of dispatching the action. The palette entry and the tab-strip
+    button are the only entry points now; this asserts the chord stays gone
+    and that both remaining paths (palette entry, underlying action) are
+    still wired, so nobody re-adds a chord that doesn't work.
     """
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
 
     keys = [b.key for b in ChatScreen.BINDINGS]
-    assert keys.count("alt+t") == 1
-    assert [b.action for b in ChatScreen.BINDINGS if b.key == "alt+t"] == [
-        "new_temporary_console_tab"
-    ]
+    assert "alt+t" not in keys, "alt+t never reaches a focused composer -- do not re-add it"
     assert callable(ChatScreen.action_new_temporary_console_tab)
+
+    commands = ConsoleCommandProvider._commands(None, ChatScreen)
+    entry = next(c for c in commands if c[0] == "Console: New temporary chat")
+    assert entry[1] is ChatScreen.action_new_temporary_console_tab
+    assert "Alt+T" not in entry[2], "help text must not advertise a chord that doesn't work"
 
 
 @pytest.mark.unit

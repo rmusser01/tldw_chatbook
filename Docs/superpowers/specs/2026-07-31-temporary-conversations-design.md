@@ -100,10 +100,12 @@ A new action, `action_new_temporary_console_tab`, creating a session exactly as
 - the command palette entry "New temporary chat" (guaranteed path);
 - a "New temporary chat" button in the tab strip beside the existing
   `#console-new-chat-tab` button, in `console_session_surface.py`;
-- `Alt+T`, chosen for consistency with the existing Alt family (`Alt+M` model,
-  `Alt+W` workspace) and its mnemonic link to `Ctrl+T` (new tab). **The binding
-  must be verified live in a real terminal before it is committed to**; if it
-  does not reach the app, the palette and tab-strip paths stand alone.
+- ~~`Alt+T`~~ — a chord binding was tried for consistency with the existing
+  Alt family (`Alt+M` model, `Alt+W` workspace) and its mnemonic link to
+  `Ctrl+T` (new tab), gated on live-terminal verification before being
+  committed to. Verification failed (see "Live verification" →
+  "`Alt+T` — FAILED (defect), removed") and the binding was removed; the
+  palette and tab-strip paths are the only entry points.
 
 The existing `Ctrl+T` / "New tab" path keeps its current meaning.
 
@@ -305,7 +307,7 @@ exercised at all until `[first_run] setup_completed` and a provider are
 configured. A stub `openai` key was used; its `401` reply is itself evidence
 that sends genuinely left the app.
 
-### Alt+T — FAILED (defect)
+### Alt+T — FAILED (defect), removed
 
 `Alt+T` creates the tab when focus is **outside** the composer (`◌ Chat 2`
 appeared after `F6`). With focus **in the composer** — the normal state while
@@ -315,8 +317,15 @@ is neither a tmux artifact nor specific to this feature: in Textual 8.2.7
 `Key("alt+t", "t").is_printable` is `True`, so the focused `Input` eats the key
 and the screen binding never runs. Every `alt+<letter>` binding on this screen
 is affected. The binding is therefore not dead code, but it is unreachable
-where users would press it, and it corrupts the draft when they do. Removal has
-scope beyond this feature and is left as an open decision.
+where users would press it, and it corrupts the draft when they do.
+
+**Decided: removed.** Advertising a shortcut that types a stray character into
+the user's draft is worse than advertising none. The `Binding("alt+t", ...)`
+entry was deleted from `ChatScreen.BINDINGS`; `action_new_temporary_console_tab`
+itself, the command-palette entry, and the tab-strip button are unaffected —
+they were always the guaranteed paths (see "Both guaranteed routes work"
+below). The app-wide `alt+<letter>`-vs-printable-key defect that caused this
+is out of scope for this feature and was not otherwise investigated or fixed.
 
 Both guaranteed routes work: the palette (`Console: New temporary chat` →
 `◌ Chat 3`) and the tab-strip `Temporary` button (→ `◌ Chat 4`). Neither wrote a

@@ -1385,7 +1385,6 @@ class ChatScreen(BaseAppScreen):
         # dismiss) must keep winning before this screen-level fallback runs.
         Binding("escape", "focus_console_composer_home", "Composer", show=False),
         Binding("ctrl+t", "new_console_tab", "New tab", show=True),
-        Binding("alt+t", "new_temporary_console_tab", "Temporary tab", show=False),
         Binding("alt+1", "jump_console_tab(1)", "Tab 1", show=False),
         Binding("alt+2", "jump_console_tab(2)", "Tab 2", show=False),
         Binding("alt+3", "jump_console_tab(3)", "Tab 3", show=False),
@@ -1963,7 +1962,15 @@ class ChatScreen(BaseAppScreen):
         )
 
     def action_new_temporary_console_tab(self) -> None:
-        """Open a temporary Console tab: never saved locally (Alt+T).
+        """Open a temporary Console tab: never saved locally.
+
+        Reached via the command palette ("Console: New temporary chat") or
+        the tab-strip button -- not a keybinding. An ``alt+t`` chord was
+        tried and removed: live verification found it never reached the
+        screen when the composer had focus (Textual 8.2.7 treats it as a
+        printable key, so the focused ``Input`` consumed it and inserted a
+        literal "t" into the draft instead). See
+        ``Docs/superpowers/specs/2026-07-31-temporary-conversations-design.md``.
 
         Born temporary rather than converted: a chat that persists its first
         exchange and is made temporary afterwards has already written rows.
@@ -2228,8 +2235,9 @@ class ChatScreen(BaseAppScreen):
         self._invalidate_console_persisted_rows_cache()
         await self._sync_native_console_chat_ui()
         # Task-7: this is the shared activation path for every "new session"
-        # entry point (plain Ctrl+T, "New Temporary"/Alt+T, and the other
-        # internal callers below) -- `_sync_native_console_chat_ui()` above
+        # entry point (plain Ctrl+T, "New Temporary" via the palette/tab-strip
+        # button, and the other internal callers below) --
+        # `_sync_native_console_chat_ui()` above
         # never touches `#console-temporary-chip` (same reason it never
         # touches the scope chip; see `_sync_console_retrieval_scope_row`).
         # Without this push a freshly created temporary tab would render
