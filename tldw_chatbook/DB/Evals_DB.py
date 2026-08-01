@@ -37,7 +37,7 @@ from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
 # Database Schema Version
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class EvalsDBError(Exception):
@@ -308,6 +308,42 @@ class EvalsDB:
             )
         """)
 
+        # Character probe review tables (task-1691 phase 1): per-turn
+        # annotations and per-conversation review state are two separate
+        # homes -- see EvalsDB.upsert_probe_turn_annotation/
+        # upsert_probe_review_state for why they must not be merged.
+        conn.execute("""
+            CREATE TABLE eval_probe_turn_annotations (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                run_group_id TEXT NOT NULL,
+                card_id INTEGER NOT NULL,
+                probe_index INTEGER NOT NULL,
+                sample_index INTEGER NOT NULL,
+                target_id TEXT NOT NULL,
+                turn_index INTEGER NOT NULL,
+                tags TEXT NOT NULL,          -- JSON list of tag slugs
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                client_id TEXT NOT NULL,
+                UNIQUE(run_group_id, card_id, probe_index, sample_index, target_id, turn_index)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE eval_probe_review_state (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                run_group_id TEXT NOT NULL,
+                card_id INTEGER NOT NULL,
+                probe_index INTEGER NOT NULL,
+                sample_index INTEGER NOT NULL,
+                target_id TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                reviewed_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                client_id TEXT NOT NULL,
+                UNIQUE(run_group_id, card_id, probe_index, sample_index, target_id)
+            )
+        """)
+
         # Create indexes for performance
         conn.execute("CREATE INDEX idx_eval_tasks_type ON eval_tasks (task_type)")
         conn.execute("CREATE INDEX idx_eval_tasks_deleted ON eval_tasks (deleted_at)")
@@ -318,6 +354,14 @@ class EvalsDB:
         conn.execute("CREATE INDEX idx_eval_results_run ON eval_results (run_id)")
         conn.execute(
             "CREATE INDEX idx_eval_run_metrics_run ON eval_run_metrics (run_id)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_probe_annotations_group "
+            "ON eval_probe_turn_annotations (run_group_id)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_probe_review_group "
+            "ON eval_probe_review_state (run_group_id)"
         )
 
         # Create FTS5 tables for search
@@ -581,6 +625,52 @@ class EvalsDB:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_eval_runs_group "
                 "ON eval_runs (run_group_id)"
+            )
+
+        if current_version < 5 and SCHEMA_VERSION >= 5:
+            logger.info(
+                "Migrating to version 5: Adding character probe annotation "
+                "and review-state tables"
+            )
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS eval_probe_turn_annotations (
+                    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                    run_group_id TEXT NOT NULL,
+                    card_id INTEGER NOT NULL,
+                    probe_index INTEGER NOT NULL,
+                    sample_index INTEGER NOT NULL,
+                    target_id TEXT NOT NULL,
+                    turn_index INTEGER NOT NULL,
+                    tags TEXT NOT NULL,
+                    note TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                    client_id TEXT NOT NULL,
+                    UNIQUE(run_group_id, card_id, probe_index, sample_index, target_id, turn_index)
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS eval_probe_review_state (
+                    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                    run_group_id TEXT NOT NULL,
+                    card_id INTEGER NOT NULL,
+                    probe_index INTEGER NOT NULL,
+                    sample_index INTEGER NOT NULL,
+                    target_id TEXT NOT NULL,
+                    note TEXT NOT NULL DEFAULT '',
+                    reviewed_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                    client_id TEXT NOT NULL,
+                    UNIQUE(run_group_id, card_id, probe_index, sample_index, target_id)
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_probe_annotations_group "
+                "ON eval_probe_turn_annotations (run_group_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_probe_review_group "
+                "ON eval_probe_review_state (run_group_id)"
             )
 
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -1707,6 +1797,145 @@ class EvalsDB:
             }
 
         return metrics
+
+    # --- Character Probe Review Management (task-1691 phase 1) ---
+    #
+    # Two separate homes, deliberately not merged:
+    #   eval_probe_turn_annotations -- keyed down to turn_index, holds tags
+    #     + a note about ONE turn ("it broke character on the third turn").
+    #   eval_probe_review_state -- keyed one level up (no turn_index), holds
+    #     reviewed_at + an optional note about a WHOLE conversation. This is
+    #     the only home for "I read this and nothing was notable", which
+    #     must be recordable with zero turn annotations.
+    # Both use INSERT OR REPLACE against their UNIQUE key, the same
+    # replace-on-conflict convention store_run_metrics already uses above:
+    # re-annotating a turn, or re-marking a conversation reviewed, replaces
+    # the prior row (a fresh id, created_at, and updated_at/reviewed_at)
+    # rather than erroring or accumulating duplicates.
+
+    def upsert_probe_turn_annotation(
+        self,
+        run_group_id: str,
+        card_id: int,
+        probe_index: int,
+        sample_index: int,
+        target_id: str,
+        turn_index: int,
+        tags: List[str],
+        note: str = "",
+    ) -> None:
+        """Create or replace one conversation turn's annotation.
+
+        Args:
+            run_group_id: The run group the conversation belongs to.
+            card_id: The character card's ``character_cards.id``.
+            probe_index: The probe's zero-based index within its probe set.
+            sample_index: The zero-based sample number for this cell.
+            target_id: The target's ``eval_models.id``.
+            turn_index: The zero-based turn within the conversation.
+            tags: Tag slugs describing this turn. Stored as a JSON list.
+            note: Free-text reviewer note for this turn.
+        """
+        conn = self._get_connection()
+        with conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO eval_probe_turn_annotations
+                (run_group_id, card_id, probe_index, sample_index, target_id,
+                 turn_index, tags, note, client_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_group_id,
+                    card_id,
+                    probe_index,
+                    sample_index,
+                    target_id,
+                    turn_index,
+                    json.dumps(list(tags)),
+                    note,
+                    self.client_id,
+                ),
+            )
+
+    def list_probe_turn_annotations(self, run_group_id: str) -> List[Dict[str, Any]]:
+        """Every turn annotation recorded for one run group.
+
+        Args:
+            run_group_id: The run group to read.
+
+        Returns:
+            Matching ``eval_probe_turn_annotations`` rows, each with ``tags``
+            parsed from JSON into a list.
+        """
+        conn = self._get_connection()
+        cursor = conn.execute(
+            "SELECT * FROM eval_probe_turn_annotations WHERE run_group_id = ?",
+            (run_group_id,),
+        )
+        rows = []
+        for row in cursor.fetchall():
+            data = dict(row)
+            data["tags"] = json.loads(data["tags"])
+            rows.append(data)
+        return rows
+
+    def upsert_probe_review_state(
+        self,
+        run_group_id: str,
+        card_id: int,
+        probe_index: int,
+        sample_index: int,
+        target_id: str,
+        note: str = "",
+    ) -> None:
+        """Mark one conversation reviewed, creating or replacing its state.
+
+        Args:
+            run_group_id: The run group the conversation belongs to.
+            card_id: The character card's ``character_cards.id``.
+            probe_index: The probe's zero-based index within its probe set.
+            sample_index: The zero-based sample number for this cell.
+            target_id: The target's ``eval_models.id``.
+            note: Free-text reviewer note for the whole conversation. Empty
+                is a normal value -- "reviewed, nothing notable" carries no
+                note at all.
+        """
+        conn = self._get_connection()
+        with conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO eval_probe_review_state
+                (run_group_id, card_id, probe_index, sample_index, target_id,
+                 note, client_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_group_id,
+                    card_id,
+                    probe_index,
+                    sample_index,
+                    target_id,
+                    note,
+                    self.client_id,
+                ),
+            )
+
+    def list_probe_review_state(self, run_group_id: str) -> List[Dict[str, Any]]:
+        """Every conversation's review state for one run group.
+
+        Args:
+            run_group_id: The run group to read.
+
+        Returns:
+            Matching ``eval_probe_review_state`` rows.
+        """
+        conn = self._get_connection()
+        cursor = conn.execute(
+            "SELECT * FROM eval_probe_review_state WHERE run_group_id = ?",
+            (run_group_id,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
     # --- Analysis Methods ---
 
