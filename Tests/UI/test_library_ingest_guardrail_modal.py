@@ -85,6 +85,33 @@ async def test_guardrail_modal_cancel(sample_warnings, sample_counts):
 
 
 @pytest.mark.asyncio
+async def test_guardrail_modal_escape_dismisses(sample_warnings, sample_counts):
+    """TASK-596 Task 7: BINDINGS used ``dismiss(false)`` (lowercase) --
+
+    ``textual.actions.parse`` runs ``ast.literal_eval`` on the action's
+    argument text, and lowercase ``false`` is not a Python literal, so
+    pressing Escape raised ``ActionError: unable to parse 'false' in
+    action 'dismiss(false)'`` instead of ever dismissing the modal.
+    Confirmed directly against ``textual.actions.parse`` before fixing it
+    to ``dismiss(False)``. This test exercises the real key binding
+    through ``pilot.press`` -- not the mapped Python callable directly --
+    so it would have caught the bug: before the fix, this raises instead
+    of reaching the ``assert``.
+    """
+    app = GuardrailApp()
+    async with app.run_test() as pilot:
+        captured: list[bool] = []
+        modal = IngestGuardrailModal(sample_warnings, sample_counts)
+        await app.push_screen(modal, lambda result: captured.append(result))
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert captured == [False]
+
+
+@pytest.mark.asyncio
 async def test_guardrail_modal_copy_command(sample_warnings, sample_counts):
     app = GuardrailApp()
     async with app.run_test() as pilot:

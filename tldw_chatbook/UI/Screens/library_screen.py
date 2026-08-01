@@ -771,7 +771,7 @@ class IngestGuardrailModal(ModalScreen[bool]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss(false)", "Close")]
+    BINDINGS = [("escape", "dismiss(False)", "Close")]
 
     def __init__(self, warnings: list[dict], affected_counts: dict[str, int]) -> None:
         self.warnings = warnings
