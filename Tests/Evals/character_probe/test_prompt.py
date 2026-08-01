@@ -71,6 +71,18 @@ def test_message_example_absent_contributes_nothing():
     assert composed == "You are Vex."
 
 
+def test_empty_card_and_no_steering_pins_a_blank_system_message():
+    """A card with no system prompt, no persona fields, and no steering still
+    emits a leading `{"role": "system", "content": ""}`, not a missing or
+    skipped system message. This is deliberate -- see compose_system_prompt's
+    docstring -- so a later refactor cannot silently drop the system message
+    (or its stable position as messages[0]) for a content-free card."""
+    empty_card = CardSnapshot(id=1, name="Blank")
+    assert compose_system_prompt(empty_card, None) == ""
+    messages = build_messages(empty_card, None, ["Hi?"], [])
+    assert messages[0] == {"role": "system", "content": ""}
+
+
 def test_post_history_instructions_come_after_message_example():
     card = _card(message_example="EXAMPLE-TEXT", post_history_instructions="POST-TEXT")
     composed = compose_system_prompt(card, None)

@@ -164,12 +164,21 @@ the whole TUI — a failure this codebase has already been bitten by. Every call
 and `chat_conversation_scope_service.py`). The bench's own `concurrency` setting is what bounds the
 thread fan-out; the default executor's size must not be the de-facto limit.
 
-**Prompt assembly reuses `Character_Chat_Lib`'s card→prompt path** rather than a private copy —
-otherwise the eval measures a character the app never actually presents to users. The card's
-`first_message` seeds the opening assistant turn as in real roleplay, then the probe's scripted user
-turns alternate with model replies, accumulating context. **A card with no `first_message` simply
-starts with the user's first scripted turn** — no synthetic greeting is invented, because inventing
-one would mean evaluating text the character never had.
+**Prompt assembly is the engine's own code, not reuse of an existing path.** The original intent
+here was to reuse `Character_Chat_Lib`'s card→prompt path rather than write a private copy, but no
+such function exists — the actual joiner lives in
+`UI/Screens/chat_screen.py::_character_session_prompt_seed`, which the engine cannot import
+without violating its no-`UI/`-dependencies boundary. So the engine composes the prompt itself,
+deliberately including every field that shapes voice: `system_prompt`, `personality`, `scenario`,
+`message_example`, and `post_history_instructions`. Console's own joiner currently sends only
+`system_prompt`, `personality`, `description`, and `scenario` — it omits `message_example` and
+`post_history_instructions` — so a probe run is **not** byte-identical to what Console sends
+today. Per the human's ruling, the eval's full-card fidelity is correct and Console is the one
+that should catch up; TASK-1744 tracks extracting one shared card→prompt function both paths use.
+The card's `first_message` seeds the opening assistant turn as in real roleplay, then the probe's
+scripted user turns alternate with model replies, accumulating context. **A card with no
+`first_message` simply starts with the user's first scripted turn** — no synthetic greeting is
+invented, because inventing one would mean evaluating text the character never had.
 
 **Target steering and card system prompts compose, steering first.** Task-1611 lets a target carry
 its own `system_prompt`; every card has one too. Steering is a model-level instruction and the card
@@ -262,7 +271,9 @@ a number.
 Real in-memory `EvalsDB` and a fake chat client, as elsewhere in the slice. Specific to this eval:
 
 - multi-turn ordering: turn *N* genuinely sees turn *N−1*'s reply
-- prompt assembly matches `Character_Chat_Lib`'s real output rather than a fork
+- prompt assembly includes every field that shapes voice (`message_example`,
+  `post_history_instructions` included), pending TASK-1744 bringing Console up to the same
+  fidelity via a shared function
 - annotation persistence and resumption across sessions
 - partial-conversation review after a mid-conversation failure
 - aggregation math, including that no composite score exists

@@ -28,7 +28,11 @@ def compose_system_prompt(card: CardSnapshot, steering: Optional[str]) -> str:
 
     Returns:
         str: Steering first, then the card's persona text. Empty parts are
-        omitted rather than contributing blank lines.
+        omitted rather than contributing blank lines. If every part is empty
+        (no steering, no card text at all), this deliberately returns ``""``
+        rather than raising: ``build_messages`` always emits exactly one
+        leading system message, so the message shape stays stable even for a
+        content-free card.
     """
     parts = [
         steering or "",
