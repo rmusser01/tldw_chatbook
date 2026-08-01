@@ -38,15 +38,26 @@ slot. It also takes care that a *second* failure, from `aclose()` itself
 while a drain has already failed, does not replace the drain's real error;
 it is logged (by type only) and the original error still propagates. The
 exact path below manually reproduces that same `try`/`finally` shape rather
-than relying on a bare `async with response:`, specifically to preserve that
-guarantee.
+than relying on a bare `async with response:` -- **deliberately, not for
+style.** Both `async with response:` and `contextlib.aclosing(response)`
+call `__aexit__`/`aclose()` from inside their own exception handling, and if
+that second call *also* raises, it replaces the body's exception (demoted
+to `__context__` on the new one) rather than letting the original
+propagate as primary. Reviewed and confirmed against the real
+`TTSAudioResponse` (task-5 review round 1). Do not "simplify" this back to
+`async with`/`aclosing` -- it would silently reintroduce exactly the bug
+this module exists to avoid.
 
 **Long turns are chunked.** Text longer than `MAX_TURN_CHARS` characters is
 split with `TTS/text_processing.TextChunker` and the per-chunk WAV results
 stitched with `TTS/audio_stitch.concat_wav_segments`. `TextChunker`'s "token"
 budget is a `words * 1.3` estimate (`TOKENS_PER_WORD`), not a real tokenizer
 -- see `_CHUNK_MAX_TOKENS` below for why this module picks a budget well
-under the backends' own default of 500.
+under the backends' own default of 500. `TextChunker` groups by
+sentence/word boundaries, so it cannot split text with no whitespace at all
+(dense CJK, or a pathological space-free run) no matter what budget it is
+given; `_hard_split_piece` is the backstop that makes `MAX_TURN_CHARS` an
+actual cap on every piece, not just a hint to the chunker.
 
 **An unmapped legacy `provider_id` is rejected before it ever reaches the
 shared builder.** `TTS/legacy_request_builder.build_legacy_speech_request`
@@ -122,6 +133,54 @@ class TurnSynthesisError(RuntimeError):
     """
 
 
+def _hard_split_piece(piece: str) -> list[str]:
+    """Force `piece` under `MAX_TURN_CHARS`, splitting whitespace-blind text.
+
+    `TextChunker` groups by sentence/word boundaries and budgets on an
+    estimated word/token count, not a character count -- so a piece with no
+    sentence-ending punctuation and no whitespace at all (dense CJK text, or
+    a pathological space-free run) comes back as a single oversized `str`
+    regardless of the token budget it was given (its own word-count
+    estimate for such a piece is `1`, nowhere near any reasonable budget).
+    This is the hard backstop that makes `MAX_TURN_CHARS` an actual cap on
+    every synthesis request, not just a hint to the chunker.
+
+    Args:
+        piece: One `TextChunker` piece (or a whole turn, when unchunked).
+
+    Returns:
+        `[piece]` unchanged when already at or under `MAX_TURN_CHARS`.
+        Otherwise, `piece` cut into consecutive windows of at most
+        `MAX_TURN_CHARS` characters each: a cut prefers the last whitespace
+        character in the back half of each window (so an ordinary word is
+        not sliced mid-token when a break is available), falling back to a
+        hard cut at exactly `MAX_TURN_CHARS` when no whitespace exists in
+        that window at all.
+    """
+    if len(piece) <= MAX_TURN_CHARS:
+        return [piece]
+
+    pieces: list[str] = []
+    remaining = piece
+    search_floor = MAX_TURN_CHARS // 2
+    while len(remaining) > MAX_TURN_CHARS:
+        window = remaining[:MAX_TURN_CHARS]
+        break_at = None
+        for index in range(len(window) - 1, search_floor, -1):
+            if window[index].isspace():
+                break_at = index
+                break
+        if break_at is not None:
+            pieces.append(remaining[:break_at].rstrip())
+            remaining = remaining[break_at:].lstrip()
+        else:
+            pieces.append(window)
+            remaining = remaining[MAX_TURN_CHARS:]
+    if remaining:
+        pieces.append(remaining)
+    return pieces
+
+
 def _split_turn_text(text: str) -> list[str]:
     """Split one turn's text into synthesis-sized pieces.
 
@@ -133,14 +192,21 @@ def _split_turn_text(text: str) -> list[str]:
         characters (the common case, and the only case that never needs
         `concat_wav_segments` -- see the module docstring on why that
         matters for the optional `pydub` dependency). Otherwise, the
-        non-empty pieces `TextChunker` splits `text` into.
+        non-empty pieces `TextChunker` splits `text` into, each further
+        passed through `_hard_split_piece` so no returned piece ever
+        exceeds `MAX_TURN_CHARS` characters.
     """
     if len(text) <= MAX_TURN_CHARS:
         return [text]
 
     chunker = TextChunker(max_tokens=_CHUNK_MAX_TOKENS)
     pieces = [chunk.text for chunk in chunker.chunk_text(text) if chunk.text.strip()]
-    return pieces or [text]
+    pieces = pieces or [text]
+
+    capped: list[str] = []
+    for candidate in pieces:
+        capped.extend(_hard_split_piece(candidate))
+    return capped
 
 
 def _looks_like_wav(payload: bytes) -> bool:
@@ -238,7 +304,10 @@ async def _synthesize_exact_chunk(
     (`tts_events.py:899-912`) shape: the response is closed exactly once,
     on every exit path -- success, a validation failure, or a drain failure
     -- and a *second* failure from closing itself never replaces the
-    primary error; it is logged by type only.
+    primary error; it is logged by type only. This is a manual
+    `try`/`except`/`finally`, not `async with response:` -- see the module
+    docstring's "Closing the response is load-bearing" section for why
+    that substitution is unsafe here.
 
     Args:
         tts_service: The app's TTS service, duck-typed to `synthesize_exact`.

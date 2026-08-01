@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from pydub import AudioSegment
 
+import tldw_chatbook.Subscriptions.briefing_audio as briefing_audio
 from tldw_chatbook.Subscriptions.briefing_audio import (
     MAX_TURN_CHARS,
     TurnSynthesisError,
@@ -25,6 +26,7 @@ from tldw_chatbook.Subscriptions.briefing_audio import (
 )
 from tldw_chatbook.Subscriptions.briefing_voices import VoiceSelection
 from tldw_chatbook.TTS.adapter_types import TTSAudioResponse, TTSRequest
+from tldw_chatbook.TTS.audio_stitch import AudioStitchError
 from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
 
 pytestmark = pytest.mark.unit
@@ -105,9 +107,15 @@ def _exact_snapshot(
 
 @dataclass
 class _ExactPlan:
-    """One programmed `synthesize_exact` call's outcome."""
+    """One programmed `synthesize_exact` call's outcome.
 
-    snapshot: TTSRequestedSelectionSnapshot
+    `snapshot` is typed `object`, not `TTSRequestedSelectionSnapshot`, on
+    purpose: some tests deliberately program a non-snapshot (`None`, or a
+    same-shaped look-alike) to prove `_validate_exact_snapshot` rejects
+    anything that is not the exact real type.
+    """
+
+    snapshot: object
     chunks: list[bytes]
     stream_error: BaseException | None = None
 
@@ -129,6 +137,14 @@ class _FakeTTSService:
     set, makes every `generate_audio_stream` call yield the same fixed
     chunk instead, for a long-turn test that does not care how many pieces
     `TextChunker` produces, only that there is more than one.
+
+    `aclose_count` counts actual *calls* to the response's `aclose()`,
+    wrapping the real bound method rather than registering a cleanup
+    callback: `TTSAudioResponse.aclose()` is itself idempotent (a second
+    call short-circuits before running any cleanup callback,
+    `adapter_types.py:388-390`), so a callback-based counter would not
+    notice the module under test calling `aclose()` twice. Wrapping the
+    method call itself does.
     """
 
     exact_plans: list[_ExactPlan] = field(default_factory=list)
@@ -155,11 +171,14 @@ class _FakeTTSService:
             content_type="audio/wav",
             byte_stream=_stream(),
         )
-        response.add_cleanup(self._count_aclose)
-        return response, plan.snapshot
+        original_aclose = response.aclose
 
-    async def _count_aclose(self) -> None:
-        self.aclose_count += 1
+        async def _counting_aclose() -> None:
+            self.aclose_count += 1
+            await original_aclose()
+
+        response.aclose = _counting_aclose
+        return response, plan.snapshot
 
     async def generate_audio_stream(
         self,
@@ -246,6 +265,62 @@ async def test_exact_path_contract_violation_names_speaker_index_and_both_voices
     assert "voice-a" in message
     assert "voice-b" in message
     # The response must still be released even though validation failed.
+    assert service.aclose_count == 1
+
+
+async def test_exact_path_rejects_a_missing_snapshot_naming_speaker_and_index() -> None:
+    """The provider returning no provenance at all must not be treated as OK."""
+    selection = _exact_selection(speaker="Host")
+    service = _FakeTTSService(
+        exact_plans=[_ExactPlan(snapshot=None, chunks=[_silence_wav(80)])]
+    )
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        await synthesize_turn(service, selection, "hello", turn_index=7)
+
+    message = str(caught.value)
+    assert "Host" in message
+    assert "turn 7" in message
+    assert service.aclose_count == 1
+
+
+async def test_exact_path_rejects_a_look_alike_snapshot_object() -> None:
+    """A same-shaped object that is not the real snapshot type must still fail.
+
+    `_validate_exact_snapshot` uses `type(...) is not
+    TTSRequestedSelectionSnapshot`, not `isinstance`/duck-typing,
+    specifically so a look-alike object (right attribute names, wrong
+    type) cannot slip through.
+    """
+
+    @dataclass
+    class _LookAlikeSnapshot:
+        provider_id: str
+        model_id: str
+        voice_id: str | None
+        response_format: str
+        speed: float
+        options: dict
+
+    selection = _exact_selection(speaker="Host", model_id="model-a", voice_id="voice-a")
+    look_alike = _LookAlikeSnapshot(
+        provider_id="audio_cpp",
+        model_id="model-a",
+        voice_id="voice-a",
+        response_format="wav",
+        speed=1.0,
+        options={},
+    )
+    service = _FakeTTSService(
+        exact_plans=[_ExactPlan(snapshot=look_alike, chunks=[_silence_wav(80)])]
+    )
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        await synthesize_turn(service, selection, "hello", turn_index=8)
+
+    message = str(caught.value)
+    assert "Host" in message
+    assert "turn 8" in message
     assert service.aclose_count == 1
 
 
@@ -373,3 +448,61 @@ async def test_short_turn_is_not_chunked_and_needs_only_one_provider_call() -> N
 
     assert result == wav
     assert len(service.legacy_requests) == 1
+
+
+async def test_hard_cap_splits_dense_no_whitespace_text_under_the_character_gate() -> (
+    None
+):
+    """`TextChunker` cannot split text with no whitespace at all.
+
+    Its own word-count-based token estimate for a single whitespace-free
+    run is `1` (`len(text.split())`), nowhere near any chunk budget, so it
+    comes back as one oversized piece regardless of `_CHUNK_MAX_TOKENS` --
+    this is the "3000 chars -> 1 piece" failure mode from review round 1.
+    `_hard_split_piece` is the backstop that makes `MAX_TURN_CHARS` an
+    actual cap: assert every request this turn produces carries text at or
+    under the limit.
+    """
+    text = "字" * 3000  # dense CJK-style run with no whitespace anywhere
+    assert len(text) > MAX_TURN_CHARS
+
+    selection = _legacy_selection(provider_id="kokoro")
+    service = _FakeTTSService(legacy_repeat_chunk=_silence_wav(50))
+
+    await synthesize_turn(service, selection, text, turn_index=0)
+
+    assert len(service.legacy_requests) > 1
+    for request, _internal_model_id in service.legacy_requests:
+        assert len(request.input) <= MAX_TURN_CHARS
+
+
+async def test_stitch_failure_on_a_long_turn_raises_naming_speaker_and_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A multi-chunk turn whose pieces cannot be stitched must still fail by name.
+
+    Forces `concat_wav_segments` to raise (rather than relying on an
+    undecodable chunk, which `_looks_like_wav`/`pydub` might reject earlier
+    for a different reason) so this pins the stitch-failure wrapping path
+    specifically, independent of any other validation.
+    """
+
+    def _boom(segments: list[bytes], *, gap_ms: int = 350) -> bytes:
+        raise AudioStitchError("segment 1 could not be decoded", segment_index=1)
+
+    monkeypatch.setattr(briefing_audio, "concat_wav_segments", _boom)
+
+    sentence = "This sentence repeats to build a turn longer than the character gate. "
+    text = sentence * 40
+    assert len(text) > MAX_TURN_CHARS
+
+    selection = _legacy_selection(provider_id="kokoro", speaker="Narrator")
+    service = _FakeTTSService(legacy_repeat_chunk=_silence_wav(80))
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        await synthesize_turn(service, selection, text, turn_index=9)
+
+    message = str(caught.value)
+    assert "Narrator" in message
+    assert "turn 9" in message
+    assert len(service.legacy_requests) > 1
