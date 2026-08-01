@@ -22,7 +22,9 @@ audio synthesized from those scripts. Two export actions live on that
 section's top toolbar, and both write to a location you pick:
 
 - **Export** saves the selected briefing as a Markdown file. It is enabled
-  once a briefing has finished generating.
+  once you have selected a briefing that has finished generating — a
+  finished briefing that isn't selected, or nothing selected at all, leaves
+  the button disabled.
 - **Export Feed** writes a **podcast feed directory**: a `feed.xml` plus a
   copy of every finished audio episode in the watchlist. It is enabled once
   at least one episode exists.

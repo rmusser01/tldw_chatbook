@@ -31,6 +31,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock
+from urllib.parse import unquote
 
 import pytest
 
@@ -659,3 +660,144 @@ def test_a_destination_failing_validate_path_simple_raises_before_anything_is_wr
 
     query_spy.assert_not_called()
     assert not hostile_destination.exists()
+
+
+# --- FIX B (whole-branch review): the export must page, never truncate -----
+#
+# The original implementation called `list_watchlist_audio_episodes(
+# watchlist_id)` with the accessor's default `limit=500` and never paged, so
+# episode 501+ was neither exported nor recorded in `skipped` -- the export
+# would report full success while silently dropping the tail. Real SQL
+# `LIMIT`/`OFFSET` only ever returns fewer than `limit` rows when the table
+# is actually exhausted, so shrinking `_EPISODES_PAGE_SIZE` (a module
+# attribute for exactly this reason) lets these tests exercise a real
+# multi-page walk with a handful of seeded rows rather than hundreds.
+
+
+def test_export_pages_through_more_than_one_page_of_episodes(tmp_path, monkeypatch):
+    """The literal "more episodes than one page" case: with the page size
+    shrunk to 2 and 5 real episodes seeded, every one must still be
+    exported -- no gaps, no silent truncation at the first page boundary.
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(briefing_export, "_EPISODES_PAGE_SIZE", 2)
+    db = _db(tmp_path)
+    watchlist_id = _make_watchlist(db)
+    audio_dir = briefing_audio.briefing_audio_dir()
+
+    audio_ids = [
+        _seed_episode(
+            db,
+            watchlist_id,
+            audio_dir=audio_dir,
+            created_at=f"2026-01-{n + 1:02d} 00:00:00",
+            preset_name=f"Preset {n}",
+        )[0]
+        for n in range(5)
+    ]
+
+    destination = tmp_path / "export"
+    destination.mkdir()
+
+    result = export_feed_directory(
+        db, watchlist_id, destination=destination, watchlist_name="W", now=_NOW
+    )
+
+    assert result.episode_count == 5, (
+        "a page size smaller than the episode count must not truncate the "
+        "export -- every episode must still be exported"
+    )
+    assert result.skipped == []
+
+    written_audio_files = [p for p in destination.iterdir() if p.name != "feed.xml"]
+    assert len(written_audio_files) == 5
+
+    tree = ET.fromstring((destination / "feed.xml").read_bytes())
+    items = tree.findall("./channel/item")
+    assert len(items) == 5
+    guids = {item.findtext("guid") for item in items}
+    assert guids == {f"briefing-audio-{audio_id}" for audio_id in audio_ids}
+
+
+def test_export_calls_the_accessor_with_explicit_paging_kwargs_until_a_page_is_empty(
+    tmp_path, monkeypatch
+):
+    """Pins the actual CALL SHAPE, not just the outcome -- a caller that
+    reverted to a single bare call (`list_watchlist_audio_episodes(
+    watchlist_id)`, the exact FIX B bug: relying on the accessor's own
+    500-row default and never paging) would still return the one episode
+    seeded here (there are far fewer than 500), so an outcome-only
+    assertion cannot tell the two apart. This asserts every call passed
+    `limit`/`offset` explicitly, offsets advanced by the page size with no
+    gaps, and the walk stopped only once a page came back empty -- which
+    requires at least two calls even for a single-episode watchlist.
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    watchlist_id = _make_watchlist(db)
+    audio_dir = briefing_audio.briefing_audio_dir()
+    _seed_episode(db, watchlist_id, audio_dir=audio_dir)
+
+    real_query = db.list_watchlist_audio_episodes
+    query_spy = Mock(wraps=real_query)
+    monkeypatch.setattr(db, "list_watchlist_audio_episodes", query_spy)
+
+    destination = tmp_path / "export"
+    destination.mkdir()
+
+    export_feed_directory(
+        db, watchlist_id, destination=destination, watchlist_name="W", now=_NOW
+    )
+
+    # One page returns the single episode, a second (empty) page confirms
+    # there is nothing left -- exactly two calls, not one per episode and
+    # not an unbounded number.
+    assert query_spy.call_count == 2
+    page_size = briefing_export._EPISODES_PAGE_SIZE
+    expected_offsets = [0, page_size]
+    actual_offsets = [call.kwargs["offset"] for call in query_spy.call_args_list]
+    assert actual_offsets == expected_offsets
+    for call in query_spy.call_args_list:
+        assert call.kwargs["limit"] == page_size
+
+
+# --- FIX A (whole-branch review): percent-encoding end-to-end --------------
+
+
+def test_a_space_in_the_preset_name_stays_on_disk_but_is_encoded_in_the_feed(
+    tmp_path, monkeypatch
+):
+    """`safe_export_stem` deliberately keeps spaces in the exported filename
+    (pinned by `test_stem_keeps_ordinary_characters` for its other caller);
+    `briefing_feed.build_feed_xml` must percent-encode that same filename
+    ONLY when emitting the `<enclosure>` url, never on disk. This is the
+    end-to-end version of the property `test_briefing_feed.py` pins in
+    isolation."""
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    watchlist_id = _make_watchlist(db)
+    audio_dir = briefing_audio.briefing_audio_dir()
+    _seed_episode(db, watchlist_id, audio_dir=audio_dir, preset_name="Two Host Debate")
+
+    destination = tmp_path / "export"
+    destination.mkdir()
+
+    export_feed_directory(
+        db, watchlist_id, destination=destination, watchlist_name="W", now=_NOW
+    )
+
+    episode_files = [p for p in destination.iterdir() if p.name != "feed.xml"]
+    assert len(episode_files) == 1
+    on_disk_name = episode_files[0].name
+    assert " " in on_disk_name, "the on-disk filename must keep its space"
+
+    tree = ET.fromstring((destination / "feed.xml").read_bytes())
+    enclosure = tree.find("./channel/item/enclosure")
+    url = enclosure.get("url")
+
+    assert " " not in url, "the enclosure URL must not carry a raw space"
+    assert "%20" in url
+    assert unquote(url) == on_disk_name, (
+        "decoding the emitted URL must recover exactly the filename actually "
+        "written to disk"
+    )

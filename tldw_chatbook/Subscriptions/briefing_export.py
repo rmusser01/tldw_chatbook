@@ -24,8 +24,10 @@ user chose (through Task 5's `ExportFeedRequested` flow), alongside a
 markdown half above, this DOES do its own I/O -- validating the
 destination, copying files, and writing `feed.xml` atomically -- because
 the deliverable here is several files landing together, not one screen
-writing one file. Three decisions from the phase 3 plan are load-bearing
-for this half specifically:
+writing one file. Five decisions are load-bearing for this half
+specifically: the first three from the phase 3 plan, the fourth (full
+pagination) from this whole-branch review, and the fifth (`0o644`
+permissions) from Task 4's own review round 1:
 
 1. **Never route the destination through `Utils/private_paths.py`.**
    `secure_private_directory(..., application_owned=True)` chmods its
@@ -59,7 +61,20 @@ for this half specifically:
    (silence is never a state) applied to "one of many episodes broke",
    which is an honest partial success, not a reason to hand the user
    nothing at all.
-4. **Exported files get a fixed `0o644`, deliberately ignoring umask.**
+4. **The full watchlist is exported, never silently capped.**
+   `list_watchlist_audio_episodes` defaults its own `limit` to 500 rows
+   per call (CLAUDE.md's pagination rule, for callers that only want one
+   page); a feed export needs EVERY episode, so `export_feed_directory`
+   walks pages (`_EPISODES_PAGE_SIZE` at a time) until the accessor
+   returns an empty page, rather than a single bounded call. Whole-branch
+   review: the original single unbounded call silently truncated at 500
+   and recorded nothing in `skipped` for episode 501+ -- the exact
+   "success toast lies about scope" failure decision 3 above exists to
+   rule out for a single bad episode, just at a coarser grain (an entire
+   tail of episodes, not one). `_EPISODES_PAGE_SIZE` is a module attribute
+   (not an inline literal) specifically so a test can shrink it and
+   exercise the pagination loop without seeding hundreds of real rows.
+5. **Exported files get a fixed `0o644`, deliberately ignoring umask.**
    Audio in `briefing_audio_dir()` is written `0o600` by
    `atomic_private_write_bytes`, and `shutil.copy2` would carry that mode
    into the user's folder -- which silently breaks the entire deliverable:
@@ -248,6 +263,16 @@ def default_briefing_filename(
 _FEED_XML_NAME = "feed.xml"
 _FEED_XML_PARTIAL_NAME = "feed.xml.partial"
 
+#: Whole-branch review (FIX B): `list_watchlist_audio_episodes` defaults
+#: its own `limit` to 500, and the original single unbounded call here
+#: silently dropped episode 501+ with no record in `skipped`. Matches that
+#: same default so a typical watchlist (well under one page) still costs
+#: exactly one query; `export_feed_directory` below pages through as many
+#: calls as it takes to exhaust every episode. A module attribute (not an
+#: inline literal) so a test can shrink it and exercise the pagination
+#: loop itself without seeding hundreds of real rows.
+_EPISODES_PAGE_SIZE = 500
+
 #: Task 4 review round 1: the mode every file this module WRITES into the
 #: user's export directory ends up at -- an ordinary, group/other-readable
 #: file, deliberately NOT the `0o600` private-storage mode `briefing_audio_
@@ -300,7 +325,14 @@ def _episode_filename(row: Mapping[str, Any], source_path: Path) -> str:
             present. Only its suffix (extension) is reused.
 
     Returns:
-        A bare filename (no path separator), e.g. `"two-host-debate-42.wav"`.
+        A bare filename (no path separator), e.g. `"Two Host Debate-42.wav"`
+        for a `preset_name` of `"Two Host Debate"` and `audio_id` `42` --
+        `safe_export_stem` keeps spaces and original casing verbatim (see
+        its own docstring), it does not slugify. Whole-branch review (FIX
+        D): this docstring previously showed a slugified, lowercase-hyphen
+        example (`"two-host-debate-42.wav"`) that described away the exact
+        real-space property `briefing_feed.build_feed_xml` must
+        percent-encode at the `<enclosure>` URL.
     """
     audio_id = row.get("audio_id")
     stem = safe_export_stem(
@@ -547,9 +579,17 @@ def export_feed_directory(
     access on it (decision 2) -- no `Path(...)`, `.exists()`, `.stat()`, or
     `shutil.copy2` until `audio_file_path_is_safe` has passed.
 
+    Every episode is fetched, not just the first `_EPISODES_PAGE_SIZE` of
+    them (module docstring, decision 4) -- `list_watchlist_audio_episodes`
+    is paged through until exhausted, so a watchlist with more episodes
+    than one page is exported (and reported) in full rather than silently
+    truncated.
+
     Args:
         db: An open `SubscriptionsDB`.
-        watchlist_id: Passed straight to `list_watchlist_audio_episodes`.
+        watchlist_id: Passed straight to `list_watchlist_audio_episodes`,
+            paged through in `_EPISODES_PAGE_SIZE`-row chunks until
+            exhausted.
         destination: The user-chosen directory to export into. Must already
             exist (a `SelectDirectory` dialog, Task 5, only ever dismisses
             with an existing directory or `None`) -- validated with
@@ -579,7 +619,22 @@ def export_feed_directory(
         destination, require_exists=True
     ).resolve()
 
-    rows = db.list_watchlist_audio_episodes(watchlist_id)
+    # FIX B (whole-branch review): page through every episode rather than
+    # one bounded call -- `list_watchlist_audio_episodes` defaults to a
+    # 500-row page, and a single call silently truncated any watchlist
+    # with more episodes than that, with the tail recorded nowhere. Walks
+    # until the accessor returns an empty page, so the query cost for a
+    # typical (well-under-one-page) watchlist is still exactly one call.
+    rows: list[Mapping[str, Any]] = []
+    offset = 0
+    while True:
+        page = db.list_watchlist_audio_episodes(
+            watchlist_id, limit=_EPISODES_PAGE_SIZE, offset=offset
+        )
+        if not page:
+            break
+        rows.extend(page)
+        offset += _EPISODES_PAGE_SIZE
 
     episodes: list[FeedEpisode] = []
     skipped: list[str] = []

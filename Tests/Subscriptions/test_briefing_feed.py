@@ -20,6 +20,7 @@ import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from urllib.parse import quote, unquote
 
 import pytest
 
@@ -81,6 +82,19 @@ def test_channel_carries_title_description_and_last_build_date():
     assert parsedate_to_datetime(last_build_date) == _NOW
 
 
+def test_channel_link_is_present_non_empty_and_a_relative_reference():
+    """FIX C (whole-branch review): RSS 2.0 requires `title`, `link` and
+    `description` on every channel; validators and Apple's podcast
+    requirements flag a missing `<link>`. There is no server URL to point
+    at (serving the exported folder is the user's own choice), so this is
+    the feed's own filename as a relative reference -- consistent with the
+    directory being self-contained."""
+    link = ET.fromstring(_build([])).find("channel").findtext("link")
+    assert link
+    assert "://" not in link  # a relative reference, not an invented URL
+    assert link == "feed.xml"
+
+
 def test_empty_episodes_still_produces_a_valid_channel_with_zero_items():
     channel = ET.fromstring(_build([])).find("channel")
     assert channel is not None
@@ -131,6 +145,80 @@ def test_enclosure_length_is_bytes_and_type_is_audio_wav():
     enclosure = ET.fromstring(_build([episode])).find("channel").find("item").find("enclosure")
     assert enclosure.get("length") == "98765"
     assert enclosure.get("type") == "audio/wav"
+
+
+# --- FIX A (whole-branch review): enclosure URLs are percent-encoded -------
+#
+# `FeedEpisode.filename` comes from Task 4's `safe_export_stem`, which
+# deliberately keeps spaces (pinned for its other caller by
+# `test_stem_keeps_ordinary_characters` in
+# `test_briefing_export_markdown.py`) and, via `str.isalnum()`, also admits
+# non-ASCII letters. RFC 3986 forbids a raw space in a URI reference; a
+# podcast client that sends it verbatim in the request line (rather than
+# percent-encoding on resolve) gets a 400. The fix must be applied ONLY at
+# emission -- `FeedEpisode.filename` itself, and the file Task 4 writes to
+# disk under that name, must be untouched.
+
+
+def test_enclosure_url_percent_encodes_a_space_and_carries_no_raw_space():
+    episode = _episode(filename="Two Host Debate-42.wav")
+    url = (
+        ET.fromstring(_build([episode]))
+        .find("channel")
+        .find("item")
+        .find("enclosure")
+        .get("url")
+    )
+    assert "%20" in url
+    assert " " not in url
+
+
+def test_enclosure_url_percent_encodes_non_ascii_characters():
+    episode = _episode(filename="Café Debate-7.wav")
+    url = (
+        ET.fromstring(_build([episode]))
+        .find("channel")
+        .find("item")
+        .find("enclosure")
+        .get("url")
+    )
+    assert "é" not in url
+    assert "%C3%A9" in url  # UTF-8 bytes for "é", percent-encoded
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "script-9-audio-3.wav",
+        "Two Host Debate-42.wav",
+        "Café Debate-7.wav",
+        "already has, punctuation!.wav",
+    ],
+)
+def test_enclosure_url_is_idempotently_encoded(filename):
+    """The general property: the emitted `url` is already fully encoded --
+    decoding then re-encoding it must be a no-op. A url that were only
+    partially encoded (or double-encoded) would fail this even if the
+    space/non-ASCII spot-checks above happened to pass."""
+    episode = _episode(filename=filename)
+    url = (
+        ET.fromstring(_build([episode]))
+        .find("channel")
+        .find("item")
+        .find("enclosure")
+        .get("url")
+    )
+    assert url == quote(unquote(url), safe="")
+
+
+def test_enclosure_url_percent_encoding_does_not_change_the_on_disk_filename():
+    """`FeedEpisode.filename` -- what Task 4 writes to disk and what a
+    future reader of this module should expect to find unmodified -- must
+    stay exactly as given; only the emitted `<enclosure>` URL is encoded."""
+    episode = _episode(filename="Two Host Debate-42.wav")
+    assert episode.filename == "Two Host Debate-42.wav"
+    _build([episode])  # building must not mutate the (frozen) episode
+    assert episode.filename == "Two Host Debate-42.wav"
 
 
 # --- itunes:duration ----------------------------------------------------------

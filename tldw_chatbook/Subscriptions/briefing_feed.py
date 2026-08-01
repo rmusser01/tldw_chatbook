@@ -33,6 +33,24 @@ home directory into a file they distribute. `build_feed_xml` enforces this
 by rejecting any `FeedEpisode.filename` containing a path separator before
 emitting anything.
 
+**Enclosure URLs are percent-encoded at emission -- the on-disk filename is
+not.** Whole-branch review: `FeedEpisode.filename` comes from Task 4's
+`safe_export_stem`, which deliberately KEEPS spaces (pinned by
+`test_stem_keeps_ordinary_characters` for its other caller, the Markdown
+export's save-dialog filename) and, via `str.isalnum()`, also admits
+non-ASCII letters. A raw space in a URI reference is forbidden by RFC 3986;
+a podcast client that sends it in the request line verbatim rather than
+percent-encoding it on resolve gets a 400 and the episode never downloads.
+The fix is applied ONLY where the filename becomes a URL -- `urllib.parse.
+quote` wraps `episode.filename` when it is set as the `enclosure`'s `url`
+attribute below -- never to `FeedEpisode.filename` itself or to any file
+`Task 4` writes to disk: every static file server (including stdlib
+`http.server`, the one this app's docs point users at) unquotes a request
+path before looking up the file, so the file keeps its human-readable,
+space-containing name on disk and the feed stays a valid URI reference.
+`safe_export_stem` itself is untouched -- its space-keeping behavior is
+correct for its other caller.
+
 **All timestamps must be timezone-aware.** `email.utils.format_datetime`
 does *not* treat a naive `datetime` as local time -- it emits the correct
 wall-clock digits tagged `-0000` (RFC 2822's "unverified offset"). The real
@@ -45,6 +63,17 @@ than quietly coercing to UTC (a caller passing naive input has a bug worth
 surfacing, not hiding). **For Task 4:** SQLite's `CURRENT_TIMESTAMP` column
 is UTC but comes back as a naive string -- attach `timezone.utc` explicitly
 when parsing it into a `datetime` for this module.
+
+**`<channel>` carries a `<link>`.** RSS 2.0 requires `title`, `link` and
+`description` on every channel, and validators (and Apple's podcast
+requirements) flag its absence. There is no server URL to point at --
+serving the exported folder is the user's own choice (see the Docs/User
+Guide's own "serve it yourself" note), so this module does not invent one.
+`<link>` is set to `"feed.xml"`, the feed's own filename, as a relative
+reference -- consistent with the whole directory being self-contained
+(episodes are already referenced by bare relative filename, above). This
+must match `briefing_export._FEED_XML_NAME`, the literal name Task 4 writes
+the returned bytes to.
 """
 
 from __future__ import annotations
@@ -54,6 +83,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from email.utils import format_datetime
 from typing import Sequence
+from urllib.parse import quote
 
 _ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 _ITUNES_DURATION_TAG = f"{{{_ITUNES_NS}}}duration"
@@ -82,9 +112,15 @@ class FeedEpisode:
     Attributes:
         title: Episode title, emitted verbatim as the `<item>`'s `<title>`.
         filename: Bare relative filename of the episode's audio file within
-            the feed directory (e.g. `"script-1-audio-2.wav"`). Must not
-            contain a path separator (`/` or `\\`) -- :func:`build_feed_xml`
-            raises :class:`FeedBuildError` if it does.
+            the feed directory (e.g. `"script-1-audio-2.wav"`, or
+            `"Two Host Debate-42.wav"` -- Task 4's `safe_export_stem`
+            deliberately keeps spaces). Must not contain a path separator
+            (`/` or `\\`) -- :func:`build_feed_xml` raises
+            :class:`FeedBuildError` if it does. Stored and emitted to disk
+            exactly as given; :func:`build_feed_xml` percent-encodes a
+            COPY of it for the `<enclosure>`'s `url` attribute only (see
+            the module docstring) -- this field itself is never
+            percent-encoded.
         length_bytes: Size of the audio file in bytes, emitted as the
             `<enclosure>`'s `length` attribute.
         duration_seconds: Playback duration in seconds, or `None` if
@@ -169,6 +205,11 @@ def build_feed_xml(
     channel = ET.SubElement(rss, "channel")
 
     ET.SubElement(channel, "title").text = channel_title
+    # RFC 2822/RSS-2.0 conventional order is title, link, description. A
+    # relative reference to the feed's own filename -- there is no server
+    # URL to point at; see the module docstring's "<channel> carries a
+    # <link>" section. Must match `briefing_export._FEED_XML_NAME`.
+    ET.SubElement(channel, "link").text = "feed.xml"
     ET.SubElement(channel, "description").text = channel_description
     ET.SubElement(channel, "lastBuildDate").text = format_datetime(now)
 
@@ -182,7 +223,16 @@ def build_feed_xml(
         ET.SubElement(item, "pubDate").text = format_datetime(episode.published)
 
         enclosure = ET.SubElement(item, "enclosure")
-        enclosure.set("url", episode.filename)
+        # Percent-encode HERE ONLY -- `episode.filename` itself (and the
+        # file Task 4 writes to disk under that exact name) is never
+        # touched. `safe_export_stem` deliberately keeps spaces and,
+        # via `str.isalnum()`, admits non-ASCII letters too; RFC 3986
+        # forbids a raw space in a URI reference, so a client that does
+        # not percent-encode on resolve would send it verbatim and get a
+        # 400. `safe=""` encodes every character outside the unreserved
+        # set (the guard above already rules out `/`, so there is nothing
+        # this would need to leave alone).
+        enclosure.set("url", quote(episode.filename, safe=""))
         enclosure.set("length", str(episode.length_bytes))
         enclosure.set("type", "audio/wav")
 
