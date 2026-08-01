@@ -54,7 +54,7 @@ from ...DB.Evals_DB import EvalsDB
 from ...Evals.word_bench.capture_client import WordBenchCaptureClient
 from ...Evals.word_bench.models import BenchConfig, Snippet, Target
 from ...Evals.word_bench.runner import CancelToken, CaptureClientLike, ProgressFn, WordBenchRunner
-from ...Evals.word_bench.storage import _unique_name, load_bench, save_bench
+from ...Evals.word_bench.storage import _unique_name, load_bench, model_steering, save_bench
 from .evals_state import EvalsViewModel
 from .snippet_editor import dataset_snippets, import_snippets_into_dataset
 
@@ -81,11 +81,17 @@ SAMPLE_BENCH_NAME = "loaded-nouns (sample)"
 SAMPLE_DATASET_NAME = "loaded-nouns (sample)"
 SAMPLE_TARGET_NAME = "Sample target (llama.cpp)"
 
-#: task-1482 Task 6: the base name for a row created via bench_editor.py's
-#: "Create target" button (an authored bench's own target, never part of
-#: the one-click sample flow above) -- passed as `resolve_sample_target`'s
-#: `name` override so that flow's row does not read as though it came from
-#: SAMPLE_TARGET_NAME's unrelated demo.
+#: task-1482 Task 6 / task-1611 T2: the base name auto-generated for a
+#: blank Name field in bench_editor.py's "+ New target" create-target
+#: mini-form (an authored bench's own target, never part of the one-click
+#: sample flow above) -- so a row minted that way does not read as though
+#: it came from SAMPLE_TARGET_NAME's unrelated demo. Passed straight to
+#: `storage._unique_name` by `evals_screen.py`'s own create-target handler,
+#: never through `resolve_sample_target` (task-1611 T2: that handler now
+#: calls `EvalsDB.create_model` directly -- see its own docstring for why
+#: `resolve_sample_target`'s reuse-an-existing-row-first behavior is wrong
+#: for a control whose whole point is minting an ADDITIONAL, possibly
+#: differently-steered target even when one already exists).
 BENCH_EDITOR_TARGET_NAME = "llama.cpp target"
 
 #: The word bench's own preflight canary already answers "is this endpoint
@@ -178,7 +184,30 @@ def configured_llama_cpp_url(app_config: Optional[Mapping[str, Any]]) -> Optiona
     return normalized or None
 
 
-def _configured_llama_cpp_model_id(app_config: Optional[Mapping[str, Any]]) -> str:
+def configured_llama_cpp_model_id(app_config: Optional[Mapping[str, Any]]) -> str:
+    """The model id a configured llama.cpp endpoint's config declares, or
+    ``""`` if unset -- the sibling of ``configured_llama_cpp_url`` above,
+    read the same config-only, no-network way. Public (task-1611 T2):
+    originally private and used only by ``resolve_sample_target``'s own
+    creation branch below, but ``evals_screen.py``'s "+ New target"
+    create-target handler needs the identical resolution WITHOUT going
+    through ``resolve_sample_target`` itself (see ``BENCH_EDITOR_TARGET_
+    NAME``'s own comment for why: that function reuses an already-
+    registered row first, which is exactly wrong for a control whose job
+    is minting an ADDITIONAL target).
+
+    Args:
+        app_config: The app's config mapping, or ``None``. Read via
+            ``api_settings.llama_cpp.model``; any other shape (missing
+            section, non-string value) is treated as unset.
+
+    Returns:
+        The configured model id, stripped of surrounding whitespace, or
+        ``""`` if no ``llama_cpp`` model is configured. Never ``None`` --
+        unlike ``configured_llama_cpp_url``, callers of this function (see
+        ``resolve_sample_target``'s own comment on ``eval_models.model_id``
+        being ``NOT NULL``) always need a concrete string to fall back on.
+    """
     model = _llama_cpp_settings(app_config).get("model")
     return model.strip() if isinstance(model, str) else ""
 
@@ -246,13 +275,18 @@ def resolve_sample_target(
         name: The base name for a newly CREATED row (irrelevant when an
             existing row is reused instead -- see above). Defaults to
             ``SAMPLE_TARGET_NAME``, the one-click sample bench's own
-            wording; ``bench_editor.py``'s Task 6 "Create target" button
-            (via ``evals_screen.py``, this module's other caller of the
-            ``create=True`` path) passes ``BENCH_EDITOR_TARGET_NAME``
-            instead, so a target created from an authored bench does not
-            read as though it came from the unrelated one-click flow.
-            Always passed through ``storage._unique_name`` before the
-            write, exactly like the default.
+            wording. This function's only caller with ``create=True`` today
+            is ``create_and_run_sample_bench``, using the default; task-
+            1611 T2 moved ``bench_editor.py``'s "+ New target" create-
+            target handler off this function entirely (it calls
+            ``EvalsDB.create_model`` directly, via ``evals_screen.py`` --
+            see ``BENCH_EDITOR_TARGET_NAME``'s own comment for why this
+            function's reuse-an-existing-row-first behavior is wrong for
+            that control). ``name`` stays a parameter here regardless,
+            for any future caller minting a differently-named row through
+            this SAME reuse-or-create resolution. Always passed through
+            ``storage._unique_name`` before the write, exactly like the
+            default.
 
     Returns:
         The resolved ``eval_models`` row (a real, DB-backed dict), or
@@ -277,7 +311,7 @@ def resolve_sample_target(
     # either way, per capture_client.py's own payload). "default" here is a
     # placeholder a real server discards, never a claim about a specific
     # model that exists.
-    model_id = _configured_llama_cpp_model_id(app_config) or "default"
+    model_id = configured_llama_cpp_model_id(app_config) or "default"
     new_id = db.create_model(
         name=_unique_name(name), provider="llama_cpp", model_id=model_id
     )
@@ -414,6 +448,20 @@ async def create_and_run_sample_bench(
             target could be resolved (callers should have already checked
             ``provider_is_configured`` and hidden the offer in that case;
             this is a defensive re-check, not the primary gate).
+        ValueError: Via ``storage.model_steering``, if the resolved target
+            row's ``config`` is corrupt (both ``prefix`` and
+            ``system_prompt`` set, or a non-mapping ``config``).
+            ``resolve_sample_target`` REUSES an arbitrary existing
+            ``llama_cpp`` ``eval_models`` row when one is already
+            registered (see its own docstring) rather than always minting
+            a fresh one, so this is reachable with a pre-existing corrupt
+            row, not only through this function's own writes. NOT wrapped
+            into a ``RuntimeError`` the way ``run_existing_bench`` wraps
+            the equivalent case (task-1611) -- this function's only
+            caller today (``evals_screen.py``'s sample-bench worker)
+            already catches broad ``Exception`` around the whole call, so
+            the un-wrapped type reaches the same user-facing toast either
+            way.
         asyncio.CancelledError: If this coroutine itself is hard-cancelled
             (e.g. by Textual's ``exclusive=True`` worker mechanism) while
             ``runner.run`` is in flight. Re-raised after marking any
@@ -446,11 +494,14 @@ async def create_and_run_sample_bench(
     ]
     import_snippets_into_dataset(db, dataset_id, snippet_dicts)
 
+    prefix, system_prompt = model_steering(target_row)
     target = Target(
         id=target_row["id"],
         name=target_row["name"],
         provider=target_row["provider"],
         model_id=target_row["model_id"],
+        prefix=prefix,
+        system_prompt=system_prompt,
     )
     config = BenchConfig(
         name=_unique_name(SAMPLE_BENCH_NAME),
@@ -501,9 +552,16 @@ def _resolve_targets(db: EvalsDB, config: BenchConfig) -> list[Target]:
     proceed with a target it cannot resolve to real provider/model_id
     values.
 
+    Each row's steering (``prefix``/``system_prompt``) is read via
+    ``storage.model_steering`` -- see that function's docstring for the
+    ``eval_models.config`` convention this relies on.
+
     Raises:
         RuntimeError: Naming the first ``target_id`` that no longer
             resolves to a live, non-deleted ``eval_models`` row.
+        ValueError: Via ``storage.model_steering``, if a resolved row's
+            stored ``config`` has both ``prefix`` and ``system_prompt``
+            set -- a corrupt row this function does not attempt to repair.
     """
     targets: list[Target] = []
     for target_id in config.target_ids:
@@ -513,12 +571,15 @@ def _resolve_targets(db: EvalsDB, config: BenchConfig) -> list[Target]:
                 f"Target {target_id!r} could not be resolved — its "
                 "eval_models row is missing or was deleted."
             )
+        prefix, system_prompt = model_steering(model)
         targets.append(
             Target(
                 id=model["id"],
                 name=model["name"],
                 provider=model["provider"],
                 model_id=model["model_id"],
+                prefix=prefix,
+                system_prompt=system_prompt,
             )
         )
     return targets
@@ -618,7 +679,16 @@ async def run_existing_bench(
             targets configured (task-1482: a draft bench created via the
             rail's "+ New bench" starts with ``target_ids=()``), any of
             its targets no longer resolve to a live ``eval_models`` row,
-            or its dataset is missing or has no snippets.
+            its dataset is missing or has no snippets, a resolved target's
+            stored steering is corrupt (task-1611: ``eval_models.config``
+            sets both ``prefix`` and ``system_prompt`` -- see
+            ``storage.model_steering``), or ``WordBenchRunner.run`` rejects
+            the run because a target's steering does not match the bench's
+            ``prompt_mode``. The latter two are plain ``ValueError``s at
+            their source, re-raised here as a ``RuntimeError`` carrying the
+            original message verbatim (naming the offending target/model
+            id) so every failure this function can produce is the same
+            exception type.
         asyncio.CancelledError: If this coroutine itself is hard-cancelled
             (e.g. by Textual's ``exclusive=True`` worker mechanism) while
             ``runner.run`` is in flight. Re-raised after marking any
@@ -657,12 +727,18 @@ async def run_existing_bench(
         # that does not go through the UI gate.
         raise RuntimeError(f"Bench {config.name!r} has no targets to run.")
 
-    targets = _resolve_targets(db, config)
-    snippets = _load_snippets(db, config.dataset_id)
-
-    factory = client_factory or _default_client_factory(app_config)
-    runner = WordBenchRunner(db, factory)
     try:
+        # _resolve_targets can itself raise a bare ValueError (via
+        # storage.model_steering, when a resolved target's stored config
+        # sets both prefix and system_prompt), so it is inside this same
+        # try/except ValueError alongside runner.run below -- both sources
+        # get the identical RuntimeError treatment rather than one being
+        # wrapped and the other leaking through unwrapped.
+        targets = _resolve_targets(db, config)
+        snippets = _load_snippets(db, config.dataset_id)
+
+        factory = client_factory or _default_client_factory(app_config)
+        runner = WordBenchRunner(db, factory)
         outcome = await runner.run(
             config, targets, snippets, task_id,
             progress=progress, cancel_token=cancel_token,
@@ -670,5 +746,18 @@ async def run_existing_bench(
     except asyncio.CancelledError:
         _mark_orphaned_runs_cancelled(db, task_id)
         raise
+    except ValueError as exc:
+        # WordBenchRunner.run raises a plain ValueError (naming the target
+        # and the mode -- see its own docstring) when a resolved target's
+        # steering does not match config.prompt_mode, and (via
+        # storage.create_run_group) a second, different ValueError if
+        # `targets` somehow carries a duplicate id. Every OTHER failure
+        # this function can produce is already a RuntimeError (see the
+        # docstring's own Raises section); re-raising this one as a
+        # RuntimeError too, rather than letting the bare ValueError through,
+        # means every caller of this function -- and the bench-run worker's
+        # own `except Exception` toast in evals_screen.py -- only ever has
+        # to reason about one exception shape from this seam.
+        raise RuntimeError(str(exc)) from exc
 
     return RunBenchResult(task_id=task_id, run_group_id=outcome.group_id)

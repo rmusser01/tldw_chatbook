@@ -51,24 +51,76 @@ Description/Top-K/Probes above, exactly the state loss the "display-only
 until Save" paragraph above exists to avoid. A duplicate add (the target
 id is already staged) is rejected inline with the exact text ``"Target
 already on this bench."``, through the same ``#evals-bench-form-error``
-callout Top-K/name failures use. When NO ``llama_cpp`` ``eval_models`` row
-exists anywhere in the db, the picker is replaced by
-``#evals-bench-create-target``, which posts ``CreateTargetRequested`` for
-``evals_screen.py`` to handle -- this module must never import
-``sample_bench.resolve_sample_target`` (the function that actually
-creates the row) itself: ``sample_bench.py`` imports the capture client
-and the runner, both of which the source-scan test mentioned above
-(``Tests/UI/test_evals_bench_editor.py``) pins this module can never
-reach, even transitively. ``stage_target()`` is the targeted
-(non-recompose) call the screen makes once it has created the row.
+callout Top-K/name failures use. ``stage_target()`` is the targeted
+(non-recompose) call the screen makes once it has created a row this
+module asked for via ``CreateTargetRequested`` -- see that message's own
+docstring for why this module cannot create the row itself.
 
 Task-1610: ``BenchEditor.is_dirty()`` reports whether the mounted form (the
-five fields above plus the staged target list) differs from
-``self._loaded_config`` -- read by ``evals_screen.py``'s
-``_selection_unmoved_since_launch`` so a run/sample-bench worker completing
-while this editor holds unsaved edits degrades to a toast instead of
-calling ``select()``, which would otherwise recompose this whole widget
-and silently discard everything not yet Saved.
+five fields above, the staged target list, and -- task-1611 T2 fix round
+1 -- the "+ New target" mini-form's own typed-but-not-yet-created Name/
+steering text) differs from ``self._loaded_config`` -- read by
+``evals_screen.py``'s ``_selection_unmoved_since_launch`` so a run/sample-
+bench worker completing while this editor holds unsaved edits degrades to
+a toast instead of calling ``select()``, which would otherwise recompose
+this whole widget and silently discard everything not yet Saved.
+
+Task-1611 whole-branch review fix round (documented, not fixed -- judged
+not to stay cleanly contained): a SUCCESSFUL Save is the one place this
+protection does not reach. ``Saved`` triggers ``evals_screen.py``'s own
+``select()``, which builds a genuinely NEW ``BenchEditor`` instance from
+storage -- the mini-form's own ``self._pending_target_*`` has no path
+from the old instance to the new one, so any typed-but-never-created
+Name/steering text is silently gone the moment Save succeeds, even
+though ``is_dirty()`` itself would have called that exact text worth
+protecting one line earlier. Threading it through ``Saved`` -> the
+screen -> the next ``BenchEditor``'s constructor was considered and
+rejected: ``select()`` is this screen's GENERIC recompose entry point,
+shared by every selection-kind change, not a Save-specific hook, and
+correctly scoping carried state to only the bench just saved (never
+leaking into a later, unrelated selection) is real surface area for a
+strange, hard-to-notice bug in exchange for a minor convenience. This is
+a deliberate boundary: Revert discarding unsaved state IS what "revert"
+means; this is the one place a genuine SUCCESS does the same thing.
+
+Task-1611 T2: a target's STEERING (``storage.model_steering`` -- a raw-
+mode ``prefix`` or a chat-mode ``system_prompt``, read out of the target's
+own ``eval_models.config``) is now a real, reachable, db-backed thing, not
+merely a wired-but-dead seam (see ``_resolve_bench_targets``'s own
+docstring). The "+ New target" mini-form (``_build_create_target_control``)
+therefore renders ALWAYS in the targets section -- unlike Task 6's
+``#evals-bench-create-target``, which rendered ONLY when zero ``llama_cpp``
+rows existed: a bench author may want an ADDITIONAL, differently-steered
+target even when one (or several) already exist, and steering is
+IMMUTABLE per row (``model_steering``'s own docstring: no ``update_model``
+exists, so a differently-steered variant is always a new row). Zero-models
+keeps its old behavior as the degenerate case of this same, now-unified
+control -- the Add picker simply has nothing to offer, per
+``_build_target_add_control`` returning ``None``.
+
+The mini-form is a Name ``Input`` (``#evals-target-name``, optional -- a
+blank value auto-names on the screen side) plus ONE steering ``Input``,
+picked by the CURRENT prompt mode: ``#evals-target-prefix`` for raw,
+``#evals-target-system-prompt`` for chat -- never both, mirroring
+``Target``/``model_steering``'s own one-field-per-mode contract. A prompt-
+mode flip (``_on_prompt_mode_changed``) swaps which one is mounted via the
+SAME targeted ``_refresh_targets_section`` rebuild Add/Remove/
+``stage_target`` already use -- never a whole-widget recompose. Because
+that rebuild tears down and rebuilds ``#evals-bench-targets-section``
+wholesale, the mini-form's own typed Name/steering text would otherwise be
+discarded on every Add/Remove/mode-flip; ``_capture_pending_target_form``/
+``self._pending_target_*`` persist it across exactly those rebuilds, the
+same state-loss concern Task 5's "display-only until Save" paragraph
+raises for the OUTER fields, applied one level down. A successful create
+(``stage_target``) resets that pending state back to blank -- a fresh
+form for whatever gets created next, and no accidental same-name resubmit.
+
+Target rows now also render a short steering suffix (`_build_target_row`)
+-- `` · prefix: <preview>`` (whitespace made visible via the ␣ marker
+convention, reusing ``snippet_editor.render_snippet_cell``) or
+`` · system prompt set`` -- so a bench with multiple, differently-steered
+variants of the same underlying model can actually be told apart at a
+glance; an unsteered row's label is unchanged.
 """
 
 from __future__ import annotations
@@ -76,6 +128,7 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional, Sequence
 
 from rich.markup import escape as escape_markup
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -85,7 +138,7 @@ from textual.widgets import Button, Input, Select, Static, TextArea
 
 from ...DB.Evals_DB import ConflictError, EvalsDB
 from ...Evals.word_bench.models import BenchConfig, PreflightResult, Target
-from ...Evals.word_bench.storage import load_bench, save_bench
+from ...Evals.word_bench.storage import load_bench, model_steering, save_bench
 from .evals_state import EvalsViewModel
 from .snippet_editor import render_snippet_cell
 
@@ -102,6 +155,43 @@ CLASSIC_TASK_DEFERRAL_SENTENCE = "Running classic tasks is not available in this
 #: sub-1 top-K value -- asserted exactly by
 #: ``test_top_k_parse_failure_renders_the_pinned_callout``.
 TOP_K_ERROR_TEXT = "Top-K must be a whole number of 1 or more."
+
+#: Verbatim. The raw-mode steering field's label in the "+ New target"
+#: mini-form (task-1611 T2) -- pinned exactly by
+#: ``test_steering_field_label_matches_the_current_prompt_mode``.
+PREFIX_FIELD_LABEL = "Prefix (optional — leading whitespace preserved)"
+
+#: Verbatim. The chat-mode steering field's label in the "+ New target"
+#: mini-form (task-1611 T2) -- sibling of ``PREFIX_FIELD_LABEL`` above.
+SYSTEM_PROMPT_FIELD_LABEL = "System prompt (optional)"
+
+#: The row table's steering-preview cap (task-1611 T2): long enough to be
+#: useful, short enough that a steered row never wraps onto a second line
+#: in the table's own single-``Static``-per-row layout (see
+#: ``_build_target_row``).
+_STEERING_PREVIEW_MAX_LEN = 40
+
+
+def _steering_preview_text(value: str) -> str:
+    """A single-line, length-capped source string for a steering value's
+    row-table preview, BEFORE it goes through ``render_snippet_cell``'s own
+    ␣-marker convention for leading/trailing/interior-run whitespace.
+
+    ``render_snippet_cell``'s own whitespace classifier only flags a RUN of
+    2+ whitespace characters as anomalous (``snippet_editor.py``'s
+    ``_INTERIOR_RUN_RE``) -- a single embedded ``"\\n"`` would slip through
+    untouched and render as a literal line break inside the row's Static,
+    breaking this row's single-line contract. Replaced with a visible "⏎"
+    marker here instead of being silently dropped, so a steering value that
+    happens to carry one (never possible to TYPE into the single-line
+    ``Input`` this form uses, but not excluded for a row created some other
+    way) is still an honest, if unusual, preview rather than a corrupted
+    one.
+    """
+    single_line = value.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "⏎")
+    if len(single_line) > _STEERING_PREVIEW_MAX_LEN:
+        return single_line[:_STEERING_PREVIEW_MAX_LEN] + "…"
+    return single_line
 
 
 def _target_status_text(preflight: dict[str, Any], target_id: str) -> str:
@@ -140,24 +230,39 @@ def _resolve_bench_targets(db: EvalsDB, target_ids: Sequence[str]) -> list[Targe
     rendered as unresolvable in the target table further down this same
     widget) is skipped rather than raising: it cannot be checked either
     way, and ``save_bench`` itself never rejects a bench for carrying one.
+    A row whose OWN ``config`` is corrupt (``model_steering`` raises --
+    e.g. hand-edited JSON with both ``prefix`` and ``system_prompt`` set)
+    is skipped for the identical reason: this function's job is a best-
+    effort mode check, not a data-integrity audit -- ``run_existing_bench``
+    (``sample_bench.py``) already surfaces that same corruption as a hard
+    error at the point it actually matters, RUN time.
 
     A thin, LOCAL mirror of ``sample_bench.py``'s own ``_resolve_targets``
-    (same ``db.get_model`` lookup, same three fields) rather than an
-    import of that private helper: ``sample_bench.py`` imports the runner
-    and the HTTP client that drives it, both of which this module's own
-    source-scan test pins it must never reach, even transitively through
-    an import graph (see the module docstring's own "provider" mention
-    above). Never sets ``prefix``/``system_prompt`` -- no
-    ``eval_models`` column stores either field today, so every ``Target``
-    built here is always valid for both prompt modes in production; the
-    ``is_valid_for_mode`` check this feeds is a wired-but-currently-
-    unreachable seam, exercised in tests by monkeypatching this function
-    to return a hand-built ``Target`` that does carry one.
+    (same ``db.get_model`` lookup, same ``model_steering`` call) rather
+    than an import of that private helper: ``sample_bench.py`` imports the
+    runner and the HTTP client that drives it, both of which this module's
+    own source-scan test pins it must never reach, even transitively
+    through an import graph (see the module docstring's own "provider"
+    mention above).
+
+    Task-1611 T2: now sets ``prefix``/``system_prompt`` for real, via
+    ``storage.model_steering`` -- no longer the wired-but-dead seam this
+    docstring used to describe (``eval_models.config`` has carried
+    steering since task-1611 T1; this function just did not read it yet).
+    The save-time ``is_valid_for_mode`` check below is reachable through a
+    genuine, db-backed steered target now, not only through the
+    monkeypatched ``Target`` ``test_prompt_mode_switch_revalidates_
+    targets_and_names_the_offending_target`` still exercises for a
+    hand-built case.
     """
     targets: list[Target] = []
     for target_id in target_ids:
         model = db.get_model(target_id)
         if model is None:
+            continue
+        try:
+            prefix, system_prompt = model_steering(model)
+        except ValueError:
             continue
         targets.append(
             Target(
@@ -165,6 +270,8 @@ def _resolve_bench_targets(db: EvalsDB, target_ids: Sequence[str]) -> list[Targe
                 name=model["name"],
                 provider=model["provider"],
                 model_id=model["model_id"],
+                prefix=prefix,
+                system_prompt=system_prompt,
             )
         )
     return targets
@@ -193,17 +300,58 @@ class BenchEditor(Vertical):
             self.bench_id = bench_id
 
     class CreateTargetRequested(Message, namespace="bench_editor"):
-        """Posted when the zero-``llama_cpp``-models ``#evals-bench-
-        create-target`` button is pressed. Handled by ``evals_screen.py``,
-        never here -- see the module docstring's source-scan pin:
-        resolving/creating the row reuses ``sample_bench.
-        resolve_sample_target``, which (transitively, via ``capture_
-        client``/``runner``) this module must never import, even just to
-        call it directly. Carries no payload -- the handler already has
-        the view model and app config, and reaches the mounted editor via
-        ``self.query_one(BenchEditor)`` (only one is ever mounted at a
-        time, for the current selection) to call ``stage_target()`` on it.
+        """Posted when the "+ New target" ``#evals-bench-create-target``
+        button is pressed -- task-1611 T2: ALWAYS rendered now, not only
+        in the zero-``llama_cpp``-models state (see the module docstring's
+        own T2 paragraph). Handled by ``evals_screen.py``, never here --
+        creating the row is a real ``EvalsDB.create_model`` write, and
+        this module's own source-scan test pins that its source text may
+        never even NAME the provider capture client or the runner that
+        drives it, even in a comment (see the module docstring's own
+        careful phrasing above). The handler reaches the mounted editor
+        via ``self.query_one(BenchEditor)`` (only one is ever mounted at a
+        time, for the current selection) to call ``stage_target()`` on it
+        once the row exists.
+
+        Carries the create-target mini-form's own typed state, read fresh
+        by ``_on_create_target_pressed`` at press time:
+
+        Args:
+            name: The Name ``Input``'s raw value, exactly as typed (never
+                stripped here). ``evals_screen.py``'s handler treats a
+                blank or whitespace-only value as "auto-name this", via
+                ``storage._unique_name(sample_bench.
+                BENCH_EDITOR_TARGET_NAME)`` -- the SAME base name/
+                convention the old zero-models-only flow always used for
+                its one auto-created row.
+            prefix: The raw-mode steering ``Input``'s value, or ``None``
+                if that Input was not the one mounted (chat mode) or was
+                left blank. Passed through EXACTLY, no ``.strip()`` -- a
+                raw-mode prefix's LEADING whitespace is meaningful (it is
+                prepended literally to every snippet), so trimming it here
+                would silently change what a run actually measures.
+            system_prompt: The chat-mode steering ``Input``'s value, under
+                the same blank-is-``None``/no-strip rules as ``prefix``
+                above.
+
+        At most one of ``prefix``/``system_prompt`` is ever non-``None`` --
+        only ONE steering ``Input`` is ever mounted at a time (see
+        ``_build_create_target_control``), so this is a construction
+        invariant of ``_on_create_target_pressed``, not something this
+        class itself checks.
         """
+
+        def __init__(
+            self,
+            *,
+            name: str = "",
+            prefix: Optional[str] = None,
+            system_prompt: Optional[str] = None,
+        ) -> None:
+            super().__init__()
+            self.name = name
+            self.prefix = prefix
+            self.system_prompt = system_prompt
 
     def __init__(
         self,
@@ -250,6 +398,28 @@ class BenchEditor(Vertical):
         #: target readiness only ever changes on a fresh bench selection,
         #: never mid-edit.
         self._preflight_map: dict[str, PreflightResult] = {}
+        #: Task-1611 T2: the prompt mode `_build_create_target_control`
+        #: last built the "+ New target" mini-form's steering `Input` for
+        #: -- the SOLE source of truth for which one (`#evals-target-
+        #: prefix` vs `#evals-target-system-prompt`) is currently mounted.
+        #: Set by `compose()` before its first build (never by querying
+        #: `#evals-bench-prompt-mode` live -- that Select has not MOUNTED
+        #: yet at that point, since `compose()` is still yielding its own
+        #: widgets) and kept in sync by `_on_prompt_mode_changed` on every
+        #: genuine flip afterward.
+        self._last_prompt_mode: Optional[str] = None
+        #: Task-1611 T2: the create-target mini-form's own typed Name/
+        #: steering text, persisted across a targeted `#evals-bench-
+        #: targets-section` rebuild (Add/Remove/a mode flip) that would
+        #: otherwise tear down and silently discard it -- see
+        #: `_capture_pending_target_form`. Only the ONE steering attribute
+        #: matching `self._last_prompt_mode` is ever actually mounted at a
+        #: given moment; the other is simply carried along unused until a
+        #: flip brings it back. Reset to blank by `stage_target` once a
+        #: create actually succeeds -- see that method's own docstring.
+        self._pending_target_name: str = ""
+        self._pending_target_prefix: str = ""
+        self._pending_target_system_prompt: str = ""
 
     def is_dirty(self) -> bool:
         """True when the mounted form differs from ``self._loaded_config``
@@ -270,6 +440,24 @@ class BenchEditor(Vertical):
         6's Add/Remove handlers) rather than read from a widget, so that
         list is compared to ``loaded.target_ids`` verbatim.
 
+        Task-1611 T2 (fix round 1): the "+ New target" mini-form's own
+        typed-but-not-yet-created Name/steering text ALSO counts -- a user
+        can type a prefix, never press Create, and have a background
+        worker complete mid-edit exactly as easily as they can edit the
+        five fields above; nothing about ``stage_target``/``save_bench``
+        having consumed nothing yet makes that text less real or less
+        destroyable by a recompose. Read fresh via a direct query here
+        (never ``self._pending_target_*`` for the CURRENTLY mounted
+        steering ``Input`` -- that attribute is only ever refreshed by
+        OTHER handlers right before a rebuild, see
+        ``_capture_pending_target_form``'s own docstring, and this method
+        is called at arbitrary times, not only right before one); the
+        NON-mounted steering ``Input`` (only one of the two ever is, see
+        ``_build_create_target_control``) falls back to
+        ``self._pending_target_*`` instead, since a raw-mode prefix typed
+        before a flip to chat is still real unsaved state even though its
+        ``Input`` is not currently in the DOM to query.
+
         ``False`` when this widget never composed a form at all --
         ``self._loaded_config`` stays ``None`` in both of ``compose()``'s
         early-return branches (no db, or an unreadable bench row) -- there
@@ -279,9 +467,11 @@ class BenchEditor(Vertical):
         edit -- see ``_on_save_pressed``'s identical `int(...)` parse.
 
         Returns:
-            bool: True when any form field or the staged target list
-            differs from the loaded bench state; False for a pristine
-            form or when no form composed at all.
+            bool: True when any form field, the staged target list, or the
+            "+ New target" mini-form's own typed state differs from the
+            loaded bench state (mini-form: differs from blank, since that
+            state is never itself part of ``self._loaded_config``); False
+            for a pristine form or when no form composed at all.
         """
         loaded = self._loaded_config
         if loaded is None:
@@ -319,6 +509,35 @@ class BenchEditor(Vertical):
             return True
         if tuple(self._staged_target_ids) != tuple(loaded.target_ids):
             return True
+
+        try:
+            mini_form_name = self.query_one("#evals-target-name", Input).value
+        except QueryError:
+            # Defensive only, structurally unreachable (whole-branch
+            # review): unlike the two steering `Input`s below, `#evals-
+            # target-name` is unconditionally part of `_build_create_
+            # target_control`'s own output in BOTH prompt modes -- there
+            # is no mode in which the mini-form renders at all (which is
+            # already guaranteed by this point, see this method's own
+            # earlier `loaded is None` early return) without it. Kept for
+            # the same reason the outer five-field `QueryError` handler
+            # above is kept: the conservative direction if that invariant
+            # is ever broken by a future change is treating an unreadable
+            # field as dirty, not silently reading it as unchanged.
+            mini_form_name = self._pending_target_name
+        try:
+            mini_form_prefix = self.query_one("#evals-target-prefix", Input).value
+        except QueryError:
+            mini_form_prefix = self._pending_target_prefix
+        try:
+            mini_form_system_prompt = self.query_one(
+                "#evals-target-system-prompt", Input
+            ).value
+        except QueryError:
+            mini_form_system_prompt = self._pending_target_system_prompt
+        if mini_form_name or mini_form_prefix or mini_form_system_prompt:
+            return True
+
         return False
 
     def compose(self) -> ComposeResult:
@@ -432,13 +651,39 @@ class BenchEditor(Vertical):
             else self._view_model.preflight_for_bench(self._bench_id)
         )
         self._preflight_map = preflight
+        # Task-1611 T2: the SOLE source of truth for which steering Input
+        # `_build_create_target_control` mounts -- set here, BEFORE that
+        # builder runs, never by querying `#evals-bench-prompt-mode` live:
+        # that Select was only just yielded above and has not MOUNTED yet
+        # (`compose()` is still executing), so `query_one` would raise.
+        self._last_prompt_mode = config.prompt_mode
         yield Vertical(*self._build_targets_section(), id="evals-bench-targets-section")
 
     def _build_targets_section(self) -> list[Widget]:
-        """Builds the whole "Targets (N)" slice -- heading, row table (or
-        the empty state), and the Add picker / zero-models create-target
-        affordance -- as concrete widget INSTANCES rather than a
-        `with Container(): yield child`-composed generator.
+        """Builds the whole "Targets (N)" slice -- a FIXED heading, then
+        ONE shared scrollable body holding the row table (or the empty
+        state), the Add picker (only when there is something to pick),
+        and the always-rendered "+ New target" mini-form (task-1611 T2)
+        -- as concrete widget INSTANCES rather than a `with Container():
+        yield child`-composed generator.
+
+        Task-1611 T2 fix round 1: the row table, the Add picker, and the
+        create-target mini-form used to be THREE SEPARATE fixed siblings
+        of the heading, each independently competing for this whole
+        section's own small `1fr` share -- confirmed live that with
+        enough targets to need it, the table's OWN box got squeezed down
+        to a literal 1-row floor (the Add picker and mini-form, TOGETHER
+        needing 2 more fixed rows, always won that competition first) --
+        see `#evals-bench-targets-body`'s own CSS comment for the
+        measurements. Wrapping all three in ONE shared scrollable
+        `Vertical` (`#evals-bench-targets-body`, this method's own
+        returned list's second element) instead means the row table is no
+        longer capped by leftover space AFTER the other two are
+        subtracted -- it is simply whatever comes FIRST in this ONE
+        scrollable list, so it claims as much of the section's `1fr` share
+        as there IS, and the Add picker / mini-form (lower priority than
+        seeing your own already-staged targets) scroll into view after it
+        instead of permanently starving it.
 
         That `with`-block pattern (used by every OTHER section of
         `compose()` above) only works while Textual's own compose
@@ -446,25 +691,24 @@ class BenchEditor(Vertical):
         during a real `compose()` call, NOT true when this same building
         logic needs to run again later from an event handler
         (`_on_add_target_pressed`, `_on_remove_target_pressed`,
-        `stage_target`). Building plain widget instances instead (passed
-        as `*children` to each container's own constructor -- a fully
-        supported `Widget.__init__` form, not a workaround) works
-        identically in both places: `compose()` just yields the returned
-        list's container, and `_refresh_targets_section` mounts the same
-        builder's output directly into the already-live `#evals-bench-
-        targets-section` container.
+        `_on_prompt_mode_changed`, `stage_target`). Building plain widget
+        instances instead (passed as `*children` to each container's own
+        constructor -- a fully supported `Widget.__init__` form, not a
+        workaround) works identically in both places: `compose()` just
+        yields the returned list's container, and `_refresh_targets_
+        section` mounts the same builder's output directly into the
+        already-live `#evals-bench-targets-section` container.
         """
         db = self._view_model.db
         preflight = self._preflight_map
-        widgets: list[Widget] = [
-            Static(
-                f"Targets ({len(self._staged_target_ids)})",
-                id="evals-bench-targets-heading",
-                classes="destination-section evals-pane-title",
-            )
-        ]
+        heading = Static(
+            f"Targets ({len(self._staged_target_ids)})",
+            id="evals-bench-targets-heading",
+            classes="destination-section evals-pane-title",
+        )
+        body: list[Widget] = []
         if not self._staged_target_ids:
-            widgets.append(
+            body.append(
                 Static("No targets configured yet.", id="evals-bench-targets-empty")
             )
         else:
@@ -480,9 +724,12 @@ class BenchEditor(Vertical):
                 self._build_target_row(db, preflight, index, target_id)
                 for index, target_id in enumerate(self._staged_target_ids)
             ]
-            widgets.append(Vertical(*rows, id="evals-bench-target-table"))
-        widgets.append(self._build_target_add_control())
-        return widgets
+            body.append(Vertical(*rows, id="evals-bench-target-table"))
+        add_control = self._build_target_add_control()
+        if add_control is not None:
+            body.append(add_control)
+        body.append(self._build_create_target_control())
+        return [heading, Vertical(*body, id="evals-bench-targets-body")]
 
     @staticmethod
     def _build_target_row(
@@ -495,7 +742,20 @@ class BenchEditor(Vertical):
         from before Task 6, ``#evals-bench-target-{index}`` /
         ``evals-bench-target-row``) plus a per-row ``Remove`` button
         (``#evals-bench-target-remove-{index}``, following the row's own
-        numbering)."""
+        numbering).
+
+        Task-1611 T2: a steered row's label gains a short suffix --
+        `` · prefix: <preview>`` (the preview routed through
+        ``render_snippet_cell``'s ␣-marker convention, same as every other
+        user-authored snippet/probe text this workbench renders) or
+        `` · system prompt set`` (no preview -- unlike a prefix, a system
+        prompt is never literally concatenated into the measured text, so
+        there is no whitespace-significance story to show). Reading a
+        corrupt row's steering (``model_steering`` raising) degrades to
+        the UNSUFFIXED label rather than crashing this render -- the same
+        best-effort posture ``_resolve_bench_targets`` takes for the
+        identical case at save time.
+        """
         model = db.get_model(target_id) if db is not None else None
         status_text = _target_status_text(preflight, target_id)
         if model is None:
@@ -504,9 +764,27 @@ class BenchEditor(Vertical):
             # eval_models row leaves a dangling reference here. Still
             # removable via the button below, just never resolvable to a
             # real name.
-            label = f"(deleted target {target_id}) — unresolvable"
+            label: Any = f"(deleted target {target_id}) — unresolvable"
         else:
-            label = f"{model['name']} ({model['provider']}) — {status_text}"
+            base = f"{model['name']} ({model['provider']}) — {status_text}"
+            try:
+                prefix, system_prompt = model_steering(model)
+            except ValueError:
+                prefix, system_prompt = None, None
+            if prefix:
+                # A `Text` object, never a plain string with `escape_
+                # markup` -- `Text.append` treats every argument as
+                # LITERAL content, so this is markup-safe by construction
+                # regardless of what the prefix contains (the same
+                # guarantee `render_snippet_cell` already relies on for
+                # arbitrary snippet/probe text elsewhere in this widget).
+                label = Text(base)
+                label.append(" · prefix: ")
+                label.append(render_snippet_cell(_steering_preview_text(prefix)))
+            elif system_prompt:
+                label = f"{base} · system prompt set"
+            else:
+                label = base
         return Horizontal(
             Static(
                 label,
@@ -522,25 +800,25 @@ class BenchEditor(Vertical):
             classes="evals-bench-target-row-wrap",
         )
 
-    def _build_target_add_control(self) -> Widget:
-        """The Add picker (a ``Select`` over ``EvalsViewModel.
-        llama_targets()`` plus an ``Add`` button), or -- when no
-        ``llama_cpp`` ``eval_models`` row exists anywhere in the db yet --
-        the ``#evals-bench-create-target`` button instead.
+    def _build_target_add_control(self) -> Optional[Widget]:
+        """The Add picker: a ``Select`` over ``EvalsViewModel.
+        llama_targets()`` plus an ``Add`` button -- or ``None`` when no
+        ``llama_cpp`` ``eval_models`` row exists anywhere in the db yet
+        (there is nothing to pick from). Task-1611 T2: the zero-models
+        ``#evals-bench-create-target`` button that used to live in this
+        method's own empty branch now ALWAYS renders instead, from
+        ``_build_create_target_control`` -- see the module docstring's T2
+        paragraph.
 
         ``Select`` raises ``EmptySelectError`` when constructed with zero
         options and ``allow_blank=False`` (see its own docstring) --
-        ``llama_targets()`` being empty is exactly this method's own
-        create-target branch condition, so the two can never disagree and
-        this never risks that error.
+        ``llama_targets()`` being empty is exactly when this method
+        returns ``None`` instead of building one, so the two can never
+        disagree and this never risks that error.
         """
         llama_targets = self._view_model.llama_targets()
         if not llama_targets:
-            return Button(
-                "Create target from configured llama.cpp server",
-                id="evals-bench-create-target",
-                classes="console-action-secondary",
-            )
+            return None
         # escape_markup: `Select` options parse their label as markup on
         # render (the same `Content.from_markup` hazard this widget's
         # other user-authored strings already guard against, see the
@@ -567,6 +845,80 @@ class BenchEditor(Vertical):
                 classes="console-action-secondary",
             ),
             id="evals-bench-add-target-row",
+        )
+
+    def _build_create_target_control(self) -> Widget:
+        """The "+ New target" mini-form (task-1611 T2): a Name ``Input``,
+        ONE steering ``Input`` picked by ``self._last_prompt_mode``, and
+        the ``#evals-bench-create-target`` button, ALL on one shared row.
+        ALWAYS rendered -- unlike the Add picker above, this has no
+        zero-models gate: a bench author may want an ADDITIONAL,
+        differently-steered target even when one (or several) already
+        exist, and steering is immutable per row (see the module
+        docstring's T2 paragraph).
+
+        Both ``Input``s carry their descriptive text as a ``placeholder``
+        (``PREFIX_FIELD_LABEL``/``SYSTEM_PROMPT_FIELD_LABEL`` for the
+        steering one, mirroring the Name field's own "steered variant
+        name" placeholder-not-label framing) rather than a separate
+        ``Static`` label, and are ``compact=True`` (border-less, 1 row
+        instead of the top-level fields' bordered 3) -- the SAME space-
+        saving choice `_build_target_add_control`'s own Add picker already
+        makes for its ``Select`` (see that method's own `compact=True`
+        comment).
+
+        Squeezed onto ONE row -- not, say, fields-above-button, which was
+        this method's own first revision -- because this whole targets
+        section has a small, FIXED budget inside `#evals-detail-pane` at a
+        realistic viewport, confirmed live through TWO separate live
+        failures while arriving at this shape: a first, taller draft (a
+        margin, a "New target" heading, bordered Inputs, labels ABOVE each
+        field) pushed `#evals-bench-create-target` below the SCREEN's own
+        bottom edge entirely -- `Widget.region` proved it, not merely
+        clipped within its pane -- and `pilot.click` raised `OutOfBounds`.
+        A second, already-compacted draft (fields on one row, the button
+        on a row below) still lost the SAME way once a real target already
+        exists: the Add picker row that then also renders pushed the
+        button's row down by exactly one more, landing it UNDER this
+        app's own screen-wide footer bar -- geometrically in-bounds (no
+        `OutOfBounds` this time) but genuinely unclickable, since
+        `Screen.get_widget_at` resolves that point to the footer, not this
+        button (confirmed via that exact call, not merely inferred from
+        the region numbers).
+
+        Reads ``self._last_prompt_mode`` (never queries ``#evals-bench-
+        prompt-mode`` live) so this builds identically whether called from
+        `compose()` (before that Select has mounted) or from a later
+        targeted rebuild -- see `compose()`'s own comment for why.
+        """
+        prompt_mode = self._last_prompt_mode or "raw"
+        if prompt_mode == "chat":
+            steering_placeholder = SYSTEM_PROMPT_FIELD_LABEL
+            steering_id = "evals-target-system-prompt"
+            steering_value = self._pending_target_system_prompt
+        else:
+            steering_placeholder = PREFIX_FIELD_LABEL
+            steering_id = "evals-target-prefix"
+            steering_value = self._pending_target_prefix
+        return Horizontal(
+            Input(
+                value=self._pending_target_name,
+                placeholder="steered variant name",
+                compact=True,
+                id="evals-target-name",
+            ),
+            Input(
+                value=steering_value,
+                placeholder=steering_placeholder,
+                compact=True,
+                id=steering_id,
+            ),
+            Button(
+                "+ New target",
+                id="evals-bench-create-target",
+                classes="console-action-secondary",
+            ),
+            id="evals-bench-create-target-form",
         )
 
     async def _refresh_targets_section(self) -> None:
@@ -600,22 +952,78 @@ class BenchEditor(Vertical):
         await section.mount_all(self._build_targets_section())
         self._clear_form_error()
 
+    def _capture_pending_target_form(self) -> None:
+        """Stashes whatever is currently typed into the "+ New target"
+        mini-form's Name/steering ``Input``s onto ``self._pending_target_
+        *`` (task-1611 T2) -- called by every handler BELOW that is about
+        to call ``_refresh_targets_section`` for a reason OTHER than a
+        successful create (Add, Remove, a prompt-mode flip). Without this,
+        any of those targeted rebuilds would silently discard whatever the
+        user had started typing into this mini-form, exactly the state
+        loss the module docstring's Task 5 paragraph already guards
+        against for the OUTER Name/Description/Top-K/Probes fields, one
+        level down.
+
+        Only ONE steering ``Input`` is ever mounted at a time (see
+        ``_build_create_target_control``), so at most one of the two
+        steering ``query_one`` calls below finds a real widget -- the
+        other's ``QueryError`` is expected, not a bug, and leaves that
+        pending attribute exactly as it already was (e.g. a raw-mode
+        prefix typed earlier survives a flip to chat and back).
+        """
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            self._pending_target_name = self.query_one("#evals-target-name", Input).value
+        except QueryError:
+            pass
+        try:
+            self._pending_target_prefix = self.query_one(
+                "#evals-target-prefix", Input
+            ).value
+        except QueryError:
+            pass
+        try:
+            self._pending_target_system_prompt = self.query_one(
+                "#evals-target-system-prompt", Input
+            ).value
+        except QueryError:
+            pass
+
+    def _reset_pending_target_form(self) -> None:
+        """Clears the "+ New target" mini-form's persisted typed state
+        (task-1611 T2) -- called by ``stage_target`` once a Create press
+        actually succeeds, so the next rebuild shows a blank form rather
+        than re-offering the just-submitted name (which would just collide
+        on a second press) or steering text."""
+        self._pending_target_name = ""
+        self._pending_target_prefix = ""
+        self._pending_target_system_prompt = ""
+
     async def stage_target(self, model_row: Mapping[str, Any]) -> None:
         """Stages a freshly created ``eval_models`` row as a bench target
         -- called by ``evals_screen.py``'s ``CreateTargetRequested``
-        handler after IT creates the row via ``sample_bench.
-        resolve_sample_target(..., create=True)`` (see that message's own
-        docstring for why this module cannot make that call itself). A
-        TARGETED call against the already-mounted editor instance, never a
-        recompose -- see ``_build_targets_section``'s own docstring.
+        handler after IT creates the row (a real ``EvalsDB.create_model``
+        write -- see that message's own docstring for why this module
+        cannot make that call itself). A TARGETED call against the
+        already-mounted editor instance, never a recompose -- see
+        ``_build_targets_section``'s own docstring.
+
+        Task-1611 T2: also resets the "+ New target" mini-form's own
+        pending state (``_reset_pending_target_form``) -- a fresh, blank
+        form for whatever the user creates next, rather than the just-
+        submitted Name/steering text lingering to be accidentally
+        resubmitted (which would just raise a ``ConflictError`` on the
+        SAME name).
         """
         target_id = model_row.get("id") if isinstance(model_row, Mapping) else None
         if not target_id or target_id in self._staged_target_ids:
-            # Defensive only: a freshly `_unique_name`d row cannot already
-            # be staged, but this mirrors the Add-picker's own duplicate
+            # Defensive only: a freshly created row cannot already be
+            # staged, but this mirrors the Add-picker's own duplicate
             # guard rather than assuming the caller never will pass one.
             return
         self._staged_target_ids.append(target_id)
+        self._reset_pending_target_form()
         await self._refresh_targets_section()
 
     def _show_form_error(self, message: str) -> None:
@@ -663,8 +1071,8 @@ class BenchEditor(Vertical):
         except QueryError:
             # Defensive only: this button is never composed without the
             # picker beside it (see `_build_target_add_control`) -- the
-            # zero-models state renders `#evals-bench-create-target`
-            # instead, with no `Add` button at all.
+            # zero-models state means `_build_target_add_control` returned
+            # `None` instead, with no picker/Add button at all.
             return
         target_id = picker.value
         if target_id is Select.BLANK or not isinstance(target_id, str):
@@ -677,6 +1085,7 @@ class BenchEditor(Vertical):
             self._show_form_error("Target already on this bench.")
             return
         self._staged_target_ids.append(target_id)
+        self._capture_pending_target_form()
         await self._refresh_targets_section()
 
     @on(Button.Pressed, ".evals-bench-target-remove")
@@ -698,15 +1107,74 @@ class BenchEditor(Vertical):
         if not 0 <= index < len(self._staged_target_ids):
             return
         del self._staged_target_ids[index]
+        self._capture_pending_target_form()
+        await self._refresh_targets_section()
+
+    @on(Select.Changed, "#evals-bench-prompt-mode")
+    async def _on_prompt_mode_changed(self, event: Select.Changed) -> None:
+        """Swaps the "+ New target" mini-form's steering ``Input`` (task-
+        1611 T2) via the SAME targeted ``_refresh_targets_section`` rebuild
+        Add/Remove/``stage_target`` already use -- never a whole-widget
+        recompose (see the module docstring's T2 paragraph).
+
+        Guarded against the mount-time echo: a fresh ``Select`` constructed
+        with a non-blank ``value=`` (this one always is -- see `compose()`)
+        posts its own ``Changed`` the instant it mounts, carrying that SAME
+        initial value -- not a real user flip (this codebase has hit this
+        trap before, see the module docstring's own note). Comparing
+        against ``self._last_prompt_mode`` (set in `compose()` before this
+        Select even mounts) rather than a boolean "have I ever fired"
+        flag means a GENUINE flip back to the value the form started with
+        still refreshes correctly -- only the literal mount echo, whose
+        value is by definition unchanged from what `_last_prompt_mode`
+        already holds, is ever skipped.
+        """
+        event.stop()
+        new_mode = event.value
+        if new_mode == self._last_prompt_mode:
+            return
+        self._capture_pending_target_form()
+        self._last_prompt_mode = new_mode
         await self._refresh_targets_section()
 
     @on(Button.Pressed, "#evals-bench-create-target")
     def _on_create_target_pressed(self, event: Button.Pressed) -> None:
-        """Posts `CreateTargetRequested` for `evals_screen.py` to handle --
+        """Posts `CreateTargetRequested` with whatever is currently typed
+        into the "+ New target" mini-form (task-1611 T2) -- Name (raw,
+        un-stripped) and ONE steering value, picked by
+        `self._last_prompt_mode` (never queried live from `#evals-bench-
+        prompt-mode`, since only ONE of the two steering `Input`s is ever
+        mounted at once -- see `_build_create_target_control`). A blank
+        steering value normalizes to `None` here (not on the screen side)
+        so `evals_screen.py`'s handler never has to distinguish "field
+        left blank" from "field holds an explicit empty string" -- they
+        are the same thing. Handled by `evals_screen.py`, never here --
         see that message class's own docstring for why this module cannot
         create the row itself."""
         event.stop()
-        self.post_message(self.CreateTargetRequested())
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            name = self.query_one("#evals-target-name", Input).value
+        except QueryError:
+            name = ""
+        prefix: Optional[str] = None
+        system_prompt: Optional[str] = None
+        if self._last_prompt_mode == "chat":
+            try:
+                value = self.query_one("#evals-target-system-prompt", Input).value
+            except QueryError:
+                value = ""
+            system_prompt = value if value != "" else None
+        else:
+            try:
+                value = self.query_one("#evals-target-prefix", Input).value
+            except QueryError:
+                value = ""
+            prefix = value if value != "" else None
+        self.post_message(
+            self.CreateTargetRequested(name=name, prefix=prefix, system_prompt=system_prompt)
+        )
 
     @on(Button.Pressed, "#evals-bench-save")
     def _on_save_pressed(self, event: Button.Pressed) -> None:
@@ -765,18 +1233,37 @@ class BenchEditor(Vertical):
             return
 
         # Prompt-mode/target revalidation: see `_resolve_bench_targets`'s
-        # own docstring for why this is currently unreachable through a
-        # real db-backed target (no `eval_models` column stores `prefix`/
-        # `system_prompt` yet) but stays wired and tested.
+        # own docstring -- task-1611 T2 made this reachable through a
+        # real, db-backed steered target, not only the monkeypatched one
+        # some of this module's own tests still use.
         resolved_targets = _resolve_bench_targets(db, config.target_ids)
         invalid_target = next(
             (t for t in resolved_targets if not t.is_valid_for_mode(config.prompt_mode)),
             None,
         )
         if invalid_target is not None:
+            # Steering is IMMUTABLE per row (see `model_steering`'s own
+            # docstring -- no `update_model` exists), so this target
+            # cannot be "fixed" in place. Removal is the one NECESSARY
+            # step -- creating an additional target via this same
+            # section's "+ New target" mini-form, without also removing
+            # this one, leaves the offending target still staged and this
+            # exact error still blocking the NEXT Save (whole-branch
+            # review, Minor: an earlier revision of this copy offered
+            # "create a new target ... instead" as if it were an
+            # alternative to removal, which does not unblock anything on
+            # its own). A replacement is optional, phrased as such, and
+            # deliberately names no specific steering -- an UNSTEERED
+            # replacement target is just as valid for either mode as a
+            # steered one (`Target.is_valid_for_mode`: raw only rejects a
+            # `system_prompt`, chat only rejects a `prefix`; neither
+            # requires the other field be set), so naming one over the
+            # other here would over-prescribe.
             self._show_form_error(
                 f"{invalid_target.name} is not valid for {config.prompt_mode} mode; "
-                "change its prefix/system prompt settings before switching modes."
+                "steering cannot be edited on an existing target -- remove it "
+                "from this bench (optionally replacing it with a new target "
+                "instead)."
             )
             return
 
@@ -806,6 +1293,33 @@ class BenchEditor(Vertical):
             self._show_form_error(str(exc))
             return
 
+        # Whole-branch review, Minor (judged, documented, not fixed): a
+        # successful Save discards the "+ New target" mini-form's own
+        # typed-but-not-yet-created Name/steering text -- `Saved` triggers
+        # `evals_screen.py`'s `select()`, a full recompose that builds a
+        # BRAND NEW `BenchEditor` (see `Saved`'s own docstring: "always an
+        # edit, never a create" refers to the BENCH, not this widget
+        # instance), and `self._pending_target_*` resets to blank in that
+        # fresh instance's `__init__` -- there is no path from here to it.
+        # This contradicts `is_dirty()`'s own premise one specific way:
+        # that state IS worth protecting from an involuntary recompose
+        # (a completing background worker), yet a VOLUNTARY one the user
+        # just triggered themselves (pressing Save) silently drops it
+        # anyway. Considered threading the mini-form's pending state
+        # through `Saved` -> `evals_screen.py` -> the next `BenchEditor`'s
+        # constructor (mirroring how `save_bench`'s own cleaned name/
+        # description already round-trip through this exact recompose);
+        # rejected as not staying cleanly contained: `select()` is this
+        # screen's GENERIC recompose entry point, shared by every
+        # selection-kind change, not a Save-specific hook -- carrying
+        # state through it correctly requires it be scoped to the EXACT
+        # bench just saved and unconditionally cleared after one use, or
+        # a stray value could leak into an unrelated LATER selection's
+        # freshly-composed editor, a worse and stranger bug than today's
+        # simple, well-understood loss. Documented here, and in the module
+        # docstring's Task-1610 paragraph, as a deliberate boundary:
+        # Revert discarding unsaved state is what "revert" MEANS: this is
+        # the one place Save (a success, not a discard) does too.
         self.post_message(self.Saved(self._bench_id))
 
     @on(Button.Pressed, "#evals-bench-revert")

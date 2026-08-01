@@ -19,6 +19,7 @@ from tldw_chatbook.Evals.word_bench.storage import (
     load_bench,
     load_grid,
     load_run_preflight,
+    model_steering,
     save_bench,
     save_cell,
 )
@@ -470,3 +471,176 @@ def test_load_run_preflight_defaults_for_run_groups_written_before_this_change(
 def test_load_run_preflight_raises_for_an_unknown_run_group(db):
     with pytest.raises(ValueError):
         load_run_preflight(db, "does-not-exist")
+
+
+# ---------------------------------------------------------------------------
+# task-1611 -- model_steering: eval_models.config is the storage home for a
+# target's steering (prefix/system_prompt).
+# ---------------------------------------------------------------------------
+
+
+def test_model_steering_reads_prefix_from_config(db):
+    model_id = db.create_model(
+        name="steered", provider="llama_cpp", model_id="m",
+        config={"prefix": "Be careful. "},
+    )
+    assert model_steering(db.get_model(model_id)) == ("Be careful. ", None)
+
+
+def test_model_steering_reads_system_prompt_from_config(db):
+    model_id = db.create_model(
+        name="steered-chat", provider="llama_cpp", model_id="m",
+        config={"system_prompt": "You are terse."},
+    )
+    assert model_steering(db.get_model(model_id)) == (None, "You are terse.")
+
+
+def test_model_steering_defaults_to_none_none_for_an_unsteered_row(db):
+    """Regression: every eval_models row written before this convention
+    existed has no prefix/system_prompt key at all in its config."""
+    model_id = db.create_model(name="base", provider="llama_cpp", model_id="m")
+    assert model_steering(db.get_model(model_id)) == (None, None)
+
+
+def test_model_steering_normalizes_an_empty_prefix_to_none(db):
+    model_id = db.create_model(
+        name="cleared", provider="llama_cpp", model_id="m",
+        config={"prefix": ""},
+    )
+    assert model_steering(db.get_model(model_id)) == (None, None)
+
+
+def test_model_steering_normalizes_an_empty_system_prompt_to_none(db):
+    model_id = db.create_model(
+        name="cleared-chat", provider="llama_cpp", model_id="m",
+        config={"system_prompt": ""},
+    )
+    assert model_steering(db.get_model(model_id)) == (None, None)
+
+
+def test_model_steering_raises_naming_the_model_id_when_both_are_set(db):
+    """A Target itself rejects both fields set (models.Target.__post_init__),
+    but a stored eval_models row can reach this state some other way (e.g.
+    hand-edited JSON); model_steering must surface it, not silently pick
+    one field over the other."""
+    model_id = db.create_model(
+        name="corrupt", provider="llama_cpp", model_id="m",
+        config={"prefix": "a", "system_prompt": "b"},
+    )
+    with pytest.raises(ValueError, match=model_id):
+        model_steering(db.get_model(model_id))
+
+
+def test_model_steering_preserves_prefix_and_system_prompt_whitespace(db):
+    """Fix round 1: pins that model_steering never trims -- a future
+    ``.strip()`` "cleanup" must fail this. A leading newline in a raw-mode
+    prefix and a leading space in a chat-mode system_prompt are both
+    meaningful content, not incidental formatting."""
+    prefix_id = db.create_model(
+        name="newline-prefix", provider="llama_cpp", model_id="m",
+        config={"prefix": "\nBe careful. "},
+    )
+    assert model_steering(db.get_model(prefix_id)) == ("\nBe careful. ", None)
+
+    system_prompt_id = db.create_model(
+        name="space-system-prompt", provider="llama_cpp", model_id="m",
+        config={"system_prompt": " Be terse."},
+    )
+    assert model_steering(db.get_model(system_prompt_id)) == (None, " Be terse.")
+
+
+def _set_raw_config(db, model_id: str, json_text: str) -> None:
+    """Write literal JSON text straight into eval_models.config, bypassing
+    create_model's own `config or {}` coalescing -- the ONLY way to get a
+    falsy-but-non-dict value (0, [], "", false) actually persisted, since
+    create_model itself would otherwise normalize any of those to {} before
+    they ever reach storage. Simulates the hand-edited-JSON corruption
+    vector these tests are pinning."""
+    db.get_connection().execute(
+        "UPDATE eval_models SET config = ? WHERE id = ?", (json_text, model_id)
+    )
+
+
+def test_model_steering_raises_naming_the_model_id_for_a_non_mapping_config(db):
+    """Fix round 1: a hand-edited config that parses to something other
+    than a JSON object (a list, a bare number) must not reach the `.get()`
+    calls below as an opaque AttributeError -- it is the exact corruption
+    vector this function's docstring already anticipates for the
+    both-set case."""
+    list_id = db.create_model(name="list-config", provider="llama_cpp", model_id="m")
+    _set_raw_config(db, list_id, '["a"]')
+    with pytest.raises(ValueError, match=list_id):
+        model_steering(db.get_model(list_id))
+
+    int_id = db.create_model(name="int-config", provider="llama_cpp", model_id="m")
+    _set_raw_config(db, int_id, "5")
+    with pytest.raises(ValueError, match=int_id):
+        model_steering(db.get_model(int_id))
+
+
+# ---------------------------------------------------------------------------
+# PR #1155 fix round -- reversed ruling: falsy is NOT a synonym for absent.
+# Only a genuinely missing "config" key or an explicit None (SQL NULL) mean
+# unsteered; every other non-mapping value, falsy or not, is corrupt and
+# must raise the same as ["a"]/5 above.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("json_text", ["0", "[]", '""', "false"])
+def test_model_steering_raises_for_a_falsy_non_mapping_config(db, json_text):
+    """Reverses this function's original (incorrect) leniency: 0/[]/""/false
+    all used to be coalesced into "unsteered" by a bare `config or {}`,
+    exactly the same as a missing config -- inconsistent with ["a"]/5 (both
+    truthy) correctly raising. Every one of these must now raise too,
+    naming the model id."""
+    model_id = db.create_model(name="falsy-config", provider="llama_cpp", model_id="m")
+    _set_raw_config(db, model_id, json_text)
+    with pytest.raises(ValueError, match=model_id):
+        model_steering(db.get_model(model_id))
+
+
+def test_model_steering_treats_an_absent_config_key_as_unsteered():
+    """A row with no "config" key at all (every eval_models row written
+    before this convention existed) -- exercised directly against the
+    function since get_model/list_models always include the key."""
+    assert model_steering({"id": "x"}) == (None, None)
+
+
+def test_model_steering_treats_an_explicit_none_config_as_unsteered():
+    """An explicit SQL NULL (config present, value None) reads the same as
+    a missing key -- both carry no information about steering."""
+    assert model_steering({"id": "x", "config": None}) == (None, None)
+
+
+def test_model_steering_treats_a_real_empty_mapping_as_unsteered(db):
+    """{} is a genuine, valid empty mapping -- unlike 0/[]/""/false above,
+    it is real evidence of "deliberately unsteered", not a corrupt
+    non-mapping value, and must still resolve cleanly."""
+    model_id = db.create_model(
+        name="empty-config", provider="llama_cpp", model_id="m", config={},
+    )
+    assert model_steering(db.get_model(model_id)) == (None, None)
+
+
+def test_model_steering_raises_naming_the_model_id_and_field_for_a_non_string_prefix(db):
+    """Fix round 1 (b): a present steering value that is not itself a
+    string (e.g. hand-edited to a number) must not propagate into
+    Target.prefix and then capture_client._build_request's string
+    concatenation as an untyped value."""
+    model_id = db.create_model(
+        name="numeric-prefix", provider="llama_cpp", model_id="m",
+        config={"prefix": 5},
+    )
+    with pytest.raises(ValueError, match=model_id) as exc_info:
+        model_steering(db.get_model(model_id))
+    assert "prefix" in str(exc_info.value)
+
+
+def test_model_steering_raises_naming_the_model_id_and_field_for_a_non_string_system_prompt(db):
+    model_id = db.create_model(
+        name="listy-system-prompt", provider="llama_cpp", model_id="m",
+        config={"system_prompt": ["x"]},
+    )
+    with pytest.raises(ValueError, match=model_id) as exc_info:
+        model_steering(db.get_model(model_id))
+    assert "system_prompt" in str(exc_info.value)
