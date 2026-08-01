@@ -109,8 +109,23 @@ def _classify_ip(ip_str: str) -> str:
     return "public" if ip.is_global else "private"
 
 
+def _log_origin(url: str) -> str:
+    """Return a credential- and query-free URL label for transport logs."""
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return "<invalid-url>"
+    if not host or parsed.scheme not in ("http", "https"):
+        return "<invalid-url>"
+    rendered_host = f"[{host}]" if ":" in host else host
+    rendered_port = f":{port}" if port is not None else ""
+    return f"{parsed.scheme}://{rendered_host}{rendered_port}"
+
+
 def _blocked(url: str, reason: str, host: str, detail: str = "") -> EgressDecision:
-    logger.warning(f"Egress blocked ({reason}): {url} {detail}".rstrip())
+    logger.warning(f"Egress blocked ({reason}): {_log_origin(url)} {detail}".rstrip())
     log_counter("egress_blocked", labels={"reason": reason})
     return EgressDecision(allowed=False, reason=reason, host=host)
 
@@ -118,7 +133,7 @@ def _blocked(url: str, reason: str, host: str, detail: str = "") -> EgressDecisi
 def _pre_resolution(url: str, trusted_origins: frozenset):
     """Checks that need no DNS. Returns EgressDecision, or the host to resolve."""
     if not _config_enabled():
-        logger.debug(f"Egress check disabled by [web_security] for {url}")
+        logger.debug(f"Egress check disabled by [web_security] for {_log_origin(url)}")
         log_counter("egress_check_skipped")
         return EgressDecision(allowed=True, reason="disabled", host="")
     try:

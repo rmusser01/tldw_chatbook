@@ -2400,7 +2400,7 @@
     },
     {
       "call_count": 3,
-      "diagnostic_digest": "ca82a96931afabf055ca",
+      "diagnostic_digest": "77e51ea48869deb02e1c",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Utils/egress.py",
       "reason": "remaining Chatbook production diagnostic owner"
