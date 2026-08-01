@@ -709,17 +709,24 @@ async def test_alias_tokens_substitute_character_name_with_neutral_user():
         assert seed == "Hello User, I am Elara/Elara."
 
 
-# ---- build_preview_system_prompt (tasks 1530/1531) ----
+# ---- build_preview_system_prompt (tasks 1530/1531/1744) ----
 
 
 def test_build_preview_system_prompt_resolves_macros():
+    """task-1744: the preview now composes through the same shared joiner as
+    Console and the character-probe engine, so ``description`` gains the
+    "Description: " label they already use -- this pins the label, not just
+    the macro resolution the test name describes (see
+    Tests/UI/test_character_session_prompt_seed.py's
+    ``test_console_engine_and_preview_compose_byte_identical_system_prompts``
+    for the cross-surface parity guard)."""
     from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
         build_preview_system_prompt,
     )
 
     record = {"name": "Elara", "description": "{{char}} guides {{user}}."}
 
-    assert build_preview_system_prompt(record) == "Elara guides User."
+    assert build_preview_system_prompt(record) == "Description: Elara guides User."
 
 
 def test_build_preview_system_prompt_folds_greeting_after_prompt():
@@ -732,7 +739,7 @@ def test_build_preview_system_prompt_folds_greeting_after_prompt():
         greeting="Hello, traveler.",
     )
 
-    assert out.startswith("Guide the user.")
+    assert out.startswith("Description: Guide the user.")
     assert "Hello, traveler." in out
 
 
@@ -742,3 +749,39 @@ def test_build_preview_system_prompt_empty_record_falls_back():
     )
 
     assert build_preview_system_prompt({}) == "Stay in character."
+
+
+def test_build_preview_system_prompt_message_example_and_post_history_reach_it():
+    """task-1744 fix round 1: the preview used to omit message_example and
+    post_history_instructions entirely, same as pre-task-1744 Console --
+    now both reach the composed prompt, matching Console and the engine."""
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        build_preview_system_prompt,
+    )
+
+    record = {
+        "name": "Vex",
+        "system_prompt": "You are Vex.",
+        "message_example": "<START>\nVex: Try me.",
+        "post_history_instructions": "Never break character.",
+    }
+
+    out = build_preview_system_prompt(record)
+
+    assert "Example dialogue:\n<START>\nVex: Try me." in out
+    assert "Never break character." in out
+
+
+def test_build_preview_system_prompt_persona_profile_record_is_unaffected():
+    """A persona profile record (no personality/description/scenario/
+    message_example/post_history_instructions keys at all -- see
+    PersonasScreen._profile_record) must still compose cleanly: the shared
+    joiner treats absent fields the same as empty ones, so this is not
+    persona-specific handling, just confirmation none is needed."""
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        build_preview_system_prompt,
+    )
+
+    profile_record = {"id": "p-1", "name": "Ada", "system_prompt": "Be helpful."}
+
+    assert build_preview_system_prompt(profile_record) == "Be helpful."

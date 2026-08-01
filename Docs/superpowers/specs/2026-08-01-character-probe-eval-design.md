@@ -200,6 +200,13 @@ that should catch up; TASK-1744 tracks extracting one shared card→prompt funct
 The engine composes those four shared fields **in Console's own order** so that shared function has
 one less difference to reconcile, then appends the two Console does not send.
 
+*Resolved by TASK-1744:* the join (field order, labels, macro resolution) now lives in
+`Character_Chat_Lib.compose_character_card_text`, a non-UI module both the engine
+(`compose_system_prompt`) and `chat_screen.py::_character_session_prompt_seed` import lazily, exactly
+as this section predicted would be needed. Console gained `message_example` and
+`post_history_instructions` in the process — a deliberate, user-visible change to every existing
+character session's system prompt, not an incidental refactor.
+
 **Card macros are resolved, not passed through.** Cards are authored against SillyTavern-style
 macros, and Console resolves `{{char}}`/`{{user}}` (and their aliases) before the text reaches any
 provider payload — task-1530 exists because they otherwise leak verbatim. The engine resolves them
@@ -307,8 +314,9 @@ Real in-memory `EvalsDB` and a fake chat client, as elsewhere in the slice. Spec
 
 - multi-turn ordering: turn *N* genuinely sees turn *N−1*'s reply
 - prompt assembly includes every field that shapes voice (`description`, `message_example`,
-  `post_history_instructions` included), pending TASK-1744 bringing Console up to the same
-  fidelity via a shared function
+  `post_history_instructions` included); TASK-1744 moved the join itself into
+  `Character_Chat_Lib.compose_character_card_text`, shared with Console's
+  `_character_session_prompt_seed`, so the two are byte-identical for the same card
 - **targets come from real `eval_models` rows, never hand-built dicts.** A target's steering lives
   inside the row's `config` JSON, not as a top-level column; a fixture that invents the flatter
   shape will agree with code that reads the wrong place, which is exactly how phase 1 shipped seven
