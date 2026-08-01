@@ -43,7 +43,12 @@ from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.base_backends import LocalTTSBackend
 from tldw_chatbook.TTS.audio_service import get_audio_service
 from tldw_chatbook.TTS.text_processing import TextChunker, TextNormalizer
+from tldw_chatbook.TTS.voice_blend_paths import (
+    default_kokoro_backend_blend_directory,
+    write_private_json,
+)
 from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.Utils.private_paths import secure_private_directory
 
 #######################################################################################################################
 #
@@ -128,17 +133,24 @@ class KokoroTTSBackend(LocalTTSBackend):
         self.enable_voice_mixing = self.config.get("KOKORO_ENABLE_VOICE_MIXING", False)
 
         # Voice blend storage
-        self.voice_blends_dir = Path(
-            self.config.get(
-                "KOKORO_VOICE_BLENDS_DIR",
-                get_cli_setting(
-                    "app_tts",
-                    "KOKORO_VOICE_BLENDS_DIR",
-                    "~/.config/tldw_cli/kokoro_voice_blends",
-                ),
+        configured_blends_dir = self.config.get("KOKORO_VOICE_BLENDS_DIR")
+        if configured_blends_dir is None:
+            configured_blends_dir = get_cli_setting(
+                "app_tts", "KOKORO_VOICE_BLENDS_DIR", None
             )
-        ).expanduser()
-        self.voice_blends_dir.mkdir(parents=True, exist_ok=True)
+        self._voice_blends_directory_is_application_owned = (
+            configured_blends_dir is None
+        )
+        if self._voice_blends_directory_is_application_owned:
+            self.voice_blends_dir = default_kokoro_backend_blend_directory()
+            secure_private_directory(
+                self.voice_blends_dir,
+                create=True,
+                application_owned=True,
+            )
+        else:
+            self.voice_blends_dir = Path(configured_blends_dir).expanduser()
+            self.voice_blends_dir.mkdir(parents=True, exist_ok=True)
         self.saved_blends = self._load_saved_blends()
 
         # Initialize default blends if none exist
@@ -1550,15 +1562,24 @@ class KokoroTTSBackend(LocalTTSBackend):
 
         return blends
 
-    def _save_blends(self):
-        """Save voice blends to disk"""
+    def _save_blends(self) -> bool:
+        """Atomically save voice blends to disk."""
         blend_file = self.voice_blends_dir / "voice_blends.json"
         try:
-            with open(blend_file, "w") as f:
-                json.dump(self.saved_blends, f, indent=2)
+            write_private_json(
+                blend_file,
+                self.saved_blends,
+                application_owned_directory=(
+                    self.voice_blends_dir
+                    if self._voice_blends_directory_is_application_owned
+                    else None
+                ),
+            )
             logger.info(f"Saved {len(self.saved_blends)} voice blends")
+            return True
         except Exception as e:
             logger.error(f"Failed to save voice blends: {e}")
+            return False
 
     def _create_default_blends(self):
         """Create default voice blend presets"""
@@ -1638,6 +1659,9 @@ class KokoroTTSBackend(LocalTTSBackend):
         Returns:
             Success status
         """
+        updated = False
+        had_existing_blend = name in self.saved_blends
+        previous_blend = self.saved_blends.get(name)
         try:
             # Validate and normalize weights
             total_weight = sum(w for _, w in voices)
@@ -1656,12 +1680,23 @@ class KokoroTTSBackend(LocalTTSBackend):
 
             # Save to memory and disk
             self.saved_blends[name] = blend_data
-            self._save_blends()
+            updated = True
+            if not self._save_blends():
+                if had_existing_blend:
+                    self.saved_blends[name] = previous_blend
+                else:
+                    self.saved_blends.pop(name, None)
+                return False
 
             logger.info(f"Saved voice blend '{name}' with {len(voices)} voices")
             return True
 
         except Exception as e:
+            if updated:
+                if had_existing_blend:
+                    self.saved_blends[name] = previous_blend
+                else:
+                    self.saved_blends.pop(name, None)
             logger.error(f"Failed to save voice blend: {e}")
             return False
 
@@ -1685,12 +1720,20 @@ class KokoroTTSBackend(LocalTTSBackend):
 
     def delete_voice_blend(self, name: str) -> bool:
         """Delete a saved voice blend"""
-        if name in self.saved_blends:
-            del self.saved_blends[name]
-            self._save_blends()
+        if name not in self.saved_blends:
+            return False
+
+        removed_blend = self.saved_blends.pop(name)
+        try:
+            if not self._save_blends():
+                self.saved_blends[name] = removed_blend
+                return False
             logger.info(f"Deleted voice blend '{name}'")
             return True
-        return False
+        except Exception as e:
+            self.saved_blends[name] = removed_blend
+            logger.error(f"Failed to delete voice blend: {e}")
+            return False
 
     def create_blend_from_preset(self, preset_name: str) -> Optional[str]:
         """

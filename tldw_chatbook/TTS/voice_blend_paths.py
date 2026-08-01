@@ -20,6 +20,11 @@ def kokoro_ui_blend_file() -> Path:
     return get_cli_config_path().parent / "kokoro_voice_blends.json"
 
 
+def default_kokoro_backend_blend_directory() -> Path:
+    """Return the active profile's default Kokoro backend blend directory."""
+    return get_cli_config_path().parent / "kokoro_voice_blends"
+
+
 def write_private_json(
     path: Path,
     payload: Mapping[str, Any],
