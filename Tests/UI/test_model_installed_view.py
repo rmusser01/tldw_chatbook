@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.css.query import NoMatches
 from textual.widgets import Button
 
 from tldw_chatbook.Model_Artifacts.service import ArtifactRef
@@ -47,6 +48,22 @@ def test_unmanaged_scan_is_bounded_and_labels_supported_model_files(
 
     assert len(rows) == 2
     assert all(row.path.suffix == ".gguf" for row in rows)
+
+
+def test_unmanaged_scan_validates_root_before_walking(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Configured legacy roots pass the shared path-safety boundary first."""
+    from tldw_chatbook.UI.Screens import model_installed_view as module
+
+    walk = MagicMock()
+    monkeypatch.setattr(module.os, "walk", walk)
+
+    with pytest.raises(ValueError, match="dangerous pattern"):
+        module.InstalledView.scan_unmanaged(tmp_path / "../..")
+
+    walk.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -143,20 +160,22 @@ def test_repair_summary_reports_every_reconciliation_outcome(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize(
-    ("worker_name", "service_method", "worker_args"),
+    ("worker_name", "service_method", "worker_args", "log_context"),
     (
-        ("_load_inventory", "list_installed", ()),
+        ("_load_inventory", "list_installed", (), ("legacy", "configured")),
         (
             "_activate_model",
             "activate",
             (ArtifactRef("parakeet-v2", "rev", "int8"),),
+            ("parakeet-v2", "rev", "int8"),
         ),
         (
             "_delete_model",
             "delete",
             (ArtifactRef("parakeet-v2", "rev", "int8"),),
+            ("parakeet-v2", "rev", "int8"),
         ),
-        ("_repair_store", "reconcile", ()),
+        ("_repair_store", "reconcile", (), ("store", "shared")),
     ),
 )
 def test_installed_worker_failures_are_logged_and_sanitized(
@@ -165,6 +184,7 @@ def test_installed_worker_failures_are_logged_and_sanitized(
     worker_name: str,
     service_method: str,
     worker_args: tuple,
+    log_context: tuple[str, ...],
 ) -> None:
     """Every background failure retains diagnostics without exposing them in UI."""
     from tldw_chatbook.UI.Screens import model_installed_view as module
@@ -184,6 +204,8 @@ def test_installed_worker_failures_are_logged_and_sanitized(
 
     fake_logger.opt.assert_called_once_with(exception=True)
     fake_logger.error.assert_called_once()
+    logged = " ".join(str(value) for value in fake_logger.error.call_args.args).casefold()
+    assert all(value in logged for value in log_context)
     assert marker not in str(fake_app.call_from_thread.call_args)
 
 
@@ -328,6 +350,96 @@ def test_curated_preflight_result_opens_the_shared_modal(
     modal, callback = fake_app.push_screen.call_args[0]
     assert isinstance(modal, ModelInstallModal)
     assert callback == view._confirm_install
+
+
+def test_curated_progress_tolerates_recompose_gap() -> None:
+    """A progress event is retained while its widget is temporarily absent."""
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+    from tldw_chatbook.Widgets.ModelArtifacts import InstallProgressed
+
+    progress = AcquisitionProgress(
+        "fetch",
+        ArtifactRef("parakeet-v2", "immutable-revision", "int8"),
+        "encoder.onnx",
+        1,
+        2,
+    )
+    view = CuratedView(service_factory=MagicMock(), registry_factory=MagicMock())
+    view.query_one = MagicMock(side_effect=NoMatches)
+    view.refresh = MagicMock()
+
+    view._install_progressed(InstallProgressed(progress))
+
+    assert view._progress is progress
+    view.refresh.assert_called_once_with(recompose=True)
+
+
+def test_curated_provision_completion_tolerates_recompose_gap() -> None:
+    """Missing progress markup cannot skip install cleanup and refresh."""
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    view = CuratedView(service_factory=MagicMock(), registry_factory=MagicMock())
+    view._operation_reference = reference
+    view._pending_report = object()
+    view._progress = object()
+    view.query_one = MagicMock(side_effect=NoMatches)
+    view.notify = MagicMock()
+    view.post_message = MagicMock()
+    view.ensure_loaded = MagicMock()
+
+    view._apply_provision_result(None)
+
+    assert view._operation_reference is None
+    assert view._pending_report is None
+    assert view._progress is None
+    view.post_message.assert_called_once()
+    view.ensure_loaded.assert_called_once_with(force=True)
+
+
+@pytest.mark.parametrize("operation", ("preflight", "installation"))
+def test_curated_install_failures_log_exact_artifact_context(
+    operation: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Worker diagnostics identify the safe immutable artifact reference."""
+    from Tests.UI.test_model_artifact_widgets import _report
+    from tldw_chatbook.UI.Screens import model_curated_view as module
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    fake_app = MagicMock()
+    fake_logger = MagicMock()
+    fake_logger.opt.return_value = fake_logger
+    monkeypatch.setattr(module.CuratedView, "app", property(lambda self: fake_app))
+    monkeypatch.setattr(module, "logger", fake_logger)
+    view = module.CuratedView(
+        service_factory=MagicMock(),
+        registry_factory=MagicMock(),
+    )
+
+    if operation == "preflight":
+        async def fail_preflight(_reference):
+            raise RuntimeError("PRIVATE-WORKER-DETAIL")
+
+        view._preflight = fail_preflight
+        module.CuratedView._preflight_model.__wrapped__(view, reference)
+    else:
+        report = _report(tmp_path / "managed")
+        view._pending_report = report
+
+        async def fail_provision(_report):
+            raise RuntimeError("PRIVATE-WORKER-DETAIL")
+
+        view._provision = fail_provision
+        module.CuratedView._provision_model.__wrapped__(view)
+        reference = report.root
+
+    logged = " ".join(str(value) for value in fake_logger.error.call_args.args)
+    assert reference.artifact_id in logged
+    assert reference.revision in logged
+    assert reference.variant in logged
 
 
 def test_models_rail_lists_curated_and_installed_and_drops_local_models() -> None:

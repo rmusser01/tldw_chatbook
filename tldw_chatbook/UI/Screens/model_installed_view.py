@@ -29,6 +29,7 @@ from tldw_chatbook.UI.Screens.model_browser_state import (
     UnmanagedRow,
     inventory_rows,
 )
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Widgets.ModelArtifacts.activation_controls import (
     ActivationRequested,
     DeletionRequested,
@@ -307,6 +308,7 @@ class InstalledView(Widget):
         Returns:
             Bounded legacy model rows in deterministic path order.
         """
+        root = validate_path_simple(root, require_exists=False).resolve()
         if limit <= 0 or not root.is_dir():
             return ()
         rows: list[UnmanagedRow] = []
@@ -361,7 +363,10 @@ class InstalledView(Widget):
             unmanaged = self.scan_unmanaged(self._legacy_dir)
             rows = inventory_rows(installed, usage, unmanaged)
         except Exception:
-            logger.opt(exception=True).error("Managed model inventory load failed")
+            logger.opt(exception=True).error(
+                "Managed model inventory load failed; legacy_scan_configured={}",
+                self._legacy_dir is not None,
+            )
             self.app.call_from_thread(
                 self._apply_inventory,
                 (),
@@ -521,7 +526,10 @@ class InstalledView(Widget):
         try:
             report = self._service_for_worker().reconcile()
         except Exception as exc:
-            logger.opt(exception=True).error("Managed model repair failed")
+            logger.opt(exception=True).error(
+                "Managed model repair failed; store={}",
+                "shared",
+            )
             self.app.call_from_thread(
                 self._apply_lifecycle_result,
                 "repair",

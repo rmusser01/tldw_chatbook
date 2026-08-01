@@ -10,6 +10,7 @@ from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -260,7 +261,12 @@ class CuratedView(Widget):
         try:
             report = asyncio.run(self._preflight(reference))
         except Exception as exc:
-            logger.opt(exception=True).error("Curated model preflight failed")
+            logger.opt(exception=True).error(
+                "Curated model preflight failed for {}@{}/{}",
+                reference.artifact_id,
+                reference.revision,
+                reference.variant,
+            )
             self.app.call_from_thread(
                 self._apply_preflight_result,
                 None,
@@ -322,7 +328,12 @@ class CuratedView(Widget):
         try:
             asyncio.run(self._provision(report))
         except Exception as exc:
-            logger.opt(exception=True).error("Curated model installation failed")
+            logger.opt(exception=True).error(
+                "Curated model installation failed for {}@{}/{}",
+                report.root.artifact_id,
+                report.root.revision,
+                report.root.variant,
+            )
             self.app.call_from_thread(
                 self._apply_provision_result,
                 install_failure_message(
@@ -337,10 +348,14 @@ class CuratedView(Widget):
     def _install_progressed(self, event: InstallProgressed) -> None:
         """Retain and render worker progress outside the modal."""
         self._progress = event.progress
-        progress = self.query_one(
-            "#curated-model-install-progress",
-            ModelInstallProgress,
-        )
+        try:
+            progress = self.query_one(
+                "#curated-model-install-progress",
+                ModelInstallProgress,
+            )
+        except NoMatches:
+            self.refresh(recompose=True)
+            return
         progress.display = True
         progress.update_progress(event.progress)
 
@@ -350,11 +365,15 @@ class CuratedView(Widget):
         self._pending_report = None
         self._operation_reference = None
         self._progress = None
-        progress = self.query_one(
-            "#curated-model-install-progress",
-            ModelInstallProgress,
-        )
-        progress.display = False
+        try:
+            progress = self.query_one(
+                "#curated-model-install-progress",
+                ModelInstallProgress,
+            )
+        except NoMatches:
+            progress = None
+        if progress is not None:
+            progress.display = False
         if error is not None:
             self.notify(error, severity="error")
         else:

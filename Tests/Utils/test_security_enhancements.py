@@ -90,6 +90,11 @@ class TestValidatePathSimple:
         with pytest.raises(ValueError, match="dangerous pattern"):
             validate_path_simple("..\\..\\etc\\passwd")
 
+        # The second parent reference may terminate the path. Windows CI
+        # constructs this exact shape for a lock root beneath ``tmp_path``.
+        with pytest.raises(ValueError, match="dangerous pattern"):
+            validate_path_simple("C:\\Temp\\cache\\..\\..")
+
 
 class TestLogSanitizer:
     """Test the log sanitization utilities."""

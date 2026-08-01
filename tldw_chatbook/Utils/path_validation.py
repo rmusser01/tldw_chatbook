@@ -397,7 +397,7 @@ def validate_path_simple(
         # Check for obvious traversal attempts
         dangerous_patterns = [
             "../..",  # Multiple parent refs (POSIX)
-            "..\\..\\",  # Multiple parent refs (Windows) -- kept in parity
+            "..\\..",  # Multiple parent refs (Windows) -- kept in parity
             # with the POSIX pattern above; a single "..\" segment is a
             # legitimate, unresolved component (e.g. "nested\..\locks") and
             # must not be flagged here. This function has no base directory
