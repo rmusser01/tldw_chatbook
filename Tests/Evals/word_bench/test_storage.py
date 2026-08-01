@@ -549,6 +549,18 @@ def test_model_steering_preserves_prefix_and_system_prompt_whitespace(db):
     assert model_steering(db.get_model(system_prompt_id)) == (None, " Be terse.")
 
 
+def _set_raw_config(db, model_id: str, json_text: str) -> None:
+    """Write literal JSON text straight into eval_models.config, bypassing
+    create_model's own `config or {}` coalescing -- the ONLY way to get a
+    falsy-but-non-dict value (0, [], "", false) actually persisted, since
+    create_model itself would otherwise normalize any of those to {} before
+    they ever reach storage. Simulates the hand-edited-JSON corruption
+    vector these tests are pinning."""
+    db.get_connection().execute(
+        "UPDATE eval_models SET config = ? WHERE id = ?", (json_text, model_id)
+    )
+
+
 def test_model_steering_raises_naming_the_model_id_for_a_non_mapping_config(db):
     """Fix round 1: a hand-edited config that parses to something other
     than a JSON object (a list, a bare number) must not reach the `.get()`
@@ -556,24 +568,79 @@ def test_model_steering_raises_naming_the_model_id_for_a_non_mapping_config(db):
     vector this function's docstring already anticipates for the
     both-set case."""
     list_id = db.create_model(name="list-config", provider="llama_cpp", model_id="m")
-    db.get_connection().execute(
-        "UPDATE eval_models SET config = ? WHERE id = ?", ('["a"]', list_id)
-    )
+    _set_raw_config(db, list_id, '["a"]')
     with pytest.raises(ValueError, match=list_id):
         model_steering(db.get_model(list_id))
 
     int_id = db.create_model(name="int-config", provider="llama_cpp", model_id="m")
-    db.get_connection().execute(
-        "UPDATE eval_models SET config = ? WHERE id = ?", ("5", int_id)
-    )
+    _set_raw_config(db, int_id, "5")
     with pytest.raises(ValueError, match=int_id):
         model_steering(db.get_model(int_id))
 
 
-def test_model_steering_treats_an_empty_list_config_as_unsteered(db):
-    """An empty list is falsy, same as a missing/None config -- caught by
-    the `or {}` fallback before the non-mapping check ever runs. Exercised
-    directly against the function (rather than through create_model/
-    get_model) because create_model's own `config or {}` already
-    normalizes a `[]` argument to `{}` before it is ever stored."""
-    assert model_steering({"id": "x", "config": []}) == (None, None)
+# ---------------------------------------------------------------------------
+# PR #1155 fix round -- reversed ruling: falsy is NOT a synonym for absent.
+# Only a genuinely missing "config" key or an explicit None (SQL NULL) mean
+# unsteered; every other non-mapping value, falsy or not, is corrupt and
+# must raise the same as ["a"]/5 above.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("json_text", ["0", "[]", '""', "false"])
+def test_model_steering_raises_for_a_falsy_non_mapping_config(db, json_text):
+    """Reverses this function's original (incorrect) leniency: 0/[]/""/false
+    all used to be coalesced into "unsteered" by a bare `config or {}`,
+    exactly the same as a missing config -- inconsistent with ["a"]/5 (both
+    truthy) correctly raising. Every one of these must now raise too,
+    naming the model id."""
+    model_id = db.create_model(name="falsy-config", provider="llama_cpp", model_id="m")
+    _set_raw_config(db, model_id, json_text)
+    with pytest.raises(ValueError, match=model_id):
+        model_steering(db.get_model(model_id))
+
+
+def test_model_steering_treats_an_absent_config_key_as_unsteered():
+    """A row with no "config" key at all (every eval_models row written
+    before this convention existed) -- exercised directly against the
+    function since get_model/list_models always include the key."""
+    assert model_steering({"id": "x"}) == (None, None)
+
+
+def test_model_steering_treats_an_explicit_none_config_as_unsteered():
+    """An explicit SQL NULL (config present, value None) reads the same as
+    a missing key -- both carry no information about steering."""
+    assert model_steering({"id": "x", "config": None}) == (None, None)
+
+
+def test_model_steering_treats_a_real_empty_mapping_as_unsteered(db):
+    """{} is a genuine, valid empty mapping -- unlike 0/[]/""/false above,
+    it is real evidence of "deliberately unsteered", not a corrupt
+    non-mapping value, and must still resolve cleanly."""
+    model_id = db.create_model(
+        name="empty-config", provider="llama_cpp", model_id="m", config={},
+    )
+    assert model_steering(db.get_model(model_id)) == (None, None)
+
+
+def test_model_steering_raises_naming_the_model_id_and_field_for_a_non_string_prefix(db):
+    """Fix round 1 (b): a present steering value that is not itself a
+    string (e.g. hand-edited to a number) must not propagate into
+    Target.prefix and then capture_client._build_request's string
+    concatenation as an untyped value."""
+    model_id = db.create_model(
+        name="numeric-prefix", provider="llama_cpp", model_id="m",
+        config={"prefix": 5},
+    )
+    with pytest.raises(ValueError, match=model_id) as exc_info:
+        model_steering(db.get_model(model_id))
+    assert "prefix" in str(exc_info.value)
+
+
+def test_model_steering_raises_naming_the_model_id_and_field_for_a_non_string_system_prompt(db):
+    model_id = db.create_model(
+        name="listy-system-prompt", provider="llama_cpp", model_id="m",
+        config={"system_prompt": ["x"]},
+    )
+    with pytest.raises(ValueError, match=model_id) as exc_info:
+        model_steering(db.get_model(model_id))
+    assert "system_prompt" in str(exc_info.value)

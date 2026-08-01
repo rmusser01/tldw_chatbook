@@ -195,6 +195,18 @@ def configured_llama_cpp_model_id(app_config: Optional[Mapping[str, Any]]) -> st
     NAME``'s own comment for why: that function reuses an already-
     registered row first, which is exactly wrong for a control whose job
     is minting an ADDITIONAL target).
+
+    Args:
+        app_config: The app's config mapping, or ``None``. Read via
+            ``api_settings.llama_cpp.model``; any other shape (missing
+            section, non-string value) is treated as unset.
+
+    Returns:
+        The configured model id, stripped of surrounding whitespace, or
+        ``""`` if no ``llama_cpp`` model is configured. Never ``None`` --
+        unlike ``configured_llama_cpp_url``, callers of this function (see
+        ``resolve_sample_target``'s own comment on ``eval_models.model_id``
+        being ``NOT NULL``) always need a concrete string to fall back on.
     """
     model = _llama_cpp_settings(app_config).get("model")
     return model.strip() if isinstance(model, str) else ""
