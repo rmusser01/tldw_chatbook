@@ -61,7 +61,6 @@ from tldw_chatbook.Model_Artifacts.store import managed_model_artifact_root
 if TYPE_CHECKING:
     from tldw_chatbook.Model_Artifacts.acquisition import (
         AcquisitionProgress,
-        ArtifactCatalog,
         ArtifactSourceMap,
         CredentialResolver,
         PreflightReport,
