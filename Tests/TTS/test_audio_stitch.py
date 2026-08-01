@@ -19,11 +19,14 @@ exported to ``BytesIO`` — no fixtures on disk, no network.
 
 from __future__ import annotations
 
+import importlib
+import sys
 from io import BytesIO
 
 import pytest
 from pydub import AudioSegment
 
+import tldw_chatbook.TTS.audio_stitch as audio_stitch
 from tldw_chatbook.TTS.audio_stitch import (
     AudioStitchError,
     concat_wav_segments,
@@ -108,12 +111,21 @@ def test_empty_sequence_raises_audio_stitch_error() -> None:
 
 
 def test_undecodable_segment_names_its_zero_based_index() -> None:
+    """Pin the failing index precisely, not via a loose substring check.
+
+    A bare ``"1" in str(exc)`` would also pass for an unrelated "1" anywhere
+    in the message (for example a byte count or a different segment's
+    index). Task 6 surfaces this index to the user as "turn N", so an
+    off-by-one must be catchable: assert both the typed ``segment_index``
+    attribute and a specific, unambiguous message phrase.
+    """
     segments = [_silence_wav(300), b"not audio", _silence_wav(300)]
 
     with pytest.raises(AudioStitchError) as exc_info:
         concat_wav_segments(segments)
 
-    assert "1" in str(exc_info.value)
+    assert exc_info.value.segment_index == 1
+    assert "Segment 1 " in str(exc_info.value)
 
 
 def test_mixed_sample_rates_decode_and_sum_durations() -> None:
@@ -126,3 +138,62 @@ def test_mixed_sample_rates_decode_and_sum_durations() -> None:
     assert wav_duration_seconds(result) == pytest.approx(
         expected_seconds, abs=_DURATION_TOLERANCE_SECONDS
     )
+
+
+def test_concat_wav_segments_raises_when_pydub_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both public functions must fail at call time, not import time.
+
+    ``pydub`` is only an optional extra; a bare module-scope import would
+    take down the entire Watchlists Collections screen for a user who never
+    installed it (``screen_registry.load_screen_class`` swallows
+    ``ImportError`` from any module in a screen's import chain). Patching the
+    module's ``PYDUB_AVAILABLE`` flag simulates that absence for the call
+    path without touching real import machinery.
+    """
+    monkeypatch.setattr(audio_stitch, "PYDUB_AVAILABLE", False)
+
+    with pytest.raises(AudioStitchError, match="pydub"):
+        concat_wav_segments([_silence_wav(100)])
+
+
+def test_wav_duration_seconds_raises_when_pydub_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(audio_stitch, "PYDUB_AVAILABLE", False)
+
+    with pytest.raises(AudioStitchError, match="pydub"):
+        wav_duration_seconds(_silence_wav(100))
+
+
+def test_module_imports_successfully_without_pydub_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The load-bearing import-safety test: no import-time dependency on pydub.
+
+    Chosen approach: block ``pydub`` via the ``sys.modules[name] = None``
+    convention — Python's import machinery raises ``ImportError`` immediately
+    for any ``import``/``from ... import`` of a name mapped to ``None`` in
+    ``sys.modules`` — then force a genuinely fresh import of
+    ``tldw_chatbook.TTS.audio_stitch``. This is the honest version of the
+    check: it does not merely assert the guard *flag* takes the right value
+    (which could pass even if a stray, unguarded module-scope ``import
+    pydub`` sat elsewhere in the file, so long as some other guarded import
+    ran first) — it forces the module's actual top-level code to execute
+    with pydub genuinely unreachable, the same condition
+    ``screen_registry.load_screen_class`` creates for a user without the
+    audio extra.
+
+    ``monkeypatch.setitem``/``delitem`` record and restore ``sys.modules``'s
+    exact prior state at teardown, so the real, already-imported module (and
+    the names already bound at the top of this test file, which reference
+    the original module object) are unaffected once this test ends.
+    """
+    monkeypatch.setitem(sys.modules, "pydub", None)
+    monkeypatch.setitem(sys.modules, "pydub.exceptions", None)
+    monkeypatch.delitem(sys.modules, "tldw_chatbook.TTS.audio_stitch", raising=False)
+
+    reloaded = importlib.import_module("tldw_chatbook.TTS.audio_stitch")
+
+    assert reloaded.PYDUB_AVAILABLE is False

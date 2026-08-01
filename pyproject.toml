@@ -156,6 +156,7 @@ audio = [
     "yt-dlp",
     "numpy",
     "pydub",
+    "audioop-lts; python_version >= '3.13'",  # stdlib audioop removed in 3.13; pydub needs it
     # macOS prefers parakeet-mlx at runtime (see config.py's darwin branch), so
     # ship it there rather than leaving the preferred engine uninstalled: the
     # preference could never engage on a normal macOS install, and audio ingest
@@ -208,6 +209,7 @@ local_tts = [
     "nltk",
     "pyaudio",
     "pydub",
+    "audioop-lts; python_version >= '3.13'",  # stdlib audioop removed in 3.13; pydub needs it
     "transformers",  # For tokenization
     "torch",  # For PyTorch-based models
     "onnxruntime",  # For ONNX models
@@ -351,6 +353,7 @@ all-tools = [
     "scipy",
     "yt-dlp",
     "pydub",
+    "audioop-lts; python_version >= '3.13'",  # stdlib audioop removed in 3.13; pydub needs it
     "pyaudio>=0.2.14",
     "sounddevice>=0.4.6",
     "webrtcvad>=2.0.10",
