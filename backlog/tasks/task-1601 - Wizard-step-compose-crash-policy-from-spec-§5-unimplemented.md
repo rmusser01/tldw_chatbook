@@ -1,5 +1,5 @@
 ---
-id: TASK-1566
+id: TASK-1601
 title: Wizard step compose() crash policy from spec §5 unimplemented
 status: Done
 assignee: []
