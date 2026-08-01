@@ -27,6 +27,7 @@ could plausibly have shipped:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import threading
@@ -3733,6 +3734,88 @@ async def test_pressing_export_pushes_a_file_save_dialog_seeded_with_the_default
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("resolve_via", ["a real path", "cancel"])
+async def test_a_second_export_press_while_the_dialog_is_open_is_refused_then_rearms(
+    monkeypatch, tmp_path, resolve_via,
+):
+    """Review round 1 (Important #1): an earlier draft argued Textual
+    "refuses to stack" a second `FileSave`. A live repro of two rapid
+    presses disproved that -- the screen stack ended up
+    `['FileSave', 'FileSave']`, two live dialogs, not one refused.
+
+    Two presses in one tick (before either worker has run -- `run_worker`
+    only schedules) must push exactly ONE dialog and refuse the second
+    with a toast. Then, once the first dialog resolves -- exercised here
+    BOTH via a real path and via a cancel (`resolve_via`) -- a LATER press
+    must work again: the re-arm assertion that catches a flag stuck
+    `True` forever, which would be worse than the bug being fixed (a
+    cancelled export permanently wedging Export shut).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+
+    push_screen_mock = AsyncMock()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        monkeypatch.setattr(host, "push_screen", push_screen_mock)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.select_briefing_by_id(str(briefing_id))
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Two presses in the same tick: `Button.press()` only POSTS
+        # `Button.Pressed` (Textual's message queue is FIFO and each
+        # message is handled to completion before the next is dequeued),
+        # so the first press's handler -- which claims the guard
+        # synchronously, on the UI thread, before `run_worker` -- has
+        # already set `_briefing_export_in_flight` by the time the second
+        # press's `ExportBriefingRequested` is handled.
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        export_button = pane.query_one("#artifacts-export-button", Button)
+        export_button.press()
+        export_button.press()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert push_screen_mock.await_count == 1, (
+            "two rapid presses must push exactly one dialog, not stack two"
+        )
+        refusals = [
+            call
+            for call in app.notify.call_args_list
+            if "already in progress" in str(call.args[0])
+        ]
+        assert len(refusals) == 1, "the second press must be refused with a toast"
+
+        # Resolve the FIRST press's dialog -- the callback it was given --
+        # either via a real chosen path or via `None` (cancelled).
+        _, first_kwargs = push_screen_mock.call_args
+        callback = first_kwargs["callback"]
+        if resolve_via == "a real path":
+            await callback(tmp_path / "export.md")
+        else:
+            await callback(None)
+
+        # The guard must have re-armed: a THIRD press now pushes ANOTHER
+        # real dialog rather than being refused.
+        push_screen_mock.reset_mock()
+        app.notify.reset_mock()
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.query_one("#artifacts-export-button", Button).press()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert push_screen_mock.await_count == 1, (
+            "Export must be usable again once the first dialog resolved"
+        )
+
+
+@pytest.mark.asyncio
 async def test_write_briefing_export_file_writes_the_document_and_toasts_success(
     tmp_path,
 ):
@@ -3844,3 +3927,69 @@ async def test_write_briefing_export_file_write_failure_toasts_the_exception_typ
     assert "OSError" in args[0]
     assert kwargs.get("severity") == "error"
     assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_write_briefing_export_file_unicode_encode_error_toasts_the_exception_type(
+    monkeypatch, tmp_path
+):
+    """Review round 1 (Important #2): the write's `except` previously
+    caught only `OSError`, narrower than both the brief and the
+    `library_screen` precedent it claims to mirror. A live repro
+    confirmed a `UnicodeEncodeError` -- entirely plausible from model- or
+    feed-derived body text -- escaped uncaught: no toast, no
+    notification, a silent failure. Broadened to `except Exception`
+    (still logging by type only, never the body).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
+    briefing["watchlist_name"] = "Morning AI Brief"
+
+    def _boom(*_args, **_kwargs):
+        raise UnicodeEncodeError("ascii", "x", 0, 1, "boom")
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        destination = tmp_path / "export.md"
+        with monkeypatch.context() as ctx:
+            ctx.setattr(Path, "write_text", _boom)
+            await screen._write_briefing_export_file(destination, briefing)
+
+    assert not destination.exists()
+    app.notify.assert_called_once()
+    args, kwargs = app.notify.call_args
+    assert "UnicodeEncodeError" in args[0]
+    assert kwargs.get("severity") == "error"
+    assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_write_briefing_export_file_cancelled_error_propagates_uncaught(
+    monkeypatch, tmp_path
+):
+    """`asyncio.CancelledError` must never be reported as a failed export
+    -- a cancelled worker is not the same thing as a write that failed,
+    and the broadened `except Exception` above must not accidentally
+    swallow it (review round 1, Important #2's own caveat).
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
+    briefing["watchlist_name"] = "Morning AI Brief"
+
+    def _cancel(*_args, **_kwargs):
+        raise asyncio.CancelledError()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        destination = tmp_path / "export.md"
+        with monkeypatch.context() as ctx:
+            ctx.setattr(Path, "write_text", _cancel)
+            with pytest.raises(asyncio.CancelledError):
+                await screen._write_briefing_export_file(destination, briefing)
+
+    assert not destination.exists()
+    app.notify.assert_not_called()
