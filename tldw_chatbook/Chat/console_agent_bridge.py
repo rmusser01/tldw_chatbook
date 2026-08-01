@@ -992,7 +992,9 @@ def _compose_run_registry_and_allowed(
     (P5-T6, only when there is at least one non-colliding eligible entry)
     an already-composed MCP provider -- shadowing order: builtins beat
     skills beat MCP, matching the allow-list's own
-    ``builtins ∪ skills ∪ mcp`` ordering.
+    ``builtins ∪ skills ∪ mcp`` ordering. For a temporary session
+    (``ephemeral=True``) neither the skill nor the MCP provider is
+    registered at all, and the allow-list is builtins-only.
 
     Args:
         context: A fresh ``get_context(mode="local")`` payload.
@@ -1018,12 +1020,18 @@ def _compose_run_registry_and_allowed(
             roots. ``None`` (the default) leaves the ContextVar unset for
             the run, which is ``allowed_file_roots``'s own documented
             fallback to whatever workspace is currently active.
-        ephemeral: final-review F4 -- whether THIS run's owning Console
-            session is temporary, threaded into the freshly-constructed
-            ``BuiltinToolProvider`` so its ``invoke()`` refuses the
-            write-shaped built-ins (``create_note``/``update_note``/
-            ``write_file``) for it. ``False`` (the default) preserves
-            every pre-existing caller's behavior unchanged.
+        ephemeral: whether THIS run's owning Console session is temporary.
+            Threaded into three places: the freshly-constructed
+            ``BuiltinToolProvider`` (whose ``invoke()`` refuses the
+            write-shaped built-ins ``create_note``/``update_note``/
+            ``write_file``), the ``ToolCatalogRegistry`` itself (whose
+            ``invoke_by_name`` is the choke point that refuses skill and
+            MCP calls outright -- arbitrary third-party code whose write
+            behavior cannot be established statically), and this
+            function's own composition, which additionally leaves skill
+            and MCP tools out of the run's catalog and allow-list so the
+            model is never offered them. ``False`` (the default)
+            preserves every pre-existing caller's behavior unchanged.
 
     Returns:
         ``(registry, allowed_tools, builtin_names)`` -- the per-run
@@ -1033,18 +1041,24 @@ def _compose_run_registry_and_allowed(
         declared ``allowed_tools`` against -- never against skill names,
         so a skill's sub-agent can never call another skill).
     """
-    registry = ToolCatalogRegistry()
+    registry = ToolCatalogRegistry(ephemeral=ephemeral)
     builtin_provider = BuiltinToolProvider(
         gate=builtin_gate, workspace_id=workspace_id, ephemeral=ephemeral
     )
     registry.register_provider(builtin_provider)
     builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
     eligible = _non_colliding_skill_entries(context, builtin_names)
-    if eligible:
+    # Defense in depth, NOT the guarantee: a temporary session refuses every
+    # skill and MCP call at `ToolCatalogRegistry.invoke_by_name` regardless
+    # of what is advertised here. Dropping them from the run's catalog and
+    # allow-list as well just means the model is never offered a tool whose
+    # only possible outcome is a refusal -- a UX improvement layered on top
+    # of the choke point, which stays load-bearing on its own.
+    if eligible and not ephemeral:
         registry.register_provider(SkillToolProvider(eligible))
-    skill_names = tuple(str(item["name"]) for item in eligible)
+    skill_names = () if ephemeral else tuple(str(item["name"]) for item in eligible)
     allowed_tools = tuple(builtin_names) + skill_names
-    if mcp_provider is not None:
+    if mcp_provider is not None and not ephemeral:
         collision_names = set(builtin_names) | set(skill_names) | RUNTIME_TOOL_NAMES
         # Single partition call (finding 8, substrate review): the two
         # public wrappers (`_non_colliding_mcp_names`, `shadowed_mcp_names`)

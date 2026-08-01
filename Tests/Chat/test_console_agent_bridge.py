@@ -48,6 +48,10 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.tool_catalog import (
+    SkillToolProvider,
+    ToolCatalogRegistry,
+)
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 
 
@@ -1984,6 +1988,241 @@ def test_compose_run_registry_and_allowed_no_ephemeral_is_unchanged():
     registry._providers[0]._tools["write_file"] = _StubWriteFileTool()
     result = registry.invoke_by_name("write_file", {})
     assert result.ok, result.error
+
+
+# -- the temporary-session tool gate at the shared choke point --
+#
+# Every refusal assertion below carries its allowed-normally control in the
+# SAME test. That is the dangerous direction here: a guard that fired
+# unconditionally would break MCP and skill tools for every user of the app,
+# and each "assert refused" half would still be perfectly green.
+
+
+def _stub_tool(tool_name: str):
+    """A minimal always-succeeding ``Tool`` double registered under a name.
+
+    ``_StubWriteFileTool`` above hardcodes one name; the gate tests need a
+    handful (the three write-shaped built-ins and the four gateable
+    read-only ones, none of which are registered by default because their
+    ``[tools]`` gates ship off).
+    """
+
+    class _Stub:
+        name = tool_name
+        description = "stub"
+        parameters = {"type": "object", "properties": {}}
+
+        async def execute(self, **kwargs):
+            return {"ok": True}
+
+    return _Stub()
+
+
+class _FakeSourcedProvider:
+    """``ToolProvider`` double that reports an arbitrary catalog ``source``.
+
+    Lets the source-based policy be exercised for skills (whose real
+    provider deliberately raises from ``invoke``) and for a source no one
+    has whitelisted, without inventing a whole provider per case.
+    """
+
+    def __init__(self, source, entries):
+        self._source = source
+        self._entries = list(entries)
+        self.invoke_calls: list[tuple[str, dict]] = []
+
+    def list_catalog(self):
+        return [
+            ToolCatalogEntry(
+                id=name, name=name, one_line_description="d", source=self._source
+            )
+            for name in self._entries
+        ]
+
+    def load_schema(self, tool_id):
+        return ToolSchema(
+            id=tool_id,
+            name=tool_id,
+            description="",
+            parameters={"type": "object", "properties": {}},
+        )
+
+    def invoke(self, tool_id, args):
+        self.invoke_calls.append((tool_id, dict(args or {})))
+        return ToolResult(ok=True, content=f"result:{tool_id}")
+
+
+_SKILL_CONTEXT = {
+    "available_skills": [
+        {
+            "name": "tidy_repo",
+            "description": "Tidy the repository",
+            "argument_hint": "",
+            "trust_blocked": False,
+            "disable_model_invocation": False,
+        },
+    ],
+}
+
+
+def test_invoke_by_name_refuses_an_mcp_tool_only_in_a_temporary_run():
+    """Requirements 1 and 5, together: the CHOKE POINT is load-bearing on
+    its own, not merely a backstop to the allow-list.
+
+    Both registries here are built by hand and the MCP provider registered
+    straight onto them -- no allow-list, no ``_compose_run_registry_and_
+    allowed`` filtering anywhere in the picture. So the refusal can only be
+    coming from ``invoke_by_name`` itself, and the control proves the same
+    call succeeds when the session is not temporary.
+    """
+    saved_provider = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
+    saved = ToolCatalogRegistry()
+    saved.register_provider(saved_provider)
+    control = saved.invoke_by_name("mcp__srv_a__search", {"query": "weather"})
+    assert control.ok is True, control.error
+    assert saved_provider.invoke_calls == [("mcp__srv_a__search", {"query": "weather"})]
+
+    temp_provider = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
+    temporary = ToolCatalogRegistry(ephemeral=True)
+    temporary.register_provider(temp_provider)
+    refused = temporary.invoke_by_name("mcp__srv_a__search", {"query": "weather"})
+    assert refused.ok is False
+    assert "temporary chat" in refused.error
+    assert "mcp__srv_a__search" in refused.error
+    # The provider was never reached -- refused before dispatch, not after.
+    assert temp_provider.invoke_calls == []
+
+
+def test_invoke_by_name_refuses_a_skill_tool_only_in_a_temporary_run():
+    """Requirement 2, at the choke point, with the real ``SkillToolProvider``.
+
+    That class's ``invoke`` raises by design (skill calls route through the
+    run-scoped spawn executor), which makes the control unusually sharp: in
+    a saved chat the call must still REACH the provider, and the only
+    observable proof of that is the RuntimeError escaping. In a temporary
+    chat the gate must intercept first and hand back a ToolResult.
+    """
+    entries = [
+        {"name": "tidy_repo", "description": "Tidy the repository", "argument_hint": ""}
+    ]
+
+    saved = ToolCatalogRegistry()
+    saved.register_provider(SkillToolProvider(entries))
+    with pytest.raises(RuntimeError):
+        saved.invoke_by_name("tidy_repo", {"args": ""})
+
+    temporary = ToolCatalogRegistry(ephemeral=True)
+    temporary.register_provider(SkillToolProvider(entries))
+    refused = temporary.invoke_by_name("tidy_repo", {"args": ""})
+    assert refused.ok is False
+    assert "temporary chat" in refused.error
+    assert "tidy_repo" in refused.error
+
+
+def test_invoke_by_name_refuses_a_skill_sourced_tool_that_would_otherwise_succeed():
+    """Requirement 2 again, with a skill-sourced provider that DOES return
+    a successful result -- so the control half is a real, observed success
+    rather than the real provider's by-design raise."""
+    saved_provider = _FakeSourcedProvider("skill", ["tidy_repo"])
+    saved = ToolCatalogRegistry()
+    saved.register_provider(saved_provider)
+    control = saved.invoke_by_name("tidy_repo", {"args": "x"})
+    assert control.ok is True, control.error
+    assert saved_provider.invoke_calls == [("tidy_repo", {"args": "x"})]
+
+    temp_provider = _FakeSourcedProvider("skill", ["tidy_repo"])
+    temporary = ToolCatalogRegistry(ephemeral=True)
+    temporary.register_provider(temp_provider)
+    refused = temporary.invoke_by_name("tidy_repo", {"args": "x"})
+    assert refused.ok is False
+    assert "temporary chat" in refused.error
+    assert temp_provider.invoke_calls == []
+
+
+def test_invoke_by_name_refuses_a_provider_source_nobody_whitelisted():
+    """Unknown capability fails toward not-writing: a provider added after
+    this was written is gated on the day it is added, and the control shows
+    it is otherwise dispatched completely normally."""
+    saved_provider = _FakeSourcedProvider("some_provider_invented_in_2027", ["thing"])
+    saved = ToolCatalogRegistry()
+    saved.register_provider(saved_provider)
+    control = saved.invoke_by_name("thing", {})
+    assert control.ok is True, control.error
+
+    temp_provider = _FakeSourcedProvider("some_provider_invented_in_2027", ["thing"])
+    temporary = ToolCatalogRegistry(ephemeral=True)
+    temporary.register_provider(temp_provider)
+    refused = temporary.invoke_by_name("thing", {})
+    assert refused.ok is False
+    assert "temporary chat" in refused.error
+    assert temp_provider.invoke_calls == []
+
+
+def test_temporary_run_keeps_read_only_builtins_and_still_refuses_write_shaped_ones():
+    """Requirements 3 and 4 in one test: no over-blocking, no regression.
+
+    The read-only half is the control that catches an unconditional guard;
+    the saved-run half at the end is the control that catches a guard which
+    ignores the flag entirely.
+    """
+    write_shaped = ("write_file", "create_note", "update_note")
+    read_only = ("read_file", "list_directory", "glob_files", "grep_files")
+
+    temporary, _allowed, _names = _compose_run_registry_and_allowed(
+        {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False), ephemeral=True
+    )
+    # The gateable built-ins ship behind `[tools]` gates that default to
+    # off, so poke stubs under their real names rather than flipping user
+    # config from a test.
+    for name in write_shaped + read_only:
+        temporary._providers[0]._tools[name] = _stub_tool(name)
+    temporary.reset_catalog_cache()
+
+    for name in write_shaped:
+        result = temporary.invoke_by_name(name, {})
+        assert result.ok is False, name
+        assert "temporary chat" in result.error, name
+    for name in read_only:
+        result = temporary.invoke_by_name(name, {})
+        assert result.ok, (name, result.error)
+    calc = temporary.invoke_by_name("calculator", {"expression": "6*7"})
+    assert calc.ok, calc.error
+
+    saved, _allowed, _names = _compose_run_registry_and_allowed(
+        {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False)
+    )
+    for name in write_shaped:
+        saved._providers[0]._tools[name] = _stub_tool(name)
+    saved.reset_catalog_cache()
+    for name in write_shaped:
+        result = saved.invoke_by_name(name, {})
+        assert result.ok, (name, result.error)
+
+
+def test_temporary_run_never_advertises_mcp_or_skill_tools_but_a_saved_run_does():
+    """Defense in depth (the allow-list half): the model is not offered a
+    tool whose only possible outcome is a refusal. Control in the same
+    test: the identical composition for a saved chat advertises both."""
+    saved_mcp = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
+    saved, saved_allowed, _names = _compose_run_registry_and_allowed(
+        _SKILL_CONTEXT, mcp_provider=saved_mcp
+    )
+    assert "mcp__srv_a__search" in saved_allowed
+    assert "tidy_repo" in saved_allowed
+    assert {e.source for e in saved.list_catalog()} == {"builtin", "skill", "mcp"}
+
+    temp_mcp = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
+    temporary, temp_allowed, _names = _compose_run_registry_and_allowed(
+        _SKILL_CONTEXT, mcp_provider=temp_mcp, ephemeral=True
+    )
+    assert "mcp__srv_a__search" not in temp_allowed
+    assert "tidy_repo" not in temp_allowed
+    assert temp_allowed == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
+    assert {e.source for e in temporary.list_catalog()} == {"builtin"}
+    # Never listed, so a stray call cannot resolve at all -- and the fake
+    # is never reached either way.
+    assert temporary.invoke_by_name("mcp__srv_a__search", {}).ok is False
+    assert temp_mcp.invoke_calls == []
 
 
 def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_builtin():

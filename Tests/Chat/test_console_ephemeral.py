@@ -3,10 +3,13 @@
 import pytest
 
 from tldw_chatbook.Chat.console_ephemeral import (
+    EPHEMERAL_AUDITED_TOOL_SOURCES,
     EPHEMERAL_BLOCKED_ACTIONS,
+    EPHEMERAL_UNAUDITED_TOOL_REASON,
     TEMPORARY_LABEL,
     TEMPORARY_TOOLTIP,
     blocked_reason,
+    tool_blocked_reason,
 )
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -44,10 +47,73 @@ def test_user_facing_copy_never_overstates_the_guarantee():
     """
     forbidden = ("private", "anonym", "untracked", "incognito", "secure")
     copy = " ".join(
-        [TEMPORARY_LABEL, TEMPORARY_TOOLTIP, *EPHEMERAL_BLOCKED_ACTIONS.values()]
+        [
+            TEMPORARY_LABEL,
+            TEMPORARY_TOOLTIP,
+            *EPHEMERAL_BLOCKED_ACTIONS.values(),
+            EPHEMERAL_UNAUDITED_TOOL_REASON,
+        ]
     ).lower()
     for word in forbidden:
         assert word not in copy, f"copy overstates the guarantee: {word!r}"
+
+
+# -- agent tool-dispatch policy (tool_blocked_reason) --
+
+
+@pytest.mark.unit
+def test_unaudited_tool_sources_are_refused_and_audited_ones_are_judged_by_name():
+    """Skills/MCP refuse wholesale; built-ins keep their per-name verdict.
+
+    Both directions in one test on purpose: a policy that refused
+    *everything* would satisfy the refusal half alone, and would silently
+    break the read-only built-ins every ordinary chat depends on.
+    """
+    # Unaudited sources: refused whatever the tool is called.
+    for source in ("skill", "mcp"):
+        reason = tool_blocked_reason("anything", source=source, ephemeral=True)
+        assert reason is not None
+        assert "temporary chat" in reason
+        assert "anything" in reason
+
+    # Audited source: judged per name -- write-shaped out, read-only in.
+    assert tool_blocked_reason("write_file", source="builtin", ephemeral=True)
+    assert tool_blocked_reason("create_note", source="builtin", ephemeral=True)
+    assert tool_blocked_reason("update_note", source="builtin", ephemeral=True)
+    for read_only in (
+        "read_file",
+        "list_directory",
+        "glob_files",
+        "grep_files",
+        "calculator",
+        "get_current_datetime",
+    ):
+        assert (
+            tool_blocked_reason(read_only, source="builtin", ephemeral=True) is None
+        ), read_only
+
+
+@pytest.mark.unit
+def test_an_unrecognised_tool_source_fails_toward_not_writing():
+    """A provider added later is covered on the day it is added.
+
+    ``None`` (caller could not resolve a source) and a source nobody has
+    whitelisted must both refuse -- the whole point of the policy being a
+    whitelist rather than a list of known-bad sources.
+    """
+    assert "builtin" in EPHEMERAL_AUDITED_TOOL_SOURCES
+    for source in (None, "", "some_provider_invented_in_2027"):
+        reason = tool_blocked_reason("calculator", source=source, ephemeral=True)
+        assert reason is not None, source
+        assert "temporary chat" in reason
+
+
+@pytest.mark.unit
+def test_tool_policy_blocks_nothing_outside_a_temporary_chat():
+    """The control for every refusal above: a saved chat runs all of them."""
+    for source in ("builtin", "skill", "mcp", None, "future_provider"):
+        assert tool_blocked_reason("write_file", source=source, ephemeral=False) is None
+        assert tool_blocked_reason("anything", source=source, ephemeral=False) is None
 
 
 def _row_counts(db: CharactersRAGDB) -> tuple[int, int]:

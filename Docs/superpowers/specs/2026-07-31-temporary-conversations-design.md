@@ -282,7 +282,7 @@ row's precedent of documenting a reachable-but-not-applicable hit.
 | Impersonate (`impersonate`, composer menu, `_run_console_impersonate`) | Yes | Nothing — drafts the user's next message via a model call and inserts it into the composer | allowed (no write) |
 | Attachment staging (`attachment_core.py`: `process_attachment_path`, `process_attachment_bytes`, `load_processed_file`) | Yes | Nothing — zero `write`/`save` call sites in the file; bytes are staged in memory and referenced from the original path | allowed (no write) |
 | Agent **tool** calls in an ordinary reply (`create_note`/`update_note`/`write_file`, `Agents/tool_catalog.py:399-422` gateable built-ins, composed for every reply by `console_agent_bridge.py`'s `_compose_run_registry_and_allowed`, dispatched from `BuiltinToolProvider.invoke`) | Yes — a temporary chat runs the same agent loop as any other; the running session's identity was never threaded into tool dispatch at all before final-review F4 | Notes-DB row (`create_note`/`update_note`) or a file on disk (`write_file`) | blocked (final-review F4, new) |
-| MCP tool calls and skill-provided tool calls in an ordinary reply (`Agents/mcp_tool_provider.py`'s `MCPToolProvider`, `Agents/tool_catalog.py`'s `SkillToolProvider`, both composed into the same run's catalog alongside `BuiltinToolProvider`) | Yes — same agent loop, same temporary chat; neither provider's `invoke()` (nor the skill spawn-executor path `SkillToolProvider` hands off to) reads `ephemeral` or consults `EPHEMERAL_BLOCKED_ACTIONS` | Whatever the connected MCP server or invoked skill writes — server-defined, unaudited here; could include local files or DB rows | **not blocked — known, documented gap.** Threading `ephemeral` through F4 only reached `BuiltinToolProvider`; gating MCP/skill tool dispatch is future work, not covered by this design |
+| MCP tool calls and skill-provided tool calls in an ordinary reply (`Agents/mcp_tool_provider.py`'s `MCPToolProvider`, `Agents/tool_catalog.py`'s `SkillToolProvider`, both composed into the same run's catalog alongside `BuiltinToolProvider`) | Yes — same agent loop, same temporary chat | Whatever the connected MCP server or invoked skill writes — server-defined, unaudited here; could include local files or DB rows | blocked outright (choke-point fix, new — see below) |
 
 Six new rows extend `EPHEMERAL_BLOCKED_ACTIONS`: `save-image`,
 `save-as-note`, `save-as-media`, `save-as-prompt`, `save-as-chatbook`, and
@@ -301,8 +301,9 @@ UI action_id table. A run's tool catalog is actually composed from
 (`Agents/tool_catalog.py`'s `ToolProvider` protocol) —
 `BuiltinToolProvider`, `Agents/mcp_tool_provider.py`'s `MCPToolProvider`,
 and `Agents/tool_catalog.py`'s `SkillToolProvider` — composed and invoked
-from `console_agent_bridge.py`. This fix reaches only the first of the
-three; see the residual-gap note below the sink table. `Agents/
+from `console_agent_bridge.py`. The F4 fix described here reached only the
+first of the three; all three are covered by the choke-point fix in the
+following section. `Agents/
 tool_catalog.py:399-422` registers `create_note`, `update_note`, and
 `write_file` as built-ins the Console agent bridge composes for **every
 ordinary reply** (`console_agent_bridge.py:1030`,
@@ -341,16 +342,67 @@ artifact and keep working in a temporary chat.
 `EPHEMERAL_BLOCKED_ACTIONS` is therefore not "the" registry for every
 artifact-producing sink — it is the registry for two specific shapes: the
 static `action_id`-dispatched UI actions (composer menu, workbench,
-message-action row), and these three write-shaped agent built-ins,
-because `BuiltinToolProvider.invoke` is the one call site that consults
-it. **Known, documented gap (not fixed here, and out of scope for this
-fix):** MCP tools (`MCPToolProvider`) and skill-provided tools
-(`SkillToolProvider`) are separate `ToolProvider`s composed into the same
-run's catalog; neither checks `ephemeral` or consults this registry, so a
-write-shaped MCP tool or a skill that itself writes local artifacts
-dispatches ungated in a temporary session today. Gating those providers is
-future work, not a residual risk this design mitigates — see the sink
-audit table's MCP/skill-tools row.
+message-action row), and these three write-shaped agent built-ins. It is
+consulted for **audited** tools only; see the next section for everything
+else.
+
+### Tool dispatch is gated at the choke point, not per provider
+
+Threading `ephemeral` into `BuiltinToolProvider` fixed one provider. A
+run's catalog holds three (`BuiltinToolProvider`, `SkillToolProvider`,
+`MCPToolProvider`), all behind one `ToolProvider` protocol, and gating
+only the first repeats the exact mistake this feature's architecture
+exists to avoid: everywhere else the design gates at a single point so a
+missed path fails toward *not writing*. Fixed by moving the boundary to
+the shared choke point every provider's `invoke()` is reached through.
+
+**What is enforced, and where:**
+
+| Where | What it does |
+| --- | --- |
+| `Chat/console_ephemeral.py`'s `tool_blocked_reason(name, source=…, ephemeral=…)` | Owns the policy in one function. A tool whose catalog `source` is in `EPHEMERAL_AUDITED_TOOL_SOURCES` (today: `{"builtin"}` — this repo's own code, so "does it write locally?" is answerable by reading it) is judged per name against `EPHEMERAL_BLOCKED_ACTIONS`. **Every other source refuses**, including `None` (caller could not resolve one). |
+| `Agents/tool_catalog.py`'s `ToolCatalogRegistry.__init__(ephemeral=…)` / `invoke_by_name` | **The guarantee.** `invoke_by_name` is the single line every provider's `invoke()` is dispatched from; it resolves the tool's `source` (cached in the same `list_catalog()` sweep as the owner and name maps) and returns `ToolResult(ok=False, error=…)` before dispatch when the policy refuses. Never raises — the pure loop must not see exceptions out of tool invocation. |
+| `Agents/tool_catalog.py`'s `BuiltinToolProvider.invoke` | Unchanged from the F4 fix; now defense in depth behind the choke point. |
+| `Chat/console_agent_bridge.py`'s `_compose_run_registry_and_allowed` | Defense in depth (UX, not the guarantee): a temporary run registers neither `SkillToolProvider` nor the MCP provider, and its allow-list is builtins + `spawn_subagent` only — so the model is never offered a tool whose only possible outcome is a refusal. The `invoke_by_name` guard holds independently of this filtering, and `Tests/Chat/test_console_agent_bridge.py::test_invoke_by_name_refuses_an_mcp_tool_only_in_a_temporary_run` proves it by registering a provider straight onto a hand-built registry with no allow-list in the picture at all. |
+
+**Why skills and MCP refuse *wholesale* rather than per name.** Both are
+arbitrary third-party code. An MCP server tool can do anything its server
+implements; a skill's own sub-agent run can call whatever its rendered
+prompt directs. There is no static property of the name or schema that
+establishes a tool does not write locally, and a guarantee that reads "not
+saved locally" cannot rest on hoping it doesn't. Unknown capability fails
+toward not-writing, exactly as the store's persistence gate does. Read-only
+built-ins (`read_file`, `list_directory`, `glob_files`, `grep_files`,
+`calculator`, `get_current_datetime`) are unaffected and keep working.
+
+**Why the default is refuse rather than a list of known-bad sources.** The
+whitelist means a fourth provider added later is covered on the day it is
+added, without anyone remembering to come back to this file. That is the
+one property a blacklist could not have given.
+
+The refusal sentence (`EPHEMERAL_UNAUDITED_TOOL_REASON`) follows the same
+convention as every other row: it names what would happen ("may write to
+this device" — genuinely all that is knowable) and never implies privacy.
+
+Tests live in `Tests/Chat/test_console_ephemeral.py` (the policy function,
+including the unknown-source and outside-a-temporary-chat controls) and
+`Tests/Chat/test_console_agent_bridge.py` (the choke point and the
+composition). Every refusal assertion carries its allowed-normally control
+in the *same* test, because the dangerous failure direction here is a
+guard that fires unconditionally: that would break MCP and skill tools for
+every user of the app while leaving every "assert refused" test green.
+Verified by mutation — forcing the guard on fails the control halves (9
+tests, including the pre-existing end-to-end `test_run_reply_refuses_
+write_file_in_an_ephemeral_session_end_to_end`), forcing it off fails
+exactly the four choke-point refusal halves.
+
+**Residual, deliberately out of scope:** the skill *spawn* path
+(`agent_service`'s `invoke_tool` → `_BridgeSkillRunner.run` → `spawn`)
+never reaches `invoke_by_name` at all, so in a temporary session a skill
+call is stopped by the allow-list instead — `allowed_tools` no longer
+carries skill names, so the loop returns `Tool not permitted: <name>`
+before any skill renders. The call is refused either way; only the wording
+differs from the ephemeral-specific sentence.
 
 ## Live verification
 
