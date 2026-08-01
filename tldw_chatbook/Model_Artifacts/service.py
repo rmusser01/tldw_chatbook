@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import ipaddress
 import json
@@ -11,7 +12,7 @@ import re
 import shutil
 import stat
 import sys
-import tempfile
+import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -21,6 +22,7 @@ from urllib.parse import urlsplit
 
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 from tldw_chatbook.Utils.path_validation import validate_path_simple
+from . import leases as _leases
 from .leases import (
     ArtifactLeaseError,
     ArtifactLeaseKey,
@@ -109,8 +111,76 @@ _READINESS_KEYS = frozenset(
 _ACTIVE_SCHEMA_VERSION = 1
 _ACTIVE_KEYS = frozenset({"schema_version", "root"})
 _LIFECYCLE_LEASE_KEY = ArtifactLeaseKey("!lifecycle", "1", "writer")
+
+# TASK-595: reserved lease identity for the single global managed-acquisition
+# session. Defined once here (not in the not-yet-written acquisition module,
+# to avoid a circular import) so both reconcile()'s staging GC and the future
+# acquisition runtime (Task 6+) key off the exact same ArtifactLeaseKey.
+# "#managed-acquisition" can never collide with a real ArtifactRef.artifact_id
+# because canonical artifact identifiers are validated against
+# _CANONICAL_COMPONENT, which forbids a leading "#".
+ACQUISITION_SESSION_LEASE_KEY = ArtifactLeaseKey(
+    "#managed-acquisition", "session", "global"
+)
+
+# Non-blocking probe timeout (seconds) shared by every lease this service
+# (or its ArtifactAcquisitionService caller) only ever tries opportunistically
+# rather than waiting on: reconcile()'s two staging-GC lease probes below
+# (_gc_install_staging_orphan, _gc_managed_staging), and acquisition.py's own
+# acquisition-session lease attempt in provision() (imported from there, not
+# redefined -- this 0.1s value was previously triplicated across all three
+# call sites). An immediate, typed failure beats a hang: whoever else holds
+# the lease is busy RIGHT NOW, not "worth waiting for" at any of these sites.
+NONBLOCKING_LEASE_TIMEOUT_SECONDS = 0.1
+
+# Naming convention for install()'s ephemeral staging tempdirs (see install()
+# below, which names then leases then creates each one -- never a bare
+# tempfile.mkdtemp, whose combined name+create step would leave the
+# directory visible on disk before its orphan-detection lease is held).
+# reconcile() uses this same prefix to recognize candidate orphans among
+# staging's top-level entries.
+_INSTALL_STAGING_PREFIX = "install-"
+
+# Filename SUFFIX of a managed-download fetch-state sidecar, addressed as
+# a SIBLING of the ``managed/<id>/<rev>/<variant>`` payload directory it
+# describes (``.../<variant>.fetch-state.json``), never a child of it --
+# see acquisition.py's ``_fetch_sidecar_path`` for why (core.install's
+# payload-tree validation would otherwise reject it as an undeclared
+# file, which used to force the sidecar to be deleted before every
+# install attempt, destroying resumable state on any failure). Mirrors
+# acquisition.py's private ``_FETCH_SIDECAR_SUFFIX``; a drift-guard test
+# in test_reconcile_staging_gc.py fails if the two ever diverge.
+_MANAGED_FETCH_SIDECAR_SUFFIX = ".fetch-state.json"
 _PathSnapshot = tuple[int, int, int, int, int, int]
 _NodeIdentity = tuple[int, int, int]
+
+
+def _install_staging_lease_key(staging_name: str) -> ArtifactLeaseKey:
+    """Return the lease key one in-flight ``install()`` call holds.
+
+    ``install()`` acquires this key, non-reentrantly, for the full lifetime
+    of one staging tempdir -- from directory creation until its final
+    cleanup (success or failure). ``reconcile()`` tries the same key
+    non-blocking before deleting a candidate ``install-*`` orphan: if it is
+    still held, a live install owns that directory and it must survive;
+    if it is free, the directory was abandoned (e.g. by a crashed process,
+    whose OS-level lock is released automatically) and is safe to remove.
+
+    Reserved under the "#install-staging" namespace, which -- like
+    ``ACQUISITION_SESSION_LEASE_KEY``'s "#managed-acquisition" -- can never
+    collide with a real ``ArtifactRef.lease_key()``, since canonical
+    artifact identifiers never start with "#".
+
+    Args:
+        staging_name: Basename of the ``install-*`` staging tempdir (unique
+            per call, generated before the directory itself is created --
+            see ``install()``).
+
+    Returns:
+        The reserved lease key scoped to that one staging directory.
+    """
+
+    return ArtifactLeaseKey("#install-staging", staging_name, "lock")
 
 
 def _path_snapshot(info: os.stat_result) -> _PathSnapshot:
@@ -790,6 +860,7 @@ class ReconcileReport:
     state_removed: int
     corrupt_artifacts: tuple[Path, ...]
     staging_entries: tuple[Path, ...]
+    staging_removed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -950,6 +1021,19 @@ class ModelArtifactService:
         """Return the non-loadable same-filesystem staging directory."""
 
         return self._staging_path
+
+    @property
+    def locks_path(self) -> Path:
+        """Return the managed lock-file root used by artifact operation leases.
+
+        Exposed (TASK-595 Task 6) so ``ArtifactAcquisitionService`` -- a
+        composed caller in a different module -- can acquire its own
+        reserved-namespace leases (e.g. ``ACQUISITION_SESSION_LEASE_KEY``)
+        against the exact same lock root this service uses internally,
+        without reaching into a private attribute.
+        """
+
+        return self._locks_path
 
     def artifact_path(self, reference: ArtifactRef) -> Path:
         """Return the contained final path for one validated reference."""
@@ -1217,6 +1301,8 @@ class ModelArtifactService:
                 )
                 state_removed += 1
 
+        staging_removed = self._gc_staging(staging_entries)
+
         return ReconcileReport(
             readiness_created=readiness_created,
             state_removed=state_removed,
@@ -1224,6 +1310,7 @@ class ModelArtifactService:
                 sorted(corrupt_paths, key=lambda path: path.as_posix())
             ),
             staging_entries=staging_entries,
+            staging_removed=staging_removed,
         )
 
     def _delete_under_leases(self, reference: ArtifactRef) -> None:
@@ -1352,6 +1439,204 @@ class ModelArtifactService:
         if _path_snapshot(self._staging_path.stat(follow_symlinks=False)) != before:
             raise ArtifactPathError("staging changed during reconciliation scan")
         return entries
+
+    def _gc_staging(self, staging_entries: tuple[Path, ...]) -> tuple[str, ...]:
+        """Garbage-collect staging orphans, preserving resumable managed state.
+
+        Two independent categories of staging content are reclaimed here;
+        everything else (unrecognized top-level names) is left alone,
+        matching reconcile()'s historical report-only behavior for
+        arbitrary staging content:
+
+        * ``install-*`` tempdirs abandoned by a crashed :meth:`install`
+          call. A live in-flight call on any process still holds
+          ``_install_staging_lease_key(name)``, so this is safe to attempt
+          under the exclusive lifecycle lease this method's caller already
+          holds -- no additional lease is required for this category.
+        * ``managed/<id>/<rev>/<variant>`` download-staging directories
+          whose ``fetch-state.json`` sidecar is missing, unparseable, or
+          does not parse to the ``{"files": {...}}`` shape the fetch phase
+          actually writes (see :meth:`_is_valid_managed_staging_entry`).
+          Only removed when ``ACQUISITION_SESSION_LEASE_KEY`` is free
+          (non-blocking); when busy, the entire ``managed`` subtree is left
+          untouched for this reconcile pass so an in-progress acquisition's
+          resumable state is never disturbed.
+
+        Args:
+            staging_entries: Immediate children of the staging root, as
+                returned by :meth:`_staging_entries`.
+
+        Returns:
+            Staging-relative POSIX paths of every entry removed.
+        """
+
+        removed: list[str] = []
+        managed_root: Path | None = None
+        for entry in staging_entries:
+            if entry.name == "managed":
+                try:
+                    mode = entry.stat(follow_symlinks=False).st_mode
+                except FileNotFoundError:
+                    continue
+                except OSError as error:
+                    raise ArtifactPathError(
+                        "failed to inspect staging entry"
+                    ) from error
+                if stat.S_ISDIR(mode) and not stat.S_ISLNK(mode):
+                    managed_root = entry
+                continue
+            if not entry.name.startswith(_INSTALL_STAGING_PREFIX):
+                continue
+            name = self._gc_install_staging_orphan(entry)
+            if name is not None:
+                removed.append(name)
+
+        if managed_root is not None:
+            removed.extend(self._gc_managed_staging(managed_root))
+
+        return tuple(sorted(removed))
+
+    def _gc_install_staging_orphan(self, entry: Path) -> str | None:
+        """Remove one ``install-*`` staging directory if it is abandoned.
+
+        Tries ``_install_staging_lease_key(entry.name)`` non-blocking: a
+        live :meth:`install` call already holds this key for its whole
+        staging lifetime, so a busy lease means the directory is still in
+        use and must survive; a free lease means the directory was
+        abandoned (its owner is gone, and the OS released the lease when
+        that process or handle closed) and is safe to remove.
+
+        Args:
+            entry: Top-level staging directory matching the ``install-*``
+                tempdir prefix used by :meth:`install`.
+
+        Returns:
+            The removed entry's staging-relative POSIX path, or None when
+            an in-flight install still owns it.
+        """
+
+        self._assert_managed_path(self._locks_path)
+        try:
+            lease = ArtifactOperationLease(
+                self._locks_path,
+                _install_staging_lease_key(entry.name),
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=NONBLOCKING_LEASE_TIMEOUT_SECONDS,
+            )
+            lease.acquire()
+        except ArtifactLeaseTimeoutError:
+            return None
+        try:
+            self._remove_state_path(entry, "failed to remove staging orphan")
+        finally:
+            lease.release()
+        return entry.relative_to(self._staging_path).as_posix()
+
+    def _gc_managed_staging(self, managed_root: Path) -> tuple[str, ...]:
+        """GC orphaned managed-download staging entries.
+
+        Requires ``ACQUISITION_SESSION_LEASE_KEY`` non-blocking; when busy
+        (a managed acquisition may still be writing into this subtree),
+        the whole managed staging tree is left untouched for this
+        reconcile pass.
+
+        Args:
+            managed_root: The ``staging/managed`` directory (already
+                confirmed to be a real, non-symlink directory).
+
+        Returns:
+            Staging-relative POSIX paths of every orphan entry removed.
+        """
+
+        self._assert_managed_path(self._locks_path)
+        try:
+            lease = ArtifactOperationLease(
+                self._locks_path,
+                ACQUISITION_SESSION_LEASE_KEY,
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=NONBLOCKING_LEASE_TIMEOUT_SECONDS,
+            )
+            lease.acquire()
+        except ArtifactLeaseTimeoutError:
+            return ()
+        try:
+            removed: list[str] = []
+            for candidate in self._state_files(managed_root, 3):
+                if self._is_valid_managed_staging_entry(managed_root, candidate):
+                    continue
+                self._remove_state_path(
+                    candidate, "failed to remove staging orphan"
+                )
+                removed.append(candidate.relative_to(self._staging_path).as_posix())
+            return tuple(removed)
+        finally:
+            lease.release()
+
+    def _is_valid_managed_staging_entry(
+        self,
+        managed_root: Path,
+        candidate: Path,
+    ) -> bool:
+        """Return whether ``candidate`` is part of a live managed download.
+
+        The fetch-state sidecar for ``managed/<id>/<rev>/<variant>/`` lives
+        as a SIBLING file -- ``managed/<id>/<rev>/<variant>.fetch-state.json``
+        -- never inside the payload directory it describes (see
+        acquisition.py's ``_fetch_sidecar_path`` for why). Both the payload
+        directory AND its sidecar therefore surface as SEPARATE depth-three
+        candidates from :meth:`_state_files`, and either one is classified
+        by resolving its counterpart: a candidate is live only when BOTH
+        the payload directory exists as a real (non-symlink) directory AND
+        its sidecar parses to a JSON OBJECT with a ``"files"`` mapping --
+        the exact shape ``ArtifactAcquisitionService``'s fetch phase always
+        writes (see ``acquisition.py``'s ``_load_fetch_sidecar`` /
+        ``_fetch_one_file``). Anything shallower, deeper, symlinked,
+        missing its counterpart, or whose sidecar is unparseable or parses
+        to something else entirely (e.g. a bare JSON list or string --
+        valid JSON, but not a usable fetch-state record) is an orphan.
+        ``_assert_managed_path`` rejects a symlink anywhere in the chain up
+        to and including either path, so a symlinked payload directory or
+        sidecar is correctly treated as an orphan without ever being
+        followed.
+
+        Args:
+            managed_root: The ``staging/managed`` directory.
+            candidate: One entry surfaced by scanning ``managed_root`` to a
+                fixed depth of three (see :meth:`_state_files`) -- either
+                the payload directory or its sibling sidecar file.
+
+        Returns:
+            True when the entry's resumable download state should survive
+            garbage collection.
+        """
+
+        parts = candidate.relative_to(managed_root).parts
+        if len(parts) != 3:
+            return False
+        name = parts[-1]
+        if name.endswith(_MANAGED_FETCH_SIDECAR_SUFFIX):
+            sidecar = candidate
+            payload_dir = candidate.parent / name[: -len(_MANAGED_FETCH_SIDECAR_SUFFIX)]
+        else:
+            payload_dir = candidate
+            sidecar = candidate.parent / f"{name}{_MANAGED_FETCH_SIDECAR_SUFFIX}"
+        try:
+            self._assert_managed_path(
+                sidecar,
+                allow_missing=True,
+                target_must_be_directory=False,
+            )
+            payload = sidecar.read_text(encoding="utf-8")
+            parsed = json.loads(payload)
+        except (ArtifactPathError, OSError, ValueError):
+            return False
+        if not (isinstance(parsed, dict) and isinstance(parsed.get("files"), dict)):
+            return False
+        try:
+            self._assert_managed_path(payload_dir)
+        except (ArtifactPathError, OSError):
+            return False
+        return True
 
     def _readiness_ref_from_path(self, path: Path) -> ArtifactRef | None:
         try:
@@ -1681,19 +1966,26 @@ class ModelArtifactService:
         self,
         descriptor: ArtifactDescriptor,
         source_directory: Path,
+        *,
+        consume_source: bool = False,
     ) -> ArtifactRef:
         """Verify and promote one local source directory immutably.
 
         Args:
             descriptor: Strict descriptor for the artifact being installed.
             source_directory: Existing local directory containing its payload.
+            consume_source: Move files instead of copying when source lies inside
+                the service root. Requires source inside the root; raises
+                ArtifactPathError otherwise. On EXDEV (cross-device link), falls
+                back to copy+delete. Defaults to False (today's copy semantics).
 
         Returns:
             The installed artifact's immutable reference.
 
         Raises:
             TypeError: An argument has the wrong public API type.
-            ArtifactPathError: The source or managed destination is unsafe.
+            ArtifactPathError: The source or managed destination is unsafe, or
+                consume_source with a source outside the service root.
             ArtifactIntegrityError: A declared file fails size or digest checks.
             ArtifactConflictError: The immutable destination conflicts.
             ArtifactStateError: Artifact storage or lease operations fail.
@@ -1717,24 +2009,70 @@ class ModelArtifactService:
         )
 
         staging: Path | None = None
+        staging_lease: ArtifactOperationLease | None = None
         try:
             self._assert_managed_path(self._staging_path)
-            staging = Path(
-                tempfile.mkdtemp(
-                    prefix="install-",
-                    dir=self._staging_path,
-                )
+            # The staging directory's NAME is generated and its
+            # per-directory orphan-detection lease acquired BEFORE the
+            # directory itself is created on disk -- deliberately NOT a
+            # bare ``tempfile.mkdtemp``, whose combined name-and-create
+            # step makes the directory visible to a directory listing
+            # before anything protects it. reconcile()'s staging GC
+            # (``_gc_install_staging_orphan``) only ever considers names
+            # that already exist as real directories, and only treats one
+            # as abandoned -- safe to delete -- when its lease is free.
+            # Creating the directory first and leasing it second leaves a
+            # window where a concurrent reconcile() pass can observe the
+            # (leaseless) directory, acquire the lease itself, and delete
+            # a staging dir this call is about to copy files into. Naming
+            # then leasing then creating closes that window: nothing
+            # exists for reconcile() to find until the lease already
+            # belongs to this call.
+            staging_name = f"{_INSTALL_STAGING_PREFIX}{uuid.uuid4().hex}"
+            staging = self._staging_path / staging_name
+            self._assert_managed_path(self._locks_path)
+            # Held for this call's whole staging lifetime so reconcile()'s
+            # staging GC can tell this directory apart from one abandoned by
+            # a crashed install (see _install_staging_lease_key). Built via
+            # the leases submodule rather than the plain ArtifactOperationLease
+            # import: this is an orphan-detection lock, not one of the writer
+            # leases tests intentionally intercept via that name (see
+            # test_install_acquires_exact_writer_leases_in_fixed_order), and
+            # must keep working even when those tests replace that symbol.
+            staging_lease = _leases.ArtifactOperationLease(
+                self._locks_path,
+                _install_staging_lease_key(staging_name),
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=self._lease_timeout_seconds,
             )
+            staging_lease.acquire()
+            try:
+                # Matches tempfile.mkdtemp's own directory permission bits
+                # (owner-only rwx) -- this is still a temporary, operation-
+                # owned staging directory, not a final managed-store path.
+                os.mkdir(staging, 0o700)
+            except OSError as error:
+                raise ArtifactStateError(
+                    "failed to create artifact install staging directory"
+                ) from error
             self._assert_managed_path(staging)
-            self._copy_payload(descriptor, source_directory, staging)
-            if (
-                self._validate_payload_tree(
-                    source_directory,
-                    descriptor.files,
-                )
-                != source_snapshot
-            ):
-                raise ArtifactPathError("source tree changed during artifact copy")
+            # Only pass consume_source if True to maintain backward compatibility
+            # with tests that monkeypatch _copy_payload
+            if consume_source:
+                self._copy_payload(descriptor, source_directory, staging, consume_source=True)
+            else:
+                self._copy_payload(descriptor, source_directory, staging)
+            # When consume_source=True, files are intentionally moved from source.
+            # Skip the unchanged-tree check in that case; it's expected to change.
+            if not consume_source:
+                if (
+                    self._validate_payload_tree(
+                        source_directory,
+                        descriptor.files,
+                    )
+                    != source_snapshot
+                ):
+                    raise ArtifactPathError("source tree changed during artifact copy")
             destination = self.artifact_path(descriptor.reference)
             self._assert_managed_path(self._locks_path)
 
@@ -1786,20 +2124,33 @@ class ModelArtifactService:
         except OSError as error:
             raise ArtifactStateError("artifact installation I/O failed") from error
         finally:
-            if staging is not None:
-                primary_error = sys.exception()
-                try:
-                    shutil.rmtree(staging)
-                except FileNotFoundError:
-                    pass
-                except OSError as cleanup_error:
-                    if primary_error is None:
-                        raise ArtifactStateError(
-                            "failed to clean operation-owned artifact staging"
-                        ) from cleanup_error
-                    primary_error.add_note(
-                        f"operation staging cleanup failed: {cleanup_error!r}"
-                    )
+            primary_error = sys.exception()
+            try:
+                if staging is not None:
+                    try:
+                        shutil.rmtree(staging)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as cleanup_error:
+                        if primary_error is None:
+                            raise ArtifactStateError(
+                                "failed to clean operation-owned artifact staging"
+                            ) from cleanup_error
+                        primary_error.add_note(
+                            f"operation staging cleanup failed: {cleanup_error!r}"
+                        )
+            finally:
+                if staging_lease is not None:
+                    try:
+                        staging_lease.release()
+                    except BaseException as release_error:
+                        if primary_error is None:
+                            raise ArtifactStateError(
+                                "failed to release staging operation lease"
+                            ) from release_error
+                        primary_error.add_note(
+                            f"staging operation lease release failed: {release_error!r}"
+                        )
 
     def _resolve_closure(
         self,
@@ -2259,11 +2610,49 @@ class ModelArtifactService:
         descriptor: ArtifactDescriptor,
         source: Path,
         staging: Path,
+        *,
+        consume_source: bool = False,
     ) -> None:
+        """Copy or move declared payload into install staging.
+
+        Args:
+            descriptor: Artifact descriptor with file metadata.
+            source: Source directory containing payload files.
+            staging: Destination staging directory.
+            consume_source: Move files with os.replace when the source lies
+                inside this service's root (both stagings share it). EXDEV
+                (bind-mount inside the root) degrades to copy+delete for that
+                file — correctness over the disk optimization.
+
+        Raises:
+            ArtifactPathError: consume_source with a source outside the root,
+                or when source path contains symlinks or redirects.
+        """
+        if consume_source:
+            # Validate source is inside root and contains no symlinks or
+            # redirects anywhere in its path hierarchy.
+            try:
+                self._assert_managed_path(source)
+            except ArtifactPathError as error:
+                raise ArtifactPathError(
+                    "consume_source requires a source inside the service root "
+                    "with no symlink or redirect path components"
+                ) from error
+
         for item in descriptor.files:
-            destination = staging / item.path
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source / item.path, destination, follow_symlinks=False)
+            src = source / item.path
+            dst = staging / item.path
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if consume_source:
+                try:
+                    os.replace(src, dst)
+                    continue
+                except OSError as exc:
+                    if exc.errno != errno.EXDEV:
+                        raise
+            shutil.copyfile(src, dst, follow_symlinks=False)
+            if consume_source:
+                src.unlink()
 
     def _verify_payload(
         self,

@@ -24,8 +24,14 @@ every integrity-bearing step.
    (workers never import the acquisition modules), following
    `Tests/STT/test_boundaries.py`.
 4. **Composition over the sealed core** (Approach A): a new
-   `ArtifactAcquisitionService` composes `ModelArtifactService`; only two
-   small, sync, agreed additions touch the core.
+   `ArtifactAcquisitionService` composes `ModelArtifactService`; only three
+   small, sync, agreed additions touch the core: `install(...,
+   consume_source: bool = False)`; `reconcile()`'s staging GC; and a
+   per-staging-dir `install()` lease (its `locks_path` property plus
+   `ReconcileReport.staging_removed`) added mid-implementation as an
+   approved in-flight fix for a real race between a crashed `install()`'s
+   abandoned staging tempdir and a concurrent `reconcile()` pass (see
+   Core additions below).
 
 ## Architecture
 
@@ -40,7 +46,7 @@ every integrity-bearing step.
   redirects) re-shaped to stream chunks to a staged file under a hard
   `max_bytes` bound instead of buffering bodies in memory. Supports `Range`
   resume and returns captured validators (ETag / Last-Modified).
-- **Core additions (sync, small):**
+- **Core additions (sync, small; three total, not two — see Decision 4):**
   - `ModelArtifactService.install(..., consume_source: bool = False)` —
     per-file `os.replace` when the source directory lies inside the service
     root; a source outside the root raises `ArtifactPathError` (no silent
@@ -52,6 +58,16 @@ every integrity-bearing step.
     Valid-sidecar staging is resumable state and is never GC'd (see
     Recovery). Deletions are containment-checked and counted in
     `ReconcileReport`.
+  - Per-staging-dir `install()` lease — a reserved `#install-staging`
+    lease key held for one `install()` call's whole staging tempdir
+    lifetime, exposed via the new `ModelArtifactService.locks_path`
+    property (so `ArtifactAcquisitionService`, in a different module, can
+    take its own reserved-namespace leases against the same lock root) and
+    surfaced in reports via `ReconcileReport.staging_removed`. Approved
+    mid-implementation, not part of the original two-addition plan: without
+    it, `reconcile()`'s staging GC could not tell a crashed `install()`'s
+    abandoned tempdir apart from one still legitimately in flight, a real
+    race between the two.
 
 ### Serialization: one acquisition-session lease
 
@@ -105,11 +121,17 @@ touching staging.
 
 ### Cancellation semantics (stated honestly)
 
-Task cancellation is honored at fetch chunk boundaries, at lease polls
-(bridged into the leases' `cancelled` callable), and between artifacts. An
-`install()` already running in an executor completes before cancellation
-takes effect — it is short relative to transfers, and AC #3's guarantees
-hold regardless.
+Task cancellation is honored at fetch chunk boundaries and between
+artifacts. Lease acquisition is non-blocking with a short, fixed timeout
+(0.1s for `provision()`'s acquisition-session lease; see
+`NONBLOCKING_LEASE_TIMEOUT_SECONDS`) rather than a long poll, so no
+`cancelled`-callable bridge into `leases.py` was ever implemented or is
+needed — a wait that short has nothing meaningful to interrupt mid-flight.
+`ArtifactOperationLease.cancelled` remains available as a constructor
+parameter for a future caller that does need it, but no lease in this
+acquisition path passes one. An `install()` already running in an executor
+completes before cancellation takes effect — it is short relative to
+transfers, and AC #3's guarantees hold regardless.
 
 ## API surface
 
