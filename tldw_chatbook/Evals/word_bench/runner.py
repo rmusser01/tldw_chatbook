@@ -59,11 +59,30 @@ class CaptureClientLike(Protocol):
     async def capture_with_continuation(
         self, snippet: str, target: Target, mode: PromptMode, top_k: int
     ) -> tuple[CellCapture | CellError, str]:
-        """task-1710: only invoked by ``_capture_cell`` when
+        """Measure one cell AND sample what the model says next.
+
+        task-1710: only invoked by ``_capture_cell`` when
         ``BenchConfig.capture_continuations`` is ``True``. A fake used only
         in flag-off tests need not implement this -- Python's structural
         ``Protocol`` is not enforced at runtime, and this method is never
-        called on the flag-off path."""
+        called on the flag-off path.
+
+        Args:
+            snippet: The text whose continuation is measured, steered by
+                ``target`` exactly as ``capture`` steers it.
+            target: The column being measured.
+            mode: ``"raw"`` or ``"chat"`` -- decides whether the
+                continuation costs a second request (raw) or is salvaged
+                from the measured response (chat).
+            top_k: The top-K width requested for the measured distribution;
+                it never sizes the continuation.
+
+        Returns:
+            A ``(cell, continuation)`` pair. The cell is exactly what
+            ``capture`` would have returned for the same inputs -- the
+            continuation never perturbs it. The continuation is ``""``
+            when the cell itself failed, or when sampling it failed.
+        """
         ...
 
 
