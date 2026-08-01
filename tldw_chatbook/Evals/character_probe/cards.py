@@ -6,10 +6,24 @@ from typing import Any, Sequence
 
 from .models import CardSnapshot
 
-#: Card fields copied into a run. Every one participates in prompt assembly;
-#: anything not listed here (images, timestamps, versions) is deliberately
-#: excluded because it cannot change what the model sees.
+#: Card fields copied into a run. Every one participates in prompt assembly,
+#: and adding a field here is only HALF the change --
+#: ``prompt.compose_system_prompt`` must compose it too, or the snapshot
+#: grows text the model never sees.
+#:
+#: What is excluded is the card's non-prompting columns (``image``, the
+#: ``created_at``/``last_modified`` timestamps, ``version``/``client_id``/
+#: ``deleted``) plus the metadata columns no probe path reads today
+#: (``creator_notes``, ``alternate_greetings``, ``tags``, ``creator``,
+#: ``character_version``, ``extensions``). Omitting a field from this list
+#: is NOT automatically harmless: ``description`` -- the primary V2 persona
+#: field, which Console itself sends -- was missing here until the
+#: whole-branch review of task-1691 phase 1, and every probe until then ran
+#: against a character stripped of its main definition. Anything omitted in
+#: future must be omitted because it is not prompting text, not because a
+#: list happened not to mention it.
 _SNAPSHOT_FIELDS = (
+    "description",
     "system_prompt",
     "personality",
     "scenario",

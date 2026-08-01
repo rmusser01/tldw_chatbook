@@ -63,7 +63,88 @@ def test_message_example_reaches_the_system_prompt():
     snapshot boundary."""
     card = _card(message_example="<START>\n{{user}}: Hi\n{{char}}: Hey.")
     composed = compose_system_prompt(card, None)
-    assert "{{user}}: Hi" in composed
+    assert "User: Hi" in composed
+
+
+def test_card_macros_are_resolved_not_leaked():
+    """Cards are authored against SillyTavern-style macros. Console resolves
+    them before sending (task-1530) precisely because they otherwise reach
+    the provider verbatim; a probe that shipped a literal ``{{char}}`` would
+    be evaluating text no real chat with this card ever produces."""
+    card = _card(
+        system_prompt="You are {{char}}. {{user}} is your rival.",
+        message_example="{{user}}: Hi\n{{char}}: Hey.",
+        personality="{{char}} is sardonic",
+        description="{{char}} runs the docks",
+        scenario="{{user}} finds {{char}} on a rooftop",
+        post_history_instructions="Stay as {{char}}.",
+    )
+    composed = compose_system_prompt(card, None)
+    assert "{{char}}" not in composed
+    assert "{{user}}" not in composed
+    assert "You are Vex. User is your rival." in composed
+    assert "Vex is sardonic" in composed
+    assert "Vex runs the docks" in composed
+    assert "User finds Vex on a rooftop" in composed
+    assert "Stay as Vex." in composed
+
+
+def test_the_first_message_resolves_its_macros_too():
+    card = _card(first_message="Well, {{user}}. {{char}} was expecting you.")
+    messages = build_messages(card, None, ["Hello?"], [])
+    assert messages[1] == {
+        "role": "assistant",
+        "content": "Well, User. Vex was expecting you.",
+    }
+
+
+def test_scripted_turns_are_sent_verbatim():
+    """A probe's turns are the eval author's text, not the card's, and the
+    probe format's rule is that turn text is reproduced exactly -- prompt
+    formatting changes model behaviour."""
+    messages = build_messages(_card(), None, ["Who is {{char}}?"], [])
+    assert messages[-1] == {"role": "user", "content": "Who is {{char}}?"}
+
+
+def test_steering_is_not_macro_resolved():
+    """Steering is a model-level instruction attached to a TARGET, not card
+    text. A run spans several cards, so resolving it would give one card's
+    name to a string that belongs to none of them."""
+    composed = compose_system_prompt(_card(), "Never mention {{char}}.")
+    assert composed.startswith("Never mention {{char}}.")
+
+
+def test_a_nameless_card_falls_back_rather_than_substituting_nothing():
+    card = _card(name="  ", system_prompt="You are {{char}}.")
+    assert compose_system_prompt(card, None) == "You are Character."
+
+
+def test_description_reaches_the_system_prompt():
+    """``description`` is the primary V2 persona field and the one Console
+    already sends. It was absent from CardSnapshot, from _SNAPSHOT_FIELDS and
+    from the spec's field list until the whole-branch review of task-1691
+    phase 1, so every probe ran against a character stripped of its main
+    definition."""
+    card = _card(description="A dock-side fixer who owes everyone a favour.")
+    composed = compose_system_prompt(card, None)
+    assert "A dock-side fixer who owes everyone a favour." in composed
+
+
+def test_description_absent_contributes_nothing():
+    assert compose_system_prompt(_card(description=""), None) == "You are Vex."
+
+
+def test_description_follows_personality_as_console_orders_them():
+    """Console's joiner is system_prompt, personality, description, scenario;
+    matching it leaves TASK-1744's shared function one less difference to
+    reconcile."""
+    card = _card(
+        system_prompt="SYS", personality="PERS", description="DESC", scenario="SCEN"
+    )
+    composed = compose_system_prompt(card, None)
+    assert composed.index("SYS") < composed.index("PERS")
+    assert composed.index("PERS") < composed.index("DESC")
+    assert composed.index("DESC") < composed.index("SCEN")
 
 
 def test_message_example_absent_contributes_nothing():

@@ -4,6 +4,13 @@ Steering composes AHEAD of the card's own system prompt: steering is a
 model-level instruction ("answer in English") and the card is the content it
 operates on. Both are preserved -- silently dropping either would evaluate
 something other than what the bench describes.
+
+Card text is written against SillyTavern-style macros, so ``{{char}}``,
+``{{user}}`` and their aliases are RESOLVED here before the text leaves this
+module. Console resolves them for exactly the same reason (task-1530: they
+otherwise leak verbatim into every provider payload), and a probe that
+shipped a literal ``{{user}}`` to the model would be evaluating text no real
+chat with that card ever produces.
 """
 
 from __future__ import annotations
@@ -12,36 +19,85 @@ from typing import Optional, Sequence
 
 from .models import CardSnapshot
 
+#: What ``{{user}}`` resolves to. A probe run has no human in the exchange --
+#: the "user" turns are a script -- so there is no real name to use, and
+#: "User" is what Console substitutes on the Personas surfaces too, which
+#: keeps a probe's prompt comparable with a real session's.
+USER_MACRO_NAME = "User"
+
+#: What ``{{char}}`` resolves to when a card has no usable name. Matches
+#: ``Character_Chat_Lib.replace_placeholders``'s own fallback.
+FALLBACK_CHAR_NAME = "Character"
+
+
+def resolve_card_macros(text: str, card: CardSnapshot) -> str:
+    """Resolve ``{{char}}``/``{{user}}`` (and aliases) in one card's text.
+
+    Args:
+        text: Text taken from the card.
+        card: The card the text came from; its ``name`` supplies
+            ``{{char}}``.
+
+    Returns:
+        str: The text with every macro substituted. ``""`` in, ``""`` out.
+    """
+    # Local import, matching chat_screen.py's own convention for this
+    # function: Character_Chat_Lib imports Pillow and CharactersRAGDB at
+    # module scope, and this engine package stays importable without paying
+    # for either until a prompt is actually composed.
+    from ...Character_Chat.Character_Chat_Lib import replace_placeholders
+
+    return replace_placeholders(
+        text, card.name.strip() or FALLBACK_CHAR_NAME, USER_MACRO_NAME
+    )
+
 
 def compose_system_prompt(card: CardSnapshot, steering: Optional[str]) -> str:
     """Build the system prompt for one card under one target's steering.
 
-    ``message_example`` is included deliberately, not merely because it is
-    present on ``CardSnapshot``: ``cards.py`` snapshots it precisely because
-    "every one participates in prompt assembly", and example dialogue shapes
-    a character's voice as much as its personality or scenario does. Leaving
-    it out would silently narrow what the probe actually evaluates.
+    Every field on :class:`~tldw_chatbook.Evals.character_probe.models.CardSnapshot`
+    is composed here, because ``cards.py`` snapshots a field precisely when
+    it "participates in prompt assembly". That includes ``description`` (the
+    primary V2 persona field) and ``message_example`` -- example dialogue
+    shapes a character's voice as much as its personality does, and leaving
+    either out would silently narrow what the probe evaluates.
+
+    Field order follows Console's own joiner (``system_prompt``,
+    ``personality``, ``description``, ``scenario``) so that TASK-1744, which
+    extracts one shared card-to-prompt function for both paths, has one less
+    difference to reconcile; the eval then adds ``message_example`` and
+    ``post_history_instructions``, which Console does not send yet.
+
+    Macros are resolved in the CARD's text only. ``steering`` is the eval
+    author's own model-level instruction rather than card text, so it is
+    passed through verbatim -- a ``{{char}}`` written there is not a card
+    macro and must not silently acquire one card's name in a run that spans
+    several.
 
     Args:
         card: The snapshotted card.
         steering: The target's own system prompt, or None when unsteered.
 
     Returns:
-        str: Steering first, then the card's persona text. Empty parts are
-        omitted rather than contributing blank lines. If every part is empty
-        (no steering, no card text at all), this deliberately returns ``""``
-        rather than raising: ``build_messages`` always emits exactly one
-        leading system message, so the message shape stays stable even for a
-        content-free card.
+        str: Steering first, then the card's persona text with macros
+        resolved. Empty parts are omitted rather than contributing blank
+        lines. If every part is empty (no steering, no card text at all),
+        this deliberately returns ``""`` rather than raising:
+        ``build_messages`` always emits exactly one leading system message,
+        so the message shape stays stable even for a content-free card.
     """
-    parts = [
-        steering or "",
+    card_parts = [
         card.system_prompt,
         f"Personality: {card.personality}" if card.personality else "",
+        f"Description: {card.description}" if card.description else "",
         f"Scenario: {card.scenario}" if card.scenario else "",
         f"Example dialogue:\n{card.message_example}" if card.message_example else "",
         card.post_history_instructions,
     ]
+    card_text = "\n\n".join(
+        part.strip() for part in card_parts if part and part.strip()
+    )
+    parts = [steering or "", resolve_card_macros(card_text, card)]
     return "\n\n".join(part.strip() for part in parts if part and part.strip())
 
 
@@ -54,9 +110,15 @@ def build_messages(
     """Build the message list for the next turn of a conversation.
 
     The card's ``first_message`` seeds an opening assistant turn as it does in
-    real roleplay. A card without one starts at the user's first scripted turn
-    -- no greeting is invented, because inventing one would evaluate text the
-    character never had.
+    real roleplay, with its macros resolved like the rest of the card's text.
+    A card without one starts at the user's first scripted turn -- no greeting
+    is invented, because inventing one would evaluate text the character never
+    had.
+
+    Scripted user turns are sent VERBATIM, macros included: a probe's turns
+    are the eval author's text, not the card's, and the probe format's own
+    rule is that turn text is reproduced exactly because prompt formatting
+    changes model behaviour.
 
     Args:
         card: The snapshotted card.
@@ -87,7 +149,12 @@ def build_messages(
         {"role": "system", "content": compose_system_prompt(card, steering)}
     ]
     if card.first_message:
-        messages.append({"role": "assistant", "content": card.first_message})
+        messages.append(
+            {
+                "role": "assistant",
+                "content": resolve_card_macros(card.first_message, card),
+            }
+        )
     for index, reply in enumerate(replies_so_far):
         messages.append({"role": "user", "content": scripted_turns[index]})
         messages.append({"role": "assistant", "content": reply})

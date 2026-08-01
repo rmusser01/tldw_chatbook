@@ -18,6 +18,7 @@ def _card(**overrides):
     base = {
         "id": 1,
         "name": "Vex",
+        "description": "A dock-side fixer.",
         "system_prompt": "You are Vex.",
         "personality": "sardonic",
         "scenario": "a rooftop at night",
@@ -35,6 +36,7 @@ def test_snapshot_copies_every_field_used_in_prompting():
     assert snapshot == CardSnapshot(
         id=1,
         name="Vex",
+        description="A dock-side fixer.",
         system_prompt="You are Vex.",
         personality="sardonic",
         scenario="a rooftop at night",
@@ -49,6 +51,44 @@ def test_missing_fields_become_empty_strings_not_none():
     (snapshot,) = snapshot_cards(db, [1])
     assert snapshot.system_prompt == ""
     assert snapshot.first_message == ""
+    assert snapshot.description == ""
+
+
+def test_description_is_snapshotted():
+    """``description`` is a real ``character_cards`` column and the primary
+    V2 persona field -- Console sends it. It was missing from
+    _SNAPSHOT_FIELDS until the whole-branch review of task-1691 phase 1, so
+    every probe ran against a character stripped of its main definition.
+    Pinned here as well as in test_prompt.py because a snapshot that omits
+    it is permanent: the run keeps no other copy of the card."""
+    db = _FakeCharacterDB({1: _card(description="A dock-side fixer.")})
+    (snapshot,) = snapshot_cards(db, [1])
+    assert snapshot.description == "A dock-side fixer."
+
+
+def test_every_snapshotted_field_is_composed_into_the_prompt():
+    """Adding a field to _SNAPSHOT_FIELDS is only half a change: a field the
+    snapshot carries but prompt.py never composes is text the model never
+    sees, which is exactly how ``description`` went missing. Every text
+    field's value must appear in the composed prompt (``first_message``
+    seeds the assistant turn instead, so it is checked there)."""
+    from tldw_chatbook.Evals.character_probe.prompt import build_messages
+
+    values = {
+        "description": "DESCRIPTION-TEXT",
+        "system_prompt": "SYSTEM-TEXT",
+        "personality": "PERSONALITY-TEXT",
+        "scenario": "SCENARIO-TEXT",
+        "post_history_instructions": "POST-TEXT",
+        "message_example": "EXAMPLE-TEXT",
+        "first_message": "GREETING-TEXT",
+    }
+    db = _FakeCharacterDB({1: _card(**values)})
+    (snapshot,) = snapshot_cards(db, [1])
+    messages = build_messages(snapshot, None, ["Hi?"], [])
+    rendered = "\n".join(m["content"] for m in messages)
+    for field, value in values.items():
+        assert value in rendered, f"{field} never reaches the model"
 
 
 def test_order_follows_the_requested_ids():

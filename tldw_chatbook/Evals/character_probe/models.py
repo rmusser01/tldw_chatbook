@@ -102,10 +102,20 @@ class CardSnapshot:
     foreign keys between them. Copying the text into the run means editing or
     deleting a card later never rewrites what a past run shows -- the same
     provenance rule word_bench applies to snippets.
+
+    Every field here is prompting text and every one is composed by
+    ``prompt.compose_system_prompt`` (``name`` additionally supplies the
+    ``{{char}}`` macro's value). ``description`` is the primary V2 persona
+    field: it was absent from this dataclass, from ``cards._SNAPSHOT_FIELDS``,
+    and from the design spec's field list until the whole-branch review of
+    task-1691 phase 1, so every probe ran against a character stripped of its
+    main definition. Adding a field here is only half a change -- compose it
+    in ``prompt.py`` too, or the snapshot grows text the model never sees.
     """
 
     id: int
     name: str
+    description: str = ""
     system_prompt: str = ""
     personality: str = ""
     scenario: str = ""
@@ -118,10 +128,22 @@ class CardSnapshot:
 class ConversationTurn:
     """One scripted user turn and the model's reply to it.
 
-    ``reply`` and ``error`` are both ``""`` by default: a turn that never
-    ran (the conversation was cancelled or failed before reaching it) is
-    simply absent from a ``Conversation.turns`` tuple, so a turn that *is*
-    present but carries no reply text is not a state this runner produces.
+    A turn is recorded only once its provider call has returned, so a turn
+    that never ran (the conversation was cancelled or failed before reaching
+    it) is simply absent from its ``Conversation.turns`` tuple. A turn that
+    *is* present may still carry ``reply == ""``, and that IS a state this
+    runner produces: the provider callable is allowed to return empty text
+    (the app's own response extraction yields ``""`` rather than raising for
+    a response with no content) and the runner records it verbatim. "The
+    model said nothing" is a real observation this eval exists to surface,
+    not a malformed row.
+
+    ``error`` is RESERVED and is never populated by the runner today: a
+    failed turn ends its whole conversation, and ``Conversation.error`` is
+    that failure's only home. The field exists -- and round-trips through
+    storage -- so that a future per-turn record (a retried turn, say) has
+    somewhere to live without a storage migration. Do not read ``""`` here
+    as "this turn succeeded"; read ``Conversation.error`` for that.
     """
 
     user: str
