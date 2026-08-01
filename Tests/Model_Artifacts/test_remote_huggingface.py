@@ -130,6 +130,32 @@ async def test_search_timeout_traceback_has_no_upstream_secret_or_cause() -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"metadata":"json-secret-marker",}',
+        b'{"metadata":"utf8-secret-marker"}\xff',
+    ],
+    ids=["malformed-json", "invalid-utf8"],
+)
+async def test_search_parser_failures_have_no_cause_or_upstream_marker(
+    body: bytes,
+) -> None:
+    """Catches parser exception chains exposing an upstream response body."""
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=_client_factory(lambda _: httpx.Response(200, content=body))
+    )
+
+    with pytest.raises(RemoteDiscoveryError) as raised:
+        await adapter.search("whisper")
+
+    rendered = "".join(traceback.format_exception(raised.value))
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert "secret-marker" not in rendered
+
+
+@pytest.mark.asyncio
 async def test_search_rejects_redirect_status_as_remote_error() -> None:
     """Catches a redirect response being parsed as trusted search metadata."""
     adapter = HuggingFaceRemoteAdapter(
