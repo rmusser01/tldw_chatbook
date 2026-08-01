@@ -2266,6 +2266,71 @@ class SubscriptionsDB(BaseDB):
             )
             return [dict(row) for row in cursor.fetchall()]
 
+    def list_watchlist_audio_episodes(
+        self, watchlist_id: int, *, limit: int = 500, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """List a watchlist's finished audio episodes for feed export.
+
+        One joined `SELECT` across `briefing_audio -> briefing_scripts ->
+        briefings`, scoped to `watchlist_id` through the `briefings` row
+        each script ultimately belongs to (`briefing_audio` has no
+        `watchlist_id` column of its own). Only rows a listener -- or an
+        RSS reader -- can actually play are returned: `audio.status =
+        'complete'` AND `audio.file_path IS NOT NULL` are two independent
+        predicates, since a `complete` render whose file write never
+        landed is just as unplayable as one still `generating` or
+        `failed`.
+
+        Ordered by `briefings.created_at DESC, audio.id DESC` --
+        deliberately *not* `list_briefing_audio`'s `audio.created_at`: a
+        podcast feed reads newest-briefing-first (episode recency), not
+        newest-render-first (when the audio happened to be synthesized).
+
+        Args:
+            watchlist_id: The `watchlists.id` to list episodes for. Scopes
+                the join by identity -- audio belonging to any other
+                watchlist's briefings is never returned, regardless of how
+                many rows exist elsewhere.
+            limit: Maximum number of rows to return (CLAUDE.md Performance
+                Rules: paginate DB results). Defaults to 500.
+            offset: Number of rows to skip before the page starts.
+
+        Returns:
+            Up to `limit` rows, starting at `offset`, newest-briefing-first.
+            Each row is a dict with keys `audio_id`, `script_id`,
+            `briefing_id`, `file_path`, `duration_seconds`, `turn_count`,
+            `preset_name`, `briefing_created_at`, `briefing_status`,
+            `covers_from_ts`, `model_used` -- the exact aliases Tasks 3
+            (RSS feed generation) and 5 (the export button) quote by name.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                """
+                SELECT
+                    audio.id AS audio_id,
+                    audio.script_id AS script_id,
+                    scripts.briefing_id AS briefing_id,
+                    audio.file_path AS file_path,
+                    audio.duration_seconds AS duration_seconds,
+                    audio.turn_count AS turn_count,
+                    scripts.preset_name AS preset_name,
+                    briefings.created_at AS briefing_created_at,
+                    briefings.status AS briefing_status,
+                    briefings.covers_from_ts AS covers_from_ts,
+                    briefings.model_used AS model_used
+                FROM briefing_audio AS audio
+                JOIN briefing_scripts AS scripts ON scripts.id = audio.script_id
+                JOIN briefings ON briefings.id = scripts.briefing_id
+                WHERE briefings.watchlist_id = ?
+                  AND audio.status = 'complete'
+                  AND audio.file_path IS NOT NULL
+                ORDER BY briefings.created_at DESC, audio.id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (watchlist_id, limit, offset),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
     def set_watchlist_briefing_settings(
         self,
         watchlist_id: int,

@@ -195,6 +195,7 @@ from tldw_chatbook.TTS.legacy_bridge import LEGACY_PROVIDER_IDS
 from tldw_chatbook.TTS.legacy_request_builder import build_legacy_speech_request
 from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
 from tldw_chatbook.TTS.text_processing import TextChunker
+from tldw_chatbook.Utils.path_validation import is_safe_path
 from tldw_chatbook.Utils.private_paths import (
     atomic_private_write_bytes,
     secure_private_directory,
@@ -1070,6 +1071,40 @@ def briefing_audio_dir() -> Path:
         create=True,
         application_owned=True,
     ).lexical_path
+
+
+def audio_file_path_is_safe(file_path: str | Path) -> bool:
+    """Whether `file_path` resolves to somewhere inside `briefing_audio_dir()`.
+
+    Qodo review round 1, FIX B (phase 2b): `file_path` comes from our own DB
+    row today, but nothing enforces that at the schema level, and CLAUDE.md
+    requires every file path to be checked through `Utils/path_validation.py`
+    before the filesystem ever sees it -- a tampered or corrupted row must
+    not let a caller probe (`.exists()`) or play/copy an arbitrary path.
+    Two callers share this single check rather than each carrying their own
+    copy of it: `UI.Watchlists_Modules.artifacts_pane` (disables Play;
+    `WatchlistsCollectionsScreen.handle_play_audio_requested` guards the
+    actual playback call) and `briefing_export.export_feed_directory`
+    (phase 3 Task 4 -- guards copying a file OUT of private storage for a
+    podcast feed export).
+
+    Moved here from `artifacts_pane.py` in phase 3 Task 4 review round 1:
+    this is a services-layer security check, not UI code, and living in a
+    UI module made `briefing_export.py`'s import of it the only
+    `Subscriptions -> UI` import in the whole package -- one import away
+    from a circular-import trap the day this module wants something from
+    `briefing_export` (plausible, since it names files too). `artifacts_
+    pane` re-imports the name from here, so every existing caller keeps its
+    current spelling.
+
+    Args:
+        file_path: The candidate path, as stored on a `briefing_audio` row.
+
+    Returns:
+        `True` only when `file_path` resolves (following `..`/symlinks)
+        to a location inside `briefing_audio_dir()`.
+    """
+    return is_safe_path(file_path, briefing_audio_dir())
 
 
 async def generate_script_audio(

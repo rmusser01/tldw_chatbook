@@ -1,7 +1,7 @@
 # Watchlists Briefings & Podcasts — design (spec #2)
 
 **Date:** 2026-07-30
-**Status:** phases 1-2 implemented (2026-07-31); phases 3-4 pending
+**Status:** phases 1-3 implemented (2026-08-01); phase 4 pending
 
 **Phase 1 delivery notes (2026-07-30):** two deferrals from the phase 1 plan, both confirmed by
 the project owner (2026-07-30):
@@ -112,6 +112,45 @@ continues to diverge by design (it derives kokoro's onnx/pytorch suffix from liv
 options and alltalk's from the requested model id, where the builder uses fixed constants); both
 sides carry a cross-reference comment (the TASK-1393 pact convention) so the two are never mistaken
 for interchangeable and never converged without updating both call sites' expectations.
+
+**Phase 3 delivery notes (2026-08-01):** markdown export and the podcast feed directory (Tasks
+1-5) shipped on `feat/briefings-phase-3`. Four things worth recording against this design's
+original text:
+
+- **Localhost serving is cut, by the project owner's decision — the spec's premise was false.**
+  This design's "Exports and feed" section above says "if the app's `[web_server]` is enabled it
+  can serve that directory over localhost for podcast clients; serving is a toggle." At plan time
+  that toggle turned out not to exist: `[web_server]` is **textual-serve** — a mutually exclusive
+  process mode that serves the *TUI itself* to a browser (`app.py` returns instead of running the
+  TUI when it is engaged), whose only static route is hardcoded to textual-serve's own assets, and
+  whose `enabled` key is read by no code at all anywhere in the app. There was never a server
+  running alongside the TUI for this feature to toggle. Consequently the directory is the whole
+  deliverable, exactly as this design's own wording already said ("the directory is the
+  deliverable"); a user-run static server (e.g. `python -m http.server` from the exported folder)
+  is the documented path for pointing a podcast client at it. See task-1760 for the scoped,
+  net-new follow-up (a standalone opt-in static server) this finding produced.
+- **The feed directory is self-contained by design.** `briefing_feed.build_feed_xml` writes
+  enclosure URLs as **bare relative filenames**, not absolute paths or `file://` URIs. This is
+  deliberate, not an oversight: a relative URL means the folder can be copied, zipped, synced to
+  another machine, or handed to someone else, and it still resolves correctly wherever it lands —
+  no home directory, username, or local filesystem layout ever leaks into `feed.xml`.
+- **Exported files are `0o644` by deliberate decision — recorded as Decision 4 in
+  `Subscriptions/briefing_export.py`'s module docstring.** Audio inside the app's private storage
+  (`briefing_audio_dir()`) is written `0o600` by `atomic_private_write_bytes`; naively inheriting
+  that mode into an export would make a folder the user explicitly chose *in order to share it*
+  readable only by the exporting account — silently defeating the point of exporting at all. The
+  fixed mode is applied explicitly (not derived from umask): umask expresses a default for
+  arbitrary file creation, not intent for a folder picked for sharing, and honouring a hardened
+  umask here would hand the most security-conscious users a silently unreadable feed. The real
+  access boundary is unchanged — the destination directory's own permissions (left untouched by
+  Decision 1 in the same docstring) remain what actually gates access; a `0o644` file inside a
+  `0o700` directory stays unreachable to anyone else regardless.
+- **§Testing's "every new test `pytest.mark.unit` or it is invisible to CI" is stale.** That was
+  true when this design was written; since task-1465, CI instead runs `pytest Tests
+  --ignore=Tests/UI` plus a separate `pytest Tests/UI` pass, neither with marker selection, so an
+  unmarked test is collected and run either way. What actually matters now is `--strict-markers`:
+  an unregistered `@pytest.mark.*` name is a collection **error**, not a silent no-op, so the
+  bar is "use a registered marker (or none)," not "must be `unit`."
 
 **Predecessor:** `2026-07-25-watchlists-console-rebuild-design.md` (spec #1), which deferred this
 slice: *"Spec #2 covers artifact generation (briefings, 2-speaker podcasts) and its scheduled

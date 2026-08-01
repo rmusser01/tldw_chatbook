@@ -49,7 +49,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Select, Static
 
-from ...Subscriptions.briefing_audio import briefing_audio_dir
+from ...Subscriptions.briefing_audio import audio_file_path_is_safe, briefing_audio_dir
 from ...Subscriptions.briefing_selection import (
     MODE_AUTO,
     MODE_AUTO_FEATURED,
@@ -61,7 +61,6 @@ from ...Subscriptions.briefing_service import (
     STATUS_FAILED,
     STATUS_GENERATING,
 )
-from ...Utils.path_validation import is_safe_path
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .table_selection import highlight_is_user_driven
 
@@ -120,6 +119,17 @@ class GenerateBriefingRequested(Message):
 
 class RefreshBriefingsRequested(Message):
     """Posted when the user asks to re-read the briefing list."""
+
+
+class ExportBriefingRequested(Message):
+    """Posted when the user asks to export the selected briefing as markdown.
+
+    Carries nothing, same shape as `GenerateBriefingRequested`/`CastScript
+    Requested` and for the same reason: the briefing to export is the
+    screen's own `_selected_briefing`, already mirrored there by `handle_
+    briefing_selected` -- there is nothing this message needs to carry that
+    the screen does not already hold.
+    """
 
 
 class BriefingModeChanged(Message):
@@ -204,6 +214,29 @@ class StopAudioRequested(Message):
     """Posted when the user asks to stop the selected script's audio.
 
     Carries nothing, for the identical reason `PlayAudioRequested` does.
+    """
+
+
+class ExportFeedRequested(Message):
+    """Posted when the user asks to export this watchlist's audio as a
+    podcast feed directory (spec #2 phase 3, Task 5).
+
+    Carries nothing, same shape as `GenerateBriefingRequested`/
+    `SynthesizeAudioRequested` and for the same reason: the watchlist to
+    export is the screen's own scope (`_briefing_watchlist_id`), and
+    whether there is anything worth exporting is already mirrored onto
+    this pane's own `has_audio_episodes` reactive -- there is nothing this
+    message needs to carry that the screen does not already hold.
+
+    Posted from the button living in `#artifacts-toolbar` -- the SAME
+    watchlist-scoped toolbar Generate/Refresh/Task 1's markdown Export
+    already live in, and (review round 1, Important #1) NOT `#artifacts-
+    audio-toolbar`, where an earlier draft placed it: that toolbar only
+    renders once a SCRIPT is selected, but this export is WATCHLIST-
+    scoped (every complete episode across the whole watchlist), so a
+    button hidden behind an unrelated script selection is a button a
+    user cannot find at all -- see `compose`'s own comment at the
+    button's new site.
     """
 
 
@@ -354,29 +387,6 @@ _AUDIO_UNEXPLAINED_FAILURE = "Audio synthesis failed, but recorded no reason."
 def _audio_status_text(row: dict[str, Any]) -> str:
     """One audio render's status, as a bare lowercase string."""
     return str(row.get("status") or "").strip().lower()
-
-
-def audio_file_path_is_safe(file_path: str | Path) -> bool:
-    """Whether `file_path` resolves to somewhere inside `briefing_audio_dir()`.
-
-    Qodo review round 1, FIX B: `file_path` comes from our own DB row today,
-    but nothing enforces that at the schema level, and CLAUDE.md requires
-    every file path to be checked through `Utils/path_validation.py` before
-    the filesystem ever sees it -- a tampered or corrupted row must not let
-    this UI probe (`.exists()`) or play an arbitrary path. Shared by
-    `_audio_file_is_playable` below (disables Play) and
-    `WatchlistsCollectionsScreen.handle_play_audio_requested` (guards the
-    actual playback call), so there is exactly one place this check is
-    made.
-
-    Args:
-        file_path: The candidate path, as stored on a `briefing_audio` row.
-
-    Returns:
-        `True` only when `file_path` resolves (following `..`/symlinks)
-        to a location inside `briefing_audio_dir()`.
-    """
-    return is_safe_path(file_path, briefing_audio_dir())
 
 
 def _audio_file_is_playable(row: dict[str, Any] | None) -> bool:
@@ -538,6 +548,16 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: to a successful one. Screen-supplied, resolved alongside `scripts`
     #: inside `_load_briefings`.
     scripts_with_audio = reactive[dict[int, str]]({}, recompose=True)
+    #: Task 5 (phase 3): whether the WHOLE watchlist -- not merely the
+    #: selected script -- has at least one export-ready audio episode
+    #: (`SubscriptionsDB.list_watchlist_audio_episodes`'s own `complete`
+    #: + `file_path IS NOT NULL` predicate). Screen-supplied, resolved
+    #: alongside the rest of `_load_briefings`'s watchlist-scoped reads --
+    #: never computed on this widget, which has no database handle of its
+    #: own. Gates the Export Feed button's disabled state: a dead control
+    #: offering to export nothing is a spec violation (phase 2b shipped a
+    #: disabled Play for exactly this reason).
+    has_audio_episodes = reactive(False, recompose=True)
     #: Task 6: every `[item N]` id the SELECTED briefing's body cites,
     #: resolved once per selection by the screen (`_load_briefings`, via
     #: `get_subscription_items_by_ids`) -- `{"item_id": int, "label": Text,
@@ -686,6 +706,62 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 id="artifacts-refresh-button",
                 compact=True,
                 tooltip="Re-read this watchlist's briefings.",
+            )
+            # Task 1 (phase 3): exporting is an action on THE SELECTED
+            # briefing, so -- unlike Generate/Refresh, which are
+            # watchlist-wide -- it is disabled with nothing selected, and
+            # ALSO disabled for any non-`complete` row: a `failed`/`empty`/
+            # `generating` briefing has no body worth exporting (`empty`
+            # writes no body by design, `failed` recorded none, and
+            # `generating` has not finished). Placed in this SAME toolbar
+            # rather than a new `Horizontal` -- adding a row here would cost
+            # height this pane's budget cannot spare (see the module
+            # docstring's own note on the pane's fixed `fr` split).
+            export_disabled = (
+                self.selected_briefing is None
+                or _status_text(self.selected_briefing) != STATUS_COMPLETE
+            )
+            yield Button(
+                "Export…",
+                id="artifacts-export-button",
+                compact=True,
+                disabled=export_disabled,
+                tooltip=(
+                    "Select a completed briefing to export it."
+                    if export_disabled
+                    else "Export this briefing as a markdown file."
+                ),
+            )
+            # Task 5 (phase 3): review round 1, Important #1. The brief
+            # originally placed this button in `#artifacts-audio-toolbar`,
+            # which only renders once a SCRIPT is selected -- but the feed
+            # export itself is WATCHLIST-scoped (every complete episode
+            # across the whole watchlist), not script-scoped, so a user
+            # could not find it without first selecting some unrelated
+            # script. Moved to THIS toolbar instead: it is the one Task 1's
+            # own watchlist-scoped markdown Export already lives in, and it
+            # renders unconditionally (see `compose`'s own top-level
+            # structure -- unlike the picker/scripts/audio sections below,
+            # nothing gates this `Horizontal` at all), so the button is
+            # discoverable the moment a watchlist is in scope, exactly like
+            # Generate/Refresh/Export are. Still costs zero rows: both are
+            # EXISTING `.destination-filter-strip` toolbars, `height: 1`
+            # either way -- see the pinned geometry tests re-run for this
+            # move (`test_the_list_the_button_and_the_body_are_all_on_
+            # screen`, `test_the_briefings_table_keeps_at_least_three_
+            # usable_rows`).
+            yield Button(
+                "Export Feed…",
+                id="artifacts-export-feed-button",
+                compact=True,
+                disabled=not self.has_audio_episodes,
+                tooltip=(
+                    "This watchlist has no complete audio episodes to "
+                    "export."
+                    if not self.has_audio_episodes
+                    else "Export this watchlist's audio episodes as a "
+                    "podcast feed directory."
+                ),
             )
 
         if self.can_generate:
@@ -1159,6 +1235,8 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             self.post_message(GenerateBriefingRequested())
         elif button_id == "artifacts-refresh-button":
             self.post_message(RefreshBriefingsRequested())
+        elif button_id == "artifacts-export-button":
+            self.post_message(ExportBriefingRequested())
         elif button_id == "artifacts-presets-button":
             self.post_message(ManagePresetsRequested())
         elif button_id == "artifacts-cast-button":
@@ -1169,6 +1247,8 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             self.post_message(PlayAudioRequested())
         elif button_id == "artifacts-stop-button":
             self.post_message(StopAudioRequested())
+        elif button_id == "artifacts-export-feed-button":
+            self.post_message(ExportFeedRequested())
         event.stop()
 
     def on_select_changed(self, event: Select.Changed) -> None:
