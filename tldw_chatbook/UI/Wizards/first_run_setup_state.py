@@ -761,7 +761,11 @@ def build_summary_rows(
         speech_row = SummaryRow(
             "Speech transcription",
             ROW_ATTENTION,
-            "configured but not installed — revisit Settings",
+            # Review Important 1: there is no Settings speech/model category
+            # -- the real, reachable destination for installing/deleting
+            # this managed model is the Lab nav destination's Models screen
+            # (screen_registry TAB_LLM "Models", rail rows Curated/Installed).
+            "configured but not installed — revisit Lab ▸ Models",
         )
 
     return (

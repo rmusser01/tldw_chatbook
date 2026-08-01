@@ -234,6 +234,66 @@ def read_speech_prefill(app_config: Mapping[str, object]) -> SpeechPrefill:
     )
 
 
+def speech_prefill_status(prefill: SpeechPrefill) -> str:
+    """Human copy describing what is currently persisted, or "" for nothing.
+
+    TASK-1301 review (Important 3 / AC#5's "re-run prefills" clause): the
+    step must SHOW what re-running setup would interact with before the
+    user acts, instead of silently overwriting it. This deliberately does
+    NOT special-case the shipped template default (``faster-whisper`` /
+    ``distil-large-v3``) as "nothing" -- from the user's point of view it
+    is a real, currently-effective value that installing/activating here
+    would replace, so it is shown exactly like any other persisted
+    provider. Contrast ``read_speech_prefill``'s docstring, which is about
+    a DIFFERENT question ("did the wizard configure this") that
+    legitimately excludes the template default.
+
+    Args:
+        prefill: The currently persisted transcription defaults.
+
+    Returns:
+        Empty when nothing is persisted at all; otherwise a sentence
+        describing the current default and, when it differs from the
+        Parakeet ONNX provider, the consequence of acting on this step.
+    """
+    if not prefill.provider_id:
+        return ""
+    if prefill.provider_id == _ROUTING_POLICY.parakeet_provider_id:
+        return f"Already your default: {prefill.model_id} ({prefill.language})."
+    return (
+        f"Currently configured: {prefill.provider_id} — installing or "
+        "activating here will switch your default to Parakeet v2."
+    )
+
+
+def should_persist_speech_config(*, active: bool, acted_this_run: bool) -> bool:
+    """Whether ``commit()`` should write ``[transcription]``.
+
+    TASK-1301 review (Important 3): AC#5 says persist only after a verified
+    active artifact -- but "active" alone is not sufficient, because the
+    artifact may have been installed in an earlier session (e.g. from the
+    Library screen) while ``[transcription]`` was deliberately configured
+    for something else (``remote-whisper``, ``default_language="auto"``,
+    ...). Without also requiring that the USER engaged this step during
+    THIS run, a re-run that just presses Next through every step would
+    silently clobber that existing, unrelated configuration. This is the
+    single choke point for that decision so the wizard's byte-identical
+    re-run guarantee has one testable, named gate.
+
+    Args:
+        active: Whether a verified managed Parakeet v2 artifact is
+            currently active (freshly re-checked, never trusted stale
+            widget state).
+        acted_this_run: Whether the user successfully installed or
+            activated the artifact THROUGH THIS STEP during this wizard
+            run (never true for a re-run that only presses Next).
+
+    Returns:
+        True only when both conditions hold.
+    """
+    return active and acted_this_run
+
+
 __all__ = [
     "LANGUAGE_DISPLAY_NAMES",
     "TRANSCRIPTION_SECTION",
@@ -242,6 +302,8 @@ __all__ = [
     "SpeechPrefill",
     "build_speech_transcription_commit",
     "read_speech_prefill",
+    "should_persist_speech_config",
+    "speech_prefill_status",
     "recommended_speech_selection",
     "routing_policy",
     "speech_language_options",
