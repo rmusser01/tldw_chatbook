@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -12,6 +13,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from ...TTS import TTSPlaygroundSelectionPreset
+from ...TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
 from ..Lab_Modules.lab_speech_status import (
     SPEECH_CAPABILITY_SELECTOR,
     speech_capability_detail,
@@ -23,6 +25,7 @@ from ..STTS_Window import STTS_VIEW_KEYS, STTSWindow
 from ..Speech.speech_runtime_status import (
     speech_tts_navigation_target_from_context,
 )
+from ..Speech.speech_playground_model import AXIS_CONTROLS
 from ..Speech.speech_settings_contracts import SpeechTTSNavigationTarget
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from .lab_frame import LabScreen
@@ -68,6 +71,32 @@ SPEECH_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
 #: view instead of a pushed screen. Kept so the next such row has a
 #: home, and so the branch that handles them stays exercised.
 SPEECH_NON_VIEW_KEYS: frozenset[str] = frozenset()
+_SPEECH_PLAYGROUND_AXES_STATE_KEY = "speech_playground_axes"
+_MAX_PROCESS_LOCAL_AXIS_LENGTH = 4096
+
+
+def _bounded_playground_axes(value: object) -> dict[str, str]:
+    """Accept only bounded comparison axes for process-local screen restore."""
+
+    if not isinstance(value, Mapping):
+        return {}
+    axes: dict[str, str] = {}
+    for control_id in AXIS_CONTROLS:
+        candidate = value.get(control_id)
+        if (
+            type(candidate) is not str
+            or not candidate
+            or len(candidate) > _MAX_PROCESS_LOCAL_AXIS_LENGTH
+            or any(
+                unicodedata.category(character) in {"Cc", "Cf", "Cs"}
+                for character in candidate
+            )
+        ):
+            continue
+        axes[control_id] = candidate
+    if axes.get("tts-provider-select") not in BUILT_IN_TTS_PROVIDER_IDS:
+        return {}
+    return axes
 
 
 class STTSScreen(LabScreen):
@@ -90,6 +119,7 @@ class STTSScreen(LabScreen):
             ]
             | None
         ) = None
+        self._restored_playground_axes: dict[str, str] = {}
 
     def lab_header_state(self) -> WorkbenchHeaderState:
         """Return the Speech header copy and derived readiness.
@@ -169,9 +199,37 @@ class STTSScreen(LabScreen):
             The ``STTSWindow``, mounted after first paint like every Lab
             body.
         """
-        self.stts_window = STTSWindow(self.app_instance, classes="window")
+        self.stts_window = STTSWindow(
+            self.app_instance,
+            classes="window",
+            playground_axis_values=self._restored_playground_axes,
+        )
         self.stts_window.styles.height = "1fr"
         return self.stts_window
+
+    def save_state(self) -> dict[str, object]:
+        """Save only bounded process-local Playground comparison axes."""
+
+        state = dict(super().save_state() or {})
+        axes = self._restored_playground_axes
+        if self.stts_window is not None:
+            axes = self.stts_window.playground_axis_snapshot()
+        bounded = _bounded_playground_axes(axes)
+        if bounded:
+            state[_SPEECH_PLAYGROUND_AXES_STATE_KEY] = bounded
+        else:
+            state.pop(_SPEECH_PLAYGROUND_AXES_STATE_KEY, None)
+        return state
+
+    def restore_state(self, state: dict[str, object]) -> None:
+        """Seed bounded axes before the fresh deferred Speech body mounts."""
+
+        super().restore_state(state)
+        self._restored_playground_axes = _bounded_playground_axes(
+            state.get(_SPEECH_PLAYGROUND_AXES_STATE_KEY)
+            if isinstance(state, Mapping)
+            else None
+        )
 
     def on_lab_body_ready(self) -> None:
         """Bind the rail highlight to the window's ``current_view``.

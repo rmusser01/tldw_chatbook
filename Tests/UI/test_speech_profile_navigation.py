@@ -76,6 +76,32 @@ def _playground_ready(screen: STTSScreen) -> bool:
     )
 
 
+def test_speech_screen_state_keeps_only_bounded_playground_axes() -> None:
+    """Fresh-screen restore cannot retain text, unknown keys, or unsafe axes."""
+
+    app = _SpeechHost()
+    screen = app.screen_under_test
+    screen.restore_state(
+        {
+            "speech_playground_axes": {
+                "tts-provider-select": "audio_cpp",
+                "tts-model-select": "safe-model",
+                "tts-voice-select": "unsafe\nvoice",
+                "tts-speed-input": "1.25",
+                "tts-text-input": "private synthesis text",
+                "unknown-control": "private provider body",
+                "tts-language-select": "x" * 4097,
+            }
+        }
+    )
+
+    assert screen.save_state()["speech_playground_axes"] == {
+        "tts-provider-select": "audio_cpp",
+        "tts-model-select": "safe-model",
+        "tts-speed-input": "1.25",
+    }
+
+
 @pytest.mark.asyncio
 async def test_profile_library_navigation_waits_for_deferred_speech_body() -> None:
     app = _SpeechHost({"view": "profiles"})
@@ -203,7 +229,7 @@ async def test_exact_preset_rejects_late_prior_generation_completion(tmp_path) -
     ("intent", "focused_id"),
     (
         (SpeechTTSNavigationIntent.CONFIGURE, "tts-provider-select"),
-        (SpeechTTSNavigationIntent.TEST, "tts-refresh-catalog-btn"),
+        (SpeechTTSNavigationIntent.TEST, "tts-test-connection-btn"),
         (SpeechTTSNavigationIntent.REFRESH_MODELS, "tts-refresh-catalog-btn"),
         (SpeechTTSNavigationIntent.REFRESH_VOICES, "tts-voice-select"),
     ),
@@ -260,6 +286,65 @@ async def test_bounded_lab_navigation_restores_provider_and_focus_without_action
 
     generate.assert_not_called()
     assert True not in catalog_calls
+
+
+@pytest.mark.asyncio
+async def test_test_connection_and_refresh_are_distinct_explicit_actions(
+    monkeypatch,
+) -> None:
+    service = FakeTTSService()
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_check_higgs_installation",
+        lambda self: None,
+    )
+    app = _SpeechHost(
+        {
+            "view": "playground",
+            "provider": "audio_cpp",
+            "intent": "test",
+        }
+    )
+    screen = app.screen_under_test
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: (
+                _playground_ready(screen)
+                and service.catalog_calls
+                and all(not refresh for _provider, refresh in service.catalog_calls)
+            ),
+        )
+        initial_refreshes = sum(refresh for _provider, refresh in service.catalog_calls)
+
+        screen.query_one("#tts-test-connection-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                sum(refresh for _provider, refresh in service.catalog_calls)
+                == initial_refreshes + 1
+            ),
+        )
+
+        screen.query_one("#tts-refresh-catalog-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                sum(refresh for _provider, refresh in service.catalog_calls)
+                == initial_refreshes + 2
+            ),
+        )
+
+    assert service.catalog_calls[-2:] == [
+        ("audio_cpp", True),
+        ("audio_cpp", True),
+    ]
 
 
 @pytest.mark.parametrize(

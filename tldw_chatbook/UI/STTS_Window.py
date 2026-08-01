@@ -4429,13 +4429,24 @@ class STTSWindow(Container):
 
     current_view = reactive("playground")
 
-    def __init__(self, app_instance, **kwargs):
+    def __init__(
+        self,
+        app_instance,
+        *,
+        playground_axis_values: Mapping[str, str] | None = None,
+        **kwargs,
+    ):
         """Initialize the S/TT/S window."""
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self._pending_playground_preset: TTSPlaygroundSelectionPreset | None = None
         self._pending_playground_navigation: SpeechTTSNavigationTarget | None = None
         self._pending_adopted_preset: TTSPlaygroundSelectionPreset | None = None
+        # Bounded, process-local Playground axes survive only internal Lab
+        # view switches. They are never written to global or Studio settings.
+        self._playground_axis_values: dict[str, str] = dict(
+            playground_axis_values or {}
+        )
         self._studio_store = StudioTTSPreferenceStore()
         self._global_preferences = SpeechSettingsPane._read_global_preferences()
         self._studio_load_result: StudioTTSLoadResult | None = None
@@ -4645,6 +4656,8 @@ class STTSWindow(Container):
 
         # Give widgets a chance to clean up before removal
         for child in content_container.children:
+            if isinstance(child, SpeechPlaygroundPane):
+                self._playground_axis_values = dict(child.axis_values)
             if hasattr(child, "cleanup") and callable(child.cleanup):
                 try:
                     child.cleanup()
@@ -4663,6 +4676,7 @@ class STTSWindow(Container):
                 SpeechPlaygroundPane(
                     id="speech-playground-pane",
                     profile_preset=preset,
+                    axis_values=self._playground_axis_values,
                     axis_defaults=_seed_axis_defaults(
                         load_result.snapshot,
                         self._global_preferences,
@@ -4713,6 +4727,17 @@ class STTSWindow(Container):
         # STTSScreen since the sidebar moved, so every one of them would raise
         # NoMatches on the first view change. The screen watches
         # `current_view` and applies `is-active` itself.
+
+    def playground_axis_snapshot(self) -> dict[str, str]:
+        """Return detached process-local axes for a fresh Speech screen."""
+
+        try:
+            pane = self.query_one(SpeechPlaygroundPane)
+        except QueryError:
+            pass
+        else:
+            self._playground_axis_values = dict(pane.axis_values)
+        return dict(self._playground_axis_values)
 
     def _apply_pending_playground_preset(
         self,

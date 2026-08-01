@@ -119,6 +119,13 @@ class SpeechPlaybackMixin:
         if event.button.id == "tts-generate-btn":
             self._generate_tts()
             event.stop()  # Prevent event from bubbling up
+        elif event.button.id == "tts-test-connection-btn":
+            if self._selected_provider_id is not None:
+                self._load_provider_catalog(
+                    self._selected_provider_id,
+                    refresh=True,
+                )
+            event.stop()
         elif event.button.id == "tts-refresh-catalog-btn":
             if self._selected_provider_id is not None:
                 self._load_provider_catalog(

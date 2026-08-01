@@ -37,6 +37,7 @@ from tldw_chatbook.TTS import (
     TTSPlaygroundSelectionPreset,
     TTSPreferencesSnapshot,
 )
+from tldw_chatbook.TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 from tldw_chatbook.UI.Lab_Modules.lab_speech_status import (
     speech_local_dependency_availability,
@@ -89,13 +90,13 @@ from .speech_settings_contracts import (
 if TYPE_CHECKING:
     pass
 
-#: Below this pane width the split stacks. Two panes need roughly 30 cells
-#: each to stay readable; the Lab rail and inspector already take their
-#: share, so at 80 columns the body is ~41 and side-by-side would give each
-#: about 20. Mirrors `PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH`'s approach --
-#: a measured threshold, toggled from `on_resize`, because Textual has no
-#: media queries.
-SPEECH_SPLIT_MIN_WIDTH = 64
+#: Below this pane width the split and action rows stack. Two panes need
+#: roughly 30 cells each, while the fixed six-action Playground strip needs
+#: 83 cells including its spacing. A small margin above that measured width
+#: keeps the final action inside the pane. Mirrors
+#: `PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH`'s approach -- a measured threshold,
+#: toggled from `on_resize`, because Textual has no media queries.
+SPEECH_SPLIT_MIN_WIDTH = 86
 
 
 class OpenStudioPreferencesRequested(Message):
@@ -126,6 +127,11 @@ PLAYGROUND_ACTIONS: tuple[WorkbenchAction, ...] = (
         id="tts-random-text-btn", label="Random", tooltip="Insert sample text"
     ),
     WorkbenchAction(id="tts-clear-text-btn", label="Clear", tooltip="Clear the text"),
+    WorkbenchAction(
+        id="tts-test-connection-btn",
+        label="Test",
+        tooltip="Test the selected provider connection",
+    ),
     WorkbenchAction(
         id="tts-refresh-catalog-btn",
         label="Refresh",
@@ -274,8 +280,33 @@ class SpeechPlaygroundPane(
         )
         self.init_synthesis_state()
         self.init_catalog_state()
+        self._seed_session_control_snapshot()
         self.init_playback_state()
         self.init_profile_state(profile_preset)
+
+    def _seed_session_control_snapshot(self) -> None:
+        """Restore bounded process-local axes after an internal Lab view switch."""
+
+        provider_id = self.axis_values.get("tts-provider-select")
+        if provider_id not in BUILT_IN_TTS_PROVIDER_IDS:
+            return
+        snapshot: dict[str, Any] = {}
+        for control_id, snapshot_key in (
+            ("tts-model-select", "model_id"),
+            ("tts-voice-select", "voice_id"),
+            ("tts-format-select", "response_format"),
+        ):
+            value = self.axis_values.get(control_id)
+            if isinstance(value, str) and value:
+                snapshot[snapshot_key] = value
+        speed = self.axis_values.get("tts-speed-input")
+        if isinstance(speed, str):
+            try:
+                snapshot["speed"] = float(speed)
+            except ValueError:
+                pass
+        if snapshot:
+            self._provider_control_snapshots[provider_id] = snapshot
 
     def _cli_setting(self, section: str, key: str, default: Any = None) -> Any:
         """Project saved Studio inheritance into the existing catalog loader.
@@ -294,6 +325,10 @@ class SpeechPlaygroundPane(
             and self._navigation_seed_active
         ):
             return self._navigation_target.provider_id
+        if section == "app_tts" and key == "default_provider":
+            session_provider = self.axis_values.get("tts-provider-select")
+            if session_provider in BUILT_IN_TTS_PROVIDER_IDS:
+                return session_provider
         if (
             section != "app_tts"
             or type(studio) is not StudioTTSPreferencesSnapshot
@@ -406,6 +441,8 @@ class SpeechPlaygroundPane(
         selector = (
             "#tts-provider-select"
             if target.intent in {None, SpeechTTSNavigationIntent.CONFIGURE}
+            else "#tts-test-connection-btn"
+            if target.intent is SpeechTTSNavigationIntent.TEST
             else "#tts-voice-select"
             if target.intent is SpeechTTSNavigationIntent.REFRESH_VOICES
             else "#tts-refresh-catalog-btn"

@@ -53,13 +53,19 @@ def test_settings_save_result_is_safe_immutable_and_separates_persistence() -> N
         persisted=True,
         provider_statuses={"openai": "unavailable"},
         failure_phase=None,
+        provider_configuration_revisions={"openai": 4},
+        provider_runtime_revisions={"openai": 9},
     )
 
     assert result.persisted is True
     assert result.provider_statuses == {"openai": "unavailable"}
+    assert result.provider_configuration_revisions == {"openai": 4}
+    assert result.provider_runtime_revisions == {"openai": 9}
     assert result.failure_phase is None
     with pytest.raises(TypeError):
         result.provider_statuses["openai"] = "applied"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        result.provider_configuration_revisions["openai"] = 5  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
         result.persisted = False  # type: ignore[misc]
 

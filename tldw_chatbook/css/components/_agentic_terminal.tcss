@@ -4457,6 +4457,33 @@ _CredentialClearModal {
     margin: 0 0 0 1;
 }
 
+.settings-speech-stacked .settings-speech-input-row {
+    layout: vertical;
+    height: auto;
+    min-height: 3;
+    margin-bottom: 1;
+}
+
+.settings-speech-stacked .settings-speech-input-row .settings-input-label,
+.settings-speech-stacked .settings-speech-input-row .settings-speech-control-stack,
+.settings-speech-stacked .settings-speech-input-row > Input,
+.settings-speech-stacked .settings-speech-input-row > Select,
+.settings-speech-stacked .settings-speech-input-row > Switch {
+    width: 100%;
+    min-width: 0;
+}
+
+.settings-speech-stacked #settings-speech-actions {
+    layout: vertical;
+    height: 4;
+}
+
+.settings-speech-stacked #settings-speech-actions Button {
+    width: 100%;
+    min-width: 0;
+    margin-right: 0;
+}
+
 /* One row per backend inside the Backends block -- label, status badge,
    Enabled checkbox, default marker, Test button. height:auto (not the
    base .settings-input-row's fixed height:1) so the row never clips a

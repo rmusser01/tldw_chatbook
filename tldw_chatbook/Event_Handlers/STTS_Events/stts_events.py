@@ -1216,13 +1216,26 @@ class STTSEventHandler:
         )
         from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
 
-        for host in (SpeechPlaygroundPane, TTSPlaygroundWidget):
-            try:
-                return self.app.query_one(host)
-            except Exception as error:
-                logger.debug(
-                    "{} is not mounted ({})", host.__name__, type(error).__name__
-                )
+        roots: list[Any] = []
+        try:
+            active_screen = self.app.screen
+        except Exception:
+            active_screen = None
+        if active_screen is not None:
+            roots.append(active_screen)
+        roots.append(self.app)
+
+        for root in roots:
+            for host in (SpeechPlaygroundPane, TTSPlaygroundWidget):
+                try:
+                    return root.query_one(host)
+                except Exception as error:
+                    logger.debug(
+                        "{} is not mounted under {} ({})",
+                        host.__name__,
+                        type(root).__name__,
+                        type(error).__name__,
+                    )
         return None
 
     @staticmethod

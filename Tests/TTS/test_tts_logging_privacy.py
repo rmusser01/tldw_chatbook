@@ -1394,6 +1394,10 @@ async def test_audio_cpp_service_boundary_never_exposes_private_http_or_request_
                 response = await service.synthesize(speech_request())
                 assert [chunk async for chunk in response.byte_stream] == [wav]
                 catalog = await service.get_catalog("audio_cpp")
+                cached_observation = service.latest_native_capability_observation(
+                    "audio_cpp"
+                )
+                assert cached_observation is not None
                 retained_metadata = dict(response.metadata)
         finally:
             primary_error = sys.exception()
@@ -1429,6 +1433,7 @@ async def test_audio_cpp_service_boundary_never_exposes_private_http_or_request_
             repr(exception_notes),
             "\n".join(rendered_tracebacks),
             repr(catalog),
+            repr(cached_observation),
             repr(retained_metadata),
         )
     )

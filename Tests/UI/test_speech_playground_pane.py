@@ -112,7 +112,17 @@ async def test_no_control_is_clipped_by_its_container(size):
                 if not button.region.width:
                     continue
                 if not strip.region.contains_region(button.region):
-                    escaped.append((strip_id, str(button.label)))
+                    escaped.append(
+                        (
+                            strip_id,
+                            str(button.label),
+                            strip.region,
+                            button.region,
+                            tuple(
+                                sorted(screen.query_one(SpeechPlaygroundPane).classes)
+                            ),
+                        )
+                    )
         assert not escaped, f"clipped by container at {size}: {escaped}"
 
 

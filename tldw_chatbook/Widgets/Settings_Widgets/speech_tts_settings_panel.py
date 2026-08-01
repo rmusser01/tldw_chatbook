@@ -23,6 +23,7 @@ from textual.css.query import QueryError
 from textual.events import DescendantFocus
 from textual.message import Message
 from textual.screen import ModalScreen
+from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, Select, Static, Switch
 from textual.worker import NoActiveWorker, get_current_worker
 
@@ -94,6 +95,8 @@ _LANGUAGE_OPTIONS = [
 ]
 
 LeaveChoice = Literal["save", "discard", "cancel"]
+_GLOBAL_SPEECH_TTS_STACK_WIDTH = 104
+_COLLAPSIBLE_TITLE_FOCUS_SUFFIX = "::collapsible-title"
 
 
 class _CredentialEditorModal(ModalScreen[str | None]):
@@ -123,6 +126,7 @@ class _CredentialEditorModal(ModalScreen[str | None]):
                 id="settings-speech-credential-new-value",
                 password=True,
                 placeholder="Enter a new credential",
+                tooltip=f"New {self.provider_label} credential",
             )
             with Horizontal(classes="settings-action-row"):
                 yield Button("Cancel", id="settings-speech-credential-cancel")
@@ -334,8 +338,29 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_defaults = None
         self._pending_saved_provider_id: str | None = None
         self._pending_saved_provider_values: dict[str, object] | None = None
+        self._pending_focus_control_id: str | None = None
+        self._pending_displaced_focus_control_id: str | None = None
+        self._pending_focus_moved_after_displacement = False
         self._leave_save_waiters: dict[int, asyncio.Future[bool]] = {}
         self._last_focused_control_id: str | None = None
+
+    def on_mount(self) -> None:
+        """Apply responsive layout without performing provider work."""
+
+        self._sync_responsive_layout()
+
+    def on_resize(self) -> None:
+        """Keep labels and actions inside the available Settings detail width."""
+
+        self._sync_responsive_layout()
+
+    def _sync_responsive_layout(self) -> None:
+        """Stack fields and actions when one row cannot fit four cells."""
+
+        self.set_class(
+            self.size.width < _GLOBAL_SPEECH_TTS_STACK_WIDTH,
+            "settings-speech-stacked",
+        )
 
     @staticmethod
     def _field_dom_id(provider_id: str, field_id: str) -> str:
@@ -349,6 +374,8 @@ class SpeechTTSSettingsPanel(Vertical):
         classes: str = "",
         error: Static | None = None,
     ) -> Horizontal:
+        if isinstance(control, (Input, Select, Switch)) and not control.tooltip:
+            control.tooltip = label
         children: list[Any] = [Static(label, classes="settings-input-label")]
         if error is not None:
             children.append(
@@ -475,6 +502,7 @@ class SpeechTTSSettingsPanel(Vertical):
                     value=str(self.state.providers[provider_id].get(field_id, "")),
                     id=dom_id,
                     placeholder=placeholder,
+                    tooltip=label,
                     disabled=environment_owned,
                     classes=(
                         "settings-compact-input settings-speech-field "
@@ -1194,7 +1222,11 @@ class SpeechTTSSettingsPanel(Vertical):
                         "the configured server."
                     ),
                 )
-                with Collapsible(title="Advanced safety limits", collapsed=True):
+                with Collapsible(
+                    title="Advanced safety limits",
+                    collapsed=True,
+                    id="settings-speech-audio-cpp-advanced",
+                ):
                     yield self._input(
                         provider_id, "max_input_characters", "Max input characters"
                     )
@@ -1590,6 +1622,9 @@ class SpeechTTSSettingsPanel(Vertical):
         request_id = self._next_request_id
         self._next_request_id += 1
         self._latest_request_id = request_id
+        self._pending_focus_control_id = self._focused_id()
+        self._pending_displaced_focus_control_id = None
+        self._pending_focus_moved_after_displacement = False
         self._set_save_pending(True)
         self._pending_credential_mutation = None
         self._pending_saved_defaults = (
@@ -1605,7 +1640,10 @@ class SpeechTTSSettingsPanel(Vertical):
             if proposal.settings or proposal.delete_setting_keys
             else None
         )
-        self._set_result("Saving global Speech & TTS settings locally…")
+        self._set_result(
+            "Saving global Speech & TTS settings locally…",
+            severity="information",
+        )
         self.post_message(
             STTSSettingsSaveEvent(
                 proposal.settings,
@@ -1636,6 +1674,9 @@ class SpeechTTSSettingsPanel(Vertical):
         request_id = self._next_request_id
         self._next_request_id += 1
         self._latest_request_id = request_id
+        self._pending_focus_control_id = self._focused_id()
+        self._pending_displaced_focus_control_id = None
+        self._pending_focus_moved_after_displacement = False
         self._set_save_pending(True)
         self._pending_credential_mutation = mutation
         self._pending_saved_defaults = None
@@ -1733,8 +1774,12 @@ class SpeechTTSSettingsPanel(Vertical):
         """Apply only the latest bounded persistence/reconfiguration result."""
         if result.request_id != self._latest_request_id:
             return
+        focus_id = self._completion_focus_id(self._pending_focus_control_id)
         leave_waiter = self._leave_save_waiters.pop(result.request_id, None)
         self._latest_request_id = None
+        self._pending_focus_control_id = None
+        self._pending_displaced_focus_control_id = None
+        self._pending_focus_moved_after_displacement = False
         self._set_save_pending(False)
         mutation = self._pending_credential_mutation
         saved_defaults = self._pending_saved_defaults
@@ -1759,6 +1804,7 @@ class SpeechTTSSettingsPanel(Vertical):
             self._refresh_status_rows()
             if leave_waiter is not None and not leave_waiter.done():
                 leave_waiter.set_result(False)
+            self.call_later(self._restore_focus, focus_id)
             return
 
         if mutation is not None:
@@ -1852,7 +1898,12 @@ class SpeechTTSSettingsPanel(Vertical):
             # Credential controls derive their affordances from safe metadata,
             # while a saved audio.cpp connection invalidates prior capability
             # provenance. Repaint either bounded presentation state.
-            self.call_later(self.recompose)
+            self.call_later(
+                self._recompose_and_restore_focus,
+                focus_id,
+            )
+        else:
+            self.call_later(self._restore_focus, focus_id)
 
     def receive_stts_settings_runtime_result(
         self,
@@ -1949,23 +2000,100 @@ class SpeechTTSSettingsPanel(Vertical):
         """Remember the draft control even if a navigation click takes focus."""
 
         control = event.control
-        if control is not None and control.id:
-            self._last_focused_control_id = control.id
+        focus_token = self._focus_token(control)
+        if focus_token is not None:
+            if (
+                self._pending_focus_control_id is not None
+                and focus_token != self._pending_focus_control_id
+                and self._pending_invoking_control_is_disabled()
+            ):
+                if self._pending_displaced_focus_control_id is None:
+                    # Disabling the invoking action blurs it; Textual then
+                    # advances to the next focusable control. Remember that
+                    # automatic landing separately from a later user move.
+                    self._pending_displaced_focus_control_id = focus_token
+                elif focus_token != self._pending_displaced_focus_control_id:
+                    self._pending_focus_moved_after_displacement = True
+            self._last_focused_control_id = focus_token
+
+    @staticmethod
+    def _focus_token(control: Widget | None) -> str | None:
+        """Return a stable token for ID'd controls or a Collapsible title."""
+
+        if control is None:
+            return None
+        if control.id:
+            return control.id
+        parent = control.parent
+        if isinstance(parent, Collapsible) and parent.id:
+            return f"{parent.id}{_COLLAPSIBLE_TITLE_FOCUS_SUFFIX}"
+        return None
+
+    def _resolve_focus_token(self, focus_token: str) -> Widget | None:
+        """Resolve a stable focus token after an optional panel recompose."""
+
+        try:
+            if focus_token.endswith(_COLLAPSIBLE_TITLE_FOCUS_SUFFIX):
+                collapsible_id = focus_token.removesuffix(
+                    _COLLAPSIBLE_TITLE_FOCUS_SUFFIX
+                )
+                return self.query_one(f"#{collapsible_id}", Collapsible).query_one(
+                    "CollapsibleTitle"
+                )
+            return self.query_one(f"#{focus_token}")
+        except QueryError:
+            return None
+
+    def _pending_invoking_control_is_disabled(self) -> bool:
+        """Return whether pending work disabled the control that invoked it."""
+
+        if self._pending_focus_control_id is None:
+            return False
+        control = self._resolve_focus_token(self._pending_focus_control_id)
+        return control is not None and control.disabled
 
     def _focused_id(self) -> str | None:
         focused = self.app.focused
-        if focused is not None and focused.id and self in focused.ancestors_with_self:
-            self._last_focused_control_id = focused.id
+        focus_token = self._focus_token(focused)
+        if (
+            focused is not None
+            and focus_token is not None
+            and self in focused.ancestors_with_self
+        ):
+            self._last_focused_control_id = focus_token
         return self._last_focused_control_id
 
     def _restore_focus(self, control_id: str | None) -> None:
         if not control_id or not self.is_mounted:
             return
-        try:
-            control = self.query_one(f"#{control_id}")
+        control = self._resolve_focus_token(control_id)
+        if control is not None:
             control.screen.set_focus(control)
-        except QueryError:
-            return
+
+    def _completion_focus_id(self, fallback_id: str | None) -> str | None:
+        """Keep newer focus, falling back only when the invoking focus was lost."""
+
+        focused = self.app.focused
+        if focused is None or not focused.is_mounted:
+            return fallback_id
+        if self not in focused.ancestors_with_self:
+            return None
+        focus_token = self._focus_token(focused)
+        if focus_token is not None:
+            if (
+                not self._pending_focus_moved_after_displacement
+                and focus_token == self._pending_displaced_focus_control_id
+            ):
+                return fallback_id
+            self._last_focused_control_id = focus_token
+            return focus_token
+        return fallback_id
+
+    async def _recompose_and_restore_focus(self, control_id: str | None) -> None:
+        """Repaint derived controls while retaining the invoking keyboard target."""
+
+        await self.recompose()
+        self._restore_focus(control_id)
 
     async def confirm_leave(self) -> bool:
         """Resolve the global draft before its owner or surface changes."""

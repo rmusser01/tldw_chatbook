@@ -177,6 +177,8 @@ def _field_row(
 ) -> Horizontal:
     """Build one compact setting row with source and validation copy."""
 
+    if not control.tooltip:
+        control.tooltip = label
     return Horizontal(
         Static(label, classes="speech-setting-label", markup=False),
         control,
@@ -230,6 +232,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
         self._corrupt = False
         self._adoption_pending = False
         self._busy = False
+        self._load_applied = False
 
     @property
     def saved_snapshot(self) -> StudioTTSPreferencesSnapshot:
@@ -508,7 +511,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             self._apply_load_result(result)
 
     def _apply_load_result(self, result: StudioTTSLoadResult) -> None:
-        if not self.is_mounted:
+        if not self.is_mounted or not self.query("#studio-tts-status"):
             return
         self._load_result = result
         self._saved_snapshot = result.snapshot
@@ -536,6 +539,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             adopted_preset = self._adopted_preset
             self._adopted_preset = None
             self._apply_adopted_preset(adopted_preset)
+        self._load_applied = True
 
     def _show_load_issues(self, issues: tuple[str, ...]) -> None:
         """Map bounded storage issue paths to their owning visible fields."""
@@ -851,7 +855,24 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
                 continue
             control = self.query_one(f"#{control_id}")
             control.screen.set_focus(control)
+            # In the stacked narrow layout the validation copy is the row
+            # immediately after the focused control. Include that copy in
+            # the viewport instead of stopping with it one line below. Wait
+            # for removing ``hidden`` to participate in layout first.
+            self.call_after_refresh(self._scroll_error_into_view, error)
             return
+
+    def _scroll_error_into_view(self, error: Static) -> None:
+        """Reveal one laid-out validation row inside the Studio scroller."""
+
+        if not self.is_mounted or not error.is_mounted:
+            return
+        self.query_one("#speech-settings-groups", VerticalScroll).scroll_to_widget(
+            error,
+            animate=False,
+            force=True,
+            immediate=True,
+        )
 
     def _collect_candidate(
         self,
@@ -1062,6 +1083,18 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
         if await self.confirm_leave():
             self._apply_provider(target)
 
+    def _set_status(
+        self,
+        copy: str,
+        *,
+        severity: str | None = None,
+    ) -> None:
+        """Update visible status and optionally use the app announcement channel."""
+
+        self.query_one("#studio-tts-status", Static).update(copy)
+        if severity is not None:
+            self.app.notify(copy, severity=severity)
+
     def _set_busy(self, busy: bool, copy: str = "") -> None:
         self._busy = busy
         if not self.is_mounted:
@@ -1088,7 +1121,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             self.query_one("#studio-tts-format", Select).disabled = is_audio_cpp
             self.query_one("#studio-tts-speed", Input).disabled = is_audio_cpp
         if copy:
-            self.query_one("#studio-tts-status", Static).update(copy)
+            self._set_status(copy, severity="information")
 
     async def save_preferences(self) -> bool:
         """Validate and atomically persist only the Studio snapshot."""
@@ -1096,17 +1129,20 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
         if self._busy:
             return False
         if self._corrupt:
-            self.query_one("#studio-tts-status", Static).update(
-                "Reset only Studio preferences before saving this corrupt record."
+            self._set_status(
+                "Reset only Studio preferences before saving this corrupt record.",
+                severity="error",
             )
             return False
         candidate = self._collect_candidate(show_errors=True)
         if candidate is None:
-            self.query_one("#studio-tts-status", Static).update(
-                "Fix the highlighted Studio fields before saving."
+            self._set_status(
+                "Fix the highlighted Studio fields before saving.",
+                severity="error",
             )
             self._focus_first_error()
             return False
+        focus_id = self._focused_id()
         self._set_busy(True, "Saving Studio preferences…")
         try:
             result = await asyncio.to_thread(self._store.save, candidate)
@@ -1114,12 +1150,14 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             raise
         except Exception:
             logger.warning("Studio TTS preference save failed")
-            self.query_one("#studio-tts-status", Static).update(
-                "Studio preferences were not saved."
+            self._set_status(
+                "Studio preferences were not saved.",
+                severity="error",
             )
             return False
         finally:
             self._set_busy(False)
+            self._restore_focus(focus_id)
 
         if result.snapshot is None or result.status in {
             StudioTTSWriteStatus.CONFLICT,
@@ -1130,17 +1168,24 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
                 if result.status is StudioTTSWriteStatus.CONFLICT
                 else "Studio preferences were not saved."
             )
-            self.query_one("#studio-tts-status", Static).update(copy)
+            self._set_status(copy, severity="error")
             return False
 
         self._saved_snapshot = result.snapshot
         self._adoption_pending = False
         self.query_one("#studio-tts-adoption-status", Static).add_class("hidden")
         self._apply_snapshot(result.snapshot)
-        self.query_one("#studio-tts-status", Static).update(
-            "Studio preferences saved."
-            if result.status is not StudioTTSWriteStatus.SAVED_CACHE_RELOAD_FAILED
-            else "Studio preferences saved; reopen the pane to refresh cached values."
+        self._set_status(
+            (
+                "Studio preferences saved."
+                if result.status is not StudioTTSWriteStatus.SAVED_CACHE_RELOAD_FAILED
+                else "Studio preferences saved; reopen the pane to refresh cached values."
+            ),
+            severity=(
+                "information"
+                if result.status is not StudioTTSWriteStatus.SAVED_CACHE_RELOAD_FAILED
+                else "warning"
+            ),
         )
         self.post_message(StudioPreferencesSaved(result.snapshot))
         return True
@@ -1170,8 +1215,9 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             self._set_busy(False)
 
         if failed or result is None:
-            self.query_one("#studio-tts-status", Static).update(
-                "Saved Studio preferences could not be reloaded."
+            self._set_status(
+                "Saved Studio preferences could not be reloaded.",
+                severity="error",
             )
             self._restore_focus(focus_id)
             return False
@@ -1179,10 +1225,12 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
         if result.state is StudioTTSLoadState.CORRUPT:
             self._restore_focus(focus_id)
             return False
-        self.query_one("#studio-tts-status", Static).update(
-            "Reverted to saved Studio preferences."
+        self._set_status(
+            "Reverted to saved Studio preferences.",
+            severity="information",
         )
         self.post_message(StudioPreferencesSaved(result.snapshot))
+        self._restore_focus(focus_id)
         return True
 
     async def reset_to_global(self) -> bool:
@@ -1190,6 +1238,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
 
         if self._busy:
             return False
+        focus_id = self._focused_id()
         self._set_busy(True, "Resetting only Studio preferences…")
         try:
             result = await asyncio.to_thread(
@@ -1200,25 +1249,29 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             raise
         except Exception:
             logger.warning("Studio TTS preference reset failed")
-            self.query_one("#studio-tts-status", Static).update(
-                "Studio preferences were not reset."
+            self._set_status(
+                "Studio preferences were not reset.",
+                severity="error",
             )
             return False
         finally:
             self._set_busy(False)
+            self._restore_focus(focus_id)
         if result.snapshot is None or result.status in {
             StudioTTSWriteStatus.CONFLICT,
             StudioTTSWriteStatus.FAILED,
         }:
-            self.query_one("#studio-tts-status", Static).update(
-                "Studio preferences were not reset."
+            self._set_status(
+                "Studio preferences were not reset.",
+                severity="error",
             )
             return False
         self._corrupt = False
         self._saved_snapshot = result.snapshot
         self._apply_snapshot(result.snapshot)
-        self.query_one("#studio-tts-status", Static).update(
-            "Studio overrides removed; values now inherit Global defaults."
+        self._set_status(
+            "Studio overrides removed; values now inherit Global defaults.",
+            severity="information",
         )
         self.post_message(StudioPreferencesSaved(result.snapshot))
         return True
