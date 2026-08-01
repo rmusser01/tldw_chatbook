@@ -161,6 +161,16 @@ class ConsoleComposerMenuModal(ModalScreen["str | None"]):
     .console-composer-menu-hint {
         color: $text-muted;
     }
+
+    /* Sits directly under the disabled row it explains. `$warning` rather
+       than `$text-muted`: the earlier live pass measured disabled-label
+       contrast at ~1.1:1, so muting the explanation too would make the
+       reason as unreadable as the state it explains. */
+    .console-composer-menu-reason {
+        color: $warning;
+        margin: 0 0 1 2;
+        width: 100%;
+    }
     """
 
     BINDINGS = [("escape", "dismiss_menu", "Cancel")]
@@ -204,6 +214,18 @@ class ConsoleComposerMenuModal(ModalScreen["str | None"]):
                 button.disabled = not entry.enabled
                 button.tooltip = entry.description
                 yield button
+                # A disabled row must SAY why on screen. The tooltip alone
+                # made "disabled with a stated reason" a promise the TUI
+                # never kept -- hovering is not a gesture keyboard users
+                # make, and the dimming alone reads as "broken". Only
+                # disabled rows carry the line, so the menu stays compact
+                # in the common case where everything is available.
+                if not entry.enabled:
+                    yield Static(
+                        entry.description,
+                        classes="console-composer-menu-reason",
+                        markup=False,
+                    )
             yield Static(
                 "Esc closes without changing your draft.",
                 classes="console-composer-menu-hint",
