@@ -544,8 +544,10 @@ class WordBenchCaptureClient:
         requests ``logprobs`` at all (only generated text is wanted) and its
         response is never handed to ``normalize_logprobs``, so it is
         structurally incapable of influencing the measured result computed
-        from the separate, ``max_tokens: 1`` (or ``top_k``-sized) request
-        for ``content``.
+        from the separate, always ``max_tokens: 1`` request for ``content``
+        (``top_k`` only ever sizes that request's ``logprobs``, never its
+        ``max_tokens`` -- see ``_build_request``'s raw-mode branch above;
+        corrected here during task-1710 T3 review).
 
         Steered identically to that request (``target.prefix`` prepended,
         same as ``_build_request``'s raw-mode branch) -- see ``preflight``'s
