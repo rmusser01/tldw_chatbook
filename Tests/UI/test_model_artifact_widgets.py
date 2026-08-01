@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Static
+from textual.widgets import Button, Checkbox, Static
 
 from tldw_chatbook.Model_Artifacts.acquisition import (
     ArtifactPreflightEntry,
@@ -18,6 +18,7 @@ def _report(
     *,
     sufficient_space: bool = True,
     gating_errors: tuple[str, ...] = (),
+    license_id: str = "CC-BY-4.0",
 ) -> PreflightReport:
     reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
     return PreflightReport(
@@ -29,7 +30,7 @@ def _report(
                 source_url="https://example.test/model",
                 repository="publisher/parakeet-v2",
                 revision="immutable-revision",
-                license_id="CC-BY-4.0",
+                license_id=license_id,
                 license_url="https://example.test/license",
                 precision="int8",
                 total_bytes=1024,
@@ -89,14 +90,37 @@ async def test_plan_panel_renders_every_consent_field(tmp_path: Path) -> None:
     for expected in (
         "publisher/parakeet-v2",
         "immutable-revision",
-        "CC-BY-4.0",
+        "License: CC-BY-4.0",
+        "Source review page: https://example.test/license",
         "int8",
         "4 files",
         str(tmp_path / "managed"),
         "Staging",
         "Enough free space",
+        "Every declared file is checked against pinned sizes and SHA-256 digests "
+        "before installation completes.",
     ):
         assert expected in text
+
+
+@pytest.mark.asyncio
+async def test_plan_panel_labels_noassertion_as_unknown_and_separates_review_url(
+    tmp_path: Path,
+) -> None:
+    """Missing license metadata cannot be mistaken for a declared license.
+
+    This fails if the panel shows the sentinel as a license or combines the
+    source-review page with that license text.
+    """
+    report = _report(tmp_path / "managed", license_id="NOASSERTION")
+    app = _PanelApp(report)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text = "\n".join(str(item.renderable) for item in app.query(Static))
+
+    assert "License: Unknown / not declared" in text
+    assert "Source review page: https://example.test/license" in text
+    assert "License: NOASSERTION" not in text
 
 
 @pytest.mark.asyncio
@@ -136,6 +160,7 @@ async def test_confirm_and_cancel_return_decisions(tmp_path: Path) -> None:
             decisions.append,
         )
         await pilot.pause()
+        assert app.screen.query_one("#model-install-confirm", Button).disabled is False
         await pilot.click("#model-install-confirm")
         await pilot.pause()
         assert decisions == [True]
@@ -148,6 +173,42 @@ async def test_confirm_and_cancel_return_decisions(tmp_path: Path) -> None:
         await pilot.click("#model-install-cancel")
         await pilot.pause()
         assert decisions == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_install_acknowledgment_gates_only_callers_that_require_it(
+    tmp_path: Path,
+) -> None:
+    """An unknown-license acknowledgment unlocks the shared Install control.
+
+    This fails if the required checkbox does not gate consent, or if the modal
+    fails to render the acknowledgment supplied by a caller.
+    """
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
+
+    report = _report(tmp_path / "managed", license_id="NOASSERTION")
+    app = _ModalApp()
+    async with app.run_test() as pilot:
+        await app.push_screen(
+            ModelInstallModal(
+                report,
+                model_label="Parakeet v2",
+                required_acknowledgment=(
+                    "No license was declared. I reviewed the source and want to continue."
+                ),
+            )
+        )
+        await pilot.pause()
+        confirm = app.screen.query_one("#model-install-confirm", Button)
+        checkbox = app.screen.query_one(Checkbox)
+        assert checkbox.value is False
+        assert confirm.disabled is True
+
+        await pilot.click(Checkbox)
+        await pilot.pause()
+
+        assert checkbox.value is True
+        assert confirm.disabled is False
 
 
 @pytest.mark.asyncio

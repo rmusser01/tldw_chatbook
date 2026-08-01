@@ -1,5 +1,6 @@
 """Pure state-mapping tests for the managed model browser."""
 
+from dataclasses import replace
 from pathlib import Path
 
 from tldw_chatbook.Model_Artifacts.acquisition import (
@@ -12,6 +13,8 @@ from tldw_chatbook.Model_Artifacts.service import (
     InstalledArtifact,
     ProvenanceClass,
 )
+
+from Tests.Model_Artifacts.test_acquisition_types import make_descriptor
 
 
 def _report(destination: Path) -> PreflightReport:
@@ -114,6 +117,91 @@ def test_inventory_keeps_broken_and_unmanaged_rows_visible(tmp_path: Path) -> No
     assert rows[1].provenance == "Unmanaged — integrity unknown"
     assert rows[1].installed_store_bytes == 100
     assert rows[1].staging_store_bytes == 25
+
+
+def test_inventory_marks_unassigned_models_ineligible_for_activation(
+    tmp_path: Path,
+) -> None:
+    """A downloaded unassigned model never claims runtime compatibility.
+
+    This fails if inventory uses readiness or active state to enable an
+    unassigned descriptor, rather than its consumer authority.
+    """
+    from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
+
+    descriptor = replace(make_descriptor(), consumer="unassigned")
+    row = inventory_rows(
+        (
+            InstalledArtifact(
+                path=tmp_path / "remote-model",
+                descriptor=descriptor,
+                ready=True,
+                active=True,
+                error=None,
+            ),
+        ),
+        None,
+        (),
+    )[0]
+
+    assert row.activation_allowed is False
+    assert row.action_hint == "Downloaded · runtime compatibility not verified"
+
+
+def test_inventory_keeps_repair_copy_ahead_of_unassigned_compatibility(
+    tmp_path: Path,
+) -> None:
+    """A broken unassigned model remains repairable instead of looking ready.
+
+    This fails if the unassigned compatibility branch precedes the broken
+    branch.
+    """
+    from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
+
+    descriptor = replace(make_descriptor(), consumer="unassigned")
+    row = inventory_rows(
+        (
+            InstalledArtifact(
+                path=tmp_path / "broken-remote-model",
+                descriptor=descriptor,
+                ready=True,
+                active=True,
+                error="manifest mismatch",
+            ),
+        ),
+        None,
+        (),
+    )[0]
+
+    assert row.activation_allowed is False
+    assert row.action_hint == "Needs repair — Repair"
+
+
+def test_inventory_keeps_assigned_consumer_readiness_copy(tmp_path: Path) -> None:
+    """An assigned ready model retains the existing activation state copy.
+
+    This fails if the unassigned policy suppresses activation for any other
+    consumer.
+    """
+    from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
+
+    descriptor = make_descriptor()
+    row = inventory_rows(
+        (
+            InstalledArtifact(
+                path=tmp_path / "assigned-model",
+                descriptor=descriptor,
+                ready=True,
+                active=False,
+                error=None,
+            ),
+        ),
+        None,
+        (),
+    )[0]
+
+    assert row.activation_allowed is True
+    assert row.action_hint == "Ready"
 
 
 def test_install_failure_messages_are_typed_labeled_and_sanitized() -> None:

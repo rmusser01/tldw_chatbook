@@ -67,6 +67,7 @@ class InventoryRow:
     dependencies: tuple[ArtifactRef, ...]
     ready: bool
     active: bool
+    activation_allowed: bool
     is_broken: bool
     is_unmanaged: bool
     provenance: str
@@ -176,6 +177,7 @@ def inventory_rows(
                     dependencies=(),
                     ready=False,
                     active=False,
+                    activation_allowed=False,
                     is_broken=True,
                     is_unmanaged=False,
                     provenance="Integrity state unavailable",
@@ -190,8 +192,11 @@ def inventory_rows(
             continue
 
         is_broken = item.error is not None
+        activation_allowed = descriptor.consumer != "unassigned"
         if is_broken:
             action_hint = "Needs repair — Repair"
+        elif not activation_allowed:
+            action_hint = "Downloaded · runtime compatibility not verified"
         elif item.active:
             action_hint = "Active"
         elif item.ready:
@@ -208,6 +213,7 @@ def inventory_rows(
                 dependencies=descriptor.dependencies,
                 ready=item.ready,
                 active=item.active,
+                activation_allowed=activation_allowed,
                 is_broken=is_broken,
                 is_unmanaged=False,
                 provenance=provenance_label(descriptor.provenance),
@@ -230,6 +236,7 @@ def inventory_rows(
             dependencies=(),
             ready=False,
             active=False,
+            activation_allowed=False,
             is_broken=False,
             is_unmanaged=True,
             provenance="Unmanaged — integrity unknown",

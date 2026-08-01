@@ -105,6 +105,55 @@ async def test_activation_controls_emit_intents_and_refuse_pending_reentry() -> 
         assert app.query_one(".model-delete", Button).disabled is True
 
 
+@pytest.mark.asyncio
+async def test_unassigned_controls_omit_activate_and_keep_delete_available() -> None:
+    """An unassigned inventory row can be deleted but cannot request activation.
+
+    This fails if disabling activation also removes Delete, or if controls
+    render an activation affordance when policy disallows it.
+    """
+    from tldw_chatbook.Widgets.ModelArtifacts.activation_controls import (
+        DeletionRequested,
+        ModelActivationControls,
+    )
+
+    reference = ArtifactRef("remote-gguf", "immutable-revision", "q4_k_m")
+
+    class _ControlsApp(App):
+        def __init__(self) -> None:
+            self.messages = []
+            super().__init__()
+
+        def compose(self) -> ComposeResult:
+            yield ModelActivationControls(
+                reference,
+                active=False,
+                ready=True,
+                allow_activation=False,
+            )
+
+        def on_deletion_requested(self, event: DeletionRequested) -> None:
+            self.messages.append(event)
+
+    app = _ControlsApp()
+    async with app.run_test() as pilot:
+        controls = app.query_one(ModelActivationControls)
+        assert len(app.query(".model-activate")) == 0
+        assert app.query_one(".model-delete", Button).disabled is False
+
+        controls.set_pending(True)
+        await pilot.pause()
+        assert app.query_one(".model-delete", Button).disabled is True
+
+        controls.set_pending(False)
+        await pilot.click(".model-delete")
+        await pilot.pause()
+
+    assert len(app.messages) == 1
+    assert isinstance(app.messages[0], DeletionRequested)
+    assert app.messages[0].reference == reference
+
+
 def test_installed_view_refuses_a_second_lifecycle_operation() -> None:
     """Activation/deletion cannot re-enter while hashing or leasing is pending."""
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView

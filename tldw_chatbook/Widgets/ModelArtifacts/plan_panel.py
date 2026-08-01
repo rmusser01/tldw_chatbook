@@ -39,11 +39,17 @@ class ModelPlanPanel(Static):
         lines = [f"Install {model_label}?", ""]
         for row in rows:
             installed = " (already installed)" if row.already_installed else ""
+            license_label = (
+                "Unknown / not declared"
+                if row.license_id == "NOASSERTION"
+                else row.license_id
+            )
             lines.extend(
                 (
                     f"Source: {row.repository}{installed}",
                     f"Revision: {row.revision}",
-                    f"License: {row.license_id} — {row.license_url}",
+                    f"License: {license_label}",
+                    f"Source review page: {row.license_url}",
                     f"Precision: {row.precision}",
                     f"Contents: {row.file_count} files, {_mib(row.total_bytes)}",
                     f"Provenance: {row.provenance}",
@@ -72,7 +78,7 @@ class ModelPlanPanel(Static):
             (
                 "",
                 "Every declared file is checked against pinned sizes and "
-                "SHA-256 digests before the model becomes usable.",
+                "SHA-256 digests before installation completes.",
             )
         )
         super().__init__(

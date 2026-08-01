@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button
+from textual.widgets import Button, Checkbox
 
 from .plan_panel import ModelPlanPanel
 
@@ -54,6 +55,7 @@ class ModelInstallModal(ModalScreen[bool]):
         container_id: str = "model-install-modal",
         confirm_id: str = "model-install-confirm",
         cancel_id: str = "model-install-cancel",
+        required_acknowledgment: str | None = None,
     ) -> None:
         """Build a consent prompt from an immutable preflight report.
 
@@ -63,23 +65,33 @@ class ModelInstallModal(ModalScreen[bool]):
             container_id: Container id for the consuming surface.
             confirm_id: Confirm button id for the consuming surface.
             cancel_id: Cancel button id for the consuming surface.
+            required_acknowledgment: Optional text that must be acknowledged
+                before installing.
         """
         self.report = report
         self.model_label = model_label
         self.container_id = container_id
         self.confirm_id = confirm_id
         self.cancel_id = cancel_id
+        self.required_acknowledgment = required_acknowledgment
+        self._acknowledged = required_acknowledgment is None
         super().__init__()
 
     @property
     def ungrantable(self) -> bool:
         """Return whether the report cannot produce valid consent."""
-        return bool(self.report.gating_errors) or not self.report.sufficient_space
+        return (
+            bool(self.report.gating_errors)
+            or not self.report.sufficient_space
+            or not self._acknowledged
+        )
 
     def compose(self) -> ComposeResult:
         """Compose the plan and decision controls."""
         with Vertical(id=self.container_id, classes="model-install-modal"):
             yield ModelPlanPanel(self.report, model_label=self.model_label)
+            if self.required_acknowledgment is not None:
+                yield Checkbox(self.required_acknowledgment)
             with Horizontal(classes="model-install-actions"):
                 yield Button("Cancel", id=self.cancel_id, variant="default")
                 yield Button(
@@ -88,6 +100,12 @@ class ModelInstallModal(ModalScreen[bool]):
                     variant="primary",
                     disabled=self.ungrantable,
                 )
+
+    @on(Checkbox.Changed)
+    def _acknowledgment_changed(self, event: Checkbox.Changed) -> None:
+        """Update consent availability after an optional acknowledgment."""
+        self._acknowledged = event.value
+        self.query_one(f"#{self.confirm_id}", Button).disabled = self.ungrantable
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Dismiss with the decision represented by the pressed control."""
