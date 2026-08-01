@@ -17,10 +17,13 @@ you touch them; some are read-only and point you elsewhere.
 ## Getting there
 
 - **Click Settings in the nav bar.** There is **no Ctrl+digit for Settings** —
-  it is the twelfth of thirteen destinations and the ten hotkey digits run out
+  it is the last of thirteen destinations and the ten hotkey digits run out
   before it. The nav bar's right edge shows "More: Ctrl+P" for this reason.
 - **Ctrl+P** → "Switch to Settings", or "Settings & Preferences: Open Settings
-  Tab". Typing **stats** or **Statistics** also lands here.
+  Tab". Typing **stats** also surfaces the Settings entry, because "stats" is
+  one of this screen's legacy route names — but the similarly-named
+  "Settings & Preferences: Show Database Stats" opens the separate Statistics
+  screen, not Settings.
 - Other screens deep-link in with a category preselected — e.g. the app's own
   pointer, "Settings ▸ Diagnostics ▸ Run setup wizard."
 
@@ -41,18 +44,24 @@ Moving around: **click** a rail row, or **Tab** from the nav bar to drop focus
 into the rail at **Overview**, then **j**/**k** or **↑**/**↓** to move and
 **Enter** to open; Tab again walks into the detail pane's fields. **/** focuses
 the filter from anywhere; its status line reads "No filter | / focus category
-search", "Filter: \<text\> | N match(es) | Enter opens \<Category\>" (naming the
-exact field when your text named one), or "Filter: \<text\> | 0 matches | Esc
-clears". **Enter** jumps to the top match and clears the filter; **Esc** just
-clears it. Some pages also carry jump buttons: **Open Providers & Models** and
-**Open Advanced Config** on Privacy & Security, five guided-path chips on
-Advanced Config, and **Open Theme editor** on Overview.
+search", "Filter: \<text\> | N matches | Enter opens \<Category\>" (singular
+"1 match" for a lone hit, and the target gains "› \<Field\>" when your text
+named a field), or "Filter: \<text\> | 0 matches | Esc clears". **Enter** jumps
+to the top match and clears the filter; **Esc** just clears it. Some pages also
+carry jump buttons: **Open Providers & Models** and **Open Advanced Config** on
+Privacy & Security, five guided-path chips on Advanced Config, and **Open Theme
+editor** on Overview and Appearance.
 
 ## Features & controls
 
 ### How saving works — five models, eight badges
 
-The State banner reads "State: \<badge\> | \<what saving affects\>".
+![A draft category with unsaved changes](images/settings/console-draft.svg)
+
+The State banner reads "State: \<badge\> | \<what saving affects\>". Above,
+Console Behavior has an edited field, so it reads "State: Unsaved changes |
+Save (s) or Revert (r) — switching categories keeps this draft." and the
+Scope Inspector's buttons lose their "— no changes" suffix.
 
 | Badge | What it means | Categories |
 |---|---|---|
@@ -137,7 +146,8 @@ and scrolling** holds **Animations** and **Smooth scrolling**, each a button
 whose label is its state (Enabled / Disabled); **Preview and boundary**
 summarises what a save will touch. **Preview** applies runtime-safe values for
 this session only and persists nothing ("Appearance preview applied for this
-session only.") — it is the only way to see a theme change without restarting.
+session only.") — it is the only way to see *this pane's* theme selection
+without restarting.
 Four of the six fields are less useful than they look (see
 [Quirks](#quirks--troubleshooting)); **Theme** and **Density** are the two that
 matter.
@@ -392,8 +402,11 @@ not open an editor.
   **Palette limit (themes)** is read only by a legacy window, not the command
   palette. **Web font size (px)** applies to the browser terminal when you serve
   the app over the web — it changes **nothing** in the TUI.
-- **The theme didn't change after saving.** **Theme** is applied once, at
-  launch; **Preview** is the only way to see it this session. A theme you
+- **The theme didn't change after saving.** The Appearance **Theme** field is
+  applied once, at launch; **Preview** shows it this session. Two other routes
+  do apply a theme immediately: the Theme editor's **Apply** (this session
+  only), and the command palette's "Theme: Switch to \<name\>", which applies
+  it *and* rewrites the launch default. A theme you
   **Save** in the Theme editor is only stored — set it as the launch default in
   **Appearance**.
 - **A splash change had no effect.** All splash settings are startup-only.

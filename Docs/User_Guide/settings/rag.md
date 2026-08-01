@@ -13,8 +13,8 @@ the app are read-only, so tuning always starts by cloning one.
 ## Getting there
 
 Open **Settings** — click it in the nav bar, or press **Ctrl+P** and pick
-**"Tab Navigation: Switch to Settings"** (there is no `Ctrl+<digit>` for
-Settings; it sits past the ten numbered destinations). Then pick **RAG** in the
+"Switch to Settings" (there is no **Ctrl+digit** for Settings; it sits past the
+ten numbered destinations). Then pick **RAG** in the
 **Settings Sections** rail, under **Domain Defaults** — or press `/`, type
 `rag`, press Enter.
 
@@ -175,6 +175,11 @@ testing a connection ("RAG check started." → "RAG check: `<state>` index ·
 
 ## Keyboard & commands
 
+**A focused text field swallows every key below** — typing `b` into **Chunk
+size** types a `b`, it does not start a backfill. Press **Esc** first; while a
+field has focus the footer relabels the hints as `Esc, s` / `Esc, r` /
+`Esc, t`.
+
 | Key | Action |
 |---|---|
 | `a` | **Set active** — make the picked profile the one retrieval uses and you edit |
@@ -184,10 +189,7 @@ testing a connection ("RAG check started." → "RAG check: `<state>` index ·
 | `r` | Revert the profile draft |
 | `t` | Check index — re-read the index status line |
 
-`a`, `c`, and `b` exist only on this category. **A focused text field swallows
-all six** — typing `b` into **Chunk size** types a `b`, it does not start a
-backfill. Press **Esc** first; while a field has focus the footer relabels the
-hints as `Esc, s` / `Esc, r` / `Esc, t`.
+`a`, `c`, and `b` exist only on this category.
 
 ## Related settings & docs
 
