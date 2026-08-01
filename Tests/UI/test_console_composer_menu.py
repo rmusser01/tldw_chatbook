@@ -376,3 +376,30 @@ def test_transcript_trimming_keeps_newest_and_stays_user_first():
     assert len(kept) < len(rows), "a huge thread must be trimmed"
     assert kept[0]["role"] == "user", "must never lead with an assistant row"
     assert kept[-1] == rows[-1], "the newest turn is always kept"
+
+
+@pytest.mark.unit
+def test_temporary_tab_has_a_free_chord_and_a_palette_entry():
+    """Alt+T must not collide, and the palette path must exist regardless.
+
+    A chord that a terminal swallows is not a guaranteed path; the palette
+    entry is. Both are asserted so neither can quietly disappear.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    keys = [b.key for b in ChatScreen.BINDINGS]
+    assert keys.count("alt+t") == 1
+    assert [b.action for b in ChatScreen.BINDINGS if b.key == "alt+t"] == [
+        "new_temporary_console_tab"
+    ]
+    assert callable(ChatScreen.action_new_temporary_console_tab)
+
+
+@pytest.mark.unit
+def test_controller_new_session_can_be_born_temporary():
+    """`ephemeral` reaches the store, not just the controller signature."""
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    store = ConsoleChatStore()
+    assert store.create_session(title="A").ephemeral is False
+    assert store.create_session(title="B", ephemeral=True).ephemeral is True

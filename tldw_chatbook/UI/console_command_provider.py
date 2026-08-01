@@ -45,6 +45,11 @@ class ConsoleCommandProvider(Provider):
                 "Open a new Console chat tab (Ctrl+T)",
             ),
             (
+                "Console: New temporary chat",
+                screen.action_new_temporary_console_tab,
+                "Open a chat that is never saved locally (Alt+T)",
+            ),
+            (
                 "Console: Focus composer",
                 screen.action_focus_console_composer_home,
                 "Return focus to the composer (Esc)",

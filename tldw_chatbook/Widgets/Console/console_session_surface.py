@@ -240,6 +240,21 @@ class ConsoleSessionSurface(Vertical):
         button.styles.max_height = CONSOLE_NEW_TAB_BUTTON_HEIGHT
         return button
 
+    def _build_new_temporary_tab_button(self) -> Button:
+        """Return the tab-strip control for a chat that is never saved."""
+        button = Button("Temporary", id="console-new-temporary-tab", compact=True)
+        button.tooltip = "New temporary Console tab — not saved locally"
+        for style, value in (
+            ("width", CONSOLE_NEW_TAB_BUTTON_WIDTH),
+            ("min_width", CONSOLE_NEW_TAB_BUTTON_WIDTH),
+            ("max_width", CONSOLE_NEW_TAB_BUTTON_WIDTH),
+            ("height", CONSOLE_NEW_TAB_BUTTON_HEIGHT),
+            ("min_height", CONSOLE_NEW_TAB_BUTTON_HEIGHT),
+            ("max_height", CONSOLE_NEW_TAB_BUTTON_HEIGHT),
+        ):
+            setattr(button.styles, style, value)
+        return button
+
     @classmethod
     def _display_title(cls, title: str) -> str:
         """Return a tab label that preserves space for close/rename controls.
@@ -365,6 +380,7 @@ class ConsoleSessionSurface(Vertical):
             desired_ids.append(f"console-session-tab-{session.id}")
             desired_ids.append(f"console-close-session-tab-{session.id}")
         desired_ids.append("console-new-chat-tab")
+        desired_ids.append("console-new-temporary-tab")
         return desired_ids
 
     def _update_existing_tab_strip(
@@ -455,7 +471,7 @@ class ConsoleSessionSurface(Vertical):
                 return
 
             removed_count = len(tab_strip.children)
-            mounted_count = (len(sessions) * 2) + 1
+            mounted_count = (len(sessions) * 2) + 2
             for child in list(tab_strip.children):
                 await child.remove()
             for session in sessions:
@@ -474,6 +490,7 @@ class ConsoleSessionSurface(Vertical):
                 )
                 await tab_strip.mount(self._build_close_tab_button(session))
             await tab_strip.mount(self._build_new_tab_button())
+            await tab_strip.mount(self._build_new_temporary_tab_button())
             self._record_mount_churn(mounted=mounted_count, removed=removed_count)
         if active_session_id is not None:
             try:

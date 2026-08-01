@@ -1383,6 +1383,7 @@ class ChatScreen(BaseAppScreen):
         # dismiss) must keep winning before this screen-level fallback runs.
         Binding("escape", "focus_console_composer_home", "Composer", show=False),
         Binding("ctrl+t", "new_console_tab", "New tab", show=True),
+        Binding("alt+t", "new_temporary_console_tab", "Temporary tab", show=False),
         Binding("alt+1", "jump_console_tab(1)", "Tab 1", show=False),
         Binding("alt+2", "jump_console_tab(2)", "Tab 2", show=False),
         Binding("alt+3", "jump_console_tab(3)", "Tab 3", show=False),
@@ -1959,6 +1960,19 @@ class ChatScreen(BaseAppScreen):
             self._create_native_console_session_from_active_context(), exclusive=False
         )
 
+    def action_new_temporary_console_tab(self) -> None:
+        """Open a temporary Console tab: never saved locally (Alt+T).
+
+        Born temporary rather than converted: a chat that persists its first
+        exchange and is made temporary afterwards has already written rows.
+        """
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(
+            self._create_native_console_session_from_active_context(ephemeral=True),
+            exclusive=False,
+        )
+
     def action_open_console_session_settings(self) -> None:
         """Open the full Console session settings modal, guarded by the setup modal.
 
@@ -2174,8 +2188,14 @@ class ChatScreen(BaseAppScreen):
                     severity="warning",
                 )
 
-    async def _create_native_console_session_from_active_context(self) -> None:
-        """Create and focus a native Console session in the active workspace context."""
+    async def _create_native_console_session_from_active_context(
+        self, *, ephemeral: bool = False
+    ) -> None:
+        """Create and focus a native Console session in the active workspace context.
+
+        Args:
+            ephemeral: Create the session temporary (never saved locally).
+        """
         # TASK-339: new_session activates the fresh session inline; snapshot
         # first so the deferred draft swap attributes settle-window typing
         # to the new tab instead of clobbering it.
@@ -2185,6 +2205,7 @@ class ChatScreen(BaseAppScreen):
                 self._active_console_session_settings()
                 or self._default_console_session_settings()
             ),
+            ephemeral=ephemeral,
         )
         # TASK-251: new-chat-tab handler -- invalidate so the browser's
         # "selected" row indicator picks up the new active session promptly.
@@ -2197,6 +2218,12 @@ class ChatScreen(BaseAppScreen):
         """Open the active Console workspace switcher."""
         event.stop()
         self._open_console_workspace_switcher()
+
+    @on(Button.Pressed, "#console-new-temporary-tab")
+    def on_console_new_temporary_tab(self, event: Button.Pressed) -> None:
+        """Open a temporary Console tab from the tab strip."""
+        event.stop()
+        self.action_new_temporary_console_tab()
 
     @on(Button.Pressed, "#console-fleet-coachmark-dismiss")
     def on_console_fleet_coachmark_dismiss(self, event: Button.Pressed) -> None:

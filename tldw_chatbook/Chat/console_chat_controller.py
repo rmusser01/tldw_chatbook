@@ -1661,12 +1661,19 @@ class ConsoleChatController:
         *,
         title: str | None = None,
         settings: ConsoleSessionSettings | None = None,
+        ephemeral: bool = False,
     ) -> ConsoleChatSession:
-        """Create and activate a new native Console session."""
+        """Create and activate a new native Console session.
+
+        Args:
+            ephemeral: Create the session temporary -- never written to local
+                storage until explicitly saved.
+        """
         next_number = len(self.store.sessions()) + 1
         session = self.store.create_session(
             title=title or f"Chat {next_number}",
             settings=settings,
+            ephemeral=ephemeral,
         )
         # `create_session` above already activated the new session, so the
         # default (no explicit session_id -> active session) targets the
