@@ -92,6 +92,36 @@ def _clean_task_name(name: str) -> str:
     return cleaned
 
 
+def _clean_task_description(description: Optional[str]) -> Optional[str]:
+    """Strip control characters from a task description.
+
+    Shared by ``create_task`` and ``update_task`` (task-1614 hygiene
+    parity, mirroring ``_clean_task_name``'s own task-1482 history) --
+    before this helper, ``update_task``'s ``description`` parameter
+    passed straight through completely unfiltered while ``create_task``
+    already stripped control characters from it.
+
+    Unlike ``_clean_task_name``, a falsy (``None``/``""``) description is
+    returned unchanged rather than rejected -- ``eval_tasks.description``
+    carries no ``NOT NULL`` constraint, an empty description is a normal,
+    valid value (including an explicit "clear the description" update),
+    and no surrounding-whitespace strip is applied either, matching
+    ``create_task``'s own pre-existing behavior exactly (control-character
+    filter only).
+
+    Args:
+        description: The raw description as supplied by a caller, or
+            ``None``/``""`` when the task carries no description.
+
+    Returns:
+        Optional[str]: The description with non-printable characters and
+        NULs removed; a falsy input is returned unchanged.
+    """
+    if not description:
+        return description
+    return "".join(c for c in description if c.isprintable() and ord(c) != 0)
+
+
 class EvalsDB:
     """Database manager for LLM evaluation data and results."""
 
@@ -571,10 +601,7 @@ class EvalsDB:
 
         # Clean control characters from name and description
         name = _clean_task_name(name)
-        if description:
-            description = "".join(
-                c for c in description if c.isprintable() and ord(c) != 0
-            )
+        description = _clean_task_description(description)
 
         if task_type not in [
             "question_answer",
@@ -679,6 +706,11 @@ class EvalsDB:
         ``create_task`` uses (control-char filter + strip + blank rejection)
         so the two paths cannot drift again -- this used to only ``.strip()``
         and never rejected a blank name (task-1482 hygiene parity).
+        ``description`` is likewise cleaned through the same
+        ``_clean_task_description`` helper ``create_task`` uses
+        (control-char filter, no strip, no blank rejection) -- this used
+        to pass ``description`` straight through with no cleaning at all
+        (task-1614 hygiene parity).
 
         Raises:
             InputError: If ``name`` is given and, once cleaned, is empty.
@@ -696,7 +728,7 @@ class EvalsDB:
 
         if description is not None:
             updates.append("description = ?")
-            params.append(description)
+            params.append(_clean_task_description(description))
 
         if config_data is not None:
             updates.append("config_data = ?")

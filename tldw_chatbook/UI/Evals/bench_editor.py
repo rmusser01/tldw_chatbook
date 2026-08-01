@@ -1269,15 +1269,35 @@ class BenchEditor(Vertical):
 
         try:
             save_bench(db, config, self._bench_id)
-        except (ValueError, ConflictError, RuntimeError) as exc:
+        except ConflictError:
+            # `eval_tasks.name` collided with another task's name -- LIVE
+            # OR soft-deleted (see `save_bench`'s own docstring): the
+            # UNIQUE index on `eval_tasks.name` carries no `deleted_at`
+            # exemption, so a deleted bench's name stays reserved forever.
+            # `Evals_DB`'s raw message ("Task name already exists") uses
+            # the DB's own vocabulary ("Task", not "bench") and says
+            # nothing about the reservation trap -- a user who just
+            # deleted a bench and reused its name would see this collision
+            # with NO bench of that name visible anywhere in the library,
+            # which reads as a lie without the explanation below (task-1612
+            # copy polish; the earlier commit's own comment on this branch
+            # already named this exact trap without fixing the copy).
+            # Task-1612 pins this new copy exactly (see
+            # test_renaming_to_a_taken_name_renders_the_conflict_callout);
+            # the DB's raw message is deliberately never surfaced now.
+            self._show_form_error(
+                f'A bench named "{config.name}" already exists -- choose a '
+                "different name. (Deleting a bench does not free its name: "
+                "a deleted bench may still be holding it.)"
+            )
+            return
+        except (ValueError, RuntimeError) as exc:
             # ValueError: BenchConfig re-validation inside save_bench (a
             # duplicate target_id -- unreachable here since the Add
             # picker's own inline rejection, `_on_add_target_pressed`,
             # already keeps `self._staged_target_ids` duplicate-free), or
             # `Evals_DB.InputError` (a ValueError subclass) from
             # `_clean_task_name` rejecting a blank/control-char-only name.
-            # ConflictError: `eval_tasks.name` collided with another task's
-            # name, live OR soft-deleted (see `save_bench`'s docstring).
             # RuntimeError: `save_bench`'s update branch found no matching
             # row -- the bench was deleted (this process or another)
             # between this form loading it and this Save (PR #1138
@@ -1286,10 +1306,13 @@ class BenchEditor(Vertical):
             # user would otherwise have seen nothing at all -- not even a
             # crash, if some caller ever swallowed it -- instead of the
             # honest "this bench is gone" this callout states.
-            # Mutation check: dropping either the `ConflictError` or the
-            # `RuntimeError` half of this tuple makes the matching Save
-            # failure raise straight out of this handler instead of
-            # rendering the callout.
+            # Mutation check: dropping the `RuntimeError` half of this
+            # tuple makes that Save failure raise straight out of this
+            # handler instead of rendering the callout. `ConflictError` has
+            # its own mutation check above -- dropping that `except`
+            # clause entirely makes the matching Save failure raise
+            # straight out of this handler too (it no longer widens
+            # `except ValueError`, so it is no longer implicitly caught).
             self._show_form_error(str(exc))
             return
 

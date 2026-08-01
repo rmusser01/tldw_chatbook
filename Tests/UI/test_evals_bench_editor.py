@@ -341,6 +341,29 @@ def _target_status_text(screen, index: int) -> str:
     return text.plain if hasattr(text, "plain") else str(text)
 
 
+def test_llama_targets_uses_the_documented_list_limit_not_list_models_default(
+    evals_db: EvalsDB,
+):
+    """task-1612: ``EvalsViewModel.llama_targets()`` used to call
+    ``db.list_models(provider="llama_cpp")`` with no ``limit=`` at all,
+    silently falling back to ``EvalsDB.list_models``'s own default of 100
+    -- unlike every other read on ``EvalsViewModel``
+    (``_all_tasks``/``datasets``/``run_groups``/``runs_for_task``), which
+    all pass the module's documented ``_LIST_LIMIT`` (500) so a busy
+    install's older rows do not silently fall off. This creates more than
+    100 ``llama_cpp`` models and asserts none are dropped -- before the
+    fix, only the newest 100 came back."""
+    for i in range(120):
+        evals_db.create_model(
+            name=f"llama-target-{i}", provider="llama_cpp", model_id=f"model-{i}"
+        )
+
+    view_model = EvalsViewModel(evals_db)
+    targets = view_model.llama_targets()
+
+    assert len(targets) == 120
+
+
 # ---------------------------------------------------------------------------
 # Detail pane: bench metadata + target table
 # ---------------------------------------------------------------------------
@@ -1172,13 +1195,19 @@ async def test_blank_name_save_failure_renders_the_db_rejection_callout(
 async def test_renaming_to_a_taken_name_renders_the_conflict_callout(
     evals_app, evals_db, bench_with_mixed_readiness
 ):
-    """Mutation check (Step 4 of the task-5 brief): dropping the
-    `ConflictError` half of `_on_save_pressed`'s `except (ValueError,
-    ConflictError)` clause makes this test fail -- `Evals_DB.update_task`
-    raises `ConflictError` (an `EvalsDBError`, NOT a `ValueError`) for a
-    `eval_tasks.name` UNIQUE collision, so a bare `except ValueError` would
-    let it propagate uncaught out of this handler instead of rendering the
-    callout asserted below."""
+    """Mutation check (task-1612): dropping `_on_save_pressed`'s
+    `except ConflictError` clause makes this test fail -- `Evals_DB.
+    update_task` raises `ConflictError` (an `EvalsDBError`, NOT a
+    `ValueError`), so it would no longer be caught by the sibling
+    `except (ValueError, RuntimeError)` clause and would propagate
+    uncaught out of this handler instead of rendering the callout below.
+
+    task-1612: pins the bench-vocabulary copy exactly -- the DB's own
+    raw message ("Task name already exists") says "Task", not "bench",
+    and never mentions that `eval_tasks.name`'s UNIQUE index has no
+    `deleted_at` exemption (a deleted bench's name stays reserved), so a
+    prior substring-only assertion here would have tolerated either the
+    raw DB copy or this replacement."""
     task_id, _ = bench_with_mixed_readiness
     other_dataset_id = evals_db.create_dataset(
         name="other-dataset", format="custom", source_path="inline:other-dataset"
@@ -1206,7 +1235,11 @@ async def test_renaming_to_a_taken_name_renders_the_conflict_callout(
 
         callout = screen.query_one("#evals-bench-form-error")
         assert callout.display
-        assert "already exists" in str(callout.renderable)
+        assert str(callout.renderable) == (
+            'A bench named "taken-name" already exists -- choose a '
+            "different name. (Deleting a bench does not free its name: "
+            "a deleted bench may still be holding it.)"
+        )
 
         # No recompose on failure: the Input still shows what was typed.
         assert screen.query_one("#evals-bench-name", Input).value == "taken-name"
@@ -1543,6 +1576,48 @@ async def test_zero_models_state_offers_create_target_and_stages_it(
         assert not screen.query_one("#evals-bench-form-error").display
         saved = load_bench(evals_db, task_id)
         assert saved.target_ids == (models[0]["id"],)
+
+
+@pytest.mark.asyncio
+async def test_create_target_with_no_llama_cpp_server_configured_notifies_and_creates_nothing(
+    evals_app, evals_db, bench_with_zero_llama_models
+):
+    """task-1613: pins the zero-config error path for the "+ New target"
+    mini-form's button (``#evals-bench-create-target`` -- task-1611 T2
+    renamed its LABEL from "Create target from configured llama.cpp
+    server" to "+ New target", but kept the id and the gate this test
+    drives). Unlike every other create-target test in this module, this
+    one uses the bare ``evals_app`` fixture (an empty ``app_config``, no
+    llama_cpp URL set) rather than ``evals_app_configured`` -- exercising
+    ``evals_screen.py``'s ``_on_bench_create_target_requested`` early
+    return on ``sample_bench.configured_llama_cpp_url(app_config) is
+    None``, BEFORE it ever reaches ``db.create_model``."""
+    task_id = bench_with_zero_llama_models
+    assert evals_db.list_models(provider="llama_cpp") == []
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        create_button = screen.query_one("#evals-bench-create-target", Button)
+        assert create_button.region.width > 0
+
+        await pilot.click("#evals-bench-create-target")
+        await pilot.pause()
+
+        assert evals_app.app_instance.notifications
+        message, severity = evals_app.app_instance.notifications[-1]
+        assert severity == "error"
+        assert message == (
+            "No llama.cpp server is configured; set one in Settings first."
+        )
+
+        assert evals_db.list_models(provider="llama_cpp") == [], (
+            "the zero-config click must not create an eval_models row"
+        )
+        assert not screen.query("#evals-bench-target-0"), "nothing was staged"
 
 
 @pytest.mark.asyncio
