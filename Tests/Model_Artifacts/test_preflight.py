@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import httpx
 import pytest
 
+from Tests.Model_Artifacts.acquisition_test_helpers import _trusted
 from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 from Tests.Model_Artifacts.test_acquisition_types import DictCatalog, make_descriptor
 from tldw_chatbook.Model_Artifacts import (
@@ -25,20 +26,6 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
     PreflightNotGrantableError,
 )
 from tldw_chatbook.Model_Artifacts.service import ModelArtifactService
-
-
-def _trusted(srv: FixtureArtifactServer) -> frozenset:
-    """Trusted-origins set for a fixture server, in egress's real format.
-
-    ``tldw_chatbook.Utils.egress._normalize_trusted`` / ``_post_resolution``
-    key membership on the bare, lowercased HOSTNAME (e.g. ``"127.0.0.1"``),
-    not a scheme+host+port URL string -- mirrors the ``_trusted`` helper in
-    ``Tests/Model_Artifacts/test_stream_fetch.py``. The fixture server binds
-    to the loopback IP literal, which classifies as "private" under
-    ``_classify_ip`` and would otherwise be egress-blocked; listing it here
-    is what lets policy allow the preflight HEAD probe to reach it.
-    """
-    return frozenset({urlparse(srv.url("/")).hostname})
 
 
 @pytest.mark.asyncio

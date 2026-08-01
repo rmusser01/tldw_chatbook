@@ -25,17 +25,16 @@ Four things this file pins down that no earlier task's tests cover:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import subprocess
 import sys
 import textwrap
-from urllib.parse import urlparse
 
 import httpx
 import pytest
 
+from Tests.Model_Artifacts.acquisition_test_helpers import _trusted, _two_file_descriptor
 from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 from Tests.Model_Artifacts.test_acquisition_types import DictCatalog, make_descriptor
 from tldw_chatbook.Model_Artifacts import ArtifactRef
@@ -48,18 +47,6 @@ from tldw_chatbook.Model_Artifacts.fetch import stream_fetch
 from tldw_chatbook.Model_Artifacts.service import ModelArtifactService
 
 TOKEN = "tok-secret-9f3c4a"
-
-
-def _trusted(srv: FixtureArtifactServer) -> frozenset:
-    """Trusted-origins set for a fixture server, in egress's real format.
-
-    Keyed on the bare, lowercased HOSTNAME (see ``test_stream_fetch.py`` /
-    ``test_preflight.py``'s identical helpers) -- both fixture servers in
-    the cross-origin test bind the SAME loopback hostname on different
-    ports, and egress's trust check is host-only (port-blind), so this one
-    entry covers both.
-    """
-    return frozenset({urlparse(srv.url("/")).hostname})
 
 
 class _StaticResolver:
@@ -186,48 +173,6 @@ async def test_gated_repo_with_resolver_provisions_and_never_leaks_token(tmp_pat
 # ---------------------------------------------------------------------------
 
 
-def _two_file_descriptor_for_hygiene(ref: ArtifactRef, source_url: str) -> "ArtifactDescriptor":
-    """A genuine 2-file descriptor, duplicated locally per this suite's
-    convention of not cross-importing test-private helpers (see
-    ``test_source_map.py``'s identical-purpose ``_two_file_descriptor``)."""
-
-    from tldw_chatbook.Model_Artifacts import (
-        ArtifactDescriptor,
-        ArtifactFile,
-        ArtifactFormat,
-        ArtifactRole,
-        ProvenanceClass,
-    )
-
-    files = (
-        ArtifactFile("a.bin", 4, hashlib.sha256(b"aaaa").hexdigest()),
-        ArtifactFile("b.bin", 4, hashlib.sha256(b"bbbb").hexdigest()),
-    )
-    return ArtifactDescriptor(
-        reference=ref,
-        model_id="test/model",
-        role=ArtifactRole.ROOT,
-        format=ArtifactFormat.ONNX,
-        consumer="test",
-        model_family="test-family",
-        upstream_repository="test/repo",
-        upstream_revision="main",
-        source_url=source_url,
-        precision=ref.variant,
-        license_id="test-license",
-        license_url="https://example.test/license",
-        usage_notice="Test model",
-        runtime_name="test-runtime",
-        runtime_version_constraint="==1.0.0",
-        supported_os=("linux",),
-        supported_architectures=("x86-64",),
-        provenance=(ProvenanceClass.CHATBOOK_CURATED,),
-        files=files,
-        expected_installed_bytes=8,
-        dependencies=(),
-    )
-
-
 @pytest.mark.asyncio
 async def test_multi_file_source_map_urls_never_leak_into_state_manifests_or_errors(
     tmp_path, caplog
@@ -267,7 +212,7 @@ async def test_multi_file_source_map_urls_never_leak_into_state_manifests_or_err
             # free isolates this test to what TASK-1695 actually adds: the
             # PER-FILE source-map entries below, which must never appear
             # anywhere a plain descriptor field legitimately does.
-            desc = _two_file_descriptor_for_hygiene(root, srv.url("/hygiene-descriptor-source"))
+            desc = _two_file_descriptor(root, srv.url("/hygiene-descriptor-source"))
             catalog = DictCatalog({root: desc})
             sources = {
                 root: {
@@ -316,6 +261,116 @@ async def test_multi_file_source_map_urls_never_leak_into_state_manifests_or_err
             scanned += 1
             assert MARKER.encode() not in path.read_bytes(), f"source-map URL leaked into {path}"
     assert scanned > 0, "sanity: the artifact store must contain files to scan"
+
+
+# ---------------------------------------------------------------------------
+# (f) PR-1165 review, P0: a bearer token resolved for a repository must
+# never reach a per-file mapped URL on a DIFFERENT origin than the
+# descriptor's own source_url -- not just on a redirect hop (which
+# fetch.stream_fetch already strips independently, see (c) below), but on
+# the INITIAL request too.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_credential_attached_to_same_origin_mapped_file(tmp_path):
+    """A per-file source-map URL on the SAME origin as ``descriptor.
+    source_url`` receives the repository's resolved bearer token, exactly
+    like the single-file fallback path already did."""
+
+    core = ModelArtifactService(tmp_path / "root")
+    root = ArtifactRef("same-origin-mapped-model", "r1", "int8")
+    resolver = _StaticResolver(TOKEN)
+
+    with FixtureArtifactServer() as srv:
+        srv.serve("/a.bin", b"aaaa", require_token=TOKEN, etag='"va"')
+        srv.serve("/b.bin", b"bbbb", require_token=TOKEN, etag='"vb"')
+        desc = _two_file_descriptor(root, srv.url("/a.bin"))
+        catalog = DictCatalog({root: desc})
+        sources = {root: {"a.bin": srv.url("/a.bin"), "b.bin": srv.url("/b.bin")}}
+        svc = ArtifactAcquisitionService(
+            core,
+            free_bytes_probe=lambda p: 10**12,
+            trusted_origins=_trusted(srv),
+            credential_resolver=resolver,
+        )
+
+        report = await svc.preflight(root, catalog, sources=sources)
+        consent = report.grant()
+        activated = await svc.provision(root, consent, catalog, sources=sources)
+        assert activated == root
+
+    for path in ("/a.bin", "/b.bin"):
+        assert any(
+            headers.get("Authorization") == f"Bearer {TOKEN}"
+            for headers in srv.requests[path]
+        ), f"same-origin mapped file {path} must have received the credential"
+
+
+@pytest.mark.asyncio
+async def test_credential_withheld_from_cross_origin_mapped_file_but_both_download(
+    tmp_path,
+):
+    """A per-file source-map URL on a DIFFERENT origin than ``descriptor.
+    source_url`` must NEVER receive the repository's bearer token -- not
+    just on a redirect hop, but on its very first request. Both files must
+    still download successfully: the cross-origin file is public (no
+    credential needed at all), matching a real third-party CDN or mirror.
+
+    Regression test for the P0 finding: before this fix, ``_auth_headers``
+    attached a resolved token to EVERY per-file request for the
+    descriptor's repository, regardless of which URL (and therefore which
+    origin) it was actually going to -- modeled here with two real,
+    differently-ported ``FixtureArtifactServer`` instances, which is what
+    makes this the INITIAL-request case ``stream_fetch``'s own
+    redirect-hop stripping does not cover.
+    """
+
+    core = ModelArtifactService(tmp_path / "root")
+    root = ArtifactRef("cross-origin-mapped-model", "r1", "int8")
+    resolver = _StaticResolver(TOKEN)
+
+    with FixtureArtifactServer() as same_origin, FixtureArtifactServer() as cross_origin:
+        same_origin.serve("/a.bin", b"aaaa", require_token=TOKEN, etag='"va"')
+        # Public: a real cross-origin CDN never receives this repository's
+        # credential, so it must not require one either.
+        cross_origin.serve("/b.bin", b"bbbb", etag='"vb"')
+
+        desc = _two_file_descriptor(root, same_origin.url("/a.bin"))
+        catalog = DictCatalog({root: desc})
+        sources = {
+            root: {
+                "a.bin": same_origin.url("/a.bin"),
+                "b.bin": cross_origin.url("/b.bin"),
+            }
+        }
+        svc = ArtifactAcquisitionService(
+            core,
+            free_bytes_probe=lambda p: 10**12,
+            trusted_origins=_trusted(same_origin) | _trusted(cross_origin),
+            credential_resolver=resolver,
+        )
+
+        report = await svc.preflight(root, catalog, sources=sources)
+        assert report.gating_errors == ()
+        consent = report.grant()
+        activated = await svc.provision(root, consent, catalog, sources=sources)
+        assert activated == root
+
+        assert any(
+            headers.get("Authorization") == f"Bearer {TOKEN}"
+            for headers in same_origin.requests["/a.bin"]
+        ), "the same-origin mapped file must have received the credential"
+
+        b_requests = cross_origin.requests["/b.bin"]
+        assert b_requests, "the cross-origin mapped file must have been reached at all"
+        assert all("Authorization" not in headers for headers in b_requests), (
+            "the credential must NOT have reached the cross-origin mapped file"
+        )
+
+    destination = core.artifact_path(root)
+    assert (destination / "a.bin").read_bytes() == b"aaaa"
+    assert (destination / "b.bin").read_bytes() == b"bbbb"
 
 
 # ---------------------------------------------------------------------------

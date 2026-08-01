@@ -25,80 +25,25 @@ not-yet-installed multi-file descriptor:
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import replace as dc_replace
-from urllib.parse import urlparse
 
 import httpx
 import pytest
 
+from Tests.Model_Artifacts.acquisition_test_helpers import (
+    _trusted,
+    _two_file_descriptor,
+    grant_consent,
+)
 from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 from Tests.Model_Artifacts.test_acquisition_types import DictCatalog, make_descriptor
-from tldw_chatbook.Model_Artifacts import (
-    ArtifactDescriptor,
-    ArtifactFile,
-    ArtifactFormat,
-    ArtifactRef,
-    ArtifactRole,
-    ProvenanceClass,
-)
+from tldw_chatbook.Model_Artifacts import ArtifactRef, ArtifactRole
 from tldw_chatbook.Model_Artifacts.acquisition import (
     ArtifactAcquisitionService,
     CatalogError,
     ConsentMismatchError,
 )
 from tldw_chatbook.Model_Artifacts.service import ModelArtifactService
-
-
-def _trusted(srv: FixtureArtifactServer) -> frozenset:
-    """Trusted-origins set for a fixture server (see test_stream_fetch.py's
-    identical helper for why this is the bare hostname, not a URL)."""
-
-    return frozenset({urlparse(srv.url("/")).hostname})
-
-
-def _two_file_descriptor(
-    ref: ArtifactRef,
-    source_url: str = "https://example.test/model",
-    *,
-    role: ArtifactRole = ArtifactRole.ROOT,
-) -> ArtifactDescriptor:
-    """A genuine 2-file descriptor with real, independently-verifiable
-    content -- unlike the pre-1695 fixtures of the same shape (e.g.
-    ``test_preflight.py``'s ``_two_file_descriptor``), whose ONLY job was
-    to trip the old blanket multi-file refusal, this one is exercised
-    end-to-end over a real fixture server, so its declared sizes/digests
-    must actually match ``a.bin``/``b.bin``'s served bytes. ``role`` is
-    settable because ``core.activate``'s closure resolution rejects an
-    installed dependency whose manifest role isn't ``DEPENDENCY``."""
-
-    files = (
-        ArtifactFile("a.bin", 4, hashlib.sha256(b"aaaa").hexdigest()),
-        ArtifactFile("b.bin", 4, hashlib.sha256(b"bbbb").hexdigest()),
-    )
-    return ArtifactDescriptor(
-        reference=ref,
-        model_id="test/model",
-        role=role,
-        format=ArtifactFormat.ONNX,
-        consumer="test",
-        model_family="test-family",
-        upstream_repository="test/repo",
-        upstream_revision="main",
-        source_url=source_url,
-        precision=ref.variant,
-        license_id="test-license",
-        license_url="https://example.test/license",
-        usage_notice="Test model",
-        runtime_name="test-runtime",
-        runtime_version_constraint="==1.0.0",
-        supported_os=("linux",),
-        supported_architectures=("x86-64",),
-        provenance=(ProvenanceClass.CHATBOOK_CURATED,),
-        files=files,
-        expected_installed_bytes=8,
-        dependencies=(),
-    )
 
 
 def _forbid_client() -> httpx.AsyncClient:
@@ -398,31 +343,34 @@ async def test_resolution_failure_at_provision_also_precedes_any_side_effect(tmp
     """The same total-resolution validation runs again inside provision()'s
     independent catalog/source re-walk (defense-in-depth against a source
     map that changed shape between preflight() and provision()) -- and
-    still fails before the session lease does anything durable."""
+    still fails before the session lease does anything durable.
+
+    PR-1165 review (P2): ``good_sources`` points at a real, loopback
+    fixture server (not an ``example.test`` placeholder) so
+    ``preflight()``'s network gating probe -- which a fully-resolved
+    source map legitimately reaches -- never performs real DNS. What this
+    test actually proves is narrower and doesn't depend on that probe's
+    outcome either way: provision()'s re-walk with a BROKEN map fails
+    before touching staging at all.
+    """
 
     core = ModelArtifactService(tmp_path / "root")
     root = ArtifactRef("multi-file-model", "r1", "int8")
     desc = _two_file_descriptor(root)
     catalog = DictCatalog({root: desc})
-    # No client_factory override here: preflight() with a fully-resolved
-    # good_sources map legitimately reaches the network gating probe (which
-    # tolerates an unreachable "example.test" host by design -- see
-    # _probe_gating's own httpx.HTTPError/EgressBlockedError handling).
-    # What THIS test proves is narrower: provision()'s re-walk with a
-    # BROKEN map fails before touching staging at all.
-    svc = ArtifactAcquisitionService(core, free_bytes_probe=lambda p: 10**12)
-    good_sources = {
-        root: {
-            "a.bin": "https://example.test/a.bin",
-            "b.bin": "https://example.test/b.bin",
-        }
-    }
-    report = await svc.preflight(root, catalog, sources=good_sources)
-    consent = report.grant()
+    with FixtureArtifactServer() as srv:
+        srv.serve("/a.bin", b"aaaa", etag='"va"', support_range=True)
+        srv.serve("/b.bin", b"bbbb", etag='"vb"', support_range=True)
+        svc = ArtifactAcquisitionService(
+            core, free_bytes_probe=lambda p: 10**12, trusted_origins=_trusted(srv)
+        )
+        good_sources = {root: {"a.bin": srv.url("/a.bin"), "b.bin": srv.url("/b.bin")}}
+        report = await svc.preflight(root, catalog, sources=good_sources)
+        consent = report.grant()
 
-    broken_sources = {root: {"a.bin": "https://example.test/a.bin"}}  # b.bin missing now
-    with pytest.raises(CatalogError):
-        await svc.provision(root, consent, catalog, sources=broken_sources)
+        broken_sources = {root: {"a.bin": srv.url("/a.bin")}}  # b.bin missing now
+        with pytest.raises(CatalogError):
+            await svc.provision(root, consent, catalog, sources=broken_sources)
 
     # _aggregate_closure raises before the per-artifact loop ever creates a
     # download stage -- so the (always-present, ModelArtifactService creates
@@ -440,31 +388,38 @@ async def test_source_url_changed_after_consent_raises_consent_mismatch(tmp_path
     """Swapping a source-map URL between preflight() and provision() must
     invalidate consent -- the spec's rule that the fingerprint covers
     credential-free source identities, not just the closure's reference
-    set."""
+    set.
+
+    PR-1165 review (P2): ``sources_v1`` points at a real, loopback fixture
+    server so ``preflight()``'s network gating probe never performs real
+    DNS. ``sources_v2`` (never actually fetched -- provision() raises
+    before any network access, straight off the recomputed fingerprint)
+    stays a syntactically-valid but unserved URL on that same server.
+    """
 
     core = ModelArtifactService(tmp_path / "root")
     root = ArtifactRef("multi-file-model", "r1", "int8")
     desc = _two_file_descriptor(root)
     catalog = DictCatalog({root: desc})
-    svc = ArtifactAcquisitionService(core, free_bytes_probe=lambda p: 10**12)
+    with FixtureArtifactServer() as srv:
+        srv.serve("/a.bin", b"aaaa", etag='"va"', support_range=True)
+        srv.serve("/b.bin", b"bbbb", etag='"vb"', support_range=True)
+        svc = ArtifactAcquisitionService(
+            core, free_bytes_probe=lambda p: 10**12, trusted_origins=_trusted(srv)
+        )
 
-    sources_v1 = {
-        root: {
-            "a.bin": "https://example.test/a.bin",
-            "b.bin": "https://example.test/b.bin",
-        }
-    }
-    report = await svc.preflight(root, catalog, sources=sources_v1)
-    consent = report.grant()
+        sources_v1 = {root: {"a.bin": srv.url("/a.bin"), "b.bin": srv.url("/b.bin")}}
+        report = await svc.preflight(root, catalog, sources=sources_v1)
+        consent = report.grant()
 
-    sources_v2 = {
-        root: {
-            "a.bin": "https://example.test/a-DIFFERENT-origin.bin",
-            "b.bin": "https://example.test/b.bin",
+        sources_v2 = {
+            root: {
+                "a.bin": srv.url("/a-DIFFERENT-origin.bin"),
+                "b.bin": srv.url("/b.bin"),
+            }
         }
-    }
-    with pytest.raises(ConsentMismatchError):
-        await svc.provision(root, consent, catalog, sources=sources_v2)
+        with pytest.raises(ConsentMismatchError):
+            await svc.provision(root, consent, catalog, sources=sources_v2)
 
 
 @pytest.mark.asyncio
@@ -493,13 +448,30 @@ async def test_identical_source_map_at_provision_does_not_mismatch(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_source_map_fingerprint_matches_plain_closure_fingerprint_when_absent(tmp_path):
-    """When no caller ever passes ``sources``, the consent fingerprint is
-    BYTE-FOR-BYTE the plain ``closure_fingerprint(root, deps)`` this
-    codebase used before TASK-1695 -- the back-compat guarantee that lets
-    an ``AcquisitionConsent`` hand-built from that older function (a
-    pattern many existing tests and, potentially, callers still use) keep
-    matching ``provision()``'s own recomputed report."""
+async def test_single_file_fallback_fingerprint_differs_from_plain_closure_fingerprint(
+    tmp_path,
+):
+    """TASK-1712 (PR-1165 review, P1): closes a residual TASK-1695 left open.
+
+    Superseded assertion: this test used to assert the consent fingerprint
+    was BYTE-FOR-BYTE the plain ``closure_fingerprint(root, deps)`` even
+    when the closure resolves a not-yet-installed single-file descriptor's
+    OWN ``source_url`` (the fallback ``_resolve_file_sources`` uses when no
+    explicit ``sources`` map is supplied at all). That was itself the
+    consent hole TASK-1712 closes: a caller-supplied ``sources`` entry was
+    folded into the fingerprint, but the fallback-resolved ``source_url``
+    was not, so a dynamic ``ArtifactCatalog`` (mirror rotation, CDN
+    rebalancing -- the protocol guarantees no immutability) could change it
+    between ``preflight()`` and ``provision()`` with nothing to catch it.
+    Every resolved source now folds in uniformly, so the fingerprint is no
+    longer plain-closure-equivalent for ANY not-yet-installed entry,
+    caller-supplied source map or not.
+
+    ``grant_consent`` (network-free) is used instead of a real
+    ``preflight()`` call -- ``make_descriptor``'s default ``source_url`` is
+    an unreachable ``example.test`` placeholder, and this test's own setup
+    has no need to touch the network.
+    """
 
     from tldw_chatbook.Model_Artifacts import closure_fingerprint
 
@@ -509,5 +481,120 @@ async def test_source_map_fingerprint_matches_plain_closure_fingerprint_when_abs
     catalog = DictCatalog({root: desc})
     svc = ArtifactAcquisitionService(core, free_bytes_probe=lambda p: 10**12)
 
-    report = await svc.preflight(root, catalog)
-    assert report.closure_fingerprint == closure_fingerprint(root, ())
+    consent = grant_consent(svc, root, catalog)
+    assert consent.closure_fingerprint != closure_fingerprint(root, ())
+
+
+@pytest.mark.asyncio
+async def test_single_file_source_url_changed_after_consent_raises_consent_mismatch(
+    tmp_path,
+):
+    """TASK-1712's headline acceptance criterion.
+
+    A single-file descriptor with NO explicit source map at all -- its
+    file's URL resolved purely via the ``descriptor.source_url`` fallback
+    -- must still be consent-gated exactly like a caller-supplied
+    ``sources`` entry. Before this fix, ``_closure_fingerprint_with_sources``
+    only folded in caller-supplied entries, so this exact scenario --
+    ``descriptor.source_url`` changing between ``grant()`` and
+    ``provision()`` with no explicit source map involved -- was NOT
+    consent-gated: ``provision()`` would silently fetch from the new origin
+    under stale consent.
+    """
+
+    core = ModelArtifactService(tmp_path / "root")
+    root = ArtifactRef("single-file-model-4", "r1", "int8")
+    desc_v1 = make_descriptor(ref=root, source_url="https://mirror-a.example.test/model")
+    catalog_v1 = DictCatalog({root: desc_v1})
+    svc = ArtifactAcquisitionService(core, free_bytes_probe=lambda p: 10**12)
+
+    consent = grant_consent(svc, root, catalog_v1)
+
+    desc_v2 = dc_replace(desc_v1, source_url="https://mirror-b.example.test/model")
+    catalog_v2 = DictCatalog({root: desc_v2})
+
+    with pytest.raises(ConsentMismatchError):
+        await svc.provision(root, consent, catalog_v2)
+
+
+# ---------------------------------------------------------------------------
+# PR-1165 review (P2): the gating probe targets the REAL per-file URLs the
+# closure will actually be fetched from, not the descriptor's own
+# source_url -- which a caller-supplied source map may never be fetched
+# from at all.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_gated_mapped_file_detected_at_preflight_even_when_descriptor_url_is_public(
+    tmp_path,
+):
+    """A per-file source-map URL on a gated origin must be probed, even
+    though the descriptor's own ``source_url`` (never actually fetched
+    from once a source map supplies every declared file) sits on a fully
+    public origin.
+
+    Regression test: before this fix, ``_probe_gating`` only ever probed
+    ``descriptor.source_url`` -- the public origin here -- so a gated
+    mapped file was never even reached during preflight(); its 401 would
+    only have surfaced mid-transfer, well after consent was granted.
+    """
+
+    core = ModelArtifactService(tmp_path / "root")
+    root = ArtifactRef("mapped-gated-model", "r1", "int8")
+    with FixtureArtifactServer() as public_repo, FixtureArtifactServer() as gated_cdn:
+        public_repo.serve("/descriptor-landing", b"unused")
+        gated_cdn.serve("/a.bin", b"aaaa", require_token="cdn-secret", etag='"va"')
+        gated_cdn.serve("/b.bin", b"bbbb", require_token="cdn-secret", etag='"vb"')
+
+        desc = _two_file_descriptor(root, public_repo.url("/descriptor-landing"))
+        catalog = DictCatalog({root: desc})
+        sources = {
+            root: {"a.bin": gated_cdn.url("/a.bin"), "b.bin": gated_cdn.url("/b.bin")}
+        }
+        svc = ArtifactAcquisitionService(
+            core,
+            free_bytes_probe=lambda p: 10**12,
+            trusted_origins=_trusted(public_repo) | _trusted(gated_cdn),
+        )
+
+        report = await svc.preflight(root, catalog, sources=sources)
+
+    assert report.gating_errors, "the gated mapped-file origin must have been probed"
+
+
+@pytest.mark.asyncio
+async def test_gated_descriptor_url_does_not_block_public_mapped_files(tmp_path):
+    """A gated ``descriptor.source_url`` must not block consent for a
+    closure whose ACTUAL per-file URLs are all on a public origin --
+    nothing will ever be fetched from ``source_url`` once a source map
+    supplies every declared file.
+
+    Regression test: before this fix, ``_probe_gating`` probed
+    ``descriptor.source_url`` -- gated here -- unconditionally, so
+    preflight() reported this closure gated even though the real fetch
+    would never touch that origin at all.
+    """
+
+    core = ModelArtifactService(tmp_path / "root")
+    root = ArtifactRef("descriptor-gated-model", "r1", "int8")
+    with FixtureArtifactServer() as gated_repo, FixtureArtifactServer() as public_cdn:
+        gated_repo.serve("/descriptor-landing", b"unused", require_token="repo-secret")
+        public_cdn.serve("/a.bin", b"aaaa", etag='"va"')
+        public_cdn.serve("/b.bin", b"bbbb", etag='"vb"')
+
+        desc = _two_file_descriptor(root, gated_repo.url("/descriptor-landing"))
+        catalog = DictCatalog({root: desc})
+        sources = {
+            root: {"a.bin": public_cdn.url("/a.bin"), "b.bin": public_cdn.url("/b.bin")}
+        }
+        svc = ArtifactAcquisitionService(
+            core,
+            free_bytes_probe=lambda p: 10**12,
+            trusted_origins=_trusted(gated_repo) | _trusted(public_cdn),
+        )
+
+        report = await svc.preflight(root, catalog, sources=sources)
+
+    assert report.gating_errors == ()
+    report.grant()  # must not raise

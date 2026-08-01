@@ -25,7 +25,12 @@ import httpx
 
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
-from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise_async
+from tldw_chatbook.Utils.egress import (
+    EgressBlockedError,
+    check_url_or_raise_async,
+    origin_of,
+    same_origin,
+)
 
 from .fetch import (
     FetchRestartRequired,
@@ -329,6 +334,29 @@ class AcquisitionConsent:
 
 
 @dataclass(frozen=True)
+class _GatingTarget:
+    """One bounded gating-probe target: an actual fetch URL, its repository, and origin-binding source.
+
+    PR-1165 review (P2): probes the URL ``provision()`` will ACTUALLY
+    fetch, not just the descriptor's own ``source_url`` -- a caller-mapped
+    per-file URL (TASK-1695) can live on a different origin (a CDN, a
+    mirror) than the descriptor's own repository, so probing only
+    ``source_url`` both lets a gated mapped file through undetected (its
+    own origin is never probed) and lets a gated ``source_url`` block
+    consent for a closure whose real per-file URLs are all public (the
+    descriptor URL is probed even though nothing will ever be fetched from
+    it). ``source_url`` is carried alongside ``url`` so the probe binds
+    credentials to it exactly like the real fetch does (``_auth_headers``):
+    a probe against a cross-origin mapped URL never carries the
+    repository's token, matching the P0 fix.
+    """
+
+    url: str
+    repository: str
+    source_url: str
+
+
+@dataclass(frozen=True)
 class AcquisitionProgress:
     """Progress during an active acquisition operation."""
 
@@ -497,10 +525,9 @@ def resolve_catalog_closure(
 def _closure_fingerprint_with_sources(
     root: ArtifactRef,
     dependencies: Iterable[ArtifactRef],
-    source_map: ArtifactSourceMap,
     resolved_sources: Mapping[ArtifactRef, Mapping[str, str]],
 ) -> str:
-    """Extend ``closure_fingerprint`` to also cover CALLER-SUPPLIED source identities.
+    """Extend ``closure_fingerprint`` to also cover every resolved source identity.
 
     TASK-1695: the design spec requires the consent fingerprint to cover
     "credential-free source identities", not just the closure's set of
@@ -511,46 +538,53 @@ def _closure_fingerprint_with_sources(
     readiness records and installed-manifest verification, which know
     nothing about source maps and must not change shape for this task.
 
-    Deliberately narrower than "every resolved URL": only ``(ref, path,
-    url)`` triples the CALLER actually named in ``source_map`` are folded
-    in -- not every entry ``resolved_sources`` filled in via the single-file
-    ``descriptor.source_url`` fallback. This is what keeps the pre-1695
-    single-file contract byte-for-byte back-compatible: a caller who never
-    passes ``sources`` (the overwhelming majority of existing callers and
-    tests, which is exactly the back-compat case TASK-1695 requires) gets
-    back PLAIN ``closure_fingerprint(root, dependencies)``, unchanged --
-    including anyone who built an ``AcquisitionConsent`` by hand from that
-    same base function before this task existed. A caller who DOES pass
-    ``sources`` gets exactly what the spec asks for: swap one of those
-    supplied URLs between ``preflight()`` and ``provision()`` and the
-    fingerprint changes, so ``provision()`` raises ``ConsentMismatchError``
-    instead of silently fetching from the new origin under stale consent.
+    TASK-1712 (PR-1165 review, P1): folds in EVERY entry of
+    ``resolved_sources`` -- not just ``(ref, path)`` pairs the caller
+    actually named in a ``sources`` argument. The original TASK-1695
+    version only covered caller-supplied entries, which left a real
+    consent hole: a not-yet-installed, single-file descriptor with NO
+    explicit source map at all resolves its file's URL from
+    ``descriptor.source_url`` alone (the single-file fallback -- see
+    ``_resolve_file_sources``), and that fallback-resolved URL was
+    excluded from the fingerprint entirely. A dynamic ``ArtifactCatalog``
+    (mirror rotation, CDN rebalancing -- the protocol guarantees no
+    immutability) could then change ``descriptor.source_url`` between
+    ``preflight()`` and ``provision()`` and have the new URL fetched under
+    stale consent, exactly the hole this function exists to close for the
+    caller-supplied case. Folding in every resolved entry, fallback
+    included, closes it uniformly.
+
+    This is no longer back-compatible with the bare
+    ``closure_fingerprint(root, dependencies)`` for any closure containing
+    a not-yet-installed entry (see
+    ``test_source_map.py::test_single_file_fallback_fingerprint_differs_from_plain_closure_fingerprint``):
+    a caller that hand-builds an ``AcquisitionConsent`` from that bare
+    function must switch to ``PreflightReport.grant()`` instead, which
+    always reflects the real, current formula.
 
     Args:
         root: The closure's root reference.
         dependencies: Every reference in the closure (root included or not
             -- ``closure_fingerprint`` normalizes this the same way it
             always has).
-        source_map: The caller's own ``sources`` argument (or ``{}``) --
-            only ``(ref, path)`` pairs actually present here are folded in.
         resolved_sources: ``{ref: {file_path: url}}``, the fully resolved
-            map ``_aggregate_closure`` already validated (fallback entries
-            included) -- consulted only to supply each caller-named pair's
-            VALIDATED url value.
+            map ``_aggregate_closure`` already validated for every
+            not-yet-installed entry in the closure -- caller-supplied
+            ``sources`` entries AND single-file ``source_url`` fallback
+            entries alike; both fold in identically here.
 
     Returns:
         Plain ``closure_fingerprint(root, dependencies)`` when
-        ``source_map`` names no ``(ref, path)`` pair that was actually
-        resolved; otherwise a hex SHA-256 digest combining that base
-        fingerprint with every such pair's resolved URL, order-independent.
+        ``resolved_sources`` is empty (every closure entry already
+        installed); otherwise a hex SHA-256 digest combining that base
+        fingerprint with every resolved ``(ref, path, url)`` triple,
+        order-independent.
     """
 
     triples = sorted(
-        (ref.artifact_id, ref.revision, ref.variant, path, resolved_sources[ref][path])
-        for ref, files in source_map.items()
-        if ref in resolved_sources
-        for path in files
-        if path in resolved_sources[ref]
+        (ref.artifact_id, ref.revision, ref.variant, path, url)
+        for ref, files in resolved_sources.items()
+        for path, url in files.items()
     )
     base = closure_fingerprint(root, dependencies)
     if not triples:
@@ -701,8 +735,10 @@ class ArtifactAcquisitionService:
         # running loop on Python >= 3.10.
         self._lock = asyncio.Lock()
 
-    def _auth_headers(self, repository: str) -> dict[str, str] | None:
-        """Resolve an ``Authorization`` header for ``repository``, or ``None``.
+    def _auth_headers(
+        self, repository: str, *, url: str, source_url: str
+    ) -> dict[str, str] | None:
+        """Resolve an ``Authorization`` header for ``repository``, bound to ``source_url``'s origin.
 
         The single seam every credentialed request in this service goes
         through -- the preflight gating HEAD probe (``_probe_gating``) and
@@ -713,15 +749,34 @@ class ArtifactAcquisitionService:
         need to describe what's being fetched use ``repository`` or the
         file path, never this return value's contents.
 
+        PR-1165 review (P0): a resolved token is attached ONLY when ``url``
+        (the actual request target) shares ``source_url``'s origin (scheme,
+        host, port) -- see ``CredentialResolver``'s own docstring, which
+        already promised this. Before this fix, ``url`` was never
+        considered at all: a per-file URL resolved from a caller-supplied
+        source map (TASK-1695) pointing at a DIFFERENT origin than the
+        descriptor's own ``source_url`` (e.g. a third-party CDN) still
+        received the repository's bearer token on its very first request --
+        not just a redirect hop, which is the only cross-origin case
+        ``fetch.stream_fetch`` independently strips credentials from
+        regardless of what this method returns.
+
         Args:
             repository: The upstream repository identifier to resolve a
                 credential for.
+            url: The actual URL this credential (if any) would be attached
+                to requesting.
+            source_url: The descriptor's own ``source_url`` -- the
+                repository's trusted origin a credential is scoped to.
 
         Returns:
             ``{"Authorization": "Bearer <token>"}`` when a resolver is
-            configured and returns a truthy token for ``repository``, else
-            ``None`` (no header attached -- the request goes out anonymous).
+            configured, returns a truthy token for ``repository``, AND
+            ``url`` shares ``source_url``'s origin; ``None`` otherwise (no
+            header attached -- the request goes out anonymous).
         """
+        if not same_origin(url, source_url):
+            return None
         if self._credential_resolver is None:
             return None
         token = self._credential_resolver.resolve(repository)
@@ -785,7 +840,7 @@ class ArtifactAcquisitionService:
     ) -> tuple[
         tuple[ArtifactDescriptor, ...],
         PreflightReport,
-        dict[str, ArtifactPreflightEntry],
+        dict[tuple[str, tuple[str, str, int] | None], _GatingTarget],
         dict[ArtifactRef, dict[str, str]],
     ]:
         """Resolve the catalog closure and aggregate space/staged-credit/source math.
@@ -812,12 +867,17 @@ class ArtifactAcquisitionService:
             A tuple of: the closure descriptors in stable sorted order; a
             ``PreflightReport`` with ``gating_errors`` deliberately left
             empty (the caller decides whether and how to probe); the
-            per-repository gating-probe targets, for a caller that wants to
-            hand them to ``_probe_gating``; and the resolved per-file source
-            map (``{ref: {file_path: url}}``) covering every not-yet-
-            installed artifact in the closure, for a caller (``provision()``)
-            that needs the exact URLs this same aggregation validated,
-            without re-deriving them from ``sources`` a second time.
+            gating-probe targets (PR-1165 review, P2: one per distinct
+            ``(repository, origin)`` pair actually resolved for a not-yet-
+            installed entry -- see ``_GatingTarget`` -- not one per
+            repository's bare ``descriptor.source_url``, which a caller's
+            per-file source map may never even be fetched from), for a
+            caller that wants to hand them to ``_probe_gating``; and the
+            resolved per-file source map (``{ref: {file_path: url}}``)
+            covering every not-yet-installed artifact in the closure, for a
+            caller (``provision()``) that needs the exact URLs this same
+            aggregation validated, without re-deriving them from ``sources``
+            a second time.
 
         Raises:
             CatalogError: Propagated from an unknown ref, a dependency
@@ -851,9 +911,12 @@ class ArtifactAcquisitionService:
         entries: list[ArtifactPreflightEntry] = []
         download_bytes = 0
         already_staged_bytes = 0
-        # First not-installed entry per repository, in stable closure order --
-        # the representative whose URL gets the one bounded gating probe.
-        gating_targets: dict[str, ArtifactPreflightEntry] = {}
+        # PR-1165 review (P2): one representative target per distinct
+        # (repository, origin) pair actually RESOLVED for a not-yet-
+        # installed entry, in stable closure order -- bounded (one probe
+        # per distinct source, per spec) without probing the descriptor's
+        # own source_url when nothing will ever be fetched from it.
+        gating_targets: dict[tuple[str, tuple[str, str, int] | None], _GatingTarget] = {}
         # TASK-1695: resolved per-file source URLs, not-yet-installed
         # entries only -- see _aggregate_closure's Returns docstring.
         resolved_sources: dict[ArtifactRef, dict[str, str]] = {}
@@ -899,7 +962,16 @@ class ArtifactAcquisitionService:
                 # over-claimed credit silently offset another entry's real
                 # download cost instead of just clamping its own.
                 download_bytes += max(entry.total_bytes - staged, 0)
-                gating_targets.setdefault(entry.repository, entry)
+                for url in resolved_sources[ref].values():
+                    key = (entry.repository, origin_of(url))
+                    gating_targets.setdefault(
+                        key,
+                        _GatingTarget(
+                            url=url,
+                            repository=entry.repository,
+                            source_url=entry.source_url,
+                        ),
+                    )
 
         # TASK-1695: computed AFTER the loop above (not right after the
         # closure walk, as closure_fingerprint() alone was) -- the source
@@ -910,7 +982,6 @@ class ArtifactAcquisitionService:
         fingerprint = _closure_fingerprint_with_sources(
             root,
             (descriptor.reference for descriptor in closure),
-            source_map,
             resolved_sources,
         )
 
@@ -1444,7 +1515,11 @@ class ArtifactAcquisitionService:
         )
 
         url = self._file_url(resolved_sources, file)
-        headers = self._auth_headers(descriptor.upstream_repository)
+        headers = self._auth_headers(
+            descriptor.upstream_repository,
+            url=url,
+            source_url=descriptor.source_url,
+        )
 
         def on_chunk(count: int) -> None:
             progress_state.bytes_done += count
@@ -1950,16 +2025,26 @@ class ArtifactAcquisitionService:
             total += min(bytes_done, actual_size, declared_sizes[file_path])
         return total
 
-    async def _probe_gating(self, targets: Iterable[ArtifactPreflightEntry]) -> list[str]:
-        """Bounded HEAD probe per repository; collect 401/403s.
+    async def _probe_gating(self, targets: Iterable[_GatingTarget]) -> list[str]:
+        """Bounded HEAD probe per distinct resolved source; collect 401/403s.
+
+        PR-1165 review (P2): probes each target's actual ``url`` (the URL
+        ``provision()`` will really fetch), not a descriptor's bare
+        ``source_url`` -- see ``_GatingTarget`` and
+        ``_aggregate_closure``'s gating-targets construction for why.
 
         Anonymous unless a ``credential_resolver`` is configured AND
-        resolves a token for the entry's repository, in which case the
-        probe carries the same ``Authorization`` header the real fetch
-        would use (``_auth_headers``) -- a working credential clears
-        gating here exactly as it would clear the real transfer, instead
-        of preflight reporting a repository gated that provision() would
-        actually be able to reach.
+        resolves a token for the target's repository AND ``url`` shares
+        ``source_url``'s origin, in which case the probe carries the same
+        ``Authorization`` header the real fetch would use
+        (``_auth_headers``) -- a working credential clears gating here
+        exactly as it would clear the real transfer, instead of preflight
+        reporting a repository gated that provision() would actually be
+        able to reach. A mapped file on a different origin is always
+        probed anonymously, matching the real fetch (P0): if it genuinely
+        requires auth, no credential this service holds could ever satisfy
+        it, so surfacing that as a gating error here (rather than a
+        transfer failure later) is the earlier, more useful signal.
 
         Any other outcome -- 2xx/3xx/other 4xx/5xx, timeout, connection
         failure, or an egress-policy block -- is silently non-fatal here:
@@ -1967,7 +2052,8 @@ class ArtifactAcquisitionService:
         Only an explicit auth-required status is a gating signal.
 
         Args:
-            targets: One representative entry per unique repository.
+            targets: One representative target per distinct
+                ``(repository, origin)`` pair actually resolved.
 
         Returns:
             Gating-error messages naming the repository and the credential
@@ -1983,20 +2069,24 @@ class ArtifactAcquisitionService:
         assert client is not None
         errors: list[str] = []
         try:
-            for entry in targets:
+            for target in targets:
                 try:
                     await check_url_or_raise_async(
-                        entry.source_url, trusted_origins=self._trusted_origins
+                        target.url, trusted_origins=self._trusted_origins
                     )
                     response = await client.head(
-                        entry.source_url,
+                        target.url,
                         timeout=_PREFLIGHT_PROBE_TIMEOUT_SECONDS,
-                        headers=self._auth_headers(entry.repository),
+                        headers=self._auth_headers(
+                            target.repository,
+                            url=target.url,
+                            source_url=target.source_url,
+                        ),
                         # Explicit regardless of the client's own default:
                         # client_factory is a public seam, and an injected
                         # client configured to follow redirects would
                         # otherwise both bypass this app's own egress check
-                        # for the redirect target (only entry.source_url is
+                        # for the redirect target (only target.url is
                         # checked above) and carry the bearer token
                         # cross-origin.
                         follow_redirects=False,
@@ -2005,7 +2095,7 @@ class ArtifactAcquisitionService:
                     continue
                 if response.status_code in (401, 403):
                     errors.append(
-                        f"repository '{entry.repository}' requires credentials "
+                        f"repository '{target.repository}' requires credentials "
                         f"(HTTP {response.status_code}); set {_CREDENTIAL_ENV_HINT} and retry"
                     )
         finally:

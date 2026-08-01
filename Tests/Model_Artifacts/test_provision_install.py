@@ -17,10 +17,10 @@ import contextlib
 import hashlib
 import json
 import time
-from urllib.parse import urlparse
 
 import pytest
 
+from Tests.Model_Artifacts.acquisition_test_helpers import _trusted, grant_consent
 from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 from Tests.Model_Artifacts.test_acquisition_types import DictCatalog
 from tldw_chatbook.Model_Artifacts import (
@@ -33,10 +33,8 @@ from tldw_chatbook.Model_Artifacts import (
     ArtifactIntegrityError,
     ArtifactStateError,
     ProvenanceClass,
-    closure_fingerprint,
 )
 from tldw_chatbook.Model_Artifacts.acquisition import (
-    AcquisitionConsent,
     AcquisitionProgress,
     ArtifactAcquisitionService,
     MAX_FILE_REFETCHES,
@@ -45,13 +43,6 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
 )
 from tldw_chatbook.Model_Artifacts.service import ModelArtifactService
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
-
-
-def _trusted(srv: FixtureArtifactServer) -> frozenset:
-    """Trusted-origins set for a fixture server (see test_stream_fetch.py's
-    identical helper for why this is the bare hostname, not a URL)."""
-
-    return frozenset({urlparse(srv.url("/")).hostname})
 
 
 def _descriptor(
@@ -272,7 +263,7 @@ async def test_provision_preverify_total_ignores_fetch_phases_netted_staged_cred
 
     svc = ArtifactAcquisitionService(core, free_bytes_probe=lambda p: 10**12)
     catalog = DictCatalog({ref: desc})
-    consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(ref, ()))
+    consent = grant_consent(svc, ref, catalog)
 
     captured: list[_ProvisionProgressState] = []
 
@@ -622,9 +613,7 @@ async def test_provision_end_to_end_installs_and_activates_root_and_dependency(t
         svc = ArtifactAcquisitionService(
             core, free_bytes_probe=lambda p: 10**12, trusted_origins=_trusted(srv)
         )
-        consent = AcquisitionConsent(
-            closure_fingerprint=closure_fingerprint(root_ref, (dep_ref,))
-        )
+        consent = grant_consent(svc, root_ref, catalog)
 
         events: list[AcquisitionProgress] = []
         activated = await svc.provision(root_ref, consent, catalog, progress=events.append)
@@ -692,7 +681,7 @@ async def test_provision_corrupt_payload_refetches_exactly_once_then_fails(tmp_p
 
         desc = _descriptor(ref, files_body=correct_body, source_url=srv.url("/model.bin"))
         catalog = DictCatalog({ref: desc})
-        consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(ref, ()))
+        consent = grant_consent(svc, ref, catalog)
 
         with pytest.raises(TransferError) as excinfo:
             await svc.provision(ref, consent, catalog)
@@ -744,7 +733,6 @@ async def test_provision_activates_already_installed_closure_with_zero_fetch_req
     # test recovers from.
 
     catalog = DictCatalog({root_ref: root_desc, dep_ref: dep_desc})
-    consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(root_ref, (dep_ref,)))
 
     with FixtureArtifactServer() as srv:
         # Deliberately no route registered: any network attempt 404s, and
@@ -752,6 +740,11 @@ async def test_provision_activates_already_installed_closure_with_zero_fetch_req
         svc = ArtifactAcquisitionService(
             core, free_bytes_probe=lambda p: 10**12, trusted_origins=_trusted(srv)
         )
+        # Both root_ref and dep_ref are already installed (see above), so
+        # _aggregate_closure resolves no sources for either -- this consent
+        # is unaffected by TASK-1712's fingerprint change, but grant_consent
+        # is used here for consistency (see its docstring).
+        consent = grant_consent(svc, root_ref, catalog)
         events: list[AcquisitionProgress] = []
         activated = await svc.provision(root_ref, consent, catalog, progress=events.append)
 
@@ -863,7 +856,7 @@ async def test_provision_activate_wraps_core_state_error_as_retryable(
 
     svc = ArtifactAcquisitionService(core, free_bytes_probe=lambda p: 10**12)
     catalog = DictCatalog({ref: desc})
-    consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(ref, ()))
+    consent = grant_consent(svc, ref, catalog)
 
     def raise_state_error(*args, **kwargs):
         raise ArtifactStateError("simulated lease contention")

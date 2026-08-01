@@ -26,17 +26,15 @@ from urllib.parse import urlparse
 
 import pytest
 
+from Tests.Model_Artifacts.acquisition_test_helpers import grant_consent
 from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 from Tests.Model_Artifacts.provision_processes import (
     DictCatalog,
     build_descriptor,
     provision_signal_on_phase,
 )
-from tldw_chatbook.Model_Artifacts import ArtifactRef, closure_fingerprint
-from tldw_chatbook.Model_Artifacts.acquisition import (
-    AcquisitionConsent,
-    ArtifactAcquisitionService,
-)
+from tldw_chatbook.Model_Artifacts import ArtifactRef
+from tldw_chatbook.Model_Artifacts.acquisition import ArtifactAcquisitionService
 from tldw_chatbook.Model_Artifacts.leases import ArtifactOperationLease, LeaseMode
 from tldw_chatbook.Model_Artifacts.service import (
     ACQUISITION_SESSION_LEASE_KEY,
@@ -205,10 +203,12 @@ async def test_kill_mid_fetch_valid_sidecar_survives_and_fresh_provision_resumes
         }
         assert (stage.payload / "model.bin").stat().st_size == len(initial_body)
 
-        # (a) the valid, marked download stage survives reconcile() (it is
-        # not the bare install-*/managed staging shape reconcile()'s GC
-        # recognizes at all, so it is left untouched as an unrecognized
-        # top-level entry -- see service.py's _gc_staging docstring).
+        # (a) the valid, marked download stage survives reconcile() -- it IS
+        # a not-yet-installed download-<fingerprint>/ stage reconcile()'s GC
+        # (TASK-1697) now recognizes, but that GC only ever reclaims a stage
+        # whose reference is ALREADY installed (see service.py's
+        # _gc_download_staging docstring); this one genuinely isn't yet, so
+        # it is left completely untouched.
         report = core.reconcile()
         assert stage.operation.exists()
         assert (stage.payload / "model.bin").exists()
@@ -223,10 +223,10 @@ async def test_kill_mid_fetch_valid_sidecar_survives_and_fresh_provision_resumes
         srv.serve("/model.bin", full_body, etag='"v1"', support_range=True)
         catalog = DictCatalog({descriptor.reference: descriptor})
         root_ref = ArtifactRef(*ref_parts)
-        consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(root_ref, ()))
         svc = ArtifactAcquisitionService(
             core, free_bytes_probe=lambda _p: 10**12, trusted_origins=frozenset({trusted})
         )
+        consent = grant_consent(svc, root_ref, catalog)
 
         activated = await svc.provision(root_ref, consent, catalog)
 
@@ -331,12 +331,15 @@ async def test_kill_between_install_and_activate_fresh_provision_activates_with_
             dependencies=(dep_ref_parts,),
         )
         catalog = DictCatalog({dep_ref: dep_descriptor, root_ref: root_descriptor})
-        consent = AcquisitionConsent(
-            closure_fingerprint=closure_fingerprint(root_ref, (dep_ref,))
-        )
         svc = ArtifactAcquisitionService(
             core, free_bytes_probe=lambda _p: 10**12, trusted_origins=frozenset({trusted})
         )
+        # Both dep_ref and root_ref are already installed at this point (see
+        # the assertion above), so _aggregate_closure resolves no sources
+        # for either -- this consent is unaffected by TASK-1712's fingerprint
+        # change, but grant_consent is still used here for consistency (see
+        # its docstring) rather than reintroducing a hand-built one.
+        consent = grant_consent(svc, root_ref, catalog)
 
         events = []
         activated = await svc.provision(root_ref, consent, catalog, progress=events.append)
@@ -420,20 +423,19 @@ def test_reconcile_after_crash_removes_only_orphans_leaves_everything_else(tmp_p
 
     # A hand-crafted orphan in the OLD bare managed/ staging shape: no
     # sidecar at all. reconcile()'s staging GC (_gc_managed_staging) still
-    # recognizes and removes this shape -- porting that GC to the new
-    # download-stage layout is separate follow-up work (reconciliation doc
-    # item 4), not required by TASK-1694; this pins that the OLD GC path
-    # still works and is not disturbed by the new stage layout existing
-    # alongside it.
+    # recognizes and removes this shape; this pins that the OLD GC path
+    # still works and is not disturbed by the new download-stage layout
+    # (TASK-1697's _gc_download_staging) existing alongside it.
     orphan_dir = core.staging_path / "managed" / "orphan-model" / "rev1" / "int8"
     orphan_dir.mkdir(parents=True)
     (orphan_dir / "model.bin").write_bytes(b"abandoned")
 
     report = core.reconcile()
 
-    # Only the orphan is named as removed; the survivor's own (unrecognized
-    # top-level "download-*") stage entry is left alone entirely -- see
-    # service.py's _gc_staging docstring.
+    # Only the orphan is named as removed; the survivor's own download-stage
+    # entry IS now recognized by _gc_download_staging (TASK-1697), but that
+    # GC only ever reclaims a stage whose reference is already installed --
+    # this survivor genuinely isn't, so it is left alone entirely.
     assert report.staging_removed == ("managed/orphan-model/rev1/int8",)
     assert not orphan_dir.exists()
 

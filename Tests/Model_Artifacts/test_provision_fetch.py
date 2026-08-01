@@ -15,10 +15,10 @@ import errno
 import hashlib
 import json
 import threading
-from urllib.parse import urlparse
 
 import pytest
 
+from Tests.Model_Artifacts.acquisition_test_helpers import _trusted, grant_consent
 from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 from Tests.Model_Artifacts.test_acquisition_types import DictCatalog, make_descriptor
 from tldw_chatbook.Model_Artifacts import (
@@ -28,11 +28,9 @@ from tldw_chatbook.Model_Artifacts import (
     ArtifactRef,
     ArtifactRole,
     ProvenanceClass,
-    closure_fingerprint,
 )
 from tldw_chatbook.Model_Artifacts import fetch as fetch_module
 from tldw_chatbook.Model_Artifacts.acquisition import (
-    AcquisitionConsent,
     AcquisitionProgress,
     ArtifactAcquisitionService,
     CatalogError,
@@ -48,13 +46,6 @@ from tldw_chatbook.Model_Artifacts.service import (
     ModelArtifactService,
 )
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
-
-
-def _trusted(srv: FixtureArtifactServer) -> frozenset:
-    """Trusted-origins set for a fixture server (see test_stream_fetch.py's
-    identical helper for why this is the bare hostname, not a URL)."""
-
-    return frozenset({urlparse(srv.url("/")).hostname})
 
 
 def _make_two_file_descriptor(source_url: str) -> ArtifactDescriptor:
@@ -571,7 +562,7 @@ async def test_provision_cancel_mid_fetch_releases_lease_and_preserves_prior_act
             ref=new_ref, files_body=body, source_url=srv.url("/model.bin")
         )
         catalog = DictCatalog({new_ref: new_desc})
-        consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(new_ref, ()))
+        consent = grant_consent(svc, new_ref, catalog)
 
         progress_seen = asyncio.Event()
 
