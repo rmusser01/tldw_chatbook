@@ -248,6 +248,70 @@ def test_active_managed_dir_ignores_non_parakeet_active_artifact(tmp_path: Path)
     assert artifact.active_managed_parakeet_v2_dir(service=core) is None
 
 
+def test_active_managed_dir_rejects_same_id_different_revision(tmp_path: Path) -> None:
+    """PR-1167 review (Finding 1): matching on ``artifact_id`` alone would
+    wrongly return an active ``parakeet-v2`` artifact pinned to a
+    DIFFERENT revision/variant than the one this adapter's descriptor
+    declares -- latent today (only one descriptor exists), but a real
+    misresolution the instant a second revision/variant is ever installed
+    and activated, which is exactly what the managed store supports. The
+    resolver must match the FULL ``ArtifactRef`` and fall through (return
+    ``None``, letting the caller continue to its next resolution step) for
+    anything else.
+    """
+
+    from tldw_chatbook.Model_Artifacts.service import (
+        ArtifactDescriptor,
+        ArtifactFile,
+        ArtifactFormat,
+        ArtifactRef,
+        ArtifactRole,
+        ProvenanceClass,
+    )
+
+    core = ModelArtifactService(tmp_path / "root")
+    # Same artifact_id ("parakeet-v2") as artifact.parakeet_v2_reference(),
+    # but a different revision -- a distinct, real artifact once the store
+    # holds more than one.
+    other_revision_ref = ArtifactRef(
+        artifact.PARAKEET_V2_ARTIFACT_ID, "a" * 40, artifact.PARAKEET_V2_VARIANT
+    )
+    assert other_revision_ref != artifact.parakeet_v2_reference()
+    payload = b"different-revision-bytes"
+    descriptor = ArtifactDescriptor(
+        reference=other_revision_ref,
+        model_id="test/model",
+        role=ArtifactRole.ROOT,
+        format=ArtifactFormat.ONNX,
+        consumer="test",
+        model_family="test-family",
+        upstream_repository="test/repo",
+        upstream_revision="main",
+        source_url="https://example.test/model",
+        precision=other_revision_ref.variant,
+        license_id="test-license",
+        license_url="https://example.test/license",
+        usage_notice="Test model",
+        runtime_name="test-runtime",
+        runtime_version_constraint="==1.0.0",
+        supported_os=("linux",),
+        supported_architectures=("x86-64",),
+        provenance=(ProvenanceClass.CHATBOOK_CURATED,),
+        files=(ArtifactFile("config.json", len(payload), hashlib.sha256(payload).hexdigest()),),
+        expected_installed_bytes=len(payload),
+        dependencies=(),
+    )
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "config.json").write_bytes(payload)
+    core.install(descriptor, source_dir)
+    core.activate(other_revision_ref)
+
+    # The resolver must NOT return the different-revision artifact, even
+    # though it shares artifact_id and is genuinely active.
+    assert artifact.active_managed_parakeet_v2_dir(service=core) is None
+
+
 # ---------------------------------------------------------------------------
 # End-to-end managed install against the localhost fixture server.
 # ---------------------------------------------------------------------------

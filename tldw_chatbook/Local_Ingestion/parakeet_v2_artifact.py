@@ -81,7 +81,12 @@ _PARAKEET_V2_USAGE_NOTICE = (
 
 
 def parakeet_v2_reference() -> ArtifactRef:
-    """Return the exact immutable reference for the managed Parakeet v2 artifact."""
+    """Return the exact immutable reference for the managed Parakeet v2 artifact.
+
+    Returns:
+        The ``ArtifactRef`` identifying the curated Parakeet v2 INT8 bundle
+        (artifact id, pinned revision, and variant).
+    """
 
     return ArtifactRef(
         PARAKEET_V2_ARTIFACT_ID,
@@ -139,6 +144,10 @@ def parakeet_v2_descriptor() -> ArtifactDescriptor:
     only what is CLAIMED about where that digest originally came from.
     ``ArtifactDescriptor`` itself forbids combining ``INTEGRITY_VERIFIED``
     with ``LOCAL_INTEGRITY_RECORDED``; this pair does not hit that.
+
+    Returns:
+        The validated, immutable descriptor for the curated Parakeet v2
+        INT8 bundle.
     """
 
     files = _artifact_files()
@@ -180,6 +189,10 @@ def parakeet_v2_source_map() -> "ArtifactSourceMap":
     the shared downloader's multi-file fetch never has to guess a per-file
     URL. See ``ArtifactSourceMap``'s own docstring (TASK-1695) for why this
     lives outside the frozen descriptor schema.
+
+    Returns:
+        A single-entry ``{parakeet_v2_reference(): {filename: url}}`` map
+        covering every file the descriptor declares.
     """
 
     ref = parakeet_v2_reference()
@@ -227,6 +240,9 @@ def managed_model_artifact_root() -> Path:
     artifact this application acquires shares this one
     ``ModelArtifactService`` root, distinguished internally by artifact id,
     revision, and variant.
+
+    Returns:
+        The absolute path to the shared managed-artifact store root.
     """
 
     from tldw_chatbook.Utils.paths import get_user_data_dir
@@ -235,7 +251,11 @@ def managed_model_artifact_root() -> Path:
 
 
 def parakeet_v2_managed_service() -> ModelArtifactService:
-    """Construct a ``ModelArtifactService`` over the shared managed store root."""
+    """Construct a ``ModelArtifactService`` over the shared managed store root.
+
+    Returns:
+        A ``ModelArtifactService`` rooted at ``managed_model_artifact_root()``.
+    """
 
     return ModelArtifactService(managed_model_artifact_root())
 
@@ -266,6 +286,7 @@ def active_managed_parakeet_v2_dir(
         has a further fallback (the verified legacy bundle).
     """
 
+    expected_ref = parakeet_v2_reference()
     try:
         core = service if service is not None else parakeet_v2_managed_service()
         for item in core.list_installed():
@@ -273,7 +294,16 @@ def active_managed_parakeet_v2_dir(
                 item.descriptor is not None
                 and item.ready
                 and item.active
-                and item.descriptor.reference.artifact_id == PARAKEET_V2_ARTIFACT_ID
+                # PR-1167 review (Finding 1): match the FULL reference
+                # (artifact_id, revision, AND variant), not just
+                # artifact_id. An active artifact sharing this id but a
+                # different revision/variant is a real, distinct artifact
+                # once a second one exists in the store -- matching on id
+                # alone would return it anyway, and the loaders downstream
+                # expect exactly the pinned INT8 revision this adapter
+                # declares, not "whichever parakeet-v2 happens to be
+                # active."
+                and item.descriptor.reference == expected_ref
             ):
                 return item.path
     except (ArtifactError, TypeError, ValueError, OSError):

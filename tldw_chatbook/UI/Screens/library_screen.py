@@ -930,6 +930,76 @@ class ParakeetV2InstallModal(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class _ParakeetV2NoPendingReportError(RuntimeError):
+    """Raised when confirm fires with no preflight report to grant.
+
+    Never carries anything but this module's own fixed, already-safe
+    message -- see ``_parakeet_v2_failure_message``, which is the only
+    place that re-reads it via ``str()``.
+    """
+
+
+def _parakeet_v2_failure_message(exc: BaseException) -> str:
+    """Map a Parakeet v2 preflight/provision failure to a stable, user-safe message.
+
+    PR-1167 review (Finding 2): the raw exception text is never shown to
+    the user -- ``PreflightNotGrantableError`` embeds the full
+    ``gating_errors`` tuple in its own message, and other acquisition
+    failures may carry internal state that has no business reaching a
+    notification. The full exception (type, message, traceback) is still
+    always logged at the two call sites via ``logger.opt(exception=True)``,
+    so nothing is lost for debugging -- only what reaches ``notify()``
+    changes.
+
+    Args:
+        exc: The exception raised by ``run_parakeet_v2_preflight()`` or
+            ``run_parakeet_v2_provision()`` (or, for the "confirm fired
+            with nothing pending" case, this module's own
+            ``_ParakeetV2NoPendingReportError``).
+
+    Returns:
+        A stable, sanitized message safe to pass to ``notify()``.
+    """
+    if isinstance(exc, _ParakeetV2NoPendingReportError):
+        # Authored entirely by this module, with no injected content --
+        # safe to surface verbatim, unlike every other branch below.
+        return str(exc)
+
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        AcquisitionBusyError,
+        CatalogError,
+        ConsentMismatchError,
+        GatedRepositoryError,
+        InsufficientSpaceError,
+        PreflightNotGrantableError,
+        TransferError,
+    )
+
+    if isinstance(exc, InsufficientSpaceError):
+        return "Not enough free disk space for this install."
+    if isinstance(exc, GatedRepositoryError):
+        return (
+            "This model's repository requires a credential. Configure "
+            "HUGGINGFACE_API_KEY (or HF_TOKEN) and retry."
+        )
+    if isinstance(exc, AcquisitionBusyError):
+        return "Another Parakeet v2 install is already in progress. Try again shortly."
+    if isinstance(exc, ConsentMismatchError):
+        return "The install plan changed since it was shown. Retry Install to see the current plan."
+    if isinstance(exc, PreflightNotGrantableError):
+        return (
+            "This install plan can no longer proceed (insufficient space or "
+            "a gating error). Retry Install to see the current plan."
+        )
+    if isinstance(exc, CatalogError):
+        return "The Parakeet v2 download source is misconfigured."
+    if isinstance(exc, TransferError):
+        if exc.retryable:
+            return "The download was interrupted. Retry Install to resume."
+        return "The download failed and cannot be retried automatically."
+    return "Parakeet v2 install failed. See the application log for details."
+
+
 def _affected_counts(preflight: PreflightResult) -> dict[str, int]:
     """Map each tooling feature to the number of files that depend on it."""
     counts: dict[str, int] = {}
@@ -12309,7 +12379,7 @@ class LibraryScreen(BaseAppScreen):
             self.app.call_from_thread(
                 self._apply_parakeet_v2_preflight_result,
                 None,
-                str(exc),
+                _parakeet_v2_failure_message(exc),
             )
             return
         self.app.call_from_thread(
@@ -12364,7 +12434,7 @@ class LibraryScreen(BaseAppScreen):
         report = self._parakeet_v2_pending_report
         try:
             if report is None:
-                raise RuntimeError(
+                raise _ParakeetV2NoPendingReportError(
                     "No Parakeet v2 install plan is available; retry Install."
                 )
             installed = asyncio.run(  # policy-exception: worker-thread loop
@@ -12375,7 +12445,7 @@ class LibraryScreen(BaseAppScreen):
             self.app.call_from_thread(
                 self._apply_parakeet_v2_install_result,
                 None,
-                str(exc),
+                _parakeet_v2_failure_message(exc),
             )
             return
         self.app.call_from_thread(

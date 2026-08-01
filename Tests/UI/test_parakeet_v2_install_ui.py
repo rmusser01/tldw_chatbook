@@ -18,10 +18,22 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
 from tldw_chatbook.Model_Artifacts import ArtifactRef
-from tldw_chatbook.Model_Artifacts.acquisition import ArtifactPreflightEntry, PreflightReport
+from tldw_chatbook.Model_Artifacts.acquisition import (
+    AcquisitionBusyError,
+    ArtifactPreflightEntry,
+    CatalogError,
+    ConsentMismatchError,
+    GatedRepositoryError,
+    InsufficientSpaceError,
+    PreflightNotGrantableError,
+    PreflightReport,
+    TransferError,
+)
 from tldw_chatbook.UI.Screens.library_screen import (
     LibraryScreen,
     ParakeetV2InstallModal,
+    _parakeet_v2_failure_message,
+    _ParakeetV2NoPendingReportError,
 )
 
 
@@ -282,6 +294,125 @@ def test_declining_confirmation_does_not_start_installer_worker() -> None:
     screen._confirm_parakeet_v2_install(False)
 
     screen._run_parakeet_v2_install.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# PR-1167 review (Finding 2): failures are mapped to stable, user-safe
+# messages -- never the raw exception text, which for some of these types
+# embeds internal state (e.g. PreflightNotGrantableError's gating_errors
+# tuple).
+# ---------------------------------------------------------------------------
+
+_RAW_MARKER = "RAW-EXCEPTION-TEXT-MUST-NOT-REACH-NOTIFY-4f2c9a"
+
+
+def test_failure_message_maps_insufficient_space() -> None:
+    exc = InsufficientSpaceError(f"{_RAW_MARKER}: need 900000000 but have 100")
+    message = _parakeet_v2_failure_message(exc)
+    assert message == "Not enough free disk space for this install."
+    assert _RAW_MARKER not in message
+
+
+def test_failure_message_maps_gated_repository() -> None:
+    exc = GatedRepositoryError(f"{_RAW_MARKER}: repo requires auth")
+    message = _parakeet_v2_failure_message(exc)
+    assert "requires a credential" in message
+    assert _RAW_MARKER not in message
+
+
+def test_failure_message_maps_acquisition_busy() -> None:
+    exc = AcquisitionBusyError(f"{_RAW_MARKER}: session lease held")
+    message = _parakeet_v2_failure_message(exc)
+    assert "already in progress" in message
+    assert _RAW_MARKER not in message
+
+
+def test_failure_message_maps_consent_mismatch() -> None:
+    exc = ConsentMismatchError(f"{_RAW_MARKER}: fingerprint changed")
+    message = _parakeet_v2_failure_message(exc)
+    assert "plan changed" in message
+    assert _RAW_MARKER not in message
+
+
+def test_failure_message_maps_preflight_not_grantable_without_leaking_gating_tuple() -> None:
+    # The real shape PreflightReport.grant() raises: embeds the full
+    # gating_errors tuple (and a HuggingFace credential-env hint) in its
+    # own message -- exactly the internal-state leak Finding 2 flagged.
+    exc = PreflightNotGrantableError(
+        f"preflight not grantable: gating_errors=('{_RAW_MARKER}',), sufficient_space=False"
+    )
+    message = _parakeet_v2_failure_message(exc)
+    assert "can no longer proceed" in message
+    assert _RAW_MARKER not in message
+
+
+def test_failure_message_maps_catalog_error() -> None:
+    exc = CatalogError(f"{_RAW_MARKER}: unknown artifact")
+    message = _parakeet_v2_failure_message(exc)
+    assert "misconfigured" in message
+    assert _RAW_MARKER not in message
+
+
+def test_failure_message_maps_retryable_transfer_error() -> None:
+    exc = TransferError(f"{_RAW_MARKER}: connection reset", retryable=True)
+    message = _parakeet_v2_failure_message(exc)
+    assert "interrupted" in message and "Retry" in message
+    assert _RAW_MARKER not in message
+
+
+def test_failure_message_maps_non_retryable_transfer_error() -> None:
+    exc = TransferError(f"{_RAW_MARKER}: oversized body", retryable=False)
+    message = _parakeet_v2_failure_message(exc)
+    assert "cannot be retried automatically" in message
+    assert _RAW_MARKER not in message
+
+
+def test_failure_message_maps_no_pending_report_verbatim() -> None:
+    # The one case that's safe to show verbatim: authored entirely by this
+    # module, with no injected content.
+    exc = _ParakeetV2NoPendingReportError(
+        "No Parakeet v2 install plan is available; retry Install."
+    )
+    assert _parakeet_v2_failure_message(exc) == str(exc)
+
+
+def test_failure_message_falls_back_for_unknown_exception_types() -> None:
+    exc = RuntimeError(f"{_RAW_MARKER}: something unexpected")
+    message = _parakeet_v2_failure_message(exc)
+    assert message == "Parakeet v2 install failed. See the application log for details."
+    assert _RAW_MARKER not in message
+
+
+def test_preflight_result_notify_text_uses_mapped_message_not_raw_exception() -> None:
+    """End-to-end through the notify composition: the same mapped message
+    ``_parakeet_v2_failure_message`` returns is what ``notify()`` actually
+    receives, with no raw exception text anywhere in it.
+    """
+    mapped = _parakeet_v2_failure_message(InsufficientSpaceError(_RAW_MARKER))
+    screen = object.__new__(LibraryScreen)
+    screen._parakeet_v2_install_worker = MagicMock()
+    screen.app_instance = MagicMock()
+
+    screen._apply_parakeet_v2_preflight_result(None, mapped)
+
+    notify_text = screen.app_instance.notify.call_args[0][0]
+    assert mapped in notify_text
+    assert _RAW_MARKER not in notify_text
+
+
+def test_install_result_notify_text_uses_mapped_message_not_raw_exception() -> None:
+    mapped = _parakeet_v2_failure_message(GatedRepositoryError(_RAW_MARKER))
+    screen = object.__new__(LibraryScreen)
+    screen._library_ingest_form = LibraryIngestFormState()
+    screen._parakeet_v2_install_worker = MagicMock()
+    screen.app_instance = MagicMock()
+    screen.refresh = MagicMock()
+
+    screen._apply_parakeet_v2_install_result(None, mapped)
+
+    notify_text = screen.app_instance.notify.call_args[0][0]
+    assert mapped in notify_text
+    assert _RAW_MARKER not in notify_text
 
 
 # ---------------------------------------------------------------------------
