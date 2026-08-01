@@ -4,6 +4,7 @@
 # Imports
 #
 # Standard Library
+import importlib
 import os
 import time
 from typing import Dict, Literal
@@ -15,6 +16,39 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 #######################################################################################################################
 #
 # Functions:
+
+
+def warm_up_image_protocol() -> bool:
+    """Resolve textual_image's rendering protocol while the terminal is free.
+
+    task-1650: ``textual_image`` chooses its renderer exactly once, at
+    import time, by writing an escape query and reading the terminal's
+    reply (see ``textual_image/renderable/__init__.py``). Every app-side
+    import is lazy -- nested inside functions that run in the LIVE app --
+    and by then Textual holds the terminal in raw mode and owns stdin, so
+    the query never gets an answer and selection silently degrades to
+    half-cell rendering. The result is pixelated avatars and inline images
+    in Kitty/iTerm2 with no exception and no log line. textual_image warns
+    about exactly this in its own source ("querying the terminal isn't
+    possible anymore once Textual is started").
+
+    Call this ONCE from each entry point before ``App.run()``. Importing
+    the top-level ``textual_image`` package is not sufficient: the choice
+    lives in the ``renderable`` submodule, which ``textual_image.widget``
+    pulls in.
+
+    Returns:
+        True if the protocol-selecting import completed; False when the
+        optional dependency is absent or its terminal query failed (both
+        leave the app on its non-graphics fallbacks, which is correct).
+    """
+    try:
+        importlib.import_module("textual_image.widget")
+    except Exception:
+        # Optional dependency, or a terminal query that raised -- callers
+        # fall back to mosaic/pixels rendering, which always works.
+        return False
+    return True
 
 
 def detect_terminal_capabilities() -> Dict[str, any]:
