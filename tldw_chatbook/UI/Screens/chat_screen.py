@@ -6174,18 +6174,25 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _character_avatar_available_cols(self) -> int:
-        """Usable width, in columns, of the rail's avatar holder.
+        """Usable width, in columns, available to the rail avatar.
 
-        Returns the holder's settled content width when the DOM is laid
-        out, else 0 so `character_avatar_box` falls back to the historical
-        minimum (widget builds can run a tick before layout settles).
+        Measures the rail SECTION BODY, never the avatar holder: the
+        holder is ``width: auto`` (task-1661, so it hugs the portrait
+        instead of claiming the whole section), which makes its width a
+        function of the child we are about to size -- measuring it fed the
+        old child's width back in and pinned the box at the minimum
+        forever. ``content_size`` already excludes padding and border.
+
+        Returns:
+            The section body's content width in columns, or 0 before
+            layout settles so `character_avatar_box` uses its fallback.
         """
         try:
-            holder = self.query_one("#console-character-avatar", Container)
+            body = self.query_one("#console-rail-section-body-character")
         except Exception:
             return 0
         try:
-            return int(holder.content_size.width)
+            return int(body.content_size.width)
         except Exception:
             return 0
 

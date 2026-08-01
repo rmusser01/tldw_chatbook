@@ -49,9 +49,18 @@ The bust framing the user sees is the character card's own artwork.
 `character_avatar_box(available_cols)` clamps between the historical 16x8
 minimum and 44x22, deriving lines as half the columns (terminal cells are
 ~2x taller than wide, so this reads near-square). Width comes from
-`_character_avatar_available_cols()`, which reads the holder's settled
-`content_size` and returns 0 before layout settles, falling back to the
-old constants. Both the graphics widget and the mosaic fallback use the
+`_character_avatar_available_cols()`, which measures the rail SECTION
+BODY and returns 0 before layout settles, falling back to the old
+constants.
+
+**Second-pass correction (user re-test):** the first attempt measured the
+HOLDER, which had just been made `width: auto` -- circular, since the
+holder hugs the very child being sized. Harness probe: holder reported 13
+cols (the previous child) vs 27 for the section body, so the box clamped
+to the 16-col minimum and nothing visibly changed. A regression test now
+pins that the measurement comes from the section body and differs from
+the holder's width. Verified after the fix: 27 cols -> box (27, 14),
+mounted image 22x14 cells; a 45-col rail -> (44, 22). Both the graphics widget and the mosaic fallback use the
 same box, and the mosaic switched `fit="cover"` -> `"contain"` so the two
 paths frame identically (user chose whole-image over crop-to-fill).
 

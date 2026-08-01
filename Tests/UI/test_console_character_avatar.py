@@ -653,3 +653,37 @@ async def test_avatar_holder_hugs_its_content():
     holder = src.split("avatar_holder = ClickableAvatarBox", 1)[1][:900]
     assert 'avatar_holder.styles.width = "auto"' in holder
     assert 'avatar_holder.styles.height = "auto"' in holder
+
+
+
+@pytest.mark.asyncio
+async def test_available_cols_measures_the_section_not_the_holder(
+    console_screen_with_db,
+):
+    """Width must come from the rail section body, never the holder.
+
+    task-1661 regression: the holder is ``width: auto`` so it hugs the
+    portrait; measuring IT to size the portrait is circular -- it fed the
+    previous child's width back in (13 cols observed) and pinned the box
+    at the 16-column minimum no matter how wide the rail was.
+    """
+    app, screen, db = console_screen_with_db
+    from PIL import Image as PILImage
+    from io import BytesIO
+
+    buf = BytesIO()
+    PILImage.new("RGB", (400, 500), (200, 10, 10)).save(buf, format="PNG")
+    cid = db.add_character_card({"name": "Ada", "image": buf.getvalue()})
+    _set_active_console_character(screen, cid, "Ada")
+    await screen._refresh_active_character_avatar_if_scope_changed()
+
+    body = screen.query_one("#console-rail-section-body-character")
+    holder = screen.query_one("#console-character-avatar")
+    measured = screen._character_avatar_available_cols()
+
+    assert measured == body.content_size.width
+    assert holder.content_size.width < body.content_size.width, (
+        "holder should hug its content, so this test proves the two differ"
+    )
+    assert measured != holder.content_size.width
+
