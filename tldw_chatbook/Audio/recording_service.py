@@ -12,6 +12,7 @@ from collections import deque
 from types import SimpleNamespace
 from typing import Optional, Callable, Deque, List, Dict, Any
 from contextlib import contextmanager
+
 from loguru import logger
 
 # Try to import numpy as optional dependency for audio functionality
