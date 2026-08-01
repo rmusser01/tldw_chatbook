@@ -94,6 +94,7 @@ from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
     load_model_catalog_settings,
 )
+from ...TTS.adapter_types import TTSNativeCapabilityObservation
 from ...Utils.input_validation import (
     provider_api_key_validation_error,
     sanitize_string,
@@ -11162,6 +11163,33 @@ class SettingsScreen(BaseAppScreen):
         """
         self.mutate_reactive(SettingsScreen.active_category)
 
+    def _audio_cpp_cached_settings_observation(
+        self,
+    ) -> tuple[TTSNativeCapabilityObservation | None, int | None]:
+        """Read existing service state without initializing or contacting it."""
+        service = getattr(self.app_instance, "tts_service", None)
+        observation_reader = getattr(
+            service,
+            "latest_native_capability_observation",
+            None,
+        )
+        revision_reader = getattr(service, "configuration_revision", None)
+        if not callable(observation_reader) or not callable(revision_reader):
+            return None, None
+        try:
+            observation = observation_reader("audio_cpp")
+            revision = revision_reader("audio_cpp")
+        except (KeyError, RuntimeError, TypeError, ValueError):
+            return None, None
+        if (
+            observation is not None
+            and type(observation) is not TTSNativeCapabilityObservation
+        ):
+            observation = None
+        if type(revision) is not int or revision < 0:
+            revision = None
+        return observation, revision
+
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.OVERVIEW:
@@ -11169,6 +11197,10 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
             yield from self._render_provider_detail()
         elif category is SettingsCategoryId.SPEECH_TTS:
+            (
+                audio_cpp_observation,
+                audio_cpp_configuration_revision,
+            ) = self._audio_cpp_cached_settings_observation()
             try:
                 app_config = get_runtime_config_snapshot().values
                 speech_tts_state = load_global_speech_tts_state(
@@ -11180,6 +11212,8 @@ class SettingsScreen(BaseAppScreen):
                 state=self._speech_tts_draft_state or speech_tts_state,
                 original_state=self._speech_tts_original_state,
                 configure_provider=self._speech_tts_configure_provider,
+                audio_cpp_observation=audio_cpp_observation,
+                audio_cpp_configuration_revision=audio_cpp_configuration_revision,
                 id="settings-speech-tts-panel",
             )
         elif category is SettingsCategoryId.CONSOLE_BEHAVIOR:

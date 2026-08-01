@@ -30,7 +30,7 @@ from typing import Any
 
 from loguru import logger
 from rich.text import Text
-from textual import on, work
+from textual import work
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Select, Static, Switch, TextArea
 
@@ -41,6 +41,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSProviderReconfiguringError,
     TTSRegistryClosedError,
+    TTSVoiceDiscoveryResult,
 )
 from tldw_chatbook.TTS.legacy_catalogs import (
     LEGACY_DEFAULT_MODELS,
@@ -326,11 +327,29 @@ class SpeechCatalogMixin:
             request_generation=request_generation,
         )
         try:
-            voices = await service.get_voices(
-                provider_id,
-                model_id,
-                refresh=refresh,
-            )
+            observe_voices = getattr(service, "observe_voices", None)
+            if provider_id == AUDIO_CPP_PROVIDER_ID and callable(observe_voices):
+                observation = await observe_voices(
+                    provider_id,
+                    model_id,
+                    refresh=refresh,
+                )
+                if (
+                    type(observation) is not TTSVoiceDiscoveryResult
+                    or observation.provider_id != provider_id
+                    or observation.model_id != model_id
+                    or observation.catalog_revision != catalog_revision
+                ):
+                    raise ValueError(
+                        "The selected provider returned incompatible voice metadata"
+                    )
+                voices = observation.voices if observation.state == "complete" else ()
+            else:
+                voices = await service.get_voices(
+                    provider_id,
+                    model_id,
+                    refresh=refresh,
+                )
         except asyncio.CancelledError:
             raise
         except Exception as error:

@@ -13,11 +13,14 @@ import unicodedata
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
+from ipaddress import ip_address
 from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlsplit
 
+from tldw_chatbook.TTS.adapter_types import TTSNativeCapabilityObservation
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.Utils.input_validation import (
@@ -226,6 +229,40 @@ class CredentialIntent(StrEnum):
     SET = "set"
     REPLACE = "replace"
     CLEAR = "clear"
+
+
+class AudioCppExactChoiceState(StrEnum):
+    """Truthful status for one exact audio.cpp selector axis."""
+
+    NOT_OBSERVED = "Not observed"
+    FRESH = "Fresh"
+    STALE = "Stale"
+    UNVERIFIED = "Unverified"
+    MISSING = "Missing"
+
+
+@dataclass(frozen=True, slots=True)
+class AudioCppAxisChoices:
+    """Safe exact choices and observation state for one selector axis."""
+
+    options: tuple[tuple[str, str], ...]
+    state: AudioCppExactChoiceState
+
+    @property
+    def exact_allowed(self) -> bool:
+        """Return whether the Exact policy can be represented safely."""
+        return bool(self.options)
+
+
+@dataclass(frozen=True, slots=True)
+class AudioCppGlobalChoices:
+    """Read-only projection of the latest accepted audio.cpp observation."""
+
+    model: AudioCppAxisChoices
+    voice: AudioCppAxisChoices
+    configuration_revision: int | None
+    catalog_revision: int | None
+    observed_at: datetime | None
 
 
 @dataclass
@@ -626,6 +663,171 @@ def load_global_speech_tts_state(
     )
 
 
+def audio_cpp_transport_warning(value: object) -> str | None:
+    """Return a fixed warning for a valid non-loopback plain-HTTP origin.
+
+    Invalid drafts are left to field validation, and the submitted origin is
+    never included in the warning text.
+    """
+    try:
+        canonical = AudioCppConfig.from_mapping({"base_url": value}).base_url
+        parsed = urlsplit(canonical)
+    except (TypeError, UnicodeError, ValueError):
+        return None
+    if parsed.scheme != "http" or parsed.hostname is None:
+        return None
+    hostname = parsed.hostname.rstrip(".").lower()
+    local = hostname == "localhost" or hostname.endswith(".localhost")
+    if not local:
+        try:
+            local = ip_address(hostname).is_loopback
+        except ValueError:
+            pass
+    if local:
+        return None
+    return (
+        "Warning: this non-loopback HTTP server is not transport-encrypted; "
+        "submitted text and returned audio may be visible in transit. Use HTTPS "
+        "when available."
+    )
+
+
+def _pinned_option(identifier: str, state: AudioCppExactChoiceState) -> tuple[str, str]:
+    suffix = (
+        "Missing" if state is AudioCppExactChoiceState.MISSING else "Unverified"
+    )
+    return (f"{identifier} ({suffix})", identifier)
+
+
+def _append_pinned_choice(
+    options: tuple[tuple[str, str], ...],
+    identifier: str | None,
+    state: AudioCppExactChoiceState,
+) -> tuple[tuple[str, str], ...]:
+    if not identifier or any(value == identifier for _label, value in options):
+        return options
+    return (*options, _pinned_option(identifier, state))
+
+
+def project_audio_cpp_global_choices(
+    defaults: GlobalSpeechTTSDefaults,
+    *,
+    observation: TTSNativeCapabilityObservation | None,
+    current_configuration_revision: int | None,
+) -> AudioCppGlobalChoices:
+    """Project cached audio.cpp choices without performing provider work."""
+    pinned_model = (
+        defaults.model_id
+        if defaults.model_mode == "exact" and isinstance(defaults.model_id, str)
+        else None
+    )
+    pinned_voice = (
+        defaults.voice_id
+        if defaults.voice_mode == "exact" and isinstance(defaults.voice_id, str)
+        else None
+    )
+    if observation is None or observation.snapshot.catalog is None:
+        model_state = (
+            AudioCppExactChoiceState.UNVERIFIED
+            if pinned_model
+            else AudioCppExactChoiceState.NOT_OBSERVED
+        )
+        voice_state = (
+            AudioCppExactChoiceState.UNVERIFIED
+            if pinned_voice
+            else AudioCppExactChoiceState.NOT_OBSERVED
+        )
+        model_options = _append_pinned_choice((), pinned_model, model_state)
+        voice_options = _append_pinned_choice((), pinned_voice, voice_state)
+        return AudioCppGlobalChoices(
+            model=AudioCppAxisChoices(model_options, model_state),
+            voice=AudioCppAxisChoices(voice_options, voice_state),
+            configuration_revision=(
+                observation.snapshot.configuration_revision if observation else None
+            ),
+            catalog_revision=None,
+            observed_at=observation.observed_at if observation else None,
+        )
+
+    snapshot = observation.snapshot
+    catalog = snapshot.catalog
+    same_configuration = (
+        current_configuration_revision is not None
+        and snapshot.configuration_revision == current_configuration_revision
+    )
+    fresh = same_configuration and catalog.health.fresh
+    model_options = tuple(
+        (model.display_name or model.model_id, model.model_id)
+        for model in catalog.models
+    )
+
+    if not fresh:
+        state = AudioCppExactChoiceState.STALE
+        model_options = _append_pinned_choice(model_options, pinned_model, state)
+        voice_options: tuple[tuple[str, str], ...] = ()
+        result = snapshot.voice_results.get(pinned_model) if pinned_model else None
+        if result is not None and result.state == "complete":
+            voice_options = tuple((voice, voice) for voice in result.voices)
+        voice_options = _append_pinned_choice(voice_options, pinned_voice, state)
+        return AudioCppGlobalChoices(
+            model=AudioCppAxisChoices(model_options, state),
+            voice=AudioCppAxisChoices(voice_options, state),
+            configuration_revision=snapshot.configuration_revision,
+            catalog_revision=catalog.revision,
+            observed_at=observation.observed_at,
+        )
+
+    model_ids = {value for _label, value in model_options}
+    if pinned_model and pinned_model not in model_ids:
+        model_state = (
+            AudioCppExactChoiceState.UNVERIFIED
+            if catalog.approximate
+            else AudioCppExactChoiceState.MISSING
+        )
+        model_options = _append_pinned_choice(
+            model_options,
+            pinned_model,
+            model_state,
+        )
+    else:
+        model_state = AudioCppExactChoiceState.FRESH
+
+    voice_options: tuple[tuple[str, str], ...] = ()
+    voice_state = AudioCppExactChoiceState.UNVERIFIED
+    selected_model_is_known = pinned_model is not None and pinned_model in model_ids
+    result = snapshot.voice_results.get(pinned_model) if selected_model_is_known else None
+    if (
+        result is not None
+        and result.state == "complete"
+        and result.catalog_revision == catalog.revision
+    ):
+        voice_options = tuple((voice, voice) for voice in result.voices)
+        voice_ids = {value for _label, value in voice_options}
+        if pinned_voice and pinned_voice not in voice_ids:
+            voice_state = AudioCppExactChoiceState.MISSING
+            voice_options = _append_pinned_choice(
+                voice_options,
+                pinned_voice,
+                voice_state,
+            )
+        else:
+            voice_state = AudioCppExactChoiceState.FRESH
+    else:
+        voice_options = _append_pinned_choice(
+            voice_options,
+            pinned_voice,
+            AudioCppExactChoiceState.UNVERIFIED,
+        )
+
+    return AudioCppGlobalChoices(
+        model=AudioCppAxisChoices(model_options, model_state),
+        voice=AudioCppAxisChoices(voice_options, voice_state),
+        configuration_revision=snapshot.configuration_revision,
+        catalog_revision=catalog.revision,
+        observed_at=observation.observed_at,
+    )
+
+
 def _validation_error(provider_id: str, field_id: str, message: str) -> None:
     raise GlobalSpeechTTSValidationError(provider_id, field_id, message)
 
@@ -787,6 +989,13 @@ def _validated_provider_values(
     values: Mapping[str, object],
 ) -> dict[str, object]:
     if provider_id == "audio_cpp":
+        allowed_fields = frozenset(AudioCppConfig().to_mapping())
+        if set(values) - allowed_fields or values.get("mode") != "external":
+            _validation_error(
+                provider_id,
+                "base_url",
+                "Only external audio.cpp server settings are supported.",
+            )
         candidate: dict[str, object] = {
             "mode": "external",
             "base_url": _string(provider_id, "base_url", values.get("base_url")),

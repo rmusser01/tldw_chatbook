@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -16,18 +17,27 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_selector,
 )
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
-from tldw_chatbook.UI.Screens.settings_speech_tts import (
-    BUILT_IN_TTS_PROVIDER_ORDER,
-    CredentialIntent,
-    GLOBAL_TTS_PROVIDER_FIELD_IDS,
-    load_global_speech_tts_state,
-)
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
     STTSSettingsSaveResult,
+)
+from tldw_chatbook.TTS.adapter_types import (
+    ProviderHealth,
+    TTSModelInfo,
+    TTSNativeCapabilityObservation,
+    TTSNativeCapabilitySnapshot,
+    TTSProviderCatalog,
+    TTSVoiceDiscoveryResult,
+)
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
+from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    BUILT_IN_TTS_PROVIDER_ORDER,
+    GLOBAL_TTS_PROVIDER_FIELD_IDS,
+    CredentialIntent,
+    load_global_speech_tts_state,
 )
 from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
@@ -58,16 +68,23 @@ class _PanelHarness(App[None]):
         *,
         configure_provider: str = "audio_cpp",
         state=None,
+        observation: TTSNativeCapabilityObservation | None = None,
+        current_configuration_revision: int | None = None,
     ) -> None:
         super().__init__()
         self.configure_provider = configure_provider
         self.state = state or load_global_speech_tts_state({})
+        self.observation = observation
+        self.current_configuration_revision = current_configuration_revision
         self.events: list[STTSSettingsSaveEvent] = []
+        self.navigation: list[NavigateToScreen] = []
 
     def compose(self) -> ComposeResult:
         yield SpeechTTSSettingsPanel(
             state=self.state,
             configure_provider=self.configure_provider,
+            audio_cpp_observation=self.observation,
+            audio_cpp_configuration_revision=self.current_configuration_revision,
             id="panel",
         )
 
@@ -75,6 +92,77 @@ class _PanelHarness(App[None]):
     def record_save(self, event: STTSSettingsSaveEvent) -> None:
         self.events.append(event)
         event.stop()
+
+    @on(NavigateToScreen)
+    def record_navigation(self, event: NavigateToScreen) -> None:
+        self.navigation.append(event)
+        event.stop()
+
+
+def _audio_cpp_observation() -> TTSNativeCapabilityObservation:
+    catalog = TTSProviderCatalog(
+        provider_id="audio_cpp",
+        revision=7,
+        health=ProviderHealth(state="available", fresh=True),
+        models=(
+            TTSModelInfo(
+                model_id="model-a",
+                display_name="Model A",
+                family="fake",
+                upstream_mode="tts",
+                formats=("wav",),
+                voices=(),
+                supports_speed=False,
+                omit_voice_uses_server_default=True,
+            ),
+            TTSModelInfo(
+                model_id="model-b",
+                display_name="Model B",
+                family="fake",
+                upstream_mode="tts",
+                formats=("wav",),
+                voices=(),
+                supports_speed=False,
+                omit_voice_uses_server_default=True,
+            ),
+        ),
+    )
+    return TTSNativeCapabilityObservation(
+        snapshot=TTSNativeCapabilitySnapshot(
+            provider_id="audio_cpp",
+            configuration_revision=4,
+            state="unverified",
+            catalog=catalog,
+            voice_results={
+                "model-a": TTSVoiceDiscoveryResult(
+                    provider_id="audio_cpp",
+                    model_id="model-a",
+                    catalog_revision=7,
+                    voices=("voice-a", "voice-b"),
+                    state="complete",
+                )
+            },
+        ),
+        observed_at=datetime(2026, 8, 1, 12, 30, tzinfo=timezone.utc),
+    )
+
+
+def _audio_cpp_state(
+    *,
+    model_mode: str = "first_available",
+    model_id: str | None = None,
+    voice_mode: str = "server_default",
+    voice_id: str | None = None,
+) -> object:
+    state = load_global_speech_tts_state({})
+    state.defaults.provider_id = "audio_cpp"
+    state.defaults.model_mode = model_mode
+    state.defaults.model_id = model_id
+    state.defaults.voice_mode = voice_mode
+    state.defaults.voice_id = voice_id
+    state.defaults.response_format = "wav"
+    state.defaults.speed = 1.0
+    return state
 
 
 _BUNDLE = (
@@ -175,6 +263,244 @@ async def test_global_panel_states_scope_and_mounts_only_selected_provider() -> 
         configure = screen.query_one("#settings-speech-configure-provider", Select)
         assert configure.value in BUILT_IN_TTS_PROVIDER_ORDER
         assert screen.query_one(f"#settings-speech-provider-{configure.value}")
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_first_run_offers_only_dynamic_default_policies() -> None:
+    app = _PanelHarness(state=_audio_cpp_state())
+
+    async with app.run_test(size=(150, 60)):
+        model_policy = app.query_one("#settings-speech-model-policy", Select)
+        voice_policy = app.query_one("#settings-speech-voice-policy", Select)
+
+        assert model_policy._legal_values == {"first_available"}
+        assert voice_policy._legal_values == {"server_default"}
+        assert app.query_one("#settings-speech-model-value", Select).disabled is True
+        assert app.query_one("#settings-speech-voice-value", Select).disabled is True
+        status = str(
+            app.query_one("#settings-speech-audio-cpp-choice-status", Static).renderable
+        )
+        assert "Model: Not observed" in status
+        assert "Voice: Not observed" in status
+
+
+@pytest.mark.asyncio
+async def test_first_switch_to_audio_cpp_does_not_pin_another_providers_exact_ids() -> (
+    None
+):
+    state = load_global_speech_tts_state({})
+    assert state.defaults.provider_id == "openai"
+    assert state.defaults.model_mode == "exact"
+    assert state.defaults.voice_mode == "exact"
+    app = _PanelHarness(state=state)
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        app.query_one("#settings-speech-default-provider", Select).value = "audio_cpp"
+        await pilot.pause()
+
+        model_policy = app.query_one("#settings-speech-model-policy", Select)
+        voice_policy = app.query_one("#settings-speech-voice-policy", Select)
+        assert model_policy.value == "first_available"
+        assert model_policy._legal_values == {"first_available"}
+        assert voice_policy.value == "server_default"
+        assert voice_policy._legal_values == {"server_default"}
+        assert app.query_one("#settings-speech-model-value", Select).disabled is True
+        assert app.query_one("#settings-speech-voice-value", Select).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_returning_to_audio_cpp_restores_its_persisted_exact_ids() -> None:
+    app = _PanelHarness(
+        state=_audio_cpp_state(
+            model_mode="exact",
+            model_id="saved-model",
+            voice_mode="exact",
+            voice_id="saved-voice",
+        )
+    )
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        provider = app.query_one("#settings-speech-default-provider", Select)
+        provider.value = "openai"
+        await pilot.pause()
+        app.query_one("#settings-speech-default-provider", Select).value = "audio_cpp"
+        await pilot.pause()
+
+        assert app.query_one("#settings-speech-model-policy", Select).value == "exact"
+        assert app.query_one("#settings-speech-model-value", Select).value == (
+            "saved-model"
+        )
+        assert app.query_one("#settings-speech-voice-policy", Select).value == "exact"
+        assert app.query_one("#settings-speech-voice-value", Select).value == (
+            "saved-voice"
+        )
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_cached_choices_are_revisioned_and_model_scoped() -> None:
+    app = _PanelHarness(
+        state=_audio_cpp_state(
+            model_mode="exact",
+            model_id="model-a",
+            voice_mode="exact",
+            voice_id="voice-a",
+        ),
+        observation=_audio_cpp_observation(),
+        current_configuration_revision=4,
+    )
+
+    async with app.run_test(size=(150, 60)):
+        model = app.query_one("#settings-speech-model-value", Select)
+        voice = app.query_one("#settings-speech-voice-value", Select)
+
+        assert model.value == "model-a"
+        assert {value for _label, value in model._options} >= {
+            "model-a",
+            "model-b",
+        }
+        assert voice.value == "voice-a"
+        assert {value for _label, value in voice._options} >= {
+            "voice-a",
+            "voice-b",
+        }
+        status = str(
+            app.query_one("#settings-speech-audio-cpp-choice-status", Static).renderable
+        )
+        assert "Model: Fresh" in status
+        assert "Voice: Fresh" in status
+        provenance = str(
+            app.query_one(
+                "#settings-speech-audio-cpp-observation-provenance", Static
+            ).renderable
+        )
+        assert "configuration revision 4" in provenance
+        assert "catalog revision 7" in provenance
+        output_format = app.query_one("#settings-speech-output-format", Select)
+        speed = app.query_one("#settings-speech-speed", Input)
+        assert output_format.value == "wav"
+        assert output_format.disabled is True
+        assert speed.value == "1.0"
+        assert speed.disabled is True
+        assert "requires WAV output and speed 1.0" in str(
+            app.query_one("#settings-speech-default-constraints", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_persisted_exact_values_remain_pinned_unverified() -> None:
+    app = _PanelHarness(
+        state=_audio_cpp_state(
+            model_mode="exact",
+            model_id="saved-model",
+            voice_mode="exact",
+            voice_id="saved-voice",
+        )
+    )
+
+    async with app.run_test(size=(150, 60)):
+        assert app.query_one("#settings-speech-model-value", Select).value == (
+            "saved-model"
+        )
+        assert app.query_one("#settings-speech-voice-value", Select).value == (
+            "saved-voice"
+        )
+        status = str(
+            app.query_one("#settings-speech-audio-cpp-choice-status", Static).renderable
+        )
+        assert "Model: Unverified" in status
+        assert "Voice: Unverified" in status
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_stale_observation_is_visibly_distinct() -> None:
+    app = _PanelHarness(
+        state=_audio_cpp_state(
+            model_mode="exact",
+            model_id="model-a",
+            voice_mode="exact",
+            voice_id="voice-a",
+        ),
+        observation=_audio_cpp_observation(),
+        current_configuration_revision=5,
+    )
+
+    async with app.run_test(size=(150, 60)):
+        status = str(
+            app.query_one("#settings-speech-audio-cpp-choice-status", Static).renderable
+        )
+        assert "Model: Stale" in status
+        assert "Voice: Stale" in status
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_authoritative_missing_model_stays_visible() -> None:
+    app = _PanelHarness(
+        state=_audio_cpp_state(
+            model_mode="exact",
+            model_id="missing-model",
+            voice_mode="exact",
+            voice_id="saved-voice",
+        ),
+        observation=_audio_cpp_observation(),
+        current_configuration_revision=4,
+    )
+
+    async with app.run_test(size=(150, 60)):
+        model = app.query_one("#settings-speech-model-value", Select)
+        assert model.value == "missing-model"
+        assert "Missing" in str(model._options[-1][0])
+        status = str(
+            app.query_one("#settings-speech-audio-cpp-choice-status", Static).renderable
+        )
+        assert "Model: Missing" in status
+        assert "Voice: Unverified" in status
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_remote_http_warning_and_dirty_draft_attribution_update() -> (
+    None
+):
+    app = _PanelHarness(state=_audio_cpp_state())
+
+    async with app.run_test(size=(150, 70)) as pilot:
+        base_url = app.query_one("#settings-speech-audio_cpp-base-url", Input)
+        base_url.value = "http://remote.example.test:8080"
+        await pilot.pause()
+
+        warning = str(
+            app.query_one("#settings-speech-audio-cpp-transport-warning", Static).renderable
+        )
+        attribution = str(
+            app.query_one("#settings-speech-audio-cpp-draft-attribution", Static).renderable
+        )
+        assert "not transport-encrypted" in warning
+        assert "submitted text" in warning
+        assert "saved server configuration" in attribution
+        assert "unsaved Server URL draft" in attribution
+
+        base_url.value = "http://127.0.0.1:8080"
+        await pilot.pause()
+        assert not str(
+            app.query_one("#settings-speech-audio-cpp-transport-warning", Static).renderable
+        )
+        assert "unsaved Server URL draft" not in str(
+            app.query_one("#settings-speech-audio-cpp-draft-attribution", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_recovery_opens_speech_lab_playground_without_provider_work() -> (
+    None
+):
+    app = _PanelHarness(state=_audio_cpp_state())
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        app.query_one("#settings-speech-audio-cpp-open-lab", Button).press()
+        await pilot.pause()
+
+    assert len(app.navigation) == 1
+    assert app.navigation[0].screen_name == "stts"
+    assert app.navigation[0].screen_context == {"view": "playground"}
 
 
 @pytest.mark.asyncio
@@ -364,6 +690,70 @@ async def test_normal_panel_actions_do_not_contact_or_initialize_tts(
         await pilot.pause()
 
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_settings_reads_only_existing_cached_audio_cpp_observation(
+    monkeypatch,
+) -> None:
+    class CachedObservationOnlyService:
+        def __init__(self) -> None:
+            self.reads: list[tuple[str, str]] = []
+
+        def latest_native_capability_observation(self, provider_id: str):
+            self.reads.append(("observation", provider_id))
+            return _audio_cpp_observation()
+
+        def configuration_revision(self, provider_id: str) -> int:
+            self.reads.append(("revision", provider_id))
+            return 4
+
+        async def get_catalog(self, *_args, **_kwargs):
+            raise AssertionError("Settings must not discover a catalog")
+
+        async def observe_voices(self, *_args, **_kwargs):
+            raise AssertionError("Settings must not discover voices")
+
+        async def ensure_ready(self, *_args, **_kwargs):
+            raise AssertionError("Settings must not test a provider")
+
+    monkeypatch.setattr(
+        settings_screen_module,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(
+            values={
+                "app_tts": {
+                    "default_provider": "audio_cpp",
+                    "default_model_mode": "exact",
+                    "default_model": "model-a",
+                    "default_voice_mode": "exact",
+                    "default_voice": "voice-a",
+                    "default_format": "wav",
+                    "default_speed": 1.0,
+                }
+            }
+        ),
+    )
+    app = _build_test_app()
+    service = CachedObservationOnlyService()
+    app.tts_service = service
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = await _open_speech_tts(host, pilot)
+
+        assert screen.query_one("#settings-speech-model-value", Select).value == (
+            "model-a"
+        )
+        assert screen.query_one("#settings-speech-voice-value", Select).value == (
+            "voice-a"
+        )
+
+    assert service.reads
+    assert set(service.reads) == {
+        ("observation", "audio_cpp"),
+        ("revision", "audio_cpp"),
+    }
 
 
 @pytest.mark.asyncio

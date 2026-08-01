@@ -6,6 +6,7 @@ import math
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Any, Literal
 from uuid import uuid4
@@ -23,6 +24,7 @@ from tldw_chatbook.TTS.adapter_types import (
     ProgressSink,
     ProviderHealth,
     TTSAudioResponse,
+    TTSNativeCapabilityObservation,
     TTSNativeCapabilitySnapshot,
     TTSOperationError,
     TTSProgress,
@@ -453,6 +455,12 @@ class TTSService:
         self._settings_publication_tasks: set[asyncio.Task[TTSSettingsPublication]] = (
             set()
         )
+        self._native_capability_observations: dict[
+            str,
+            TTSNativeCapabilityObservation,
+        ] = {}
+        self._native_catalog_request_generations: dict[str, int] = {}
+        self._native_voice_request_generations: dict[tuple[str, str], int] = {}
         candidate_preferences = (
             TTSPreferencesSnapshot.from_settings({})
             if preferences_snapshot is None
@@ -603,6 +611,134 @@ class TTSService:
 
     # Native capability snapshot orchestration
 
+    def latest_native_capability_observation(
+        self,
+        provider_id: str,
+    ) -> TTSNativeCapabilityObservation | None:
+        """Return accepted in-memory capability state without provider work."""
+        self._require_native_provider(provider_id)
+        return self._native_capability_observations.get(provider_id)
+
+    def _reserve_native_catalog_request(self, provider_id: str) -> int:
+        generation = self._native_catalog_request_generations.get(provider_id, 0) + 1
+        self._native_catalog_request_generations[provider_id] = generation
+        return generation
+
+    def _native_catalog_request_is_current(
+        self,
+        provider_id: str,
+        generation: int,
+    ) -> bool:
+        return self._native_catalog_request_generations.get(provider_id) == generation
+
+    def _reserve_native_voice_request(self, provider_id: str, model_id: str) -> int:
+        key = (provider_id, model_id)
+        generation = self._native_voice_request_generations.get(key, 0) + 1
+        self._native_voice_request_generations[key] = generation
+        return generation
+
+    def _native_voice_request_is_current(
+        self,
+        provider_id: str,
+        model_id: str,
+        generation: int,
+    ) -> bool:
+        return self._native_voice_request_generations.get(
+            (provider_id, model_id)
+        ) == generation
+
+    def _publish_native_capability_snapshot(
+        self,
+        snapshot: TTSNativeCapabilitySnapshot,
+    ) -> None:
+        """Accept only a snapshot for the provider's still-current revision."""
+        try:
+            current_revision = self.configuration_revision(snapshot.provider_id)
+        except (KeyError, TTSRegistryClosedError):
+            return
+        if current_revision != snapshot.configuration_revision:
+            return
+        self._native_capability_observations[snapshot.provider_id] = (
+            TTSNativeCapabilityObservation(
+                snapshot=snapshot,
+                observed_at=datetime.now(timezone.utc),
+            )
+        )
+
+    def _publish_native_catalog(
+        self,
+        provider_id: str,
+        configuration_revision: int,
+        catalog: TTSProviderCatalog,
+    ) -> None:
+        """Publish a catalog and retain only voices from its exact revision."""
+        if catalog.provider_id != provider_id:
+            return
+        try:
+            current_revision = self.configuration_revision(provider_id)
+        except (KeyError, TTSRegistryClosedError):
+            return
+        if current_revision != configuration_revision:
+            return
+
+        retained_voices: Mapping[str, TTSVoiceDiscoveryResult] = {}
+        previous = self._native_capability_observations.get(provider_id)
+        if (
+            catalog.health.fresh
+            and previous is not None
+            and previous.snapshot.configuration_revision == configuration_revision
+            and previous.snapshot.catalog is not None
+            and previous.snapshot.catalog.revision == catalog.revision
+        ):
+            retained_voices = previous.snapshot.voice_results
+        try:
+            snapshot = TTSNativeCapabilitySnapshot(
+                provider_id=provider_id,
+                configuration_revision=configuration_revision,
+                state="unverified",
+                catalog=catalog,
+                voice_results=retained_voices,
+            )
+        except (TypeError, ValueError):
+            return
+        self._publish_native_capability_snapshot(snapshot)
+
+    def _publish_native_voice_result(
+        self,
+        provider_id: str,
+        configuration_revision: int,
+        result: TTSVoiceDiscoveryResult,
+    ) -> None:
+        """Merge one model-scoped voice result into a matching catalog."""
+        previous = self._native_capability_observations.get(provider_id)
+        if previous is None:
+            return
+        snapshot = previous.snapshot
+        catalog = snapshot.catalog
+        if (
+            snapshot.configuration_revision != configuration_revision
+            or catalog is None
+            or not catalog.health.fresh
+            or result.provider_id != provider_id
+            or result.catalog_revision != catalog.revision
+            or result.model_id
+            not in {model.model_id for model in catalog.models}
+        ):
+            return
+        voice_results = dict(snapshot.voice_results)
+        voice_results[result.model_id] = result
+        try:
+            merged = TTSNativeCapabilitySnapshot(
+                provider_id=provider_id,
+                configuration_revision=configuration_revision,
+                state="unverified",
+                catalog=catalog,
+                voice_results=voice_results,
+            )
+        except (TypeError, ValueError):
+            return
+        self._publish_native_capability_snapshot(merged)
+
     async def get_native_capability_snapshot(
         self,
         provider_id: str,
@@ -627,6 +763,11 @@ class TTSService:
         model_ids = self._distinct_capability_model_ids(exact_voice_model_ids)
         if asyncio.get_running_loop().time() >= deadline:
             return result
+        catalog_request_generation = self._reserve_native_catalog_request(provider_id)
+        voice_request_generations = {
+            model_id: self._reserve_native_voice_request(provider_id, model_id)
+            for model_id in model_ids
+        }
         primary_error: BaseException | None = None
         try:
             async with asyncio.timeout_at(deadline):
@@ -670,12 +811,49 @@ class TTSService:
                         primary_error,
                     )
         if self._close_signal.is_set():
-            return self._unverified_native_capabilities(
+            result = self._unverified_native_capabilities(
                 provider_id,
                 revision,
                 result.catalog,
             )
+        self._publish_native_snapshot_result(
+            result,
+            catalog_request_generation=catalog_request_generation,
+            voice_request_generations=voice_request_generations,
+        )
         return result
+
+    def _publish_native_snapshot_result(
+        self,
+        snapshot: TTSNativeCapabilitySnapshot,
+        *,
+        catalog_request_generation: int,
+        voice_request_generations: Mapping[str, int],
+    ) -> None:
+        """Merge only still-current catalog and model-scoped observations."""
+        catalog = snapshot.catalog
+        if catalog is not None and self._native_catalog_request_is_current(
+            snapshot.provider_id,
+            catalog_request_generation,
+        ):
+            self._publish_native_catalog(
+                snapshot.provider_id,
+                snapshot.configuration_revision,
+                catalog,
+            )
+        for model_id, result in snapshot.voice_results.items():
+            request_generation = voice_request_generations.get(model_id)
+            if request_generation is None or not self._native_voice_request_is_current(
+                snapshot.provider_id,
+                model_id,
+                request_generation,
+            ):
+                continue
+            self._publish_native_voice_result(
+                snapshot.provider_id,
+                snapshot.configuration_revision,
+                result,
+            )
 
     async def _observe_native_capabilities(
         self,
@@ -1018,7 +1196,33 @@ class TTSService:
         Returns:
             The provider's current catalog.
         """
-        return await self.registry.get_catalog(provider_id, refresh=refresh)
+        native_provider = any(
+            descriptor.provider_id == provider_id and descriptor.native
+            for descriptor in self.provider_descriptors()
+        )
+        configuration_revision = (
+            self.configuration_revision(provider_id) if native_provider else None
+        )
+        request_generation = (
+            self._reserve_native_catalog_request(provider_id)
+            if native_provider
+            else None
+        )
+        catalog = await self.registry.get_catalog(provider_id, refresh=refresh)
+        if (
+            configuration_revision is not None
+            and request_generation is not None
+            and self._native_catalog_request_is_current(
+                provider_id,
+                request_generation,
+            )
+        ):
+            self._publish_native_catalog(
+                provider_id,
+                configuration_revision,
+                catalog,
+            )
+        return catalog
 
     async def get_voices(
         self,
@@ -1050,11 +1254,27 @@ class TTSService:
     ) -> TTSVoiceDiscoveryResult:
         """Return structured voice authority for one native provider model."""
         self._require_native_provider(provider_id)
-        return await self.registry.observe_voices(
+        configuration_revision = self.configuration_revision(provider_id)
+        request_generation = self._reserve_native_voice_request(
+            provider_id,
+            model_id,
+        )
+        result = await self.registry.observe_voices(
             provider_id,
             model_id,
             refresh=refresh,
         )
+        if self._native_voice_request_is_current(
+            provider_id,
+            model_id,
+            request_generation,
+        ):
+            self._publish_native_voice_result(
+                provider_id,
+                configuration_revision,
+                result,
+            )
+        return result
 
     async def reconfigure_provider(
         self,

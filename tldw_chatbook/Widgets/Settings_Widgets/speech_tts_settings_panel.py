@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -25,6 +27,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
     STTSSettingsSaveResult,
 )
+from tldw_chatbook.TTS.adapter_types import TTSNativeCapabilityObservation
 from tldw_chatbook.Third_Party.textual_fspicker import (
     FileOpen,
     Filters,
@@ -35,13 +38,16 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     GLOBAL_TTS_PROVIDER_FIELD_IDS,
     TTS_PROVIDER_LABELS,
+    AudioCppGlobalChoices,
     CredentialIntent,
     CredentialSource,
     GlobalSpeechTTSCredentialMutation,
     GlobalSpeechTTSState,
     GlobalSpeechTTSValidationError,
+    audio_cpp_transport_warning,
     build_credential_mutation,
     build_global_speech_tts_save_proposal,
+    project_audio_cpp_global_choices,
     restore_non_secret_defaults,
 )
 
@@ -183,11 +189,15 @@ class SpeechTTSSettingsPanel(Vertical):
         state: GlobalSpeechTTSState,
         original_state: GlobalSpeechTTSState | None = None,
         configure_provider: str | None = None,
+        audio_cpp_observation: TTSNativeCapabilityObservation | None = None,
+        audio_cpp_configuration_revision: int | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.original_state = deepcopy(original_state or state)
         self.state = deepcopy(state)
+        self._audio_cpp_observation = audio_cpp_observation
+        self._audio_cpp_configuration_revision = audio_cpp_configuration_revision
         self.configure_provider = (
             configure_provider
             if configure_provider in BUILT_IN_TTS_PROVIDER_ORDER
@@ -395,6 +405,58 @@ class SpeechTTSSettingsPanel(Vertical):
             classes="settings-speech-credential",
         )
 
+    def _audio_cpp_choices(self) -> AudioCppGlobalChoices:
+        return project_audio_cpp_global_choices(
+            self.state.defaults,
+            observation=self._audio_cpp_observation,
+            current_configuration_revision=self._audio_cpp_configuration_revision,
+        )
+
+    @staticmethod
+    def _safe_exact_options(
+        options: tuple[tuple[str, str], ...],
+    ) -> list[tuple[Text, str]]:
+        """Render provider-supplied labels as text, never Textual markup."""
+        return [(Text(label, no_wrap=True), value) for label, value in options]
+
+    def _audio_cpp_observation_copy(
+        self,
+        choices: AudioCppGlobalChoices,
+    ) -> str:
+        if choices.observed_at is None:
+            return "No accepted audio.cpp catalog has been observed in this session."
+        observed = choices.observed_at.astimezone(timezone.utc).strftime(
+            "%Y-%m-%d %H:%M UTC"
+        )
+        configuration_revision = (
+            str(choices.configuration_revision)
+            if choices.configuration_revision is not None
+            else "unknown"
+        )
+        catalog_revision = (
+            str(choices.catalog_revision)
+            if choices.catalog_revision is not None
+            else "none"
+        )
+        return (
+            f"Observed {observed} | configuration revision "
+            f"{configuration_revision} | catalog revision {catalog_revision}."
+        )
+
+    def _audio_cpp_draft_attribution_copy(self, value: object | None = None) -> str:
+        candidate = (
+            self.state.providers["audio_cpp"].get("base_url")
+            if value is None
+            else value
+        )
+        saved = self.original_state.providers["audio_cpp"].get("base_url")
+        if candidate != saved:
+            return (
+                "Catalog and runtime observations apply to the saved server "
+                "configuration, not this unsaved Server URL draft."
+            )
+        return "Catalog and runtime observations apply to the saved server configuration."
+
     def compose(self) -> ComposeResult:
         yield Static(
             "Speech & TTS", classes="destination-section settings-column-title"
@@ -415,6 +477,24 @@ class SpeechTTSSettingsPanel(Vertical):
             )
 
         defaults = self.state.defaults
+        audio_cpp_selected = defaults.provider_id == "audio_cpp"
+        audio_cpp_choices = self._audio_cpp_choices() if audio_cpp_selected else None
+        if audio_cpp_choices is not None:
+            model_policy_options = [("First available", "first_available")]
+            if audio_cpp_choices.model.exact_allowed:
+                model_policy_options.append(("Exact", "exact"))
+            voice_policy_options = [("Server default", "server_default")]
+            if audio_cpp_choices.voice.exact_allowed:
+                voice_policy_options.append(("Exact", "exact"))
+        else:
+            model_policy_options = [
+                ("Exact", "exact"),
+                ("First available", "first_available"),
+            ]
+            voice_policy_options = [
+                ("Exact", "exact"),
+                ("Server default", "server_default"),
+            ]
         with Vertical(
             id="settings-speech-global-defaults", classes="settings-focus-card"
         ):
@@ -438,7 +518,7 @@ class SpeechTTSSettingsPanel(Vertical):
             yield self._row(
                 "Model policy",
                 Select(
-                    [("Exact", "exact"), ("First available", "first_available")],
+                    model_policy_options,
                     value=defaults.model_mode,
                     id="settings-speech-model-policy",
                     allow_blank=False,
@@ -451,24 +531,49 @@ class SpeechTTSSettingsPanel(Vertical):
                     "settings-speech-model-policy",
                 ),
             )
-            yield self._row(
-                "Model value",
-                Input(
-                    value=defaults.model_id or "",
-                    id="settings-speech-model-value",
-                    disabled=defaults.model_mode != "exact",
-                    placeholder="Exact model ID",
-                    classes="settings-compact-input settings-speech-draft-field",
-                ),
-                error=self._default_error(
-                    "default_model",
-                    "settings-speech-model-value",
-                ),
-            )
+            if audio_cpp_choices is not None:
+                yield self._row(
+                    "Model value",
+                    Select(
+                        self._safe_exact_options(audio_cpp_choices.model.options),
+                        value=(
+                            defaults.model_id
+                            if defaults.model_mode == "exact" and defaults.model_id
+                            else Select.NULL
+                        ),
+                        id="settings-speech-model-value",
+                        allow_blank=defaults.model_mode != "exact",
+                        compact=True,
+                        disabled=defaults.model_mode != "exact",
+                        classes=(
+                            "settings-compact-select settings-speech-draft-field"
+                        ),
+                    ),
+                    classes="settings-select-row",
+                    error=self._default_error(
+                        "default_model",
+                        "settings-speech-model-value",
+                    ),
+                )
+            else:
+                yield self._row(
+                    "Model value",
+                    Input(
+                        value=defaults.model_id or "",
+                        id="settings-speech-model-value",
+                        disabled=defaults.model_mode != "exact",
+                        placeholder="Exact model ID",
+                        classes="settings-compact-input settings-speech-draft-field",
+                    ),
+                    error=self._default_error(
+                        "default_model",
+                        "settings-speech-model-value",
+                    ),
+                )
             yield self._row(
                 "Voice policy",
                 Select(
-                    [("Exact", "exact"), ("Server default", "server_default")],
+                    voice_policy_options,
                     value=defaults.voice_mode,
                     id="settings-speech-voice-policy",
                     allow_blank=False,
@@ -481,21 +586,64 @@ class SpeechTTSSettingsPanel(Vertical):
                     "settings-speech-voice-policy",
                 ),
             )
-            yield self._row(
-                "Voice value",
-                Input(
-                    value=defaults.voice_id or "",
-                    id="settings-speech-voice-value",
-                    disabled=defaults.voice_mode != "exact",
-                    placeholder="Exact voice ID",
-                    classes="settings-compact-input settings-speech-draft-field",
-                ),
-                error=self._default_error(
-                    "default_voice",
-                    "settings-speech-voice-value",
-                ),
-            )
-            audio_cpp_selected = defaults.provider_id == "audio_cpp"
+            if audio_cpp_choices is not None:
+                yield self._row(
+                    "Voice value",
+                    Select(
+                        self._safe_exact_options(audio_cpp_choices.voice.options),
+                        value=(
+                            defaults.voice_id
+                            if defaults.voice_mode == "exact" and defaults.voice_id
+                            else Select.NULL
+                        ),
+                        id="settings-speech-voice-value",
+                        allow_blank=defaults.voice_mode != "exact",
+                        compact=True,
+                        disabled=defaults.voice_mode != "exact",
+                        classes=(
+                            "settings-compact-select settings-speech-draft-field"
+                        ),
+                    ),
+                    classes="settings-select-row",
+                    error=self._default_error(
+                        "default_voice",
+                        "settings-speech-voice-value",
+                    ),
+                )
+                yield Static(
+                    f"Model: {audio_cpp_choices.model.state.value} | "
+                    f"Voice: {audio_cpp_choices.voice.state.value}",
+                    id="settings-speech-audio-cpp-choice-status",
+                    classes="settings-status-row",
+                    markup=False,
+                )
+                yield Static(
+                    self._audio_cpp_observation_copy(audio_cpp_choices),
+                    id="settings-speech-audio-cpp-observation-provenance",
+                    classes="settings-detail-row",
+                    markup=False,
+                )
+                yield Static(
+                    "Settings reuses accepted in-memory observations only. Open "
+                    "Speech Lab to test the server or refresh models and voices.",
+                    classes="settings-detail-row",
+                    markup=False,
+                )
+            else:
+                yield self._row(
+                    "Voice value",
+                    Input(
+                        value=defaults.voice_id or "",
+                        id="settings-speech-voice-value",
+                        disabled=defaults.voice_mode != "exact",
+                        placeholder="Exact voice ID",
+                        classes="settings-compact-input settings-speech-draft-field",
+                    ),
+                    error=self._default_error(
+                        "default_voice",
+                        "settings-speech-voice-value",
+                    ),
+                )
             yield self._row(
                 "Output format",
                 Select(
@@ -619,8 +767,17 @@ class SpeechTTSSettingsPanel(Vertical):
                 yield self._input(
                     provider_id,
                     "base_url",
-                    "Server URL",
+                    "Server URL (HTTP/HTTPS origin only)",
                     placeholder="http://127.0.0.1:8080",
+                )
+                yield Static(
+                    audio_cpp_transport_warning(
+                        self.state.providers[provider_id].get("base_url")
+                    )
+                    or "",
+                    id="settings-speech-audio-cpp-transport-warning",
+                    classes="settings-status-row",
+                    markup=False,
                 )
                 yield self._input(
                     provider_id,
@@ -637,6 +794,21 @@ class SpeechTTSSettingsPanel(Vertical):
                     id="settings-speech-audio_cpp-privacy-notice",
                     classes="settings-status-row",
                     markup=False,
+                )
+                yield Static(
+                    self._audio_cpp_draft_attribution_copy(),
+                    id="settings-speech-audio-cpp-draft-attribution",
+                    classes="settings-detail-row",
+                    markup=False,
+                )
+                yield Button(
+                    "Open Speech Lab to test or refresh",
+                    id="settings-speech-audio-cpp-open-lab",
+                    compact=True,
+                    tooltip=(
+                        "Open the TTS Playground; Settings itself never contacts "
+                        "the configured server."
+                    ),
                 )
                 with Collapsible(title="Advanced safety limits", collapsed=True):
                     yield self._input(
@@ -848,15 +1020,31 @@ class SpeechTTSSettingsPanel(Vertical):
                 self.state.defaults.provider_id = provider
             if isinstance(model_mode, str):
                 self.state.defaults.model_mode = model_mode
-            model_value = self.query_one("#settings-speech-model-value", Input).value
+            model_control = self.query_one("#settings-speech-model-value")
+            model_value = (
+                model_control.value
+                if isinstance(model_control, (Input, Select))
+                else None
+            )
             self.state.defaults.model_id = (
-                model_value if self.state.defaults.model_mode == "exact" else None
+                model_value
+                if self.state.defaults.model_mode == "exact"
+                and isinstance(model_value, str)
+                else None
             )
             if isinstance(voice_mode, str):
                 self.state.defaults.voice_mode = voice_mode
-            voice_value = self.query_one("#settings-speech-voice-value", Input).value
+            voice_control = self.query_one("#settings-speech-voice-value")
+            voice_value = (
+                voice_control.value
+                if isinstance(voice_control, (Input, Select))
+                else None
+            )
             self.state.defaults.voice_id = (
-                voice_value if self.state.defaults.voice_mode == "exact" else None
+                voice_value
+                if self.state.defaults.voice_mode == "exact"
+                and isinstance(voice_value, str)
+                else None
             )
             if isinstance(response_format, str):
                 self.state.defaults.response_format = response_format
@@ -1135,6 +1323,12 @@ class SpeechTTSSettingsPanel(Vertical):
                 self.original_state.defaults = saved_defaults
             if saved_provider_id is not None and saved_provider_values is not None:
                 self.original_state.providers[saved_provider_id] = saved_provider_values
+                if saved_provider_id == "audio_cpp":
+                    # The retained observation describes the pre-save registry
+                    # revision. Until a later explicit Lab operation publishes
+                    # another one, it must render stale rather than proving the
+                    # newly saved server draft.
+                    self._audio_cpp_configuration_revision = None
 
         cache_reload_failed = result.failure_phase == "cache_reload"
         if result.provider_statuses:
@@ -1161,10 +1355,10 @@ class SpeechTTSSettingsPanel(Vertical):
             ),
         )
         self._announce_draft_state()
-        if mutation is not None:
-            # Credential controls derive their Set/Replace/Clear affordances
-            # from safe source metadata, so a successful explicit mutation
-            # must repaint the selected form without ever projecting a secret.
+        if mutation is not None or saved_provider_id == "audio_cpp":
+            # Credential controls derive their affordances from safe metadata,
+            # while a saved audio.cpp connection invalidates prior capability
+            # provenance. Repaint either bounded presentation state.
             self.call_later(self.recompose)
 
     def _credential_editor_result(
@@ -1219,6 +1413,17 @@ class SpeechTTSSettingsPanel(Vertical):
             return
         self._collect_visible_state()
         if event.value == "audio_cpp":
+            persisted = self.original_state.defaults
+            if persisted.provider_id == "audio_cpp":
+                self.state.defaults.model_mode = persisted.model_mode
+                self.state.defaults.model_id = persisted.model_id
+                self.state.defaults.voice_mode = persisted.voice_mode
+                self.state.defaults.voice_id = persisted.voice_id
+            else:
+                self.state.defaults.model_mode = "first_available"
+                self.state.defaults.model_id = None
+                self.state.defaults.voice_mode = "server_default"
+                self.state.defaults.voice_id = None
             self.state.defaults.response_format = "wav"
             self.state.defaults.speed = 1.0
         await self.recompose()
@@ -1233,6 +1438,10 @@ class SpeechTTSSettingsPanel(Vertical):
         self._collect_visible_state()
         if event.value != "exact":
             self.state.defaults.model_id = None
+        elif self.state.defaults.provider_id == "audio_cpp":
+            choices = self._audio_cpp_choices().model.options
+            if choices and not self.state.defaults.model_id:
+                self.state.defaults.model_id = choices[0][1]
         await self.recompose()
         self._announce_draft_state()
 
@@ -1245,8 +1454,42 @@ class SpeechTTSSettingsPanel(Vertical):
         self._collect_visible_state()
         if event.value != "exact":
             self.state.defaults.voice_id = None
+        elif self.state.defaults.provider_id == "audio_cpp":
+            choices = self._audio_cpp_choices().voice.options
+            if choices and not self.state.defaults.voice_id:
+                self.state.defaults.voice_id = choices[0][1]
         await self.recompose()
         self._announce_draft_state()
+
+    @on(Select.Changed, "#settings-speech-model-value")
+    async def handle_audio_cpp_model_changed(self, event: Select.Changed) -> None:
+        if (
+            self._syncing
+            or self.state.defaults.provider_id != "audio_cpp"
+            or self.state.defaults.model_mode != "exact"
+            or not isinstance(event.value, str)
+            or event.value == self.state.defaults.model_id
+        ):
+            return
+        self._collect_visible_state()
+        await self.recompose()
+        self._announce_draft_state()
+
+    @on(Input.Changed, "#settings-speech-audio_cpp-base-url")
+    def handle_audio_cpp_base_url_changed(self, event: Input.Changed) -> None:
+        try:
+            warning = self.query_one(
+                "#settings-speech-audio-cpp-transport-warning",
+                Static,
+            )
+            attribution = self.query_one(
+                "#settings-speech-audio-cpp-draft-attribution",
+                Static,
+            )
+        except QueryError:
+            return
+        warning.update(audio_cpp_transport_warning(event.value) or "")
+        attribution.update(self._audio_cpp_draft_attribution_copy(event.value))
 
     @on(Input.Changed, ".settings-speech-draft-field")
     @on(Select.Changed, ".settings-speech-draft-field")
@@ -1293,9 +1536,10 @@ class SpeechTTSSettingsPanel(Vertical):
 
     @on(Button.Pressed, "#settings-speech-open-lab")
     @on(Button.Pressed, "#settings-speech-open-lab-bottom")
+    @on(Button.Pressed, "#settings-speech-audio-cpp-open-lab")
     def handle_open_lab(self, event: Button.Pressed) -> None:
         event.stop()
-        self.post_message(NavigateToScreen("stts"))
+        self.post_message(NavigateToScreen("stts", {"view": "playground"}))
 
     @on(Button.Pressed, ".settings-speech-credential Button")
     def handle_credential_action(self, event: Button.Pressed) -> None:

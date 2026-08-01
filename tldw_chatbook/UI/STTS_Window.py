@@ -5,9 +5,8 @@
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from typing import Optional, Dict, Any, List, Literal
+from typing import Optional, Dict, Any, List
 from pathlib import Path
-from urllib.parse import urlsplit
 from uuid import uuid4
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
@@ -35,7 +34,6 @@ from rich.text import Text
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSPlaygroundGenerateEvent,
-    STTSSettingsSaveEvent,
     STTSAudioBookGenerateEvent,
 )
 from tldw_chatbook.TTS import (
@@ -43,7 +41,6 @@ from tldw_chatbook.TTS import (
     STTSGeneratedAudio,
     STTSPlaygroundRequest,
     TTSPlaygroundSelectionPreset,
-    TTSPreferencesSnapshot,
     TTSProfileService,
     get_tts_service,
 )
@@ -54,7 +51,6 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRegistryClosedError,
     TTSVoiceDiscoveryResult,
 )
-from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.legacy_catalogs import (
     LEGACY_DEFAULT_MODELS,
     LEGACY_DEFAULT_VOICES,
@@ -64,7 +60,6 @@ from tldw_chatbook.TTS.voice_blend_paths import kokoro_ui_blend_file
 from tldw_chatbook.UI.stts_playground_catalog import (
     AUDIO_CPP_PROVIDER_ID,
     CatalogRequestToken,
-    FIRST_AVAILABLE_MODEL_ID,
     LOADING_SELECT_VALUE,
     PlaygroundControls,
     SERVER_DEFAULT_VOICE_ID,
@@ -90,7 +85,6 @@ from tldw_chatbook.UI.stts_profile_library import (
     profile_action_error_copy,
 )
 from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_state
-from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileOpen as FileOpen,
     EnhancedFileSave as FileSave,
@@ -2026,12 +2020,9 @@ class TTSPlaygroundWidget(Widget):
                 self._clear_profile_voice_validation(request_token)
                 return
             observation: TTSVoiceDiscoveryResult | None = None
-            preset = self._profile_preset
             observe_voices = getattr(service, "observe_voices", None)
             if (
-                preset is not None
-                and preset.provider_id == provider_id
-                and provider_id == AUDIO_CPP_PROVIDER_ID
+                provider_id == AUDIO_CPP_PROVIDER_ID
                 and callable(observe_voices)
             ):
                 observation = await observe_voices(

@@ -94,6 +94,7 @@ class FakeTTSService:
         self.descriptor_calls = 0
         self.catalog_calls: list[tuple[str, bool]] = []
         self.voice_calls: list[tuple[str, str, bool]] = []
+        self.voice_observation_calls: list[tuple[str, str, bool]] = []
         self.synthesize_calls = 0
         self.revisions = {provider_id: 1 for provider_id in PROVIDER_IDS}
         self.catalogs = {
@@ -204,6 +205,7 @@ class FakeTTSService:
         model_id: str,
         refresh: bool = False,
     ) -> TTSVoiceDiscoveryResult:
+        self.voice_observation_calls.append((provider_id, model_id, refresh))
         voices = await self.get_voices(provider_id, model_id, refresh=refresh)
         catalog = self.catalogs[provider_id]
         model_ids = {model.model_id for model in catalog.models}
@@ -437,6 +439,9 @@ async def test_mount_uses_descriptors_and_resolves_only_selected_provider(
     assert service.voice_calls == [
         ("audio_cpp", "<opaque:model>", False),
     ]
+    assert service.voice_observation_calls == [
+        ("audio_cpp", "<opaque:model>", False),
+    ]
     assert service.synthesize_calls == 0
 
 
@@ -654,6 +659,7 @@ async def test_superseded_catalog_failure_cannot_overwrite_newer_success(
                     await release_first.wait()
                 raise RuntimeError("obsolete refresh failed")
             assert provider_id == "audio_cpp"
+            service.catalogs[provider_id] = newer_catalog
             return newer_catalog
 
         monkeypatch.setattr(service, "get_catalog", get_catalog)
@@ -715,6 +721,7 @@ async def test_superseded_catalog_success_cannot_invalidate_newer_success(
                 except asyncio.CancelledError:
                     await release_first.wait()
                 return older_catalog
+            service.catalogs[provider_id] = newer_catalog
             return newer_catalog
 
         monkeypatch.setattr(service, "get_catalog", get_catalog)
@@ -860,6 +867,7 @@ async def test_catalog_generation_is_reserved_before_exclusive_worker_cancellati
                     return obsolete_catalog
             second_started.set()
             await release_second.wait()
+            service.catalogs[provider_id] = newer_catalog
             return newer_catalog
 
         monkeypatch.setattr(service, "get_catalog", get_catalog)

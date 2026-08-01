@@ -4,6 +4,7 @@ import asyncio
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -331,6 +332,22 @@ class TTSNativeCapabilitySnapshot:
             "voice_results",
             MappingProxyType(frozen_results),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class TTSNativeCapabilityObservation:
+    """Latest accepted in-memory native capability state and observation time."""
+
+    snapshot: TTSNativeCapabilitySnapshot
+    observed_at: datetime
+
+    def __post_init__(self) -> None:
+        if type(self.snapshot) is not TTSNativeCapabilitySnapshot:
+            raise TypeError("Native capability observation snapshot is invalid")
+        if type(self.observed_at) is not datetime:
+            raise TypeError("Native capability observation time is invalid")
+        if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
+            raise ValueError("Native capability observation time must be timezone-aware")
 
 
 def _validate_voice_discovery_identifier(value: object, label: str) -> None:
