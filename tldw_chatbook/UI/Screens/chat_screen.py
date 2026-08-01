@@ -354,11 +354,18 @@ from ...Widgets.Console.console_generation_card import (
     generation_card_signature,
 )
 from ...Widgets.Console.console_status_chips import (
+    ConsoleModelChip,
+    ConsoleAssistantChip,
     ConsoleScopeChip,
     ConsoleStatusChips,
 )
 from ...Widgets.Console.console_retrieval_scope_row import (
     ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
+)
+from ...Widgets.Console.console_character_picker_modal import (
+    ConsoleCharacterChoice,
+    ConsoleCharacterOption,
+    ConsoleCharacterPickerModal,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 from ...Widgets.Console.console_model_popover import (
@@ -5900,6 +5907,183 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         event.stop()
         await self._clear_console_retrieval_scope()
+
+    @on(ConsoleModelChip.OpenRequested)
+    async def _console_model_chip_activated(
+        self, event: ConsoleModelChip.OpenRequested
+    ) -> None:
+        """Open the quick model popover from the Provider/Model chips.
+
+        task-1670: a second entry point into the same opener Alt+M uses,
+        following the scope-chip precedent below.
+        """
+        event.stop()
+        await self.action_open_console_model_popover()
+
+    @on(ConsoleAssistantChip.OpenRequested)
+    async def _console_assistant_chip_activated(
+        self, event: ConsoleAssistantChip.OpenRequested
+    ) -> None:
+        """Open the character picker from the Character/Assistant chip."""
+        event.stop()
+        await self._open_console_character_picker()
+
+    async def _open_console_character_picker(self) -> None:
+        """Load characters off-thread and open the picker modal (task-1672)."""
+        options = await asyncio.to_thread(self._console_character_picker_options)
+        if not options:
+            self.app.notify(
+                "No characters saved yet — import a card in Roleplay first.",
+                severity="information",
+            )
+            return
+        self.app.push_screen(
+            ConsoleCharacterPickerModal(
+                options=options,
+                current_character_id=self._current_console_rail_character_id(),
+            ),
+            callback=self._apply_console_character_choice,
+        )
+
+    def _console_character_picker_options(
+        self,
+    ) -> tuple[ConsoleCharacterOption, ...]:
+        """Read selectable character cards (worker thread; never raises)."""
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return ()
+        try:
+            cards = db.list_character_cards(limit=500)
+        except Exception:
+            logger.opt(exception=True).warning("Character picker: list failed.")
+            return ()
+        options: list[ConsoleCharacterOption] = []
+        for card in cards or ():
+            card_id = _canonical_card_character_id(card.get("id"))
+            name = str(card.get("name") or "").strip()
+            if card_id is None or not name:
+                continue
+            options.append(
+                ConsoleCharacterOption(
+                    character_id=card_id,
+                    name=name,
+                    description=str(card.get("description") or "")[:200],
+                )
+            )
+        return tuple(options)
+
+    def _apply_console_character_choice(
+        self, choice: "ConsoleCharacterChoice | None"
+    ) -> None:
+        """Route the picker result to a swap or a new character session."""
+        if choice is None:
+            return
+        self.run_worker(
+            self._apply_console_character_choice_async(choice),
+            exclusive=True,
+            group="console-character-pick",
+        )
+
+    async def _apply_console_character_choice_async(
+        self, choice: "ConsoleCharacterChoice"
+    ) -> None:
+        """Apply the picked character to this session or a fresh one."""
+        card = await asyncio.to_thread(
+            self._fetch_character_card_for_avatar, choice.character_id
+        )
+        if card is None:
+            self.app.notify(
+                f"Could not load {choice.name}.", severity="error"
+            )
+            return
+        name, system_prompt, greeting = _character_session_prompt_seed(
+            card, choice.name
+        )
+        store = getattr(self.app_instance, "console_chat_store", None)
+        if store is None:
+            return
+        if choice.placement == "new":
+            session = store.create_session(
+                title=f"Chat with {name}",
+                workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
+                runtime_backend="local",
+                assistant_kind="character",
+                assistant_id=str(choice.character_id),
+                assistant_authority_id=None,
+                character_id=choice.character_id,
+                character_name=name,
+            )
+            if greeting:
+                try:
+                    store.append_message(
+                        session.id,
+                        role=ConsoleMessageRole.ASSISTANT,
+                        content=greeting,
+                        persist=True,
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Character picker: greeting seed failed; continuing."
+                    )
+            store.switch_session(session.id)
+            self.app.notify(f"Started a new chat with {name}.")
+        else:
+            if not self._swap_console_session_character(
+                store, choice.character_id, name, greeting
+            ):
+                return
+            self.app.notify(f"This chat now uses {name}.")
+        self._sync_native_console_chat_ui()
+        await self._refresh_active_character_avatar_if_scope_changed()
+
+    def _swap_console_session_character(
+        self, store: Any, character_id: int, name: str, greeting: str
+    ) -> bool:
+        """Rebind the active session to ``character_id`` in place.
+
+        The greeting is only seeded into an EMPTY chat (user decision,
+        2026-07-31): interrupting a conversation in progress with a
+        greeting reads as the model talking to itself.
+
+        Returns:
+            True when the active session was rebound.
+        """
+        session_id = getattr(store, "active_session_id", None)
+        session = None
+        if session_id:
+            session = next(
+                (s for s in store.sessions() if s.id == session_id), None
+            )
+        if session is None:
+            return False
+        for field, value in (
+            ("runtime_backend", "local"),
+            ("assistant_kind", "character"),
+            ("assistant_id", str(character_id)),
+            ("assistant_authority_id", None),
+            ("character_id", character_id),
+            ("character_name", name),
+        ):
+            try:
+                object.__setattr__(session, field, value)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Character swap: could not set {}.", field
+                )
+                return False
+        if greeting and not store.messages_for_session(session_id):
+            try:
+                store.append_message(
+                    session_id,
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content=greeting,
+                    persist=True,
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Character swap: greeting seed failed; continuing."
+                )
+        return True
 
     @on(ConsoleScopeChip.OpenRequested)
     async def _console_scope_chip_activated(

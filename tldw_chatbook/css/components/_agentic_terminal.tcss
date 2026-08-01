@@ -2116,7 +2116,12 @@ ConsoleRunLogModal {
 .console-control-chip {
     width: auto;
     min-width: 7;
-    max-width: 22;
+    /* task-1671: 22 cut model ids mid-token ("Model: claude-3-hai…").
+       The ask was 25 chars of the MODEL NAME, and the "Model: " prefix
+       costs 7 with 2 more for padding -- hence 34. Chips are width:auto,
+       so this cap only bites long labels: "RAG: off" and friends are
+       unchanged. Focus still lifts the cap entirely. */
+    max-width: 34;
     height: 1;
     min-height: 1;
     margin: 0 1 0 0;
