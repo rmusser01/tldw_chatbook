@@ -273,6 +273,17 @@ _FEED_XML_PARTIAL_NAME = "feed.xml.partial"
 #: loop itself without seeding hundreds of real rows.
 _EPISODES_PAGE_SIZE = 500
 
+#: Whole-branch review round 2: an upper bound on the pagination walk
+#: above, so a broken accessor cannot spin it forever. Terminating on an
+#: empty page is correct only while the accessor honours `offset`; one that
+#: ignored it would hand back a full page indefinitely, and the walk would
+#: hang a worker while growing its row list without limit. Set far above
+#: any plausible watchlist so it fires ONLY on that bug, and the walk
+#: raises rather than truncating when it trips -- silently exporting the
+#: first N episodes is precisely the failure decision 4 above exists to
+#: rule out.
+_EPISODES_MAX_ROWS = 100_000
+
 #: Task 4 review round 1: the mode every file this module WRITES into the
 #: user's export directory ends up at -- an ordinary, group/other-readable
 #: file, deliberately NOT the `0o600` private-storage mode `briefing_audio_
@@ -625,9 +636,18 @@ def export_feed_directory(
     # with more episodes than that, with the tail recorded nowhere. Walks
     # until the accessor returns an empty page, so the query cost for a
     # typical (well-under-one-page) watchlist is still exactly one call.
+    # The loop is bounded, not merely terminated by an empty page: an
+    # accessor that ignored `offset` would return a full page forever, and
+    # an unbounded walk would then grow `rows` without limit inside a
+    # worker -- a hang plus unbounded memory in production, not just a slow
+    # test. (That is exactly the regression `task-1761` describes for the
+    # pagination TESTS; the same failure reaches further here.) The cap is
+    # deliberately far above any plausible watchlist so it can only ever
+    # fire on a broken accessor, and it fails loudly rather than silently
+    # truncating -- the whole point of decision 4 above.
     rows: list[Mapping[str, Any]] = []
     offset = 0
-    while True:
+    while offset < _EPISODES_MAX_ROWS:
         page = db.list_watchlist_audio_episodes(
             watchlist_id, limit=_EPISODES_PAGE_SIZE, offset=offset
         )
@@ -635,6 +655,12 @@ def export_feed_directory(
             break
         rows.extend(page)
         offset += _EPISODES_PAGE_SIZE
+    else:
+        raise BriefingExportError(
+            f"Refusing to export: the episode query returned more than "
+            f"{_EPISODES_MAX_ROWS} rows, which means it is not honouring "
+            f"its offset. No files were written."
+        )
 
     episodes: list[FeedEpisode] = []
     skipped: list[str] = []

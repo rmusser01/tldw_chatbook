@@ -195,11 +195,18 @@ def test_enclosure_url_percent_encodes_non_ascii_characters():
         "already has, punctuation!.wav",
     ],
 )
-def test_enclosure_url_is_idempotently_encoded(filename):
-    """The general property: the emitted `url` is already fully encoded --
-    decoding then re-encoding it must be a no-op. A url that were only
-    partially encoded (or double-encoded) would fail this even if the
-    space/non-ASCII spot-checks above happened to pass."""
+def test_enclosure_url_decodes_back_to_exactly_the_on_disk_filename(filename):
+    """The general property, stated as the thing a client actually depends
+    on: unquoting the emitted `url` the way a static file server does must
+    yield the exact name Task 4 wrote to disk -- no more, no less.
+
+    The obvious phrasing of this property, `url == quote(unquote(url))`, is
+    a TAUTOLOGY: it holds for the output of `quote()` no matter what was
+    fed in, so a double-encoding bug (`quote(quote(name))`) satisfies it
+    and stays green. A whole-branch reviewer caught that by mutating the
+    emit to double-quote and watching all four parametrizations pass. This
+    phrasing REDs on that mutation, because a double-encoded url unquotes
+    to `Two%20Host...`, not to the filename."""
     episode = _episode(filename=filename)
     url = (
         ET.fromstring(_build([episode]))
@@ -208,7 +215,7 @@ def test_enclosure_url_is_idempotently_encoded(filename):
         .find("enclosure")
         .get("url")
     )
-    assert url == quote(unquote(url), safe="")
+    assert unquote(url) == filename
 
 
 def test_enclosure_url_percent_encoding_does_not_change_the_on_disk_filename():

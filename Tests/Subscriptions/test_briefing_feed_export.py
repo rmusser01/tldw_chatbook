@@ -801,3 +801,36 @@ def test_a_space_in_the_preset_name_stays_on_disk_but_is_encoded_in_the_feed(
         "decoding the emitted URL must recover exactly the filename actually "
         "written to disk"
     )
+
+
+class _OffsetIgnoringDB:
+    """An accessor that ignores `offset` -- the shape `task-1761` describes.
+
+    Terminating the export's pagination walk on an empty page is correct
+    only while the accessor honours `offset`; one that ignores it hands
+    back a full page forever. Without the `_EPISODES_MAX_ROWS` bound that
+    hangs a worker while growing its row list without limit, so this pins
+    the bound rather than the happy path.
+    """
+
+    def list_watchlist_audio_episodes(self, watchlist_id, *, limit, offset):
+        return [{"audio_id": 1, "file_path": None}] * limit
+
+
+def test_an_offset_ignoring_accessor_is_refused_rather_than_spun_forever(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(briefing_export, "_EPISODES_PAGE_SIZE", 10)
+    monkeypatch.setattr(briefing_export, "_EPISODES_MAX_ROWS", 50)
+    with pytest.raises(briefing_export.BriefingExportError, match="offset"):
+        briefing_export.export_feed_directory(
+            _OffsetIgnoringDB(),
+            1,
+            destination=tmp_path,
+            watchlist_name="W",
+            now=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+    # `tmp_path` also holds the harness's own scaffolding, so assert on the
+    # artifacts this function would have written rather than on emptiness.
+    assert not (tmp_path / "feed.xml").exists(), "a refused export must write no feed"
+    assert not list(tmp_path.glob("*.wav")), "a refused export must copy no episodes"
