@@ -1025,7 +1025,8 @@ Update the tests to describe current behavior:
      async controller call and form closure after Submit. Preserve the stronger
      upstream form/focus/Select readiness checks, real button press, pilot
      typing, tab order, both viewport cases, and geometry; do not assign input
-     values.
+     values. Return a fresh RuleSet list container from the session-global test
+     CSS cache so one full-app teardown cannot corrupt the next viewport mount.
 
 The only planned production behavior changes outside an ADR-029 diagnostic
 correction are the three-name synchronization of the existing Library

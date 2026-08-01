@@ -138,7 +138,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [x] #108 Settings provider-navigation preselection coverage waits boundedly for the recomposed Select and Input to expose the routed provider/model values, while preserving category selection, recovery copy, and zero-draft assertions.
 - [x] #109 Skill editor scroll coverage waits boundedly for focus-driven scrolling to place the Trust review control inside the canvas viewport, while preserving structural, keyboard-scroll, and positive-scroll assertions.
 - [x] #110 Responsiveness artifact writer coverage supplies an explicit allowed temporary root, so a pytest `--basetemp` override outside the OS temp root does not invalidate the fixture while traversal rejection remains covered.
-- [x] #111 Watchlists create-source form coverage waits boundedly for controller submission and form closure instead of relying on a fixed pause, while preserving the stronger upstream form/focus/Select readiness checks, real typing, tab order, both viewports, and geometry assertions.
+- [x] #111 Watchlists create-source form coverage waits boundedly for controller submission and form closure instead of relying on a fixed pause, while preserving the stronger upstream form/focus/Select readiness checks, real typing, tab order, both viewports, geometry assertions, and repeatable cross-app mounting.
 - [x] #112 Real Parakeet MLX integration suites are classified as slow and selected from platform plus installed-package availability without consulting the lazy-import cache, so explicit slow runs reach production's first-use loader validation while mocked coverage remains in the mandatory gate.
 <!-- AC:END -->
 
@@ -255,7 +255,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 102. Wait for routed Settings provider/model values instead of assuming one post-recompose pause is sufficient.
 103. Wait for the Skill editor's focus-driven scroll to satisfy its exact viewport geometry.
 104. Give the responsiveness artifact writer test an explicit allowed temporary root instead of coupling it to pytest's configurable base directory.
-105. Wait for Watchlists controller submission and form closure instead of relying on a fixed pause.
+105. Wait for Watchlists controller submission and form closure instead of relying on a fixed pause, and keep the global test CSS cache from sharing its mutable rule-list container across app instances.
 106. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
 107. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->
@@ -269,7 +269,9 @@ timing checks with exact bounded outcomes. Production changes remain narrow:
 prompt dirty-state handling, Watchlists hierarchy styling, File Notes
 lifecycle/export guards, missing-key provider copy, local-audio validation, and
 Parakeet empty/zero-frame handling. Real Parakeet integration remains lazy and
-is selected behind `--run-slow` without consulting the empty module cache.
+is selected behind `--run-slow` without consulting the empty module cache. The
+test CSS parse cache returns a fresh rule-list container to each app so repeated
+full-shell mounts cannot corrupt the next viewport case.
 
 ADR required: no new ADR. The work applies ADR-029, ADR-033, and ADR-037 and
 does not introduce a new storage, security, runtime, or ownership boundary.

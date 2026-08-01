@@ -4367,8 +4367,13 @@ the mocked controller call and form closure that it already asserts.
 Run the two end-to-end parameters repeatedly, the complete create-source form
 module, Ruff/format, and `git diff --check`.
 
-The corrected end-to-end pair passed focused verification. The original branch
-also recorded the complete create-source form module passing 15/15.
+The corrected end-to-end pair passed focused verification. Final-base
+verification exposed a second-app-only Textual `Select` mount failure: the
+session-global test CSS cache returned the same mutable RuleSet list to both
+app instances. Returning a shallow list copy at both cache boundaries keeps
+the parse optimization and makes the original small-then-large viewport order
+pass together. The original branch also recorded the complete create-source
+form module passing 15/15.
 
 ### Task 4dl: Make real Parakeet selection compatible with lazy imports
 
