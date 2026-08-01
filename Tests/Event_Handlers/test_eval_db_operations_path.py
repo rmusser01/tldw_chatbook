@@ -29,14 +29,18 @@ def test_default_db_path_tracks_a_retargeted_profile(monkeypatch, tmp_path):
     currently active profile, not a fixed HOME-relative literal."""
     from tldw_chatbook.config import get_evals_db_path
 
-    retargeted = tmp_path / "profile-two" / "config.toml"
-    retargeted.parent.mkdir()
+    profile_dir = tmp_path / "profile-two"
+    profile_dir.mkdir(mode=0o700)
+    retargeted = profile_dir / "config.toml"
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(retargeted))
 
     ops = EvalDBOperations()
 
-    assert Path(ops.db.db_path) == get_evals_db_path()
-    assert str(tmp_path) in str(ops.db.db_path)
+    try:
+        assert Path(ops.db.db_path) == get_evals_db_path()
+        assert str(tmp_path) in str(ops.db.db_path)
+    finally:
+        ops.db.close()
 
 
 def test_explicit_db_path_is_unaffected(tmp_path):

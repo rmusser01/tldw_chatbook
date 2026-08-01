@@ -13,7 +13,7 @@ from loguru import logger as loguru_logger
 from rich.markup import escape as escape_markup
 from textual.app import App
 from textual.widget import Widget
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Select
 
 import tldw_chatbook
 from tldw_chatbook.DB.Evals_DB import EvalsDB
@@ -26,6 +26,7 @@ from tldw_chatbook.Evals.word_bench.models import (
 )
 from tldw_chatbook.Evals.word_bench.storage import create_run_group, save_bench
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
+from tldw_chatbook.UI.Evals.bench_editor import BenchEditor
 from tldw_chatbook.UI.Evals.library_rail import LibraryRail
 from tldw_chatbook.UI.Evals.snippet_editor import import_snippets_into_dataset
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
@@ -319,6 +320,251 @@ async def test_every_pane_descendant_stays_within_its_pane(evals_app, seeded_ben
         assert library_pane.region.contains_region(rail_row.region)
 
 
+#: The number of target rows a realistic 160x45 viewport genuinely shows
+#: without scrolling, once there are that many or more -- confirmed live
+#: (see `test_target_rows_stay_reachable_at_4_and_8_targets`'s own
+#: docstring). A LITERAL constant, not derived from any live-measured
+#: region -- whole-branch review, Minor: an earlier version of this test
+#: computed the equivalent count as `min(body.region.height, n_targets)`,
+#: which made the assertion self-adjust to whatever a regression produced
+#: (e.g. a collapse back to a literal 1-row floor would have shrunk the
+#: expected count to 1 and kept passing) instead of failing against a
+#: fixed, independently-chosen expectation.
+_TARGET_ROWS_VISIBLE_WITHOUT_SCROLLING = 3
+
+
+@pytest.mark.asyncio
+async def test_target_rows_stay_reachable_at_4_and_8_targets(
+    evals_db,
+):
+    """task-1611 T2 fix round 1, then superseded by the whole-branch review
+    fix round below. The "+ New target" mini-form plus the Add picker
+    used to be TWO SEPARATE fixed siblings of the row table, each
+    independently subtracted from the targets section's own tiny `1fr`
+    share at a realistic viewport -- confirmed live that the table's OWN
+    box collapsed all the way down to a literal 1-row floor once there
+    were enough targets, at which point a 4-target bench's 4th row
+    escaped `#evals-detail-pane`'s own clip rectangle at the DEFAULT,
+    unscrolled position -- the exact signature
+    `test_every_pane_descendant_stays_within_its_pane` above catches.
+
+    Fix round 1's own fix (wrapping the row table, the Add picker, and
+    the mini-form in ONE shared scrollable `#evals-bench-targets-body`)
+    was ITSELF superseded by the whole-branch review fix round: that
+    local scroll level could not also fix a SEPARATE, worse failure (a
+    tall `#evals-bench-form-error` callout pushing remedies off the
+    SCREEN with no scrolling anywhere in `BenchEditor` at all -- see
+    `test_blocked_save_remedies_stay_reachable_on_short_terminals`
+    below), and layering a second scroll level on top of the first one
+    demonstrably did not work (`BenchEditor`'s own virtual-size
+    computation could not see past the body's own separately-scrolling,
+    still-small box). `#evals-bench-editor` is now the ONE scrollable
+    region for the whole form; see its own CSS comment in `_evals.tcss`
+    for the full story, and `#evals-bench-targets-section`'s for why its
+    own local scroll was removed rather than kept alongside the outer
+    one.
+
+    This test's OWN claims changed to match: (1) the targets heading is
+    pane-contained at the default (unscrolled) position, regardless of
+    target count; (2) `_TARGET_ROWS_VISIBLE_WITHOUT_SCROLLING` rows (a
+    FIXED constant, not read back from live geometry -- see its own
+    comment) are ALSO pane-contained at the default position whenever
+    there are that many or more targets; and (3) scrolling the OUTER
+    editor all the way to its own end genuinely brings the "+ New
+    target" button into the pane's clip rectangle -- not merely that
+    `max_scroll_y` is non-zero, which is the claim the original T2
+    report made WITHOUT live-verifying it.
+    """
+    for n_targets in (4, 8):
+        ids = [
+            evals_db.create_model(
+                name=f"scale-target-{n_targets}-{i}", provider="llama_cpp", model_id="m"
+            )
+            for i in range(n_targets)
+        ]
+        dataset_id = evals_db.create_dataset(
+            name=f"scale-set-{n_targets}",
+            format="custom",
+            source_path=f"inline:scale-set-{n_targets}",
+            metadata={"sample_count": 4},
+        )
+        config = BenchConfig(
+            name=f"scale bench {n_targets}",
+            prompt_mode="raw",
+            top_k=20,
+            dataset_id=dataset_id,
+            target_ids=tuple(ids),
+        )
+        task_id = save_bench(evals_db, config)
+
+        app = EvalsHarness(_FakeAppInstance(evals_db))
+        async with app.run_test(size=(160, 45)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            screen.select(kind="bench", id=task_id)
+            await pilot.pause()
+
+            editor = screen.query_one(BenchEditor)
+            pane = screen.query_one("#evals-detail-pane")
+            heading = screen.query_one("#evals-bench-targets-heading")
+            assert pane.region.contains_region(heading.region), (
+                f"the targets heading at {heading.region} escapes the pane's "
+                f"clip region {pane.region} with {n_targets} targets"
+            )
+            assert editor.max_scroll_y > 0, (
+                f"expected {n_targets} targets plus the Add picker and the "
+                "create-target form to overflow the editor's own box -- "
+                "this test's whole premise needs genuine overflow to prove "
+                "anything"
+            )
+
+            for index in range(min(_TARGET_ROWS_VISIBLE_WITHOUT_SCROLLING, n_targets)):
+                row = screen.query_one(f"#evals-bench-target-{index}")
+                assert pane.region.contains_region(row.region), (
+                    f"row {index} (of the "
+                    f"{_TARGET_ROWS_VISIBLE_WITHOUT_SCROLLING} expected to "
+                    f"fit without scrolling) escapes the pane with "
+                    f"{n_targets} targets"
+                )
+
+            # And scrolling the OUTER editor all the way to its own end
+            # genuinely brings the "+ New target" button -- the lowest-
+            # priority, always-present affordance in this shared flow --
+            # into view.
+            editor.scroll_to(y=editor.max_scroll_y, animate=False)
+            await pilot.pause()
+            create_button = screen.query_one("#evals-bench-create-target")
+            assert pane.region.contains_region(create_button.region), (
+                "scrolling to the end never brought the create-target "
+                f"button into the pane's clip region ({n_targets} targets)"
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(160, 45), (120, 40)], ids=["160x45", "120x40"])
+async def test_blocked_save_remedies_stay_reachable_on_short_terminals(
+    evals_db, size
+):
+    """Whole-branch review, IMPORTANT. A tall `#evals-bench-form-error`
+    callout (this task's own reworded mode-revalidation copy, which wraps
+    to 5+ lines at a realistic 160x45/120x40 terminal) is composed ABOVE
+    the targets section -- pushing BOTH remedies the error text itself
+    names (the offending target row's own `Remove` button, and the "+ New
+    target" mini-form) off the bottom of the SCREEN entirely, with
+    neither `#evals-detail-pane` nor `BenchEditor` scrollable (confirmed
+    live before this fix: `overflow_y` was `hidden`, `allow_vertical_
+    scroll` was `False`, and `editor.scroll_to()` moved nothing). A user
+    hitting this was told to do two things they could neither see nor
+    reach; only flipping the mode `Select` back or resizing the terminal
+    escaped. Pre-existing (the Top-K error callout already did this at
+    160x45, unrelated to this task), but this task's own copy -- which
+    explicitly instructs "remove it" -- walks a user straight into it.
+
+    `#evals-bench-editor` becoming the sole scrollable region for the
+    whole form (see its own `_evals.tcss` comment) fixes this: scrolls to
+    reveal `#evals-bench-save` first (120x40 needs this even in the
+    CLEAN, no-error state -- confirmed live as a second, independently
+    real pre-existing gap this same fix happens to close too), clicks it
+    to trigger the error, then scrolls again to reach the offending row's
+    `Remove` button and the create-target control -- asserting both are
+    pane-CONTAINED and that `Screen.get_widget_at` resolves to the actual
+    button, not to `footer-spacer` or anything else painted on top of a
+    geometrically-plausible-but-actually-obscured position (the exact
+    failure mode a bare containment check alone would miss -- see
+    `test_every_pane_descendant_stays_within_its_pane`'s own docstring
+    for why that distinction matters here too). Red-first against the
+    code before this fix round: both `contained` assertions failed
+    outright (`OutOfBounds`-adjacent, off the SCREEN's own bottom edge),
+    confirmed live before writing this test.
+    """
+    id1 = evals_db.create_model(name="target-1", provider="llama_cpp", model_id="m")
+    id2 = evals_db.create_model(
+        name="target-2",
+        provider="llama_cpp",
+        model_id="m",
+        config={"prefix": "Continue: "},
+    )
+    dataset_id = evals_db.create_dataset(
+        name="loaded-nouns",
+        format="custom",
+        source_path="inline:loaded-nouns",
+        metadata={"sample_count": 12},
+    )
+    config = BenchConfig(
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(id1, id2),
+        probes=(" Sure", " I"),
+    )
+    task_id = save_bench(evals_db, config)
+
+    app = EvalsHarness(_FakeAppInstance(evals_db))
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+
+        editor = screen.query_one(BenchEditor)
+        pane = screen.query_one("#evals-detail-pane")
+
+        screen.query_one("#evals-bench-prompt-mode", Select).value = "chat"
+        await pilot.pause()
+
+        # Reach Save -- itself already off-screen at 120x40 even before
+        # any error renders (see the docstring above).
+        editor.scroll_to(y=editor.max_scroll_y, animate=False)
+        await pilot.pause()
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+
+        callout = screen.query_one("#evals-bench-form-error")
+        assert callout.display
+        assert "target-2" in str(callout.renderable)
+
+        # The error callout just grew the form's total content height --
+        # scroll again to reach its new bottom.
+        editor.scroll_to(y=editor.max_scroll_y, animate=False)
+        await pilot.pause()
+        await pilot.pause()
+
+        # target-2 is index 1 (config.target_ids == (id1, id2)) -- its own
+        # Remove button, not any remove button (`.evals-bench-target-
+        # remove` alone would match target-1's too, with two staged).
+        remove_btn = screen.query_one("#evals-bench-target-remove-1")
+        create_btn = screen.query_one("#evals-bench-create-target")
+
+        assert pane.region.contains_region(remove_btn.region), (
+            f"target-2's Remove button at {remove_btn.region} escapes the "
+            f"pane's clip region {pane.region} at {size[0]}x{size[1]} -- "
+            "the error's own remedy is unreachable"
+        )
+        assert pane.region.contains_region(create_btn.region), (
+            f"the create-target button at {create_btn.region} escapes the "
+            f"pane's clip region {pane.region} at {size[0]}x{size[1]} -- "
+            "the error's own remedy is unreachable"
+        )
+
+        resolved_remove, _ = screen.get_widget_at(
+            remove_btn.region.x + 1, remove_btn.region.y
+        )
+        assert resolved_remove is remove_btn, (
+            f"the Remove button's own screen position resolves to "
+            f"{resolved_remove!r}, not the button itself, at "
+            f"{size[0]}x{size[1]} -- painted underneath something else"
+        )
+        resolved_create, _ = screen.get_widget_at(
+            create_btn.region.x + 1, create_btn.region.y
+        )
+        assert resolved_create is create_btn, (
+            f"the create-target button's own screen position resolves to "
+            f"{resolved_create!r}, not the button itself, at "
+            f"{size[0]}x{size[1]} -- painted underneath something else"
+        )
+
+
 @pytest.mark.asyncio
 async def test_import_button_stays_in_its_pane_and_pilot_click_opens_the_picker(
     evals_app, evals_db
@@ -527,11 +773,14 @@ async def test_primary_action_state_stays_disabled_for_a_target_less_bench(
         label, disabled, tooltip = screen._primary_action_state()
         assert label == "Run draft bench"
         assert disabled is True
-        # Exact-match: same wording as the readiness panel's own "No
-        # targets configured yet." for the identical state
-        # (inspector.py/bench_editor.py), per the coordinator's fix.
+        # Exact-match. task-1612: appends "and Save" -- staging a target
+        # in the bench editor's Add picker does not touch this row's
+        # persisted `target_ids` (only Save does), so a user who has just
+        # staged one but not yet saved would otherwise read this tooltip
+        # as stale/wrong while it still claims "no targets yet".
         assert tooltip == (
-            "This bench has no targets yet; add one in the bench editor."
+            "This bench has no targets yet; add one in the bench editor "
+            "and Save."
         )
 
 
@@ -1645,6 +1894,51 @@ async def test_bench_run_completion_does_not_yank_a_dirty_bench_editor(
         assert screen._selection.id == runnable_bench
         assert screen.query_one("#evals-bench-name", Input) is name_input
         assert screen.query_one("#evals-bench-name", Input).value == "typed-while-running"
+        message, severity = evals_app.app_instance.notifications[-1]
+        assert severity == "information"
+        assert message == "Bench run finished — see the Runs section."
+        # The run itself is real -- the DB write is not lost, only the
+        # auto-navigate is skipped.
+        assert len(screen._view_model.run_groups()) == 1
+
+
+@pytest.mark.asyncio
+async def test_bench_run_completion_does_not_yank_a_bench_editor_with_unsaved_mini_form_text(
+    evals_app, runnable_bench
+):
+    """task-1611 T2 fix round 1: the SAME protection as
+    ``test_bench_run_completion_does_not_yank_a_dirty_bench_editor`` above,
+    but the unsaved edit lives in the "+ New target" mini-form
+    (``#evals-target-name``) rather than the bench's own Name field.
+    ``BenchEditor.is_dirty()`` had to learn about that mini-form for this
+    to hold -- before that fix, this exact scenario recomposed right over
+    the typed-but-never-created target name."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        await pilot.pause()
+
+        name_input = screen.query_one("#evals-target-name", Input)
+        name_input.value = "typed-while-running"
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+        assert screen._selection.kind == "bench"
+        assert screen._selection.id == runnable_bench
+        assert screen.query_one("#evals-target-name", Input) is name_input
+        assert screen.query_one("#evals-target-name", Input).value == "typed-while-running"
         message, severity = evals_app.app_instance.notifications[-1]
         assert severity == "information"
         assert message == "Bench run finished — see the Runs section."

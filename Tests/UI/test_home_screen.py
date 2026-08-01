@@ -1251,11 +1251,14 @@ async def test_home_flashcards_due_snapshot_reads_in_memory_db_via_real_worker()
 @pytest.mark.asyncio
 async def test_pending_console_launch_does_not_create_home_live_work_controls():
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "workflows",
-        "title": "Daily digest",
-        "payload": {},
-    }
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "workflows",
+            "title": "Daily digest",
+            "payload": {},
+        },
+    )
     host = HomeHarness(app)
 
     async with host.run_test(size=HOME_TEST_SIZE) as pilot:
@@ -1264,6 +1267,7 @@ async def test_pending_console_launch_does_not_create_home_live_work_controls():
 
         assert len(home.query("#home-pause")) == 0
         assert len(home.query("#home-open-in-console")) == 0
+        assert app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
 
 # --- Library ingest jobs -> Home Running / Needs Attention (L3b Task 6) ---

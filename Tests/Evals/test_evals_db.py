@@ -177,6 +177,46 @@ class TestTaskOperations:
         assert task["description"] == "Updated description"
         assert task["config_data"]["version"] == 2
 
+    def test_create_task_strips_control_characters_from_description(self, in_memory_db):
+        """create_task has always filtered control characters out of
+        ``description`` -- see its own inline comment ("Clean control
+        characters from name and description"). Pins the exact round-trip
+        so a future refactor (e.g. task-1614's shared ``_clean_task_
+        description`` helper) cannot silently change this behavior."""
+        task_id = in_memory_db.create_task(
+            name="hazard_task",
+            description="Hazard\x00\x01\x07 description\x1b[31m",
+            task_type="question_answer",
+            config_format="custom",
+            config_data={"test": "data"},
+        )
+
+        task = in_memory_db.get_task(task_id)
+        assert task["description"] == "Hazard description[31m"
+
+    def test_update_task_strips_control_characters_from_description(self, in_memory_db):
+        """task-1614: parity fix -- update_task used to pass ``description``
+        straight through with NO control-character filtering at all,
+        unlike create_task (see the sibling test above for that path's
+        identical, pre-existing behavior). Both now share
+        ``_clean_task_description``, so this pins the same exact
+        round-trip on the update path."""
+        task_id = in_memory_db.create_task(
+            name="hazard_update_task",
+            description="Original",
+            task_type="question_answer",
+            config_format="custom",
+            config_data={"test": "data"},
+        )
+
+        success = in_memory_db.update_task(
+            task_id, description="Hazard\x00\x01\x07 description\x1b[31m"
+        )
+        assert success
+
+        task = in_memory_db.get_task(task_id)
+        assert task["description"] == "Hazard description[31m"
+
     def test_delete_task(self, in_memory_db):
         """Test task deletion (soft delete)."""
         task_id = in_memory_db.create_task(

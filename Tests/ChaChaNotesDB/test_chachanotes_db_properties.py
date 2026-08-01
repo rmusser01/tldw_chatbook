@@ -1084,22 +1084,23 @@ class TestConcurrency:
         Property: The `_get_thread_connection` method must provide a unique
         connection object for each thread.
         """
-        connection_ids = set()
+        connections = []
         lock = threading.Lock()
 
-        def get_and_store_conn_id():
+        def get_and_store_connection():
             conn = db_instance.get_connection()
             with lock:
-                connection_ids.add(id(conn))
+                connections.append(conn)
 
-        threads = [threading.Thread(target=get_and_store_conn_id) for _ in range(5)]
+        threads = [threading.Thread(target=get_and_store_connection) for _ in range(5)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
 
-        # If threading.local is working, there should be 5 unique connection IDs.
-        assert len(connection_ids) == 5
+        # Retain each object through the assertion so Python cannot reuse a
+        # short-lived connection's id for a later worker.
+        assert len({id(conn) for conn in connections}) == 5
 
     def test_wal_mode_allows_concurrent_reads_during_write_transaction(
         self, db_instance: CharactersRAGDB

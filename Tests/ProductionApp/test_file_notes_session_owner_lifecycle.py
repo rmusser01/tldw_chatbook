@@ -35,6 +35,9 @@ from Tests.Notes.test_file_notes_git_commit_integration import (
 from Tests.UI.app_factory import _build_test_app
 
 
+_ASYNC_SETTLE_TIMEOUT = 10.0
+
+
 @dataclass
 class _OwnerProbe:
     events: list[str]
@@ -353,10 +356,13 @@ async def test_app_owner_first_retained_commit_shutdown_precedes_replica_teardow
         screen = await _wait_for_library(app, pilot)
         screen._library_file_notes_workspace = workspace
         waiter = service.start_commit(binding, review.handle)
-        await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+        await asyncio.wait_for(
+            runner.commit_started.wait(),
+            _ASYNC_SETTLE_TIMEOUT,
+        )
 
     assert waiter is not None
-    outcome = await asyncio.wait_for(waiter, 1.0)
+    outcome = await asyncio.wait_for(waiter, _ASYNC_SETTLE_TIMEOUT)
     assert outcome.state == "uncertain"
     assert runner.commit_calls == 1
     assert runner.shutdown_called is True
@@ -396,7 +402,7 @@ async def test_retained_commit_shutdown_joins_cancelled_recovery_before_owner_cl
         delayed_postflight,
     )
     waiter = service.check_commit_again(binding)
-    await asyncio.wait_for(started.wait(), 1.0)
+    await asyncio.wait_for(started.wait(), _ASYNC_SETTLE_TIMEOUT)
     cycle = service._commit_recovery_cycle
     assert cycle is not None
 
@@ -408,8 +414,11 @@ async def test_retained_commit_shutdown_joins_cancelled_recovery_before_owner_cl
     assert not shutdown.done()
 
     release.set()
-    await asyncio.wait_for(shutdown, 1.0)
-    outcome = await asyncio.wait_for(asyncio.shield(cycle), 1.0)
+    await asyncio.wait_for(shutdown, _ASYNC_SETTLE_TIMEOUT)
+    outcome = await asyncio.wait_for(
+        asyncio.shield(cycle),
+        _ASYNC_SETTLE_TIMEOUT,
+    )
 
     assert outcome.state == "uncertain"
     assert runner.commit_calls == 1

@@ -2127,9 +2127,9 @@ def test_inventory_rejects_replaced_artifacts_root_before_traversal(
         scan_calls.append(Path(path))
         return original_scandir(path)
 
-    monkeypatch.setattr(service_module.os, "scandir", record_scandir)
-
-    installed = service.list_installed()
+    with monkeypatch.context() as patch:
+        patch.setattr(service_module.os, "scandir", record_scandir)
+        installed = service.list_installed()
 
     assert scan_calls == []
     assert len(installed) == 1
@@ -2248,10 +2248,10 @@ def test_disk_usage_rejects_directory_identity_change_during_scan(
             return iter(entries)
         return original_scandir(path)
 
-    monkeypatch.setattr(service_module.os, "scandir", swap_artifacts)
-
-    with pytest.raises(service_module.ArtifactPathError):
-        service.disk_usage()
+    with monkeypatch.context() as patch:
+        patch.setattr(service_module.os, "scandir", swap_artifacts)
+        with pytest.raises(service_module.ArtifactPathError):
+            service.disk_usage()
 
     assert swapped is True
 

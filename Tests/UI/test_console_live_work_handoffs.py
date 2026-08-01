@@ -449,7 +449,8 @@ def test_open_console_for_live_work_routes_to_chat_route():
         "recovery": "Workflow is starting.",
         "action_label": "Open workflow run",
     }
-    assert app.pending_handoffs.acknowledge(claim)
+    assert app.pending_handoffs.acknowledge(claim) is True
+    assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
 
 def test_open_console_for_live_work_preserves_minimal_call_defaults():
@@ -470,7 +471,8 @@ def test_open_console_for_live_work_preserves_minimal_call_defaults():
         "recovery": "Console has staged this live-work request.",
         "action_label": "Open in Console",
     }
-    assert app.pending_handoffs.acknowledge(claim)
+    assert app.pending_handoffs.acknowledge(claim) is True
+    assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
 
 def test_console_live_work_status_card_state_derives_stable_rows_from_launch():
@@ -752,13 +754,17 @@ async def test_skeletal_destination_console_actions_are_disabled_with_recovery_c
     host = DestinationHarness(app, route)
 
     async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
+        deadline = time.monotonic() + 2.0
+        while expected_copy not in _screen_static_text(host.screen):
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    f"Timed out waiting for recovery copy: {expected_copy}"
+                )
+            await pilot.pause(0.01)
         button = host.screen.query_one(f"#{button_id}")
         assert button.disabled is True
         assert "unavailable" in str(button.label).lower()
-        assert expected_copy in " ".join(
-            str(widget.renderable) for widget in host.screen.query("Static")
-        )
+        assert expected_copy in _screen_static_text(host.screen)
         await pilot.click(f"#{button_id}")
         await pilot.pause(0.1)
 

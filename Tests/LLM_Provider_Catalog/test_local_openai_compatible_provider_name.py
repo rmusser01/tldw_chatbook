@@ -31,9 +31,7 @@ def _run_handler_capturing_kwargs(handler, settings_payload):
         patch.object(
             local_calls,
             "get_runtime_config_snapshot",
-            return_value=type(
-                "Snapshot", (), {"values": settings_payload}
-            )(),
+            return_value=type("Snapshot", (), {"values": settings_payload})(),
         ),
     ):
         result = handler(input_data=_MESSAGES, model="test-model")

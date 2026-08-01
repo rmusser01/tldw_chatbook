@@ -6849,6 +6849,11 @@ async def test_library_shell_note_conflict_reload_falls_back_to_list_when_note_m
                 f"autosave_state={screen._library_note_autosave_state!r})."
             ),
         )
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-note-conflict-reload"),
+            message="Reload remained mounted after the list-view recompose.",
+        )
 
         assert screen._selected_note_id == ""
         assert screen._library_note_detail is None
@@ -6900,6 +6905,11 @@ async def test_library_shell_note_conflict_overwrite_falls_back_to_list_when_not
                 f"(stuck: view={screen._library_notes_view!r}, "
                 f"autosave_state={screen._library_note_autosave_state!r})."
             ),
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-note-conflict-overwrite"),
+            message="Overwrite remained mounted after the list-view recompose.",
         )
 
         assert screen._selected_note_id == ""

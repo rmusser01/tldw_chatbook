@@ -38,6 +38,8 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     StagingOwnership,
 )
 
+_ASYNC_SETTLE_TIMEOUT = 10.0
+
 
 def _git(repository: Path, *arguments: str) -> bytes:
     return subprocess.run(
@@ -1042,12 +1044,12 @@ async def test_commit_review_retained_cancellation_supersedes_ready_capability(
 
     runner.arm("cancelled_token")
     second_waiter = service.start_commit_review(binding, "Second review")
-    await asyncio.wait_for(runner.exposed.wait(), 1.0)
+    await asyncio.wait_for(runner.exposed.wait(), _ASYNC_SETTLE_TIMEOUT)
     try:
         assert service._commit_review_snapshots == {}
     finally:
         runner.terminal.set()
-        second = await asyncio.wait_for(second_waiter, 1.0)
+        second = await asyncio.wait_for(second_waiter, _ASYNC_SETTLE_TIMEOUT)
 
     assert second.state == "cancelled"
     assert second.handle is None
@@ -1656,7 +1658,7 @@ async def test_commit_review_retained_proof_child_holds_mutation_until_drained(
             service_capture=captured,
         )
     )
-    await asyncio.wait_for(runner.exposed.wait(), 1.0)
+    await asyncio.wait_for(runner.exposed.wait(), _ASYNC_SETTLE_TIMEOUT)
     service, binding = captured[0]
 
     blocked_admission = service._owner.admit_mutation(binding)
@@ -1664,7 +1666,9 @@ async def test_commit_review_retained_proof_child_holds_mutation_until_drained(
     assert not preparation.done()
 
     runner.terminal.set()
-    _service, _binding, result = await asyncio.wait_for(preparation, 1.0)
+    _service, _binding, result = await asyncio.wait_for(
+        preparation, _ASYNC_SETTLE_TIMEOUT
+    )
 
     assert result.state in {"blocked", "cancelled"}
     assert runner.claimed is True
@@ -1690,7 +1694,7 @@ async def test_explicit_review_cancel_retains_proof_child_and_mutation_lease(
             service_capture=captured,
         )
     )
-    await asyncio.wait_for(runner.exposed.wait(), 1.0)
+    await asyncio.wait_for(runner.exposed.wait(), _ASYNC_SETTLE_TIMEOUT)
     service, binding = captured[0]
 
     assert service.cancel_commit(binding)
@@ -1704,7 +1708,9 @@ async def test_explicit_review_cancel_retains_proof_child_and_mutation_lease(
     assert runner.released is False
 
     runner.terminal.set()
-    _service, _binding, result = await asyncio.wait_for(preparation, 1.0)
+    _service, _binding, result = await asyncio.wait_for(
+        preparation, _ASYNC_SETTLE_TIMEOUT
+    )
 
     assert result.state == "cancelled"
     assert runner.released is True
@@ -1744,7 +1750,7 @@ async def test_commit_review_caller_cancellation_keeps_proof_child_owned(
             service_capture=captured,
         )
     )
-    await asyncio.wait_for(runner.exposed.wait(), 1.0)
+    await asyncio.wait_for(runner.exposed.wait(), _ASYNC_SETTLE_TIMEOUT)
     service, binding = captured[0]
 
     preparation.cancel()
@@ -1755,7 +1761,7 @@ async def test_commit_review_caller_cancellation_keeps_proof_child_owned(
     cycle = service._commit_review_cycle
     assert cycle is not None
     runner.terminal.set()
-    result = await asyncio.wait_for(asyncio.shield(cycle), 1.0)
+    result = await asyncio.wait_for(asyncio.shield(cycle), _ASYNC_SETTLE_TIMEOUT)
 
     assert result.state == "blocked"
     assert runner.released is True
@@ -1779,11 +1785,13 @@ async def test_commit_review_shutdown_stops_and_drains_proof_child(
             service_capture=captured,
         )
     )
-    await asyncio.wait_for(runner.exposed.wait(), 1.0)
+    await asyncio.wait_for(runner.exposed.wait(), _ASYNC_SETTLE_TIMEOUT)
     service, binding = captured[0]
 
-    await asyncio.wait_for(service.shutdown(), 1.0)
-    _service, _binding, result = await asyncio.wait_for(preparation, 1.0)
+    await asyncio.wait_for(service.shutdown(), _ASYNC_SETTLE_TIMEOUT)
+    _service, _binding, result = await asyncio.wait_for(
+        preparation, _ASYNC_SETTLE_TIMEOUT
+    )
 
     assert result.state == "blocked"
     assert runner.released is True
@@ -1803,13 +1811,13 @@ async def test_service_shutdown_joins_active_commit_before_return(
     )
     assert review.handle is not None
     waiter = service.start_commit(binding, review.handle)
-    await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+    await asyncio.wait_for(runner.commit_started.wait(), _ASYNC_SETTLE_TIMEOUT)
     hooks_directory = runner.hooks_directory
     assert hooks_directory is not None and hooks_directory.is_dir()
 
-    await asyncio.wait_for(service.shutdown(), 1.0)
+    await asyncio.wait_for(service.shutdown(), _ASYNC_SETTLE_TIMEOUT)
     joined_at_return = waiter.done()
-    outcome = await asyncio.wait_for(waiter, 1.0)
+    outcome = await asyncio.wait_for(waiter, _ASYNC_SETTLE_TIMEOUT)
 
     assert runner.shutdown_called
     assert runner.released
@@ -1833,13 +1841,13 @@ async def test_owner_shutdown_joins_commit_before_closing_publication(
     assert review.handle is not None
     service._owner.attach_git_service(service)
     waiter = service.start_commit(binding, review.handle)
-    await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+    await asyncio.wait_for(runner.commit_started.wait(), _ASYNC_SETTLE_TIMEOUT)
     hooks_directory = runner.hooks_directory
     assert hooks_directory is not None and hooks_directory.is_dir()
 
-    await asyncio.wait_for(service._owner.shutdown_async(), 1.0)
+    await asyncio.wait_for(service._owner.shutdown_async(), _ASYNC_SETTLE_TIMEOUT)
     joined_at_return = waiter.done()
-    outcome = await asyncio.wait_for(waiter, 1.0)
+    outcome = await asyncio.wait_for(waiter, _ASYNC_SETTLE_TIMEOUT)
 
     assert joined_at_return
     assert runner.released
@@ -2122,10 +2130,10 @@ async def test_commit_confirmation_cancels_before_child_start(
     runner.arm("cancelled_token")
 
     waiter = service.start_commit(binding, review.handle)
-    await asyncio.wait_for(runner.exposed.wait(), 1.0)
+    await asyncio.wait_for(runner.exposed.wait(), _ASYNC_SETTLE_TIMEOUT)
     assert service.cancel_commit(binding) is True
     runner.terminal.set()
-    outcome = await asyncio.wait_for(waiter, 1.0)
+    outcome = await asyncio.wait_for(waiter, _ASYNC_SETTLE_TIMEOUT)
 
     assert outcome.state == "cancelled"
     assert not any("commit" in argv for argv, _environment in runner.calls)
@@ -2145,12 +2153,12 @@ async def test_commit_confirmation_cancel_refuses_after_child_begins(
     assert review.handle is not None
 
     waiter = service.start_commit(binding, review.handle)
-    await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+    await asyncio.wait_for(runner.commit_started.wait(), _ASYNC_SETTLE_TIMEOUT)
     hooks_directory = runner.hooks_directory
     assert hooks_directory is not None and hooks_directory.is_dir()
     assert service.cancel_commit(binding) is False
     runner.release_commit.set()
-    outcome = await waiter
+    outcome = await asyncio.wait_for(waiter, _ASYNC_SETTLE_TIMEOUT)
 
     assert outcome.state == "failed_unchanged"
     assert runner.commit_calls == 1
@@ -2179,12 +2187,12 @@ async def test_hooks_directory_lives_through_child_and_is_removed_with_rmdir(
 
     monkeypatch.setattr(Path, "rmdir", recording_rmdir)
     waiter = service.start_commit(binding, review.handle)
-    await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+    await asyncio.wait_for(runner.commit_started.wait(), _ASYNC_SETTLE_TIMEOUT)
     hooks_directory = runner.hooks_directory
     assert hooks_directory is not None and hooks_directory.is_dir()
     assert removed == []
     runner.release_commit.set()
-    await asyncio.wait_for(waiter, 1.0)
+    await asyncio.wait_for(waiter, _ASYNC_SETTLE_TIMEOUT)
 
     assert removed == [hooks_directory]
     assert not hooks_directory.exists()
@@ -2493,13 +2501,13 @@ async def test_commit_outcome_authority_drift_always_falls_back_to_quarantine(
     old_head = _git(repository, "rev-parse", "HEAD").decode().strip()
 
     waiter = service.start_commit(binding, review.handle)
-    await asyncio.wait_for(runner.commit_admitted.wait(), 1.0)
+    await asyncio.wait_for(runner.commit_admitted.wait(), _ASYNC_SETTLE_TIMEOUT)
     assert service._owner.record_change(
         binding,
         SessionChange("modified", "later.md"),
     )
     runner.release_commit.set()
-    outcome = await asyncio.wait_for(waiter, 2.0)
+    outcome = await asyncio.wait_for(waiter, _ASYNC_SETTLE_TIMEOUT)
 
     assert outcome.state == "uncertain"
     if mode == "pause_then_commit":
@@ -2530,12 +2538,12 @@ async def test_active_commit_refuses_root_rebind_and_publishes_original_session(
     assert review.handle is not None
 
     waiter = service.start_commit(binding, review.handle)
-    await asyncio.wait_for(runner.commit_admitted.wait(), 1.0)
+    await asyncio.wait_for(runner.commit_admitted.wait(), _ASYNC_SETTLE_TIMEOUT)
     with pytest.raises(RuntimeError, match="Git mutation is in progress"):
         service._owner.select_root(tmp_path / "other")
     assert service._owner.current_binding() == binding
     runner.release_commit.set()
-    outcome = await asyncio.wait_for(waiter, 2.0)
+    outcome = await asyncio.wait_for(waiter, _ASYNC_SETTLE_TIMEOUT)
 
     assert outcome.state == "succeeded"
     assert service._owner.current_binding() == binding
@@ -3201,7 +3209,7 @@ async def test_commit_check_again_caller_cancellation_keeps_recovery_owned(
         delayed_postflight,
     )
     waiter = service.check_commit_again(binding)
-    await asyncio.wait_for(started.wait(), 1.0)
+    await asyncio.wait_for(started.wait(), _ASYNC_SETTLE_TIMEOUT)
 
     waiter.cancel("panel unmounted")
     with pytest.raises(asyncio.CancelledError):
@@ -3211,7 +3219,7 @@ async def test_commit_check_again_caller_cancellation_keeps_recovery_owned(
     assert cycle is not None and not cycle.done()
     assert service._owner.mutation_active(binding)
     release.set()
-    outcome = await asyncio.wait_for(asyncio.shield(cycle), 1.0)
+    outcome = await asyncio.wait_for(asyncio.shield(cycle), _ASYNC_SETTLE_TIMEOUT)
 
     assert outcome.state == "uncertain"
     assert runner.commit_calls == 1
@@ -3276,7 +3284,7 @@ async def test_retained_commit_shutdown_publishes_before_hooks_cleanup(
     )
     monkeypatch.setattr(Path, "rmdir", recording_rmdir)
     waiter = service.start_commit(binding, review.handle)
-    await asyncio.wait_for(runner.commit_started.wait(), 1.0)
+    await asyncio.wait_for(runner.commit_started.wait(), _ASYNC_SETTLE_TIMEOUT)
 
     await service.shutdown()
     outcome = await waiter

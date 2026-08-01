@@ -128,20 +128,33 @@ def test_editor_lists_nested_and_marks_binary():
     from tldw_chatbook.Library.library_skills_state import build_skill_editor_state
 
     detail = {
-        "name": "demo", "content": "body", "version": 1,
+        "name": "demo",
+        "content": "body",
+        "version": 1,
         "supporting_files": {"references/api.md": "# api\n"},
         "bundle_files": [
-            {"path": "references/api.md", "size": 6, "executable": False, "is_text": True},
-            {"path": "assets/logo.png", "size": 2048, "executable": False, "is_text": False},
+            {
+                "path": "references/api.md",
+                "size": 6,
+                "executable": False,
+                "is_text": True,
+            },
+            {
+                "path": "assets/logo.png",
+                "size": 2048,
+                "executable": False,
+                "is_text": False,
+            },
         ],
-        "trust_status": "trusted", "trust_blocked": False,
+        "trust_status": "trusted",
+        "trust_blocked": False,
     }
     state = build_skill_editor_state(detail)
     names = [f.name for f in state.supporting_files]
     assert "references/api.md" in names
-    assert "assets/logo.png" in names          # binary listed
+    assert "assets/logo.png" in names  # binary listed
     binary = next(f for f in state.supporting_files if f.name == "assets/logo.png")
-    assert binary.is_text is False             # view-only marker
+    assert binary.is_text is False  # view-only marker
 
 
 def test_compose_roundtrips_through_frontmatter_grammar():

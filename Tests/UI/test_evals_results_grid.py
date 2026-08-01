@@ -16,6 +16,7 @@ Mirrors ``test_evals_screen.py``/``test_evals_bench_editor.py``'s harness
 from __future__ import annotations
 
 import math
+import time
 from pathlib import Path
 
 import pytest
@@ -605,8 +606,13 @@ def markup_hazard_run_group(evals_db: EvalsDB) -> dict:
 async def _select_run_group(pilot, group_id: str) -> ResultsGrid:
     screen: EvalsScreen = pilot.app.screen
     screen.select(kind="run_group", id=group_id)
-    await pilot.pause()
-    return screen.query_one("#evals-results-grid", ResultsGrid)
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if screen.query("#evals-results-grid"):
+            await pilot.pause()
+            return screen.query_one("#evals-results-grid", ResultsGrid)
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out mounting results grid for run group {group_id}")
 
 
 # ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 from typing import get_type_hints
 from unittest.mock import patch
 
@@ -10,6 +11,7 @@ import pytest
 
 import tldw_chatbook.Local_Ingestion.transcription_service as service_module
 from tldw_chatbook.Local_Ingestion.transcription_service import (
+    TranscriptionError,
     TranscriptionService,
     _LegacyTranscriptionBackend,
 )
@@ -328,7 +330,54 @@ def test_facade_preserves_backend_exception_identity(
     assert caught.value is failure
 
 
-def test_real_facade_keeps_configured_legacy_provider_and_language() -> None:
+@pytest.mark.parametrize(
+    ("audio_path", "cause_text"),
+    [
+        pytest.param("missing;unsafe.wav", "dangerous pattern", id="unsafe"),
+        pytest.param("non_existent_file.wav", "Path does not exist", id="missing"),
+    ],
+)
+def test_real_facade_rejects_invalid_audio_path_before_provider_dispatch(
+    audio_path: str,
+    cause_text: str,
+) -> None:
+    settings = {
+        "transcription.default_provider": "faster-whisper",
+        "transcription.default_model": "base",
+    }
+
+    with (
+        patch(
+            "tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting",
+            side_effect=lambda key, default=None: settings.get(key, default),
+        ),
+        patch.object(
+            _LegacyTranscriptionBackend,
+            "get_available_providers",
+            return_value=["faster-whisper"],
+        ),
+        patch.object(
+            _LegacyTranscriptionBackend,
+            "_transcribe_with_faster_whisper",
+        ) as transcribe,
+    ):
+        with pytest.raises(
+            TranscriptionError,
+            match="Invalid audio file path",
+        ) as exc_info:
+            TranscriptionService().transcribe(
+                audio_path,
+                provider="faster-whisper",
+            )
+
+    assert isinstance(exc_info.value.__cause__, ValueError)
+    assert cause_text in str(exc_info.value.__cause__)
+    transcribe.assert_not_called()
+
+
+def test_real_facade_keeps_configured_legacy_provider_and_language(
+    tmp_path: Path,
+) -> None:
     settings = {
         "transcription.default_provider": "faster-whisper",
         "transcription.default_model": "base",
@@ -336,6 +385,8 @@ def test_real_facade_keeps_configured_legacy_provider_and_language() -> None:
         "transcription.default_source_language": "fr",
     }
     legacy_result = {"text": "bonjour", "segments": [], "language": "fr"}
+    audio_path = tmp_path / "audio.wav"
+    audio_path.touch()
 
     with (
         patch(
@@ -353,11 +404,11 @@ def test_real_facade_keeps_configured_legacy_provider_and_language() -> None:
             return_value=legacy_result,
         ) as transcribe,
     ):
-        result = TranscriptionService().transcribe("audio.wav")
+        result = TranscriptionService().transcribe(str(audio_path))
 
     assert result is legacy_result
     assert transcribe.call_args.args[:6] == (
-        "audio.wav",
+        str(audio_path),
         "base",
         "fr",
         False,

@@ -5,7 +5,6 @@ import logging
 
 import pytest
 from textual.css.query import NoMatches
-from textual.widget import Widget
 from textual.widgets import Input, OptionList, Select
 
 import tldw_chatbook.app as app_module
@@ -299,7 +298,6 @@ async def test_settings_save_preserves_user_session_then_away_command_hands_off(
             assert settings.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
 
             provider_select = await _wait_for_stable_provider_select(settings, pilot)
-            await _wait_for_widget(provider_select, pilot, "#label", Widget)
             selected_provider = settings._provider_select_value_for_provider(
                 "Anthropic"
             )

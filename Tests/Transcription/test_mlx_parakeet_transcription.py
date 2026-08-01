@@ -591,6 +591,7 @@ class TestMLXParakeetUnit:
         assert "overlap" in result
 
 
+@pytest.mark.slow
 class TestMLXParakeetIntegration:
     """Integration tests for MLX Parakeet transcription backend."""
 
@@ -730,18 +731,6 @@ class TestMLXParakeetIntegration:
                 os.unlink(tmp_file.name)
 
     @pytest.mark.integration
-    def test_real_transcription_invalid_file(self, real_transcription_service):
-        """Reject an invalid audio file before acquiring a model."""
-        with patch(
-            "tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained"
-        ) as model_loader:
-            with pytest.raises(TranscriptionError):
-                real_transcription_service.transcribe(
-                    audio_path="non_existent_file.wav", provider="parakeet-mlx"
-                )
-        model_loader.assert_not_called()
-
-    @pytest.mark.integration
     @pytest.mark.slow
     def test_real_transcription_empty_file(self, real_transcription_service):
         """Test transcription with empty audio file."""
@@ -763,6 +752,7 @@ class TestMLXParakeetIntegration:
                 # Should handle empty file gracefully
                 assert "text" in result
                 assert result["text"] == "" or result["text"].strip() == ""
+                assert result["segments"] == []
 
             finally:
                 os.unlink(tmp_file.name)

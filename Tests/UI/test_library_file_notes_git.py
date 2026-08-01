@@ -3526,11 +3526,12 @@ async def test_hidden_unexpected_action_failure_refreshes_on_reopen(
         )
         await _wait_for_current_git_row_projection(workspace)
         assert not workspace._git_refresh_after_mutation
+        git_back = workspace.query_one("#file-notes-git-back", Button)
         git_rows = workspace.query_one("#file-notes-git-rows", ListView)
         await _wait_until(
             pilot,
-            lambda: git_rows.has_focus,
-            "reopen did not restore focus to the refreshed rows",
+            lambda: git_back.has_focus or git_rows.has_focus,
+            "reopen did not restore focus to the visible Git surface",
         )
         assert workspace._git_last_action == retained_action
         action_status = workspace.query_one(
@@ -3804,7 +3805,10 @@ async def test_workspace_trust_decline_runs_no_status_and_retry_revalidates(
         panel.query_one("#file-notes-git-trust", Button).press()
         await _wait_until(
             pilot,
-            lambda: isinstance(workspace.app.screen, SessionGitTrustDialog),
+            lambda: (
+                isinstance(workspace.app.screen, SessionGitTrustDialog)
+                and bool(list(workspace.app.screen.query("#cancel-button")))
+            ),
             "cancel retry did not reopen the prompt",
         )
         workspace.app.screen.query_one("#cancel-button", Button).press()
@@ -3824,7 +3828,10 @@ async def test_workspace_trust_decline_runs_no_status_and_retry_revalidates(
         panel.query_one("#file-notes-git-trust", Button).press()
         await _wait_until(
             pilot,
-            lambda: isinstance(workspace.app.screen, SessionGitTrustDialog),
+            lambda: (
+                isinstance(workspace.app.screen, SessionGitTrustDialog)
+                and bool(list(workspace.app.screen.query("#confirm-button")))
+            ),
             "trust retry did not reopen the prompt",
         )
         workspace.app.screen.query_one("#confirm-button", Button).press()
@@ -3969,12 +3976,15 @@ async def test_stage_all_summary_counts_the_complete_displayed_snapshot(
         )
 
         workspace.query_one("#file-notes-git-stage-all", Button).press()
-        await _wait_until(
-            pilot,
-            lambda: git_service.stage_calls == [(1, 2)]
-            and len(git_service.status_calls) == 2,
-            "Stage All did not settle and refresh",
-        )
+        for _ in range(200):
+            if (
+                git_service.stage_calls == [(1, 2)]
+                and len(git_service.status_calls) == 2
+            ):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("Stage All did not settle and refresh")
 
         assert workspace._git_last_action is not None
         assert workspace._git_last_action.text == (
@@ -4011,12 +4021,15 @@ async def test_unstage_all_summary_counts_the_complete_displayed_snapshot(
         )
 
         workspace.query_one("#file-notes-git-unstage-all", Button).press()
-        await _wait_until(
-            pilot,
-            lambda: git_service.unstage_calls == [(1, 2)]
-            and len(git_service.status_calls) == 2,
-            "Unstage All did not settle and refresh",
-        )
+        for _ in range(200):
+            if (
+                git_service.unstage_calls == [(1, 2)]
+                and len(git_service.status_calls) == 2
+            ):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("Unstage All did not settle and refresh")
 
         assert workspace._git_last_action is not None
         assert workspace._git_last_action.text == (

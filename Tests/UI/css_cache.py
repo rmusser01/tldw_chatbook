@@ -10,10 +10,9 @@
 # This wrapper adds a process-global cache in FRONT of the per-instance one.
 # Textual's own cache key omits the stylesheet's variables (safe per-instance
 # because set_variables() clears the cache); a global cache MUST include them,
-# so the key adds a fingerprint of self._variables. Parsed RuleSet lists are
-# shared across instances exactly as Textual already shares them across
-# repeated calls on one instance; the Tests/UI canary run (cache on vs off,
-# identical command) gates against any cross-instance mutation surprises.
+# so the key adds a fingerprint of self._variables. The cached RuleSet list is
+# copied at both boundaries: Textual may mutate that container while building
+# one Stylesheet, so sharing the same list with the next app is unsafe.
 #
 # Escape hatch: TLDW_TEST_CSS_CACHE=0 disables installation entirely.
 
@@ -72,11 +71,11 @@ def install() -> bool:
         )
         cached = _GLOBAL_PARSE_CACHE.get(key)
         if cached is not None:
-            return cached
+            return list(cached)
         rules = original_parse_rules(
             self, css, read_from, is_default_rules, tie_breaker, scope
         )
-        _GLOBAL_PARSE_CACHE[key] = rules
+        _GLOBAL_PARSE_CACHE[key] = list(rules)
         return rules
 
     Stylesheet._parse_rules = cached_parse_rules

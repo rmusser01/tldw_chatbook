@@ -477,8 +477,18 @@ async def test_skill_editor_canvas_scrolls_trust_panel_into_view(tmp_path):
         review_button = screen.query_one("#library-skill-trust-review", Button)
         assert review_button.disabled is False
         review_button.focus()
-        await pilot.pause()
-        await pilot.pause()
+        for _ in range(200):
+            canvas_region = canvas.region
+            button_region = review_button.region
+            if (
+                canvas_region.y
+                <= button_region.y
+                < canvas_region.y + canvas_region.height
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Trust review control did not scroll into view")
 
         assert canvas.scroll_offset.y > 0
         canvas_region = canvas.region

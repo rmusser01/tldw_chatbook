@@ -346,60 +346,87 @@ class TestMLXParakeetIntegration:
         assert "precision" in result
         assert result["precision"] == precision
 
-    def test_empty_audio_returns_zero_length_addressable_segment(
-        self, transcription_service, mock_model_download
-    ):
-        """Empty Parakeet results retain one addressable zero-length span."""
+    def test_empty_audio(self, transcription_service, mock_model_download):
+        """Test handling of empty audio files."""
         # Create empty WAV file
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
             with wave.open(tmp_file.name, "wb") as wav_file:
                 wav_file.setnchannels(1)
                 wav_file.setsampwidth(2)
-                wav_file.setframerate(16000)
+                wav_file.setframerate(8000)
                 wav_file.writeframes(b"")  # Empty audio
             empty_file = tmp_file.name
 
         try:
-            # Override the mock factory to handle empty audio
-            def create_empty_model(*args, **kwargs):
-                model = MagicMock()
+            model = "test/empty-parakeet"
+            precision = "float32"
+            attention_type = "native"
+            cached_model = MagicMock()
+            cached_model._model_name = model
+            cached_model._precision = precision
+            cached_model._attention_type = attention_type
+            transcription_service._bridge._get_backend()._parakeet_mlx_model = (
+                cached_model
+            )
+            progress_updates = []
 
-                def transcribe_empty(audio_path, **kwargs):
-                    result = MagicMock()
-                    result.text = ""  # Empty transcription for empty audio
-                    result.sentences = []  # No sentences
-                    return result
-
-                model.transcribe = transcribe_empty
-                model._model_name = args[0] if args else "test-model"
-                return model
-
-            mock_model_download.side_effect = create_empty_model
+            def progress_callback(percentage, message, metadata):
+                progress_updates.append((percentage, message, metadata))
 
             result = transcription_service.transcribe(
-                audio_path=empty_file, provider="parakeet-mlx"
+                audio_path=empty_file,
+                provider="parakeet-mlx",
+                model=model,
+                source_lang="en",
+                precision=precision,
+                attention_type=attention_type,
+                chunk_size=0,
+                overlap=999,
+                progress_callback=progress_callback,
             )
 
-            # Should handle gracefully
-            assert "text" in result
-            assert result["text"] == ""
-            assert result["segments"] == [
-                {
-                    "start": 0.0,
-                    "end": 0.0,
-                    "text": "",
-                    "Time_Start": 0.0,
-                    "Time_End": 0.0,
-                    "Text": "",
-                }
+            assert result == {
+                "text": "",
+                "segments": [],
+                "language": "en",
+                "provider": "parakeet-mlx",
+                "model": model,
+                "precision": precision,
+                "attention_type": attention_type,
+                "chunk_size": 120.0,
+                "overlap": 119.0,
+                "sample_rate": "8000 -> 16000",
+                "duration": 0.0,
+            }
+            assert progress_updates == [
+                (
+                    0,
+                    f"Starting transcription with Parakeet MLX model: {model}...",
+                    {
+                        "stage": "starting",
+                        "model": model,
+                        "provider": "parakeet-mlx",
+                    },
+                ),
+                (
+                    100,
+                    "Transcription complete: 0 segments, 0 characters",
+                    {
+                        "total_segments": 0,
+                        "total_chars": 0,
+                        "model": model,
+                    },
+                ),
             ]
+            mock_model_download.assert_not_called()
+            cached_model.transcribe.assert_not_called()
         finally:
             os.unlink(empty_file)
 
 
 @pytest.mark.skipif(
     not PARAKEET_MLX_AVAILABLE or sys.platform != "darwin",
-    reason="Parakeet MLX not available or not on macOS",
+    reason="Parakeet MLX is not installed or not on macOS",
 )
 class TestMLXParakeetRealIntegration:
     """Real integration tests that use actual Parakeet MLX if available."""

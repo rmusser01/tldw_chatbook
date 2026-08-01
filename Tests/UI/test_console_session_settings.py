@@ -4215,7 +4215,9 @@ def _build_live_config_test_app():
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
-    user_data_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-live-config-test-"))
+    user_data_dir = Path(
+        tempfile.mkdtemp(prefix="tldw-chatbook-live-config-test-")
+    ).resolve(strict=True)
 
     def fake_runtime_policy(app):
         context = SimpleNamespace(

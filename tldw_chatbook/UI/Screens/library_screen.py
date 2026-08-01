@@ -4977,7 +4977,9 @@ class LibraryScreen(BaseAppScreen):
         mid-keystroke -- unlike the counts-landing case Task 2 fixed, or
         the run-completion case below, where the (long-running) wait window
         gives the user time to resume typing in the still-editable name/
-        description fields.
+        description fields. Worker dispatch runs after that refresh so an
+        immediate completion always targets the newly mounted running canvas,
+        never the outgoing form that the recompose is replacing.
         """
         event.stop()
         if self._library_export_running:
@@ -5011,7 +5013,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_cancel_event = threading.Event()
         cancel_event = self._library_export_cancel_event
         self.refresh(recompose=True)
-        self._start_library_export_worker(
+        self.call_after_refresh(
+            self._start_library_export_worker,
             run_id=run_id,
             scope=self._library_export_scope,
             name=name,
