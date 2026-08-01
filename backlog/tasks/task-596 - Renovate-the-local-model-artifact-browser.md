@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:02'
-updated_date: '2026-08-01 20:16'
+updated_date: '2026-08-01 20:17'
 labels:
   - stt
   - artifacts
@@ -61,4 +61,6 @@ Recovery 2026-08-01: the stale ppqq claim was exhaustively checked before resumi
 Phase 1 implementation (2026-08-01): centralized the shared managed model store, added the offline curated registry and preflight provenance, introduced pure browser state plus reusable consent/progress/activation controls, migrated Library Parakeet installation to the shared flow, and added lazy Curated and Installed Lab views. Installed includes bounded legacy-file discovery, managed/staging/free-space totals, lease-safe activation/deletion, explicit deletion confirmation, and user-triggered repair. Download Models remains available until Phase 3. Verification: focused affected suite 1184 passed, 1 expected skip; Installed/shared-widget safety follow-up 16 passed; Ruff passed on all changed Python files; mypy passed on the 10 new shared/browser modules; py_compile and git diff --check passed. The attempted repository-wide UI-inclusive run was stopped after 316 passing tests because the unrelated UI corpus projected an excessive local runtime; the scoped gate covers all changed modules plus Model_Artifacts, Local_Ingestion, STT, and console dictation. Remaining TASK-596 work: Phase 2 Remote and Phase 3 GGUF adoption/legacy browser retirement; AC #5 idle heavy-worker recycle remains deferred to a pool-owner unload mechanism.
 
 Final review remediation (2026-08-01): queued forced refreshes behind in-flight inventory reads; disabled lifecycle mutation during loading; persisted Curated install state into Installed and the Lab status chip; refreshed Installed on completion; added explicit deletion confirmation; expanded Repair summaries to include readiness, stale state, staging observed/removed, and corrupt-model counts; logged all Installed worker failures with sanitized UI copy; and changed byte-progress rendering to update mounted widgets in place. Final independent review found no remaining Critical or Important issues and marked the branch ready to merge. Final scoped verification on 3f160216f: 1193 passed, 1 expected skip; Ruff passed across all changed Python files; mypy passed across the 12 affected shared/browser source files; git diff --check passed.
+
+Phase 1 pull request: #1175 (https://github.com/rmusser01/tldw_chatbook/pull/1175), targeting dev.
 <!-- SECTION:NOTES:END -->
