@@ -738,6 +738,15 @@ class STTSEventHandler:
         snapshot: STTSPlaygroundRequest,
         options: Mapping[str, Any],
     ) -> str:
+        # Cross-reference (TASK-1393 pact convention, greppable both ways):
+        # `TTS/legacy_request_builder.build_legacy_speech_request` is a
+        # separate, deliberately different copy of this id-derivation logic.
+        # This copy serves the live playground and derives kokoro's suffix
+        # from `options["use_onnx"]` and alltalk's suffix from
+        # `snapshot.model_id`; the builder derives both from fixed constants
+        # instead, matching `request_admission._legacy_request`'s table. The
+        # two are NOT interchangeable — do not converge them without
+        # updating both call sites' expectations.
         provider_id = snapshot.provider_id
         if provider_id == "openai":
             model_id = snapshot.model_id.lower().replace("-", "")
