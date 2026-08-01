@@ -26,17 +26,15 @@ from urllib.parse import urlparse
 
 import pytest
 
+from Tests.Model_Artifacts.acquisition_test_helpers import grant_consent
 from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 from Tests.Model_Artifacts.provision_processes import (
     DictCatalog,
     build_descriptor,
     provision_signal_on_phase,
 )
-from tldw_chatbook.Model_Artifacts import ArtifactRef, closure_fingerprint
-from tldw_chatbook.Model_Artifacts.acquisition import (
-    AcquisitionConsent,
-    ArtifactAcquisitionService,
-)
+from tldw_chatbook.Model_Artifacts import ArtifactRef
+from tldw_chatbook.Model_Artifacts.acquisition import ArtifactAcquisitionService
 from tldw_chatbook.Model_Artifacts.leases import ArtifactOperationLease, LeaseMode
 from tldw_chatbook.Model_Artifacts.service import (
     ACQUISITION_SESSION_LEASE_KEY,
@@ -153,6 +151,21 @@ async def test_kill_mid_fetch_valid_sidecar_survives_and_fresh_provision_resumes
         srv.serve("/model.bin", initial_body, etag='"v1"', support_range=True)
         trusted = _trusted_hostname(srv)
 
+        # Built once, reused both to compute the download stage's location
+        # after the crash (TASK-1694: a service-owned stage keyed off the
+        # descriptor's own fingerprint, not a bare
+        # staging/managed/<id>/<rev>/<variant> path) and as the resumed
+        # provision()'s catalog entry below -- the child process
+        # independently reconstructs the identical descriptor from `spec`.
+        descriptor = build_descriptor(
+            *ref_parts,
+            role="root",
+            source_url=srv.url("/model.bin"),
+            size_bytes=len(full_body),
+            sha256=sha256,
+            dependencies=(),
+        )
+
         spec = {
             "artifact_id": ref_parts[0],
             "revision": ref_parts[1],
@@ -174,10 +187,9 @@ async def test_kill_mid_fetch_valid_sidecar_survives_and_fresh_provision_resumes
         )
 
         core = ModelArtifactService(root_dir)
-        staging_dir = (
-            core.staging_path / "managed" / ref_parts[0] / ref_parts[1] / ref_parts[2]
-        )
-        sidecar_path = staging_dir.parent / f"{staging_dir.name}.fetch-state.json"
+        stage = core._download_stage_for(descriptor, create=False)
+        assert stage is not None
+        sidecar_path = stage.state / "fetch-state.json"
 
         # The fetch phase durably completed before the freeze: a real,
         # parseable checkpoint sits on disk.
@@ -189,12 +201,17 @@ async def test_kill_mid_fetch_valid_sidecar_survives_and_fresh_provision_resumes
             "bytes_done": len(initial_body),
             "complete": False,
         }
-        assert (staging_dir / "model.bin").stat().st_size == len(initial_body)
+        assert (stage.payload / "model.bin").stat().st_size == len(initial_body)
 
-        # (a) valid-sidecar managed staging survives reconcile() (Task 2's rule).
+        # (a) the valid, marked download stage survives reconcile() -- it IS
+        # a not-yet-installed download-<fingerprint>/ stage reconcile()'s GC
+        # (TASK-1697) now recognizes, but that GC only ever reclaims a stage
+        # whose reference is ALREADY installed (see service.py's
+        # _gc_download_staging docstring); this one genuinely isn't yet, so
+        # it is left completely untouched.
         report = core.reconcile()
-        assert staging_dir.exists()
-        assert (staging_dir / "model.bin").exists()
+        assert stage.operation.exists()
+        assert (stage.payload / "model.bin").exists()
         assert sidecar_path.exists()
         assert report.staging_removed == ()
 
@@ -204,27 +221,20 @@ async def test_kill_mid_fetch_valid_sidecar_survives_and_fresh_provision_resumes
 
         # (c) a fresh provision resumes via Range and completes.
         srv.serve("/model.bin", full_body, etag='"v1"', support_range=True)
-        descriptor = build_descriptor(
-            *ref_parts,
-            role="root",
-            source_url=srv.url("/model.bin"),
-            size_bytes=len(full_body),
-            sha256=sha256,
-            dependencies=(),
-        )
         catalog = DictCatalog({descriptor.reference: descriptor})
         root_ref = ArtifactRef(*ref_parts)
-        consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(root_ref, ()))
         svc = ArtifactAcquisitionService(
             core, free_bytes_probe=lambda _p: 10**12, trusted_origins=frozenset({trusted})
         )
+        consent = grant_consent(svc, root_ref, catalog)
 
         activated = await svc.provision(root_ref, consent, catalog)
 
         assert activated == root_ref
         range_headers = [headers.get("Range") for headers in srv.requests["/model.bin"]]
         assert f"bytes={len(initial_body)}-" in range_headers
-        assert not staging_dir.exists()
+        # A successful finalize retires the whole stage operation.
+        assert not stage.operation.exists()
         with core.acquire(root_ref) as handle:
             assert handle.handle.root == root_ref
 
@@ -321,12 +331,15 @@ async def test_kill_between_install_and_activate_fresh_provision_activates_with_
             dependencies=(dep_ref_parts,),
         )
         catalog = DictCatalog({dep_ref: dep_descriptor, root_ref: root_descriptor})
-        consent = AcquisitionConsent(
-            closure_fingerprint=closure_fingerprint(root_ref, (dep_ref,))
-        )
         svc = ArtifactAcquisitionService(
             core, free_bytes_probe=lambda _p: 10**12, trusted_origins=frozenset({trusted})
         )
+        # Both dep_ref and root_ref are already installed at this point (see
+        # the assertion above), so _aggregate_closure resolves no sources
+        # for either -- this consent is unaffected by TASK-1712's fingerprint
+        # change, but grant_consent is still used here for consistency (see
+        # its docstring) rather than reintroducing a hand-built one.
+        consent = grant_consent(svc, root_ref, catalog)
 
         events = []
         activated = await svc.provision(root_ref, consent, catalog, progress=events.append)
@@ -365,6 +378,20 @@ def test_reconcile_after_crash_removes_only_orphans_leaves_everything_else(tmp_p
         srv.serve("/model.bin", survivor_body, etag='"v1"', support_range=True)
         trusted = _trusted_hostname(srv)
 
+        # Reused after the crash to compute the survivor's download stage
+        # location (TASK-1694: a service-owned stage keyed off the
+        # descriptor's own fingerprint, not a bare
+        # staging/managed/<id>/<rev>/<variant> path) -- the child process
+        # independently reconstructs the identical descriptor from
+        # `survivor_spec`.
+        survivor_descriptor = build_descriptor(
+            *survivor_ref_parts,
+            role="root",
+            source_url=srv.url("/model.bin"),
+            size_bytes=len(survivor_body),
+            sha256=survivor_sha256,
+            dependencies=(),
+        )
         survivor_spec = {
             "artifact_id": survivor_ref_parts[0],
             "revision": survivor_ref_parts[1],
@@ -389,30 +416,33 @@ def test_reconcile_after_crash_removes_only_orphans_leaves_everything_else(tmp_p
         )
 
     core = ModelArtifactService(root_dir)
-    survivor_dir = (
-        core.staging_path
-        / "managed"
-        / survivor_ref_parts[0]
-        / survivor_ref_parts[1]
-        / survivor_ref_parts[2]
-    )
-    assert (survivor_dir.parent / f"{survivor_dir.name}.fetch-state.json").exists()
+    survivor_stage = core._download_stage_for(survivor_descriptor, create=False)
+    assert survivor_stage is not None
+    survivor_sidecar = survivor_stage.state / "fetch-state.json"
+    assert survivor_sidecar.exists()
 
-    # A hand-crafted orphan: no sidecar at all, unrelated to the crash above.
+    # A hand-crafted orphan in the OLD bare managed/ staging shape: no
+    # sidecar at all. reconcile()'s staging GC (_gc_managed_staging) still
+    # recognizes and removes this shape; this pins that the OLD GC path
+    # still works and is not disturbed by the new download-stage layout
+    # (TASK-1697's _gc_download_staging) existing alongside it.
     orphan_dir = core.staging_path / "managed" / "orphan-model" / "rev1" / "int8"
     orphan_dir.mkdir(parents=True)
     (orphan_dir / "model.bin").write_bytes(b"abandoned")
 
     report = core.reconcile()
 
-    # Only the orphan is named as removed.
+    # Only the orphan is named as removed; the survivor's own download-stage
+    # entry IS now recognized by _gc_download_staging (TASK-1697), but that
+    # GC only ever reclaims a stage whose reference is already installed --
+    # this survivor genuinely isn't, so it is left alone entirely.
     assert report.staging_removed == ("managed/orphan-model/rev1/int8",)
     assert not orphan_dir.exists()
 
-    # The crash-surviving valid entry is untouched.
-    assert survivor_dir.exists()
-    assert (survivor_dir / "model.bin").exists()
-    assert (survivor_dir.parent / f"{survivor_dir.name}.fetch-state.json").exists()
+    # The crash-surviving valid stage is untouched.
+    assert survivor_stage.operation.exists()
+    assert (survivor_stage.payload / "model.bin").exists()
+    assert survivor_sidecar.exists()
 
     # Content entirely outside the managed store is untouched.
     assert unrelated_file.read_text() == "do not touch"

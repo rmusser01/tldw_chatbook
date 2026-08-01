@@ -17,10 +17,10 @@ import contextlib
 import hashlib
 import json
 import time
-from urllib.parse import urlparse
 
 import pytest
 
+from Tests.Model_Artifacts.acquisition_test_helpers import _trusted, grant_consent
 from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 from Tests.Model_Artifacts.test_acquisition_types import DictCatalog
 from tldw_chatbook.Model_Artifacts import (
@@ -33,10 +33,8 @@ from tldw_chatbook.Model_Artifacts import (
     ArtifactIntegrityError,
     ArtifactStateError,
     ProvenanceClass,
-    closure_fingerprint,
 )
 from tldw_chatbook.Model_Artifacts.acquisition import (
-    AcquisitionConsent,
     AcquisitionProgress,
     ArtifactAcquisitionService,
     MAX_FILE_REFETCHES,
@@ -45,13 +43,6 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
 )
 from tldw_chatbook.Model_Artifacts.service import ModelArtifactService
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
-
-
-def _trusted(srv: FixtureArtifactServer) -> frozenset:
-    """Trusted-origins set for a fixture server (see test_stream_fetch.py's
-    identical helper for why this is the bare hostname, not a URL)."""
-
-    return frozenset({urlparse(srv.url("/")).hostname})
 
 
 def _descriptor(
@@ -246,16 +237,18 @@ async def test_provision_preverify_total_ignores_fetch_phases_netted_staged_cred
     desc = _descriptor(ref, files_body=body)
     core = ModelArtifactService(tmp_path / "root")
 
-    staged = core.staging_path / "managed" / ref.artifact_id / ref.revision / ref.variant
-    staged.mkdir(parents=True)
+    # TASK-1694: staged credit now lives under a service-owned download
+    # stage's state/ subtree (see acquisition.py's _staged_bytes_for),
+    # not a bare staging/managed/<id>/<rev>/<variant> directory.
+    stage = core._download_stage_for(desc, create=True)
     # A real on-disk partial file matching the sidecar's claimed 500 bytes
     # -- staged-credit math caps a sidecar's claim by the file's ACTUAL
     # on-disk size (see the preflight staged-credit review finding), so
     # this setup needs a real file to still net download_bytes down to
     # 1548 the way this test's docstring describes.
-    (staged / "model.bin").write_bytes(b"m" * 500)
+    (stage.payload / "model.bin").write_bytes(b"m" * 500)
     atomic_write_json(
-        staged.parent / f"{staged.name}.fetch-state.json",
+        stage.state / "fetch-state.json",
         {
             "files": {
                 "model.bin": {
@@ -270,14 +263,14 @@ async def test_provision_preverify_total_ignores_fetch_phases_netted_staged_cred
 
     svc = ArtifactAcquisitionService(core, free_bytes_probe=lambda p: 10**12)
     catalog = DictCatalog({ref: desc})
-    consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(ref, ()))
+    consent = grant_consent(svc, ref, catalog)
 
     captured: list[_ProvisionProgressState] = []
 
-    async def fake_fetch(descriptor, staging_dir, progress_state):
+    async def fake_fetch(descriptor, staging_dir, progress_state, resolved_sources=None):
         captured.append(progress_state)
 
-    async def fake_preverify(descriptor, staging_dir, progress_state):
+    async def fake_preverify(descriptor, staging_dir, progress_state, resolved_sources=None):
         captured.append(progress_state)
 
     async def fake_install(descriptor, staging_dir):
@@ -337,7 +330,7 @@ async def test_preverify_mismatch_refetches_once_and_recovers_on_good_content(tm
         )
         staging_dir = tmp_path / "staging" / "m"
         staging_dir.mkdir(parents=True)
-        sidecar_path = staging_dir.parent / f"{staging_dir.name}.fetch-state.json"
+        sidecar_path = staging_dir.parent / "state" / "fetch-state.json"
         (staging_dir / "model.bin").write_bytes(wrong_body)
         atomic_write_json(
             sidecar_path,
@@ -386,7 +379,7 @@ async def test_preverify_mismatch_persisting_past_max_refetches_raises_transfer_
         staging_dir.mkdir(parents=True)
         (staging_dir / "model.bin").write_bytes(wrong_body)
         atomic_write_json(
-            staging_dir.parent / f"{staging_dir.name}.fetch-state.json",
+            staging_dir.parent / "state" / "fetch-state.json",
             {
                 "files": {
                     "model.bin": {
@@ -411,64 +404,63 @@ async def test_preverify_mismatch_persisting_past_max_refetches_raises_transfer_
 
 
 # ---------------------------------------------------------------------------
-# _install_artifact: consume_source install, sidecar + staging cleanup.
+# _install_artifact: TASK-1694 -- finalize a download stage, no second copy.
+#
+# Retargeted from ``core.install(..., consume_source=True)`` at
+# ``core._finalize_download_stage`` (the service-owned payload-subtree
+# finalization seam ported from the parallel TASK-595 implementation; see
+# Docs/superpowers/reviews/2026-08-01-task-595-duplicate-implementation-
+# reconciliation.md item 1). ``_install_artifact`` now takes the
+# ``_ManagedDownloadStage`` itself (obtained via
+# ``core._download_stage_for``) rather than a bare ``staging_dir`` Path.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_install_promotes_payload_and_removes_staging_dir_and_sidecar(tmp_path):
+async def test_install_promotes_payload_and_removes_stage(tmp_path):
     body = b"payload-bytes" * 10
     desc = _descriptor(ArtifactRef("m", "r" * 40, "int8"), files_body=body)
     core = ModelArtifactService(tmp_path / "root")
     svc = ArtifactAcquisitionService(core)
 
-    staging_dir = core.staging_path / "managed" / "m" / ("r" * 40) / "int8"
-    staging_dir.mkdir(parents=True)
-    sidecar_path = staging_dir.parent / f"{staging_dir.name}.fetch-state.json"
-    (staging_dir / "model.bin").write_bytes(body)
+    stage = core._download_stage_for(desc, create=True)
+    sidecar_path = stage.state / "fetch-state.json"
+    (stage.payload / "model.bin").write_bytes(body)
     atomic_write_json(
         sidecar_path,
         {"files": {"model.bin": {"etag": None, "last_modified": None, "bytes_done": len(body), "complete": True}}},
     )
 
-    await svc._install_artifact(desc, staging_dir)
+    await svc._install_artifact(desc, stage)
 
     installed = core.artifact_path(desc.reference)
     assert installed.exists()
     assert (installed / "model.bin").read_bytes() == body
-    assert not staging_dir.exists()
-    assert not sidecar_path.exists()
+    # The whole stage operation (payload, having been promoted, plus its
+    # marker and state/sidecar) is retired by core._finalize_download_stage
+    # itself -- _install_artifact needs no cleanup step of its own.
+    assert not stage.operation.exists()
 
 
 @pytest.mark.asyncio
-async def test_install_failure_leaves_staging_dir_and_sidecar_intact_for_resume(tmp_path):
-    """core.install's own integrity check fails (staged content doesn't
-    match the declared hash -- as if pre-verify had been skipped, the
-    defense-in-depth check this exercises).
+async def test_finalize_failure_leaves_stage_intact_for_resume(tmp_path):
+    """A finalize failure (staged content doesn't match the declared hash
+    -- as if pre-verify had been skipped, the defense-in-depth check this
+    exercises) leaves the whole stage -- payload, sidecar, and marker --
+    completely untouched.
 
-    ``consume_source=True`` moves the file out of our staging directory
-    (into ``core.install``'s OWN internal staging) before verifying it
-    there, so a failure at this point does not leave the corrupt bytes
-    behind for inspection -- that is Task 1's sealed core behavior, not
-    something this phase controls. What Task 8 owns and this test pins:
-    nothing gets installed, and ``_install_artifact`` itself does not
-    ``rmtree`` our staging directory OR touch the sidecar on failure --
-    only a successful install triggers that cleanup (see
-    ``test_install_promotes_payload_and_removes_staging_dir_and_sidecar``).
+    Regression test for TASK-1694 AC #2/#3, and the underlying TASK-595
+    final-review P2 finding this port structurally eliminates: a retryable
+    finalize/install failure must never destroy the only resumable state a
+    later ``provision()`` attempt has to work with. ``_finalize_download_stage``
+    verifies ``stage.payload`` IN PLACE (no second staging hop to move
+    bytes into first), so a verification failure here never even reaches
+    the point where anything could be moved or deleted --
+    ``_install_artifact`` performs no cleanup of its own either way.
 
-    Regression test for TASK-595 final-review P2 (retryable install
-    failures must not destroy the only resumable state): the sidecar now
-    lives OUTSIDE the payload directory (a SIBLING file, never a child of
-    it -- see acquisition.py's ``_fetch_sidecar_path``) and is left
-    completely untouched by ``_install_artifact`` until AFTER a
-    successful install, unlike the earlier design which deleted it
-    UNCONDITIONALLY before every attempt (required then, since
-    ``core.install``'s payload-tree validation rejects an undeclared
-    file living inside the payload dir).
-
-    ``core.install``'s raw ``ArtifactIntegrityError`` is wrapped by
-    ``_run_core_call`` (review finding: core ``ArtifactError`` subclasses
-    must never escape ``provision()`` raw) into a non-retryable
+    ``core._finalize_download_stage``'s raw ``ArtifactIntegrityError`` is
+    wrapped by ``_run_core_call`` (review finding: core ``ArtifactError``
+    subclasses must never escape ``provision()`` raw) into a non-retryable
     ``TransferError`` with the original preserved as ``__cause__``.
     """
 
@@ -476,53 +468,57 @@ async def test_install_failure_leaves_staging_dir_and_sidecar_intact_for_resume(
     core = ModelArtifactService(tmp_path / "root")
     svc = ArtifactAcquisitionService(core)
 
-    staging_dir = core.staging_path / "managed" / "m" / ("r" * 40) / "int8"
-    staging_dir.mkdir(parents=True)
-    sidecar_path = staging_dir.parent / f"{staging_dir.name}.fetch-state.json"
-    (staging_dir / "model.bin").write_bytes(b"corrupt!")  # wrong content, right length
+    stage = core._download_stage_for(desc, create=True)
+    sidecar_path = stage.state / "fetch-state.json"
+    (stage.payload / "model.bin").write_bytes(b"corrupt!")  # wrong content, right length
     atomic_write_json(
         sidecar_path,
         {"files": {"model.bin": {"etag": None, "last_modified": None, "bytes_done": 8, "complete": True}}},
     )
 
     with pytest.raises(TransferError) as excinfo:
-        await svc._install_artifact(desc, staging_dir)
+        await svc._install_artifact(desc, stage)
 
     assert excinfo.value.retryable is False
     assert isinstance(excinfo.value.__cause__, ArtifactIntegrityError)
 
-    assert staging_dir.exists()
+    assert stage.operation.exists()
+    assert (stage.payload / "model.bin").read_bytes() == b"corrupt!"
     assert sidecar_path.exists(), (
-        "a failed install must NOT destroy the sidecar -- it is the only "
+        "a failed finalize must NOT destroy the sidecar -- it is the only "
         "resumable state a later provision() attempt has to work with"
     )
     assert core.list_installed() == ()
 
 
 @pytest.mark.asyncio
-async def test_retryable_install_failure_leaves_staged_bytes_resumable_via_range(
+async def test_retryable_finalize_failure_leaves_staged_bytes_resumable_via_range(
     tmp_path, monkeypatch
 ):
-    """A 'retryable' install failure must not destroy the resumable
+    """A 'retryable' finalize failure must not destroy the resumable
     download it claims can still be retried.
 
-    Regression test for TASK-595 final-review P2: the fetch-state sidecar
-    used to live INSIDE the payload directory and was deleted
-    UNCONDITIONALLY before every ``core.install`` attempt (required then,
-    since install's payload-tree validation rejects an undeclared file
-    living inside the payload dir); that pre-deletion destroyed the
-    checkpoint on ANY failure, including a merely transient, RETRYABLE
-    one -- forcing a full re-download on retry despite the ``retryable``
-    label. With the sidecar living OUTSIDE the payload tree (a sibling
-    file), a failed install leaves it -- and the partial bytes it
-    describes -- exactly where a fresh fetch phase can resume from.
+    Regression test for TASK-1694 AC #3: this is the exact bug class the
+    payload-subtree finalization seam structurally eliminates -- a
+    retryable finalization failure destroying the only durable, resumable
+    partial. Under the OLD ``core.install(..., consume_source=True)``
+    design, the fetch-state sidecar had to live OUTSIDE the payload
+    directory as a workaround (see the removed ``_FETCH_SIDECAR_SUFFIX``)
+    to survive a failed install attempt at all. Under the new design there
+    is no workaround to get right: ``core._finalize_download_stage`` never
+    moves any bytes out of ``stage.payload`` until every verification and
+    lease has already succeeded, so ANY failure before that point --
+    including this simulated transient one -- leaves the entire stage
+    (payload, state/sidecar, and marker) exactly as it was.
 
-    ``core.install`` is monkeypatched to fail directly (simulating
-    whatever internal reason -- lease contention, I/O, or anything else
-    that surfaces as a retryable ``ArtifactStateError``) rather than
-    exercising the sealed core's real internals: this isolates the claim
-    under test (acquisition.py's OWN handling of the sidecar) from the
-    core's separate, more complex internal failure modes.
+    ``core._finalize_download_stage`` is monkeypatched to fail directly
+    (simulating whatever internal reason -- lease contention, I/O, or
+    anything else that surfaces as a retryable ``ArtifactStateError``)
+    rather than exercising the sealed core's real internals: this isolates
+    the claim under test (acquisition.py's OWN handling of the stage) from
+    the core's separate, more complex internal failure modes -- which are
+    covered directly by service.py's own
+    ``test_failed_final_stage_cleanup_never_leaves_canonical_operation``.
     """
     full_body = b"0123456789" * 1000  # 10,000 bytes
     partial = full_body[:4000]
@@ -536,10 +532,9 @@ async def test_retryable_install_failure_leaves_staged_bytes_resumable_via_range
         core = ModelArtifactService(tmp_path / "root")
         svc = ArtifactAcquisitionService(core, trusted_origins=_trusted(srv))
 
-        staging_dir = core.staging_path / "managed" / "m" / ("r" * 40) / "int8"
-        staging_dir.mkdir(parents=True)
-        sidecar_path = staging_dir.parent / f"{staging_dir.name}.fetch-state.json"
-        (staging_dir / "model.bin").write_bytes(partial)
+        stage = core._download_stage_for(desc, create=True)
+        sidecar_path = stage.state / "fetch-state.json"
+        (stage.payload / "model.bin").write_bytes(partial)
         atomic_write_json(
             sidecar_path,
             {
@@ -557,14 +552,15 @@ async def test_retryable_install_failure_leaves_staged_bytes_resumable_via_range
         def raise_state_error(*args, **kwargs):
             raise ArtifactStateError("simulated transient lease contention")
 
-        monkeypatch.setattr(core, "install", raise_state_error)
+        monkeypatch.setattr(core, "_finalize_download_stage", raise_state_error)
 
         with pytest.raises(TransferError) as excinfo:
-            await svc._install_artifact(desc, staging_dir)
+            await svc._install_artifact(desc, stage)
         assert excinfo.value.retryable is True
 
         # The partial bytes and their sidecar checkpoint survived untouched.
-        assert (staging_dir / "model.bin").read_bytes() == partial
+        assert stage.operation.exists()
+        assert (stage.payload / "model.bin").read_bytes() == partial
         assert sidecar_path.exists()
         sidecar = json.loads(sidecar_path.read_text())
         assert sidecar["files"]["model.bin"]["bytes_done"] == len(partial)
@@ -574,9 +570,9 @@ async def test_retryable_install_failure_leaves_staged_bytes_resumable_via_range
         progress_state = _ProvisionProgressState(
             callback=None, bytes_total=len(full_body) - len(partial)
         )
-        await svc._fetch_artifact(desc, staging_dir, progress_state)
+        await svc._fetch_artifact(desc, stage.payload, progress_state)
 
-        assert (staging_dir / "model.bin").read_bytes() == full_body
+        assert (stage.payload / "model.bin").read_bytes() == full_body
         assert any("Range" in headers for headers in srv.requests["/model.bin"])
         final_sidecar = json.loads(sidecar_path.read_text())
         assert final_sidecar["files"]["model.bin"]["complete"] is True
@@ -617,9 +613,7 @@ async def test_provision_end_to_end_installs_and_activates_root_and_dependency(t
         svc = ArtifactAcquisitionService(
             core, free_bytes_probe=lambda p: 10**12, trusted_origins=_trusted(srv)
         )
-        consent = AcquisitionConsent(
-            closure_fingerprint=closure_fingerprint(root_ref, (dep_ref,))
-        )
+        consent = grant_consent(svc, root_ref, catalog)
 
         events: list[AcquisitionProgress] = []
         activated = await svc.provision(root_ref, consent, catalog, progress=events.append)
@@ -635,14 +629,14 @@ async def test_provision_end_to_end_installs_and_activates_root_and_dependency(t
             assert handle.handle.root == root_ref
             assert set(handle.handle.closure) == {root_ref, dep_ref}
 
-        # ALL managed staging for both artifacts is gone -- not an empty
-        # directory with a stale sidecar, which would look resumable
-        # forever to a later GC pass.
-        for ref in (root_ref, dep_ref):
-            staging_dir = (
-                core.staging_path / "managed" / ref.artifact_id / ref.revision / ref.variant
-            )
-            assert not staging_dir.exists()
+        # ALL download-stage staging for both artifacts is gone -- not an
+        # empty operation directory with a stale sidecar, which would look
+        # resumable forever to a later GC pass. core._finalize_download_stage
+        # retires the whole stage (payload having been promoted, plus its
+        # marker and state/sidecar) on a successful finalize.
+        for descriptor in (root_desc, dep_desc):
+            assert core._download_stage_for(descriptor, create=False) is None
+        assert tuple(core.staging_path.iterdir()) == ()
 
         phases_seen = [event.phase for event in events]
         for phase in ("fetch", "pre-verify", "verify-install", "activate"):
@@ -687,7 +681,7 @@ async def test_provision_corrupt_payload_refetches_exactly_once_then_fails(tmp_p
 
         desc = _descriptor(ref, files_body=correct_body, source_url=srv.url("/model.bin"))
         catalog = DictCatalog({ref: desc})
-        consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(ref, ()))
+        consent = grant_consent(svc, ref, catalog)
 
         with pytest.raises(TransferError) as excinfo:
             await svc.provision(ref, consent, catalog)
@@ -739,7 +733,6 @@ async def test_provision_activates_already_installed_closure_with_zero_fetch_req
     # test recovers from.
 
     catalog = DictCatalog({root_ref: root_desc, dep_ref: dep_desc})
-    consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(root_ref, (dep_ref,)))
 
     with FixtureArtifactServer() as srv:
         # Deliberately no route registered: any network attempt 404s, and
@@ -747,6 +740,11 @@ async def test_provision_activates_already_installed_closure_with_zero_fetch_req
         svc = ArtifactAcquisitionService(
             core, free_bytes_probe=lambda p: 10**12, trusted_origins=_trusted(srv)
         )
+        # Both root_ref and dep_ref are already installed (see above), so
+        # _aggregate_closure resolves no sources for either -- this consent
+        # is unaffected by TASK-1712's fingerprint change, but grant_consent
+        # is used here for consistency (see its docstring).
+        consent = grant_consent(svc, root_ref, catalog)
         events: list[AcquisitionProgress] = []
         activated = await svc.provision(root_ref, consent, catalog, progress=events.append)
 
@@ -769,71 +767,72 @@ async def test_provision_activates_already_installed_closure_with_zero_fetch_req
 async def test_install_artifact_wraps_core_integrity_error_as_non_retryable(
     tmp_path, monkeypatch
 ):
-    """``core.install`` raising ``ArtifactIntegrityError`` must surface as a
-    non-retryable ``TransferError``, never the raw core error.
+    """``core._finalize_download_stage`` raising ``ArtifactIntegrityError``
+    must surface as a non-retryable ``TransferError``, never the raw core
+    error.
 
     Regression test for the review finding: core ``ArtifactError``
     subclasses escaped ``provision()`` untouched, breaking the spec's
     never-trap rule. Integrity failures are not retryable -- the same
-    staged content would fail again.
+    staged content would fail again. TASK-1694 retargets ``_install_artifact``
+    at ``core._finalize_download_stage``; this test follows.
     """
     desc = _descriptor(ArtifactRef("m", "r" * 40, "int8"), files_body=b"x")
     core = ModelArtifactService(tmp_path / "root")
     svc = ArtifactAcquisitionService(core)
 
-    staging_dir = core.staging_path / "managed" / "m" / ("r" * 40) / "int8"
-    staging_dir.mkdir(parents=True)
-    (staging_dir / "model.bin").write_bytes(b"x")
+    stage = core._download_stage_for(desc, create=True)
+    (stage.payload / "model.bin").write_bytes(b"x")
 
     def raise_integrity_error(*args, **kwargs):
         raise ArtifactIntegrityError("simulated integrity failure")
 
-    monkeypatch.setattr(core, "install", raise_integrity_error)
+    monkeypatch.setattr(core, "_finalize_download_stage", raise_integrity_error)
 
     with pytest.raises(TransferError) as excinfo:
-        await svc._install_artifact(desc, staging_dir)
+        await svc._install_artifact(desc, stage)
 
     assert excinfo.value.retryable is False
     assert isinstance(excinfo.value.__cause__, ArtifactIntegrityError)
     assert "m" in str(excinfo.value)
-    assert "install" in str(excinfo.value)
+    assert "finalize" in str(excinfo.value)
 
 
 @pytest.mark.asyncio
 async def test_install_artifact_wraps_core_path_error_as_non_retryable(
     tmp_path, monkeypatch
 ):
-    """``core.install`` raising ``ArtifactPathError`` must surface as a
-    non-retryable ``TransferError``, never the raw core error.
+    """``core._finalize_download_stage`` raising ``ArtifactPathError`` must
+    surface as a non-retryable ``TransferError``, never the raw core error.
 
     Regression test for TASK-1566 (filed during TASK-595's final review):
     ``_run_core_call`` caught ``ArtifactIntegrityError``/
     ``ArtifactConflictError``/``ArtifactStateError`` but NOT
-    ``ArtifactPathError`` -- which ``core.install`` documents raising for
-    an unsafe or invalid source/destination path -- so it escaped
-    ``provision()`` raw, breaking the spec's never-trap rule. Not
-    retryable: the same unsafe/invalid path would fail again.
+    ``ArtifactPathError`` -- which the core documents raising for an
+    unsafe or invalid path -- so it escaped ``provision()`` raw, breaking
+    the spec's never-trap rule. Not retryable: the same unsafe/invalid
+    path would fail again. TASK-1694 retargets ``_install_artifact`` at
+    ``core._finalize_download_stage``; this test follows.
     """
     desc = _descriptor(ArtifactRef("m", "r" * 40, "int8"), files_body=b"x")
     core = ModelArtifactService(tmp_path / "root")
     svc = ArtifactAcquisitionService(core)
 
-    staging_dir = core.staging_path / "managed" / "m" / ("r" * 40) / "int8"
-    staging_dir.mkdir(parents=True)
-    (staging_dir / "model.bin").write_bytes(b"x")
+    stage = core._download_stage_for(desc, create=True)
+    (stage.payload / "model.bin").write_bytes(b"x")
 
     def raise_path_error(*args, **kwargs):
         raise ArtifactPathError("simulated unsafe path")
 
-    monkeypatch.setattr(core, "install", raise_path_error)
+    monkeypatch.setattr(core, "_finalize_download_stage", raise_path_error)
 
     with pytest.raises(TransferError) as excinfo:
-        await svc._install_artifact(desc, staging_dir)
+        await svc._install_artifact(desc, stage)
 
     assert excinfo.value.retryable is False
     assert isinstance(excinfo.value.__cause__, ArtifactPathError)
     assert "m" in str(excinfo.value)
-    assert "install" in str(excinfo.value)
+    assert "finalize" in str(excinfo.value)
 
 
 @pytest.mark.asyncio
@@ -857,7 +856,7 @@ async def test_provision_activate_wraps_core_state_error_as_retryable(
 
     svc = ArtifactAcquisitionService(core, free_bytes_probe=lambda p: 10**12)
     catalog = DictCatalog({ref: desc})
-    consent = AcquisitionConsent(closure_fingerprint=closure_fingerprint(ref, ()))
+    consent = grant_consent(svc, ref, catalog)
 
     def raise_state_error(*args, **kwargs):
         raise ArtifactStateError("simulated lease contention")

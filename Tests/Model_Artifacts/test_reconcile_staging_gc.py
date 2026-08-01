@@ -1,5 +1,6 @@
 """TASK-595 Task 2: reconcile deletes staging orphans, preserves resumable state."""
 
+import errno
 import hashlib
 import json
 import os
@@ -19,6 +20,7 @@ from tldw_chatbook.Model_Artifacts.service import (
     ArtifactLeaseKey,
     ArtifactLeaseTimeoutError,
     ArtifactOperationLease,
+    ArtifactStateError,
     LeaseMode,
     ModelArtifactService,
 )
@@ -260,13 +262,23 @@ def test_managed_entry_sidecar_without_payload_dir_is_removed(service):
     assert any("int8.fetch-state.json" in item for item in report.staging_removed)
 
 
-def test_fetch_sidecar_suffix_mirror_matches_acquisition():
-    """Drift guard: service.py's sibling-sidecar suffix must equal
-    acquisition.py's -- see both modules' constants for the rationale."""
-    from tldw_chatbook.Model_Artifacts import acquisition
-    from tldw_chatbook.Model_Artifacts import service as service_module
-
-    assert acquisition._FETCH_SIDECAR_SUFFIX == service_module._MANAGED_FETCH_SIDECAR_SUFFIX
+# TASK-1694: the drift guard that used to live here (asserting
+# ``acquisition._FETCH_SIDECAR_SUFFIX == service_module._MANAGED_FETCH_SIDECAR_SUFFIX``)
+# is gone along with ``_FETCH_SIDECAR_SUFFIX`` itself. That constant named
+# a sibling-FILE sidecar convention for the OLD bare
+# ``staging/managed/<id>/<rev>/<variant>`` layout acquisition.py no longer
+# writes -- remote acquisition now stages downloads through
+# ``ModelArtifactService``'s marked download-stage seam
+# (``_download_stage_for``/``_finalize_download_stage``, see
+# Docs/superpowers/reviews/2026-08-01-task-595-duplicate-implementation-
+# reconciliation.md item 1), whose fetch-state sidecar lives inside the
+# stage's own ``state/`` subtree instead. ``service.py``'s
+# ``_MANAGED_FETCH_SIDECAR_SUFFIX`` / ``_gc_managed_staging`` /
+# ``_is_valid_managed_staging_entry`` (exercised by every other test in
+# this file) are intentionally left in place -- they still correctly
+# reclaim any leftover ``managed/`` staging from before this change, and
+# porting that GC to the new stage layout is a separate, later piece of
+# work (reconciliation doc item 4), not required by TASK-1694.
 
 
 def test_gc_never_escapes_staging(service, tmp_path):
@@ -306,3 +318,120 @@ def test_gc_skips_install_staging_dir_held_by_a_live_installer(service, tmp_path
 
     assert not live.exists()
     assert any("install-livecase" in item for item in freed_report.staging_removed)
+
+
+# ---------------------------------------------------------------------------
+# TASK-1697 (PR-1165 review, P2): reconcile()'s staging GC also reclaims
+# service-owned download-<fingerprint>/ stages (TASK-1694's layout), which
+# previously fell through as an "unrecognized top-level name" and persisted
+# forever with their payload bytes. Reclaimed only when BOTH ownership is
+# provable (marker present, parseable, self-consistent with the operation
+# directory's own name) AND the reference it names is already installed --
+# the one on-disk-provable signal that this exact stage will never be
+# resumed again. A stage for a not-yet-installed reference is exactly the
+# "valid and resumable" case that must survive regardless.
+# ---------------------------------------------------------------------------
+
+
+def test_download_stage_for_already_installed_reference_is_reclaimed_and_reported(
+    service, tmp_path
+):
+    """An abandoned download stage -- its artifact later completed some
+    other way (a resumed provision(), or a direct install()), leaving this
+    operation behind, e.g. a crash between core._promote and
+    core._remove_finalized_download_stage -- is redundant and safe to
+    reclaim."""
+
+    item, source = _install_inputs(tmp_path)
+    stage = service._download_stage_for(item, create=True)
+    (stage.payload / "model.onnx").write_bytes(b"leftover-partial-bytes")
+
+    service.install(item, source)
+
+    report = service.reconcile()
+
+    assert not stage.operation.exists()
+    assert report.staging_removed == (f"download-{stage.descriptor_fingerprint}",)
+
+
+def test_download_stage_for_not_yet_installed_reference_survives_reconcile(
+    service, tmp_path
+):
+    """A download stage for a reference that is NOT YET installed is
+    exactly the "valid and resumable" case -- it must survive regardless
+    of how long it has sat there, since a later provision() call is
+    expected to resume it."""
+
+    item, source = _install_inputs(tmp_path)
+    stage = service._download_stage_for(item, create=True)
+    (stage.payload / "model.onnx").write_bytes(b"partial-bytes-in-progress")
+
+    report = service.reconcile()
+
+    assert stage.operation.exists()
+    assert (stage.payload / "model.onnx").exists()
+    assert report.staging_removed == ()
+
+
+def test_download_stage_with_unparseable_marker_is_left_alone_even_when_installed(
+    service, tmp_path
+):
+    """A marker that fails to parse makes ownership UNPROVABLE -- treated
+    as "leave it alone", not "safe to delete" -- even when the reference it
+    WOULD have named (if the marker could be trusted) is already installed
+    and would otherwise qualify for reclamation.
+
+    This pins the deliberately conservative choice this GC makes (see
+    ``ModelArtifactService._gc_download_staging``'s docstring): unlike the
+    legacy ``managed/`` GC, which reclaims a structurally-invalid entry
+    outright, an unparseable marker here is "don't know", not "orphan" --
+    this layout's payload can hold a large, real, in-progress download, so
+    a corrupt marker must never cost it.
+    """
+
+    item, source = _install_inputs(tmp_path)
+    stage = service._download_stage_for(item, create=True)
+    service.install(item, source)
+
+    stage.marker.write_text("{not valid json")
+
+    report = service.reconcile()
+
+    assert stage.operation.exists()
+    assert stage.marker.exists()
+    assert report.staging_removed == ()
+
+
+def test_download_stage_creation_failure_after_marker_leaves_no_orphan_temp_dir(
+    service, tmp_path, monkeypatch
+):
+    """A failure AFTER the marker is written (e.g. the final ``os.rename``
+    that publishes a temp stage into its canonical
+    ``download-<fingerprint>/`` path) must not leak the fully-populated
+    ``.download-<random>/`` temp directory forever.
+
+    Regression test for the P2 finding: before this fix,
+    ``_remove_incomplete_download_stage`` unconditionally no-op'd once the
+    marker existed, so this exact failure window left an orphan behind that
+    NOTHING -- including reconcile()'s staging GC, which only recognizes
+    the CANONICAL ``download-<fingerprint>/`` name, never the ephemeral
+    dotted temp one -- would ever clean up.
+    """
+
+    item, source = _install_inputs(tmp_path)
+    real_rename = os.rename
+
+    def failing_rename(src, dst, *args, **kwargs):
+        src_name = Path(src).name
+        dst_name = Path(dst).name
+        if src_name.startswith(".download-") and dst_name.startswith("download-"):
+            raise OSError(errno.EIO, "simulated rename failure")
+        return real_rename(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "rename", failing_rename)
+
+    with pytest.raises(ArtifactStateError):
+        service._download_stage_for(item, create=True)
+
+    remaining = list(Path(service.staging_path).iterdir())
+    assert remaining == [], f"orphaned temp download-stage dir(s) left behind: {remaining}"
