@@ -1112,6 +1112,52 @@ async def test_focused_cell_continuation_widget_clears_when_moving_to_a_cell_wit
 
 
 @pytest.mark.asyncio
+async def test_focused_cell_and_primary_action_paint_inside_the_inspector_viewport(
+    evals_app, run_group_with_cell_continuations
+):
+    """task-1710 T2: adding the continuation row to ``EvalsCellInspector``
+    means this widget's OWN CSS is now touched, not just its content --
+    confirmed live that ``#evals-cell-inspector`` (an unstyled ``Vertical``,
+    Textual DEFAULT_CSS ``height: 1fr``) is a direct child of
+    ``#evals-inspector-pane`` with a trailing ``#evals-primary-action``
+    sibling, the EXACT shape ``#evals-inspector-bench``'s own ``height:
+    auto`` fix (``_evals.tcss``) already documents as this pane's
+    clipping-bug risk class -- before ``_evals.tcss``'s matching
+    ``#evals-cell-inspector { height: auto; }`` fix, this widget claimed
+    a ~36-row region for ~9 rows of real content at 235x52, pushing
+    ``#evals-primary-action`` one row outside ``#lab-inspector``'s own
+    visible viewport (unreachable even scrolled to ``max_scroll_y``).
+    Pre-existing (not introduced by this task's own continuation row),
+    but in scope here because this task's own CSS touches the exact
+    rule that was missing it."""
+    fixture = run_group_with_cell_continuations
+    async with evals_app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, fixture["group_id"])
+        await _focus_cell(pilot, grid, fixture["s1"], fixture["base_id"])
+
+        lab_inspector = pilot.app.screen.query_one("#lab-inspector")
+        assert lab_inspector.max_scroll_y == 0, (
+            "the inspector pane still needs to scroll to fit its content "
+            f"(max_scroll_y={lab_inspector.max_scroll_y}) -- "
+            "EvalsCellInspector is claiming more height than its own "
+            "content needs"
+        )
+
+        continuation = pilot.app.screen.query_one("#evals-cell-inspector-continuation")
+        assert continuation.region.width > 0
+        assert continuation.region.height > 0
+        assert lab_inspector.region.contains_region(continuation.region)
+
+        button = pilot.app.screen.query_one("#evals-primary-action")
+        assert button.region.width > 0 and button.region.height > 0, button.region
+        assert lab_inspector.region.contains_region(button.region), (
+            f"button {button.region} escapes the inspector's own visible "
+            f"viewport {lab_inspector.region}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_grid_content_survives_datatable_rendering_without_bracket_corruption(
     evals_app, mixed_run_group
 ):
