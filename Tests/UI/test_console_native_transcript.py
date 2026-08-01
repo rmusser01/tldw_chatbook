@@ -1011,6 +1011,44 @@ async def test_save_as_modal_harness_preserves_empty_destination_list():
 
 
 @pytest.mark.asyncio
+async def test_save_as_modal_empty_state_names_the_temporary_chat_when_ephemeral():
+    """F3 (task-9 review): in a temporary chat every destination is
+    unavailable, so the generic "not wired" copy always fires -- it reads
+    as a bug/unfinished-feature message rather than the actual rule. Must
+    say WHY (the chat is temporary) -- and the generic copy must still be
+    the one shown otherwise (the control)."""
+
+    class _EphemeralSaveAsModalHarness(App):
+        def on_mount(self) -> None:
+            self.push_screen(
+                ConsoleSaveAsModal(
+                    destinations=[
+                        ConsoleSaveDestination(
+                            label="Note", available=False, reason="blocked"
+                        )
+                    ],
+                    ephemeral=True,
+                )
+            )
+
+    app = _EphemeralSaveAsModalHarness()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _wait_for_selector(app.screen, pilot, "#console-save-as-modal")
+        text = _visible_text(app.screen)
+
+    assert "No Save as destinations are wired for selected messages yet." not in text
+    assert "temporary" in text.lower()
+
+    # Control: the generic copy still shows for a non-ephemeral empty list.
+    normal_app = SaveAsModalHarness(destinations=[])
+    async with normal_app.run_test(size=(100, 30)) as pilot:
+        await _wait_for_selector(normal_app.screen, pilot, "#console-save-as-modal")
+        normal_text = _visible_text(normal_app.screen)
+
+    assert "No Save as destinations are wired for selected messages yet." in normal_text
+
+
+@pytest.mark.asyncio
 async def test_console_mounts_native_transcript_region():
     app = _build_test_app()
     host = ConsoleHarness(app)

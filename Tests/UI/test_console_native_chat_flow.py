@@ -4536,6 +4536,25 @@ def test_console_save_as_destinations_are_blocked_in_a_temporary_chat():
     assert all(d.available for d in wired)
 
 
+def test_console_save_as_destinations_never_show_a_literal_none_reason():
+    """F4 (task-9 review): `blocked_reason` returns `str | None`, but the
+    reasons dict is typed `dict[str, str]` -- a future registry-key drift
+    (a "save-as-<label>" id renamed/removed) must fall back to a real
+    sentence, not silently surface the literal string "None"."""
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    _install_console_save_service_fakes(app)
+    assistant = SimpleNamespace(role=ConsoleMessageRole.ASSISTANT, content="answer")
+    screen._console_active_session_is_ephemeral = lambda: True
+
+    with patch.object(chat_screen_module, "blocked_reason", lambda *a, **k: None):
+        destinations = screen._console_save_as_destinations(assistant)
+
+    reasons = {d.label: d.reason for d in destinations}
+    assert all(reason == "Not available in a temporary chat." for reason in reasons.values())
+    assert all("None" not in reason for reason in reasons.values())
+
+
 @pytest.mark.asyncio
 async def test_console_selected_message_save_as_note_creates_note_from_message():
     app = _build_test_app()
@@ -9485,6 +9504,83 @@ async def test_save_console_message_image_disambiguates_filename_collision(
         assert len(saved) == 2
         assert saved[0].name != saved[1].name
         assert all(path.read_bytes() == b"\x89PNG-bytes" for path in saved)
+
+
+@pytest.mark.asyncio
+async def test_save_image_button_reflects_the_real_screen_ephemeral_accessor():
+    """F6 (task-9 review): pins the *name* ``ConsoleTranscript.
+    _console_ephemeral_active()`` reads off the owning screen.
+
+    That reader is ``getattr(screen, "_console_active_session_is_ephemeral",
+    None)``, falling back to ``False`` -- the UNSAFE direction, since it
+    fails toward writing rather than toward blocking -- when the name is
+    missing. A pure ``ConsoleMessageActionService`` test can never catch a
+    rename in ``ChatScreen`` because it never calls the reader at all; it
+    builds the ``ephemeral`` flag by hand. This mounts the REAL
+    ``ChatScreen`` and the REAL ``ConsoleTranscript`` together so a future
+    rename of ``_console_active_session_is_ephemeral`` breaks this test
+    instead of silently un-blocking Save Image.
+    """
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+    async def _save_image_button_disabled_state(*, ephemeral: bool) -> tuple[bool, str]:
+        """Mount a fresh Console, add one image message to a session with
+        the given ephemeral flag, select it, and return the real (mounted)
+        Save Image button's ``(disabled, tooltip)``. A fresh mount per case
+        avoids scrolling a second message into view in the same transcript."""
+        app = _build_test_app()
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(160, 48)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-transcript")
+            store = console._ensure_console_chat_store()
+
+            session = store.create_session(title="S", ephemeral=ephemeral)
+            store.switch_session(session.id)
+            buffer = BytesIO()
+            PILImage.new("RGB", (4, 4), (200, 10, 10)).save(buffer, format="PNG")
+            message = store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="a picture",
+                image_data=buffer.getvalue(),
+                image_mime_type="image/png",
+            )
+            await console._sync_native_console_chat_ui()
+            # Image prep runs in a worker; wait for the image row before
+            # selecting the message, mirroring the other image-bearing
+            # tests in this file (e.g. the terminal-image-rendering test
+            # above).
+            for _ in range(80):
+                if console.query(f"#console-image-{message.id}"):
+                    break
+                await pilot.pause(0.05)
+            assert console.query(
+                f"#console-image-{message.id}"
+            ), "image row never appeared"
+            message_widget = console.query_one(f"#console-message-{message.id}")
+            message_widget.scroll_visible(animate=False)
+            await pilot.pause(0.2)
+            await pilot.click(f"#console-message-{message.id}")
+            save_selector = f"console-message-action-save-image-{message.id}"
+            await _wait_for_selector(console, pilot, f"#{save_selector}")
+
+            save_button = console.query_one(f"#{save_selector}", Button)
+            return save_button.disabled, save_button.tooltip
+
+    disabled, tooltip = await _save_image_button_disabled_state(ephemeral=True)
+    assert disabled is True
+    assert tooltip == blocked_reason("save-image", ephemeral=True)
+
+    # Control: a normal (non-ephemeral) session's Save Image stays enabled.
+    normal_disabled, _normal_tooltip = await _save_image_button_disabled_state(
+        ephemeral=False
+    )
+    assert normal_disabled is False
 
 
 def test_rehydrate_console_message_image_refetches_bytes_from_db():

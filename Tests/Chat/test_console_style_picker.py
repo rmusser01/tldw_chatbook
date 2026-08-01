@@ -454,6 +454,53 @@ async def test_action_open_console_style_insert_opens_picker():
 
 
 @pytest.mark.asyncio
+async def test_action_open_console_style_insert_is_unavailable_when_ephemeral():
+    """F5 (task-9 review): this picker's only purpose is to insert an
+    `@style` token into a `/generate-image` draft -- offering it in a
+    temporary chat teases a command that can never run there (the
+    dispatcher now refuses it). Refuses with the registry reason instead
+    of opening the picker -- and still opens normally otherwise (the
+    control)."""
+    from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        baseline_depth = len(host.screen_stack)
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        temp = store.create_session(title="Temp", ephemeral=True)
+        store.switch_session(temp.id)
+
+        notified: list = []
+        console.app_instance.notify = lambda message, **kwargs: notified.append(
+            (message, kwargs)
+        )
+
+        console.action_open_console_style_insert()
+        await pilot.pause(0.2)
+
+        assert len(host.screen_stack) == baseline_depth, "the picker must not open"
+        assert notified == [
+            (blocked_reason("generate-image", ephemeral=True), {"severity": "warning"})
+        ]
+
+        # Control: a normal (non-ephemeral) session still opens the picker.
+        normal = store.create_session(title="Normal")
+        store.switch_session(normal.id)
+        notified.clear()
+
+        console.action_open_console_style_insert()
+        await pilot.pause(0.2)
+
+        assert len(host.screen_stack) == baseline_depth + 1
+        assert notified == []
+
+
+@pytest.mark.asyncio
 async def test_style_picker_selection_inserts_style_token_into_draft():
     """An empty draft is prefixed with the command word AND the style token
     (Major review fix): the old behavior of inserting a bare `@style_anime `

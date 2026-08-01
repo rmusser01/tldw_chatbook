@@ -774,3 +774,40 @@ def test_console_composer_has_no_status_strip_selector_dependency():
     source = inspect.getsource(ConsoleComposerBar)
 
     assert "console-status-chips" not in source
+
+
+@pytest.mark.asyncio
+async def test_composer_bar_save_chatbook_is_disabled_with_a_reason_when_ephemeral():
+    """F1 (task-9 review): the composer bar's own Save Chatbook button is a
+    second door onto the same write the workbench's Save Chatbook action
+    already blocks. Must gate the same way, with the same registry reason
+    -- and still work normally otherwise (the control)."""
+    from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+    app = _ComposerGeometryApp()
+
+    async with app.run_test(size=(140, 42)) as pilot:
+        composer = app.query_one("#console-native-composer", ConsoleComposerBar)
+        save_button = composer.query_one("#console-save-chatbook", Button)
+
+        composer.sync_action_state(
+            has_draft=False,
+            run_active=False,
+            can_save_chatbook=True,
+            ephemeral=True,
+        )
+        await pilot.pause()
+
+        assert save_button.disabled is True
+        assert save_button.tooltip == blocked_reason("save-chatbook", ephemeral=True)
+
+        composer.sync_action_state(
+            has_draft=False,
+            run_active=False,
+            can_save_chatbook=True,
+            ephemeral=False,
+        )
+        await pilot.pause()
+
+        assert save_button.disabled is False
+        assert save_button.tooltip == "Open the available Chatbook artifact in Artifacts."

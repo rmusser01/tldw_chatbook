@@ -18,6 +18,7 @@ from textual.geometry import Region
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from ...Chat.console_ephemeral import blocked_reason
 from ...Chat.console_voice_input import (
     STATE_FINISHING,
     STATE_IDLE,
@@ -145,6 +146,7 @@ class ConsoleComposerBar(Horizontal):
         self._send_blocked = False
         self._setup_blocked_reason = ""
         self._can_save_chatbook = False
+        self._ephemeral = False
         self._dictation_state: _DictationState = "idle"
         #: Whether the last availability probe found both a capture backend
         #: and a transcription provider installed. Only consulted while
@@ -388,6 +390,7 @@ class ConsoleComposerBar(Horizontal):
             can_save_chatbook=self._can_save_chatbook,
             send_blocked=self._send_blocked,
             setup_blocked_reason=self._setup_blocked_reason,
+            ephemeral=self._ephemeral,
         )
 
     def sync_action_state(
@@ -398,6 +401,7 @@ class ConsoleComposerBar(Horizontal):
         can_save_chatbook: bool,
         send_blocked: bool = False,
         setup_blocked_reason: str = "",
+        ephemeral: bool = False,
     ) -> None:
         """Refresh composer action priority and disabled state.
 
@@ -407,17 +411,22 @@ class ConsoleComposerBar(Horizontal):
             can_save_chatbook: Whether a Chatbook artifact is available to save.
             send_blocked: Whether the current run state blocks new sends.
             setup_blocked_reason: Provider/model setup copy when setup blocks Send.
+            ephemeral: Whether the active session is temporary, which blocks
+                Save Chatbook (a second door onto the same write the
+                workbench's Save Chatbook action already gates).
         """
         has_draft = bool(has_draft)
         run_active = bool(run_active)
         can_save_chatbook = bool(can_save_chatbook)
         send_blocked = bool(send_blocked)
         setup_blocked_reason = setup_blocked_reason.strip()
+        ephemeral = bool(ephemeral)
         setup_reason_changed = self._setup_blocked_reason != setup_blocked_reason
         self._run_active = run_active
         self._send_blocked = send_blocked
         self._setup_blocked_reason = setup_blocked_reason
         self._can_save_chatbook = can_save_chatbook
+        self._ephemeral = ephemeral
         self._sync_collapsed_presentation()
 
         try:
@@ -480,18 +489,23 @@ class ConsoleComposerBar(Horizontal):
         attach_button.set_class(False, "console-action-disabled")
         attach_button.set_class(False, "console-action-subdued")
 
-        save_button.disabled = False
+        chatbook_blocked = blocked_reason("save-chatbook", ephemeral=ephemeral)
+        save_ready = can_save_chatbook and chatbook_blocked is None
+        save_button.disabled = chatbook_blocked is not None or not can_save_chatbook
         save_button.variant = "default"
         save_button.tooltip = (
-            "Open the available Chatbook artifact in Artifacts."
-            if can_save_chatbook
-            else "No Chatbook artifact is available to save yet."
+            chatbook_blocked
+            or (
+                "Open the available Chatbook artifact in Artifacts."
+                if can_save_chatbook
+                else "No Chatbook artifact is available to save yet."
+            )
         )
         save_button.set_class(True, "console-action-secondary")
         save_button.set_class(True, "console-save-chatbook-secondary")
-        save_button.set_class(can_save_chatbook, "console-save-chatbook-ready")
-        save_button.set_class(not can_save_chatbook, "console-action-subdued")
-        save_button.set_class(not can_save_chatbook, "console-action-disabled")
+        save_button.set_class(save_ready, "console-save-chatbook-ready")
+        save_button.set_class(not save_ready, "console-action-subdued")
+        save_button.set_class(not save_ready, "console-action-disabled")
 
         if setup_reason_changed and not self.draft_text().strip():
             self._refresh_visible_draft()

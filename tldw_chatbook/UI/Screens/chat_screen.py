@@ -2008,8 +2008,21 @@ class ChatScreen(BaseAppScreen):
         draft -- `/generate-image @<id> ...` is what later resolves and
         applies the style at generation time; this action never generates
         anything itself.
+
+        F5 (task-9 review): the command it composes is refused at dispatch
+        in a temporary chat, so offering this picker there would tease a
+        command that can never run. The picker has no "disabled with a
+        reason" affordance of its own (it is a modal launch, not a
+        control), so this explains itself via a toast instead of opening.
         """
         if self._console_setup_modal_blocking():
+            return
+        image_blocked = blocked_reason(
+            GENERATE_IMAGE_COMMAND_HANDLER_ID,
+            ephemeral=self._console_active_session_is_ephemeral(),
+        )
+        if image_blocked is not None:
+            self.app_instance.notify(image_blocked, severity="warning")
             return
         self.run_worker(
             self._open_console_style_picker_for_insert(),
@@ -10014,6 +10027,7 @@ class ChatScreen(BaseAppScreen):
             mcp_not_connected_count=self._console_mcp_not_connected_count(),
             can_save_chatbook=can_save_chatbook,
             scope_item_count=self._console_retrieval_scope_run_recipe_count(),
+            ephemeral=self._console_active_session_is_ephemeral(),
         )
         setup_blocker_copy = self._console_provider_blocker_copy()
         if setup_blocker_copy:
@@ -14723,6 +14737,19 @@ class ChatScreen(BaseAppScreen):
             await self._console_command_run_skill(parse.name, parse.args)
             return
         handler_id = self._CONSOLE_COMMAND_NAME_TO_HANDLER_ID.get(parse.name)
+        # F5 (task-9 review): the composer-menu entry that BUILDS a
+        # /generate-image draft was gated, but typing (or pasting) the
+        # command itself was not -- this is the actual choke point every
+        # path to running it passes through, so gating here closes all of
+        # them at once rather than chasing each way a draft gets composed.
+        if handler_id == GENERATE_IMAGE_COMMAND_HANDLER_ID:
+            image_blocked = blocked_reason(
+                GENERATE_IMAGE_COMMAND_HANDLER_ID,
+                ephemeral=self._console_active_session_is_ephemeral(),
+            )
+            if image_blocked is not None:
+                await self._append_native_console_system_message(image_blocked)
+                return
         dispatch_map = {
             "insert-prompt": self._console_command_insert_prompt,
             "apply-system": self._console_command_apply_system,
@@ -16574,6 +16601,7 @@ class ChatScreen(BaseAppScreen):
                     destinations=destinations,
                     message_role=self._console_message_role_label(message),
                     message_excerpt=self._console_message_excerpt(message),
+                    ephemeral=self._console_active_session_is_ephemeral(),
                 ),
                 callback=_apply_save_as,
             )
@@ -16685,6 +16713,19 @@ class ChatScreen(BaseAppScreen):
                 # the controller/run-state gate entirely (that gate exists
                 # for chat runs; image generation has its own in-flight
                 # guard, checked inside this call).
+                #
+                # F5 follow-up (task-9 review): this is a fourth door onto
+                # the same disk-writing sink /generate-image's dispatch
+                # gate covers -- it calls `run_generation_batch` directly
+                # and never passes through `_dispatch_console_command`, so
+                # it needs its own check against the same registry entry.
+                image_blocked = blocked_reason(
+                    GENERATE_IMAGE_COMMAND_HANDLER_ID,
+                    ephemeral=self._console_active_session_is_ephemeral(),
+                )
+                if image_blocked is not None:
+                    self.app_instance.notify(image_blocked, severity="warning")
+                    return True
                 await self._regenerate_console_generation_variant(message_id)
                 return True
             controller = self._ensure_console_chat_controller()
@@ -16831,9 +16872,16 @@ class ChatScreen(BaseAppScreen):
         unavailable_reasons: dict[str, str] = {}
 
         if self._console_active_session_is_ephemeral():
+            # F4 (task-9 review): `blocked_reason` returns `str | None`;
+            # every label above has a registry entry today, so this is
+            # never None in practice, but `unavailable_reasons` is typed
+            # `dict[str, str]` -- fall back to a generic sentence instead
+            # of silently letting a future registry-key drift surface the
+            # literal string "None" on the modal.
             for label in ("Chatbook", "Note", "Media", "Prompt"):
-                unavailable_reasons[label] = blocked_reason(
-                    f"save-as-{label.lower()}", ephemeral=True
+                unavailable_reasons[label] = (
+                    blocked_reason(f"save-as-{label.lower()}", ephemeral=True)
+                    or "Not available in a temporary chat."
                 )
             return ConsoleMessageActionService(
                 available_save_destinations=set(),
@@ -17736,7 +17784,14 @@ class ChatScreen(BaseAppScreen):
         *,
         can_save_chatbook: bool,
     ) -> None:
-        """Refresh Console composer action priority from draft, run, and artifact state."""
+        """Refresh Console composer action priority from draft, run, and artifact state.
+
+        F1 (task-9 review): the composer bar's own Save Chatbook button is a
+        second door onto the same write the workbench action already gates
+        -- reads ``_console_active_session_is_ephemeral()`` directly here so
+        both doors consult the same accessor without a caller having to
+        remember to thread it through.
+        """
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
@@ -17765,6 +17820,7 @@ class ChatScreen(BaseAppScreen):
             can_save_chatbook=can_save_chatbook,
             send_blocked=send_blocked,
             setup_blocked_reason=setup_blocked_reason or attachment_blocked_reason,
+            ephemeral=self._console_active_session_is_ephemeral(),
         )
         composer.sync_dictation_state(self._console_dictation_state)
         # sync_action_state resets the attach button's tooltip to generic copy

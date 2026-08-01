@@ -526,6 +526,57 @@ async def test_handle_console_message_action_routes_regenerate_for_generation_me
     assert len(appended.generation_metadata) == 2
 
 
+@pytest.mark.asyncio
+async def test_handle_console_message_action_blocks_generation_regenerate_when_ephemeral(
+    monkeypatch,
+):
+    """F5 follow-up (task-9 review): the generation-message branch of
+    "regenerate" (the circular-arrow button on an image message) calls
+    `run_generation_batch` directly -- a FOURTH door onto the same
+    disk-writing sink that /generate-image's dispatch gate does not cover,
+    since this path never goes through `_dispatch_console_command`. Must
+    refuse the same way, with the same registry reason -- and still work
+    normally otherwise (the control, which is the pre-existing test just
+    above)."""
+    from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+    store = ConsoleChatStore()
+    temp = store.create_session(title="Temp", ephemeral=True)
+    store.switch_session(temp.id)
+    message = store.append_generation_message(
+        temp.id,
+        content="[image] a red dragon",
+        variants=[(b"img0", "image/png", _meta(seed=42))],
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    notified: list = []
+    screen.app_instance.notify = lambda text, **kwargs: notified.append(
+        (text, kwargs)
+    )
+    batch_calls: list = []
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(max_variants_per_message=8),
+    )
+    monkeypatch.setattr(
+        chat_screen_module, "run_generation_batch", _fake_batch(calls=batch_calls)
+    )
+    button = Button("regen", id=f"console-message-action-regenerate-{message.id}")
+
+    handled = await screen.handle_console_message_action(Button.Pressed(button))
+
+    assert handled is True
+    assert batch_calls == [], "must never reach run_generation_batch when ephemeral"
+    assert len(store.get_message(message.id).generation_metadata) == 1, (
+        "message must be untouched"
+    )
+    assert notified == [
+        (blocked_reason("generate-image", ephemeral=True), {"severity": "warning"})
+    ]
+
+
 # --- TASK-1: speak (TTS) action dispatch --------------------------------------
 
 
@@ -742,6 +793,53 @@ async def test_handle_console_message_action_speak_stop_does_not_clear_other_mes
     assert handled is True
     assert screen._console_speaking_message_id == message_b.id
     assert notified == []
+
+
+# --- F5 (task-9 review): /generate-image dispatch gate in a temporary chat --
+
+
+@pytest.mark.asyncio
+async def test_dispatch_console_command_blocks_generate_image_when_ephemeral():
+    """F5: typing /generate-image was not gated -- only the composer-menu
+    entry that BUILDS the command was. Gate the command at its actual
+    dispatcher (`_dispatch_console_command`) so every path that reaches a
+    /generate-image draft (typed by hand, pasted from the Generate Image
+    modal, or inserted via the style browser) refuses the same way, with
+    the same registry reason -- and still dispatches normally otherwise
+    (the control)."""
+    from tldw_chatbook.Chat.console_command_grammar import CommandParse
+    from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+    store = ConsoleChatStore()
+    temp = store.create_session(title="Temp", ephemeral=True)
+    store.switch_session(temp.id)
+
+    screen = _bare_generation_screen(store)
+    screen._console_initial_session_title_for_workspace = (
+        lambda workspace_id: "Console"
+    )
+
+    handler_calls: list = []
+
+    async def _spy_handler(parse):
+        handler_calls.append(parse)
+
+    screen._console_command_generate_image = _spy_handler
+
+    parse = CommandParse(kind="command", name="generate-image", args="a dragon")
+    await screen._dispatch_console_command(parse)
+
+    assert handler_calls == [], "the handler must not run in a temporary chat"
+    messages = [m.content for m in store.messages_for_session(temp.id)]
+    assert messages == [blocked_reason("generate-image", ephemeral=True)]
+
+    # Control: a normal (non-ephemeral) session still dispatches.
+    normal = store.create_session(title="Normal")
+    store.switch_session(normal.id)
+    await screen._dispatch_console_command(parse)
+
+    assert len(handler_calls) == 1
+    assert handler_calls[0] is parse
 
 
 # --- Task 3: handler-level wiring test for /generate-image style threading ----
