@@ -19,11 +19,11 @@ you touch them; some are read-only and point you elsewhere.
 - **Click Settings in the nav bar.** There is **no Ctrl+digit for Settings** —
   it is the last of thirteen destinations and the ten hotkey digits run out
   before it. The nav bar's right edge shows "More: Ctrl+P" for this reason.
-- **Ctrl+P** → "Switch to Settings", or "Settings & Preferences: Open Settings
-  Tab". Typing **stats** also surfaces the Settings entry, because "stats" is
-  one of this screen's legacy route names — but the similarly-named
-  "Settings & Preferences: Show Database Stats" opens the separate Statistics
-  screen, not Settings.
+- **Ctrl+P** → "Tab Navigation: Switch to Settings", or "Settings &
+  Preferences: Open Settings Tab". Typing **stats** also surfaces the Settings
+  entry, because "stats" is one of this screen's legacy route names — but the
+  similarly-named "Settings & Preferences: Show Database Stats" opens the
+  separate Statistics screen, not Settings.
 - Other screens deep-link in with a category preselected — e.g. the app's own
   pointer, "Settings ▸ Diagnostics ▸ Run setup wizard."
 
@@ -430,4 +430,4 @@ not open an editor.
   inspector" at the bottom means there is more below.
 
 —
-*Verified against dev @ fb2df0c8a — 2026-08-01*
+*Verified against dev @ fb2df0c8a — 2026-07-31*

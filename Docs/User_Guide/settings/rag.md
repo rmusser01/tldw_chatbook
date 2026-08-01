@@ -13,8 +13,8 @@ the app are read-only, so tuning always starts by cloning one.
 ## Getting there
 
 Open **Settings** — click it in the nav bar, or press **Ctrl+P** and pick
-"Switch to Settings" (there is no **Ctrl+digit** for Settings; it sits past the
-ten numbered destinations). Then pick **RAG** in the
+"Tab Navigation: Switch to Settings" (there is no **Ctrl+digit** for Settings;
+it sits past the ten numbered destinations). Then pick **RAG** in the
 **Settings Sections** rail, under **Domain Defaults** — or press `/`, type
 `rag`, press Enter.
 
@@ -229,4 +229,4 @@ field has focus the footer relabels the hints as `Esc, s` / `Esc, r` /
   shortly." is different — that one is transient, so press **Backfill** again.
 
 —
-*Verified against dev @ fb2df0c8a — 2026-08-01*
+*Verified against dev @ fb2df0c8a — 2026-07-31*
