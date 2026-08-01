@@ -43,11 +43,11 @@ Delivered across 10 sequential tasks (commits tagged `TASK-595` on
 `feat/managed-model-acquisition`), composed entirely over the sealed 594
 core (`ModelArtifactService`) via a new `ArtifactAcquisitionService`:
 
-- **Core additions (exactly two, by design):** `install(..., consume_source=True)`
+- **Core additions (three; see the spec's Decision 4):** `install(..., consume_source=True)`
   (in-root move with EXDEV copy fallback) and `reconcile()`'s
-  orphans-only managed-staging GC (a directory survives iff its
-  `fetch-state.json` sidecar parses as JSON; anything else -- missing,
-  corrupt, wrong depth -- is swept). Both are exercised directly by this
+  orphans-only managed-staging GC (a directory survives iff its sibling `<variant>.fetch-state.json`
+  sidecar parses as a dict with a `files` mapping; anything else --
+  missing, corrupt, wrong shape, wrong depth -- is swept). Both are exercised directly by this
   task's real-subprocess crash tests.
 - **`acquisition.py`:** async `preflight()` (closure walk + staged-byte
   credit + space math + gating probe) → `PreflightReport.grant()` →
@@ -94,3 +94,22 @@ core (`ModelArtifactService`) via a new `ArtifactAcquisitionService`:
 Full gate: `Tests/Model_Artifacts/ Tests/STT/test_boundaries.py` --
 358 passed (355 pre-existing + 3 new), stable across repeated runs.
 <!-- SECTION:NOTES:END -->
+
+### Post-merge corrections (2026-08-01)
+
+The notes above described the design as approved; three details changed in the
+PR-1157 review fix wave and are corrected inline: core additions are three (the
+per-staging-dir install lease was added as an in-flight race fix), the staging
+GC classifier requires a dict with a `files` mapping rather than any parseable
+JSON, and the fetch-state sidecar is a **sibling** of the staging directory
+rather than living inside it (so a retryable install failure cannot destroy the
+resumable download).
+
+**This task was implemented twice, in parallel.** A second approved spec and a
+partial implementation exist on `codex/task-595-managed-downloads-v2` in a
+separate clone. See
+`Docs/superpowers/reviews/2026-08-01-task-595-duplicate-implementation-reconciliation.md`
+for the comparison and the accepted decision: the merged implementation stands,
+and the parallel branch's better boundaries are ported via TASK-1694 (payload-
+subtree finalization), TASK-1695 (source-map per-file URLs), TASK-1696 (Parakeet
+consumer migration), and TASK-1697 (marker-based recovery ownership).
