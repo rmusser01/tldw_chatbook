@@ -105,3 +105,47 @@ def test_editing_a_deleted_bench_raises(db, config):
     db.delete_task(task_id)
     with pytest.raises(ValueError, match="could not be updated"):
         save_character_bench(db, config, task_id=task_id)
+
+
+def test_max_tokens_zero_round_trips(db):
+    """A stored max_tokens of 0 is a real, explicitly-chosen value, not a
+    missing one -- ``data.get("max_tokens") or 512`` cannot tell "the
+    caller stored 0" from "this key is absent", since both are falsy, and
+    would silently replace a deliberate 0 with the default on every load.
+    """
+    config = CharacterProbeConfig(
+        name="n", probe_set_id="p", character_ids=(1,), target_ids=("t",),
+        max_tokens=0,
+    )
+    task_id = save_character_bench(db, config)
+    assert load_character_bench(db, task_id).max_tokens == 0
+
+
+def test_concurrency_round_trips_at_minimum_legal_value(db):
+    config = CharacterProbeConfig(
+        name="n", probe_set_id="p", character_ids=(1,), target_ids=("t",),
+        concurrency=1,
+    )
+    task_id = save_character_bench(db, config)
+    assert load_character_bench(db, task_id).concurrency == 1
+
+
+def test_samples_per_cell_round_trips_at_minimum_legal_value(db):
+    config = CharacterProbeConfig(
+        name="n", probe_set_id="p", character_ids=(1,), target_ids=("t",),
+        samples_per_cell=1,
+    )
+    task_id = save_character_bench(db, config)
+    assert load_character_bench(db, task_id).samples_per_cell == 1
+
+
+def test_character_ids_must_be_integers():
+    """Rejected at construction, not merely at the storage boundary -- a
+    caller building one directly with string ids (easy to do from a form
+    field) must not be able to end up with a config that round-trips
+    through save/load as a *different* type than it started as.
+    """
+    with pytest.raises(ValueError, match="character_ids"):
+        CharacterProbeConfig(
+            name="n", probe_set_id="p", character_ids=("3", "7"), target_ids=("t",)
+        )

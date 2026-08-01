@@ -216,6 +216,62 @@ def save_character_bench(
     )
 
 
+def _stored_int_field(
+    data: Mapping[str, Any], key: str, default: int, task_id: str
+) -> int:
+    """One integer field out of a stored ``config_data``, missing-vs-falsy aware.
+
+    A present-but-falsy stored value (``0``, most notably a zero
+    ``max_tokens``) is a real value the caller explicitly chose, not an
+    absent one -- ``data.get(key) or default`` cannot tell those apart,
+    since ``0`` and a missing key are both falsy, and would silently
+    replace a deliberately-stored ``0`` with ``default`` on every load.
+    Only a genuinely missing key, or an explicit stored ``None``, reads as
+    ``default`` here.
+
+    A present value that is negative or not integer-shaped is instead
+    treated as corrupt data and rejected outright, matching the
+    "fail loudly on a corrupt row" contract this module already applies to
+    ``bench_type`` (``is_character_bench``/``load_character_bench`` below)
+    and, for the probe-set half of this file, ``is_probe_set``/
+    ``load_probe_set`` -- silently coercing a negative or garbage stored
+    value into ``default`` would look like a normal, freshly-created bench
+    rather than the sign of a hand-edited or otherwise damaged row that it
+    actually is. ``0`` itself is not rejected here: whether it is a
+    sensible value for a *particular* field (e.g. ``max_tokens``) is that
+    field's own concern -- ``CharacterProbeConfig.__post_init__`` already
+    enforces a ``>= 1`` floor for ``concurrency``/``samples_per_cell``, so
+    a stored ``0`` for either of those still fails loudly, just one layer
+    up, the moment this function's caller constructs the config below.
+
+    Args:
+        data: The bench's ``config_data``, already parsed into a dict.
+        key: The field to read.
+        default: Value to use when the key is absent or explicitly ``None``.
+        task_id: The owning bench's id, only for the error message below.
+
+    Returns:
+        int: The stored value, or ``default``.
+
+    Raises:
+        ValueError: If the key is present with a value that is not
+            integer-shaped (e.g. a string) or is negative -- naming both
+            the bench id and the field.
+    """
+    value = data.get(key)
+    if value is None:
+        return default
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"Bench {task_id!r} has a non-integer {key!r}: {value!r}"
+        ) from None
+    if result < 0:
+        raise ValueError(f"Bench {task_id!r} has a negative {key!r}: {result!r}")
+    return result
+
+
 def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
     """Read a character probe bench back.
 
@@ -229,7 +285,12 @@ def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
     Raises:
         ValueError: If the task does not exist or is not a character probe
             bench -- loading a word bench here would otherwise produce a
-            config with empty characters and look like data loss.
+            config with empty characters and look like data loss. Also
+            propagated from ``_stored_int_field`` (see its own docstring)
+            for a corrupt ``concurrency``/``samples_per_cell``/
+            ``max_tokens``, and from ``CharacterProbeConfig.__post_init__``
+            for a stored ``concurrency``/``samples_per_cell`` below its
+            ``>= 1`` floor.
     """
     row = db.get_task(task_id)
     if row is None:
@@ -243,10 +304,10 @@ def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
         probe_set_id=str(data.get("probe_set_id") or ""),
         character_ids=tuple(int(cid) for cid in data.get("character_ids") or ()),
         target_ids=tuple(str(tid) for tid in data.get("target_ids") or ()),
-        concurrency=int(data.get("concurrency") or 1),
-        samples_per_cell=int(data.get("samples_per_cell") or 1),
+        concurrency=_stored_int_field(data, "concurrency", 1, task_id),
+        samples_per_cell=_stored_int_field(data, "samples_per_cell", 1, task_id),
         seed=data.get("seed"),
         temperature=float(data.get("temperature", 0.8)),
-        max_tokens=int(data.get("max_tokens") or 512),
+        max_tokens=_stored_int_field(data, "max_tokens", 512, task_id),
         extra_tags=tuple(data.get("extra_tags") or ()),
     )

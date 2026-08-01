@@ -43,7 +43,13 @@ class CharacterProbeConfig:
     ``character_ids`` are ``character_cards.id`` INTEGERs, unlike every eval
     id in this slice, which is TEXT. They are deliberately not normalised to
     strings: the cross-database lookup against ``ChaChaNotes_DB`` binds them
-    as integers.
+    as integers. This is enforced here, not merely documented: a caller
+    constructing one directly with string ids (e.g. ``("3", "7")``, easy to
+    do by accident from a form field) is rejected at construction rather
+    than being accepted here only to come back out as ``int`` after a
+    ``storage.save_character_bench``/``load_character_bench`` round trip --
+    an asymmetry a future UI caller would otherwise have to discover the
+    expensive way.
 
     Defaults are conservative on purpose: ``samples_per_cell=1`` (no
     surprise fan-out cost), ``seed=None`` (no false sense of determinism
@@ -54,6 +60,9 @@ class CharacterProbeConfig:
         ValueError: If ``samples_per_cell`` or ``concurrency`` is less than
             1, or if ``character_ids``/``target_ids`` is empty -- a bench
             with no characters or no targets can never produce a cell.
+        ValueError: If any element of ``character_ids`` is not an ``int``
+            (``bool`` included, since it is an ``int`` subclass but never a
+            real card id) -- see the type-fidelity note above.
     """
 
     name: str
@@ -77,3 +86,9 @@ class CharacterProbeConfig:
             raise ValueError("A character probe bench needs at least one character.")
         if not self.target_ids:
             raise ValueError("A character probe bench needs at least one target.")
+        for cid in self.character_ids:
+            if not isinstance(cid, int) or isinstance(cid, bool):
+                raise ValueError(
+                    f"character_ids must be int (character_cards.id), got "
+                    f"{cid!r} of type {type(cid).__name__}."
+                )
