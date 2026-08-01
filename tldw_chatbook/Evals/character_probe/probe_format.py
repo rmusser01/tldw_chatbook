@@ -3,6 +3,20 @@
 Turns are delimited explicitly rather than by line breaks so a single turn can
 be a multi-paragraph prompt -- complex prompts are exactly what this eval
 exists to study, and a newline-delimited format could not express one.
+
+**Delimiter matching is lenient about surrounding whitespace**: a line
+delimits when ``line.strip()`` equals the delimiter, so ``"  ---  "`` is a
+delimiter just as ``"---"`` is. The spec's wording ("a line of ``---``")
+reads stricter than that, and the leniency is a deliberate ruling rather
+than an oversight. The two failure modes are not symmetric: with a strict
+match, an INVISIBLE trailing space makes a delimiter silently fail to
+delimit, merging two turns into one prompt that then runs and produces
+plausible-looking results -- likely to happen (editors and copy-paste add
+trailing whitespace constantly) and very hard to see. With the lenient
+match, the cost is that an indented literal ``---`` inside a turn is eaten
+as a delimiter -- less likely, and it fails visibly as a probe split in the
+wrong place. The lenient reading is chosen for that reason; the cost is
+documented rather than hidden, and pinned by test.
 """
 
 from __future__ import annotations
@@ -45,6 +59,13 @@ def _clean_turn(raw: str) -> str:
 
 def parse_probe_text(text: str) -> ProbeSet:
     """Parse the plain-text probe format into a ``ProbeSet``.
+
+    A line delimits when its STRIPPED content equals the delimiter, so
+    ``"  ---  "`` and ``"\t==="`` delimit exactly as a bare ``---``/``===``
+    does. That leniency is deliberate (see the module note below), and it
+    widens the v1 escaping limitation: no line whose stripped content is
+    ``---`` or ``===`` can appear inside a turn, indented or padded or
+    otherwise.
 
     Args:
         text: The file's contents.
@@ -92,9 +113,12 @@ def format_probe_text(probe_set: ProbeSet) -> str:
 
     Returns:
         str: Text in the plain-text format. Note: if any turn contains a line
-            that strips to ``---`` or ``===``, it will not round-trip through
-            parse_probe_text, as those are treated as delimiters. Escaping is
-            not supported in this format version.
+            that STRIPS to ``---`` or ``===`` -- including an indented or
+            trailing-space form such as ``"  ---  "``, since delimiter
+            matching compares stripped content (see the module docstring for
+            why that leniency is deliberate) -- it will not round-trip
+            through parse_probe_text, as such a line is treated as a
+            delimiter. Escaping is not supported in this format version.
     """
     return f"\n{PROBE_DELIMITER}\n".join(
         f"\n{TURN_DELIMITER}\n".join(probe.turns) for probe in probe_set.probes

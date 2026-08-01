@@ -61,10 +61,22 @@ Take your time, and include what you could smell.
 Leading and trailing blank lines around a turn are stripped; interior whitespace is preserved
 exactly, since prompt formatting can change behaviour.
 
-**Limitation:** The v1 format does not escape delimiters, so a turn whose content contains a bare
-line of `---` or `===` will not round-trip correctly through parsing — the line will be treated as a
-delimiter. Escaping is out of scope for v1; a rich probe editor (v2, following task-1482's model)
-will address this.
+**Limitation:** The v1 format does not escape delimiters, so a turn whose content contains a line of
+`---` or `===` will not round-trip correctly through parsing — the line will be treated as a
+delimiter. This applies to any line whose **stripped** content is a delimiter, not only a bare one:
+matching compares `line.strip()`, so `"  ---  "` and `"\t==="` delimit exactly as `---` and `===`
+do, and an indented or trailing-space delimiter line cannot appear inside a turn either.
+
+That leniency is a **deliberate ruling**, not an oversight of the "a line of `---`" wording above.
+The two failure modes are not symmetric. Under a strict match, an invisible trailing space makes a
+delimiter silently *fail* to delimit — merging two turns into one prompt that then runs and returns
+plausible-looking results. That is both likely (editors and copy-paste add trailing whitespace
+constantly) and near-impossible to spot. Under the lenient match, the cost is that an indented
+literal `---` inside a turn is consumed as a delimiter — less likely, and it fails visibly as a
+probe split in the wrong place. Both behaviours are pinned by test so neither can drift.
+
+Escaping is out of scope for v1; a rich probe editor (v2, following task-1482's model) will address
+this.
 
 A rich probe editor is a follow-up, mirroring how bench authoring (task-1482) followed the sample
 bench.

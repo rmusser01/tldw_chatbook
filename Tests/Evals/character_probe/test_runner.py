@@ -121,6 +121,37 @@ def test_per_sample_seed_is_offset_so_samples_differ(targets):
     assert sorted(call["seed"] for call in chat.calls) == [100, 101, 102]
 
 
+def test_a_negative_seed_stays_random_for_every_sample(targets):
+    """llama.cpp reads a negative seed as "pick a random seed", and
+    load_character_bench explicitly accepts one. Offsetting it turns
+    -1, 0, 1 ... -- so sample 0 is randomly seeded and every LATER sample
+    gets a deterministic seed the user never asked for. That defeats the
+    only reason to take several samples (seeing variance) while looking
+    like it worked."""
+    chat = _FakeChat()
+    probe_set = ProbeSet(probes=(Probe(turns=("One",)),))
+    asyncio.run(
+        CharacterProbeRunner(chat).run(
+            [_card()], probe_set, targets, _config(samples_per_cell=3, seed=-1)
+        )
+    )
+    assert [call["seed"] for call in chat.calls] == [-1, -1, -1]
+
+
+def test_a_seed_of_zero_is_still_offset(targets):
+    """0 is a real, explicitly-chosen seed, not a sentinel -- the same
+    falsy-but-real case Task 3 fixed for max_tokens. Only NEGATIVE seeds
+    are the random sentinel, so 0 must keep offsetting."""
+    chat = _FakeChat()
+    probe_set = ProbeSet(probes=(Probe(turns=("One",)),))
+    asyncio.run(
+        CharacterProbeRunner(chat).run(
+            [_card()], probe_set, targets, _config(samples_per_cell=3, seed=0)
+        )
+    )
+    assert sorted(call["seed"] for call in chat.calls) == [0, 1, 2]
+
+
 def test_no_seed_passes_none(targets):
     chat = _FakeChat()
     probe_set = ProbeSet(probes=(Probe(turns=("One",)),))

@@ -43,6 +43,45 @@ ChatCallable = Callable[..., str]
 ProgressCallback = Callable[[int, int], None]
 
 
+def _sample_seed(bench_seed: Optional[int], sample_index: int) -> Optional[int]:
+    """The seed for one sample of a cell.
+
+    A non-negative bench seed is offset by the sample index, which is the
+    whole point of seeding a multi-sample run: one fixed seed would return
+    N identical answers, tripling review volume for zero information, so a
+    seeded run must be reproducible AND have samples that genuinely differ.
+
+    A NEGATIVE seed is a sentinel, not an arithmetic value: llama.cpp reads
+    it as "pick a random seed", and ``storage.load_character_bench``
+    deliberately accepts one for that reason. Offsetting it is worse than
+    useless -- ``-1`` becomes ``-1, 0, 1, ...``, so sample 0 is randomly
+    seeded while every later sample gets a *deterministic* seed the user
+    never chose. The offset exists precisely so samples differ; applied to
+    the random sentinel it does the exact opposite, quietly collapsing the
+    variance the samples were taken to reveal, and the run still looks like
+    it worked. A negative seed is therefore passed through unchanged for
+    every sample.
+
+    ``0`` is NOT a sentinel: it is a real, explicitly-chosen seed (the same
+    falsy-but-real case ``storage._stored_int_field`` exists for), so it
+    offsets normally.
+
+    Args:
+        bench_seed: ``CharacterProbeConfig.seed``.
+        sample_index: Zero-based sample number within its cell.
+
+    Returns:
+        Optional[int]: ``None`` when unseeded, the seed unchanged when it is
+        the negative random sentinel, otherwise ``bench_seed +
+        sample_index``.
+    """
+    if bench_seed is None:
+        return None
+    if bench_seed < 0:
+        return bench_seed
+    return bench_seed + sample_index
+
+
 class CancelToken:
     """Cancels a whole run; see the module docstring for what that means."""
 
@@ -100,7 +139,7 @@ class CharacterProbeRunner:
         the only place an ``eval_models`` row ever keeps it.
         """
         steering = target.steering
-        seed = None if config.seed is None else config.seed + sample_index
+        seed = _sample_seed(config.seed, sample_index)
         collected: list[ConversationTurn] = []
         replies: list[str] = []
         error = ""

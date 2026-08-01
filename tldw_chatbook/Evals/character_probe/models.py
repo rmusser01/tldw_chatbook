@@ -56,6 +56,23 @@ class CharacterProbeConfig:
     unless explicitly requested), and ``concurrency=1`` (no surprise
     parallel-request load against a target).
 
+    ``seed`` has THREE meanings, and the distinction is load-bearing rather
+    than cosmetic -- ``runner._sample_seed`` branches on it:
+
+    * ``None`` -- unseeded. No seed is sent at all.
+    * a NEGATIVE value -- the "pick a random seed" sentinel llama.cpp
+      defines (``-1`` conventionally). It is a sentinel, not a number to do
+      arithmetic on, so it is sent UNCHANGED for every sample of a cell.
+      Offsetting it would make ``-1`` run as ``-1, 0, 1, ...``: sample 0
+      randomly seeded, every later sample deterministic and never asked
+      for, which destroys exactly the variance multi-sampling exists to
+      show.
+    * ZERO or POSITIVE -- a real seed. The per-sample seed is
+      ``seed + sample_index``, so a seeded run is reproducible *and* its
+      samples genuinely differ. ``0`` is a real seed here, not a falsy
+      stand-in for "unset" (the same distinction ``storage``'s stored-field
+      readers enforce).
+
     Raises:
         ValueError: If ``samples_per_cell`` or ``concurrency`` is less than
             1, or if ``character_ids``/``target_ids`` is empty -- a bench

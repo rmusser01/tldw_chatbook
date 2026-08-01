@@ -115,3 +115,30 @@ def test_turn_containing_bare_delimiter_does_not_round_trip():
     # The turn is split into two at the --- delimiter
     assert len(parsed.probes[0].turns) == 2
     assert parsed.probes[0].turns == ("before", "after")
+
+
+def test_a_whitespace_padded_delimiter_still_delimits():
+    """Deliberate leniency, pinned so it cannot drift either way.
+
+    A strict match would make an INVISIBLE trailing space silently fail to
+    delimit, merging two turns into one prompt that then runs and produces
+    plausible-looking results -- likely (editors add trailing whitespace
+    constantly) and very hard to see. The lenient match's cost is that an
+    indented literal --- inside a turn is eaten, which is less likely and
+    fails visibly. See the module docstring for the full ruling.
+    """
+    parsed = parse_probe_text("First turn\n  ---  \nSecond turn")
+    assert parsed.probes[0].turns == ("First turn", "Second turn")
+
+
+def test_a_whitespace_padded_probe_delimiter_still_delimits():
+    parsed = parse_probe_text("Probe one\n\t===\nProbe two")
+    assert [p.turns for p in parsed.probes] == [("Probe one",), ("Probe two",)]
+
+
+def test_an_indented_delimiter_inside_a_turn_is_eaten():
+    """The documented cost of the leniency above -- pinned so the limitation
+    is deliberate rather than a surprise, matching how the bare-delimiter
+    round-trip loss is already pinned."""
+    parsed = parse_probe_text("before\n    ---\nafter")
+    assert parsed.probes[0].turns == ("before", "after")
