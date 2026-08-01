@@ -105,8 +105,9 @@ It exposes typed immutable values:
   upstream paths, per-file sizes/digests, and total size.
 - `ResolvedRemoteModel`: repository, immutable commit, license state, and
   bounded candidates.
-- `ResolvedRemoteCatalog`: the one selected `ArtifactDescriptor` plus its
-  complete `ArtifactSourceMap`; it structurally satisfies `ArtifactCatalog`.
+- `ResolvedRemoteCatalog`: a minimal one-item wrapper around the selected
+  `ArtifactDescriptor` and its complete `ArtifactSourceMap`; its only catalog
+  behavior is the `descriptor(ref)` method required by `ArtifactCatalog`.
 
 The adapter uses existing `httpx`. It does not import the legacy downloader or
 introduce a provider framework.
@@ -158,11 +159,31 @@ bytes, rather than trusting `Content-Length`:
 | GGUF candidates returned | 100 |
 | shards in one set | 64 |
 
-JSON values have exact expected types. Repository identifiers, commit SHAs, and
-file paths are independently validated before any URL or descriptor is built.
+Identity and security-bearing JSON values have exact expected types. Repository
+identifiers, commit SHAs, and file paths are independently validated before any
+URL or descriptor is built.
 A repository identifier must be one bounded `owner/repository` pair using the
 portable Hugging Face identifier character set. The resolved commit must be an
-immutable hexadecimal Git commit identity, not `main`, a tag, or user input.
+immutable value matching `[0-9a-f]{40}`, not `main`, a tag, or user input.
+
+User/upstream text has fixed presentation and request bounds:
+
+| Value | Bound |
+|---|---:|
+| trimmed search input | 256 characters |
+| repository identifier | 96 characters |
+| upstream file path | 1,024 UTF-8 bytes |
+| license identifier | 128 characters |
+| persisted/display model label | 160 characters |
+| optional downloads/likes counter | 0 through 2^63 - 1 |
+| optional last-updated value | 64 characters |
+
+Identity and access-control fields fail closed on an invalid type or bound.
+Hugging Face gated state accepts only `false`, `"auto"`, or `"manual"` and is
+normalized for display; private state must be boolean. Optional popularity and
+update fields are displayed only when they have the expected bounded scalar
+shape, and otherwise are omitted rather than rejecting an otherwise usable
+repository.
 
 A repository response containing more than 2,048 file entries is rejected; it
 is never partially inspected. Eligible candidates are sorted by their exact
@@ -266,6 +287,23 @@ The descriptor is deliberately inert:
 The unassigned OS/architecture sentinels intentionally fail closed. They do not
 claim support for every platform.
 
+The remaining source and inventory fields are pinned as follows:
+
+| Field | Value |
+|---|---|
+| upstream repository | exact repository ID returned by repository resolution |
+| upstream revision | exact resolved commit SHA |
+| source URL | first generated pinned payload URL in managed-file order |
+| expected installed bytes | exact sum of selected LFS file sizes |
+| files | deterministic managed paths with corresponding LFS sizes/digests |
+| license ID | declared bounded ID, otherwise `NOASSERTION` |
+| license URL | pinned repository source-review page |
+
+Using the first payload URL for `source_url` is intentional: every generated
+source-map URL shares its Hugging Face origin, so the existing acquisition
+service can bind repository credentials to that origin before its fetcher strips
+them from cross-origin redirect hops.
+
 ## License behavior
 
 If model metadata declares a non-empty license identifier, the identifier is
@@ -275,6 +313,11 @@ shown. If it does not, the descriptor records `NOASSERTION`.
 does not guarantee a pinned license-document URL. Remote descriptors therefore
 store the pinned repository page as the review URL. User-facing copy calls this
 the **source review page**, never a license document.
+
+The shared plan panel renders these as separate lines for every model:
+
+- `License: <identifier>` (or `Unknown / not declared` for `NOASSERTION`);
+- `Source review page: <URL>`.
 
 For `NOASSERTION`, the shared install modal accepts one optional required
 acknowledgment. Remote supplies: **No license was declared. I reviewed the
@@ -323,15 +366,14 @@ create readiness for any structurally valid ROOT artifact, including an
 unassigned Remote artifact; this task does not change that core behavior.
 
 Remote inertness therefore never depends on `InstalledArtifact.ready`. Installed
-derives `runtime_assigned` from the descriptor's consumer, runtime, OS, and
-architecture fields: it is false when `consumer`, `model_family`, or
-`runtime_name` equals `unassigned`, or either supported-platform tuple contains
-the `unassigned` sentinel. An unassigned descriptor always says **Downloaded ·
-runtime compatibility not verified**, even if Repair later sets `ready=True`.
-Add an optional `allow_activation: bool = True` input to
-`ModelActivationControls`; unassigned rows pass false, which omits only the
-Activate button while preserving the existing lease-safe Delete action. No
-other installed-row behavior changes.
+uses one authority: `activation_allowed` is false when
+`descriptor.consumer == "unassigned"`. Such a descriptor always says
+**Downloaded · runtime compatibility not verified**, even if Repair later sets
+`ready=True`. Add an optional `allow_activation: bool = True` input to
+`ModelActivationControls`; unassigned-consumer rows pass false, which omits only
+the Activate button while preserving the existing lease-safe Delete action. No
+other installed-row behavior changes. The other sentinel fields remain
+defense-in-depth for future runtime consumers, not additional UI branches.
 
 ## Concurrency and cancellation
 
@@ -351,7 +393,9 @@ lease guarantees.
 
 ## Errors and recovery
 
-The adapter and view map typed failures to short sanitized messages:
+The adapter uses one `RemoteDiscoveryError` carrying a bounded reason code and a
+retryable flag; it does not add an exception hierarchy. The view maps it and
+existing acquisition failures to short sanitized messages:
 
 | Failure | User-visible recovery |
 |---|---|
@@ -364,9 +408,10 @@ The adapter and view map typed failures to short sanitized messages:
 | insufficient disk or acquisition gating | existing preflight explanation |
 | transfer or digest mismatch | existing managed-acquisition failure and Retry |
 
-Logs record the operation and a bounded/hash-safe context, not raw search text,
-private repository names, tokens, source bodies, or arbitrary upstream error
-content. UI labels always use `markup=False`.
+Logs record only the operation and, after selection, the already deterministic
+artifact ID. No new logging/hash helper is introduced. Raw search text, private
+repository names, tokens, source bodies, and arbitrary upstream error content
+are excluded. UI labels always use `markup=False`.
 
 ## Portability
 
@@ -385,7 +430,8 @@ coverage that was not run.
 Focused tests cover:
 
 1. Search and exact-repository request construction, token scoping, strict
-   parsing, body/result/file limits, and sanitized failures using
+   parsing (including gated-state normalization), text/body/result/file limits,
+   and sanitized failures using
    `httpx.MockTransport` or equivalent injected clients.
 2. Single GGUFs, complete shard sets, incomplete/duplicate/inconsistent shard
    sets, missing LFS metadata, candidate limits, and deterministic portable

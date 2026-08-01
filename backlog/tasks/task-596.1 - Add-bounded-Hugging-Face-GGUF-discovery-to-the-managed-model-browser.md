@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-01 21:51'
-updated_date: '2026-08-01 22:00'
+updated_date: '2026-08-01 22:22'
 labels:
   - stt
   - artifacts
@@ -34,7 +34,7 @@ Let users explicitly find and download remote GGUF models through the shared man
 - [ ] #1 Opening Remote performs no network request; explicit search or exact repository submission runs off the Textual event loop with bounded, generation-fenced results.
 - [ ] #2 A selected repository resolves to an immutable commit and offers only LFS-backed single GGUF files or complete bounded GGUF shard sets with recorded sizes and SHA-256 digests.
 - [ ] #3 A selected candidate reaches the existing managed preflight, consent, download, verification, and installation flow; configured Hugging Face credentials support gated or private repositories without being persisted or forwarded across origins.
-- [ ] #4 Remote models are labeled Local integrity recorded, remain unassigned and inactive, and are never presented as runtime-compatible, transcription-ready, or eligible for automatic routing.
-- [ ] #5 Known license metadata is shown; missing license metadata is recorded as NOASSERTION with a pinned source-review page and requires explicit acknowledgment before download.
-- [ ] #6 Focused adapter, GGUF grouping, Textual, redirect-security, and managed-acquisition tests cover the flow without adding native or platform-specific dependencies; Windows and Linux gates remain required when runners are available.
+- [ ] #4 Known license metadata is shown; missing license metadata is recorded as NOASSERTION with a pinned source-review page and requires explicit acknowledgment before download.
+- [ ] #5 Focused adapter, GGUF grouping, Textual, redirect-security, and managed-acquisition tests cover the flow without adding native or platform-specific dependencies; Windows and Linux gates remain required when runners are available.
+- [ ] #6 Remote installation labels the model Local integrity recorded and does not activate it; its descriptor uses consumer=unassigned, Installed offers no activation action for that consumer, and no UI presents it as runtime-compatible, transcription-ready, or eligible for automatic routing.
 <!-- AC:END -->
