@@ -742,7 +742,7 @@ async def test_provision_activates_already_installed_closure_with_zero_fetch_req
         )
         # Both root_ref and dep_ref are already installed (see above), so
         # _aggregate_closure resolves no sources for either -- this consent
-        # is unaffected by TASK-1712's fingerprint change, but grant_consent
+        # is unaffected by TASK-1720's fingerprint change, but grant_consent
         # is used here for consistency (see its docstring).
         consent = grant_consent(svc, root_ref, catalog)
         events: list[AcquisitionProgress] = []

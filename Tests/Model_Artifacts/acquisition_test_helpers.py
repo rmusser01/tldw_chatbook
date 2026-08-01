@@ -7,7 +7,7 @@ files (``test_stream_fetch.py``, ``test_preflight.py``, ``test_source_map.py``,
 ``_two_file_descriptor_for_hygiene`` duplicated ``test_source_map.py``'s
 ``_two_file_descriptor`` almost line-for-line. Both now live here once.
 
-``grant_consent`` is a third helper this same review's P1 fix (TASK-1712)
+``grant_consent`` is a third helper this same review's P1 fix (TASK-1720)
 needs in many of the same files: folding every resolved per-file source URL
 (including the single-file ``source_url`` fallback, not just caller-supplied
 ``sources`` entries) into the consent fingerprint means a hand-built
@@ -116,7 +116,7 @@ def grant_consent(
     pure, network-free aggregation the public ``preflight()`` wraps with a
     gating probe (see its own docstring: "the only I/O is
     ``core.list_installed()`` and ``core.disk_usage()``") -- and grants the
-    resulting report exactly like a caller would. Since TASK-1712 folded
+    resulting report exactly like a caller would. Since TASK-1720 folded
     every resolved per-file source URL, including the single-file
     ``source_url`` fallback, into the real consent fingerprint, a
     hand-built ``AcquisitionConsent(closure_fingerprint=closure_fingerprint(

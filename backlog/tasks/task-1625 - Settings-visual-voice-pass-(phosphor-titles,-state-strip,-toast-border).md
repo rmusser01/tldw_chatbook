@@ -1,5 +1,5 @@
 ---
-id: task-1625
+id: TASK-1625
 title: 'Settings: visual-voice pass (phosphor titles, state strip, toast border)'
 status: Done
 assignee:

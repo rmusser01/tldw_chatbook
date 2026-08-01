@@ -336,7 +336,7 @@ async def test_kill_between_install_and_activate_fresh_provision_activates_with_
         )
         # Both dep_ref and root_ref are already installed at this point (see
         # the assertion above), so _aggregate_closure resolves no sources
-        # for either -- this consent is unaffected by TASK-1712's fingerprint
+        # for either -- this consent is unaffected by TASK-1720's fingerprint
         # change, but grant_consent is still used here for consistency (see
         # its docstring) rather than reintroducing a hand-built one.
         consent = grant_consent(svc, root_ref, catalog)

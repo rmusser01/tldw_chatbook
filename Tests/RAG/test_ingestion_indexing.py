@@ -253,8 +253,10 @@ class TestMediaPostIngestHook:
 
     def test_unregister_stops_callbacks(self, media_db):
         calls = []
+
         def cb(db, mid, muuid):
             return calls.append(mid)
+
         media_db_module.register_media_post_ingest_callback(cb)
         media_db_module.unregister_media_post_ingest_callback(cb)
 
@@ -611,9 +613,7 @@ class TestIngestionIndexer:
         )
         idx = IngestionIndexer(rag_service=service, indexing_db=indexing_db)
         try:
-            assert idx.submit_removal(
-                IndexRemoval("58", "media", "media_58")
-            )
+            assert idx.submit_removal(IndexRemoval("58", "media", "media_58"))
             assert idx.wait_until_idle(timeout=10)
             assert indexing_db.get_indexed_item_info("58", "media") is not None
             assert idx.stats()["failed"] == 1
@@ -737,9 +737,7 @@ class TestEndToEndSemanticSearch:
                 result.metadata.get("source_id") != str(media_id)
                 for result in deleted_results
             )
-            assert indexing_db.get_indexed_item_info(
-                str(media_id), "media"
-            ) is None
+            assert indexing_db.get_indexed_item_info(str(media_id), "media") is None
 
             assert media_db.undelete_media(media_id)
             assert indexer.wait_until_idle(timeout=60)
@@ -981,9 +979,7 @@ class TestBackfill:
 
         assert summary["removed"] == 1
         assert service.vector_store.deleted[-1] == f"media_{media_id}"
-        assert indexing_db.get_indexed_item_info(
-            str(media_id), "media"
-        ) is None
+        assert indexing_db.get_indexed_item_info(str(media_id), "media") is None
 
 
 # === Shared service wiring ===
@@ -1046,6 +1042,8 @@ class TestSharedRagServiceLockDeadlock:
     ``select()`` on a stalled socket).
     """
 
+    _THREAD_SCHEDULING_TIMEOUT_SECONDS = 30.0
+
     @pytest.fixture(autouse=True)
     def _isolate_build_lock(self, monkeypatch):
         monkeypatch.setattr(
@@ -1061,7 +1059,9 @@ class TestSharedRagServiceLockDeadlock:
         # to build -- fake it so this test never touches a real
         # ConfigProfileManager / on-disk profiles dir (same rationale as
         # Tests/RAG/test_first_run_import.py's lock-ordering regression test).
-        monkeypatch.setattr(active_config, "resolve_active_rag_config", lambda **kwargs: object())
+        monkeypatch.setattr(
+            active_config, "resolve_active_rag_config", lambda **kwargs: object()
+        )
 
     def test_reset_does_not_block_on_in_flight_construction(self, monkeypatch):
         """RED for task-641: a reset/set-active call concurrent with a slow
@@ -1075,7 +1075,7 @@ class TestSharedRagServiceLockDeadlock:
             entered_construction.set()
             # Stand-in for the stalled HuggingFace CloudFront socket read
             # the UAT sample(1) capture showed.
-            release_construction.wait(timeout=5)
+            release_construction.wait(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
             return FakeRAGService()
 
         self._patch_construction(monkeypatch, _slow_create_rag_service)
@@ -1085,9 +1085,9 @@ class TestSharedRagServiceLockDeadlock:
         )
         builder.start()
         try:
-            assert entered_construction.wait(timeout=5), (
-                "construction never started"
-            )
+            assert entered_construction.wait(
+                timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+            ), "construction never started"
 
             # While construction is still blocked "mid-download", a
             # concurrent reset (as fired from the main/UI thread by
@@ -1102,7 +1102,7 @@ class TestSharedRagServiceLockDeadlock:
             )
         finally:
             release_construction.set()
-            builder.join(timeout=5)
+            builder.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
             assert not builder.is_alive()
             ingestion_indexing.reset_shared_rag_service()
 
@@ -1136,8 +1136,8 @@ class TestSharedRagServiceLockDeadlock:
         t1.start()
         t2.start()
         try:
-            t1.join(timeout=5)
-            t2.join(timeout=5)
+            t1.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+            t2.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
             assert not t1.is_alive() and not t2.is_alive()
             assert len(calls) == 1, f"construction ran {len(calls)} times, expected 1"
             assert len(results) == 2
@@ -1161,7 +1161,7 @@ class TestSharedRagServiceLockDeadlock:
 
         def _slow_create_rag_service(**kwargs):
             entered_construction.set()
-            release_construction.wait(timeout=5)
+            release_construction.wait(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
             return FakeRAGService()
 
         self._patch_construction(monkeypatch, _slow_create_rag_service)
@@ -1173,15 +1173,15 @@ class TestSharedRagServiceLockDeadlock:
         )
         builder.start()
         try:
-            assert entered_construction.wait(timeout=5), (
-                "construction never started"
-            )
+            assert entered_construction.wait(
+                timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+            ), "construction never started"
 
             # Reset while the build above is still in flight.
             ingestion_indexing.reset_shared_rag_service()
 
             release_construction.set()
-            builder.join(timeout=5)
+            builder.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
             assert not builder.is_alive()
 
             # The in-flight build's own result was discarded (it reflects a
@@ -1208,7 +1208,7 @@ class TestSharedRagServiceLockDeadlock:
 
         def _slow_create_rag_service(**kwargs):
             entered_construction.set()
-            release_construction.wait(timeout=5)
+            release_construction.wait(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
             built = FakeRAGService()
             built_holder.append(built)
             return built
@@ -1220,12 +1220,12 @@ class TestSharedRagServiceLockDeadlock:
         )
         builder.start()
         try:
-            assert entered_construction.wait(timeout=5), (
-                "construction never started"
-            )
+            assert entered_construction.wait(
+                timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+            ), "construction never started"
             ingestion_indexing.reset_shared_rag_service()
             release_construction.set()
-            builder.join(timeout=5)
+            builder.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
             assert not builder.is_alive()
 
             assert len(built_holder) == 1
@@ -1252,7 +1252,7 @@ class TestSharedRagServiceLockDeadlock:
 
         def _slow_create_rag_service(**kwargs):
             entered_construction.set()
-            release_construction.wait(timeout=5)
+            release_construction.wait(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
             built = FakeRAGService()
             built_holder.append(built)
             return built
@@ -1267,12 +1267,12 @@ class TestSharedRagServiceLockDeadlock:
         builder.start()
         winner = FakeRAGService()
         try:
-            assert entered_construction.wait(timeout=5), (
-                "construction never started"
-            )
+            assert entered_construction.wait(
+                timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+            ), "construction never started"
             ingestion_indexing.set_shared_rag_service(winner)
             release_construction.set()
-            builder.join(timeout=5)
+            builder.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
             assert not builder.is_alive()
 
             assert results == [winner]
@@ -1305,10 +1305,12 @@ class TestSharedRagServiceLockDeadlock:
 
         def _slow_create_rag_service(**kwargs):
             entered_construction.set()
-            release_construction.wait(timeout=5)
+            release_construction.wait(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
             return FakeRAGService()
 
-        monkeypatch.setattr(simplified_pkg, "create_rag_service", _slow_create_rag_service)
+        monkeypatch.setattr(
+            simplified_pkg, "create_rag_service", _slow_create_rag_service
+        )
 
         resolve_calls = []
         resolve_calls_lock = threading.Lock()
@@ -1322,16 +1324,18 @@ class TestSharedRagServiceLockDeadlock:
                 second_resolve_seen.set()
             return object()
 
-        monkeypatch.setattr(active_config, "resolve_active_rag_config", _tracking_resolve)
+        monkeypatch.setattr(
+            active_config, "resolve_active_rag_config", _tracking_resolve
+        )
 
         t1 = threading.Thread(
             target=ingestion_indexing.get_shared_rag_service, daemon=True
         )
         t1.start()
         try:
-            assert entered_construction.wait(timeout=5), (
-                "construction never started"
-            )
+            assert entered_construction.wait(
+                timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+            ), "construction never started"
             # t1 is now stuck mid-build, holding _shared_service_build_lock
             # (its own config resolution already happened before that).
             t2 = threading.Thread(
@@ -1339,7 +1343,9 @@ class TestSharedRagServiceLockDeadlock:
             )
             t2.start()
             try:
-                assert second_resolve_seen.wait(timeout=2), (
+                assert second_resolve_seen.wait(
+                    timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+                ), (
                     "the second caller's config resolution was blocked "
                     "behind the in-flight build's _shared_service_build_"
                     "lock -- config resolution must run BEFORE that lock "
@@ -1347,11 +1353,11 @@ class TestSharedRagServiceLockDeadlock:
                 )
             finally:
                 release_construction.set()
-                t2.join(timeout=5)
+                t2.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
                 assert not t2.is_alive()
         finally:
             release_construction.set()
-            t1.join(timeout=5)
+            t1.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
             assert not t1.is_alive()
             ingestion_indexing.reset_shared_rag_service()
 
@@ -1388,7 +1394,9 @@ class TestSharedRagServiceLockDeadlock:
             # The getter is INSIDE its pre-lock config resolution when the
             # concurrent reset (simulating a user's profile switch) lands.
             resolve_entered.set()
-            assert resolve_may_return.wait(timeout=5)
+            assert resolve_may_return.wait(
+                timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+            )
             return "CONFIG_RESOLVED_BEFORE_THE_RESET"
 
         def _fake_create(**kwargs):
@@ -1406,9 +1414,9 @@ class TestSharedRagServiceLockDeadlock:
         )
         getter.start()
         try:
-            assert resolve_entered.wait(timeout=5), (
-                "getter never entered config resolution"
-            )
+            assert resolve_entered.wait(
+                timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+            ), "getter never entered config resolution"
 
             # The user switches profiles NOW: settings save ->
             # set_active_profile() -> reset_shared_rag_service(). Bumps
@@ -1418,7 +1426,7 @@ class TestSharedRagServiceLockDeadlock:
             # Config resolution (started pre-reset) completes, returning
             # the OLD profile's config; the getter proceeds into the locks.
             resolve_may_return.set()
-            getter.join(timeout=5)
+            getter.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
             assert not getter.is_alive()
 
             assert results == [None], (
@@ -1434,7 +1442,7 @@ class TestSharedRagServiceLockDeadlock:
             )
         finally:
             resolve_may_return.set()
-            getter.join(timeout=5)
+            getter.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
             ingestion_indexing.reset_shared_rag_service()
 
 

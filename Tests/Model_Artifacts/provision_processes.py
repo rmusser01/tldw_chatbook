@@ -165,7 +165,7 @@ def provision_signal_on_phase(
         free_bytes_probe=lambda _p: 10**12,
         trusted_origins=frozenset({trusted_origin}),
     )
-    # TASK-1712 (PR-1165 review, P1): the consent fingerprint now folds in
+    # TASK-1720 (PR-1165 review, P1): the consent fingerprint now folds in
     # every resolved per-file source URL, including each single-file
     # descriptor's own `source_url` fallback -- a hand-built
     # `AcquisitionConsent(closure_fingerprint=closure_fingerprint(root,

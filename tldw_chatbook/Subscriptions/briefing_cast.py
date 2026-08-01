@@ -308,8 +308,12 @@ async def _resolve_character_texts(
                 f"speaker {speaker['name']!r} references character card {card_id}, "
                 "which could not be found"
             )
-        personality = str(card.get("personality") or "").strip()[:CHARACTER_TEXT_CHAR_CAP]
-        description = str(card.get("description") or "").strip()[:CHARACTER_TEXT_CHAR_CAP]
+        personality = str(card.get("personality") or "").strip()[
+            :CHARACTER_TEXT_CHAR_CAP
+        ]
+        description = str(card.get("description") or "").strip()[
+            :CHARACTER_TEXT_CHAR_CAP
+        ]
         contribution = "\n".join(part for part in (description, personality) if part)
         if contribution:
             texts[speaker["name"]] = contribution
@@ -627,8 +631,10 @@ async def generate_script(
     except Exception as exc:  # noqa: BLE001 - every cast failure is a row
         # No traceback: see the module docstring's egress note -- the frame
         # here holds the prompt, so only the exception's type is logged.
-        logger.warning(f"script {script_id}: cast failed against {endpoint}: {type(exc).__name__}")
-        return await asyncio.to_thread(_finish_script_failure, db, script_id, _error_text(exc))
+        logger.warning(f"script {script_id}: cast failed: {type(exc).__name__}")
+        return await asyncio.to_thread(
+            _finish_script_failure, db, script_id, _error_text(exc)
+        )
 
     return await asyncio.to_thread(
         _finish_script_success, db, script_id, json.dumps(turns), model_used

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
@@ -149,6 +151,39 @@ def _repo_with_profile(
         cursor="7",
     )
     return repo
+
+
+async def test_local_first_sync_service_observes_key_added_to_empty_shared_cache(
+    tmp_path: Path,
+) -> None:
+    """Retain an empty shared key cache so later key loads reach Sync.
+
+    Args:
+        tmp_path: Private root for the real file-backed Sync repository.
+    """
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(tmp_path)
+    server = FakeLocalFirstServer()
+    shared_dataset_keys: dict[str, bytes] = {}
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys=shared_dataset_keys,
+    )
+
+    assert service.dataset_keys is shared_dataset_keys
+    shared_dataset_keys["dataset-1"] = dataset_key
+
+    result = await service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domains=["notes"],
+    )
+
+    assert result["pulled_envelopes"] == 0
+    assert server.calls[0][0] == "pull"
 
 
 async def test_local_first_sync_once_pushes_pulls_applies_and_persists_cursor(tmp_path):

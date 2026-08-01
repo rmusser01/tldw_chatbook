@@ -1,5 +1,5 @@
 ---
-id: task-1623
+id: TASK-1623
 title: 'Scope Inspector: fold indicator + slash-preferred token folding'
 status: Done
 assignee:

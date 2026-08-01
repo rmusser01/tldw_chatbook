@@ -1,5 +1,5 @@
 ---
-id: task-1640
+id: TASK-1714
 title: 'Settings copy: action verbs, honest dirty banner, spelled stats'
 status: Done
 assignee:

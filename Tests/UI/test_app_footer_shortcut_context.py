@@ -5,6 +5,7 @@ from textual.app import App
 from textual.widgets import Static
 
 from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
+from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
 
@@ -78,28 +79,30 @@ async def test_footer_renders_workbench_shortcuts():
 
 
 @pytest.mark.asyncio
-async def test_footer_db_size_stats_expose_decode_legend_tooltip():
-    """The cryptic P:/C/N:/M: DB-size stats must be decodable on hover."""
+async def test_footer_db_size_stats_use_readable_labels_and_context_tooltip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Spell out production DB labels and describe their local context.
 
-    class TestApp(App):
-        def compose(self):
-            yield AppFooterStatus(id="footer")
+    Args:
+        monkeypatch: Pytest fixture used to bind the production manager to the
+            production footer function under test.
+    """
+    footer = AppFooterStatus(id="footer")
+    manager = DBStatusManager(app=object())
+    monkeypatch.setattr(manager, "_get_db_status_widget", lambda: footer)
+    monkeypatch.setattr(manager, "_get_db_size", lambda *_args: "1.0 KB")
 
-    app = TestApp()
+    await manager.update_db_sizes()
 
-    async with app.run_test(size=(100, 12)) as pilot:
-        await pilot.pause(0.1)
-        footer = app.query_one("#footer", AppFooterStatus)
+    rendered = str(footer._db_status_display.renderable)
+    tooltip = str(footer._db_status_display.tooltip or "")
 
-        db_display = footer.query_one("#internal-db-size-indicator", Static)
-        tooltip = str(db_display.tooltip or "")
-
-        # Every abbreviation shown in the footer must be spelled out.
-        assert "Prompts" in tooltip
-        assert "Conversations" in tooltip or "Notes" in tooltip
-        assert "Media" in tooltip
-        # And the legend should say these are database file sizes.
-        assert "size" in tooltip.lower()
+    assert "Prompts:" in rendered
+    assert "Chats/Notes:" in rendered
+    assert "Media:" in rendered
+    assert "local" in tooltip.lower()
+    assert "database file sizes" in tooltip.lower()
 
 
 @pytest.mark.asyncio

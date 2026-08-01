@@ -1,5 +1,5 @@
 ---
-id: task-1641
+id: TASK-1641
 title: 'Library Prompts editor: action row renders below the viewport (Save unreachable by mouse)'
 status: To Do
 assignee: []
