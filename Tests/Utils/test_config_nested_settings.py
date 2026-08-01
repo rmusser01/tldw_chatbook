@@ -233,3 +233,31 @@ class TestDottedFormStringDefaultRegression:
                 "transcription", "default_provider", "FALLBACK"
             )
             assert dotted == traditional == "parakeet-mlx"
+
+    def test_library_ingest_browse_location_audit_fix(self, tmp_path, monkeypatch):
+        """TASK-1754 audit fallout: ``library_screen._library_ingest_browse_location``
+        called ``get_cli_setting("library.ingest", "last_directory")`` -- a 2-arg
+        dotted-section call with a literal (non-default) second argument and no
+        explicit default. Under the fixed accessor, an omitted third argument on
+        a dotted `section` means "the whole path is in `section`, `key` is the
+        default" -- so this exact shape would have started returning the whole
+        ``[library.ingest]`` table instead of just ``last_directory``. Fixed by
+        adding an explicit ``None`` default at the call site (now the
+        unambiguous 3-arg traditional form).
+
+        Drives the real method (not a re-derivation of its call shape): the
+        method touches no other screen/app state, so it can be invoked
+        unbound with a throwaway `self`.
+        """
+        from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+        remembered_dir = tmp_path / "last-imported"
+        remembered_dir.mkdir()
+        with _real_config(
+            tmp_path,
+            monkeypatch,
+            f'[library.ingest]\nlast_directory = "{remembered_dir}"\nbackend = "local"\n',
+        ):
+            result = LibraryScreen._library_ingest_browse_location(None)
+
+        assert result == str(remembered_dir)
