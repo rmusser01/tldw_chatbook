@@ -51,6 +51,7 @@ from .service import (
     ArtifactPathError,
     ArtifactRef,
     ArtifactStateError,
+    ProvenanceClass,
     _validate_url,
     closure_fingerprint,
 )
@@ -324,6 +325,7 @@ class ArtifactPreflightEntry:
     total_bytes: int
     file_count: int
     already_installed: bool
+    provenance: tuple[ProvenanceClass, ...]
 
 
 @dataclass(frozen=True)
@@ -934,6 +936,7 @@ class ArtifactAcquisitionService:
                 total_bytes=descriptor.expected_installed_bytes,
                 file_count=len(descriptor.files),
                 already_installed=already_installed,
+                provenance=descriptor.provenance,
             )
             entries.append(entry)
             if not already_installed:

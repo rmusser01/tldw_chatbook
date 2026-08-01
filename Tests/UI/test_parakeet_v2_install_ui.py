@@ -17,7 +17,7 @@ from textual.app import App
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
-from tldw_chatbook.Model_Artifacts import ArtifactRef
+from tldw_chatbook.Model_Artifacts import ArtifactRef, ProvenanceClass
 from tldw_chatbook.Model_Artifacts.acquisition import (
     AcquisitionBusyError,
     ArtifactPreflightEntry,
@@ -68,6 +68,7 @@ def _report(
         total_bytes=download_bytes,
         file_count=4,
         already_installed=already_installed,
+        provenance=(ProvenanceClass.CHATBOOK_CURATED,),
     )
     return PreflightReport(
         root=ref,
