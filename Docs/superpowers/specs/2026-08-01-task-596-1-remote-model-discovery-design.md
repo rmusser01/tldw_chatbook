@@ -104,7 +104,7 @@ It exposes typed immutable values:
 - `RemoteGGUFCandidate`: one single file or complete shard set, including
   upstream paths, per-file sizes/digests, and total size.
 - `ResolvedRemoteModel`: repository, immutable commit, license state, and
-  bounded candidates.
+  bounded candidates plus bounded display-safe incomplete-shard warnings.
 - `ResolvedRemoteCatalog`: a minimal one-item wrapper around the selected
   `ArtifactDescriptor` and its complete `ArtifactSourceMap`; its only catalog
   behavior is the `descriptor(ref)` method required by `ArtifactCatalog`.
@@ -158,6 +158,7 @@ bytes, rather than trusting `Content-Length`:
 | repository file entries inspected | 2,048 |
 | GGUF candidates returned | 100 |
 | shards in one set | 64 |
+| incomplete-shard warnings returned | 20 |
 
 Identity and security-bearing JSON values have exact expected types. Repository
 identifiers, commit SHAs, and file paths are independently validated before any
@@ -218,8 +219,11 @@ and declared count. A shard group is eligible only when:
 - `NN` does not exceed 64.
 
 An incomplete, duplicate, inconsistent, or oversized group is rejected as a
-group and none of its members is offered as a single file. Non-sharded GGUF
-files remain independent candidates.
+group and none of its members is offered as a single file. Resolution retains at
+most 20 display-safe warnings containing the bounded candidate label and missing
+five-digit indexes. If no eligible candidate remains, those warnings are carried
+by the `no_eligible_gguf` error; otherwise they render above the eligible list.
+Non-sharded GGUF files remain independent candidates.
 
 ## Pinned source construction
 
@@ -375,9 +379,10 @@ unassigned Remote artifact; this task does not change that core behavior.
 
 Remote inertness therefore never depends on `InstalledArtifact.ready`. Installed
 uses one authority: `activation_allowed` is false when
-`descriptor.consumer == "unassigned"`. Such a descriptor always says
-**Downloaded · runtime compatibility not verified**, even if Repair later sets
-`ready=True`. Add an optional `allow_activation: bool = True` input to
+`descriptor.consumer == "unassigned"`. A non-broken descriptor in that state
+always says **Downloaded · runtime compatibility not verified**, even if Repair
+later sets `ready=True`; existing broken/repair copy still takes precedence. Add
+an optional `allow_activation: bool = True` input to
 `ModelActivationControls`; unassigned-consumer rows pass false, which omits only
 the Activate button while preserving the existing lease-safe Delete action. No
 other installed-row behavior changes. The other sentinel fields remain
@@ -401,9 +406,10 @@ lease guarantees.
 
 ## Errors and recovery
 
-The adapter uses one `RemoteDiscoveryError` carrying a bounded reason code and a
-retryable flag; it does not add an exception hierarchy. The view maps it and
-existing acquisition failures to short sanitized messages:
+The adapter uses one `RemoteDiscoveryError` carrying a bounded reason code, a
+retryable flag, and an optional bounded tuple of already sanitized display
+details; it does not add an exception hierarchy. The view maps it and existing
+acquisition failures to short sanitized messages:
 
 | Failure | User-visible recovery |
 |---|---|
