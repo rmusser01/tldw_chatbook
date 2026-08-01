@@ -247,7 +247,7 @@ Microphone → Audio Buffer → VAD Filter → Transcription Service → UI Upda
 
 ### Phase 3: UI Components (Week 3)
 - [ ] Create VoiceInputWidget
-- [ ] Implement DictationWindow
+- [ ] Retired: do not implement `DictationWindow`; use `ImprovedDictationWindow`
 - [ ] Add to STTS tab
 - [ ] Event handlers
 
