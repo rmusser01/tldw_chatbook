@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, replace
 import asyncio
 from functools import partial
 import inspect
+import logging
 import os
 from pathlib import Path
 import re
@@ -306,6 +307,7 @@ from ...Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.persistent_diagnostics import persist_event
 from ...Utils.token_counter import estimate_tokens
 from ...UI.Workbench import (
     CommandStrip,
@@ -5122,6 +5124,23 @@ class ChatScreen(BaseAppScreen):
         self._console_dictation_late_discard_ack = False
         self._set_console_dictation_state("idle")
         reason = f"Dictation failed: {exc}"
+        # Persist the failure: this branch's runtime log is admission-filtered
+        # to `tldw_chatbook.diagnostics.*`, so a toast the user reads was the
+        # ONLY record a dictation failure left anywhere -- four live-gate
+        # rounds were spent reconstructing failures from paraphrased toasts
+        # (2026-08-01). `exc_type` is the class name only; the message can
+        # carry user paths or audio filenames and is deliberately not
+        # persisted here (the loguru line below keeps it for a verbose run).
+        try:
+            persist_event(
+                "dictation",
+                "dictation_failed",
+                level=logging.ERROR,
+                exception_type=type(exc).__name__,
+            )
+        except Exception:  # noqa: BLE001 - diagnostics must never break dictation
+            logger.opt(exception=True).debug("Could not persist dictation failure")
+        logger.warning("Console dictation failed: {}", exc)
         self.app_instance.notify(reason, severity="error")
         self._speak_status(reason)
 

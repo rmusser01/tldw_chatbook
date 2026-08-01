@@ -6949,6 +6949,33 @@ class TldwCli(
         except Exception:
             pass
 
+        # Which interpreter's speech stack this run actually has. Dictation
+        # degrades silently and differently per missing package -- without
+        # `webrtcvad` no segment can finalize mid-capture (so nothing appears
+        # until stop and no voice command can fire), and without the
+        # configured provider's package the resolver quietly picks another.
+        # Both were diagnosed only after several live rounds because the run
+        # left no record of its own environment (2026-08-01); one line here
+        # dates every future report to a specific interpreter.
+        try:
+            from importlib.util import find_spec
+
+            from .Chat.console_voice_input import resolve as _resolve_dictation
+
+            # The provider dictation would actually use, not merely one that
+            # is installed: the resolver's config precedence is exactly what
+            # went wrong before, so recording its answer is the point.
+            _effective = _resolve_dictation()
+            persist_event(
+                "dictation",
+                "speech_stack_available",
+                status="ok" if find_spec("webrtcvad") is not None else "degraded",
+                provider=_effective.provider if _effective else "none",
+                model=(_effective.model if _effective else None) or "provider-default",
+            )
+        except Exception:
+            pass
+
         # Restore persisted Library ingest job history (self.library_ingest_jobs
         # already exists -- constructed store-less in __init__). Never raises:
         # a corrupt/unreadable store falls back to starting empty.
