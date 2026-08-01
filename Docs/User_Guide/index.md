@@ -15,9 +15,9 @@ can sync with a tldw server you configure).
 1. Install and launch — see the [README](../../README.md#installation). On
    first launch, a "Get started" onboarding card appears and the composer
    stays locked; sending unlocks once you've set up a provider in step 2.
-2. Open **Settings** (not yet written) — click **Settings** in the nav bar
+2. Open **[Settings](settings.md)** — click **Settings** in the nav bar
    (or **Ctrl+P** → "Switch to Settings") — and set a provider + model (or
-   point at a local server).
+   point at a local server) under **Providers & Models**.
 3. Open **[Console](console.md)** — press **Ctrl+2**, click "Console"
    in the nav bar, or use **Ctrl+P** → "Switch to Console"; then send your
    first message.
@@ -40,7 +40,7 @@ can sync with a tldw server you configure).
 | Ctrl+0 | [ACP](acp.md) 🚧 | Agent Client Protocol agents, sessions, runtimes, diffs, and terminals. |
 | — | [Lab](lab.md) 🚧 | Models, speech, and evaluation runs. |
 | — | [Logs](logs.md) 🚧 | Application logs and diagnostics. |
-| — | Settings (not yet written) | Global app preferences, appearance, accounts, and storage. |
+| — | [Settings](settings.md) | Global app preferences, appearance, accounts, and storage. |
 
 Lab, Logs, and Settings have no hotkey — reach them by clicking the nav
 label or via the command palette (**Ctrl+P**).
@@ -116,7 +116,7 @@ Full detail on runs, approvals, and tools:
 | CCP (Conversations, Characters & Prompts) | [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md) for characters and personas; prompts moved to [Library ▸ Prompts](library/prompts.md) |
 | LLM management | [Lab](lab.md) 🚧 |
 | Research | [Library](library.md) |
-| Customize | Settings (not yet written) |
+| Customize | [Settings](settings.md) |
 
 ## Conventions
 
