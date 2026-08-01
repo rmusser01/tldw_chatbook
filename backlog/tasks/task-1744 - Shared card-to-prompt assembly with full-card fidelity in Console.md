@@ -1,7 +1,7 @@
 ---
 id: TASK-1744
 title: Shared card-to-prompt assembly with full-card fidelity in Console
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-01 11:16'
 labels:
