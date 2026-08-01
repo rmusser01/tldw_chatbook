@@ -4641,7 +4641,7 @@ responsiveness 12/12, artifact writer 6/6 repeated, Watchlists end-to-end 6/6
 repeated plus module 15/15, optional-deps 26/26, and the final ordered suffix
 1,994 passed with 6 skipped in 366.46 seconds. No remaining segment failed.
 
-- [ ] **Step 4: Request final review**
+- [x] **Step 4: Request final review**
 
 Review the diff against TASK-1333 and the approved design. Fix only valid
 Critical or Important findings and rerun affected verification. Do not make any
@@ -4649,13 +4649,18 @@ additional production behavior edit beyond a documented, test-first Task 5
 correction for an actual ADR-029 violation; the Task 4m docstring clarification
 is documentation-only.
 
-- [ ] **Step 5: Complete Backlog hygiene**
+Final review found one Important issue: the real Parakeet gates treated an
+empty lazy-import cache as API absence. Task 4dl corrects that selection
+boundary, and re-review approved the fix with no remaining Critical or
+Important findings.
+
+- [x] **Step 5: Complete Backlog hygiene**
 
 Check every satisfied acceptance criterion, add concise Implementation Notes,
 record the ADR decision and exact verification results, and use the Backlog CLI
 to set TASK-1333 Done only when every gate is green.
 
-- [ ] **Step 6: Commit closeout documentation**
+- [x] **Step 6: Commit closeout documentation**
 
 ```bash
 git add \
