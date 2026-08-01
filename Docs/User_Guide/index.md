@@ -32,7 +32,7 @@ can sync with a tldw server you configure).
 | Ctrl+2 | [Console](console.md) | Live agent conversations, approvals, tools, RAG, and runs. |
 | Ctrl+3 | [Library](library.md) | Source material, imports, notes, media, conversations, prompts, skills, Search/RAG — plus hand-offs to Study for flashcards and quizzes. |
 | Ctrl+4 | [Artifacts](artifacts.md) 🚧 | Generated outputs, bundles, reports, datasets, and Chatbooks. |
-| Ctrl+5 | Roleplay & Chat Dictionaries (not yet written) | Characters, user profiles, dictionaries, and behavior profiles. |
+| Ctrl+5 | [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md) | Characters, personas, chat dictionaries, and lore/world books. |
 | Ctrl+6 | [Watchlists](watchlists.md) 🚧 | Monitored sources, runs, alerts, and recovery. |
 | Ctrl+7 | [Schedules](schedules.md) 🚧 | When jobs, watchlists, and workflows run. |
 | Ctrl+8 | [Workflows](workflows.md) 🚧 | Reusable procedures, recipes, dry-runs, and outputs. |
@@ -51,6 +51,12 @@ anywhere — the chord works even while a text field has focus. Bare digit
 keys are not navigation shortcuts (typing `2` in the composer just types
 "2"). Clicking the nav label and **Ctrl+P** work everywhere too.
 
+One screen claims some of these digits for itself: on
+[Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md), **Ctrl+1 –
+Ctrl+4 switch that screen's four modes** instead of changing screens.
+Ctrl+5 … Ctrl+0 still navigate from there, as do the nav bar and
+**Ctrl+P**.
+
 ## Global keyboard shortcuts
 
 | Key | Action |
@@ -58,7 +64,7 @@ keys are not navigation shortcuts (typing `2` in the composer just types
 | F1 | Open the current screen's keyboard-shortcuts list (content is screen-specific) |
 | Ctrl+P | Open the command palette — search and jump to any screen or command from anywhere |
 | Ctrl+Q | Quit the app |
-| Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above) |
+| Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above). Exception: on [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md), Ctrl+1 – Ctrl+4 switch that screen's modes instead |
 | F6 / Shift+F6 | Cycle forward/backward through the current screen's panes (on screens without multiple panes it only shows a notice) |
 
 Everything else (Enter/Ctrl+K/Ctrl+T in Console, and the single-letter
@@ -100,7 +106,8 @@ Full detail on runs, approvals, and tools:
 | Skills | [Library ▸ Skills](library/skills.md) |
 | Subscriptions | [Watchlists](watchlists.md) 🚧 |
 | Coding | [Console](console.md) |
-| Conversations / CCP | Roleplay & Chat Dictionaries (not yet written) |
+| Conversations | [Library ▸ Media & conversations](library/media-and-conversations.md) |
+| CCP (Conversations, Characters & Prompts) | [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md) for characters and personas; prompts moved to [Library ▸ Prompts](library/prompts.md) |
 | LLM management | [Lab](lab.md) 🚧 |
 | Research | [Library](library.md) |
 | Customize | Settings (not yet written) |

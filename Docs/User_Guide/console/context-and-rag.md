@@ -159,8 +159,10 @@ of the pre-repair text, headed "Original attempt (not selected)"), or
 
 Chat dictionaries rewrite matching text before it reaches the model;
 world books inject lore entries into the prompt when their keywords come
-up. A deep dive lives in the Roleplay chat dictionaries guide (coming in
-a later guide phase). The Inspector shows what's in play:
+up. You author both on Roleplay & Chat Dictionaries — see
+[Chat dictionaries](../roleplay-chat-dictionaries/chat-dictionaries.md)
+and [Lore books](../roleplay-chat-dictionaries/lore-books.md). The
+Inspector shows what's in play:
 
 - **Chat Dictionaries** — rows marked "from conversation" or "from
   character", with " (shadowed)" and/or " (disabled)" appended; actions
