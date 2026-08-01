@@ -154,6 +154,94 @@ def bench_with_mixed_readiness(evals_db: EvalsDB) -> tuple[str, dict[str, str]]:
     return task_id, {"ready": ready_id, "warned": warned_id, "blocked": blocked_id}
 
 
+#: task-1691 Task 2: `bench_with_continuation_samples`'s stable index
+#: mapping, mirroring `_TARGET_INDEX` above -- `config.target_ids` order is
+#: what `inspector.py`'s index-derived widget ids follow.
+_CONTINUATION_TARGET_INDEX = {
+    "whitespace": 0,
+    "hazard": 1,
+    "newline": 2,
+    "long": 3,
+    "empty": 4,
+}
+
+#: Longer than `inspector._CONTINUATION_PREVIEW_MAX_LEN` (100) so the
+#: truncation test below actually exercises the cap.
+_LONG_CONTINUATION = "x" * 150
+
+
+@pytest.fixture
+def bench_with_continuation_samples(evals_db: EvalsDB) -> str:
+    """One bench, five local targets covering task-1691 Task 2's rendering
+    rules for `PreflightResult.continuation`: a continuation worth marking
+    up for anomalous whitespace, a markup-hazard continuation (a bare
+    `[/]`, the same Rich/Textual crash vector `bench_with_markup_hazard_
+    text` covers for bench/dataset names), a continuation carrying an
+    embedded newline (the motivating UAT's own scaffolding text), a
+    continuation longer than the UI's own preview cap, and a target with
+    no continuation at all (the historical-run/failed-capture default).
+    Every `PreflightResult` here is a clean Ready pass (`state="ok"`,
+    `canary="pass"`) so these tests read the continuation sub-line in
+    isolation from the separate recovery-callout tests above.
+    """
+    whitespace_id = _make_model(evals_db, "whitespace-target")
+    hazard_id = _make_model(evals_db, "hazard-target")
+    newline_id = _make_model(evals_db, "newline-target")
+    long_id = _make_model(evals_db, "long-target")
+    empty_id = _make_model(evals_db, "empty-target")
+    dataset_id = evals_db.create_dataset(
+        name="continuation-samples",
+        format="custom",
+        source_path="inline:continuation-samples",
+        metadata={"sample_count": 4},
+    )
+    config = BenchConfig(
+        name="continuation samples v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(whitespace_id, hazard_id, newline_id, long_id, empty_id),
+    )
+    task_id = save_bench(evals_db, config)
+    targets = [
+        Target(id=whitespace_id, name="whitespace-target", provider="llama_cpp", model_id="m"),
+        Target(id=hazard_id, name="hazard-target", provider="llama_cpp", model_id="m"),
+        Target(id=newline_id, name="newline-target", provider="llama_cpp", model_id="m"),
+        Target(id=long_id, name="long-target", provider="llama_cpp", model_id="m"),
+        Target(id=empty_id, name="empty-target", provider="llama_cpp", model_id="m"),
+    ]
+    snippets = [Snippet(id="s1", text="The protestors were", group="neutral")]
+    preflight = {
+        whitespace_id: PreflightResult(
+            state="ok",
+            k_returned=20,
+            canary="pass",
+            continuation="  <|channel>thought  scaffolding",
+        ),
+        hazard_id: PreflightResult(
+            state="ok",
+            k_returned=20,
+            canary="pass",
+            continuation="[/]bold-looking output",
+        ),
+        newline_id: PreflightResult(
+            state="ok",
+            k_returned=20,
+            canary="pass",
+            continuation="<|channel><|channel>thought\n<channel|>The sky is **blue",
+        ),
+        long_id: PreflightResult(
+            state="ok",
+            k_returned=20,
+            canary="pass",
+            continuation=_LONG_CONTINUATION,
+        ),
+        empty_id: PreflightResult(state="ok", k_returned=20, canary="pass"),
+    }
+    create_run_group(evals_db, task_id, config, targets, snippets, preflight=preflight)
+    return task_id
+
+
 @pytest.fixture
 def bench_with_markup_hazard_text(evals_db: EvalsDB) -> str:
     """task-1482 Task 1: every user-authored string ``BenchEditor`` renders
@@ -594,6 +682,181 @@ async def test_blocked_target_renders_owner_problem_and_next_action(
         # above and in evals_screen.py's own module docstring).
         assert callout.region.width > 0
         assert callout.region.height > 0
+
+
+# ---------------------------------------------------------------------------
+# task-1691 Task 2: a captured continuation renders under its target row
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_continuation_renders_under_its_target_row_with_whitespace_markers(
+    evals_app, bench_with_continuation_samples
+):
+    task_id = bench_with_continuation_samples
+    index = _CONTINUATION_TARGET_INDEX["whitespace"]
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        badge = screen.query_one(f"#evals-inspector-target-{index}")
+        continuation = screen.query_one(
+            f"#evals-inspector-target-continuation-{index}"
+        )
+        continuation_text = str(continuation.renderable)
+
+        # Names the canary prompt, not a snippet/cell -- see the module
+        # docstring's own copy rationale.
+        assert continuation_text.startswith("Canary prompt continuation: ")
+        # Leading run of 2 spaces AND the interior run of 2 spaces (`"
+        # <|channel>thought  scaffolding"`) both become "␣␣" -- the same
+        # marker convention `render_snippet_cell` already applies to
+        # snippets/steering prefixes elsewhere in this workbench.
+        assert continuation_text.count("␣␣") == 2
+        assert "<|channel>thought" in continuation_text
+        assert "scaffolding" in continuation_text
+        # No raw, unmarked double space slipped through.
+        assert "  " not in continuation_text
+
+        # Painted -- this pane has a documented history of collapse/
+        # clipping defects (see inspector.py's own module docstring and
+        # _evals.tcss's #evals-inspector-bench comment); a new row must
+        # genuinely paint, not merely exist in the DOM.
+        assert badge.region.width > 0
+        assert badge.region.height > 0
+        assert continuation.region.width > 0
+        assert continuation.region.height > 0
+
+
+@pytest.mark.asyncio
+async def test_markup_hazard_continuation_renders_literally_without_crashing(
+    evals_app, bench_with_continuation_samples
+):
+    """Raw model output is never sanitized -- a captured continuation
+    carrying a bare `[/]` must render as four literal characters, not crash
+    the whole app the way an unescaped `Static(markup=True)` would (see
+    `bench_with_markup_hazard_text`'s identical concern for bench/dataset
+    names)."""
+    task_id = bench_with_continuation_samples
+    index = _CONTINUATION_TARGET_INDEX["hazard"]
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        assert pilot.app.is_running, "an unescaped hazard continuation crashed the app"
+        screen = evals_app.screen
+
+        continuation = screen.query_one(
+            f"#evals-inspector-target-continuation-{index}"
+        )
+        continuation_text = str(continuation.renderable)
+        assert "[/]bold-looking output" in continuation_text
+
+
+@pytest.mark.asyncio
+async def test_empty_continuation_renders_nothing_extra(
+    evals_app, bench_with_continuation_samples
+):
+    """Absent/empty `continuation` (a historical run, or a failed capture
+    that degraded to `""`) must render NOTHING extra -- no empty label, no
+    dangling separator."""
+    task_id = bench_with_continuation_samples
+    index = _CONTINUATION_TARGET_INDEX["empty"]
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        # The target's own badge still renders...
+        badge = screen.query_one(f"#evals-inspector-target-{index}")
+        assert "empty-target" in str(badge.renderable)
+        # ...but no continuation sub-line exists for it at all.
+        assert not screen.query(f"#evals-inspector-target-continuation-{index}")
+
+
+@pytest.mark.asyncio
+async def test_newline_bearing_continuation_stays_single_line(
+    evals_app, bench_with_continuation_samples
+):
+    """A continuation carrying an embedded newline -- the motivating UAT's
+    own scaffolding text -- must not blow up this row into more than one
+    logical line; follows the same "⏎" guard convention `bench_editor.py`
+    already uses for a target row's steering suffix."""
+    task_id = bench_with_continuation_samples
+    index = _CONTINUATION_TARGET_INDEX["newline"]
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        continuation = screen.query_one(
+            f"#evals-inspector-target-continuation-{index}"
+        )
+        continuation_text = str(continuation.renderable)
+        assert "\n" not in continuation_text
+        assert "⏎" in continuation_text
+        assert "The sky is **blue" in continuation_text
+
+
+@pytest.mark.asyncio
+async def test_long_continuation_is_truncated_with_an_ellipsis(
+    evals_app, bench_with_continuation_samples
+):
+    task_id = bench_with_continuation_samples
+    index = _CONTINUATION_TARGET_INDEX["long"]
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        continuation = screen.query_one(
+            f"#evals-inspector-target-continuation-{index}"
+        )
+        continuation_text = str(continuation.renderable)
+        assert continuation_text.endswith("…")
+        expected = (
+            inspector_module._CONTINUATION_LABEL
+            + _LONG_CONTINUATION[: inspector_module._CONTINUATION_PREVIEW_MAX_LEN]
+            + "…"
+        )
+        assert continuation_text == expected
+        # Genuinely bounded, not merely ending with an ellipsis while still
+        # carrying the full 150-character continuation ahead of it.
+        assert len(continuation_text) < len(
+            inspector_module._CONTINUATION_LABEL
+        ) + len(_LONG_CONTINUATION)
+
+
+@pytest.mark.asyncio
+async def test_historical_preflight_without_a_continuation_still_renders_the_readiness_list(
+    evals_app, bench_with_mixed_readiness
+):
+    """`bench_with_mixed_readiness`'s `PreflightResult`s were all built
+    without a `continuation=` kwarg -- exactly how a run snapshot recorded
+    before task-1691 loads back (`storage._preflight_from_snapshot`
+    defaults a missing sub-key to `""`, per task-1691 Task 1's own report).
+    Every target's readiness badge must still render, and none of them
+    gets a continuation sub-line.
+    """
+    task_id, target_ids = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        for index in _TARGET_INDEX.values():
+            badge = screen.query_one(f"#evals-inspector-target-{index}")
+            assert badge.region.width > 0
+            assert badge.region.height > 0
+            assert not screen.query(
+                f"#evals-inspector-target-continuation-{index}"
+            )
 
 
 # ---------------------------------------------------------------------------

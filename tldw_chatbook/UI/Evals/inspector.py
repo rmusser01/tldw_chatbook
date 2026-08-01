@@ -16,6 +16,20 @@ runner" guarantee both widgets carry.
 Per the design contract, ``.ds-status-badge`` colour lives in app-tier CSS
 (``css/features/_evals.tcss``), never in this widget's own CSS -- there is
 no ``DEFAULT_CSS`` here at all, deliberately.
+
+task-1691 Task 2: each target row also renders a captured continuation --
+``PreflightResult.continuation`` (task-1691 Task 1), a short, best-effort
+sample of what THIS target generates when the canary prompt is actually
+continued (never a per-cell or per-snippet continuation -- see
+``_CONTINUATION_LABEL``'s own comment for why the copy names the canary
+prompt explicitly). Rendered as a sub-line directly under its target's own
+badge row (``_continuation_static``), markup-safe and with whitespace made
+visible via ``snippet_editor.render_snippet_cell``'s ␣ convention, reusing
+that function rather than reinventing it -- the same convention
+``bench_editor.py``'s steered-target rows already use. Absent or empty
+(historical runs recorded before this field existed, or a failed capture
+that degraded to ``""``) renders nothing extra: no empty label, no
+dangling separator.
 """
 
 from __future__ import annotations
@@ -23,6 +37,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
@@ -33,6 +48,7 @@ from ...Evals.word_bench.models import CellError, PreflightResult
 from ...Evals.word_bench.storage import load_bench
 from .evals_state import EvalsViewModel
 from .results_grid import degenerate_canary_text, render_probe_reading, render_token
+from .snippet_editor import render_snippet_cell
 
 if TYPE_CHECKING:
     from .results_grid import ResultsGrid
@@ -69,6 +85,22 @@ _BLOCKED_COPY: dict[str, tuple[str, str]] = {
         "This target cannot be measured in chat mode as configured.",
     ),
 }
+
+
+#: task-1691: this pane's OWN display bound on a captured continuation's
+#: preview length -- deliberately independent of the engine's own storage
+#: cap (``CONTINUATION_CHAR_CAP``, defined alongside the HTTP capture
+#: seam). Never imported from there: this module's own source-scan test
+#: pins that ``inspector.py`` may not even name that module in its source,
+#: the same "never reaches the provider, not even transitively" guarantee
+#: the module docstring describes.
+_CONTINUATION_PREVIEW_MAX_LEN = 100
+
+#: Verbatim, deliberately naming "canary prompt": a captured continuation is
+#: a sample of what THIS target generates for the fixed canary prompt, not a
+#: per-cell continuation of any snippet a bench actually measures and not a
+#: claim about any snippet's own behaviour -- see the module docstring.
+_CONTINUATION_LABEL = "Canary prompt continuation: "
 
 
 def _is_local_provider(provider: str) -> bool:
@@ -112,6 +144,55 @@ def _recovery_callout_text(target_label: str, result: PreflightResult) -> str:
         f"Owner: {target_label}'s configured provider.\n"
         f"Problem: {target_label} {problem}\n"
         f"Next: {next_action}"
+    )
+
+
+def _continuation_preview_text(value: str) -> str:
+    """Single-line, length-capped preview text for a captured continuation,
+    BEFORE it goes through ``render_snippet_cell``'s ␣-marker convention --
+    mirrors ``bench_editor.py``'s ``_steering_preview_text`` for the
+    identical single-line/length-cap concerns. Unlike a steering prefix
+    (typed into a single-line ``Input``, so an embedded newline there is
+    only a theoretical possibility), a captured continuation is free-form
+    generated text -- the motivating UAT's own payload
+    (``'<|channel><|channel>thought\\n<channel|>The sky is **blue'``) is a
+    real example of one. Every embedded newline is replaced with a visible
+    "⏎" marker, exactly as ``bench_editor.py``'s row table already does for
+    a steering value, so a continuation containing one still renders on
+    ONE row rather than corrupting this pane's per-target row layout.
+    """
+    single_line = value.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "⏎")
+    if len(single_line) > _CONTINUATION_PREVIEW_MAX_LEN:
+        return single_line[:_CONTINUATION_PREVIEW_MAX_LEN] + "…"
+    return single_line
+
+
+def _continuation_static(index: int, continuation: str) -> Optional[Static]:
+    """The captured-continuation sub-line for one target row, or ``None``
+    when there is nothing to show. Absent/empty ``continuation`` (a
+    historical run recorded before task-1691, or a capture that failed and
+    degraded to ``""`` -- see ``PreflightResult.continuation``'s own
+    docstring) must render NOTHING extra: no empty label, no dangling
+    separator, so a bench mixing pre- and post-task-1691 runs never shows a
+    row of blank sub-lines next to rows that have real ones.
+    """
+    if not continuation:
+        return None
+    label = Text(_CONTINUATION_LABEL)
+    # A Rich `Text.append` call, never an f-string concatenated into a
+    # plain `str` -- `render_snippet_cell` already returns a `Text` whose
+    # every character is LITERAL content (see its own docstring), and
+    # appending it into another `Text` preserves that guarantee end to
+    # end. Combined with this Static's own `markup=False` below, a
+    # continuation carrying a bare `[/]` (raw model output, never
+    # sanitized) renders as four literal characters instead of crashing
+    # the app on a stray Rich/Textual markup tag.
+    label.append(render_snippet_cell(_continuation_preview_text(continuation)))
+    return Static(
+        label,
+        id=f"evals-inspector-target-continuation-{index}",
+        classes="evals-target-continuation",
+        markup=False,
     )
 
 
@@ -206,6 +287,18 @@ class EvalsInspector(Vertical):
                 classes=f"ds-status-badge {_status_css_class(result)}",
                 markup=False,
             )
+            # task-1691 Task 2: a sub-line directly under THIS target's own
+            # badge, before any recovery callout below -- the captured
+            # continuation is raw evidence a reader can weigh for
+            # themselves; the callout (when present) is this pane's own
+            # diagnosis of it. `_continuation_static` returns `None` (yields
+            # nothing) for an absent/empty continuation, per its own
+            # docstring.
+            continuation_widget = _continuation_static(
+                index, result.continuation if result is not None else ""
+            )
+            if continuation_widget is not None:
+                yield continuation_widget
             # Only a clean pass (Ready, not warned) needs no callout -- see
             # the design spec's Preflight table: every other row states
             # "which endpoint / cannot report logprobs / switch mode /
