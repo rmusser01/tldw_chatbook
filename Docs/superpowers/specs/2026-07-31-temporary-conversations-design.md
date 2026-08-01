@@ -282,6 +282,7 @@ row's precedent of documenting a reachable-but-not-applicable hit.
 | Impersonate (`impersonate`, composer menu, `_run_console_impersonate`) | Yes | Nothing — drafts the user's next message via a model call and inserts it into the composer | allowed (no write) |
 | Attachment staging (`attachment_core.py`: `process_attachment_path`, `process_attachment_bytes`, `load_processed_file`) | Yes | Nothing — zero `write`/`save` call sites in the file; bytes are staged in memory and referenced from the original path | allowed (no write) |
 | Agent **tool** calls in an ordinary reply (`create_note`/`update_note`/`write_file`, `Agents/tool_catalog.py:399-422` gateable built-ins, composed for every reply by `console_agent_bridge.py`'s `_compose_run_registry_and_allowed`, dispatched from `BuiltinToolProvider.invoke`) | Yes — a temporary chat runs the same agent loop as any other; the running session's identity was never threaded into tool dispatch at all before final-review F4 | Notes-DB row (`create_note`/`update_note`) or a file on disk (`write_file`) | blocked (final-review F4, new) |
+| MCP tool calls and skill-provided tool calls in an ordinary reply (`Agents/mcp_tool_provider.py`'s `MCPToolProvider`, `Agents/tool_catalog.py`'s `SkillToolProvider`, both composed into the same run's catalog alongside `BuiltinToolProvider`) | Yes — same agent loop, same temporary chat; neither provider's `invoke()` (nor the skill spawn-executor path `SkillToolProvider` hands off to) reads `ephemeral` or consults `EPHEMERAL_BLOCKED_ACTIONS` | Whatever the connected MCP server or invoked skill writes — server-defined, unaudited here; could include local files or DB rows | **not blocked — known, documented gap.** Threading `ephemeral` through F4 only reached `BuiltinToolProvider`; gating MCP/skill tool dispatch is future work, not covered by this design |
 
 Six new rows extend `EPHEMERAL_BLOCKED_ACTIONS`: `save-image`,
 `save-as-note`, `save-as-media`, `save-as-prompt`, `save-as-chatbook`, and
@@ -294,15 +295,21 @@ two.
 **Follow-up (final-review F4): a 9th sink the task-1 audit above could not
 see.** The four greps and the by-hand trace both scoped to `Chat/`,
 `Widgets/Console/`, and `chat_screen.py`'s `action_id` dispatch table —
-none of which cover agent **tool** dispatch, a completely separate
-mechanism (`Agents/tool_catalog.py`'s `BuiltinToolProvider`, composed and
-invoked from `console_agent_bridge.py`). `Agents/tool_catalog.py:399-422`
-registers `create_note`, `update_note`, and `write_file` as built-ins the
-Console agent bridge composes for **every ordinary reply**
-(`console_agent_bridge.py:1030`, `_compose_run_registry_and_allowed`), not
-just explicit tool-invocation UI. Nothing gated these on a temporary
-session before this fix: a model could call `write_file` or `create_note`
-mid-reply in a temporary chat exactly as it could in a saved one.
+none of which cover agent **tool** dispatch, a separate mechanism from the
+UI action_id table. A run's tool catalog is actually composed from
+*several* `ToolProvider` implementations side by side
+(`Agents/tool_catalog.py`'s `ToolProvider` protocol) —
+`BuiltinToolProvider`, `Agents/mcp_tool_provider.py`'s `MCPToolProvider`,
+and `Agents/tool_catalog.py`'s `SkillToolProvider` — composed and invoked
+from `console_agent_bridge.py`. This fix reaches only the first of the
+three; see the residual-gap note below the sink table. `Agents/
+tool_catalog.py:399-422` registers `create_note`, `update_note`, and
+`write_file` as built-ins the Console agent bridge composes for **every
+ordinary reply** (`console_agent_bridge.py:1030`,
+`_compose_run_registry_and_allowed`), not just explicit tool-invocation
+UI. Nothing gated these on a temporary session before this fix: a model
+could call `write_file` or `create_note` mid-reply in a temporary chat
+exactly as it could in a saved one.
 
 Mitigating, and why this was lower urgency than the eight UI-action sinks
 above: each of the three tools is **off by default**
@@ -330,6 +337,20 @@ overstates the guarantee" convention. `read_file`/`list_directory`/
 `glob_files`/`grep_files` and the always-on `calculator`/
 `get_current_datetime` are untouched — read-only tools produce no local
 artifact and keep working in a temporary chat.
+
+`EPHEMERAL_BLOCKED_ACTIONS` is therefore not "the" registry for every
+artifact-producing sink — it is the registry for two specific shapes: the
+static `action_id`-dispatched UI actions (composer menu, workbench,
+message-action row), and these three write-shaped agent built-ins,
+because `BuiltinToolProvider.invoke` is the one call site that consults
+it. **Known, documented gap (not fixed here, and out of scope for this
+fix):** MCP tools (`MCPToolProvider`) and skill-provided tools
+(`SkillToolProvider`) are separate `ToolProvider`s composed into the same
+run's catalog; neither checks `ephemeral` or consults this registry, so a
+write-shaped MCP tool or a skill that itself writes local artifacts
+dispatches ungated in a temporary session today. Gating those providers is
+future work, not a residual risk this design mitigates — see the sink
+audit table's MCP/skill-tools row.
 
 ## Live verification
 

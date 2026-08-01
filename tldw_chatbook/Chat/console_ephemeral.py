@@ -73,9 +73,17 @@ TEMPORARY_TOOLTIP = (
 #: ``Agents/tool_catalog.py``'s ``BuiltinToolProvider.invoke``) that an
 #: ordinary Console reply can compose and dispatch independently of any
 #: action_id above; ``blocked_reason`` is a plain string->string lookup, so
-#: reusing the one dict keeps this the single registry for every
-#: artifact-producing sink instead of splitting UI actions and tool calls
-#: across two lists that could drift apart.
+#: reusing the one dict keeps UI actions and these three built-in tool
+#: names in one place instead of splitting them across two lists that
+#: could drift apart. This is NOT a single registry for every
+#: artifact-producing sink: ``BuiltinToolProvider.invoke`` is the only
+#: tool-dispatch path that checks it. MCP tools (``Agents/
+#: mcp_tool_provider.py``'s ``MCPToolProvider``) and skill-provided tools
+#: (``Agents/tool_catalog.py``'s ``SkillToolProvider``) are separate
+#: providers in the same run's catalog that never consult this dict, so
+#: they dispatch ungated in a temporary session -- a known, documented gap,
+#: not an oversight this comment should paper over. See the design spec's
+#: audit table.
 EPHEMERAL_BLOCKED_ACTIONS: dict[str, str] = {
     "generate-image": (
         "Generating an image writes a file to disk — not available in a "

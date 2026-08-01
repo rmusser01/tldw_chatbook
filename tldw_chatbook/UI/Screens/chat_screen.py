@@ -5307,6 +5307,15 @@ class ChatScreen(BaseAppScreen):
                 (s for s in store.sessions() if s.id == session_id), None
             )
             if session is not None and not session.ephemeral:
+                # A cancelled-then-retried promote worker lands here: the
+                # first (cancelled) run's `asyncio.to_thread` DB write still
+                # completed, so the session really is saved, but that first
+                # coroutine never reached the `_sync_console_temporary_chip()`
+                # call below. Without refreshing here too, the chip and the
+                # `◌` tab marker keep reading "Temporary" about a chat
+                # that is, in fact, saved -- exactly the mismatch this
+                # marker exists to prevent.
+                self._sync_console_temporary_chip()
                 self.app_instance.notify(
                     "This chat is already saved.", severity="information"
                 )

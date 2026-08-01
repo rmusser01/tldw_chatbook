@@ -862,6 +862,15 @@ def test_promote_console_temporary_session_notifies_when_already_saved():
     used to be entirely silent -- the user clicked "Save this chat" and got
     no feedback at all. This branch (session already non-temporary) must
     now say so.
+
+    Residual-fix M1: this branch is exactly what a cancelled-then-retried
+    ``console-promote`` worker hits -- the first (cancelled) run's DB write
+    completed via ``asyncio.to_thread``, so the session really is saved by
+    the time the second run gets here, but nothing has told the chip yet.
+    Without a ``_sync_console_temporary_chip()`` call in this branch, the
+    chip and the ``◌`` tab marker keep reading "Temporary" about a chat
+    that is, in fact, saved. Asserting ``chip_calls == [False]`` (not the
+    old ``[]``) is what pins that fix down.
     """
 
     class _Store:
@@ -882,7 +891,10 @@ def test_promote_console_temporary_session_notifies_when_already_saved():
 
     asyncio.run(screen._promote_console_temporary_session())
 
-    assert chip_calls == [], "already saved -- no chip churn needed"
+    assert chip_calls == [False], (
+        "already saved -- the chip must still be refreshed so it stops "
+        "claiming the chat is Temporary"
+    )
     assert invalidated == []
     assert dispatched == []
     assert notifications == [("This chat is already saved.", "information")]

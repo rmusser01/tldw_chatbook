@@ -2444,9 +2444,16 @@ class ConsoleChatStore:
             # `persisted_message_id` for `_persist_context_summary` to map
             # to. Called unconditionally, same as `rag_scope_holder.flush_
             # to` in `persist_session_if_needed`: it is a no-op write when
-            # no summary was ever set, and running it inside this same
-            # transaction (nested `db.transaction()` seam, deferred to the
-            # outer one) means it rolls back with everything else here.
+            # no summary was ever set. It runs inside this same transaction
+            # (nested `db.transaction()` seam, deferred to the outer one),
+            # but `_persist_context_summary` catches and logs its own
+            # write failure rather than re-raising, so this is NOT covered
+            # by the messages/conversation all-or-nothing guarantee above:
+            # a summary-write failure never rolls back the transaction --
+            # the conversation and its messages still commit, just without
+            # the summary. That swallow is intentional (best-effort,
+            # local-only metadata not worth failing an entire save over);
+            # the point of this note is not to claim otherwise.
             summary, boundary_native_id = self._context_summary_by_session.get(
                 session_id, (None, None)
             )
