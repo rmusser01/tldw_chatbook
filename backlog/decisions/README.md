@@ -25,6 +25,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-025](025-shared-stt-artifacts-and-runtime-routing.md) | Accepted | Use Parakeet ONNX for explicit supported languages, faster-whisper for automatic/broad routing, transcribe.cpp for curated optional breadth, and a shared verified model-artifact core. |
 | [ADR-026](026-brand-asset-source-and-export-boundary.md) | Accepted | Keep validated Chatbook brand masters authoritative, commit reviewed exports, isolate the optional export toolchain from runtime/default CI, and keep asset-bearing work off the public remote until release clearance. |
 | [ADR-027](027-portable-database-note-session-coordinator.md) | Accepted | Keep the active Database Note draft, revisioned save queue, editor-conflict gating, and flush outcomes in a portable coordinator outside Textual presentation and separate from File Notes authority. |
+| [ADR-028](028-structured-prompts-and-auxiliary-improvement-calls.md) | Accepted | Keep structured Prompt and Recipe blocks canonical with compiled compatibility text, and route prompt improvement through a side-effect-free auxiliary Console provider seam. |
 
 ## Historical Decision Material
 
