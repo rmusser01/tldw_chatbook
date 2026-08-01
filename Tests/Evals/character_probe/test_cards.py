@@ -65,3 +65,36 @@ def test_a_missing_card_raises_naming_the_id():
 def test_no_ids_raises():
     with pytest.raises(ValueError, match="at least one character"):
         snapshot_cards(_FakeCharacterDB({}), [])
+
+
+class _MismatchedIdDB:
+    """Returns a row whose own id disagrees with whatever id was requested."""
+
+    def get_character_card_by_id(self, character_id):
+        return _card(id=999999, name="Impostor")
+
+
+def test_a_row_agreeing_with_the_requested_id_is_accepted():
+    db = _FakeCharacterDB({1: _card(id=1, name="Vex")})
+    (snapshot,) = snapshot_cards(db, [1])
+    assert snapshot.id == 1
+    assert snapshot.name == "Vex"
+
+
+def test_a_row_reporting_a_different_id_raises_naming_both():
+    with pytest.raises(ValueError, match="999999") as excinfo:
+        snapshot_cards(_MismatchedIdDB(), [1])
+    assert "1" in str(excinfo.value)
+    assert "999999" in str(excinfo.value)
+
+
+def test_string_id_is_rejected():
+    db = _FakeCharacterDB({1: _card()})
+    with pytest.raises(ValueError, match="int"):
+        snapshot_cards(db, ["1"])
+
+
+def test_bool_id_is_rejected():
+    db = _FakeCharacterDB({1: _card()})
+    with pytest.raises(ValueError, match="int"):
+        snapshot_cards(db, [True])
