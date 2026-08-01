@@ -1399,11 +1399,19 @@ class EvalsScreen(LabScreen):
             # the two surfaces.
             target_ids = (bench.get("config_data") or {}).get("target_ids") or []
             if not target_ids:
+                # task-1612: staging a target in the bench editor's Add
+                # picker does NOT touch this row's persisted `target_ids`
+                # -- only Save does (see `bench_editor.py`'s own module
+                # docstring: staged targets are form state until Save
+                # writes them via `save_bench`). Without naming Save here,
+                # a user who has just staged one reads this tooltip as
+                # stale or wrong, since it still says "no targets yet"
+                # while one is visibly staged in the editor.
                 return (
                     f"Run {name}",
                     True,
                     "This bench has no targets yet; add one in the bench "
-                    "editor.",
+                    "editor and Save.",
                 )
             return (
                 f"Run {name}",

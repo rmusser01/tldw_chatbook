@@ -773,11 +773,14 @@ async def test_primary_action_state_stays_disabled_for_a_target_less_bench(
         label, disabled, tooltip = screen._primary_action_state()
         assert label == "Run draft bench"
         assert disabled is True
-        # Exact-match: same wording as the readiness panel's own "No
-        # targets configured yet." for the identical state
-        # (inspector.py/bench_editor.py), per the coordinator's fix.
+        # Exact-match. task-1612: appends "and Save" -- staging a target
+        # in the bench editor's Add picker does not touch this row's
+        # persisted `target_ids` (only Save does), so a user who has just
+        # staged one but not yet saved would otherwise read this tooltip
+        # as stale/wrong while it still claims "no targets yet".
         assert tooltip == (
-            "This bench has no targets yet; add one in the bench editor."
+            "This bench has no targets yet; add one in the bench editor "
+            "and Save."
         )
 
 

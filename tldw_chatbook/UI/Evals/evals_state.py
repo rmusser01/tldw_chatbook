@@ -115,7 +115,13 @@ class EvalsViewModel:
         """
         if self._db is None:
             return []
-        return self._db.list_models(provider="llama_cpp")
+        # task-1612: `limit=_LIST_LIMIT` (500), not `list_models`'s own
+        # default of 100 -- every other read on this class already passes
+        # `_LIST_LIMIT` for the reason its own module-level docstring
+        # gives (no pagination UI yet). Silently capping at 100 here would
+        # let a busy install's older llama_cpp targets fall off the Add
+        # picker with no visible sign anything was truncated.
+        return self._db.list_models(provider="llama_cpp", limit=_LIST_LIMIT)
 
     def run_groups(self) -> list[dict[str, Any]]:
         """One row per distinct ``run_group_id``, newest run first.
