@@ -164,6 +164,12 @@ A repository identifier must be one bounded `owner/repository` pair using the
 portable Hugging Face identifier character set. The resolved commit must be an
 immutable hexadecimal Git commit identity, not `main`, a tag, or user input.
 
+A repository response containing more than 2,048 file entries is rejected; it
+is never partially inspected. Eligible candidates are sorted by their exact
+upstream path tuple before the 100-candidate display cap is applied. When that
+cap truncates the list, the resolved value records the total and the UI says
+that only the first 100 deterministic choices are shown.
+
 ## Eligible GGUF candidates
 
 Only repository entries with all of the following are eligible:
@@ -179,8 +185,11 @@ used to verify the downloaded bytes. Because the digest comes from the same
 origin as the payload metadata, it is recorded as local integrity, not
 independent publisher verification.
 
-Standard shards match `*-00001-of-000NN.gguf`. Grouping includes the containing
-directory, stem, and declared count. A shard group is eligible only when:
+Every standard shard member matches
+`^(?P<stem>.+)-(?P<index>[0-9]{5})-of-(?P<count>[0-9]{5})\.gguf$`.
+Both numeric fields are exactly five digits, with
+`1 <= index <= count <= 64`. Grouping includes the containing directory, stem,
+and declared count. A shard group is eligible only when:
 
 - every index from 1 through `NN` is present exactly once;
 - every shard declares LFS size and SHA-256 metadata;
@@ -217,8 +226,10 @@ loop.
 Remote identifiers are deterministic but never use raw repository or file names
 as managed directory identity:
 
-- `artifact_id`: `hf-gguf-` plus a truncated SHA-256 over the repository ID and
-  ordered selected upstream path set;
+- `artifact_id`: `hf-gguf-` plus the full lowercase SHA-256 of canonical JSON
+  `{"repository": <exact resolved repo ID>, "paths": <exact paths sorted
+  lexicographically>}`, encoded as UTF-8 with sorted keys and compact
+  separators;
 - `revision`: the full resolved repository commit SHA;
 - `variant` and `precision`: `not-declared`.
 
@@ -306,12 +317,21 @@ Add a keyword-only `activate: bool = True` parameter:
 Remote passes `activate=False`. This is an additive extension of ADR-025's
 managed acquisition boundary, not a second installation path.
 
-Because install-only artifacts have no readiness or active record, Installed
-must distinguish unassigned descriptors from corrupt/unverified artifacts.
-Their row says **Downloaded · runtime compatibility not verified**. Add an
-optional `allow_activation: bool = True` input to `ModelActivationControls`;
-Remote rows pass false, which omits only the Activate button while preserving
-the existing lease-safe Delete action. No other installed-row behavior changes.
+Immediately after install-only provisioning, the artifact has no active
+selector and normally no readiness record. Existing `reconcile()` may later
+create readiness for any structurally valid ROOT artifact, including an
+unassigned Remote artifact; this task does not change that core behavior.
+
+Remote inertness therefore never depends on `InstalledArtifact.ready`. Installed
+derives `runtime_assigned` from the descriptor's consumer, runtime, OS, and
+architecture fields: it is false when `consumer`, `model_family`, or
+`runtime_name` equals `unassigned`, or either supported-platform tuple contains
+the `unassigned` sentinel. An unassigned descriptor always says **Downloaded ·
+runtime compatibility not verified**, even if Repair later sets `ready=True`.
+Add an optional `allow_activation: bool = True` input to
+`ModelActivationControls`; unassigned rows pass false, which omits only the
+Activate button while preserving the existing lease-safe Delete action. No
+other installed-row behavior changes.
 
 ## Concurrency and cancellation
 
@@ -381,7 +401,8 @@ Focused tests cover:
    submission does, stale generations are ignored, unknown-license consent is
    gated, failures are retryable, and success refreshes Installed.
 7. Installed state mapping renders unassigned Remote artifacts as downloaded but
-   unconfigured, with no activation affordance and with deletion still present.
+   unconfigured, with no activation affordance and with deletion still present,
+   both before and after reconciliation creates readiness.
 8. One integration test from selected candidate through managed preflight and
    provision using mocked HTTP and a temporary artifact root; no real model
    download is required.
