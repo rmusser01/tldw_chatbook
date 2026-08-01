@@ -4,6 +4,7 @@ title: Move model_steering to a shared home and pin the import graph
 status: In Progress
 assignee: []
 created_date: '2026-08-01 12:45'
+updated_date: '2026-08-01 22:26'
 labels:
   - evals
 dependencies: []
@@ -52,6 +53,18 @@ needs it, rather than a copy per caller.
 - [ ] #5 The word bench's own behaviour is unchanged: `Tests/Evals/word_bench/` passes untouched
 - [ ] #6 Phase 1 exit criterion 3 in `Docs/superpowers/plans/2026-08-01-character-probe-phase1-engine.md` is restored to its original absolute wording once the import graph actually satisfies it
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Create tldw_chatbook/Evals/steering.py: pure `model_steering`/`_steering_field`, moved verbatim (docstrings intact, references updated) from word_bench/storage.py. Only stdlib imports (json, typing) -- no import of word_bench or character_probe modules.
+2. word_bench/storage.py: delete the local definitions, import `model_steering` from `..steering` instead so `word_bench.storage.model_steering` keeps working for existing callers (bench_editor.py, sample_bench.py, tests) via re-export -- but importing storage.py still pulls capture_client for its own unrelated NEUTRAL_SAMPLER use, so this re-export is for BACKWARD COMPATIBILITY of the old import path only, never used by character_probe.
+3. character_probe/targets.py: import `model_steering` directly from `..steering`, not from `..word_bench.storage`, so importing character_probe never touches word_bench.storage/capture_client/normalizer/httpx.
+4. Verify with a throwaway sys.modules probe (pre- and post-move) that word_bench.capture_client/normalizer/httpx no longer load when importing character_probe.targets.
+5. Rewrite the hygiene test in Tests/Evals/character_probe/test_conversation_storage.py: replace the source-text grep with a subprocess-based import-graph assertion -- launch a clean interpreter (cwd computed from Path(__file__).resolve() so it is cwd-independent), import every character_probe submodule, and assert word_bench.capture_client / word_bench.normalizer / httpx are absent from sys.modules. Confirm the new test FAILS against the pre-move code (temporarily revert targets.py's import) and PASSES after.
+6. Update Docs/superpowers/plans/2026-08-01-character-probe-phase1-engine.md exit criterion 3: restore the original absolute wording and replace the amendment note with one stating the import graph now satisfies it, moved by task-1754, enforced by the strengthened test.
+7. Run the targeted suites, update task ACs/status, commit.
+<!-- SECTION:PLAN:END -->
 
 ## Notes
 
