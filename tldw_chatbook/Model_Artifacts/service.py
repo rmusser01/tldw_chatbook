@@ -155,13 +155,12 @@ _INSTALL_STAGING_PREFIX = "install-"
 
 # Filename SUFFIX of a managed-download fetch-state sidecar, addressed as
 # a SIBLING of the ``managed/<id>/<rev>/<variant>`` payload directory it
-# describes (``.../<variant>.fetch-state.json``), never a child of it --
-# see acquisition.py's ``_fetch_sidecar_path`` for why (core.install's
-# payload-tree validation would otherwise reject it as an undeclared
-# file, which used to force the sidecar to be deleted before every
-# install attempt, destroying resumable state on any failure). Mirrors
-# acquisition.py's private ``_FETCH_SIDECAR_SUFFIX``; a drift-guard test
-# in test_reconcile_staging_gc.py fails if the two ever diverge.
+# describes (``.../<variant>.fetch-state.json``), never a child of it.
+# LEGACY LAYOUT ONLY: since TASK-1694 moved acquisition onto
+# service-owned ``download-<fingerprint>/`` stages (whose ``state/``
+# subtree holds resume metadata outside the promoted ``payload/``),
+# nothing writes this layout any more. The GC below keeps recognizing
+# it so a directory left by an earlier build is still reclaimed.
 _MANAGED_FETCH_SIDECAR_SUFFIX = ".fetch-state.json"
 _PathSnapshot = tuple[int, int, int, int, int, int]
 _NodeIdentity = tuple[int, int, int]

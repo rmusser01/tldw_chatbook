@@ -986,8 +986,9 @@ class ArtifactAcquisitionService:
 
         Args:
             descriptor: The artifact whose declared files to fetch.
-            staging_dir: The durable ``staging/managed/<id>/<rev>/<variant>``
-                directory for this artifact.
+            staging_dir: The service-owned stage's ``payload/`` directory
+                (resume metadata lives in its sibling ``state/`` subtree, so
+                it can never be promoted with the payload).
             progress_state: Closure-wide progress accounting to read and
                 update as bytes stream in.
 
