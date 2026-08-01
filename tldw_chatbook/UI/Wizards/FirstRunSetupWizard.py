@@ -86,6 +86,12 @@ class SetupStep(WizardStep):
         the mount. Rather than asking every step to re-check the flag, wrap
         the hooks here once. All current hooks are sync (asserted by the
         wrapper returning None on skip).
+
+        Args:
+            cls: The subclass being defined; supplied automatically by
+                Python whenever a ``SetupStep`` subclass is created.
+            **kwargs: Forwarded to ``super().__init_subclass__()``; unused
+                by this hook itself.
         """
         super().__init_subclass__(**kwargs)
         import functools
@@ -113,6 +119,12 @@ class SetupStep(WizardStep):
         crash the wizard screen. The step renders a one-line notice in its
         place, flags itself, and the container auto-skips it; the Summary
         adds a reasoned row. Subclasses implement ``compose_step``.
+
+        Returns:
+            Yields ``compose_step()``'s widgets on success. On a raised
+            exception, yields a single ``Static`` notice explaining the
+            step was skipped instead (and sets ``compose_failed = True``
+            so the container drops the step and the Summary reports it).
         """
         try:
             yield from self.compose_step()
@@ -129,7 +141,14 @@ class SetupStep(WizardStep):
             )
 
     def compose_step(self) -> ComposeResult:
-        """Step content; override in subclasses (default: framework empty)."""
+        """Step content; override in subclasses (default: framework empty).
+
+        Returns:
+            Yields this step's content widgets. The default (unoverridden)
+            body yields whatever ``WizardStep.compose()`` yields -- a single
+            empty ``Container()``; concrete steps override this to yield
+            their own field layout.
+        """
         yield from super().compose()
 
     async def commit(self) -> tuple[bool, str]:
@@ -1720,9 +1739,24 @@ class SetupWizardContainer(WizardContainer):
         """TASK-1499: base on_mount renders the progress row from the FULL
         step list; rebuild it immediately so the initial render honors the
         quick-track default (4 dots, "Step 1 of 4") instead of front-loading
-        all nine steps before the user has chosen anything."""
+        all nine steps before the user has chosen anything.
+
+        TASK-1266 follow-up: ``self.active_ids`` is first computed in
+        ``__init__``, before any step has actually composed -- a step's
+        ``compose_failed`` flag can only be known once its own compose()
+        has actually run, which Textual does while mounting this
+        container's children, i.e. by the time ``super().on_mount()``
+        (BaseWizard.on_mount, which calls ``show_step(0)`` and therefore
+        forces the children through their mount/compose pipeline) returns
+        here. Calling ``_refresh_active_ids()`` -- rather than
+        ``_rebuild_progress()`` directly -- re-derives ``active_ids``
+        against the now-accurate ``compose_failed`` flags before the very
+        first progress/nav render, instead of leaving a step that failed to
+        compose counted and shown until some later event (track selection,
+        a key being entered) happens to trigger a refresh.
+        """
         super().on_mount()
-        self._rebuild_progress()
+        self._refresh_active_ids()
         self.update_progress()
 
     # -- step construction -------------------------------------------------

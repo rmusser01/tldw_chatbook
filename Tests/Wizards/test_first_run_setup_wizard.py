@@ -2617,3 +2617,50 @@ class TestComposeCrashPolicy:
                 assert "RAG" in rendered
         finally:
             RagStep.compose_step = original
+
+    @pytest.mark.asyncio
+    async def test_failed_step_excluded_from_initial_progress_and_nav(self):
+        """A step whose compose_step() raises must be excluded from the
+        VERY FIRST progress/nav render -- before anything (select_track(),
+        a Next press, note_key_entered()) ever calls _refresh_active_ids().
+
+        SetupWizardContainer.__init__ computes self.active_ids up front,
+        before any step has actually composed -- compose_failed can only be
+        known once a step's compose() has actually run, which happens
+        later, when Textual mounts the step's children. Without a refresh
+        keyed off composition actually having happened, the failed step is
+        still counted in the initial progress/nav ("Step 1 of 4" becomes
+        wrong) and still reachable by index until something else happens to
+        trigger a refresh.
+        """
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            ModelStep,
+            SetupWizardContainer,
+        )
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import STEP_MODEL
+
+        original = ModelStep.compose_step
+
+        def _boom(self):
+            raise RuntimeError("boom")
+            yield  # pragma: no cover
+
+        ModelStep.compose_step = _boom
+        try:
+            wizard = _make_wizard()
+            app = _HostApp(wizard)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause(0.2)
+                container = wizard.query_one(SetupWizardContainer)
+                # No select_track()/Next/note_key_entered() call yet -- this
+                # is the wizard's INITIAL state, straight off mount.
+                failed_step = next(
+                    s for s in container.steps
+                    if s.config and s.config.id == STEP_MODEL
+                )
+                assert failed_step.compose_failed is True
+                assert STEP_MODEL not in container.active_ids
+                nav = wizard.query_one(WizardNavigation)
+                assert nav.total_steps == len(container.active_ids)
+        finally:
+            ModelStep.compose_step = original
