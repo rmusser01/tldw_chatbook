@@ -122,6 +122,18 @@ def test_production_blend_choice_readers_ignore_legacy_home_decoy(
     )
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile_config))
+    original_read_text = Path.read_text
+
+    def reject_legacy_decoy_read(
+        path: Path,
+        *args: object,
+        **kwargs: object,
+    ) -> str:
+        if path == decoy:
+            raise AssertionError("Production reader accessed the legacy blend decoy")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", reject_legacy_decoy_read)
 
     assert kokoro_ui_blend_file() == profile_config.parent / "kokoro_voice_blends.json"
     assert TTSPlaygroundWidget._kokoro_blend_choices() == [
