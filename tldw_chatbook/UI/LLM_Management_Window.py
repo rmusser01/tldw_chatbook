@@ -259,7 +259,8 @@ class LLMManagementWindow(Container):
             "onnx": "llm-view-onnx",
             "transformers": "llm-view-transformers",
             "mlx-lm": "llm-view-mlx-lm",
-            "local-models": "llm-view-local-models",
+            "curated": "llm-view-curated",
+            "installed": "llm-view-installed",
             "download-models": "llm-view-download-models",
         }
 
@@ -897,11 +898,29 @@ class LLMManagementWindow(Container):
                     classes="log_output_large",
                 )
 
-            # Local Models View (preserved unchanged)
-            with Container(id="llm-view-local-models", classes="llm-view"):
-                from ..Widgets.HuggingFace import LocalModelsWidget
+            # Curated and Installed stay idle until their rail row is selected.
+            with Container(id="llm-view-curated", classes="llm-view"):
+                from .Screens.model_curated_view import CuratedView
 
-                yield LocalModelsWidget(self.app_instance, id="local-models-widget")
+                yield CuratedView(id="curated-models-view")
+
+            with Container(id="llm-view-installed", classes="llm-view"):
+                from .Screens.model_installed_view import InstalledView
+
+                legacy_dir = None
+                app_config = getattr(self.app_instance, "app_config", {})
+                if isinstance(app_config, dict):
+                    configured = app_config.get("llm_management", {}).get(
+                        "model_download_dir"
+                    )
+                    if configured:
+                        from pathlib import Path
+
+                        legacy_dir = Path(str(configured)).expanduser()
+                yield InstalledView(
+                    legacy_dir=legacy_dir,
+                    id="installed-models-view",
+                )
 
             # Download Models View (preserved unchanged)
             with Container(id="llm-view-download-models", classes="llm-view"):
@@ -1057,6 +1076,18 @@ class LLMManagementWindow(Container):
         that -- a live request to huggingface.co on arrival, for users who
         never open Download Models (task-887).
         """
+        if view_name in {"curated", "installed"}:
+            try:
+                managed_view = view_widget.query_one(
+                    "#curated-models-view"
+                    if view_name == "curated"
+                    else "#installed-models-view"
+                )
+            except QueryError:
+                logger.debug(f"{view_name.title()} view is unavailable; skipped.")
+                return
+            managed_view.ensure_loaded()
+            return
         if view_name != "download-models":
             return
         # Local import: this module is on the Models mount path, and the

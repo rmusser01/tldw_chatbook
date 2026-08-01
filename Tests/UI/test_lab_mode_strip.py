@@ -270,13 +270,13 @@ async def test_lab_route_and_mode_strip_navigate_the_real_shell(
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 
     _prepare_clean_environment(monkeypatch, tmp_path)
-    # Isolate the navigation test from the Models screen's HuggingFace
-    # widgets: their init-fired reactives and scan/download workers schedule
+    # Isolate the navigation test from the remaining Download Models widgets:
+    # their init-fired reactives and download workers schedule
     # deferred DOM updates (call_later/thread completion) that race child
     # mounting and screen switches under run_test -- a pre-existing family of
     # races in those widgets, unrelated to shell navigation.
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
     from tldw_chatbook.Widgets.HuggingFace.download_manager import DownloadManager
-    from tldw_chatbook.Widgets.HuggingFace.local_models_widget import LocalModelsWidget
     from tldw_chatbook.Widgets.HuggingFace.model_search_widget import ModelSearchWidget
 
     async def _noop_async_update(self, *args):
@@ -284,9 +284,6 @@ async def test_lab_route_and_mode_strip_navigate_the_real_shell(
 
     monkeypatch.setattr(ModelSearchWidget, "perform_search", lambda self: None)
     monkeypatch.setattr(ModelSearchWidget, "_update_results_list", _noop_async_update)
-    monkeypatch.setattr(LocalModelsWidget, "scan_models", lambda self: None)
-    monkeypatch.setattr(LocalModelsWidget, "_refresh_model_list", _noop_async_update)
-    monkeypatch.setattr(LocalModelsWidget, "_update_summary", lambda self: None)
     monkeypatch.setattr(DownloadManager, "_refresh_downloads_list", _noop_async_update)
     monkeypatch.setattr(DownloadManager, "_update_summary", lambda self: None)
     app = _build_test_app()
@@ -309,25 +306,12 @@ async def test_lab_route_and_mode_strip_navigate_the_real_shell(
             )
             await _wait_until(
                 pilot,
-                lambda: len(app.screen.query(LocalModelsWidget)) == 1,
-                context="local models widget",
+                lambda: len(app.screen.query(InstalledView)) == 1,
+                context="installed models view",
             )
-            local_models = app.screen.query_one(LocalModelsWidget)
-            await _wait_until(
-                pilot,
-                lambda: len(local_models.query("#delete-confirm-dialog")) == 1,
-                context="delete confirmation dialog",
-            )
-            delete_confirm = local_models.query_one("#delete-confirm-dialog")
-            assert delete_confirm.display is False
-
-            local_models.show_delete_confirm = True
-            await pilot.pause()
-            assert delete_confirm.display is True
-
-            local_models.show_delete_confirm = False
-            await pilot.pause()
-            assert delete_confirm.display is False
+            installed_models = app.screen.query_one(InstalledView)
+            assert installed_models._service is None
+            assert installed_models._loaded is False
 
             assert app.screen.query_one("#lab-mode-models", Button).has_class(
                 "is-active"

@@ -114,3 +114,57 @@ def test_lease_blocked_deletion_message_is_specific_and_sanitized() -> None:
 
     assert "in use" in message
     assert marker not in message
+
+
+@pytest.mark.asyncio
+async def test_curated_view_performs_no_io_at_compose_time(tmp_path: Path) -> None:
+    """Curated is also eagerly mounted but remains idle until selected."""
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+
+    service_factory = MagicMock()
+    registry_factory = MagicMock()
+    view = CuratedView(
+        service_factory=service_factory,
+        registry_factory=registry_factory,
+    )
+    app = _InstalledApp(view)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+    service_factory.assert_not_called()
+    registry_factory.assert_not_called()
+
+
+def test_curated_preflight_result_opens_the_shared_modal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Selection shows the exact shared consent plan before acquisition."""
+    from Tests.UI.test_model_artifact_widgets import _report
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
+
+    fake_app = MagicMock()
+    monkeypatch.setattr(CuratedView, "app", property(lambda self: fake_app))
+    view = CuratedView(service_factory=MagicMock(), registry_factory=MagicMock())
+    report = _report(tmp_path / "managed")
+    view._operation_reference = report.root
+
+    view._apply_preflight_result(report, None)
+
+    assert view._pending_report is report
+    modal, callback = fake_app.push_screen.call_args[0]
+    assert isinstance(modal, ModelInstallModal)
+    assert callback == view._confirm_install
+
+
+def test_models_rail_lists_curated_and_installed_and_drops_local_models() -> None:
+    """Phase 1 replaces Local Models while preserving the legacy downloader."""
+    from tldw_chatbook.UI.Screens.llm_screen import MODELS_RAIL_SECTIONS
+
+    models_section = dict(MODELS_RAIL_SECTIONS)["Models"]
+    keys = [key for key, _label in models_section]
+    assert "curated" in keys
+    assert "installed" in keys
+    assert "local-models" not in keys
+    assert "download-models" in keys

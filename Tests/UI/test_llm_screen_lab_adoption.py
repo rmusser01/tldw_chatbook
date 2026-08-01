@@ -58,7 +58,7 @@ def _rail_rows(screen):
 
 
 @pytest.mark.asyncio
-async def test_all_nine_provider_rows_live_in_the_rail():
+async def test_all_provider_and_model_rows_live_in_the_rail():
     app = _app()
     async with app.run_test(size=(120, 40)) as pilot:
         screen = await _models_screen(app)
@@ -73,7 +73,8 @@ async def test_all_nine_provider_rows_live_in_the_rail():
             "onnx",
             "transformers",
             "mlx-lm",
-            "local-models",
+            "curated",
+            "installed",
             "download-models",
         ]
 
