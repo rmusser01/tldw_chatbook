@@ -320,6 +320,129 @@ async def test_every_pane_descendant_stays_within_its_pane(evals_app, seeded_ben
 
 
 @pytest.mark.asyncio
+async def test_target_table_keeps_a_floor_and_scrolls_the_rest_into_view(
+    evals_db,
+):
+    """task-1611 T2 fix round 1. The "+ New target" mini-form plus the Add
+    picker used to be TWO SEPARATE fixed siblings of the row table, each
+    independently subtracted from the targets section's own tiny `1fr`
+    share at a realistic viewport -- confirmed live (whole-branch review)
+    that the table's OWN box collapsed all the way down to a literal
+    1-row floor once there were enough targets, at which point a
+    4-target bench's 4th row escaped `#evals-detail-pane`'s own clip
+    rectangle at the DEFAULT, unscrolled position -- the exact signature
+    `test_every_pane_descendant_stays_within_its_pane` above catches.
+    Reproduces even at the commit BEFORE task-1611 T2 (a 4-target bench
+    was simply never exercised against this containment check before),
+    but T2's own fixed siblings made it trivially reachable.
+
+    First fix attempt (`min-height: 3` on the table ALONE, table/Add-
+    picker/mini-form still three separate fixed siblings) made things
+    WORSE, not better -- confirmed live: the section's own `1fr` share is
+    a fixed 4 rows regardless (driven entirely by fields ABOVE the
+    targets section, none of which this fix touches), so forcing the
+    table to 3 of those 4 rows simply evicted the Add picker and
+    mini-form off the bottom of the section's own box entirely. The
+    actual fix (see `_build_targets_section`'s and `#evals-bench-
+    targets-body`'s own docstrings/comments) wraps the table, the Add
+    picker, and the mini-form in ONE shared scrollable body instead: the
+    table -- listed first -- claims as much of that body's space as
+    exists, and the Add picker / mini-form scroll into view after it.
+
+    That means NEITHER the Add picker row NOR the mini-form is
+    "protected" as always-simultaneously-visible-without-scrolling
+    anymore once there are enough targets ahead of them in that ONE
+    shared list -- correctly so; forcing that would just recreate the
+    same "1fr share too small for everything" contradiction under a
+    different name. What this test asserts instead, verified at BOTH 4
+    and 8 targets since a fix that merely happens to clear 4 is not the
+    same claim as one that holds regardless of list length: (1) the
+    heading (the only STILL-genuinely-fixed sibling, outside the
+    scrollable body) and the body's own outer box never escape the pane,
+    regardless of target count -- the body's own box is the real
+    "floor", and it must hold; (2) at the DEFAULT scroll position,
+    whatever rows genuinely fit inside that box ARE pane-contained (not
+    merely "some" -- every one of them); and (3) scrolling all the way
+    to the end genuinely brings the "+ New target" button into the
+    pane's clip rectangle -- not merely that `max_scroll_y` is non-zero,
+    which is the claim the original T2 report made WITHOUT live-
+    verifying it (the reviewer disproved that report's wording, not this
+    claim -- this test exists because that shortcut was wrong to take on
+    faith).
+    """
+    for n_targets in (4, 8):
+        ids = [
+            evals_db.create_model(
+                name=f"scale-target-{n_targets}-{i}", provider="llama_cpp", model_id="m"
+            )
+            for i in range(n_targets)
+        ]
+        dataset_id = evals_db.create_dataset(
+            name=f"scale-set-{n_targets}",
+            format="custom",
+            source_path=f"inline:scale-set-{n_targets}",
+            metadata={"sample_count": 4},
+        )
+        config = BenchConfig(
+            name=f"scale bench {n_targets}",
+            prompt_mode="raw",
+            top_k=20,
+            dataset_id=dataset_id,
+            target_ids=tuple(ids),
+        )
+        task_id = save_bench(evals_db, config)
+
+        app = EvalsHarness(_FakeAppInstance(evals_db))
+        async with app.run_test(size=(160, 45)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            screen.select(kind="bench", id=task_id)
+            await pilot.pause()
+
+            pane = screen.query_one("#evals-detail-pane")
+            heading = screen.query_one("#evals-bench-targets-heading")
+            body = screen.query_one("#evals-bench-targets-body")
+            assert pane.region.contains_region(heading.region), (
+                f"the targets heading at {heading.region} escapes the pane's "
+                f"clip region {pane.region} with {n_targets} targets"
+            )
+            assert pane.region.contains_region(body.region), (
+                f"the targets body at {body.region} escapes the pane's clip "
+                f"region {pane.region} with {n_targets} targets -- the "
+                "floor itself must hold regardless of target count"
+            )
+            assert body.max_scroll_y > 0, (
+                f"expected {n_targets} targets plus the Add picker and the "
+                "create-target form to overflow the body's own floor -- "
+                "this test's whole premise needs genuine overflow to prove "
+                "anything"
+            )
+
+            # Every row that genuinely fits inside the body's own box at
+            # the default (unscrolled) position must be pane-contained --
+            # not merely SOME of them.
+            visible_rows = min(body.region.height, n_targets)
+            for index in range(visible_rows):
+                row = screen.query_one(f"#evals-bench-target-{index}")
+                assert pane.region.contains_region(row.region), (
+                    f"row {index} (of {visible_rows} expected to fit "
+                    f"without scrolling) escapes the pane with {n_targets} "
+                    "targets"
+                )
+
+            # And scrolling all the way to the end genuinely brings the
+            # "+ New target" button -- the lowest-priority, always-present
+            # affordance in this shared list -- into view.
+            body.scroll_to(y=body.max_scroll_y, animate=False)
+            await pilot.pause()
+            create_button = screen.query_one("#evals-bench-create-target")
+            assert pane.region.contains_region(create_button.region), (
+                "scrolling to the end never brought the create-target "
+                f"button into the pane's clip region ({n_targets} targets)"
+            )
+
+
+@pytest.mark.asyncio
 async def test_import_button_stays_in_its_pane_and_pilot_click_opens_the_picker(
     evals_app, evals_db
 ):
@@ -1645,6 +1768,51 @@ async def test_bench_run_completion_does_not_yank_a_dirty_bench_editor(
         assert screen._selection.id == runnable_bench
         assert screen.query_one("#evals-bench-name", Input) is name_input
         assert screen.query_one("#evals-bench-name", Input).value == "typed-while-running"
+        message, severity = evals_app.app_instance.notifications[-1]
+        assert severity == "information"
+        assert message == "Bench run finished — see the Runs section."
+        # The run itself is real -- the DB write is not lost, only the
+        # auto-navigate is skipped.
+        assert len(screen._view_model.run_groups()) == 1
+
+
+@pytest.mark.asyncio
+async def test_bench_run_completion_does_not_yank_a_bench_editor_with_unsaved_mini_form_text(
+    evals_app, runnable_bench
+):
+    """task-1611 T2 fix round 1: the SAME protection as
+    ``test_bench_run_completion_does_not_yank_a_dirty_bench_editor`` above,
+    but the unsaved edit lives in the "+ New target" mini-form
+    (``#evals-target-name``) rather than the bench's own Name field.
+    ``BenchEditor.is_dirty()`` had to learn about that mini-form for this
+    to hold -- before that fix, this exact scenario recomposed right over
+    the typed-but-never-created target name."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        await pilot.pause()
+
+        name_input = screen.query_one("#evals-target-name", Input)
+        name_input.value = "typed-while-running"
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+        assert screen._selection.kind == "bench"
+        assert screen._selection.id == runnable_bench
+        assert screen.query_one("#evals-target-name", Input) is name_input
+        assert screen.query_one("#evals-target-name", Input).value == "typed-while-running"
         message, severity = evals_app.app_instance.notifications[-1]
         assert severity == "information"
         assert message == "Bench run finished — see the Runs section."

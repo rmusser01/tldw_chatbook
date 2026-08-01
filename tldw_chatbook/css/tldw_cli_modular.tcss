@@ -11975,38 +11975,79 @@ Button:disabled {
     overflow-y: auto;
 }
 
-#evals-snippet-table,
-#evals-bench-target-table {
+#evals-snippet-table {
     overflow-y: auto;
 }
 
+#evals-bench-target-table {
+    /* `height: auto` (task-1611 T2 fix round 1), overriding Vertical's
+       own DEFAULT_CSS `height: 1fr` -- this lets the table size to its
+       FULL natural row count (every staged target, not a squeezed
+       fraction of one) inside `#evals-bench-targets-body` below, which is
+       what actually clips/scrolls the combined total now. See that
+       selector's own comment for the two-line story (a `min-height`
+       tried first here, alone, made things WORSE). No `overflow-y: auto`
+       of its own anymore either -- same reason, one level up. */
+    height: auto;
+}
 
-/* Task 6 (task-1482): `#evals-bench-targets-section` wraps the heading,
-   the row table, and the Add picker / create-target control together
-   (see bench_editor.py's own docstring for why -- one atomic Add/Remove/
-   `stage_target` refresh target). It deliberately keeps its DEFAULT_CSS
-   `height: 1fr`, and so, just as deliberately, does `#evals-bench-target-
-   table` below (unlike `#evals-inspector-bench`'s own `height: auto`
-   override one section up in this file) -- `#evals-detail-pane` gives
-   BenchEditor a REAL bounded height (not an ambiguous `auto`-measuring
-   one), so `1fr` on BOTH of these resolves the same way it always did for
-   the pre-Task-6 target table alone: the table claims "whatever's left"
-   after every FIXED/auto sibling (the heading Static, and the section's
-   own Add-picker-or-create-target control) is subtracted from the
-   section's own `1fr` share of BenchEditor -- shrinking, and scrolling
-   via `overflow-y: auto` (declared above), rather than ever pushing a
-   fixed sibling below it past the pane's own clip rectangle. Confirmed
-   live both ways it can go wrong: `height: auto` on either of these two
-   (tried first) let the table -- or the whole section -- claim its full,
-   UNCAPPED natural content height instead, overflowing `#evals-detail-
-   pane`'s clip rectangle by several rows at a realistic 160x45 size
-   (`test_every_pane_descendant_stays_within_its_pane`); PLAIN `1fr` with
-   no other change left the per-row `Static` squeezed to a literal
-   `region.height == 0` at the harness's cramped default 80x24 size
-   (`test_bench_with_duplicate_target_id_composes_without_raising`) --
-   that second failure was fixed separately, by narrowing the per-row
-   `Remove` button below (`.evals-bench-target-remove`), not by touching
-   either of these two heights. */
+/* Task 6 (task-1482): `#evals-bench-targets-section` wraps the heading and
+   (task-1611 T2 fix round 1) ONE shared scrollable body together (see
+   bench_editor.py's own `_build_targets_section` docstring for why the
+   row table, the Add picker, and the "+ New target" mini-form all became
+   children of that ONE body, rather than three separate fixed siblings
+   of the heading). It deliberately keeps its DEFAULT_CSS `height: 1fr`
+   (unlike `#evals-inspector-bench`'s own `height: auto` override one
+   section up in this file) -- `#evals-detail-pane` gives BenchEditor a
+   REAL bounded height (not an ambiguous `auto`-measuring one), so `1fr`
+   here resolves the same way it always did for the pre-Task-6 target
+   table alone: EVERYTHING below the heading claims "whatever's left"
+   after that one FIXED sibling is subtracted from the section's own
+   `1fr` share of BenchEditor.
+
+   Confirmed live both ways the OLD (pre-T2-fix-round-1) two-fixed-
+   siblings-plus-the-table shape could go wrong: `height: auto` on either
+   the table or the whole section (tried first, task-1482) let one of them
+   claim its full, UNCAPPED natural content height instead, overflowing
+   `#evals-detail-pane`'s clip rectangle by several rows at a realistic
+   160x45 size (`test_every_pane_descendant_stays_within_its_pane`);
+   PLAIN `1fr` with no other change left the per-row `Static` squeezed to
+   a literal `region.height == 0` at the harness's cramped default 80x24
+   size (`test_bench_with_duplicate_target_id_composes_without_raising`)
+   -- that second failure was fixed separately, by narrowing the per-row
+   `Remove` button below (`.evals-bench-target-remove`). And task-1611
+   T2's OWN two live failures (the mini-form's own layout, and the Add
+   picker's phantom extra row) are documented on `#evals-bench-targets-
+   body` and `#evals-bench-add-target-row` below.
+
+   `#evals-bench-targets-body` is the CURRENT version of the "shrinking,
+   scrolling `1fr` child" this whole comment describes -- see its own
+   comment for why the table/Add-picker/mini-form split into fixed
+   competing siblings (this comment's ORIGINAL shape) had to change
+   again, at 4+ targets, for task-1611 T2. */
+#evals-bench-targets-body {
+    height: 1fr;
+    overflow-y: auto;
+    /* Confirmed live (task-1611 T2 fix round 1): giving `#evals-bench-
+       target-table` ALONE a floor (`min-height: 3`) while it, the Add
+       picker, and the create-target mini-form stayed THREE SEPARATE
+       fixed siblings of the heading did not fix a 4+-target bench's
+       `test_every_pane_descendant_stays_within_its_pane` failure -- this
+       whole section's own `1fr` share (driven purely by the FIXED/auto
+       fields ABOVE it, none of which this fix touches) stayed a fixed 4
+       rows regardless; forcing the table to 3 of those 4 just evicted
+       the Add picker and mini-form off the BOTTOM of the section's own
+       box entirely (confirmed via the same live walk: they moved from
+       "squeezed but present" to simply not being part of the `1fr`
+       layout's accounting at all). Wrapping all three in ONE shared
+       scrollable body instead means the row table -- listed FIRST inside
+       it, see `_build_targets_section` -- claims as much of the body's
+       available space as there genuinely IS (not a leftover AFTER two
+       other fixed rows are subtracted), and the Add picker / mini-form
+       scroll into view after it: lower priority than seeing your own
+       already-staged targets, but still genuinely reachable, not simply
+       gone from the layout. */
+}
 
 #evals-inspector-bench,
 #evals-classic-detail {
@@ -12315,11 +12356,10 @@ Button:disabled {
 /* Task-1611 T2: the "+ New target" mini-form -- ALWAYS rendered now
    (unlike the Add picker above, which still disappears with zero
    `llama_cpp` rows), so it sits directly below whichever of those two
-   states is showing. `height: auto` (not `1fr`) -- see the `#evals-bench-
-   targets-section` comment further up this file: this is exactly the kind
-   of FIXED/auto sibling that comment already accounts for, subtracted
-   from the section's own `1fr` share before `#evals-bench-target-table`
-   claims the remainder (and scrolls, per its own `overflow-y: auto`).
+   states is showing, as the LAST child of `#evals-bench-targets-body`
+   (fix round 1 -- see that selector's own comment for why it, the row
+   table, and the Add picker share ONE scrollable body instead of each
+   being an independent fixed sibling). `height: auto` (not `1fr`).
 
    Name, the steering `Input`, and the `Button` ALL share ONE row --
    neither `Input` carries a separate label `Static` (their descriptive

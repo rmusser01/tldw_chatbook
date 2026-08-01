@@ -1719,6 +1719,42 @@ async def test_create_target_with_a_prefix_stages_a_row_and_save_persists_the_pr
 
 
 @pytest.mark.asyncio
+async def test_create_target_with_leading_whitespace_and_a_newline_in_the_prefix_persists_byte_exact(
+    evals_app_configured, evals_db, bench_with_zero_llama_models
+):
+    """task-1611 T2 fix round 1 (Minor): the E2E test above only ever
+    types a TRAILING space -- leading whitespace and an embedded newline
+    are the sharper case `CreateTargetRequested`'s own docstring already
+    promises ("passed through EXACTLY, no `.strip()`") but nothing UI-
+    level had actually driven all the way to a real DB row. Types a
+    LEADING ``"\\n"`` plus the rest of a prefix, creates, saves, and
+    asserts the persisted ``eval_models`` row's ``config["prefix"]`` is
+    byte-identical to what was typed."""
+    task_id = bench_with_zero_llama_models  # raw mode
+    prefix = "\nContinue: "
+    async with evals_app_configured.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app_configured.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app_configured.screen
+
+        screen.query_one("#evals-target-name", Input).value = "leading-ws-target"
+        screen.query_one("#evals-target-prefix", Input).value = prefix
+        await pilot.click("#evals-bench-create-target")
+        await pilot.pause()
+        await pilot.click("#evals-bench-save")
+        await pilot.pause()
+        assert not screen.query_one("#evals-bench-form-error").display
+
+        model = next(
+            m
+            for m in evals_db.list_models(provider="llama_cpp")
+            if m["name"] == "leading-ws-target"
+        )
+        assert model["config"]["prefix"] == prefix
+
+
+@pytest.mark.asyncio
 async def test_mode_flip_swaps_the_steering_field_and_preserves_typed_state(
     evals_app, bench_with_mixed_readiness
 ):
@@ -1976,6 +2012,98 @@ async def test_is_dirty_is_false_immediately_after_a_fresh_selection(
         await pilot.pause()
         editor = evals_app.screen.query_one(BenchEditor)
         assert editor.is_dirty() is False
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_is_false_with_a_pristine_mini_form(
+    evals_app, bench_with_available_add_target
+):
+    """task-1611 T2 fix round 1: the "+ New target" mini-form itself
+    starts blank -- typing NOTHING into it must not be mistaken for an
+    edit. Uses a bench with a pre-existing ``llama_cpp`` target (the Add
+    picker AND the mini-form both render, task-1611 T2's whole point)
+    rather than the zero-models fixture, so this exercises the mini-form
+    coexisting with the picker, not merely the degenerate case."""
+    task_id, _existing_id, _addable_id = bench_with_available_add_target
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        assert screen.query_one("#evals-bench-add-target", Select)
+        editor = screen.query_one(BenchEditor)
+        assert editor.is_dirty() is False
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_flips_true_on_typed_but_uncreated_mini_form_name(
+    evals_app, bench_with_mixed_readiness
+):
+    """task-1611 T2 fix round 1: a Name typed into the "+ New target"
+    mini-form but never submitted (Create never pressed) is real unsaved
+    state -- exactly the loss a background worker's completion must not
+    silently discard, one level down from the five top-level fields this
+    method already protected before this fix."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        editor = screen.query_one(BenchEditor)
+        assert editor.is_dirty() is False
+
+        screen.query_one("#evals-target-name", Input).value = "typed-not-created"
+        assert editor.is_dirty() is True
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_flips_true_on_typed_but_uncreated_mini_form_steering(
+    evals_app, bench_with_mixed_readiness
+):
+    """Same as the Name case above, for the steering ``Input`` -- exercised
+    via the raw-mode ``#evals-target-prefix`` field (``bench_with_mixed_
+    readiness`` is a raw-mode bench)."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        editor = screen.query_one(BenchEditor)
+        assert editor.is_dirty() is False
+
+        screen.query_one("#evals-target-prefix", Input).value = "Continue: "
+        assert editor.is_dirty() is True
+
+
+@pytest.mark.asyncio
+async def test_is_dirty_stays_true_for_a_pending_steering_value_after_a_mode_flip(
+    evals_app, bench_with_mixed_readiness
+):
+    """A raw-mode prefix typed, then the mode flips to chat -- the prefix
+    ``Input`` is no longer mounted (``_build_create_target_control`` only
+    ever mounts one steering field at a time), but the text is not gone:
+    ``_capture_pending_target_form`` (already run by ``_on_prompt_mode_
+    changed``) stashed it in ``self._pending_target_prefix``, and
+    ``is_dirty()`` must still count it -- it is exactly as real and
+    exactly as destroyable by a recompose as it was before the flip."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        editor = screen.query_one(BenchEditor)
+
+        screen.query_one("#evals-target-prefix", Input).value = "Continue: "
+        assert editor.is_dirty() is True
+
+        screen.query_one("#evals-bench-prompt-mode", Select).value = "chat"
+        await pilot.pause()
+
+        assert not screen.query("#evals-target-prefix")
+        assert editor.is_dirty() is True
 
 
 @pytest.mark.asyncio

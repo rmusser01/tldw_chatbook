@@ -57,11 +57,13 @@ module asked for via ``CreateTargetRequested`` -- see that message's own
 docstring for why this module cannot create the row itself.
 
 Task-1610: ``BenchEditor.is_dirty()`` reports whether the mounted form (the
-five fields above plus the staged target list) differs from
-``self._loaded_config`` -- read by ``evals_screen.py``'s
-``_selection_unmoved_since_launch`` so a run/sample-bench worker completing
-while this editor holds unsaved edits degrades to a toast instead of
-calling ``select()``, which would otherwise recompose this whole widget
+five fields above, the staged target list, and -- task-1611 T2 fix round
+1 -- the "+ New target" mini-form's own typed-but-not-yet-created Name/
+steering text) differs from ``self._loaded_config`` -- read by
+``evals_screen.py``'s ``_selection_unmoved_since_launch`` so a run/sample-
+bench worker completing while this editor holds unsaved edits degrades to
+a toast instead of calling ``select()``, which would otherwise recompose
+this whole widget
 and silently discard everything not yet Saved.
 
 Task-1611 T2: a target's STEERING (``storage.model_steering`` -- a raw-
@@ -421,6 +423,24 @@ class BenchEditor(Vertical):
         6's Add/Remove handlers) rather than read from a widget, so that
         list is compared to ``loaded.target_ids`` verbatim.
 
+        Task-1611 T2 (fix round 1): the "+ New target" mini-form's own
+        typed-but-not-yet-created Name/steering text ALSO counts -- a user
+        can type a prefix, never press Create, and have a background
+        worker complete mid-edit exactly as easily as they can edit the
+        five fields above; nothing about ``stage_target``/``save_bench``
+        having consumed nothing yet makes that text less real or less
+        destroyable by a recompose. Read fresh via a direct query here
+        (never ``self._pending_target_*`` for the CURRENTLY mounted
+        steering ``Input`` -- that attribute is only ever refreshed by
+        OTHER handlers right before a rebuild, see
+        ``_capture_pending_target_form``'s own docstring, and this method
+        is called at arbitrary times, not only right before one); the
+        NON-mounted steering ``Input`` (only one of the two ever is, see
+        ``_build_create_target_control``) falls back to
+        ``self._pending_target_*`` instead, since a raw-mode prefix typed
+        before a flip to chat is still real unsaved state even though its
+        ``Input`` is not currently in the DOM to query.
+
         ``False`` when this widget never composed a form at all --
         ``self._loaded_config`` stays ``None`` in both of ``compose()``'s
         early-return branches (no db, or an unreadable bench row) -- there
@@ -430,9 +450,11 @@ class BenchEditor(Vertical):
         edit -- see ``_on_save_pressed``'s identical `int(...)` parse.
 
         Returns:
-            bool: True when any form field or the staged target list
-            differs from the loaded bench state; False for a pristine
-            form or when no form composed at all.
+            bool: True when any form field, the staged target list, or the
+            "+ New target" mini-form's own typed state differs from the
+            loaded bench state (mini-form: differs from blank, since that
+            state is never itself part of ``self._loaded_config``); False
+            for a pristine form or when no form composed at all.
         """
         loaded = self._loaded_config
         if loaded is None:
@@ -470,6 +492,24 @@ class BenchEditor(Vertical):
             return True
         if tuple(self._staged_target_ids) != tuple(loaded.target_ids):
             return True
+
+        try:
+            mini_form_name = self.query_one("#evals-target-name", Input).value
+        except QueryError:
+            mini_form_name = self._pending_target_name
+        try:
+            mini_form_prefix = self.query_one("#evals-target-prefix", Input).value
+        except QueryError:
+            mini_form_prefix = self._pending_target_prefix
+        try:
+            mini_form_system_prompt = self.query_one(
+                "#evals-target-system-prompt", Input
+            ).value
+        except QueryError:
+            mini_form_system_prompt = self._pending_target_system_prompt
+        if mini_form_name or mini_form_prefix or mini_form_system_prompt:
+            return True
+
         return False
 
     def compose(self) -> ComposeResult:
@@ -592,11 +632,30 @@ class BenchEditor(Vertical):
         yield Vertical(*self._build_targets_section(), id="evals-bench-targets-section")
 
     def _build_targets_section(self) -> list[Widget]:
-        """Builds the whole "Targets (N)" slice -- heading, row table (or
-        the empty state), the Add picker (only when there is something to
-        pick), and the always-rendered "+ New target" mini-form
-        (task-1611 T2) -- as concrete widget INSTANCES rather than a
-        `with Container(): yield child`-composed generator.
+        """Builds the whole "Targets (N)" slice -- a FIXED heading, then
+        ONE shared scrollable body holding the row table (or the empty
+        state), the Add picker (only when there is something to pick),
+        and the always-rendered "+ New target" mini-form (task-1611 T2)
+        -- as concrete widget INSTANCES rather than a `with Container():
+        yield child`-composed generator.
+
+        Task-1611 T2 fix round 1: the row table, the Add picker, and the
+        create-target mini-form used to be THREE SEPARATE fixed siblings
+        of the heading, each independently competing for this whole
+        section's own small `1fr` share -- confirmed live that with
+        enough targets to need it, the table's OWN box got squeezed down
+        to a literal 1-row floor (the Add picker and mini-form, TOGETHER
+        needing 2 more fixed rows, always won that competition first) --
+        see `#evals-bench-targets-body`'s own CSS comment for the
+        measurements. Wrapping all three in ONE shared scrollable
+        `Vertical` (`#evals-bench-targets-body`, this method's own
+        returned list's second element) instead means the row table is no
+        longer capped by leftover space AFTER the other two are
+        subtracted -- it is simply whatever comes FIRST in this ONE
+        scrollable list, so it claims as much of the section's `1fr` share
+        as there IS, and the Add picker / mini-form (lower priority than
+        seeing your own already-staged targets) scroll into view after it
+        instead of permanently starving it.
 
         That `with`-block pattern (used by every OTHER section of
         `compose()` above) only works while Textual's own compose
@@ -614,15 +673,14 @@ class BenchEditor(Vertical):
         """
         db = self._view_model.db
         preflight = self._preflight_map
-        widgets: list[Widget] = [
-            Static(
-                f"Targets ({len(self._staged_target_ids)})",
-                id="evals-bench-targets-heading",
-                classes="destination-section evals-pane-title",
-            )
-        ]
+        heading = Static(
+            f"Targets ({len(self._staged_target_ids)})",
+            id="evals-bench-targets-heading",
+            classes="destination-section evals-pane-title",
+        )
+        body: list[Widget] = []
         if not self._staged_target_ids:
-            widgets.append(
+            body.append(
                 Static("No targets configured yet.", id="evals-bench-targets-empty")
             )
         else:
@@ -638,12 +696,12 @@ class BenchEditor(Vertical):
                 self._build_target_row(db, preflight, index, target_id)
                 for index, target_id in enumerate(self._staged_target_ids)
             ]
-            widgets.append(Vertical(*rows, id="evals-bench-target-table"))
+            body.append(Vertical(*rows, id="evals-bench-target-table"))
         add_control = self._build_target_add_control()
         if add_control is not None:
-            widgets.append(add_control)
-        widgets.append(self._build_create_target_control())
-        return widgets
+            body.append(add_control)
+        body.append(self._build_create_target_control())
+        return [heading, Vertical(*body, id="evals-bench-targets-body")]
 
     @staticmethod
     def _build_target_row(
