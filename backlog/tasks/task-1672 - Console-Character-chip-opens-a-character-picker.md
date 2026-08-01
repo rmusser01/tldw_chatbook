@@ -1,10 +1,11 @@
 ---
-id: task-1672
+id: TASK-1672
 title: 'Console Character chip opens a character picker'
 status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-31'
+updated_date: '2026-07-31'
 labels:
   - console
   - ux

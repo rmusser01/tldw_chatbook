@@ -5992,20 +5992,27 @@ class ChatScreen(BaseAppScreen):
             self._fetch_character_card_for_avatar, choice.character_id
         )
         if card is None:
-            self.app.notify(
-                f"Could not load {choice.name}.", severity="error"
-            )
+            self.app.notify(f"Could not load {choice.name}.", severity="error")
             return
         name, system_prompt, greeting = _character_session_prompt_seed(
             card, choice.name
         )
-        store = getattr(self.app_instance, "console_chat_store", None)
-        if store is None:
-            return
+        # cubic PR #1153 P1: the store lives on the SCREEN behind a lazy
+        # accessor -- `app_instance.console_chat_store` is always None, so
+        # the whole feature silently did nothing.
+        store = self._ensure_console_chat_store()
         if choice.placement == "new":
+            # cubic PR #1153 P1: the card's system prompt was computed and
+            # discarded, leaving the new chat on the default prompt. Mirror
+            # the Start-Chat path, which seeds it into the session settings.
+            settings = replace(
+                self._default_console_session_settings(),
+                system_prompt=system_prompt,
+            )
             session = store.create_session(
                 title=f"Chat with {name}",
                 workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
+                settings=settings,
                 runtime_backend="local",
                 assistant_kind="character",
                 assistant_id=str(choice.character_id),
@@ -6029,21 +6036,37 @@ class ChatScreen(BaseAppScreen):
             self.app.notify(f"Started a new chat with {name}.")
         else:
             if not self._swap_console_session_character(
-                store, choice.character_id, name, greeting
+                store, choice.character_id, name, system_prompt, greeting
             ):
                 return
             self.app.notify(f"This chat now uses {name}.")
-        self._sync_native_console_chat_ui()
+        # cubic PR #1153 P2: this refresher is async -- calling it without
+        # awaiting produced a never-run coroutine (and a RuntimeWarning).
+        await self._sync_native_console_chat_ui()
         await self._refresh_active_character_avatar_if_scope_changed()
 
     def _swap_console_session_character(
-        self, store: Any, character_id: int, name: str, greeting: str
+        self,
+        store: Any,
+        character_id: int,
+        name: str,
+        system_prompt: str,
+        greeting: str,
     ) -> bool:
         """Rebind the active session to ``character_id`` in place.
 
         The greeting is only seeded into an EMPTY chat (user decision,
         2026-07-31): interrupting a conversation in progress with a
         greeting reads as the model talking to itself.
+
+        Args:
+            store: The Console chat store.
+            character_id: The picked character's local id.
+            name: Display name for the session/chip.
+            system_prompt: The card's macro-resolved system prompt, which
+                must reach the session settings or the model keeps talking
+                as the previous character (cubic PR #1153 P1).
+            greeting: The card's greeting, seeded only into an empty chat.
 
         Returns:
             True when the active session was rebound.
@@ -6071,6 +6094,11 @@ class ChatScreen(BaseAppScreen):
                     "Character swap: could not set {}.", field
                 )
                 return False
+        current_settings = store.session_settings(session_id)
+        if current_settings is not None:
+            store.replace_session_settings(
+                session_id, replace(current_settings, system_prompt=system_prompt)
+            )
         if greeting and not store.messages_for_session(session_id):
             try:
                 store.append_message(
@@ -6082,6 +6110,18 @@ class ChatScreen(BaseAppScreen):
             except Exception:
                 logger.opt(exception=True).warning(
                     "Character swap: greeting seed failed; continuing."
+                )
+        # cubic PR #1153 P2: an already-saved conversation kept the old
+        # prompt after reload because the swap only touched memory.
+        conversation_id = getattr(session, "persisted_conversation_id", None)
+        if conversation_id:
+            try:
+                store.update_conversation_system_prompt(
+                    conversation_id=conversation_id, system_prompt=system_prompt
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Character swap: persisting the system prompt failed."
                 )
         return True
 

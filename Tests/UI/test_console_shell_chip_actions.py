@@ -85,25 +85,84 @@ def test_character_filter_blank_query_and_limit():
 
 
 @pytest.mark.unit
-def test_screen_handles_both_new_chip_messages():
-    """The screen must subscribe to the chips it now renders."""
-    import inspect
+def test_screen_subscribes_to_both_new_chip_messages():
+    """The screen must actually handle the messages the chips post.
 
-    from tldw_chatbook.UI.Screens import chat_screen
+    cubic PR #1153 P3: this previously asserted on ``inspect.getsource``
+    substrings, which break on any cosmetic reformat. Textual records
+    ``@on`` subscriptions on the handler itself, so assert the real
+    wiring: the handler exists and is registered for that message type.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-    src = inspect.getsource(chat_screen.ChatScreen)
-    assert "@on(ConsoleModelChip.OpenRequested)" in src
-    assert "@on(ConsoleAssistantChip.OpenRequested)" in src
-    # The model chip reuses the existing Alt+M opener rather than a fork.
-    assert "await self.action_open_console_model_popover()" in src
+    for handler_name, chip in (
+        ("_console_model_chip_activated", ConsoleModelChip),
+        ("_console_assistant_chip_activated", ConsoleAssistantChip),
+    ):
+        handler = getattr(ChatScreen, handler_name, None)
+        assert handler is not None, handler_name
+        handlers = getattr(handler, "_textual_on", None)
+        assert handlers, f"{handler_name} is not an @on handler"
+        assert any(
+            message_type is chip.OpenRequested for message_type, _ in handlers
+        ), f"{handler_name} does not subscribe to {chip.__name__}.OpenRequested"
 
 
 @pytest.mark.unit
 def test_swap_seeds_greeting_only_into_an_empty_chat():
-    """User decision: a greeting must not interrupt a live conversation."""
-    import inspect
+    """User decision: a greeting must not interrupt a live conversation.
 
-    from tldw_chatbook.UI.Screens import chat_screen
+    Drives the real method against a fake store rather than reading
+    source text (cubic PR #1153 P3).
+    """
+    from dataclasses import dataclass, replace as dc_replace
 
-    src = inspect.getsource(chat_screen.ChatScreen._swap_console_session_character)
-    assert "if greeting and not store.messages_for_session(session_id):" in src
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    @dataclass
+    class _Settings:
+        system_prompt: str = ""
+
+    class _Session:
+        def __init__(self) -> None:
+            self.id = "s1"
+            self.persisted_conversation_id = None
+
+    class _Store:
+        def __init__(self, messages):
+            self.active_session_id = "s1"
+            self._session = _Session()
+            self._messages = messages
+            self.appended = []
+            self.settings = _Settings()
+
+        def sessions(self):
+            return [self._session]
+
+        def session_settings(self, session_id):
+            return self.settings
+
+        def replace_session_settings(self, session_id, settings):
+            self.settings = settings
+
+        def messages_for_session(self, session_id):
+            return self._messages
+
+        def append_message(self, session_id, **kwargs):
+            self.appended.append(kwargs)
+
+    screen = ChatScreen.__new__(ChatScreen)
+
+    empty = _Store([])
+    assert ChatScreen._swap_console_session_character(
+        screen, empty, 7, "Lana", "SYS", "Hello!"
+    )
+    assert [a["content"] for a in empty.appended] == ["Hello!"]
+    assert empty.settings.system_prompt == "SYS"
+
+    busy = _Store(["an existing message"])
+    assert ChatScreen._swap_console_session_character(
+        screen, busy, 7, "Lana", "SYS", "Hello!"
+    )
+    assert busy.appended == [], "greeting must not interrupt a live chat"
+    assert busy.settings.system_prompt == "SYS", "prompt still applies"

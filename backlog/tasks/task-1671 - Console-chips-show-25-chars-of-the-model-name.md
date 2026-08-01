@@ -1,10 +1,11 @@
 ---
-id: task-1671
+id: TASK-1671
 title: 'Console chips show 25 chars of the model name'
 status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-31'
+updated_date: '2026-07-31'
 labels:
   - console
   - ux

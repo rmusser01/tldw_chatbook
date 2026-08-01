@@ -1,10 +1,11 @@
 ---
-id: task-1670
+id: TASK-1670
 title: 'Console Provider-Model chips open the model popover'
 status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-31'
+updated_date: '2026-07-31'
 labels:
   - console
   - ux

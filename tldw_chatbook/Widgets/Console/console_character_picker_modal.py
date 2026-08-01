@@ -65,14 +65,17 @@ def filter_character_options(
     Returns:
         Matching options, name-matches first, bounded by ``limit``.
     """
-    text = (query or "").strip().lower()
+    # casefold(), not lower(): full Unicode case folding so names like
+    # "STRASSE"/"Straße" match as documented (cubic PR #1153 P3).
+    text = (query or "").strip().casefold()
     if not text:
         return tuple(options[:limit])
-    primary = [o for o in options if text in o.name.lower()]
+    primary = [o for o in options if text in o.name.casefold()]
     secondary = [
         o
         for o in options
-        if text not in o.name.lower() and text in (o.description or "").lower()
+        if text not in o.name.casefold()
+        and text in (o.description or "").casefold()
     ]
     return tuple((primary + secondary)[:limit])
 
@@ -159,10 +162,14 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
             with placement:
                 yield Button("Swap in this chat", id="console-character-placement-swap")
                 yield Button("Start new chat", id="console-character-placement-new")
+            # markup=False: the hint interpolates a saved character name,
+            # and a name containing "[red]…" would restyle or raise
+            # (cubic PR #1153 P2).
             yield Static(
                 "Enter picks a character, then choose where it lands.",
                 id="console-character-picker-hint",
                 classes="console-character-picker-hint",
+                markup=False,
             )
 
     async def on_mount(self) -> None:
