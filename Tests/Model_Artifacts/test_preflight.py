@@ -69,16 +69,24 @@ async def test_preflight_aggregates_and_grants(tmp_path):
 
 @pytest.mark.asyncio
 async def test_preflight_counts_staged_credit(tmp_path):
-    """A partial fetch-state sidecar credits already_staged_bytes."""
+    """A partial fetch-state sidecar credits already_staged_bytes.
+
+    The staged file itself must actually exist with AT LEAST as many
+    bytes as the sidecar claims: credit is capped by the file's real
+    on-disk size, not just the sidecar's say-so (see the review finding
+    covered by test_preflight_stale_sidecar_credit_capped_by_actual_file_size)."""
     core = ModelArtifactService(tmp_path / "root")
     root = ArtifactRef("root-model", "r1", "int8")
     staged = Path(core.staging_path) / "managed" / "root-model" / "r1" / "int8"
     staged.mkdir(parents=True)
-    (staged / "fetch-state.json").write_text(
+    (staged / "model.onnx").write_bytes(b"m" * 500)
+    # Sidecar lives as a SIBLING of the payload directory (see
+    # acquisition.py's _fetch_sidecar_path), never a child of it.
+    (staged.parent / f"{staged.name}.fetch-state.json").write_text(
         json.dumps(
             {
                 "files": {
-                    "m.onnx": {
+                    "model.onnx": {
                         "etag": '"v1"',
                         "last_modified": None,
                         "bytes_done": 500,
@@ -227,17 +235,24 @@ async def test_preflight_clamps_oversized_staged_credit_to_entry_total(tmp_path)
 
     Regression test for the review finding: 999_999 claimed bytes_done for a
     2048-byte artifact must not inflate already_staged_bytes past the
-    entry's own total, and must not drive download_bytes negative.
+    entry's own total, and must not drive download_bytes negative. The
+    staged file is written at its full declared size (2048 bytes) so this
+    test still exercises the "declared total" clamp specifically, distinct
+    from the "actual on-disk size" clamp
+    (test_preflight_stale_sidecar_credit_capped_by_actual_file_size).
     """
     core = ModelArtifactService(tmp_path / "root")
     root = ArtifactRef("root-model", "r1", "int8")
     staged = Path(core.staging_path) / "managed" / "root-model" / "r1" / "int8"
     staged.mkdir(parents=True)
-    (staged / "fetch-state.json").write_text(
+    (staged / "model.onnx").write_bytes(b"m" * 2048)
+    # Sidecar lives as a SIBLING of the payload directory (see
+    # acquisition.py's _fetch_sidecar_path), never a child of it.
+    (staged.parent / f"{staged.name}.fetch-state.json").write_text(
         json.dumps(
             {
                 "files": {
-                    "m.onnx": {
+                    "model.onnx": {
                         "etag": '"v1"',
                         "last_modified": None,
                         "bytes_done": 999_999,
@@ -263,6 +278,61 @@ async def test_preflight_clamps_oversized_staged_credit_to_entry_total(tmp_path)
         report = await svc.preflight(root, catalog)
     assert report.already_staged_bytes == 2048
     assert report.download_bytes == 0
+
+
+@pytest.mark.asyncio
+async def test_preflight_stale_sidecar_credit_capped_by_actual_file_size(tmp_path):
+    """A sidecar claiming more bytes than are ACTUALLY on disk right now
+    must not inflate already_staged_bytes past what could genuinely be
+    resumed -- the declared-size clamp alone (the previous behavior)
+    doesn't catch this: 5000 is already less than nothing here, so it
+    passed the OLD "cap by declared total" check unchanged, yet the
+    staged FILE itself holds only 100 bytes. Preflight's space math must
+    trust the smaller, real number, or it can approve an acquisition that
+    then runs out of space because the "already staged" credit was
+    phantom.
+
+    Regression test for the review finding: cap each file's credit by
+    ``min(recorded bytes_done, actual file size on disk, declared file
+    size)``.
+    """
+    core = ModelArtifactService(tmp_path / "root")
+    root = ArtifactRef("root-model", "r1", "int8")
+    staged = Path(core.staging_path) / "managed" / "root-model" / "r1" / "int8"
+    staged.mkdir(parents=True)
+    (staged / "model.onnx").write_bytes(b"m" * 100)  # only 100 bytes ACTUALLY staged
+    # Sidecar lives as a SIBLING of the payload directory (see
+    # acquisition.py's _fetch_sidecar_path), never a child of it.
+    (staged.parent / f"{staged.name}.fetch-state.json").write_text(
+        json.dumps(
+            {
+                "files": {
+                    "model.onnx": {
+                        "etag": '"v1"',
+                        "last_modified": None,
+                        "bytes_done": 5000,  # claims far more than exists
+                        "complete": False,
+                    }
+                }
+            }
+        )
+    )
+    with FixtureArtifactServer() as srv:
+        svc = ArtifactAcquisitionService(
+            core, free_bytes_probe=lambda p: 10**12, trusted_origins=_trusted(srv)
+        )
+        body = b"m" * 2048
+        srv.serve("/m.onnx", body)
+        catalog = DictCatalog(
+            {
+                root: make_descriptor(
+                    ref=root, files_body=body, source_url=srv.url("/m.onnx")
+                )
+            }
+        )
+        report = await svc.preflight(root, catalog)
+    assert report.already_staged_bytes == 100
+    assert report.download_bytes == 2048 - 100
 
 
 def _two_file_descriptor(ref: ArtifactRef) -> ArtifactDescriptor:

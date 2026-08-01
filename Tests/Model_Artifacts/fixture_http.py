@@ -21,6 +21,8 @@ class _Route:
     pause_after: int | None = None
     pause_event: threading.Event | None = None
     redirect_to: str | None = None
+    omit_content_range: bool = False
+    bad_range_start: int | None = None
 
 
 class FixtureArtifactServer:
@@ -108,6 +110,22 @@ class FixtureArtifactServer:
                     self.send_header("Last-Modified", route.last_modified)
                 if route.support_range:
                     self.send_header("Accept-Ranges", "bytes")
+                if status == 206 and not route.omit_content_range:
+                    # RFC 9110 14.4: a compliant 206 always carries
+                    # Content-Range so the client can confirm where the
+                    # body actually starts -- reported_start defaults to
+                    # the REAL slice offset, but a route can override it
+                    # (bad_range_start) to simulate a server that lies.
+                    reported_start = (
+                        route.bad_range_start
+                        if route.bad_range_start is not None
+                        else start
+                    )
+                    total = len(route.body)
+                    end = reported_start + len(body) - 1 if body else reported_start
+                    self.send_header(
+                        "Content-Range", f"bytes {reported_start}-{end}/{total}"
+                    )
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 if head_only:
@@ -152,6 +170,8 @@ class FixtureArtifactServer:
         pause_after: int | None = None,
         pause_event: threading.Event | None = None,
         redirect_to: str | None = None,
+        omit_content_range: bool = False,
+        bad_range_start: int | None = None,
     ) -> None:
         """Register (or replace) a route this server responds to.
 
@@ -188,6 +208,15 @@ class FixtureArtifactServer:
                 ``.url(...)``, to model a cross-origin hand-off (e.g. an
                 authenticated repository redirecting to an unauthenticated
                 CDN URL on a different port/origin).
+            omit_content_range: If set, a 206 response omits ``Content-
+                Range`` entirely -- simulates a non-compliant server so a
+                caller can prove a missing header is rejected, not treated
+                as an implicit match.
+            bad_range_start: If set, a 206 response's ``Content-Range``
+                header reports THIS start offset instead of the real slice
+                offset the ``Range`` request produced -- simulates a
+                server whose header disagrees with where the body (as
+                received) actually starts.
         """
         if etag and weak_etag:
             etag = f"W/{etag}"
@@ -202,6 +231,8 @@ class FixtureArtifactServer:
             pause_after=pause_after,
             pause_event=pause_event,
             redirect_to=redirect_to,
+            omit_content_range=omit_content_range,
+            bad_range_start=bad_range_start,
         )
 
     def url(self, path: str) -> str:

@@ -43,6 +43,7 @@ from .service import (
     ArtifactConflictError,
     ArtifactError,
     ArtifactIntegrityError,
+    ArtifactPathError,
     ArtifactRef,
     ArtifactStateError,
     closure_fingerprint,
@@ -74,6 +75,41 @@ _CoreCallResult = TypeVar("_CoreCallResult")
 # precedence EnvConfigCredentialResolver (below) actually implements against
 # these same names: HUGGINGFACE_API_KEY, then HF_TOKEN, then config.
 _CREDENTIAL_ENV_HINT = "HUGGINGFACE_API_KEY (or HF_TOKEN)"
+
+# The fetch-state sidecar's filename SUFFIX when addressed as a sibling of
+# its staging directory (see _fetch_sidecar_path). Mirrors
+# service.py's _MANAGED_FETCH_SIDECAR_SUFFIX (private there, used by the
+# staging GC classifier) -- a drift-guard test in
+# test_reconcile_staging_gc.py fails if the two ever diverge, the same
+# pattern fetch.py's _STRIP_HEADERS uses against egress.py's.
+_FETCH_SIDECAR_SUFFIX = ".fetch-state.json"
+
+
+def _fetch_sidecar_path(staging_dir: Path) -> Path:
+    """Sibling fetch-state sidecar path for a managed staging directory.
+
+    TASK-595 final-review P2: the sidecar used to live INSIDE the payload
+    directory it describes (``staging_dir / "fetch-state.json"``) --
+    ``core.install``'s payload-tree validation rejects any file it
+    doesn't declare, so ``_install_artifact`` had to delete the sidecar
+    before every install attempt, destroying the only resumable state on
+    ANY install failure (including a merely transient, retryable one).
+    Living OUTSIDE the payload tree instead -- a sibling FILE named after
+    the staging directory, not a child of it -- means ``core.install``
+    never sees it at all, so nothing needs deleting before the call, and
+    a failed install leaves the sidecar (and the staged bytes it
+    describes) exactly where a later ``provision()`` attempt can resume
+    from.
+
+    Args:
+        staging_dir: The ``staging/managed/<id>/<rev>/<variant>`` payload
+            directory for one artifact.
+
+    Returns:
+        The sidecar path, a sibling of ``staging_dir`` (same parent
+        directory, name ``<variant>.fetch-state.json``).
+    """
+    return staging_dir.parent / f"{staging_dir.name}{_FETCH_SIDECAR_SUFFIX}"
 
 
 # Error hierarchy: all subclass ArtifactError
@@ -661,7 +697,11 @@ class ArtifactAcquisitionService:
                 # Clamp per entry: a stale/corrupt sidecar claiming more
                 # bytes than this artifact's own declared total must not
                 # inflate the credit shown on the consent screen.
-                staged = min(self._staged_bytes_for(ref), entry.total_bytes)
+                # ``_staged_bytes_for`` already caps each FILE's own credit
+                # by its actual on-disk size (not just the declared size),
+                # but this outer clamp against the entry's aggregate total
+                # stays as defense-in-depth.
+                staged = min(self._staged_bytes_for(descriptor), entry.total_bytes)
                 already_staged_bytes += staged
                 # Floored PER ENTRY (max(total-staged,0) here, not summed
                 # totals minus summed staged then floored once at the end)
@@ -952,7 +992,7 @@ class ArtifactAcquisitionService:
         _require_single_file(descriptor)
 
         staging_dir.mkdir(parents=True, exist_ok=True)
-        sidecar_path = staging_dir / "fetch-state.json"
+        sidecar_path = _fetch_sidecar_path(staging_dir)
         sidecar = self._load_fetch_sidecar(sidecar_path)
 
         client = self._client_factory() if self._client_factory is not None else None
@@ -1109,6 +1149,21 @@ class ArtifactAcquisitionService:
         )
 
         recorded_done = self._reconcile_durable_bytes(destination, recorded_done)
+
+        # A checkpoint from a PRIOR provision() run can exceed the file's
+        # CURRENT declared size if the catalog's declared size for this
+        # artifact/revision/variant shrank between runs (a corrected or
+        # re-cut upstream entry) -- reconciliation above only cross-checks
+        # recorded_done against the file's ACTUAL on-disk bytes, never
+        # against file.size_bytes. Left unchecked, this becomes
+        # resume_from >= max_bytes inside stream_fetch, which raises
+        # FetchTooLargeError -- wrongly surfaced as a non-retryable
+        # "upstream body exceeds declared size" failure for what is really
+        # just a stale, over-large checkpoint. Normalizing to zero here
+        # restarts the file cleanly instead: stream_fetch's mode="wb" path
+        # (resume_from == 0) truncates whatever stale bytes are on disk.
+        if recorded_done > file.size_bytes:
+            recorded_done = 0
 
         if recorded_done == file.size_bytes:
             # Reconciliation already confirms the on-disk file is exactly
@@ -1330,10 +1385,16 @@ class ArtifactAcquisitionService:
         """
 
         destination = staging_dir / file.path
-        sidecar_path = staging_dir / "fetch-state.json"
+        sidecar_path = _fetch_sidecar_path(staging_dir)
         attempts_used = 0
+        loop = asyncio.get_running_loop()
         while True:
-            digest = self._hash_staged_file(destination, descriptor, file, progress_state)
+            digest = await loop.run_in_executor(
+                None,
+                functools.partial(
+                    self._hash_staged_file, destination, descriptor, file, progress_state, loop
+                ),
+            )
             if digest == file.sha256:
                 return
             if attempts_used >= MAX_FILE_REFETCHES:
@@ -1358,8 +1419,33 @@ class ArtifactAcquisitionService:
         descriptor: ArtifactDescriptor,
         file: ArtifactFile,
         progress_state: _ProvisionProgressState,
+        loop: asyncio.AbstractEventLoop,
     ) -> str:
         """Stream one staged file's SHA-256, reporting real byte progress.
+
+        Runs entirely off the event loop: ``_preverify_one_file`` invokes
+        this via ``loop.run_in_executor``, never directly from an async
+        context. Hashing a staged file synchronously inside a coroutine
+        would block every other coroutine (including any other artifact's
+        fetch/pre-verify progress, and any UI event loop this service
+        shares) for as long as a multi-gigabyte file takes to read and
+        digest -- there is no ``await`` anywhere in a tight
+        ``hashlib.sha256().update()`` loop to yield control back.
+
+        Progress-callback invocation is marshalled back onto ``loop`` via
+        ``call_soon_threadsafe`` rather than called directly from this
+        (executor) thread: ``progress_state.callback`` is caller-supplied
+        and may update UI state that, per this codebase's threading
+        convention (``CLAUDE.md``'s "Background Work" pattern -- workers
+        call back via ``call_from_thread``, never directly), must only
+        ever be touched from the event-loop thread. ``call_soon_threadsafe``
+        is the non-Textual-specific equivalent: it schedules the callback
+        to run on ``loop`` without blocking this thread's chunk-read loop
+        waiting for it. Byte counters on ``progress_state`` are still
+        updated directly from this thread -- safe because
+        ``_preverify_artifact`` processes one file at a time, so only one
+        executor call is ever hashing at once; no concurrent writer exists
+        to race against.
 
         A zero-byte declared file (Task 7 guarantees the destination exists
         even then) reads zero chunks and hashes to the empty digest --
@@ -1374,6 +1460,8 @@ class ArtifactAcquisitionService:
                 ``file`` and to size chunk reads.
             progress_state: Closure-wide progress accounting to read and
                 update as bytes are hashed.
+            loop: The event loop ``progress_state.callback`` must be
+                invoked on.
 
         Returns:
             The lowercase hex SHA-256 digest of the file's current content.
@@ -1385,15 +1473,14 @@ class ArtifactAcquisitionService:
                 digest.update(chunk)
                 progress_state.preverify_bytes_done += len(chunk)
                 if progress_state.callback is not None:
-                    progress_state.callback(
-                        AcquisitionProgress(
-                            phase="pre-verify",
-                            ref=descriptor.reference,
-                            file=file.path,
-                            bytes_done=progress_state.preverify_bytes_done,
-                            bytes_total=progress_state.preverify_bytes_total,
-                        )
+                    event = AcquisitionProgress(
+                        phase="pre-verify",
+                        ref=descriptor.reference,
+                        file=file.path,
+                        bytes_done=progress_state.preverify_bytes_done,
+                        bytes_total=progress_state.preverify_bytes_total,
                     )
+                    loop.call_soon_threadsafe(progress_state.callback, event)
         return digest.hexdigest()
 
     async def _install_artifact(
@@ -1403,25 +1490,31 @@ class ArtifactAcquisitionService:
     ) -> None:
         """Promote one pre-verified staged directory into the immutable store.
 
-        The fetch-state sidecar is removed BEFORE calling ``core.install``,
-        not after: ``install``'s payload-tree validation requires the
-        source directory to contain EXACTLY the descriptor's declared
-        files, and ``fetch-state.json`` is an acquisition-owned file the
-        core knows nothing about -- leaving it in place would make every
-        install fail with "source contains an undeclared file". Once
-        pre-verify has confirmed every staged file's content, the sidecar's
-        resume checkpoints have already served their purpose.
+        The fetch-state sidecar lives OUTSIDE ``staging_dir`` (see
+        ``_fetch_sidecar_path``) -- a SIBLING file, never a child of the
+        payload directory ``core.install`` validates -- so it is left
+        completely untouched here until AFTER a successful install. This
+        is deliberately NOT the same as the earlier design, which deleted
+        an in-tree sidecar before every attempt (required then, since
+        ``install``'s payload-tree validation rejects any file it doesn't
+        declare): that pre-deletion destroyed the only resumable state on
+        ANY install failure, including a merely transient, retryable one
+        -- a "retryable" error that also destroys what it would resume
+        from is not actually retryable. With the sidecar out of the
+        payload tree, ``core.install`` never even sees it, so a failed
+        attempt leaves both the sidecar and the staged bytes it describes
+        exactly where a later ``provision()`` call can resume from.
 
         ``core.install(..., consume_source=True)`` is synchronous core
         surface (file moves, lease acquisition, manifest writes), so it
         runs in the default executor like every other core call this
         service makes. On success, ``consume_source`` has moved every
-        declared file out of ``staging_dir`` into the immutable store; the
-        now-empty (files and sidecar both gone) directory tree is removed
-        so a later ``reconcile()`` staging GC sees nothing left to
-        classify for this artifact -- an empty leftover directory with no
-        sidecar would otherwise look identical to an abandoned partial
-        download.
+        declared file out of ``staging_dir`` into the immutable store;
+        the now-empty directory tree AND its sibling sidecar are both
+        removed so a later ``reconcile()`` staging GC sees nothing left
+        to classify for this artifact -- an empty leftover directory (or
+        a stale sidecar with no matching payload) would otherwise look
+        identical to an abandoned partial download.
 
         Args:
             descriptor: The artifact to install.
@@ -1430,21 +1523,20 @@ class ArtifactAcquisitionService:
 
         Raises:
             TransferError: ``core.install`` raised ``ArtifactIntegrityError``,
-                ``ArtifactConflictError``, or ``ArtifactStateError`` --
-                wrapped by ``_run_core_call`` with ``retryable`` set
-                accordingly (see there). Only a SUCCESSFUL install triggers
-                the ``staging_dir`` cleanup above -- on failure it is left
-                in place (though ``consume_source`` may already have moved
-                its declared files into the core's own, separately-cleaned-
-                up staging by the time the failure surfaces, so an empty
-                leftover directory is not itself proof anything is wrong).
+                ``ArtifactConflictError``, ``ArtifactPathError``, or
+                ``ArtifactStateError`` -- wrapped by ``_run_core_call``
+                with ``retryable`` set accordingly (see there). Only a
+                SUCCESSFUL install triggers the ``staging_dir``/sidecar
+                cleanup above -- on failure both are left in place (though
+                ``consume_source`` may already have moved the payload's
+                declared files into the core's own, separately-cleaned-up
+                staging by the time the failure surfaces, so an empty
+                leftover payload directory is not itself proof anything
+                is wrong; the sidecar's checkpoint is what a resumed
+                fetch actually trusts).
         """
 
-        sidecar_path = staging_dir / "fetch-state.json"
-        try:
-            sidecar_path.unlink()
-        except FileNotFoundError:
-            pass
+        sidecar_path = _fetch_sidecar_path(staging_dir)
 
         await self._run_core_call(
             "install",
@@ -1454,6 +1546,14 @@ class ArtifactAcquisitionService:
             ),
         )
 
+        # Only reached on a SUCCESSFUL install -- both the (now-consumed)
+        # payload directory and its sibling sidecar are cleaned up
+        # together; a failure raised above skips this entirely, leaving
+        # both in place for a resumed provision() attempt.
+        try:
+            sidecar_path.unlink()
+        except FileNotFoundError:
+            pass
         shutil.rmtree(staging_dir, ignore_errors=True)
 
     async def _run_core_call(
@@ -1467,12 +1567,13 @@ class ArtifactAcquisitionService:
         ``core.install`` and ``core.activate`` are the two core entry
         points this service reaches via a bare executor hop; both can raise
         the core's own ``ArtifactError`` subclasses (integrity, conflict,
-        or lease/state contention), which would otherwise escape
-        ``provision()`` untouched -- breaking the spec's never-trap rule
-        that every acquisition-surfaced failure is a typed, retryable-
-        flagged ``AcquisitionError``. ``ArtifactIntegrityError`` and
-        ``ArtifactConflictError`` are not retryable: the same staged
-        content, or the same conflicting destination, would fail again.
+        path safety, or lease/state contention), which would otherwise
+        escape ``provision()`` untouched -- breaking the spec's never-trap
+        rule that every acquisition-surfaced failure is a typed, retryable-
+        flagged ``AcquisitionError``. ``ArtifactIntegrityError``,
+        ``ArtifactConflictError``, and ``ArtifactPathError`` are not
+        retryable: the same staged content, the same conflicting
+        destination, or the same unsafe/invalid path would fail again.
         ``ArtifactStateError`` (and its subclasses, e.g.
         ``ArtifactInUseError`` -- lease-timeout/contention style failures)
         is retryable: a later attempt may find the contended resource free.
@@ -1491,14 +1592,14 @@ class ArtifactAcquisitionService:
 
         Raises:
             TransferError: ``func`` raised ``ArtifactIntegrityError``,
-                ``ArtifactConflictError``, or ``ArtifactStateError`` (or a
-                subclass of any of these).
+                ``ArtifactConflictError``, ``ArtifactPathError``, or
+                ``ArtifactStateError`` (or a subclass of any of these).
         """
 
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(None, func)
-        except (ArtifactIntegrityError, ArtifactConflictError) as exc:
+        except (ArtifactIntegrityError, ArtifactConflictError, ArtifactPathError) as exc:
             raise TransferError(
                 f"{operation} failed for {ref.artifact_id}@{ref.revision}: {exc}",
                 retryable=False,
@@ -1535,7 +1636,7 @@ class ArtifactAcquisitionService:
                 )
             )
 
-    def _staged_bytes_for(self, ref: ArtifactRef) -> int:
+    def _staged_bytes_for(self, descriptor: ArtifactDescriptor) -> int:
         """Best-effort resumable-byte credit from a fetch-state sidecar.
 
         A missing or unparseable sidecar reads as zero credit: staged bytes
@@ -1543,20 +1644,33 @@ class ArtifactAcquisitionService:
         already fetched") -- ``provision()`` independently re-validates
         against the server's current validators before trusting any of it.
 
+        Each declared file's credit is capped by THREE independent limits:
+        the sidecar's own recorded ``bytes_done``, the file's declared
+        size, and -- the gap this closes -- the file's ACTUAL size on disk
+        right now. Capping by the declared size alone (the previous
+        behavior) still let a stale or hand-corrupted sidecar claim bytes
+        for a file that was truncated, never written, or removed out from
+        under it, inflating the credit preflight uses to decide whether
+        there's enough free space for the REMAINING download -- a report
+        computed against phantom credit can approve an acquisition that
+        then runs out of space partway through. A sidecar entry naming a
+        file this descriptor doesn't actually declare is ignored outright,
+        not just uncapped: crediting it at all would credit bytes for
+        something ``provision()`` will never look at.
+
         Args:
-            ref: The artifact reference whose staging directory to inspect.
+            descriptor: The artifact descriptor whose staging directory and
+                declared files to inspect.
 
         Returns:
-            The sum of ``bytes_done`` across every file in the sidecar, or 0.
+            The sum of capped per-file credit, or 0 for a missing or
+            unparseable sidecar.
         """
-        sidecar = (
-            self._core.staging_path
-            / "managed"
-            / ref.artifact_id
-            / ref.revision
-            / ref.variant
-            / "fetch-state.json"
+        ref = descriptor.reference
+        staging_dir = (
+            self._core.staging_path / "managed" / ref.artifact_id / ref.revision / ref.variant
         )
+        sidecar = _fetch_sidecar_path(staging_dir)
         try:
             payload = json.loads(sidecar.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -1564,13 +1678,25 @@ class ArtifactAcquisitionService:
         files = payload.get("files") if isinstance(payload, dict) else None
         if not isinstance(files, dict):
             return 0
+        declared_sizes = {file.path: file.size_bytes for file in descriptor.files}
         total = 0
-        for info in files.values():
+        for file_path, info in files.items():
+            if file_path not in declared_sizes:
+                continue
             if not isinstance(info, dict):
                 continue
             bytes_done = info.get("bytes_done")
-            if isinstance(bytes_done, int) and not isinstance(bytes_done, bool) and bytes_done >= 0:
-                total += bytes_done
+            if not (
+                isinstance(bytes_done, int)
+                and not isinstance(bytes_done, bool)
+                and bytes_done >= 0
+            ):
+                continue
+            try:
+                actual_size = (staging_dir / file_path).stat().st_size
+            except OSError:
+                actual_size = 0
+            total += min(bytes_done, actual_size, declared_sizes[file_path])
         return total
 
     async def _probe_gating(self, targets: Iterable[ArtifactPreflightEntry]) -> list[str]:

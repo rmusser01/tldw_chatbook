@@ -196,6 +196,75 @@ async def test_changed_last_modified_non_compliant_server_raises_restart(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_missing_etag_on_resume_raises_restart_without_append(tmp_path):
+    """A 206 that OMITS ETag entirely must not be accepted as matching a
+    saved strong ETag -- a missing validator is treated as a mismatch, not
+    as "no information, assume it's fine". ``ignore_if_range=True`` models
+    a non-compliant server that honors ``Range`` unconditionally (206)
+    even though its route serves no ``ETag`` header at all (this is the
+    only way to force the fixture to answer 206 while the response itself
+    carries no ETag -- see FixtureArtifactServer.serve's ``ignore_if_range``
+    docstring)."""
+    with FixtureArtifactServer() as srv:
+        srv.serve("/f.bin", BODY, etag=None, ignore_if_range=True)
+        dest = tmp_path / "f.bin"
+        seed = BODY[:100]
+        dest.write_bytes(seed)
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(FetchRestartRequired):
+                await stream_fetch(
+                    srv.url("/f.bin"), dest, client=client, max_bytes=len(BODY),
+                    resume_from=100,
+                    validators=FetchValidators(etag='"v1"', last_modified=None),
+                    trusted_origins=_trusted(srv),
+                )
+    assert dest.read_bytes() == seed
+
+
+@pytest.mark.asyncio
+async def test_content_range_start_mismatch_raises_restart_without_append(tmp_path):
+    """A 206 alone does not prove the body starts at ``resume_from`` --
+    only ``Content-Range`` does. A server whose ``Content-Range`` header
+    reports a DIFFERENT start than the ``Range`` request asked for must be
+    rejected before the destination is ever opened for append."""
+    with FixtureArtifactServer() as srv:
+        srv.serve("/f.bin", BODY, bad_range_start=999)
+        dest = tmp_path / "f.bin"
+        seed = BODY[:100]
+        dest.write_bytes(seed)
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(FetchRestartRequired):
+                await stream_fetch(
+                    srv.url("/f.bin"), dest, client=client, max_bytes=len(BODY),
+                    resume_from=100,
+                    validators=FetchValidators(etag='"v1"', last_modified=None),
+                    trusted_origins=_trusted(srv),
+                )
+    assert dest.read_bytes() == seed
+
+
+@pytest.mark.asyncio
+async def test_missing_content_range_on_resume_raises_restart_without_append(tmp_path):
+    """A non-compliant server that answers 206 without ANY Content-Range
+    header at all must be rejected the same way as a mismatched one --
+    there is no header to trust, so resuming must not be assumed safe."""
+    with FixtureArtifactServer() as srv:
+        srv.serve("/f.bin", BODY, omit_content_range=True)
+        dest = tmp_path / "f.bin"
+        seed = BODY[:100]
+        dest.write_bytes(seed)
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(FetchRestartRequired):
+                await stream_fetch(
+                    srv.url("/f.bin"), dest, client=client, max_bytes=len(BODY),
+                    resume_from=100,
+                    validators=FetchValidators(etag='"v1"', last_modified=None),
+                    trusted_origins=_trusted(srv),
+                )
+    assert dest.read_bytes() == seed
+
+
+@pytest.mark.asyncio
 async def test_max_bytes_bounds_final_size(tmp_path):
     with FixtureArtifactServer() as srv:
         srv.serve("/f.bin", BODY)

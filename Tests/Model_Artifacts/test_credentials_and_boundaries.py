@@ -171,8 +171,10 @@ async def test_gated_repo_with_resolver_provisions_and_never_leaks_token(tmp_pat
 
     # 3. The fetch-state sidecar specifically no longer exists (install()
     #    removes it), which the tree scan above already covers, but assert
-    #    it explicitly as the most direct claim the brief asks for.
-    sidecar_path = root_dir / "staging" / "managed" / "gated-model" / "r1" / "int8" / "fetch-state.json"
+    #    it explicitly as the most direct claim the brief asks for. Lives
+    #    as a SIBLING of the payload directory, never a child of it (see
+    #    acquisition.py's _fetch_sidecar_path).
+    sidecar_path = root_dir / "staging" / "managed" / "gated-model" / "r1" / "int8.fetch-state.json"
     assert not sidecar_path.exists()
 
 
@@ -224,6 +226,58 @@ async def test_cross_origin_redirect_strips_authorization_but_body_still_downloa
         assert b_requests, "the redirect target must have been reached at all"
         assert all("Authorization" not in headers for headers in b_requests), (
             "the credential must NOT have crossed the origin boundary"
+        )
+
+
+@pytest.mark.asyncio
+async def test_cross_origin_redirect_strips_client_level_default_authorization(tmp_path):
+    """Same hand-off as the per-call-header test above, but the credential
+    is attached as a CLIENT-LEVEL default header
+    (``httpx.AsyncClient(headers={"Authorization": ...})``), which a caller
+    who reuses one client across many requests (a repository's own bearer
+    token, say) may reasonably do instead of passing it per call.
+
+    ``stream_fetch``'s own ``send_headers`` stripping only ever sees the
+    per-call ``headers=`` argument it built itself -- httpx merges a
+    client's default headers onto the request during ``send()``, AFTER
+    that per-call dict was stripped, so a client-level credential was
+    previously invisible to the cross-origin strip and reached origin B
+    verbatim. Regression test for that gap.
+    """
+    body = b"cross-origin-body-bytes-" * 300  # 7200 bytes
+    with FixtureArtifactServer() as origin_a, FixtureArtifactServer() as origin_b:
+        origin_b.serve("/final.bin", body)
+        origin_a.serve(
+            "/gated.bin",
+            b"",  # never served -- redirect_to short-circuits before the body
+            require_token=TOKEN,
+            redirect_to=origin_b.url("/final.bin"),
+        )
+
+        dest = tmp_path / "f.bin"
+        async with httpx.AsyncClient(
+            headers={"Authorization": f"Bearer {TOKEN}"}
+        ) as client:
+            result = await stream_fetch(
+                origin_a.url("/gated.bin"),
+                dest,
+                client=client,
+                max_bytes=len(body) + 10,
+                trusted_origins=_trusted(origin_a),
+            )
+
+        assert dest.read_bytes() == body
+        assert result.bytes_written == len(body)
+
+        a_requests = origin_a.requests["/gated.bin"]
+        assert any(headers.get("Authorization") == f"Bearer {TOKEN}" for headers in a_requests), (
+            "the authenticated redirect origin must have SEEN the client-level credential"
+        )
+
+        b_requests = origin_b.requests["/final.bin"]
+        assert b_requests, "the redirect target must have been reached at all"
+        assert all("Authorization" not in headers for headers in b_requests), (
+            "the client-level credential must NOT have crossed the origin boundary"
         )
 
 

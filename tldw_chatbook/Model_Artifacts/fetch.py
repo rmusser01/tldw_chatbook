@@ -8,6 +8,7 @@ by acquisition, NOT this module.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
@@ -72,6 +73,37 @@ def _same_origin(a: httpx.URL, b: httpx.URL) -> bool:
     return (a.scheme, a.host, a.port) == (b.scheme, b.host, b.port)
 
 
+# ``Content-Range: bytes <start>-<end>/<total>`` (RFC 9110 14.4) or a
+# ``*``-total variant (``bytes <start>-<end>/*``); ``total`` is optional to
+# capture for callers that don't need it.
+_CONTENT_RANGE_RE = re.compile(r"^bytes (\d+)-(\d+)/(\d+|\*)$")
+
+
+def _parse_content_range_start(header_value: str | None) -> int | None:
+    """Extract the START byte offset from a ``Content-Range`` header.
+
+    A 206 response alone does not prove the body actually starts at the
+    ``Range`` request's offset -- only ``Content-Range`` does, and only when
+    it parses. Anything else (missing header, unparseable value) must be
+    treated by the caller as "cannot be trusted", never as "assume it's
+    fine".
+
+    Args:
+        header_value: The raw ``Content-Range`` header value, or ``None``
+            when the header was absent.
+
+    Returns:
+        The parsed start offset, or ``None`` when the header is missing or
+        does not match the expected ``bytes <start>-<end>/<total>`` shape.
+    """
+    if not header_value:
+        return None
+    match = _CONTENT_RANGE_RE.match(header_value.strip())
+    if not match:
+        return None
+    return int(match.group(1))
+
+
 async def stream_fetch(
     url: str,
     destination: Path,
@@ -134,65 +166,101 @@ async def stream_fetch(
     written = 0
     for _hop in range(MAX_REDIRECT_HOPS + 1):
         await check_url_or_raise_async(str(current), trusted_origins=trusted_origins)
+        is_same_origin = _same_origin(origin, current)
         send_headers = dict(request_headers)
-        if not _same_origin(origin, current):
+        if not is_same_origin:
             for name in list(send_headers):
                 if name.lower() in _STRIP_HEADERS:
                     del send_headers[name]
+        # Built explicitly (not passed straight to client.stream/client.get)
+        # so cross-origin credential stripping can also reach headers the
+        # CALLER attached at the client-construction level (e.g.
+        # httpx.AsyncClient(headers={"Authorization": ...})) -- httpx merges
+        # those client-default headers onto the request during send, AFTER
+        # send_headers above was already stripped, so send_headers alone
+        # never sees them. Mirrors egress.py's guarded_fetch_httpx_async.
+        request = client.build_request("GET", current, headers=send_headers)
+        if not is_same_origin:
+            for _h in _STRIP_HEADERS:
+                request.headers.pop(_h, None)
         try:
-            async with client.stream(
-                "GET", current, headers=send_headers, follow_redirects=False
-            ) as response:
-                if response.status_code in (301, 302, 303, 307, 308):
-                    location = response.headers.get("location")
-                    if not location:
-                        raise FetchTransportError("redirect without location")
-                    current = current.join(location)
-                    continue
-                if resume_from and response.status_code != 206:
-                    # Server ignored Range (200 full body / no support).
-                    raise FetchRestartRequired("server did not honor Range")
-                if response.status_code == 401 or response.status_code == 403:
-                    raise FetchTransportError(f"HTTP {response.status_code}")
-                if response.status_code >= 400:
-                    raise FetchTransportError(f"HTTP {response.status_code}")
-                got = FetchValidators(
-                    etag=response.headers.get("etag"),
-                    last_modified=response.headers.get("last-modified"),
-                )
-                if resume_from and validators and validators.etag and got.etag:
-                    if got.etag != validators.etag:
-                        raise FetchRestartRequired("validators changed upstream")
-                if (
-                    resume_from
-                    and validators
-                    and not validators.etag
-                    and validators.last_modified
-                    and got.last_modified
-                    and got.last_modified != validators.last_modified
-                ):
-                    # Symmetric to the ETag check above, and NOT redundant
-                    # with the earlier status-code check: that check only
-                    # catches a server that answers a stale If-Range with a
-                    # full 200. A server that IGNORES If-Range entirely (a
-                    # real and, for date-based conditionals specifically,
-                    # under-implemented failure mode -- If-Range is far more
-                    # commonly wired up for ETags than for Last-Modified)
-                    # still answers 206, and would otherwise have its
-                    # mismatched bytes appended with no detection at all.
-                    raise FetchRestartRequired("validators changed upstream")
-                mode = "ab" if resume_from else "wb"
-                with open(destination, mode) as fh:
-                    async for chunk in response.aiter_bytes(_CHUNK_BYTES):
-                        if resume_from + written + len(chunk) > max_bytes:
-                            raise FetchTooLargeError("byte bound exceeded")
-                        fh.write(chunk)
-                        written += len(chunk)
-                        if on_chunk:
-                            on_chunk(len(chunk))
-                    fh.flush()
-                    os.fsync(fh.fileno())
-                return FetchResult(written, got, resumed=bool(resume_from))
+            response = await client.send(request, stream=True, follow_redirects=False)
         except httpx.HTTPError as exc:
             raise FetchTransportError(type(exc).__name__) from exc
+        try:
+            if response.status_code in (301, 302, 303, 307, 308):
+                location = response.headers.get("location")
+                if not location:
+                    raise FetchTransportError("redirect without location")
+                current = current.join(location)
+                continue
+            if resume_from and response.status_code != 206:
+                # Server ignored Range (200 full body / no support).
+                raise FetchRestartRequired("server did not honor Range")
+            if response.status_code == 401 or response.status_code == 403:
+                raise FetchTransportError(f"HTTP {response.status_code}")
+            if response.status_code >= 400:
+                raise FetchTransportError(f"HTTP {response.status_code}")
+            got = FetchValidators(
+                etag=response.headers.get("etag"),
+                last_modified=response.headers.get("last-modified"),
+            )
+            if resume_from and validators and validators.etag:
+                # A missing ETag on the resumed response is NOT "no
+                # information" -- it is treated as a mismatch. Accepting it
+                # as a match would let a 206 that simply omits the header
+                # (a real, under-implemented server behavior, not just a
+                # theoretical one) get silently appended to stale on-disk
+                # bytes fetched under a DIFFERENT resource version.
+                if not got.etag or got.etag != validators.etag:
+                    raise FetchRestartRequired("validators changed upstream")
+            if (
+                resume_from
+                and validators
+                and not validators.etag
+                and validators.last_modified
+                and got.last_modified
+                and got.last_modified != validators.last_modified
+            ):
+                # Symmetric to the ETag check above, and NOT redundant
+                # with the earlier status-code check: that check only
+                # catches a server that answers a stale If-Range with a
+                # full 200. A server that IGNORES If-Range entirely (a
+                # real and, for date-based conditionals specifically,
+                # under-implemented failure mode -- If-Range is far more
+                # commonly wired up for ETags than for Last-Modified)
+                # still answers 206, and would otherwise have its
+                # mismatched bytes appended with no detection at all.
+                raise FetchRestartRequired("validators changed upstream")
+            if resume_from and response.status_code == 206:
+                # A 206 alone does not prove the body starts at
+                # resume_from -- only Content-Range does, and only when it
+                # parses AND its start matches. A missing/unparseable
+                # header or a start that disagrees with the Range we asked
+                # for must be rejected BEFORE the destination is ever
+                # opened for append, or a server's mismatched bytes would
+                # be silently appended to stale on-disk data.
+                range_start = _parse_content_range_start(
+                    response.headers.get("content-range")
+                )
+                if range_start != resume_from:
+                    raise FetchRestartRequired(
+                        "Content-Range start does not match the requested resume offset"
+                    )
+            mode = "ab" if resume_from else "wb"
+            with open(destination, mode) as fh:
+                async for chunk in response.aiter_bytes(_CHUNK_BYTES):
+                    if resume_from + written + len(chunk) > max_bytes:
+                        raise FetchTooLargeError("byte bound exceeded")
+                    fh.write(chunk)
+                    written += len(chunk)
+                    if on_chunk:
+                        on_chunk(len(chunk))
+                fh.flush()
+                os.fsync(fh.fileno())
+            return FetchResult(written, got, resumed=bool(resume_from))
+        except httpx.HTTPError as exc:
+            raise FetchTransportError(type(exc).__name__) from exc
+        finally:
+            await response.aclose()
     raise FetchTransportError("redirect hop limit exceeded")

@@ -177,7 +177,7 @@ async def test_kill_mid_fetch_valid_sidecar_survives_and_fresh_provision_resumes
         staging_dir = (
             core.staging_path / "managed" / ref_parts[0] / ref_parts[1] / ref_parts[2]
         )
-        sidecar_path = staging_dir / "fetch-state.json"
+        sidecar_path = staging_dir.parent / f"{staging_dir.name}.fetch-state.json"
 
         # The fetch phase durably completed before the freeze: a real,
         # parseable checkpoint sits on disk.
@@ -396,7 +396,7 @@ def test_reconcile_after_crash_removes_only_orphans_leaves_everything_else(tmp_p
         / survivor_ref_parts[1]
         / survivor_ref_parts[2]
     )
-    assert (survivor_dir / "fetch-state.json").exists()
+    assert (survivor_dir.parent / f"{survivor_dir.name}.fetch-state.json").exists()
 
     # A hand-crafted orphan: no sidecar at all, unrelated to the crash above.
     orphan_dir = core.staging_path / "managed" / "orphan-model" / "rev1" / "int8"
@@ -412,7 +412,7 @@ def test_reconcile_after_crash_removes_only_orphans_leaves_everything_else(tmp_p
     # The crash-surviving valid entry is untouched.
     assert survivor_dir.exists()
     assert (survivor_dir / "model.bin").exists()
-    assert (survivor_dir / "fetch-state.json").exists()
+    assert (survivor_dir.parent / f"{survivor_dir.name}.fetch-state.json").exists()
 
     # Content entirely outside the managed store is untouched.
     assert unrelated_file.read_text() == "do not touch"

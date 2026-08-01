@@ -12,7 +12,7 @@ import re
 import shutil
 import stat
 import sys
-import tempfile
+import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -134,9 +134,23 @@ ACQUISITION_SESSION_LEASE_KEY = ArtifactLeaseKey(
 NONBLOCKING_LEASE_TIMEOUT_SECONDS = 0.1
 
 # Naming convention for install()'s ephemeral staging tempdirs (see install()
-# and tempfile.mkdtemp below). reconcile() uses this same prefix to recognize
-# candidate orphans among staging's top-level entries.
+# below, which names then leases then creates each one -- never a bare
+# tempfile.mkdtemp, whose combined name+create step would leave the
+# directory visible on disk before its orphan-detection lease is held).
+# reconcile() uses this same prefix to recognize candidate orphans among
+# staging's top-level entries.
 _INSTALL_STAGING_PREFIX = "install-"
+
+# Filename SUFFIX of a managed-download fetch-state sidecar, addressed as
+# a SIBLING of the ``managed/<id>/<rev>/<variant>`` payload directory it
+# describes (``.../<variant>.fetch-state.json``), never a child of it --
+# see acquisition.py's ``_fetch_sidecar_path`` for why (core.install's
+# payload-tree validation would otherwise reject it as an undeclared
+# file, which used to force the sidecar to be deleted before every
+# install attempt, destroying resumable state on any failure). Mirrors
+# acquisition.py's private ``_FETCH_SIDECAR_SUFFIX``; a drift-guard test
+# in test_reconcile_staging_gc.py fails if the two ever diverge.
+_MANAGED_FETCH_SIDECAR_SUFFIX = ".fetch-state.json"
 _PathSnapshot = tuple[int, int, int, int, int, int]
 _NodeIdentity = tuple[int, int, int]
 
@@ -159,7 +173,8 @@ def _install_staging_lease_key(staging_name: str) -> ArtifactLeaseKey:
 
     Args:
         staging_name: Basename of the ``install-*`` staging tempdir (unique
-            per call, from ``tempfile.mkdtemp``).
+            per call, generated before the directory itself is created --
+            see ``install()``).
 
     Returns:
         The reserved lease key scoped to that one staging directory.
@@ -1562,35 +1577,49 @@ class ModelArtifactService:
         managed_root: Path,
         candidate: Path,
     ) -> bool:
-        """Return whether ``candidate`` is a live managed download directory.
+        """Return whether ``candidate`` is part of a live managed download.
 
-        A live entry is a ``managed/<id>/<rev>/<variant>`` directory --
-        exactly three path components below ``managed_root`` -- containing
-        a ``fetch-state.json`` sidecar that parses to a JSON OBJECT with a
-        ``"files"`` mapping: the exact shape ``ArtifactAcquisitionService``'s
-        fetch phase always writes (see ``acquisition.py``'s
-        ``_load_fetch_sidecar`` / ``_fetch_one_file``). Anything shallower,
-        deeper, symlinked, or whose sidecar is missing, unparseable, or
-        parses to something else entirely (e.g. a bare JSON list or string --
+        The fetch-state sidecar for ``managed/<id>/<rev>/<variant>/`` lives
+        as a SIBLING file -- ``managed/<id>/<rev>/<variant>.fetch-state.json``
+        -- never inside the payload directory it describes (see
+        acquisition.py's ``_fetch_sidecar_path`` for why). Both the payload
+        directory AND its sidecar therefore surface as SEPARATE depth-three
+        candidates from :meth:`_state_files`, and either one is classified
+        by resolving its counterpart: a candidate is live only when BOTH
+        the payload directory exists as a real (non-symlink) directory AND
+        its sidecar parses to a JSON OBJECT with a ``"files"`` mapping --
+        the exact shape ``ArtifactAcquisitionService``'s fetch phase always
+        writes (see ``acquisition.py``'s ``_load_fetch_sidecar`` /
+        ``_fetch_one_file``). Anything shallower, deeper, symlinked,
+        missing its counterpart, or whose sidecar is unparseable or parses
+        to something else entirely (e.g. a bare JSON list or string --
         valid JSON, but not a usable fetch-state record) is an orphan.
-        ``_assert_managed_path`` on the sidecar rejects a symlink anywhere in
-        the chain up to and including ``candidate`` itself, so a symlinked
-        ``candidate`` is correctly treated as an orphan without ever being
+        ``_assert_managed_path`` rejects a symlink anywhere in the chain up
+        to and including either path, so a symlinked payload directory or
+        sidecar is correctly treated as an orphan without ever being
         followed.
 
         Args:
             managed_root: The ``staging/managed`` directory.
             candidate: One entry surfaced by scanning ``managed_root`` to a
-                fixed depth of three (see :meth:`_state_files`).
+                fixed depth of three (see :meth:`_state_files`) -- either
+                the payload directory or its sibling sidecar file.
 
         Returns:
             True when the entry's resumable download state should survive
             garbage collection.
         """
 
-        if len(candidate.relative_to(managed_root).parts) != 3:
+        parts = candidate.relative_to(managed_root).parts
+        if len(parts) != 3:
             return False
-        sidecar = candidate / "fetch-state.json"
+        name = parts[-1]
+        if name.endswith(_MANAGED_FETCH_SIDECAR_SUFFIX):
+            sidecar = candidate
+            payload_dir = candidate.parent / name[: -len(_MANAGED_FETCH_SIDECAR_SUFFIX)]
+        else:
+            payload_dir = candidate
+            sidecar = candidate.parent / f"{name}{_MANAGED_FETCH_SIDECAR_SUFFIX}"
         try:
             self._assert_managed_path(
                 sidecar,
@@ -1601,7 +1630,13 @@ class ModelArtifactService:
             parsed = json.loads(payload)
         except (ArtifactPathError, OSError, ValueError):
             return False
-        return isinstance(parsed, dict) and isinstance(parsed.get("files"), dict)
+        if not (isinstance(parsed, dict) and isinstance(parsed.get("files"), dict)):
+            return False
+        try:
+            self._assert_managed_path(payload_dir)
+        except (ArtifactPathError, OSError):
+            return False
+        return True
 
     def _readiness_ref_from_path(self, path: Path) -> ArtifactRef | None:
         try:
@@ -1977,13 +2012,24 @@ class ModelArtifactService:
         staging_lease: ArtifactOperationLease | None = None
         try:
             self._assert_managed_path(self._staging_path)
-            staging = Path(
-                tempfile.mkdtemp(
-                    prefix=_INSTALL_STAGING_PREFIX,
-                    dir=self._staging_path,
-                )
-            )
-            self._assert_managed_path(staging)
+            # The staging directory's NAME is generated and its
+            # per-directory orphan-detection lease acquired BEFORE the
+            # directory itself is created on disk -- deliberately NOT a
+            # bare ``tempfile.mkdtemp``, whose combined name-and-create
+            # step makes the directory visible to a directory listing
+            # before anything protects it. reconcile()'s staging GC
+            # (``_gc_install_staging_orphan``) only ever considers names
+            # that already exist as real directories, and only treats one
+            # as abandoned -- safe to delete -- when its lease is free.
+            # Creating the directory first and leasing it second leaves a
+            # window where a concurrent reconcile() pass can observe the
+            # (leaseless) directory, acquire the lease itself, and delete
+            # a staging dir this call is about to copy files into. Naming
+            # then leasing then creating closes that window: nothing
+            # exists for reconcile() to find until the lease already
+            # belongs to this call.
+            staging_name = f"{_INSTALL_STAGING_PREFIX}{uuid.uuid4().hex}"
+            staging = self._staging_path / staging_name
             self._assert_managed_path(self._locks_path)
             # Held for this call's whole staging lifetime so reconcile()'s
             # staging GC can tell this directory apart from one abandoned by
@@ -1995,11 +2041,21 @@ class ModelArtifactService:
             # must keep working even when those tests replace that symbol.
             staging_lease = _leases.ArtifactOperationLease(
                 self._locks_path,
-                _install_staging_lease_key(staging.name),
+                _install_staging_lease_key(staging_name),
                 LeaseMode.EXCLUSIVE,
                 timeout_seconds=self._lease_timeout_seconds,
             )
             staging_lease.acquire()
+            try:
+                # Matches tempfile.mkdtemp's own directory permission bits
+                # (owner-only rwx) -- this is still a temporary, operation-
+                # owned staging directory, not a final managed-store path.
+                os.mkdir(staging, 0o700)
+            except OSError as error:
+                raise ArtifactStateError(
+                    "failed to create artifact install staging directory"
+                ) from error
+            self._assert_managed_path(staging)
             # Only pass consume_source if True to maintain backward compatibility
             # with tests that monkeypatch _copy_payload
             if consume_source:

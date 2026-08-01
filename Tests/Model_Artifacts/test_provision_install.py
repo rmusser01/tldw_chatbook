@@ -12,8 +12,11 @@ closure without touching the network at all.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hashlib
 import json
+import time
 from urllib.parse import urlparse
 
 import pytest
@@ -24,6 +27,7 @@ from tldw_chatbook.Model_Artifacts import (
     ArtifactDescriptor,
     ArtifactFile,
     ArtifactFormat,
+    ArtifactPathError,
     ArtifactRef,
     ArtifactRole,
     ArtifactIntegrityError,
@@ -127,6 +131,79 @@ async def test_preverify_matches_declared_hash_and_reports_real_progress(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_preverify_hashing_does_not_block_event_loop(tmp_path, monkeypatch):
+    """``_hash_staged_file`` must run off the event loop -- otherwise
+    hashing a large staged file blocks every other coroutine (any other
+    artifact's progress, cancellation checks, the UI event loop this
+    service shares) for the whole read, since a tight
+    ``hashlib.sha256().update()`` loop has no ``await`` to yield control.
+
+    Proven with a concurrent heartbeat coroutine: monkeypatch
+    ``hashlib.sha256`` (as imported into ``acquisition.py``) to sleep
+    briefly per chunk, simulating a slow hash/disk read, and count how many
+    times a sibling coroutine ticks WHILE that hashing is in flight. Against
+    the pre-fix code (a synchronous call with no internal ``await``), the
+    whole hash runs to completion before the event loop gets a chance to
+    schedule anything else, so the heartbeat gets zero ticks; with hashing
+    moved to an executor hop, the awaiting coroutine actually suspends and
+    the heartbeat ticks concurrently.
+    """
+    chunk_bytes = b"x" * (1024 * 1024)
+    body = chunk_bytes * 8  # 8 MiB == 8 reads at _hash_staged_file's 1 MiB chunk size
+    desc = _descriptor(ArtifactRef("m", "r" * 40, "int8"), files_body=body)
+    staging_dir = tmp_path / "staging" / "m"
+    staging_dir.mkdir(parents=True)
+    (staging_dir / "model.bin").write_bytes(body)
+
+    core = ModelArtifactService(tmp_path / "root")
+    svc = ArtifactAcquisitionService(core)
+    progress_state = _ProvisionProgressState(callback=None, bytes_total=len(body))
+
+    real_sha256 = hashlib.sha256
+
+    class SlowHash:
+        """Wraps a real SHA-256 but sleeps per ``update()`` call -- makes
+        the hash operation take long enough (~0.4s over 8 chunks) for a
+        blocked-vs-not-blocked event loop to be reliably observable."""
+
+        def __init__(self) -> None:
+            self._real = real_sha256()
+
+        def update(self, data: bytes) -> None:
+            time.sleep(0.05)
+            self._real.update(data)
+
+        def hexdigest(self) -> str:
+            return self._real.hexdigest()
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Model_Artifacts.acquisition.hashlib.sha256", SlowHash
+    )
+
+    heartbeats = 0
+
+    async def heartbeat() -> None:
+        nonlocal heartbeats
+        while True:
+            heartbeats += 1
+            await asyncio.sleep(0.01)
+
+    hb_task = asyncio.ensure_future(heartbeat())
+    try:
+        await svc._preverify_artifact(desc, staging_dir, progress_state)
+    finally:
+        hb_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await hb_task
+
+    assert heartbeats >= 3, (
+        "the event loop must keep running (heartbeat ticking) WHILE "
+        "_hash_staged_file is hashing, proving the hash runs off-loop"
+    )
+    assert progress_state.preverify_bytes_done == len(body)
+
+
+@pytest.mark.asyncio
 async def test_preverify_progress_total_defaults_to_bytes_total_when_unset(tmp_path):
     """Direct construction without ``preverify_bytes_total`` (every other
     test in this file) keeps working: it defaults to ``bytes_total`` via
@@ -171,8 +248,14 @@ async def test_provision_preverify_total_ignores_fetch_phases_netted_staged_cred
 
     staged = core.staging_path / "managed" / ref.artifact_id / ref.revision / ref.variant
     staged.mkdir(parents=True)
+    # A real on-disk partial file matching the sidecar's claimed 500 bytes
+    # -- staged-credit math caps a sidecar's claim by the file's ACTUAL
+    # on-disk size (see the preflight staged-credit review finding), so
+    # this setup needs a real file to still net download_bytes down to
+    # 1548 the way this test's docstring describes.
+    (staged / "model.bin").write_bytes(b"m" * 500)
     atomic_write_json(
-        staged / "fetch-state.json",
+        staged.parent / f"{staged.name}.fetch-state.json",
         {
             "files": {
                 "model.bin": {
@@ -254,9 +337,10 @@ async def test_preverify_mismatch_refetches_once_and_recovers_on_good_content(tm
         )
         staging_dir = tmp_path / "staging" / "m"
         staging_dir.mkdir(parents=True)
+        sidecar_path = staging_dir.parent / f"{staging_dir.name}.fetch-state.json"
         (staging_dir / "model.bin").write_bytes(wrong_body)
         atomic_write_json(
-            staging_dir / "fetch-state.json",
+            sidecar_path,
             {
                 "files": {
                     "model.bin": {
@@ -277,7 +361,7 @@ async def test_preverify_mismatch_refetches_once_and_recovers_on_good_content(tm
 
         assert (staging_dir / "model.bin").read_bytes() == correct_body
         assert len(srv.requests["/model.bin"]) == 1
-        sidecar = json.loads((staging_dir / "fetch-state.json").read_text())
+        sidecar = json.loads(sidecar_path.read_text())
         assert sidecar["files"]["model.bin"]["complete"] is True
         assert sidecar["files"]["model.bin"]["bytes_done"] == len(correct_body)
 
@@ -302,7 +386,7 @@ async def test_preverify_mismatch_persisting_past_max_refetches_raises_transfer_
         staging_dir.mkdir(parents=True)
         (staging_dir / "model.bin").write_bytes(wrong_body)
         atomic_write_json(
-            staging_dir / "fetch-state.json",
+            staging_dir.parent / f"{staging_dir.name}.fetch-state.json",
             {
                 "files": {
                     "model.bin": {
@@ -340,9 +424,10 @@ async def test_install_promotes_payload_and_removes_staging_dir_and_sidecar(tmp_
 
     staging_dir = core.staging_path / "managed" / "m" / ("r" * 40) / "int8"
     staging_dir.mkdir(parents=True)
+    sidecar_path = staging_dir.parent / f"{staging_dir.name}.fetch-state.json"
     (staging_dir / "model.bin").write_bytes(body)
     atomic_write_json(
-        staging_dir / "fetch-state.json",
+        sidecar_path,
         {"files": {"model.bin": {"etag": None, "last_modified": None, "bytes_done": len(body), "complete": True}}},
     )
 
@@ -352,10 +437,11 @@ async def test_install_promotes_payload_and_removes_staging_dir_and_sidecar(tmp_
     assert installed.exists()
     assert (installed / "model.bin").read_bytes() == body
     assert not staging_dir.exists()
+    assert not sidecar_path.exists()
 
 
 @pytest.mark.asyncio
-async def test_install_failure_does_not_install_and_staging_dir_survives(tmp_path):
+async def test_install_failure_leaves_staging_dir_and_sidecar_intact_for_resume(tmp_path):
     """core.install's own integrity check fails (staged content doesn't
     match the declared hash -- as if pre-verify had been skipped, the
     defense-in-depth check this exercises).
@@ -366,9 +452,19 @@ async def test_install_failure_does_not_install_and_staging_dir_survives(tmp_pat
     behind for inspection -- that is Task 1's sealed core behavior, not
     something this phase controls. What Task 8 owns and this test pins:
     nothing gets installed, and ``_install_artifact`` itself does not
-    ``rmtree`` our staging directory on failure (only a successful install
-    triggers that cleanup) -- unlike the sidecar, which is removed
-    up front regardless, to satisfy install's exact-file-set check.
+    ``rmtree`` our staging directory OR touch the sidecar on failure --
+    only a successful install triggers that cleanup (see
+    ``test_install_promotes_payload_and_removes_staging_dir_and_sidecar``).
+
+    Regression test for TASK-595 final-review P2 (retryable install
+    failures must not destroy the only resumable state): the sidecar now
+    lives OUTSIDE the payload directory (a SIBLING file, never a child of
+    it -- see acquisition.py's ``_fetch_sidecar_path``) and is left
+    completely untouched by ``_install_artifact`` until AFTER a
+    successful install, unlike the earlier design which deleted it
+    UNCONDITIONALLY before every attempt (required then, since
+    ``core.install``'s payload-tree validation rejects an undeclared
+    file living inside the payload dir).
 
     ``core.install``'s raw ``ArtifactIntegrityError`` is wrapped by
     ``_run_core_call`` (review finding: core ``ArtifactError`` subclasses
@@ -382,9 +478,10 @@ async def test_install_failure_does_not_install_and_staging_dir_survives(tmp_pat
 
     staging_dir = core.staging_path / "managed" / "m" / ("r" * 40) / "int8"
     staging_dir.mkdir(parents=True)
+    sidecar_path = staging_dir.parent / f"{staging_dir.name}.fetch-state.json"
     (staging_dir / "model.bin").write_bytes(b"corrupt!")  # wrong content, right length
     atomic_write_json(
-        staging_dir / "fetch-state.json",
+        sidecar_path,
         {"files": {"model.bin": {"etag": None, "last_modified": None, "bytes_done": 8, "complete": True}}},
     )
 
@@ -395,8 +492,94 @@ async def test_install_failure_does_not_install_and_staging_dir_survives(tmp_pat
     assert isinstance(excinfo.value.__cause__, ArtifactIntegrityError)
 
     assert staging_dir.exists()
-    assert not (staging_dir / "fetch-state.json").exists()
+    assert sidecar_path.exists(), (
+        "a failed install must NOT destroy the sidecar -- it is the only "
+        "resumable state a later provision() attempt has to work with"
+    )
     assert core.list_installed() == ()
+
+
+@pytest.mark.asyncio
+async def test_retryable_install_failure_leaves_staged_bytes_resumable_via_range(
+    tmp_path, monkeypatch
+):
+    """A 'retryable' install failure must not destroy the resumable
+    download it claims can still be retried.
+
+    Regression test for TASK-595 final-review P2: the fetch-state sidecar
+    used to live INSIDE the payload directory and was deleted
+    UNCONDITIONALLY before every ``core.install`` attempt (required then,
+    since install's payload-tree validation rejects an undeclared file
+    living inside the payload dir); that pre-deletion destroyed the
+    checkpoint on ANY failure, including a merely transient, RETRYABLE
+    one -- forcing a full re-download on retry despite the ``retryable``
+    label. With the sidecar living OUTSIDE the payload tree (a sibling
+    file), a failed install leaves it -- and the partial bytes it
+    describes -- exactly where a fresh fetch phase can resume from.
+
+    ``core.install`` is monkeypatched to fail directly (simulating
+    whatever internal reason -- lease contention, I/O, or anything else
+    that surfaces as a retryable ``ArtifactStateError``) rather than
+    exercising the sealed core's real internals: this isolates the claim
+    under test (acquisition.py's OWN handling of the sidecar) from the
+    core's separate, more complex internal failure modes.
+    """
+    full_body = b"0123456789" * 1000  # 10,000 bytes
+    partial = full_body[:4000]
+    with FixtureArtifactServer() as srv:
+        srv.serve("/model.bin", full_body, etag='"v1"', support_range=True)
+        desc = _descriptor(
+            ArtifactRef("m", "r" * 40, "int8"),
+            files_body=full_body,
+            source_url=srv.url("/model.bin"),
+        )
+        core = ModelArtifactService(tmp_path / "root")
+        svc = ArtifactAcquisitionService(core, trusted_origins=_trusted(srv))
+
+        staging_dir = core.staging_path / "managed" / "m" / ("r" * 40) / "int8"
+        staging_dir.mkdir(parents=True)
+        sidecar_path = staging_dir.parent / f"{staging_dir.name}.fetch-state.json"
+        (staging_dir / "model.bin").write_bytes(partial)
+        atomic_write_json(
+            sidecar_path,
+            {
+                "files": {
+                    "model.bin": {
+                        "etag": '"v1"',
+                        "last_modified": None,
+                        "bytes_done": len(partial),
+                        "complete": False,
+                    }
+                }
+            },
+        )
+
+        def raise_state_error(*args, **kwargs):
+            raise ArtifactStateError("simulated transient lease contention")
+
+        monkeypatch.setattr(core, "install", raise_state_error)
+
+        with pytest.raises(TransferError) as excinfo:
+            await svc._install_artifact(desc, staging_dir)
+        assert excinfo.value.retryable is True
+
+        # The partial bytes and their sidecar checkpoint survived untouched.
+        assert (staging_dir / "model.bin").read_bytes() == partial
+        assert sidecar_path.exists()
+        sidecar = json.loads(sidecar_path.read_text())
+        assert sidecar["files"]["model.bin"]["bytes_done"] == len(partial)
+
+        # A fresh fetch phase (what the NEXT provision() attempt runs
+        # first) resumes via Range, not a full re-download from zero.
+        progress_state = _ProvisionProgressState(
+            callback=None, bytes_total=len(full_body) - len(partial)
+        )
+        await svc._fetch_artifact(desc, staging_dir, progress_state)
+
+        assert (staging_dir / "model.bin").read_bytes() == full_body
+        assert any("Range" in headers for headers in srv.requests["/model.bin"])
+        final_sidecar = json.loads(sidecar_path.read_text())
+        assert final_sidecar["files"]["model.bin"]["complete"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -612,6 +795,43 @@ async def test_install_artifact_wraps_core_integrity_error_as_non_retryable(
 
     assert excinfo.value.retryable is False
     assert isinstance(excinfo.value.__cause__, ArtifactIntegrityError)
+    assert "m" in str(excinfo.value)
+    assert "install" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_install_artifact_wraps_core_path_error_as_non_retryable(
+    tmp_path, monkeypatch
+):
+    """``core.install`` raising ``ArtifactPathError`` must surface as a
+    non-retryable ``TransferError``, never the raw core error.
+
+    Regression test for TASK-1566 (filed during TASK-595's final review):
+    ``_run_core_call`` caught ``ArtifactIntegrityError``/
+    ``ArtifactConflictError``/``ArtifactStateError`` but NOT
+    ``ArtifactPathError`` -- which ``core.install`` documents raising for
+    an unsafe or invalid source/destination path -- so it escaped
+    ``provision()`` raw, breaking the spec's never-trap rule. Not
+    retryable: the same unsafe/invalid path would fail again.
+    """
+    desc = _descriptor(ArtifactRef("m", "r" * 40, "int8"), files_body=b"x")
+    core = ModelArtifactService(tmp_path / "root")
+    svc = ArtifactAcquisitionService(core)
+
+    staging_dir = core.staging_path / "managed" / "m" / ("r" * 40) / "int8"
+    staging_dir.mkdir(parents=True)
+    (staging_dir / "model.bin").write_bytes(b"x")
+
+    def raise_path_error(*args, **kwargs):
+        raise ArtifactPathError("simulated unsafe path")
+
+    monkeypatch.setattr(core, "install", raise_path_error)
+
+    with pytest.raises(TransferError) as excinfo:
+        await svc._install_artifact(desc, staging_dir)
+
+    assert excinfo.value.retryable is False
+    assert isinstance(excinfo.value.__cause__, ArtifactPathError)
     assert "m" in str(excinfo.value)
     assert "install" in str(excinfo.value)
 
