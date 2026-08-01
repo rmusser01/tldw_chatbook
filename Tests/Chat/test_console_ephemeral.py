@@ -157,3 +157,86 @@ def test_ephemeral_gate_wins_even_if_a_persisted_id_is_already_set(tmp_path):
         assert store.persist_session_if_needed(session.id) is None
     finally:
         db.close()
+
+
+@pytest.mark.unit
+def test_promotion_writes_every_message_in_order(tmp_path):
+    """Saving a temporary chat persists exactly what is on screen."""
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Temporary chat", ephemeral=True)
+        _run_a_chat(store, session.id)
+        assert _row_counts(db) == (0, 0)
+
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert conversation_id is not None
+        assert session.ephemeral is False
+        assert session.persisted_conversation_id == conversation_id
+        assert _row_counts(db) == (1, 2)
+        persisted = [
+            db.get_message_by_id(m.persisted_message_id)["content"]
+            for m in store.messages_for_session(session.id)
+        ]
+        assert persisted == ["hello", "hi there"]
+    finally:
+        db.close()
+
+
+@pytest.mark.unit
+def test_promotion_is_idempotent(tmp_path):
+    """A second Save writes nothing more and does not raise."""
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Temporary chat", ephemeral=True)
+        _run_a_chat(store, session.id)
+        first = store.promote_ephemeral_session(session.id)
+        after_first = _row_counts(db)
+
+        assert store.promote_ephemeral_session(session.id) is None
+        assert _row_counts(db) == after_first
+        assert session.persisted_conversation_id == first
+    finally:
+        db.close()
+
+
+@pytest.mark.unit
+def test_failed_promotion_rolls_back_and_stays_temporary(tmp_path, monkeypatch):
+    """A half-saved conversation must never be left in history.
+
+    The failure is injected on the SECOND message write, so the conversation
+    row and the first message are already in the transaction when it blows
+    up -- exactly the partial state the rollback exists to undo.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Temporary chat", ephemeral=True)
+        _run_a_chat(store, session.id)
+
+        calls = {"n": 0}
+        real_create = persistence.create_message
+
+        def failing_create(**kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("disk full")
+            return real_create(**kwargs)
+
+        monkeypatch.setattr(persistence, "create_message", failing_create)
+
+        with pytest.raises(RuntimeError, match="disk full"):
+            store.promote_ephemeral_session(session.id)
+
+        assert _row_counts(db) == (0, 0), "partial conversation survived"
+        assert session.ephemeral is True, "failed save left the chat persisting"
+        assert session.persisted_conversation_id is None
+        assert all(
+            m.persisted_message_id is None
+            for m in store.messages_for_session(session.id)
+        )
+    finally:
+        db.close()

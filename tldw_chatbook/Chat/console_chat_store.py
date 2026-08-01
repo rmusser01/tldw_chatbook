@@ -2348,6 +2348,67 @@ class ConsoleChatStore:
             )
         return session.persisted_conversation_id
 
+    def promote_ephemeral_session(self, session_id: str) -> str | None:
+        """Save a temporary conversation to durable storage, all or nothing.
+
+        Clears ``ephemeral`` first -- that is what opens the gate in
+        ``persist_session_if_needed`` -- then mints the conversation and
+        flushes every in-memory message. The whole sequence runs inside one
+        database transaction when the adapter exposes a real database, so a
+        failure part-way through leaves NO conversation in history rather
+        than a truncated one.
+
+        On any failure the session is restored to its temporary state
+        (``ephemeral`` back to True, ids cleared). A failed save that left
+        the flag cleared would silently start persisting on the next send --
+        the opposite of what the user asked for.
+
+        Args:
+            session_id: Id of the temporary session to save.
+
+        Returns:
+            The new persisted conversation id, or ``None`` when the session
+            was not temporary (already saved -- this is idempotent) or no
+            persistence adapter is configured.
+
+        Raises:
+            Exception: Whatever the persistence layer raises, re-raised after
+                the in-memory rollback.
+        """
+        session = self._session_or_raise(session_id)
+        if not session.ephemeral:
+            return None
+        if self.persistence is None:
+            return None
+
+        messages = list(self._messages_by_session.get(session_id, ()))
+        db = getattr(self.persistence, "db", None)
+        transaction = getattr(db, "transaction", None)
+
+        def _write() -> str | None:
+            conversation_id = self.persist_session_if_needed(session_id)
+            if conversation_id is None:
+                return None
+            for message in messages:
+                self.persist_message_if_needed(message.id)
+            return conversation_id
+
+        session.ephemeral = False
+        try:
+            if callable(transaction):
+                with transaction():
+                    return _write()
+            return _write()
+        except Exception:
+            session.ephemeral = True
+            session.persisted_conversation_id = None
+            for message in messages:
+                message.persisted_message_id = None
+            logger.bind(session_id=session_id).exception(
+                "Saving a temporary Console conversation failed; it stays temporary."
+            )
+            raise
+
     def set_session_system_prompt(
         self,
         session_id: str,
