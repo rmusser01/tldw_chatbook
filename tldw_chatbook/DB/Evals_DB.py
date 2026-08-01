@@ -108,6 +108,14 @@ def _clean_task_description(description: Optional[str]) -> Optional[str]:
     and no surrounding-whitespace strip is applied either, matching
     ``create_task``'s own pre-existing behavior exactly (control-character
     filter only).
+
+    Args:
+        description: The raw description as supplied by a caller, or
+            ``None``/``""`` when the task carries no description.
+
+    Returns:
+        Optional[str]: The description with non-printable characters and
+        NULs removed; a falsy input is returned unchanged.
     """
     if not description:
         return description
