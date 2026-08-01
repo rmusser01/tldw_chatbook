@@ -4433,7 +4433,14 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
 
 
 # --- CLI Setting Getter ---
-def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
+# Sentinel distinguishing "no default argument was supplied at all" from an
+# explicitly-passed `None` -- see the dotted-form disambiguation below.
+_CLI_SETTING_DEFAULT_UNSET = object()
+
+
+def get_cli_setting(
+    section: str, key: str = None, default: Any = _CLI_SETTING_DEFAULT_UNSET
+) -> Any:
     """Helper to get a specific setting from the loaded CLI configuration.
 
     Can be called in two ways:
@@ -4443,6 +4450,18 @@ def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
     Dotted sections/keys that miss the flat top-level lookup are resolved
     against the nested TOML tree (``[chat.images]`` loads as
     ``config["chat"]["images"]``); a flat top-level hit always wins.
+
+    Disambiguating form 1 from form 2 when exactly two positional
+    arguments are supplied and ``section`` contains a dot: an explicit
+    third argument (even ``None``) always means "traditional form,
+    honour this default". Without one, ``section`` is the complete
+    dotted path and ``key`` is really the default -- for a default of
+    *any* type, not just non-string ones. (TASK-1754: the previous
+    heuristic keyed off ``isinstance(key, str)``, so a string default --
+    the common case for provider/model/language/device names -- was
+    misread as one more path segment to walk, which always missed and
+    silently returned ``None`` instead of either the configured value or
+    the caller's own fallback.)
 
     Args:
         section: Top-level section name, or a dotted path into nested tables.
@@ -4456,6 +4475,9 @@ def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
     """
     config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
 
+    default_was_given = default is not _CLI_SETTING_DEFAULT_UNSET
+    resolved_default = default if default_was_given else None
+
     # Handle dotted notation when key is None (called with positional args)
     if key is None and "." in section:
         # Split on first dot only to handle nested keys
@@ -4464,18 +4486,16 @@ def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
         key = parts[1]
     elif key is None:
         # No dot found and no key provided - invalid call
-        return default
-
-    # Handle the case where default was passed as second argument in dotted notation
-    # e.g., get_cli_setting("section.key", 500) where 500 is the default
-    if not isinstance(key, str) and default is None:
-        default = key
-        if "." in section:
-            parts = section.split(".", 1)
-            section = parts[0]
-            key = parts[1]
-        else:
-            return default
+        return resolved_default
+    elif not default_was_given and "." in section:
+        # Pure 2-arg dotted form: get_cli_setting("a.b[.c...]", default).
+        # `key` is really the caller's default (whatever its type) --
+        # reclaim it before re-splitting `section` the same way the
+        # 1-arg branch above does.
+        resolved_default = key
+        parts = section.split(".", 1)
+        section = parts[0]
+        key = parts[1]
 
     # Flat lookup first: preserves every previously-working shape bit-for-bit
     # (a literal dotted top-level key, while impossible from TOML, wins).
@@ -4493,13 +4513,13 @@ def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
         node: Any = config
         for part in (*section.split("."), *key.split(".")):
             if not isinstance(node, dict) or part not in node:
-                return default
+                return resolved_default
             node = node[part]
         return node
     if isinstance(section_data, dict):
-        return section_data.get(key, default)
+        return section_data.get(key, resolved_default)
     # If section is not a dict or not found, return default
-    return default
+    return resolved_default
 
 
 def get_chat_defaults_streaming(default: bool = True) -> bool:
