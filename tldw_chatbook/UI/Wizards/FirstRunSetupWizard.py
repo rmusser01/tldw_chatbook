@@ -26,6 +26,7 @@ from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
     run_parakeet_v2_preflight,
     run_parakeet_v2_provision,
 )
+from tldw_chatbook.Model_Artifacts.store import managed_model_artifact_root
 from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Screens.model_installed_view import lifecycle_failure_message
 from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
@@ -1108,13 +1109,29 @@ class SpeechSetupStep(SetupStep):
     tldw_chatbook.STT.routing) and gated to what a curated descriptor can
     actually download today (AC#2).
 
-    Persistence gate (AC#5): commit() re-verifies -- off the event loop --
-    that the managed Parakeet v2 artifact is installed AND active before
-    writing anything to [transcription]; an install that never completed, or
-    one a user later deleted, leaves this step skip-safe. Skip and failures
-    never trap the user (AC#6): Next/commit never blocks on install state,
-    and a failed download still refreshes the step's own installed-state
-    read so it never gets stuck showing a stale "installing…" affordance.
+    Runtime gate (review Important 4): the `onnx-asr` extra is optional --
+    missing it means a downloaded Parakeet v2 could never actually run.
+    Gated exactly like RagStep gates on ``embeddings_rag_deps_installed()``:
+    when the extra is absent, no install is ever offered.
+
+    Persistence gate (AC#5 / review Important 3): commit() re-verifies --
+    off the event loop -- that the managed Parakeet v2 artifact is active,
+    AND requires that the user actually engaged this step THIS run
+    (installed or activated it here) before writing anything to
+    [transcription]. An artifact that merely happens to be active from an
+    earlier session (e.g. installed via the Library screen) is not enough
+    on its own -- a re-run that just presses Next through this step leaves
+    whatever is already persisted completely untouched, however different
+    (``remote-whisper``, ``default_language="auto"``, ...). The step also
+    shows what is currently persisted before the user acts (the AC#5
+    "prefill" clause) via ``first_run_speech_step_state.speech_prefill_status``.
+
+    Skip and failures never trap the user (AC#6): Next/commit never blocks
+    on install state, and a failed download still refreshes the step's own
+    installed-state read so it never gets stuck showing a stale
+    "installing…" affordance. A broken/not-ready installed item still shows
+    ModelActivationControls(ready=False) so Delete (recovery) stays
+    reachable (review Important 5).
     """
 
     def __init__(
@@ -1123,29 +1140,58 @@ class SpeechSetupStep(SetupStep):
         config: Optional[WizardStepConfig] = None,
         *,
         service_factory: Optional[Callable[[], Any]] = None,
+        runtime_installed: Optional[Callable[[], bool]] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(wizard=wizard, config=config, **kwargs)
         self._service_factory = service_factory or parakeet_v2_managed_service
+        if runtime_installed is None:
+            from tldw_chatbook.Utils.optional_deps import parakeet_onnx_deps_installed
+
+            runtime_installed = parakeet_onnx_deps_installed
+        self._runtime_installed = runtime_installed
         self._reference = parakeet_v2_reference()
         self._service: Any = None
         self._loading = False
         self._loaded = False
+        self._reload_after_load = False
         self._load_error: Optional[str] = None
         self._installed_item: Any = None
         self._operation: Optional[str] = None
         self._pending_report: Any = None
         self._progress: Any = None
+        # Review Important 3: set only by a SUCCESSFUL install/activation
+        # made THROUGH THIS STEP during this run -- see commit()'s use via
+        # first_run_speech_step_state.should_persist_speech_config.
+        self._acted_this_run = False
 
     def compose_step(self) -> ComposeResult:
+        # Review Important 2: the primary action must be visible at the
+        # wizard's own tested 120x40 budget -- title/subtitle/prefill/
+        # status/action come FIRST (typically <=6 rows); the informational
+        # language/precision catalog (up to 27 disabled rows, already
+        # capped by ".setup-choice-list") comes after, reachable by
+        # scrolling like any other step's overflow content.
         with Vertical(classes="setup-speech"):
             yield Static("Speech transcription (optional)", classes="setup-title")
             yield Static(
-                "Recommended: Parakeet v2 — English, INT8, runs fully on this "
-                "device. Used for dictation and audio/video transcripts. "
-                "Skip and set this up later in Settings ▸ Speech any time.",
+                "Recommended: Parakeet v2 (English, INT8) — on-device speech-to-text. "
+                "Skip and set this up later from Lab ▸ Models.",
                 classes="setup-subtitle",
             )
+            prefill_text = self._prefill_status_text()
+            if prefill_text:
+                yield Static(
+                    prefill_text, id="setup-speech-prefill", classes="setup-subtitle"
+                )
+            status_text, action_widget = self._status_and_action()
+            yield Static(status_text, id="setup-speech-status", classes="setup-subtitle")
+            progress = ModelInstallProgress(self._progress, id="setup-speech-install-progress")
+            progress.display = self._operation == "install" and self._progress is not None
+            yield progress
+            if action_widget is not None:
+                yield action_widget
+            yield Static("", classes="setup-step-error")
             yield Label("Language", classes="setup-field-label")
             with RadioSet(id="setup-speech-language-choice", classes="setup-choice-list"):
                 for option in speech_state.speech_language_options(
@@ -1172,20 +1218,15 @@ class SpeechSetupStep(SetupStep):
                         if option.selectable
                         else " — not yet available for managed install"
                     )
+                    # Minor 8: pre-press ONLY the one recommended option --
+                    # "selectable" alone would pre-press every selectable
+                    # precision the moment a second one is ever curated.
                     yield SetupRadioButton(
                         label,
                         id=f"setup-speech-precision-{option.value}",
-                        value=option.selectable,
+                        value=option.selectable and option.value == "int8",
                         disabled=not option.selectable,
                     )
-            status_text, action_widget = self._status_and_action()
-            yield Static(status_text, id="setup-speech-status", classes="setup-subtitle")
-            progress = ModelInstallProgress(self._progress, id="setup-speech-install-progress")
-            progress.display = self._operation == "install" and self._progress is not None
-            yield progress
-            if action_widget is not None:
-                yield action_widget
-            yield Static("", classes="setup-step-error")
 
     # -- pure, I/O-free helpers (curated_registry() only builds descriptors
     # in memory -- see its own module docstring) -------------------------
@@ -1206,7 +1247,32 @@ class SpeechSetupStep(SetupStep):
             if descriptor.model_id == policy.parakeet_v2_model_id
         )
 
+    def _prefill_status_text(self) -> str:
+        """AC#5's "re-run prefills" clause: show what is already persisted.
+
+        Reads ``self.wizard.app_instance.app_config`` directly -- the same
+        in-memory, already-loaded dict other steps read synchronously in
+        compose_step() (e.g. RagStep._embedding_model_ids()) -- so this
+        needs no worker.
+        """
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        prefill = speech_state.read_speech_prefill(app_config)
+        return speech_state.speech_prefill_status(prefill)
+
     def _status_and_action(self) -> tuple[str, Optional[Widget]]:
+        # Review Important 4: gate BEFORE the installed-state load so a
+        # minimal install sees the real reason immediately, and no install
+        # is ever offered without the runtime that would actually run it.
+        if not self._runtime_installed():
+            return (
+                'The "onnx-asr" runtime is not installed, so a downloaded '
+                "model could not run. Install the extras package "
+                '"tldw_chatbook[transcription_parakeet_onnx]" (or run '
+                "pip install 'onnx-asr[cpu]==0.12.0'), then revisit this "
+                "step. Skipping is safe — set this up later from Lab ▸ "
+                "Models.",
+                None,
+            )
         if not self._loaded:
             if self._load_error:
                 return self._load_error, Button("Retry", id="setup-speech-retry")
@@ -1220,9 +1286,18 @@ class SpeechSetupStep(SetupStep):
                 disabled=self._operation is not None,
             )
         if item.error is not None or not item.ready:
+            # Review Important 5: reuse the SAME 596 control instead of a
+            # dead end -- ready=False already keeps Delete enabled (the
+            # only real recovery path) while disabling Activate.
             return (
-                "This model needs attention — reinstall from Settings ▸ Speech.",
-                None,
+                "This model needs attention — delete it below and install "
+                "again, or manage it from Lab ▸ Models ▸ Installed.",
+                ModelActivationControls(
+                    self._reference,
+                    active=item.active,
+                    ready=item.ready,
+                    pending=self._operation is not None,
+                ),
             )
         status = "Installed and active." if item.active else "Installed, not yet active."
         return status, ModelActivationControls(
@@ -1238,11 +1313,18 @@ class SpeechSetupStep(SetupStep):
         self._ensure_loaded()
 
     def _ensure_loaded(self, *, force: bool = False) -> None:
-        if self._loading or (self._loaded and not force):
+        # Minor 11: a forced reload requested while a load is already in
+        # flight must not be silently dropped -- remember it and honor it
+        # when the in-flight load's own callback runs (InstalledView's own
+        # _reload_after_load pattern).
+        if self._loading:
+            if force:
+                self._reload_after_load = True
+            return
+        if self._loaded and not force:
             return
         self._loading = True
-        if force:
-            self._loaded = False
+        self._load_error = None
         self.refresh(recompose=True)
         self._load_installed_state()
 
@@ -1281,7 +1363,12 @@ class SpeechSetupStep(SetupStep):
         self._loading = False
         self._loaded = error is None
         self._load_error = error
-        self.refresh(recompose=True)
+        reload_after_load = self._reload_after_load
+        self._reload_after_load = False
+        if reload_after_load:
+            self._ensure_loaded(force=True)
+        else:
+            self.refresh(recompose=True)
 
     # -- install: preflight -> consent modal -> provision ------------------
     @on(Button.Pressed, "#setup-speech-install")
@@ -1366,6 +1453,7 @@ class SpeechSetupStep(SetupStep):
 
     @on(InstallProgressed)
     def _install_progressed(self, event: InstallProgressed) -> None:
+        event.stop()  # Minor 9: LibraryScreen's equivalent handler stops it too
         self._progress = event.progress
         try:
             progress = self.query_one(
@@ -1384,6 +1472,10 @@ class SpeechSetupStep(SetupStep):
         if error is not None:
             self.notify(error, severity="error")
         else:
+            # Review Important 3: a SUCCESSFUL install made through this
+            # step this run is the engagement commit()'s no-clobber gate
+            # requires -- see should_persist_speech_config.
+            self._acted_this_run = True
             self.notify("Speech model installed and activated.", severity="information")
         # AC#6: failures never trap -- always refresh installed state so the
         # step reflects reality (and drops the disabled "installing…" affordance)
@@ -1451,22 +1543,40 @@ class SpeechSetupStep(SetupStep):
         self.app.call_from_thread(self._apply_lifecycle_result, None)
 
     def _apply_lifecycle_result(self, error: Optional[str]) -> None:
+        # Capture BEFORE clearing: only a successful ACTIVATE counts as
+        # engagement (review Important 3) -- deleting is not "opting in",
+        # and the artifact will not be active afterwards anyway, so
+        # commit()'s active-check already keeps that case skip-safe.
+        operation = self._operation
         self._operation = None
         if error is not None:
             self.notify(error, severity="error")
         else:
+            if operation == "activate":
+                self._acted_this_run = True
             self.notify("Speech model updated.", severity="information")
         self._ensure_loaded(force=True)
 
-    # -- persistence gate (AC#5) --------------------------------------------
+    # -- persistence gate (AC#5 / review Important 3 & 4) -------------------
     async def commit(self) -> tuple[bool, str]:
         import asyncio
 
+        # Important 4: never persist a provider the runtime cannot execute,
+        # even if somehow both active and acted (belt-and-suspenders; the
+        # UI-side gate in _status_and_action is the primary defense --
+        # mirrors RagStep's own commit() re-check of deps_installed()).
+        if not self._runtime_installed():
+            return True, ""
         active_dir = await asyncio.get_running_loop().run_in_executor(
             None, self._check_active
         )
-        if active_dir is None:
-            return True, ""  # skip-safe: nothing verified active, nothing to persist
+        if not speech_state.should_persist_speech_config(
+            active=active_dir is not None, acted_this_run=self._acted_this_run
+        ):
+            # Skip-safe: nothing verified active, OR the user never engaged
+            # this step this run -- either way, leave [transcription] byte-
+            # identical to whatever is already persisted (review Important 3).
+            return True, ""
         provider_id, model_id, language = speech_state.recommended_speech_selection()
         ok = await self.wizard.commit_config(
             speech_state.build_speech_transcription_commit(
@@ -2062,6 +2172,17 @@ class SummaryStep(SetupStep):
         if speech_installed_check is None:
 
             def speech_installed_check() -> bool:
+                # Minor 12: a Quick-track user (who never saw the Speech
+                # step) reaching Summary must not cause the managed
+                # artifact store's directories to be created on disk --
+                # constructing a real ModelArtifactService (what
+                # active_managed_parakeet_v2_dir() does internally) mkdirs
+                # unconditionally. A read-only existence check first means
+                # "nothing was ever installed by anyone" costs zero
+                # filesystem writes; only go on to the real check once
+                # something has legitimately created the root already.
+                if not managed_model_artifact_root().exists():
+                    return False
                 return active_managed_parakeet_v2_dir() is not None
 
         config = await asyncio.get_running_loop().run_in_executor(None, load)
