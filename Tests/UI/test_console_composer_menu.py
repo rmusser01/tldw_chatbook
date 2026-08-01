@@ -5,6 +5,7 @@ tasks 1680-1683.
 
 import pytest
 
+from tldw_chatbook.Chat.console_ephemeral import ACTION_SAVE_CHAT
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     ACTION_GENERATE_CAPTION,
     ACTION_GENERATE_IMAGE,
@@ -645,3 +646,201 @@ def test_temporary_chip_posts_save_requested_on_activation():
     chip.action_save_chat()
 
     assert any(isinstance(m, ConsoleTemporaryChip.SaveRequested) for m in posted)
+
+
+@pytest.mark.unit
+def test_save_this_chat_appears_only_in_a_temporary_chat():
+    """The entry is meaningless in a normal chat, so it is absent, not disabled.
+
+    This is the one case where hiding beats disabling: a disabled "Save this
+    chat" on an already-saved conversation would read as a failure.
+    """
+    from tldw_chatbook.Chat.console_ephemeral import ACTION_SAVE_CHAT
+
+    normal = [e.action_id for e in build_composer_menu_entries()]
+    assert ACTION_SAVE_CHAT not in normal
+
+    temporary = build_composer_menu_entries(ephemeral=True)
+    ids = [e.action_id for e in temporary]
+    assert ids[0] == ACTION_SAVE_CHAT, "the escape hatch goes first"
+    entry = temporary[0]
+    assert entry.enabled is True
+    assert "not saved" in entry.description.lower()
+
+
+def _bare_promote_screen(store):
+    """Build a ``ChatScreen`` stand-in wired to a fake Console store.
+
+    Shared by the ``_promote_console_temporary_session`` tests below: each
+    one only differs in what the fake store does, and in which of the
+    captured lists it inspects afterwards.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._console_chat_store = store
+    screen._ensure_console_chat_store = lambda: store
+
+    chip_calls: list[bool] = []
+    screen._sync_console_temporary_chip = lambda: chip_calls.append(
+        screen._console_active_session_is_ephemeral()
+    )
+
+    invalidated: list[bool] = []
+    screen._invalidate_console_persisted_rows_cache = lambda: invalidated.append(True)
+
+    dispatched: list[object] = []
+    screen.run_worker = lambda coroutine, **_kwargs: dispatched.append(coroutine)
+
+    notifications: list[tuple[str, str]] = []
+
+    class _App:
+        def notify(self, message, severity="information"):
+            notifications.append((message, severity))
+
+    screen.app_instance = _App()
+    return screen, chip_calls, invalidated, dispatched, notifications
+
+
+class _PromoteSession:
+    def __init__(self, id_: str, ephemeral: bool) -> None:
+        self.id = id_
+        self.ephemeral = ephemeral
+
+
+@pytest.mark.unit
+def test_promote_console_temporary_session_saves_and_refreshes_the_chip():
+    """The effect that matters: promotion ran and the chip actually clears.
+
+    Guards the task-8 hazard directly: a handler that shows a toast and
+    never reaches ``promote_ephemeral_session`` looks identical from the
+    outside. This asserts the store call happened and the session came back
+    non-temporary, not merely that a notification fired.
+    """
+
+    class _Store:
+        def __init__(self) -> None:
+            self.active_session_id = "s1"
+            self._session = _PromoteSession("s1", ephemeral=True)
+            self.promote_calls: list[str] = []
+
+        def sessions(self):
+            return [self._session]
+
+        def promote_ephemeral_session(self, session_id):
+            self.promote_calls.append(session_id)
+            self._session.ephemeral = False
+            return "conv-123"
+
+    store = _Store()
+    screen, chip_calls, invalidated, dispatched, notifications = (
+        _bare_promote_screen(store)
+    )
+
+    screen._promote_console_temporary_session()
+
+    assert store.promote_calls == ["s1"], "the store's promotion must actually run"
+    assert store._session.ephemeral is False, "the session must come back non-temporary"
+    assert chip_calls == [False], "the chip refresh must see the now-saved session"
+    assert invalidated == [True]
+    assert len(dispatched) == 1, "_sync_native_console_chat_ui must run as a worker"
+    dispatched[0].close()
+    assert notifications == [("Chat saved.", "information")]
+
+
+@pytest.mark.unit
+def test_promote_console_temporary_session_restores_temporary_state_on_failure():
+    """A failing save must leave the chat temporary, not silently persisted."""
+
+    class _Store:
+        def __init__(self) -> None:
+            self.active_session_id = "s1"
+            self._session = _PromoteSession("s1", ephemeral=True)
+
+        def sessions(self):
+            return [self._session]
+
+        def promote_ephemeral_session(self, session_id):
+            # Mirrors promote_ephemeral_session's own contract: restore to
+            # temporary before re-raising.
+            self._session.ephemeral = True
+            raise RuntimeError("db exploded")
+
+    store = _Store()
+    screen, chip_calls, invalidated, dispatched, notifications = (
+        _bare_promote_screen(store)
+    )
+
+    screen._promote_console_temporary_session()
+
+    assert store._session.ephemeral is True, "must stay temporary after a failed save"
+    assert chip_calls == [], "a failed save must not tell the chip to disappear"
+    assert invalidated == []
+    assert dispatched == []
+    assert notifications == [
+        ("Could not save this chat. It is still temporary.", "error")
+    ]
+
+
+@pytest.mark.unit
+def test_promote_console_temporary_session_is_silent_when_already_saved():
+    """``promote_ephemeral_session`` returning ``None`` means nothing to do.
+
+    Per its contract this covers an already-saved session or no configured
+    adapter -- either way idempotent, so no toast and no chip churn.
+    """
+
+    class _Store:
+        def __init__(self) -> None:
+            self.active_session_id = "s1"
+
+        def promote_ephemeral_session(self, session_id):
+            return None
+
+    store = _Store()
+    screen, chip_calls, invalidated, dispatched, notifications = (
+        _bare_promote_screen(store)
+    )
+
+    screen._promote_console_temporary_session()
+
+    assert chip_calls == []
+    assert invalidated == []
+    assert dispatched == []
+    assert notifications == []
+
+
+@pytest.mark.unit
+def test_save_chat_menu_choice_dispatches_to_the_promote_handler():
+    """The composer-menu row for ``ACTION_SAVE_CHAT`` reaches the real save path."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = ChatScreen.__new__(ChatScreen)
+    calls: list[bool] = []
+    screen._promote_console_temporary_session = lambda: calls.append(True)
+
+    screen._handle_console_composer_menu_choice(ACTION_SAVE_CHAT)
+
+    assert calls == [True]
+
+
+@pytest.mark.unit
+def test_temporary_chip_save_requested_reaches_the_promote_handler():
+    """The chip's activation message (task-7) drives the same save path."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleTemporaryChip,
+    )
+
+    screen = ChatScreen.__new__(ChatScreen)
+    calls: list[bool] = []
+    screen._promote_console_temporary_session = lambda: calls.append(True)
+
+    event = ConsoleTemporaryChip.SaveRequested()
+    stopped: list[bool] = []
+    event.stop = lambda: stopped.append(True)
+
+    screen.on_console_temporary_chip_save(event)
+
+    assert stopped == [True], "the chip's own click/activation handling must not also fire"
+    assert calls == [True]

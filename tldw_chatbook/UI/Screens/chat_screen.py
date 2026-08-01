@@ -220,6 +220,7 @@ from ...Chat.local_server_discovery import (
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
+from ...Chat.console_ephemeral import ACTION_SAVE_CHAT
 from ...Chat.console_message_actions import (
     ConsoleActionResult,
     ConsoleMessageActionService,
@@ -358,6 +359,7 @@ from ...Widgets.Console.console_status_chips import (
     ConsoleAssistantChip,
     ConsoleScopeChip,
     ConsoleStatusChips,
+    ConsoleTemporaryChip,
 )
 from ...Widgets.Console.console_retrieval_scope_row import (
     ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
@@ -5161,7 +5163,8 @@ class ChatScreen(BaseAppScreen):
         """Open the composer overflow menu (task-1680)."""
         self.app.push_screen(
             ConsoleComposerMenuModal(
-                attachment_kind=self._console_pending_attachment_kind()
+                attachment_kind=self._console_pending_attachment_kind(),
+                ephemeral=self._console_active_session_is_ephemeral(),
             ),
             callback=self._handle_console_composer_menu_choice,
         )
@@ -5199,6 +5202,9 @@ class ChatScreen(BaseAppScreen):
         """Route the chosen menu action (task-1680)."""
         if not action_id:
             return
+        if action_id == ACTION_SAVE_CHAT:
+            self._promote_console_temporary_session()
+            return
         if action_id == ACTION_GENERATE_IMAGE:
             self.run_worker(
                 self._open_console_generate_image_modal(), exclusive=False
@@ -5217,6 +5223,45 @@ class ChatScreen(BaseAppScreen):
                 exclusive=True,
                 group="console-impersonate",
             )
+
+    def _promote_console_temporary_session(self) -> None:
+        """Save the active temporary chat, then refresh its marker and chip.
+
+        Both entry points (the composer menu row and the Temporary chip) land
+        here, so the save behaves identically however it was reached.
+        """
+        store = self._ensure_console_chat_store()
+        session_id = getattr(store, "active_session_id", None)
+        if not session_id:
+            return
+        try:
+            conversation_id = store.promote_ephemeral_session(session_id)
+        except Exception:
+            logger.opt(exception=True).warning("Saving the temporary chat failed")
+            self.app_instance.notify(
+                "Could not save this chat. It is still temporary.",
+                severity="error",
+            )
+            return
+        if conversation_id is None:
+            return
+        self._invalidate_console_persisted_rows_cache()
+        # `_sync_native_console_chat_ui()` below never touches the Temporary
+        # chip (see `_sync_console_temporary_chip`'s docstring: it is pushed
+        # explicitly at every session-creation/switch point, not folded into
+        # the general sync tick), so without this call the chip would keep
+        # showing "Temporary" on an already-saved conversation.
+        self._sync_console_temporary_chip()
+        self.run_worker(self._sync_native_console_chat_ui(), exclusive=False)
+        self.app_instance.notify("Chat saved.", severity="information")
+
+    @on(ConsoleTemporaryChip.SaveRequested)
+    def on_console_temporary_chip_save(
+        self, event: ConsoleTemporaryChip.SaveRequested
+    ) -> None:
+        """Save the temporary chat from its status chip."""
+        event.stop()
+        self._promote_console_temporary_session()
 
     async def _open_console_generate_image_modal(self) -> None:
         """Collect image options, then paste the command into the draft."""
@@ -9299,7 +9344,11 @@ class ChatScreen(BaseAppScreen):
         context`` (every "new session" entry point),
         ``_activate_console_session_for_workspace`` (workspace switch/
         create), the character-picker "new chat" flow, and the
-        conversation-browser "already-open-tab" branch (task-7 review).
+        conversation-browser "already-open-tab" branch (task-7 review), and
+        ``_promote_console_temporary_session`` (task-8) after a successful
+        save -- ``_sync_native_console_chat_ui``'s regular tick never
+        touches this chip, so a save that skipped this call would leave
+        "Temporary" showing on an already-saved conversation.
         ``_sync_console_retrieval_scope_row`` (resume, tab activation,
         scope-picker save, first-persist flush) pushes the same thing
         inline instead of calling this helper -- it already has the

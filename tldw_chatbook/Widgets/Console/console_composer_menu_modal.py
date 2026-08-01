@@ -15,6 +15,8 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Chat.console_ephemeral import ACTION_SAVE_CHAT
+
 #: Action ids returned by the menu. Stable strings, not indexes: the
 #: screen's dispatch table keys off these and tests pin them.
 ACTION_GENERATE_IMAGE = "generate-image"
@@ -34,7 +36,7 @@ class ComposerMenuEntry:
 
 
 def build_composer_menu_entries(
-    *, attachment_kind: str = "none"
+    *, attachment_kind: str = "none", ephemeral: bool = False
 ) -> tuple[ComposerMenuEntry, ...]:
     """Build the menu rows for the current composer state.
 
@@ -42,8 +44,13 @@ def build_composer_menu_entries(
     the row says which case applies: nothing staged, or a staged file that
     is not an image. Explicit unavailable states beat vanishing entries.
 
+    "Save this chat" is the exception: it is ABSENT outside a temporary
+    chat rather than disabled, because a disabled save on an already-saved
+    conversation reads as a failure rather than as "already done".
+
     Args:
         attachment_kind: ``"image"``, ``"other"``, or ``"none"``.
+        ephemeral: Whether the active session is temporary.
 
     Returns:
         The menu entries in display order.
@@ -53,7 +60,7 @@ def build_composer_menu_entries(
         "other": "Attached file is not an image",
         "none": "Attach an image first",
     }.get(attachment_kind, "Attach an image first")
-    return (
+    entries = (
         ComposerMenuEntry(
             ACTION_GENERATE_IMAGE,
             "Generate Image",
@@ -75,6 +82,16 @@ def build_composer_menu_entries(
             "Impersonate",
             "Draft your next reply with the current model",
         ),
+    )
+    if not ephemeral:
+        return entries
+    return (
+        ComposerMenuEntry(
+            ACTION_SAVE_CHAT,
+            "Save this chat",
+            "This chat is not saved locally — save it now",
+        ),
+        *entries,
     )
 
 
@@ -107,17 +124,27 @@ class ConsoleComposerMenuModal(ModalScreen["str | None"]):
 
     BINDINGS = [("escape", "dismiss_menu", "Cancel")]
 
-    def __init__(self, *, attachment_kind: str = "none", **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        attachment_kind: str = "none",
+        ephemeral: bool = False,
+        **kwargs: Any,
+    ) -> None:
         """Initialize the menu.
 
         Args:
             attachment_kind: ``"image"``, ``"other"`` or ``"none"``, which
                 decides whether Generate Caption is actionable and what its
                 disabled row explains.
+            ephemeral: Whether the active session is temporary, which
+                decides whether "Save this chat" is offered at all.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
-        self._entries = build_composer_menu_entries(attachment_kind=attachment_kind)
+        self._entries = build_composer_menu_entries(
+            attachment_kind=attachment_kind, ephemeral=ephemeral
+        )
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-composer-menu"):
