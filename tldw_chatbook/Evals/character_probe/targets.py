@@ -13,15 +13,18 @@ run needs from it are NOT top-level columns:
   branch of this package came to drop every target's steering silently while
   a test built its own row shape and passed.
 
-The steering read itself is ``word_bench.storage.model_steering`` -- the one
-existing home for that convention (task-1611), reused rather than
-reimplemented so the two bench types can never drift into disagreeing about
-what a row means. The design spec lists targets "and their steering" among
-the things this eval explicitly DOES reuse, so this import is the sanctioned
-kind; only that one reader is called, and none of word_bench's measurement
-code is referenced here or anywhere else in this package. (Importing that
-module does pull word_bench's own imports in transitively -- unavoidable
-without duplicating the reader, which is the thing worth avoiding.)
+The steering read itself is ``model_steering`` (task-1611's original reader,
+relocated by task-1754 to ``Evals.steering`` -- a shared module with no
+imports beyond the standard library), reused rather than reimplemented so
+the two bench types can never drift into disagreeing about what a row
+means. The design spec lists targets "and their steering" among the things
+this eval explicitly DOES reuse, so this import is the sanctioned kind; only
+that one reader is called, and none of word_bench's measurement code is
+referenced here or anywhere else in this package. Importing ``..steering``
+directly (never ``..word_bench.storage``, which still carries the reader
+under its old name for backward compatibility) means this package never
+loads word_bench's capture client, normalizer, or httpx -- pinned by
+``Tests/Evals/character_probe/test_conversation_storage.py::test_character_probe_never_imports_the_word_bench_measurement_stack``.
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
-from ..word_bench.storage import model_steering
+from ..steering import model_steering
 
 
 @dataclass(frozen=True)

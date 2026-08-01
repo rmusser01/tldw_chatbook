@@ -327,14 +327,127 @@ def test_a_prefix_steered_target_never_opens_a_run_group(db, bench):
 
 def test_character_probe_never_imports_the_word_bench_measurement_stack():
     """This eval reads generated text only. Importing the capture client,
-    normalizer, or canary code would let distribution vocabulary leak into a
-    surface that has no distributions -- pinned the way
-    Tests/UI/test_evals_bench_editor.py pins the same rule for the editor."""
-    import pathlib
+    normalizer, or canary code (httpx-backed) would let distribution
+    vocabulary leak into a surface that has none -- pinned the way
+    Tests/UI/test_evals_bench_editor.py pins the same rule for the editor.
 
-    package = pathlib.Path("tldw_chatbook/Evals/character_probe")
-    forbidden = ("capture_client", "normalize_logprobs", "CANARY", "top_k", "logprobs")
-    for module in package.glob("*.py"):
+    A source-token grep alone cannot catch this: ``character_probe/targets.py``
+    imports ``model_steering`` (task-1611's steering reader), and until
+    task-1754 relocated that reader out of ``word_bench.storage`` into a
+    shared, stdlib-only module (``Evals/steering.py``), importing it pulled
+    ``word_bench.capture_client`` -> ``normalizer`` -> ``httpx`` in
+    transitively -- with no forbidden token ever appearing in ANY
+    character_probe source file, so the old version of this test passed
+    throughout. The subprocess check below is what actually pins the rule;
+    the token grep after it is a cheap secondary check, not a substitute.
+
+    Runs in a subprocess so an already-populated ``sys.modules`` from other
+    tests in this same session (e.g. ``Tests/Evals/word_bench/*``, which
+    legitimately import word_bench) can never produce a false pass -- a
+    fresh interpreter is the only way to observe what importing
+    character_probe *by itself* actually loads. ``cwd`` is computed from
+    this file's own resolved path, not the process's ambient working
+    directory, so the check cannot silently no-op when pytest is invoked
+    from somewhere other than the repo root -- the previous version's own
+    bug: a relative ``pathlib.Path("tldw_chatbook/...")`` glob that matched
+    nothing (and therefore asserted nothing) from any other cwd.
+
+    The probe script reports one of three OUTCOMES on stdout, not merely a
+    process exit code, and this function asserts on which one it is rather
+    than on the exit code alone: a non-zero exit is ambiguous by itself --
+    it is what BOTH "a forbidden module loaded" (the thing this test
+    exists to catch) AND "some unrelated import in the walked package
+    raised" (a syntax error, a missing optional dependency, anything else)
+    produce, and conflating the two would send someone hunting a
+    forbidden-import violation that does not exist. ``OK`` is success;
+    ``VIOLATION:<modules>`` names exactly which forbidden modules loaded
+    (this is the failure this test is FOR); ``CRASH`` means the probe
+    itself failed to even finish walking the package, which is a different
+    problem entirely and is reported as one, with the subprocess's own
+    traceback surfaced so it is debuggable as what it actually is.
+    """
+    import pathlib
+    import subprocess
+    import sys
+
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
+    package_dir = repo_root / "tldw_chatbook" / "Evals" / "character_probe"
+    assert package_dir.is_dir(), (
+        f"computed repo root {repo_root!r} does not contain the package "
+        "under test; this test's parents[N] no longer matches this file's "
+        "location on disk"
+    )
+
+    # word_bench.storage is deliberately not listed here even though it is
+    # the module that USED to carry model_steering: it unconditionally
+    # imports capture_client itself, so any path that still reaches
+    # word_bench.storage necessarily also reaches capture_client, which is
+    # listed below. Checking the leaf modules covers the whole chain.
+    #
+    # The import loop is wrapped so an unrelated import failure anywhere in
+    # the walked package reports as CRASH (with a full traceback on
+    # stderr), never silently reads as "no forbidden module loaded" (a
+    # false pass) or gets conflated with VIOLATION (a false accusation of
+    # the wrong failure) -- see this function's own docstring.
+    probe_script = (
+        "import importlib, pkgutil, sys, traceback\n"
+        "try:\n"
+        "    import tldw_chatbook.Evals.character_probe as pkg\n"
+        "    for info in pkgutil.walk_packages(pkg.__path__, pkg.__name__ + '.'):\n"
+        "        importlib.import_module(info.name)\n"
+        "except BaseException:\n"
+        "    traceback.print_exc()\n"
+        "    sys.stdout.write('CRASH\\n')\n"
+        "    sys.exit(2)\n"
+        "forbidden = [\n"
+        "    'tldw_chatbook.Evals.word_bench.capture_client',\n"
+        "    'tldw_chatbook.Evals.word_bench.normalizer',\n"
+        "    'httpx',\n"
+        "]\n"
+        "present = sorted(m for m in forbidden if m in sys.modules)\n"
+        "if present:\n"
+        "    sys.stdout.write('VIOLATION:' + ','.join(present) + '\\n')\n"
+        "    sys.exit(1)\n"
+        "sys.stdout.write('OK\\n')\n"
+        "sys.exit(0)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe_script],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    stdout = result.stdout
+    stderr_tail = result.stderr[-4000:]
+
+    if stdout.startswith("VIOLATION:"):
+        loaded = stdout[len("VIOLATION:"):].strip()
+        pytest.fail(
+            "importing tldw_chatbook.Evals.character_probe (every module of "
+            f"it) loaded word_bench's measurement stack: {loaded}"
+        )
+    if stdout.startswith("CRASH"):
+        pytest.fail(
+            "the import-graph probe crashed while walking "
+            "tldw_chatbook.Evals.character_probe -- this is NOT evidence of "
+            "a forbidden import (see VIOLATION above for that); it means "
+            "the probe itself, or an unrelated import in the package, "
+            f"failed. Traceback from the subprocess:\n{stderr_tail}"
+        )
+    assert result.returncode == 0 and stdout.strip() == "OK", (
+        "the import-graph probe subprocess ended in an unrecognized state "
+        f"-- returncode={result.returncode} stdout={stdout!r} "
+        f"stderr(tail)={stderr_tail!r}"
+    )
+
+    # Secondary, cheap check kept alongside the graph assertion above (not
+    # instead of it -- see the docstring): no forbidden token appears in
+    # this package's own source either. package_dir is computed from
+    # repo_root above, not a relative literal, for the same cwd-independence
+    # reason as the subprocess check.
+    forbidden_tokens = ("capture_client", "normalize_logprobs", "CANARY", "top_k", "logprobs")
+    for module in package_dir.glob("*.py"):
         source = module.read_text()
-        for token in forbidden:
+        for token in forbidden_tokens:
             assert token not in source, f"{module.name} mentions {token}"
