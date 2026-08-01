@@ -1,0 +1,382 @@
+"""Lazy Installed view for managed and legacy local models."""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Callable
+from pathlib import Path
+
+from textual import on, work
+from textual.app import ComposeResult
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widget import Widget
+from textual.widgets import Button, Static
+
+from tldw_chatbook.Model_Artifacts.service import (
+    ArtifactInUseError,
+    ArtifactNotReadyError,
+    ArtifactRef,
+    ModelArtifactService,
+)
+from tldw_chatbook.Model_Artifacts.store import managed_service
+from tldw_chatbook.UI.Screens.model_browser_state import (
+    InventoryRow,
+    UnmanagedRow,
+    inventory_rows,
+)
+from tldw_chatbook.Widgets.ModelArtifacts.activation_controls import (
+    ActivationRequested,
+    DeletionRequested,
+    ModelActivationControls,
+)
+
+MAX_UNMANAGED_MODELS = 500
+_MODEL_EXTENSIONS = frozenset({".gguf", ".bin", ".safetensors", ".pt", ".pth", ".onnx"})
+_MIN_LEGACY_MODEL_BYTES = 1024 * 1024
+
+
+def lifecycle_failure_message(exc: BaseException, *, operation: str) -> str:
+    """Map lifecycle errors to stable text without leaking raw details.
+
+    Args:
+        exc: Error raised by activate, delete, or reconcile.
+        operation: User action that failed.
+
+    Returns:
+        Sanitized user-visible failure text.
+    """
+    if isinstance(exc, ArtifactInUseError):
+        return "This model is in use. Stop active work and retry deletion."
+    if isinstance(exc, ArtifactNotReadyError):
+        return "This model is not ready and cannot be activated."
+    return f"Model {operation} failed. See the application log for details."
+
+
+class InstalledView(Widget):
+    """List and manage the shared local model inventory."""
+
+    DEFAULT_CSS = """
+    InstalledView {
+        height: 100%;
+    }
+
+    InstalledView .installed-header {
+        height: 3;
+    }
+
+    InstalledView .installed-header Button {
+        width: auto;
+        margin-right: 1;
+    }
+
+    InstalledView .installed-list {
+        height: 1fr;
+    }
+
+    InstalledView .installed-model-row {
+        height: auto;
+        margin-bottom: 1;
+        padding: 1;
+        border: solid $surface-lighten-1;
+    }
+
+    InstalledView .installed-model-title {
+        text-style: bold;
+    }
+
+    InstalledView .installed-model-muted {
+        color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        service_factory: Callable[[], ModelArtifactService] = managed_service,
+        legacy_dir: Path | None = None,
+        id: str | None = None,
+    ) -> None:
+        """Create an idle view; no filesystem work occurs here.
+
+        Args:
+            service_factory: Lazy managed-store service factory.
+            legacy_dir: Legacy downloader directory to scan on activation.
+            id: Optional Textual widget id.
+        """
+        self._service_factory = service_factory
+        self._legacy_dir = legacy_dir or Path("~/Downloads/tldw_models").expanduser()
+        self._service: ModelArtifactService | None = None
+        self._rows: tuple[InventoryRow, ...] = ()
+        self._loaded = False
+        self._loading = False
+        self._load_error: str | None = None
+        self._operation_reference: ArtifactRef | None = None
+        self._operation_name: str | None = None
+        super().__init__(id=id)
+
+    def compose(self) -> ComposeResult:
+        """Compose from retained in-memory state without performing I/O."""
+        with Horizontal(classes="installed-header"):
+            yield Button("Refresh", id="installed-models-refresh", variant="primary")
+            yield Button("Repair", id="installed-models-repair", variant="default")
+        if self._loading:
+            yield Static("Loading installed models…", markup=False)
+        elif self._load_error:
+            yield Static(self._load_error, markup=False)
+        elif not self._loaded:
+            yield Static("Open Installed to load the local model inventory.", markup=False)
+        else:
+            yield self._summary()
+
+        with VerticalScroll(classes="installed-list"):
+            if self._loaded and not self._rows:
+                yield Static("No managed or legacy models found.", markup=False)
+            for row in self._rows:
+                yield self._row_widget(row)
+
+    def _summary(self) -> Static:
+        """Return the managed-store disk summary."""
+        if not self._rows or self._rows[0].installed_store_bytes is None:
+            return Static("Disk usage unavailable.", markup=False)
+        first = self._rows[0]
+        return Static(
+            "Managed: "
+            f"{self._format_bytes(first.installed_store_bytes or 0)} installed, "
+            f"{self._format_bytes(first.staging_store_bytes or 0)} staging · "
+            f"{self._format_bytes(first.free_bytes or 0)} free",
+            markup=False,
+        )
+
+    def _row_widget(self, row: InventoryRow) -> Vertical:
+        """Build one inventory row from pure render state."""
+        children: list[Widget] = [
+            Static(row.model_label, classes="installed-model-title", markup=False),
+            Static(row.provenance, classes="installed-model-muted", markup=False),
+        ]
+        if row.reference is not None:
+            children.append(
+                Static(
+                    f"Revision: {row.revision} · Precision: {row.precision}",
+                    markup=False,
+                )
+            )
+            if row.dependencies:
+                children.append(
+                    Static(
+                        "Dependencies: "
+                        + ", ".join(
+                            f"{ref.artifact_id}@{ref.revision}/{ref.variant}"
+                            for ref in row.dependencies
+                        ),
+                        markup=False,
+                    )
+                )
+        if row.size_bytes is not None:
+            children.append(Static(f"Size: {self._format_bytes(row.size_bytes)}"))
+        children.append(Static(row.action_hint, markup=False))
+        if row.reference is not None and not row.is_broken:
+            children.append(
+                ModelActivationControls(
+                    row.reference,
+                    active=row.active,
+                    ready=row.ready,
+                    pending=self._operation_reference is not None,
+                )
+            )
+        return Vertical(*children, classes="installed-model-row")
+
+    @staticmethod
+    def _format_bytes(size_bytes: int) -> str:
+        """Format bytes for compact inventory copy."""
+        size = float(size_bytes)
+        for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+            if size < 1024 or unit == "TiB":
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} TiB"
+
+    @staticmethod
+    def scan_unmanaged(
+        root: Path,
+        *,
+        limit: int = MAX_UNMANAGED_MODELS,
+    ) -> tuple[UnmanagedRow, ...]:
+        """Return a bounded scan of legacy model files.
+
+        Args:
+            root: Legacy downloader directory.
+            limit: Maximum rows returned.
+
+        Returns:
+            Bounded legacy model rows in deterministic path order.
+        """
+        if limit <= 0 or not root.is_dir():
+            return ()
+        rows: list[UnmanagedRow] = []
+        for directory, directories, filenames in os.walk(root):
+            directories.sort()
+            filenames.sort()
+            for filename in filenames:
+                path = Path(directory) / filename
+                if path.suffix.casefold() not in _MODEL_EXTENSIONS or path.is_symlink():
+                    continue
+                try:
+                    size_bytes = path.stat().st_size
+                except OSError:
+                    continue
+                if size_bytes <= _MIN_LEGACY_MODEL_BYTES:
+                    continue
+                rows.append(UnmanagedRow(path=path, size_bytes=size_bytes))
+                if len(rows) >= limit:
+                    return tuple(rows)
+        return tuple(rows)
+
+    def ensure_loaded(self, *, force: bool = False) -> None:
+        """Start the inventory worker on first activation or explicit refresh.
+
+        Args:
+            force: Reload even when a prior inventory is retained.
+        """
+        if self._loading or (self._loaded and not force):
+            return
+        self._loading = True
+        self._load_error = None
+        self.refresh(recompose=True)
+        self._load_inventory()
+
+    def _service_for_worker(self) -> ModelArtifactService:
+        """Create the managed service lazily on a worker thread."""
+        if self._service is None:
+            self._service = self._service_factory()
+        return self._service
+
+    @work(thread=True, group="installed_models_load", exclusive=True, exit_on_error=False)
+    def _load_inventory(self) -> None:
+        """Read managed inventory, disk totals, and legacy files off-loop."""
+        try:
+            service = self._service_for_worker()
+            installed = service.list_installed()
+            usage = service.disk_usage()
+            unmanaged = self.scan_unmanaged(self._legacy_dir)
+            rows = inventory_rows(installed, usage, unmanaged)
+        except Exception:
+            self.app.call_from_thread(
+                self._apply_inventory,
+                (),
+                "The local model inventory could not be loaded.",
+            )
+            return
+        self.app.call_from_thread(self._apply_inventory, rows, None)
+
+    def _apply_inventory(
+        self,
+        rows: tuple[InventoryRow, ...],
+        error: str | None,
+    ) -> None:
+        """Apply a completed inventory read on the Textual event loop."""
+        self._rows = rows
+        self._loading = False
+        self._loaded = error is None
+        self._load_error = error
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#installed-models-refresh")
+    def _refresh_pressed(self) -> None:
+        self.ensure_loaded(force=True)
+
+    @on(Button.Pressed, "#installed-models-repair")
+    def _repair_pressed(self) -> None:
+        if self._operation_reference is not None or self._operation_name is not None:
+            return
+        self._operation_name = "repair"
+        self.refresh(recompose=True)
+        self._repair_store()
+
+    @on(ActivationRequested)
+    def _activation_requested(self, event: ActivationRequested) -> None:
+        event.stop()
+        self._request_activation(event.reference)
+
+    def _request_activation(self, reference: ArtifactRef) -> None:
+        """Start activation unless another lifecycle operation is pending."""
+        if self._operation_reference is not None or self._operation_name is not None:
+            return
+        self._operation_reference = reference
+        self._operation_name = "activate"
+        self.refresh(recompose=True)
+        self._activate_model(reference)
+
+    @on(DeletionRequested)
+    def _deletion_requested(self, event: DeletionRequested) -> None:
+        event.stop()
+        if self._operation_reference is not None or self._operation_name is not None:
+            return
+        self._operation_reference = event.reference
+        self._operation_name = "delete"
+        self.refresh(recompose=True)
+        self._delete_model(event.reference)
+
+    @work(thread=True, group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
+    def _activate_model(self, reference: ArtifactRef) -> None:
+        """Activate one exact verified model off the event loop."""
+        try:
+            self._service_for_worker().activate(reference)
+        except Exception as exc:
+            self.app.call_from_thread(
+                self._apply_lifecycle_result,
+                "activate",
+                lifecycle_failure_message(exc, operation="activation"),
+            )
+            return
+        self.app.call_from_thread(self._apply_lifecycle_result, "activate", None)
+
+    @work(thread=True, group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
+    def _delete_model(self, reference: ArtifactRef) -> None:
+        """Delete one exact model without bypassing service leases."""
+        try:
+            self._service_for_worker().delete(reference)
+        except Exception as exc:
+            self.app.call_from_thread(
+                self._apply_lifecycle_result,
+                "delete",
+                lifecycle_failure_message(exc, operation="deletion"),
+            )
+            return
+        self.app.call_from_thread(self._apply_lifecycle_result, "delete", None)
+
+    @work(thread=True, group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
+    def _repair_store(self) -> None:
+        """Run explicit reconciliation off the event loop."""
+        try:
+            report = self._service_for_worker().reconcile()
+        except Exception as exc:
+            self.app.call_from_thread(
+                self._apply_lifecycle_result,
+                "repair",
+                lifecycle_failure_message(exc, operation="repair"),
+            )
+            return
+        self.app.call_from_thread(
+            self._apply_lifecycle_result,
+            "repair",
+            None,
+            f"Repair completed: {report.readiness_created} readiness records restored.",
+        )
+
+    def _apply_lifecycle_result(
+        self,
+        operation: str,
+        error: str | None,
+        success_message: str | None = None,
+    ) -> None:
+        """Complete a lifecycle operation and refresh inventory."""
+        self._operation_reference = None
+        self._operation_name = None
+        if error is not None:
+            self.notify(error, severity="error")
+        else:
+            self.notify(
+                success_message or f"Model {operation} completed.",
+                severity="information",
+            )
+        self.ensure_loaded(force=True)
