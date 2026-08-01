@@ -1763,29 +1763,36 @@ git commit -m "feat(evals): persist probe conversations, turn annotations, and r
 
 - `Tests/Evals/character_probe/` passes in full, and `Tests/Evals/word_bench/` is unchanged.
 - A bench can be saved, loaded, and run end to end against a fake chat callable, producing conversations that persist and reload.
-- No module under `character_probe/` references word_bench's measurement concepts — no distribution
-  vocabulary appears anywhere in this package's source or surface.
+- No module under `character_probe/` imports word_bench's capture client, normalizer, or canary
+  code.
 
-  **Amended after the whole-branch review (was: "imports word_bench's capture client, normalizer,
-  or canary code").** `character_probe/targets.py` deliberately imports
-  `word_bench.storage.model_steering`, the app's single existing reader for a target's steering out
-  of an `eval_models` row's `config` JSON. Importing that module pulls word_bench's own imports
+  **Restored to this original absolute wording by TASK-1754 (2026-08-01), which the criterion had
+  been amended to soften.** Between phase 1's whole-branch review and TASK-1754, this line briefly
+  read "references word_bench's measurement concepts — no distribution vocabulary appears anywhere
+  in this package's source or surface": `character_probe/targets.py` deliberately imported
+  `word_bench.storage.model_steering`, the app's one reader for a target's steering out of an
+  `eval_models` row's `config` JSON, and importing that module pulled word_bench's own imports in
   transitively — `storage` → `capture_client` → `normalizer` → `httpx` — so the criterion as
-  originally worded is **not** met by the import graph.
-  The reuse is correct and stays: duplicating that reader is exactly what produced Critical C1, in
-  which the runner read a key no `eval_models` row has ever carried and every real run silently
-  dropped its steering. The criterion's *intent* — that none of the measurement stack's ideas leak
-  into an eval that reads only generated text — is fully met, so the criterion is amended to say
-  what is actually true rather than left silently unmet.
+  originally worded was **not** met by the import graph, only in intent. TASK-1754 moved
+  `model_steering`/`_steering_field` (pure functions of a row dict, with no word_bench dependencies)
+  out of `word_bench.storage` into `Evals/steering.py`, a shared module with no imports beyond the
+  standard library; `character_probe/targets.py` now imports that module directly instead of
+  `word_bench.storage`, and `word_bench.storage` re-exports the old name so its existing callers are
+  unaffected. The reuse this criterion is really about — one steering reader for both bench types,
+  never a second, private implementation — is unchanged and stays correct: duplicating that reader
+  is exactly what produced Critical C1, in which the runner read a key no `eval_models` row has ever
+  carried and every real run silently dropped its steering. With the reader relocated, the import
+  graph now satisfies the criterion as originally written, not merely in spirit, so the absolute
+  wording above is restored rather than left softened.
 
-  **The in-repo hygiene test is weaker than the rule it names.**
+  **The in-repo hygiene test now pins the import graph, not source text.**
   `Tests/Evals/character_probe/test_conversation_storage.py::test_character_probe_never_imports_the_word_bench_measurement_stack`
-  greps each module's SOURCE TEXT for forbidden tokens. It cannot see an import graph at all, so it
-  passes on exactly the situation described above. TASK-1754 tracks both halves of the remedy:
-  moving `model_steering`/`_steering_field` (pure functions of a row dict, with no word_bench
-  dependencies) into a shared home neither package's stack rides on, and strengthening the test to
-  assert on the real import graph — e.g. `sys.modules` after a fresh package import — instead of on
-  tokens.
+  used to grep each module's SOURCE TEXT for forbidden tokens, which cannot see an import graph at
+  all and passed throughout the situation described above. TASK-1754 replaced that with a
+  subprocess-based check — importing every `character_probe` module in a fresh interpreter and
+  asserting `word_bench.capture_client`, `word_bench.normalizer`, and `httpx` are absent from
+  `sys.modules` — proven to fail against the pre-move code and pass after, so this criterion now has
+  a guard that can actually detect a regression of it.
 
 ### Forward-looking caveats for Phase 2
 
