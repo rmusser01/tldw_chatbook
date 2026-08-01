@@ -3059,3 +3059,53 @@ async def test_capture_continuations_checkbox_survives_a_targeted_targets_sectio
             is True
         )
         assert screen.query_one(BenchEditor).is_dirty() is True
+
+
+@pytest.mark.asyncio
+async def test_capture_continuations_checkbox_survives_a_prompt_mode_flip_rebuild(
+    evals_app, bench_with_mixed_readiness
+):
+    """Review Minor: sibling of `test_capture_continuations_checkbox_
+    survives_a_targeted_targets_section_rebuild` above, but for the OTHER
+    trigger of the SAME targeted `_refresh_targets_section` rebuild -- a
+    prompt-mode flip (`_on_prompt_mode_changed`). The checkbox lives
+    outside `#evals-bench-targets-section` regardless of which handler
+    triggers the rebuild, so this is mechanistically the identical
+    guarantee the Add-target test above pins -- but nothing pinned THIS
+    specific trigger directly until now. Also re-confirms, in the SAME
+    flip, that a typed Name/Probes edit survives alongside the checkbox
+    (already covered on its own by `test_mode_flip_swaps_the_steering_
+    field_and_preserves_typed_state`; repeated here so this test stands
+    alone rather than relying on a sibling test for that half of the
+    claim)."""
+    task_id, _ = bench_with_mixed_readiness  # raw mode
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        checkbox = screen.query_one("#evals-bench-capture-continuations", Checkbox)
+        checkbox.value = True
+        screen.query_one("#evals-bench-name", Input).value = "typed-but-unsaved-name"
+        screen.query_one("#evals-bench-probes", TextArea).text = "typed probe"
+
+        screen.query_one("#evals-bench-prompt-mode", Select).value = "chat"
+        await pilot.pause()
+
+        # The rebuild genuinely happened (the steering field swapped) --
+        # otherwise this test would trivially pass by never exercising
+        # the rebuild at all.
+        assert not screen.query("#evals-target-prefix")
+        assert screen.query_one("#evals-target-system-prompt", Input)
+
+        assert (
+            screen.query_one("#evals-bench-capture-continuations", Checkbox).value
+            is True
+        )
+        assert (
+            screen.query_one("#evals-bench-name", Input).value
+            == "typed-but-unsaved-name"
+        )
+        assert screen.query_one("#evals-bench-probes", TextArea).text == "typed probe"
+        assert screen.query_one(BenchEditor).is_dirty() is True

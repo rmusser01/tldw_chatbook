@@ -1112,8 +1112,9 @@ async def test_focused_cell_continuation_widget_clears_when_moving_to_a_cell_wit
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (160, 45)], ids=["235x52", "160x45"])
 async def test_focused_cell_and_primary_action_paint_inside_the_inspector_viewport(
-    evals_app, run_group_with_cell_continuations
+    evals_app, run_group_with_cell_continuations, size
 ):
     """task-1710 T2: adding the continuation row to ``EvalsCellInspector``
     means this widget's OWN CSS is now touched, not just its content --
@@ -1129,9 +1130,17 @@ async def test_focused_cell_and_primary_action_paint_inside_the_inspector_viewpo
     visible viewport (unreachable even scrolled to ``max_scroll_y``).
     Pre-existing (not introduced by this task's own continuation row),
     but in scope here because this task's own CSS touches the exact
-    rule that was missing it."""
+    rule that was missing it.
+
+    Parametrized over 235x52 AND 160x45 (review Minor): 160x45 is this
+    whole test file's own default "realistic" size and independently
+    reproduces the identical escape (button outside the pane,
+    ``max_scroll_y == 1`` without the fix) -- a single-size assertion
+    would have missed a regression that only manifests at the smaller,
+    far more common terminal.
+    """
     fixture = run_group_with_cell_continuations
-    async with evals_app.run_test(size=(235, 52)) as pilot:
+    async with evals_app.run_test(size=size) as pilot:
         await pilot.pause()
         grid = await _select_run_group(pilot, fixture["group_id"])
         await _focus_cell(pilot, grid, fixture["s1"], fixture["base_id"])
