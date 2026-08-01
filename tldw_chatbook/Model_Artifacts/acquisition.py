@@ -538,7 +538,7 @@ def _closure_fingerprint_with_sources(
     readiness records and installed-manifest verification, which know
     nothing about source maps and must not change shape for this task.
 
-    TASK-1712 (PR-1165 review, P1): folds in EVERY entry of
+    TASK-1720 (PR-1165 review, P1): folds in EVERY entry of
     ``resolved_sources`` -- not just ``(ref, path)`` pairs the caller
     actually named in a ``sources`` argument. The original TASK-1695
     version only covered caller-supplied entries, which left a real

@@ -234,7 +234,7 @@ one-row field. The convention for those fields (task-1586):
   "Per-item Save/Reset" / "Validate, then Save" / "Read-only here") —
   five save models coexist on the Settings screen, and the badge is what
   keeps their differing footer keys from reading as inconsistency
-  (task-1711).
+  (task-1717).
 - **Fold indicator:** scrollable inspector columns reserve a bottom row
   ("▼ more — scroll…") shown only while content overflows, so a
   mid-sentence clip is never the only signal that more exists

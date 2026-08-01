@@ -451,14 +451,14 @@ async def test_identical_source_map_at_provision_does_not_mismatch(tmp_path):
 async def test_single_file_fallback_fingerprint_differs_from_plain_closure_fingerprint(
     tmp_path,
 ):
-    """TASK-1712 (PR-1165 review, P1): closes a residual TASK-1695 left open.
+    """TASK-1720 (PR-1165 review, P1): closes a residual TASK-1695 left open.
 
     Superseded assertion: this test used to assert the consent fingerprint
     was BYTE-FOR-BYTE the plain ``closure_fingerprint(root, deps)`` even
     when the closure resolves a not-yet-installed single-file descriptor's
     OWN ``source_url`` (the fallback ``_resolve_file_sources`` uses when no
     explicit ``sources`` map is supplied at all). That was itself the
-    consent hole TASK-1712 closes: a caller-supplied ``sources`` entry was
+    consent hole TASK-1720 closes: a caller-supplied ``sources`` entry was
     folded into the fingerprint, but the fallback-resolved ``source_url``
     was not, so a dynamic ``ArtifactCatalog`` (mirror rotation, CDN
     rebalancing -- the protocol guarantees no immutability) could change it
@@ -489,7 +489,7 @@ async def test_single_file_fallback_fingerprint_differs_from_plain_closure_finge
 async def test_single_file_source_url_changed_after_consent_raises_consent_mismatch(
     tmp_path,
 ):
-    """TASK-1712's headline acceptance criterion.
+    """TASK-1720's headline acceptance criterion.
 
     A single-file descriptor with NO explicit source map at all -- its
     file's URL resolved purely via the ``descriptor.source_url`` fallback

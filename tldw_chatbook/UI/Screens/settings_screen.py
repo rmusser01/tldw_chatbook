@@ -4246,7 +4246,7 @@ class SettingsScreen(BaseAppScreen):
             return (
                 "State: Unsaved changes | Save (s) or Revert (r) — switching categories keeps this draft."
             )
-        # task-1711: lead with the persistence badge -- the footer hints
+        # task-1717: lead with the persistence badge -- the footer hints
         # already honestly come and go with each category's save model,
         # but nothing NAMED the model, so users trained on Save/Revert got
         # silent contract changes (five models coexist on this screen).
@@ -4254,7 +4254,7 @@ class SettingsScreen(BaseAppScreen):
         return f"State: {badge} | {self._category_state_scope_text(category)}"
 
     def _persistence_badge(self, category: SettingsCategoryId) -> str:
-        """Name the save model the active category uses (task-1711).
+        """Name the save model the active category uses (task-1717).
 
         Args:
             category: The active Settings category.

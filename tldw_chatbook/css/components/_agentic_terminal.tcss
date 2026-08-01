@@ -4025,7 +4025,7 @@ Button.settings-category-button.settings-secondary-search-match {
     margin: 0 0 1 0;
     /* task-1625: the State strip reads as a raised status surface (the
        task-345 focus steel at low alpha), not another flat prose row --
-       it now leads with the persistence badge (task-1711), so it earns
+       it now leads with the persistence badge (task-1717), so it earns
        the emphasis. */
     background: $ds-focus-bg 30%;
     color: $ds-text-primary;

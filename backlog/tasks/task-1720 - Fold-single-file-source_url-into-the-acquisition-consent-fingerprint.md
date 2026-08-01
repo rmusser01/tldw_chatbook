@@ -1,5 +1,5 @@
 ---
-id: TASK-1712
+id: TASK-1720
 title: Fold single-file source_url into the acquisition consent fingerprint
 status: Done
 assignee:

@@ -116,9 +116,9 @@ Two decisions, made explicit rather than left implicit:
   `atomic_private_write_bytes`; a failure after that write removes the file so a `failed` row
   never leaves an orphan on disk.
 
-Follow-ups filed rather than folded in: task-1711 (create_briefing_audio + update_briefing_audio
+Follow-ups filed rather than folded in: task-1718 (create_briefing_audio + update_briefing_audio
 are two statements, not one transaction -- self-healing via fail_interrupted_audio, low priority)
-and task-1712 (test-coverage residuals: the named script-untouched invariant covers only the
+and task-1719 (test-coverage residuals: the named script-untouched invariant covers only the
 synthesis-failure path, not the dedicated voice-resolution-failure path; the write-failure
 branch's atomicity is delegated to and untested against `private_paths`; one egress test's
 `diagnose=True` rationale doesn't actually bite since the fake stub short-circuits before the real

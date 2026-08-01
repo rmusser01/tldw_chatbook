@@ -8044,7 +8044,7 @@ async def test_compact_input_edge_renders_under_real_bundle():
 
 def test_state_banner_leads_with_persistence_badge():
     """Five save models coexist on this screen; the badge names the active
-    category's model in the same State-bar position everywhere (task-1711),
+    category's model in the same State-bar position everywhere (task-1717),
     so the footer keys' coming and going stops reading as inconsistency."""
     app = _build_test_app()
     screen = SettingsScreen(app)
@@ -8080,7 +8080,7 @@ def test_state_banner_dirty_branch_keeps_priority():
 
 def test_workspaces_banner_names_reversal_paths():
     """Workspaces applies immediately; the banner says how each action is
-    walked back instead of leaving 'no draft' unexplained (task-1711)."""
+    walked back instead of leaving 'no draft' unexplained (task-1717)."""
     app = _build_test_app()
     screen = SettingsScreen(app)
     text = screen._category_state_banner_text(SettingsCategoryId.WORKSPACES)
@@ -8163,7 +8163,7 @@ async def test_inspector_overflow_hint_matches_body_overflow():
 
 @pytest.mark.asyncio
 async def test_every_category_renders_the_state_banner():
-    """task-1711 AC: the persistence badge appears in the same State-bar
+    """task-1717 AC: the persistence badge appears in the same State-bar
     position on EVERY category -- the four own-persistence categories
     (Theme, Splash, Internal Prompts, Image Gen) and Workspaces previously
     skipped the banner entirely, so their save contract was unlabeled."""
