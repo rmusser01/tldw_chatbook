@@ -78,6 +78,11 @@ class ConsoleGenerateImageModal(ModalScreen["str | None"]):
     #console-generate-image-preview {
         color: $text-muted;
         margin: 1 0 0 0;
+        /* cubic PR #1160: a long pasted prompt grew the preview until the
+           Paste/Cancel buttons were pushed off-screen. */
+        height: auto;
+        max-height: 4;
+        overflow-y: auto;
     }
 
     #console-generate-image-actions {

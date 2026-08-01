@@ -5217,9 +5217,14 @@ class ChatScreen(BaseAppScreen):
             The exact string appended (including any leading newline), so
             callers that need to replace it later can match on it.
         """
-        composer = self._console_composer_or_none()
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
+        composer = self._console_composer_or_none()
+        if composer is not None and not (
+            getattr(self, "_console_visible_draft_session_id", None)
+            in (None, session_id)
+        ):
+            composer = None
         if composer is not None:
             current = composer.draft_text()
             addition = self._draft_addition(current, text)
@@ -5286,20 +5291,38 @@ class ChatScreen(BaseAppScreen):
         it, so silently rewriting their text would be wrong).
         """
         previous = getattr(self, "_console_impersonate_last", {}).get(session_id)
-        composer = self._console_composer_or_none()
         store = self._ensure_console_chat_store()
-        current = (
-            composer.draft_text()
-            if composer is not None
-            else store.session_draft(session_id)
-        )
+        # cubic PR #1160: the user can switch tabs while the draft is
+        # generating. Only touch the MOUNTED composer when it still shows
+        # this session -- otherwise write the stored draft and let the
+        # normal tab sync render it. Same guard _insert_console_dictation
+        # already uses for the identical race.
+        composer = self._console_composer_or_none()
+        if composer is not None and not (
+            store.active_session_id == session_id
+            and getattr(self, "_console_visible_draft_session_id", session_id)
+            == session_id
+        ):
+            composer = None
+        try:
+            current = (
+                composer.draft_text()
+                if composer is not None
+                else store.session_draft(session_id)
+            )
+        except KeyError:
+            logger.debug("Impersonate: session gone before insertion.")
+            return
         if previous and current.endswith(previous):
             trimmed = current[: len(current) - len(previous)]
             replacement = self._draft_addition(trimmed, suggestion)
             new_draft = trimmed + replacement
             if composer is not None:
                 composer.load_draft(new_draft)
-            store.set_session_draft(session_id, new_draft)
+            try:
+                store.set_session_draft(session_id, new_draft)
+            except KeyError:
+                logger.debug("Impersonate: session gone before draft save.")
             self._remember_console_impersonate(session_id, replacement)
             return
         appended = self._append_to_console_draft(suggestion)

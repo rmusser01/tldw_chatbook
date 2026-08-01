@@ -230,3 +230,103 @@ async def test_generate_image_modal_returns_the_composed_command():
         await pilot.pause()
 
     assert received == ["/generate-image a fox"]
+
+
+def _fake_controller_with(messages):
+    """Build a controller stub whose transcript is ``messages``."""
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    class _Msg:
+        def __init__(self, role, content, status="ok"):
+            self.role = role
+            self.content = content
+            self.status = status
+
+    class _Store:
+        def messages_for_session(self, session_id):
+            return [
+                _Msg(ConsoleMessageRole.USER if r == "user" else
+                     ConsoleMessageRole.ASSISTANT, c, s)
+                for r, c, s in messages
+            ]
+
+    controller = ConsoleChatController.__new__(ConsoleChatController)
+    controller.store = _Store()
+    return controller
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_impersonate_payload_obeys_the_provider_contract():
+    """cubic PR #1160: the request must be user-first and user-final.
+
+    A seeded character greeting is an assistant-first row, which strict
+    providers reject (task-427); a completed turn leaves the transcript
+    ending on an assistant row, which user-final providers reject.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    captured: dict[str, list] = {}
+
+    controller = _fake_controller_with(
+        [
+            ("assistant", "Greetings, traveller.", "ok"),   # seeded greeting
+            ("user", "hello", "ok"),
+            ("assistant", "broken reply", "failed"),        # failed row
+            ("assistant", "a real reply", "ok"),            # ends assistant
+        ]
+    )
+
+    class _Resolution:
+        ready = True
+
+    async def _resolve(_selection):
+        return _Resolution()
+
+    async def _collect(_resolution, messages):
+        captured["messages"] = messages
+        return "drafted reply"
+
+    controller.provider_gateway = type(
+        "_G", (), {"resolve_for_send": staticmethod(_resolve)}
+    )()
+    controller._provider_selection = lambda: None
+    controller._collect_summary_completion = _collect
+    controller._seeded_greeting_text = ConsoleChatController._seeded_greeting_text
+
+    result = await controller.impersonate_user_reply("s1")
+    assert result.text == "drafted reply"
+
+    messages = captured["messages"]
+    roles = [m["role"] for m in messages]
+    assert roles[0] == ConsoleMessageRole.SYSTEM.value
+    # First conversation row is the USER turn -- the greeting was dropped.
+    assert roles[1] == ConsoleMessageRole.USER.value
+    assert "Greetings, traveller." not in messages[1]["content"]
+    # The greeting still reaches the model, folded into the system row.
+    assert "Greetings, traveller." in messages[0]["content"]
+    # The failed row never ships.
+    blob = " ".join(str(m["content"]) for m in messages)
+    assert "broken reply" not in blob
+    # And the array ends on a USER turn.
+    assert roles[-1] == ConsoleMessageRole.USER.value
+
+
+@pytest.mark.unit
+def test_transcript_trimming_keeps_newest_and_stays_user_first():
+    """Long threads drop OLD turns, never leading with an assistant row."""
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    controller = ConsoleChatController.__new__(ConsoleChatController)
+    rows = []
+    for i in range(200):
+        rows.append({"role": "user", "content": "u" * 400})
+        rows.append({"role": "assistant", "content": "a" * 400})
+
+    kept = ConsoleChatController._trim_transcript_to_budget(controller, rows)
+
+    assert len(kept) < len(rows), "a huge thread must be trimmed"
+    assert kept[0]["role"] == "user", "must never lead with an assistant row"
+    assert kept[-1] == rows[-1], "the newest turn is always kept"

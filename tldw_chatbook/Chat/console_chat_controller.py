@@ -4077,31 +4077,63 @@ class ConsoleChatController:
                     getattr(resolution, "visible_copy", "")
                 ),
             )
+        session_messages = self.store.messages_for_session(session_id)
+        # Mirror _provider_message_payloads' rules exactly (cubic PR #1160):
+        # drop failed rows, and drop every ASSISTANT turn before the first
+        # USER turn -- strict providers reject an assistant-first array
+        # (task-427). A seeded character greeting therefore travels in the
+        # system row instead, via _seeded_greeting_text (task-1531).
         transcript: list[dict[str, Any]] = []
-        for message in self.store.messages_for_session(session_id):
+        seen_user = False
+        for message in session_messages:
             role = getattr(message, "role", None)
+            if role not in (ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT):
+                continue
+            if getattr(message, "status", None) == "failed":
+                continue
+            if not seen_user and role is ConsoleMessageRole.ASSISTANT:
+                continue
             content = str(getattr(message, "content", "") or "").strip()
-            if not content or role is None:
+            if not content:
                 continue
-            role_value = getattr(role, "value", role)
-            if role_value not in (
-                ConsoleMessageRole.USER.value,
-                ConsoleMessageRole.ASSISTANT.value,
-            ):
-                continue
-            transcript.append({"role": role_value, "content": content})
+            if role is ConsoleMessageRole.USER:
+                seen_user = True
+            transcript.append({"role": role.value, "content": content})
         if not transcript:
             return ImpersonateResult("", "empty-transcript", "")
+        # Keep the newest turns within the same budget summarize uses, so a
+        # long thread degrades by dropping OLD context rather than by
+        # blowing the provider's window (cubic PR #1160).
+        transcript = self._trim_transcript_to_budget(transcript)
         instruction = (
             "You are helping the USER write their next message in the "
             "conversation below. Reply with that message only -- their "
             "words, in their voice, no quotation marks, no narration, no "
             "preamble, and never as the assistant."
         )
+        greeting = self._seeded_greeting_text(session_messages)
+        if greeting:
+            instruction = (
+                f"{instruction}\n\nThe conversation opened with this "
+                f"assistant message, which the user has seen:\n{greeting}"
+            )
         messages = [
             {"role": ConsoleMessageRole.SYSTEM.value, "content": instruction},
             *transcript,
         ]
+        # Providers that require a user-final array reject a request ending
+        # on an assistant turn, which is the normal state after a completed
+        # reply (cubic PR #1160).
+        if messages[-1]["role"] != ConsoleMessageRole.USER.value:
+            messages.append(
+                {
+                    "role": ConsoleMessageRole.USER.value,
+                    "content": (
+                        "Write my next message in this conversation. "
+                        "Reply with that message only."
+                    ),
+                }
+            )
         try:
             text = (
                 await self._collect_summary_completion(resolution, messages)
@@ -4114,6 +4146,32 @@ class ConsoleChatController:
         if not text:
             return ImpersonateResult("", "empty-completion", "")
         return ImpersonateResult(text, "", "")
+
+    def _trim_transcript_to_budget(
+        self, transcript: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Keep the newest turns within ``_SUMMARY_SPAN_TOKEN_BUDGET``.
+
+        Args:
+            transcript: Ordered provider rows, oldest first.
+
+        Returns:
+            The newest rows that fit the budget (at least the final row, so
+            a single huge turn still produces a request).
+        """
+        kept: list[dict[str, Any]] = []
+        total = 0
+        for row in reversed(transcript):
+            cost = max(1, len(str(row.get("content", ""))) // 4)
+            if kept and total + cost > self._SUMMARY_SPAN_TOKEN_BUDGET:
+                break
+            kept.append(row)
+            total += cost
+        kept.reverse()
+        # Never lead with an assistant row after trimming (task-427).
+        while kept and kept[0]["role"] != ConsoleMessageRole.USER.value:
+            kept.pop(0)
+        return kept or transcript[-1:]
 
     async def _collect_summary_completion(
         self, resolution: Any, messages: list[dict[str, Any]]
