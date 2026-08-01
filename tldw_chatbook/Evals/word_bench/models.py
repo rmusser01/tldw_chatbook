@@ -136,6 +136,20 @@ class BenchConfig:
     probes: tuple[str, ...] = ()
     description: str = ""
     concurrency: int = 1
+    #: task-1710: opt into ALSO capturing a short continuation of every
+    #: measured SNIPPET (not just the fixed canary prompt -- see
+    #: ``PreflightResult.continuation``, task-1691's per-target sibling of
+    #: this field), one extra request per cell in raw mode (free in chat
+    #: mode -- see ``capture_client.WordBenchCaptureClient.
+    #: capture_with_continuation``). Additive and defaulted to ``False`` so
+    #: every existing bench, and every stored ``config_data`` that predates
+    #: this field, keeps loading and keeps costing exactly what it costs
+    #: today -- see ``storage.save_bench``/``load_bench``, which persist it
+    #: the same way they already do ``concurrency``. A snippets x targets
+    #: bench pays snippets x targets extra requests when this is on (raw
+    #: mode), a real, user-visible cost that must be chosen, not inherited
+    #: -- hence opt-in rather than always-on.
+    capture_continuations: bool = False
     strict: InitVar[bool] = True
 
     def __post_init__(self, strict: bool) -> None:
@@ -220,7 +234,20 @@ class TokenProb:
 
 @dataclass(frozen=True)
 class CellCapture:
-    """One measured (snippet, target) cell."""
+    """One measured (snippet, target) cell.
+
+    ``continuation`` (task-1710) is a short, best-effort generated
+    continuation of THIS cell's own snippet -- the per-cell sibling of
+    ``PreflightResult.continuation`` (task-1691's per-target continuation of
+    the fixed canary prompt) -- captured only when
+    ``BenchConfig.capture_continuations`` is ``True``; see
+    ``WordBenchCaptureClient.capture_with_continuation`` for how it is
+    produced without ever perturbing this cell's own ``top_k``/
+    ``k_returned``/``content_offset``. It is additive and defaults to
+    ``""`` so every pre-existing construction, and every historical cell
+    stored before this field existed (``storage.save_cell``/
+    ``_cell_from_payload``), keeps working unchanged.
+    """
 
     prompt_mode: PromptMode
     k_requested: int
@@ -230,6 +257,7 @@ class CellCapture:
     canary: CanaryVerdict
     captured_at: str
     schema: str = "word_bench/1"
+    continuation: str = ""
 
     @property
     def top1_mass(self) -> float:

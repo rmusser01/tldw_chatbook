@@ -650,6 +650,280 @@ async def test_preflight_continuation_degrades_to_empty_string_on_a_timeout():
     assert result.continuation == ""
 
 
+##############################################################################
+# task-1710 -- capture_with_continuation: opt-in per-CELL continuation
+##############################################################################
+
+
+@pytest.mark.asyncio
+async def test_capture_with_continuation_raw_mode_issues_one_extra_request():
+    """Raw mode's measured request is deliberately max_tokens: 1 -- a real
+    continuation needs a genuinely separate request, exactly like
+    preflight's per-target continuation (task-1691), just steered by the
+    snippet being measured instead of the fixed canary prompt."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        if len(calls) == 1:
+            return httpx.Response(200, json=RAW)  # the measured capture
+        return httpx.Response(200, json={"choices": [{"text": " blue skies ahead", "index": 0}]})
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result, continuation = await _client(handler).capture_with_continuation(
+        "The sky is", target, "raw", 5
+    )
+
+    assert len(calls) == 2, "one measurement request, one separate continuation request"
+    assert calls[0]["prompt"] == "The sky is"
+    assert calls[0]["max_tokens"] == 1, "the measured request itself must stay untouched"
+    assert "logprobs" not in calls[1], "the continuation request must never ask for logprobs"
+    assert calls[1]["max_tokens"] > 1
+    assert isinstance(result, CellCapture)
+    assert continuation == " blue skies ahead"
+
+
+@pytest.mark.asyncio
+async def test_capture_with_continuation_chat_mode_costs_zero_extra_requests():
+    """Chat mode's measured request already asks for a multi-token window
+    and its response is already in hand -- salvaging the continuation from
+    it, exactly as preflight's chat-mode continuation already does, must
+    not cost a second request."""
+    calls = []
+    payload = {
+        "choices": [{
+            "message": {"role": "assistant", "content": "**blue, the color of the sky"},
+            "logprobs": {"content": [
+                {"id": 1, "token": "<|channel>", "bytes": [], "logprob": -0.01,
+                 "top_logprobs": [{"id": 1, "token": "<|channel>", "bytes": [], "logprob": -0.01}]},
+                {"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2,
+                 "top_logprobs": [{"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2}]},
+            ]},
+        }]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        return httpx.Response(200, json=payload)
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result, continuation = await _client(handler).capture_with_continuation(
+        "The sky is", target, "chat", 5
+    )
+
+    assert len(calls) == 1, "chat mode's continuation must be salvaged, never a second request"
+    assert isinstance(result, CellCapture)
+    assert continuation == "**blue, the color of the sky"
+
+
+@pytest.mark.asyncio
+async def test_capture_with_continuation_raw_mode_carries_the_target_prefix():
+    """Steered exactly like the measured request itself -- the same
+    contract preflight's per-target continuation already carries (task-1691),
+    now applied to the actual snippet being measured."""
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append(body)
+        if len(seen) == 1:
+            return httpx.Response(200, json=RAW)
+        return httpx.Response(200, json={"choices": [{"text": " continues", "index": 0}]})
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m", prefix="Note: ")
+    _result, continuation = await _client(handler).capture_with_continuation(
+        "the snippet", target, "raw", 5
+    )
+
+    assert seen[0]["prompt"] == "Note: the snippet", "the measured request is steered"
+    assert seen[1]["prompt"] == "Note: the snippet", "the continuation request must match"
+    assert continuation == " continues"
+
+
+@pytest.mark.asyncio
+async def test_capture_with_continuation_chat_mode_reflects_system_prompt_steering():
+    payload = {
+        "choices": [{
+            "message": {"role": "assistant", "content": "steered continuation"},
+            "logprobs": {"content": [
+                {"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2,
+                 "top_logprobs": [{"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2}]},
+            ]},
+        }]
+    }
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=payload)
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m",
+                     system_prompt="Be careful.")
+    _result, continuation = await _client(handler).capture_with_continuation(
+        "the snippet", target, "chat", 5
+    )
+
+    assert seen[0]["messages"][0] == {"role": "system", "content": "Be careful."}
+    assert continuation == "steered continuation"
+
+
+@pytest.mark.asyncio
+async def test_capture_with_continuation_skips_the_continuation_when_the_cell_itself_fails():
+    """A failed measurement has nothing to continue from -- attempting a
+    continuation would spend an extra request on a cell the caller is about
+    to record as a CellError anyway."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        raise httpx.ConnectError("connection refused")
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result, continuation = await _client(handler).capture_with_continuation(
+        "s", target, "raw", 5
+    )
+
+    assert len(calls) == 1, "no continuation request must be attempted for a failed cell"
+    assert isinstance(result, CellError)
+    assert continuation == ""
+
+
+@pytest.mark.asyncio
+async def test_capture_with_continuation_degrades_to_empty_string_on_a_500():
+    """The measured cell must stay intact -- top-K and all -- when the
+    SEPARATE continuation request fails outright; a continuation failure
+    must never turn a good measurement into a CellError."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(200, json=RAW)
+        return httpx.Response(500, text="boom")
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result, continuation = await _client(handler).capture_with_continuation(
+        "s", target, "raw", 5
+    )
+
+    assert isinstance(result, CellCapture)
+    assert result.top_k, "the measured cell's top-K must be intact"
+    assert result.k_returned == 5
+    assert continuation == ""
+
+
+@pytest.mark.asyncio
+async def test_capture_with_continuation_degrades_to_empty_string_on_connect_error():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(200, json=RAW)
+        raise httpx.ConnectError("connection refused")
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result, continuation = await _client(handler).capture_with_continuation(
+        "s", target, "raw", 5
+    )
+
+    assert isinstance(result, CellCapture)
+    assert continuation == ""
+
+
+@pytest.mark.asyncio
+async def test_capture_with_continuation_degrades_to_empty_string_on_a_timeout():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(200, json=RAW)
+        raise httpx.TimeoutException("continuation request timed out")
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result, continuation = await _client(handler).capture_with_continuation(
+        "s", target, "raw", 5
+    )
+
+    assert isinstance(result, CellCapture)
+    assert continuation == ""
+
+
+@pytest.mark.asyncio
+async def test_capture_with_continuation_is_capped_to_a_bounded_length():
+    calls = []
+    long_text = "y" * 5000
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(200, json=RAW)
+        return httpx.Response(200, json={"choices": [{"text": long_text}]})
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    _result, continuation = await _client(handler).capture_with_continuation(
+        "s", target, "raw", 5
+    )
+
+    assert 0 < len(continuation) < len(long_text)
+    assert long_text.startswith(continuation)
+
+
+@pytest.mark.asyncio
+async def test_capture_with_continuation_preserves_whitespace():
+    """render_snippet_cell's whitespace convention is the UI's job (Task 2);
+    this engine layer must not itself strip anything, or that convention
+    would have nothing meaningful left to render."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(200, json=RAW)
+        return httpx.Response(200, json={"choices": [{"text": "  leading and trailing  "}]})
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    _result, continuation = await _client(handler).capture_with_continuation(
+        "s", target, "raw", 5
+    )
+
+    assert continuation == "  leading and trailing  "
+
+
+@pytest.mark.asyncio
+async def test_measured_distribution_is_identical_whether_or_not_a_continuation_is_captured():
+    """THE anti-corruption proof this task exists to guarantee: turning on
+    per-cell continuation capture must never change the measured cell
+    itself -- same top_k, same k_returned, same content_offset, same
+    canary -- for the identical response the plain capture() call would
+    have received. Mirrors task-1691's own
+    test_preflight_canary_verdict_is_unaffected_by_the_continuation_capture,
+    one level down (per-cell instead of per-target)."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body.get("max_tokens") == 1:
+            return httpx.Response(200, json=RAW)  # the measured request, either path
+        return httpx.Response(200, json={"choices": [{"text": " a continuation", "index": 0}]})
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+
+    plain = await _client(handler).capture("The sky is", target, "raw", 5)
+    with_continuation, continuation = await _client(handler).capture_with_continuation(
+        "The sky is", target, "raw", 5
+    )
+
+    assert isinstance(plain, CellCapture)
+    assert isinstance(with_continuation, CellCapture)
+    assert with_continuation.top_k == plain.top_k
+    assert with_continuation.k_returned == plain.k_returned
+    assert with_continuation.k_requested == plain.k_requested
+    assert with_continuation.content_offset == plain.content_offset
+    assert with_continuation.canary == plain.canary
+    assert with_continuation.prompt_mode == plain.prompt_mode
+    assert continuation == " a continuation"
+
+
 @pytest.mark.asyncio
 async def test_used_as_an_async_context_manager_closes_on_exit():
     def handler(request: httpx.Request) -> httpx.Response:

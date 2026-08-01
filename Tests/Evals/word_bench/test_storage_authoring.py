@@ -57,6 +57,25 @@ def test_duplicate_bench_copies_every_config_field_and_shares_the_dataset(
     assert copy.concurrency == source.concurrency == 3
 
 
+def test_duplicate_bench_preserves_the_capture_continuations_flag(db, config, targets):
+    """task-1710: capture_continuations must ride through duplication the
+    same way every other config field above does -- it changes what a run
+    costs, so a duplicate silently reverting it to the default would be a
+    real, user-visible surprise."""
+    source_id = save_bench(
+        db,
+        BenchConfig(
+            name=config.name, prompt_mode=config.prompt_mode, top_k=config.top_k,
+            dataset_id=config.dataset_id, target_ids=config.target_ids,
+            capture_continuations=True,
+        ),
+    )
+
+    new_id = duplicate_bench(db, source_id)
+
+    assert load_bench(db, new_id).capture_continuations is True
+
+
 def test_duplicate_bench_copies_no_run_history(db, config, targets, snippets):
     """A duplicate starts with an empty grid: no eval_runs/eval_results rows
     follow it, only the config."""
