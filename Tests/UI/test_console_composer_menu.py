@@ -844,3 +844,50 @@ def test_temporary_chip_save_requested_reaches_the_promote_handler():
 
     assert stopped == [True], "the chip's own click/activation handling must not also fire"
     assert calls == [True]
+
+
+@pytest.mark.unit
+def test_artifact_actions_are_disabled_with_a_reason_in_a_temporary_chat():
+    """Disabled and explained, never hidden -- and still enabled normally.
+
+    The second half is the control: an assertion that an action is disabled
+    proves nothing unless the same call proves it is enabled otherwise.
+    """
+    from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+    from tldw_chatbook.Widgets.Console.console_workbench_state import (
+        build_console_workbench_state,
+    )
+    from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+
+    menu = {
+        e.action_id: e
+        for e in build_composer_menu_entries(ephemeral=True)
+    }
+    image = menu[ACTION_GENERATE_IMAGE]
+    assert image.enabled is False
+    assert image.description == blocked_reason("generate-image", ephemeral=True)
+
+    normal = {e.action_id: e for e in build_composer_menu_entries()}
+    assert normal[ACTION_GENERATE_IMAGE].enabled is True
+
+    # ConsoleControlState has seven required label fields and no defaults.
+    control_state = ConsoleControlState(
+        provider_label="Provider: stub",
+        model_label="Model: stub",
+        assistant_label="Assistant: General",
+        rag_label="RAG: off",
+        sources_label="Sources: 0",
+        tools_label="Tools: 0",
+        approvals_label="Approvals: 0",
+    )
+
+    def chatbook_action(**kwargs):
+        state = build_console_workbench_state(
+            control_state=control_state, can_save_chatbook=True, **kwargs
+        )
+        return {a.id: a for a in state.actions}["save-chatbook"]
+
+    blocked = chatbook_action(ephemeral=True)
+    assert blocked.disabled is True
+    assert blocked.tooltip == blocked_reason("save-chatbook", ephemeral=True)
+    assert chatbook_action().disabled is False

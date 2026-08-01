@@ -10863,6 +10863,7 @@ class ChatScreen(BaseAppScreen):
             can_save_chatbook=self._console_chatbook_action_available(),
             density=self._console_workbench_density(),
             run_active=self._console_run_active(),
+            ephemeral=self._console_active_session_is_ephemeral(),
         )
 
     def _console_provider_blocker_copy(self) -> str:

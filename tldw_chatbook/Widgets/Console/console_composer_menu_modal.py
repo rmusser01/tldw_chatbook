@@ -15,7 +15,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Chat.console_ephemeral import ACTION_SAVE_CHAT
+from tldw_chatbook.Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
 
 #: Action ids returned by the menu. Stable strings, not indexes: the
 #: screen's dispatch table keys off these and tests pin them.
@@ -60,11 +60,13 @@ def build_composer_menu_entries(
         "other": "Attached file is not an image",
         "none": "Attach an image first",
     }.get(attachment_kind, "Attach an image first")
+    image_blocked = blocked_reason(ACTION_GENERATE_IMAGE, ephemeral=ephemeral)
     entries = (
         ComposerMenuEntry(
             ACTION_GENERATE_IMAGE,
             "Generate Image",
-            "Build a /generate-image command",
+            image_blocked or "Build a /generate-image command",
+            enabled=image_blocked is None,
         ),
         ComposerMenuEntry(
             ACTION_GENERATE_CAPTION,
