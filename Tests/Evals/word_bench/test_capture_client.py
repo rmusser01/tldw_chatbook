@@ -622,6 +622,35 @@ async def test_preflight_canary_verdict_is_unaffected_by_the_continuation_captur
 
 
 @pytest.mark.asyncio
+async def test_preflight_continuation_degrades_to_empty_string_on_a_timeout():
+    """Review Minor (T1): the continuation leg's failure path is
+    structurally covered by the same ``except httpx.HTTPError`` branch
+    ``test_preflight_continuation_degrades_to_empty_string_when_the_
+    continuation_request_fails`` exercises with a ``ConnectError``, but
+    nothing literally raised a *timeout* until now. ``httpx.
+    TimeoutException`` is a distinct ``httpx.HTTPError`` subclass (a
+    genuinely different failure mode -- the request was sent but no
+    response ever arrived in time, vs. never connecting at all), and the
+    canary itself (already resolved from the first response, independent
+    of the second request) must stay untouched."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(200, json=RAW)  # canary: top token " much", not Paris
+        raise httpx.TimeoutException("continuation request timed out")
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).preflight(target, "raw", 5)
+
+    assert len(calls) == 2
+    assert result.state == "ok"
+    assert result.canary == "degenerate", "the canary verdict must be untouched by the timeout"
+    assert result.continuation == ""
+
+
+@pytest.mark.asyncio
 async def test_used_as_an_async_context_manager_closes_on_exit():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=RAW)

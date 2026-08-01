@@ -21,6 +21,7 @@ from tldw_chatbook.Evals.word_bench.models import (
     BenchConfig,
     CellCapture,
     PreflightResult,
+    Snippet,
     Target,
     TokenProb,
 )
@@ -2538,3 +2539,160 @@ async def test_duplicate_and_delete_buttons_paint_full_width_like_the_primary_ac
                 f"wider than half the inspector pane's width "
                 f"({half_width}) -- {button.region}"
             )
+
+
+# ---------------------------------------------------------------------------
+# task-1691 Task 3 (review Minor, T2 reviewer): the readiness pane's
+# documented collapse/clipping risk class, now WITH multiple continuation
+# sub-lines present at once.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def bench_with_multiple_continuations(evals_db: EvalsDB) -> str:
+    """Three local targets covering task-1691's own mix, chosen to stress
+    this pane's documented collapse/clipping history (see ``_evals.tcss``'s
+    ``#evals-inspector-bench`` comment and the sibling 235x52 geometry
+    tests above) with SEVERAL continuation sub-lines stacked at once,
+    something none of task-1691's own Task 1/2 tests exercised together:
+
+    - a warned target: the TALLEST possible per-target shape -- badge +
+      continuation sub-line + a degenerate-canary recovery callout, three
+      stacked widgets for one row.
+    - an unreachable target: Blocked, with NO continuation at all --
+      ``PreflightResult.continuation`` is only ever resolved for a clean
+      canary capture (see ``capture_client.preflight``'s own docstring), so
+      a Blocked/Unavailable row never gets a continuation sub-line no
+      matter what this fixture sets.
+    - a clean Ready target whose continuation is longer than the
+      inspector's own preview cap (``inspector._CONTINUATION_PREVIEW_MAX_
+      LEN``, 100) and gets truncated.
+    """
+    warned_id = evals_db.create_model(
+        name="warned-target", provider="llama_cpp", model_id="m"
+    )
+    unreachable_id = evals_db.create_model(
+        name="unreachable-target", provider="llama_cpp", model_id="m"
+    )
+    long_id = evals_db.create_model(
+        name="long-target", provider="llama_cpp", model_id="m"
+    )
+    dataset_id = evals_db.create_dataset(
+        name="loaded-nouns", format="custom", source_path="inline:loaded-nouns",
+        metadata={"sample_count": 6},
+    )
+    config = BenchConfig(
+        name="multi-continuation v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(warned_id, unreachable_id, long_id),
+        probes=(" Sure", " I"),
+    )
+    task_id = save_bench(evals_db, config)
+    targets = [
+        Target(id=warned_id, name="warned-target", provider="llama_cpp", model_id="m"),
+        Target(id=unreachable_id, name="unreachable-target", provider="llama_cpp", model_id="m"),
+        Target(id=long_id, name="long-target", provider="llama_cpp", model_id="m"),
+    ]
+    snippets = [Snippet(id="s1", text="The protestors were", group="neutral")]
+    preflight = {
+        warned_id: PreflightResult(
+            state="ok", k_returned=20, canary="degenerate",
+            continuation="<|channel><|channel>thought\n<channel|>The sky is **blue",
+        ),
+        unreachable_id: PreflightResult(
+            state="unreachable", k_returned=None, canary="unchecked",
+            detail="connection refused",
+        ),
+        long_id: PreflightResult(
+            state="ok", k_returned=20, canary="pass",
+            continuation="x" * 150,
+        ),
+    }
+    create_run_group(evals_db, task_id, config, targets, snippets, preflight=preflight)
+    return task_id
+
+
+@pytest.mark.asyncio
+async def test_readiness_rows_with_several_continuations_paint_inside_the_inspector_viewport(
+    evals_app, bench_with_multiple_continuations
+):
+    """A captured continuation (task-1691) adds a NEW sub-line under every
+    target row that has one -- this pane's own documented collapse/
+    clipping risk class (see the sibling 235x52 geometry tests above),
+    never exercised before with MULTIPLE continuation sub-lines present at
+    once, including the tallest possible per-target shape (a warned badge
+    + a continuation sub-line + a recovery callout, three widgets stacked
+    for one target). Asserts every readiness row genuinely paints, and
+    that ``#evals-primary-action`` and the Estimate section stay
+    reachable -- scrolled into view where needed, mirroring
+    ``test_primary_action_paints_inside_the_inspector_viewport_without_
+    scrolling``'s own convention at this file's other 235x52 tests, rather
+    than assuming a single screenful covers three stacked target rows
+    (unlike those single-target fixtures, this one deliberately does not
+    assert ``max_scroll_y == 0``)."""
+    async with evals_app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=bench_with_multiple_continuations)
+        await pilot.pause()
+
+        lab_inspector = screen.query_one("#lab-inspector")
+
+        # Every target's own badge paints.
+        for index in range(3):
+            badge = screen.query_one(f"#evals-inspector-target-{index}")
+            assert badge.region.width > 0 and badge.region.height > 0, badge.region
+
+        # Target 0 (warned): continuation sub-line AND recovery callout
+        # both paint -- the tallest stacked per-target shape.
+        warned_continuation = screen.query_one(
+            "#evals-inspector-target-continuation-0"
+        )
+        assert warned_continuation.region.width > 0
+        assert warned_continuation.region.height > 0
+        warned_callout = screen.query_one("#evals-inspector-target-callout-0")
+        assert warned_callout.region.width > 0
+        assert warned_callout.region.height > 0
+
+        # Target 1 (unreachable): no continuation sub-line at all.
+        assert not screen.query("#evals-inspector-target-continuation-1")
+        unreachable_callout = screen.query_one(
+            "#evals-inspector-target-callout-1"
+        )
+        assert unreachable_callout.region.width > 0
+        assert unreachable_callout.region.height > 0
+
+        # Target 2 (long continuation): paints, truncated with an
+        # ellipsis.
+        long_continuation = screen.query_one(
+            "#evals-inspector-target-continuation-2"
+        )
+        assert long_continuation.region.width > 0
+        assert long_continuation.region.height > 0
+        assert long_continuation.visual.plain.endswith("…")
+
+        # `#evals-primary-action` and the Estimate section stay reachable
+        # -- scrolled into view, since three stacked target rows
+        # (including one three widgets tall) plausibly do not fit in one
+        # screenful; each widget's own region is genuinely non-zero once
+        # scrolled to, i.e. actually painted, not merely present in the
+        # DOM.
+        button = screen.query_one("#evals-primary-action", Button)
+        button.scroll_visible(animate=False)
+        await pilot.pause()
+        assert button.region.width > 0 and button.region.height > 0, button.region
+        assert lab_inspector.region.contains_region(button.region), (
+            f"button {button.region} escapes the inspector's own visible "
+            f"viewport {lab_inspector.region}"
+        )
+
+        estimate_calls = screen.query_one("#evals-inspector-estimate-calls")
+        estimate_calls.scroll_visible(animate=False)
+        await pilot.pause()
+        assert estimate_calls.region.width > 0 and estimate_calls.region.height > 0
+        assert lab_inspector.region.contains_region(estimate_calls.region), (
+            f"estimate {estimate_calls.region} escapes the inspector's "
+            f"own visible viewport {lab_inspector.region}"
+        )
