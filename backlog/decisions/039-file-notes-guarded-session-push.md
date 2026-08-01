@@ -1,6 +1,6 @@
 # ADR-039: File Notes Guarded Session Push
 
-Status: Proposed
+Status: Accepted
 Date: 2026-07-30
 Related Task: [TASK-1566](../tasks/task-1566%20-%20Add-guarded-exact-session-commit-push-to-File-Notes.md)
 Amends: [ADR-038 File Notes Guarded Session Commit](038-file-notes-guarded-session-commit.md)

@@ -1282,7 +1282,7 @@ git commit -m "test(notes): record guarded push acceptance [TASK-1566]"
 - Modify: relevant implementation/spec documentation only if behavior changed
   within the approved boundary.
 
-- [ ] Run the complete new boundary:
+- [x] Run the complete new boundary:
 
 ```bash
 python3 -m pytest Tests/Notes/test_file_notes_git_push.py Tests/Notes/test_file_notes_git_push_service.py Tests/Notes/test_file_notes_git_push_integration.py Tests/Notes/test_file_notes_git_push_transport.py Tests/Notes/test_git_process_containment.py Tests/UI/test_library_file_notes_git_push.py Tests/ProductionApp/test_file_notes_session_owner_lifecycle.py -q
@@ -1293,7 +1293,7 @@ The production-compatible OpenSSH full-app PTY lane is not skippable for task
 completion; if it has not run successfully in a suitable environment, stop
 before ADR/task closeout.
 
-- [ ] Run the affected adjacent File Notes regression boundary:
+- [x] Run the affected adjacent File Notes regression boundary:
 
 ```bash
 python3 -m pytest Tests/Notes/test_file_notes_session_owner.py Tests/Notes/test_file_notes_git_service.py Tests/Notes/test_file_notes_git_integration.py Tests/Notes/test_file_notes_git_commit.py Tests/Notes/test_file_notes_git_commit_integration.py Tests/UI/test_library_file_notes_git.py Tests/UI/test_library_file_notes_workspace.py -q
@@ -1302,7 +1302,7 @@ python3 -m pytest Tests/Notes/test_file_notes_session_owner.py Tests/Notes/test_
 Expected: PASS. This is the largest local test command in the plan; do not
 expand it into repository-wide pytest, coverage, or broad CI.
 
-- [ ] Run targeted static/compile/document checks on the actual changed-file
+- [x] Run targeted static/compile/document checks on the actual changed-file
   list:
 
 ```bash
@@ -1314,7 +1314,7 @@ git diff --check
 
 Expected: all commands exit 0.
 
-- [ ] Perform a self-review against all ten TASK-1566 acceptance criteria and
+- [x] Perform a self-review against all ten TASK-1566 acceptance criteria and
   the phase-to-evidence matrix. Verify in particular:
   - no pre-authorization network/helper contact;
   - safe bounded standard host-trust capture, drift revocation, exact private
@@ -1329,9 +1329,9 @@ Expected: all commands exit 0.
     SHA-1/SHA-256 format binding, and Windows fail-closed admission;
   - editable notes during retained push; and
   - no database/durable push state/general Git feature.
-- [ ] Request focused code review. Resolve technically valid findings with
+- [x] Request focused code review. Resolve technically valid findings with
   failing regression tests first and repeat only affected focused commands.
-- [ ] After implementation, tests, review, and UAT are all green:
+- [x] After implementation, tests, review, and UAT are all green:
   - confirm the required production-compatible OpenSSH same-process PTY lane
     completed successfully, with zero-preauthorization-contact and exact
     one-ref evidence;
@@ -1340,7 +1340,7 @@ Expected: all commands exit 0.
   - add concise `## Implementation Notes` covering approach, tradeoffs, files,
     focused verification, UAT evidence, and ADR-039;
   - set TASK-1566 to Done through Backlog CLI.
-- [ ] Run:
+- [x] Run:
 
 ```bash
 backlog task 1566 --plain
@@ -1351,7 +1351,7 @@ git diff --check
 Expected: TASK-1566 is Done with every AC checked, implementation notes and ADR
 link present, and only intended closeout files are uncommitted.
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add "backlog/tasks/task-1566 - Add-guarded-exact-session-commit-push-to-File-Notes.md" backlog/decisions/039-file-notes-guarded-session-push.md Docs/superpowers/specs/2026-07-30-file-notes-guarded-session-push-design.md Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md
