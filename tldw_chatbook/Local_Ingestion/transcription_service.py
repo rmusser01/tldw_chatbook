@@ -480,8 +480,10 @@ class _LegacyTranscriptionBackend:
         Returns:
             Dict with 'text' and 'segments' keys
         """
-        if not os.path.exists(audio_path):
-            raise TranscriptionError(f"Audio file not found: {audio_path}")
+        try:
+            audio_path = str(validate_path_simple(audio_path, require_exists=True))
+        except ValueError as exc:
+            raise TranscriptionError("Invalid audio file path") from exc
 
         provider = provider or self.config["default_provider"]
 

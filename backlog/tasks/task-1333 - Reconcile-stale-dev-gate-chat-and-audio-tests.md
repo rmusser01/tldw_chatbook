@@ -273,6 +273,11 @@ is selected behind `--run-slow` without consulting the empty module cache. The
 test CSS parse cache returns a fresh rule-list container to each app so repeated
 full-shell mounts cannot corrupt the next viewport case.
 
+PR review hardened AC #78 by routing the shared local-audio entry point through
+`validate_path_simple(..., require_exists=True)` before conversion or provider
+dispatch; unsafe and missing paths retain the public `TranscriptionError`
+contract and cannot reach model loading.
+
 ADR required: no new ADR. The work applies ADR-029, ADR-033, and ADR-037 and
 does not introduce a new storage, security, runtime, or ownership boundary.
 
