@@ -351,6 +351,20 @@ def test_character_probe_never_imports_the_word_bench_measurement_stack():
     from somewhere other than the repo root -- the previous version's own
     bug: a relative ``pathlib.Path("tldw_chatbook/...")`` glob that matched
     nothing (and therefore asserted nothing) from any other cwd.
+
+    The probe script reports one of three OUTCOMES on stdout, not merely a
+    process exit code, and this function asserts on which one it is rather
+    than on the exit code alone: a non-zero exit is ambiguous by itself --
+    it is what BOTH "a forbidden module loaded" (the thing this test
+    exists to catch) AND "some unrelated import in the walked package
+    raised" (a syntax error, a missing optional dependency, anything else)
+    produce, and conflating the two would send someone hunting a
+    forbidden-import violation that does not exist. ``OK`` is success;
+    ``VIOLATION:<modules>`` names exactly which forbidden modules loaded
+    (this is the failure this test is FOR); ``CRASH`` means the probe
+    itself failed to even finish walking the package, which is a different
+    problem entirely and is reported as one, with the subprocess's own
+    traceback surfaced so it is debuggable as what it actually is.
     """
     import pathlib
     import subprocess
@@ -369,19 +383,33 @@ def test_character_probe_never_imports_the_word_bench_measurement_stack():
     # imports capture_client itself, so any path that still reaches
     # word_bench.storage necessarily also reaches capture_client, which is
     # listed below. Checking the leaf modules covers the whole chain.
+    #
+    # The import loop is wrapped so an unrelated import failure anywhere in
+    # the walked package reports as CRASH (with a full traceback on
+    # stderr), never silently reads as "no forbidden module loaded" (a
+    # false pass) or gets conflated with VIOLATION (a false accusation of
+    # the wrong failure) -- see this function's own docstring.
     probe_script = (
-        "import importlib, pkgutil, sys\n"
-        "import tldw_chatbook.Evals.character_probe as pkg\n"
-        "for info in pkgutil.walk_packages(pkg.__path__, pkg.__name__ + '.'):\n"
-        "    importlib.import_module(info.name)\n"
+        "import importlib, pkgutil, sys, traceback\n"
+        "try:\n"
+        "    import tldw_chatbook.Evals.character_probe as pkg\n"
+        "    for info in pkgutil.walk_packages(pkg.__path__, pkg.__name__ + '.'):\n"
+        "        importlib.import_module(info.name)\n"
+        "except BaseException:\n"
+        "    traceback.print_exc()\n"
+        "    sys.stdout.write('CRASH\\n')\n"
+        "    sys.exit(2)\n"
         "forbidden = [\n"
         "    'tldw_chatbook.Evals.word_bench.capture_client',\n"
         "    'tldw_chatbook.Evals.word_bench.normalizer',\n"
         "    'httpx',\n"
         "]\n"
         "present = sorted(m for m in forbidden if m in sys.modules)\n"
-        "sys.stdout.write('LOADED:' + ','.join(present))\n"
-        "sys.exit(1 if present else 0)\n"
+        "if present:\n"
+        "    sys.stdout.write('VIOLATION:' + ','.join(present) + '\\n')\n"
+        "    sys.exit(1)\n"
+        "sys.stdout.write('OK\\n')\n"
+        "sys.exit(0)\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", probe_script],
@@ -390,10 +418,27 @@ def test_character_probe_never_imports_the_word_bench_measurement_stack():
         text=True,
         timeout=60,
     )
-    assert result.returncode == 0, (
-        "importing tldw_chatbook.Evals.character_probe (every module of it) "
-        "loaded word_bench's measurement stack -- "
-        f"stdout={result.stdout!r} stderr(tail)={result.stderr[-4000:]!r}"
+    stdout = result.stdout
+    stderr_tail = result.stderr[-4000:]
+
+    if stdout.startswith("VIOLATION:"):
+        loaded = stdout[len("VIOLATION:"):].strip()
+        pytest.fail(
+            "importing tldw_chatbook.Evals.character_probe (every module of "
+            f"it) loaded word_bench's measurement stack: {loaded}"
+        )
+    if stdout.startswith("CRASH"):
+        pytest.fail(
+            "the import-graph probe crashed while walking "
+            "tldw_chatbook.Evals.character_probe -- this is NOT evidence of "
+            "a forbidden import (see VIOLATION above for that); it means "
+            "the probe itself, or an unrelated import in the package, "
+            f"failed. Traceback from the subprocess:\n{stderr_tail}"
+        )
+    assert result.returncode == 0 and stdout.strip() == "OK", (
+        "the import-graph probe subprocess ended in an unrecognized state "
+        f"-- returncode={result.returncode} stdout={stdout!r} "
+        f"stderr(tail)={stderr_tail!r}"
     )
 
     # Secondary, cheap check kept alongside the graph assertion above (not
