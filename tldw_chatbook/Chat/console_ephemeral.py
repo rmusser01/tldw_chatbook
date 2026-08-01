@@ -21,6 +21,11 @@ per-message "Save as..." destinations and a message-level "Save Image"
 action that write to local storage independently of conversation
 persistence, plus a context-snapshot exporter reachable from any Console
 session. None of these were named in the design spec's known-sinks list.
+A review follow-up also traced the message-action row's ``speak`` entry to
+a real file write (TTS playback audio); it is deliberately NOT in this
+registry because the file is a transient OS-temp playback buffer,
+secure-deleted within seconds and never exposed to the user, not a durable
+artifact -- see the spec's audit table for the full reasoning.
 See ``Docs/superpowers/specs/2026-07-31-temporary-conversations-design.md``
 (``## Sink audit (task 1)``) for the full table and reasoning.
 """

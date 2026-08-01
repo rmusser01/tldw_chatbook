@@ -1515,7 +1515,7 @@ conversation reads as a failure, not as 'already done'."
 **Scope note (task 1 audit):** the sink audit in Task 1 found six more
 local-write sinks beyond Generate Image and Save Chatbook —
 `EPHEMERAL_BLOCKED_ACTIONS` now has eight entries, not two. Steps 1-7 below
-(as originally planned) cover only the first two. Steps 8-10 below are the
+(as originally planned) cover only the first two. Steps 8-11 below are the
 addendum that covers the other six: `save-image`, `save-as-note`,
 `save-as-media`, `save-as-prompt`, `save-as-chatbook`, `save-context`. This
 task is not complete until all eight are wired.

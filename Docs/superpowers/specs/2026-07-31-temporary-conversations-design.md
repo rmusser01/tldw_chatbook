@@ -131,12 +131,14 @@ saved.
 ### Blocked actions
 
 Disabled with a stated reason, never hidden, matching the convention used for
-Generate Caption:
-
-| Action | Reason shown |
-| --- | --- |
-| Generate Image | writes a PNG to disk — not available in a temporary chat |
-| Save Chatbook | exports a file — not available in a temporary chat |
+Generate Caption. This section named two actions (Generate Image, Save
+Chatbook) before implementation began; the task 1 sink audit found six more
+reachable from a Console chat. The complete, current list — all eight, with
+what each writes and why — is the `## Sink audit (task 1)` table further
+down in this document, backed by
+`tldw_chatbook.Chat.console_ephemeral.EPHEMERAL_BLOCKED_ACTIONS`. Treat that
+table as authoritative; do not re-derive the blocked-action list from this
+paragraph alone.
 
 RAG indexing of the chat's own content is skipped silently: it has no user
 control to disable, so there is nothing to label. RAG **retrieval** stays
@@ -237,6 +239,29 @@ That row turned out to hide five more local-write sinks the design's known
 list did not name — this is exactly the residual risk the design called
 out ("Sink enumeration, not the gate, is the residual risk").
 
+**Follow-up (review pass):** the message-action row's `speak` entry
+(`console_message_actions.py:74,77`) dispatches to
+`TTSMessageSpeechRequestEvent` (`chat_screen.py:16403-16419`), which drives
+`_append_tts_artifact_chunk` in
+`tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py:1160-1165` —
+`audio_file.write(chunk)` on a real file. That call sits outside all four
+greps above (it's in `Event_Handlers/`, not `Chat/` or `Widgets/Console/`)
+and was missed in the first pass. Verified directly: the artifact is created
+by `get_temp_manager().create_temp_file(...)`
+(`tts_events.py:1151-1159`, `Utils/secure_temp_files.py`, which wraps stdlib
+`tempfile` — OS temp space, not a user-facing save location), is never
+exposed to the user as a path, and is removed by
+`secure_delete_file` either immediately on stop/cancel/error
+(`_discard_tts_artifact`) or after a 5-second drain on natural playback
+completion (`_cleanup_audio_file`, `tts_events.py:1363,1404`), and again on
+app shutdown (`cleanup_tts_resources`). It is a streaming playback buffer,
+not a durable artifact the user can find afterward — a different kind of
+write than the eight blocked actions above, which all persist until the
+user deletes them. Agreeing with that read: **no block needed**; blocking
+`speak` would break TTS in a temporary chat for no local-durability benefit.
+Added as a table row rather than a registry entry, matching the RAG-sidecar
+row's precedent of documenting a reachable-but-not-applicable hit.
+
 | Sink | Reachable from a temporary chat? | Writes what | Decision |
 | --- | --- | --- | --- |
 | Generate Image (`generate-image`, composer menu → `/generate-image`) | Yes — composes from the in-memory draft/session | PNG file to the configured image save location | blocked |
@@ -247,6 +272,7 @@ out ("Sink enumeration, not the gate, is the residual risk").
 | Save as Prompt (`save-as-prompt`, `_save_console_message_as_prompt`, `chat_screen.py:16913-16986`) | Yes — same | Row in the local Prompts DB via `prompts_db.add_prompt` | blocked (new) |
 | Save as Chatbook, per-message (`save-as-chatbook`, `_save_console_message_as_chatbook`, `chat_screen.py:16987-17073`) | Yes — same; distinct from the Workbench-level Save Chatbook button | Chatbook artifact file via `local_chatbook_service.create_chatbook` | blocked (new) |
 | Save context snapshot (`save-context`, `#console-context-save` in `ConsoleContextModal`, `console_context_modal.py:287-302`, opened by `action_view_chat_context`, Ctrl+Shift+P) | Yes — dumps the live transcript and next-send payload of the active session, temporary or not | JSON file to `~/Downloads/chatbook_context_*.json` | blocked (new) |
+| Text-to-speech playback (`speak`, `_append_tts_artifact_chunk`, `tts_events.py:1151-1165`, dispatched from `chat_screen.py:16403-16419`) | Yes — any completed assistant message in any Console chat, temporary or not | Decoded audio bytes to an OS-temp playback file (`get_temp_manager()`), secure-deleted within seconds of stop/completion/shutdown, never exposed to the user as a path | allowed (transient playback buffer — not blocked; found in review, not the original four searches) |
 | RAG indexing of the chat's own content (`conversation_index_entry`/`conversation_document`, `ingestion_indexing.py:586-631`) | No — requires `conversation.get("id")`; a temporary chat has no `conversations` row for the indexer to read | Nothing, for a temporary chat | no-op (needs a conversation id) |
 | Legacy RAG-context/citation sidecar (`ChatConversationService.record_message_rag_context` / `_save_rag_context_store`, `chat_conversation_service.py:322-330,745-788`) | No — requires an already-persisted message row (`db.get_message_by_id`), and is not wired into `console_chat_controller.py` or `console_chat_store.py` at all (zero references) | JSON sidecar file, but only for non-Console flows | no-op (not reachable from Console) |
 | Generate Caption (`generate-caption`, composer menu, `_insert_console_caption_prompt`) | Yes | Nothing — appends a pre-canned prompt string to the in-memory draft | allowed (no write) |
