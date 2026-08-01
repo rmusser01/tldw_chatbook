@@ -1,7 +1,7 @@
 ---
 id: TASK-599
 title: Introduce provider-neutral STT contracts and coordinator
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:03'
