@@ -38,15 +38,21 @@ for this half specifically:
    validate_path_simple` plus plain stdlib writes are used instead, the
    same split `UI/STTS_Window.py:4040` and `UI/library_screen.py:6486`
    already make for other user-chosen destinations.
-2. **`audio_file_path_is_safe` (imported from `UI.Watchlists_Modules.
-   artifacts_pane`, not re-derived) runs BEFORE any filesystem access on a
-   `file_path` read from the DB.** Phase 2b's Qodo round established this
-   order for playback (`artifacts_pane.py:370-381`) precisely because nothing
-   enforces at the schema level that a stored path is safe. Export copies a
-   file OUT of private storage, so getting this order wrong here is a wider
-   hole than the playback bug was -- see `export_feed_directory`'s own
-   per-episode loop, where the safety check is the very first thing done
-   with `file_path`, before `Path(...)`, `.exists()`, or any copy.
+2. **`audio_file_path_is_safe` (imported from `Subscriptions.briefing_audio`,
+   not re-derived) runs BEFORE any filesystem access on a `file_path` read
+   from the DB.** Phase 2b's Qodo round established this order for playback
+   (`artifacts_pane.py`'s own `handle_play_audio_requested`) precisely
+   because nothing enforces at the schema level that a stored path is
+   safe. Export copies a file OUT of private storage, so getting this
+   order wrong here is a wider hole than the playback bug was -- see
+   `export_feed_directory`'s own per-episode loop, where the safety check
+   is the very first thing done with `file_path`, before `Path(...)`,
+   `.exists()`, or any copy. `audio_file_path_is_safe` itself lives beside
+   `briefing_audio_dir()` in `briefing_audio.py` (moved there from
+   `artifacts_pane.py` in this task's review round 1, since a UI-module
+   home made this file's import of it the only `Subscriptions -> UI`
+   import in the package); `artifacts_pane` imports it from there too, so
+   there is exactly one definition for every caller.
 3. **One bad episode is skipped, not fatal.** An unsafe path or a vanished
    source file is recorded as a reason string in `FeedExportResult.skipped`
    and the rest of the export continues -- CLAUDE.md's Error-handling ethos
@@ -68,13 +74,8 @@ from typing import Any
 from loguru import logger
 
 from ..Utils.path_validation import validate_filename, validate_path_simple
+from .briefing_audio import audio_file_path_is_safe
 from .briefing_feed import FeedEpisode, build_feed_xml
-
-# Task 4, Decision 2 above: imported, not re-derived -- this repo's rule for
-# a stored `file_path` is exactly one function, so playback and export both
-# defer to it rather than growing a second copy of the same check that could
-# silently drift from the first.
-from ..UI.Watchlists_Modules.artifacts_pane import audio_file_path_is_safe
 
 
 class BriefingExportError(RuntimeError):
@@ -129,11 +130,13 @@ def _coverage_window(briefing: Mapping[str, Any]) -> str:
 
     Mirrors `artifacts_pane._window_text`'s own two-part shape (the
     `covers_from_ts` floor and the `covers_through_item_id` watermark), but
-    is not that function: `_window_text` is a private UI helper, not a
-    shared security check, so it is not worth this module's one narrow,
-    Task-4-only import of `audio_file_path_is_safe` (see the module
-    docstring's "Feed half" section for why THAT import is warranted). The
-    string is rebuilt here from the same two columns instead.
+    is not that function: this module imports nothing from `UI/` --
+    `audio_file_path_is_safe` (used by the feed half below) lives in
+    `Subscriptions.briefing_audio`, not in `artifacts_pane`, precisely so
+    that stays true (see the module docstring's "Feed half" decision 2).
+    `_window_text` itself is a private UI helper, not a shared security
+    check, so the string is rebuilt here from the same two columns instead
+    of importing it.
     """
     parts: list[str] = []
     covers_from = briefing.get("covers_from_ts")
@@ -230,6 +233,20 @@ def default_briefing_filename(
 _FEED_XML_NAME = "feed.xml"
 _FEED_XML_PARTIAL_NAME = "feed.xml.partial"
 
+#: Task 4 review round 1: the mode every file this module WRITES into the
+#: user's export directory ends up at -- an ordinary, group/other-readable
+#: file, deliberately NOT the `0o600` private-storage mode `briefing_audio_
+#: dir()`'s own contents carry. Applied explicitly (not left to the
+#: process umask) so the result is deterministic regardless of the
+#: caller's environment: `feed.xml`'s partial is created with this mode
+#: directly, and each copied episode file is `chmod`ed to it after
+#: `shutil.copy2` (which would otherwise carry the PRIVATE source file's
+#: mode straight into the user's folder -- see `_copy_episode_audio_file`).
+#: A directory the user means to sync, zip, or serve must be readable by
+#: more than just their own account; Decision 1 already makes this promise
+#: for the directory itself, this pins the same promise for its files.
+_EXPORTED_FILE_MODE = 0o644
+
 
 @dataclass(frozen=True)
 class FeedExportResult:
@@ -278,14 +295,44 @@ def _episode_filename(row: Mapping[str, Any], source_path: Path) -> str:
     return f"{stem}-{audio_id}{suffix}"
 
 
+def _episode_title(row: Mapping[str, Any], published: datetime) -> str:
+    """One episode's `<title>`.
+
+    Task 4 review round 1: `preset_name` alone (the original choice) makes
+    every episode rendered from the same preset identical in a podcast
+    client's episode list, distinguishable only by whatever date field that
+    client happens to expose in its list view -- not a safe bet across
+    clients. Leading with the publish date here fixes that directly: two
+    episodes on the same preset now read as e.g. `"Jan 01, 2026 · Two Host
+    Debate"` and `"Jan 02, 2026 · Two Host Debate"`.
+
+    Args:
+        row: One `list_watchlist_audio_episodes` row.
+        published: The episode's parsed publish timestamp -- the same value
+            passed to `FeedEpisode.published`, so the date shown in the
+            title always matches the date the feed itself claims.
+
+    Returns:
+        A one-line title, date first.
+    """
+    date_text = published.strftime("%b %d, %Y")
+    preset_name = str(row.get("preset_name") or "").strip()
+    if preset_name:
+        return f"{date_text} · {preset_name}"
+    return f"{date_text} · Episode {row.get('audio_id')}"
+
+
 def _episode_description(row: Mapping[str, Any]) -> str:
     """One episode's `<description>` text.
 
     Mirrors `_coverage_window`'s "a status IS the observability" spirit at
     episode grain: a listener choosing between episodes in a podcast client
-    sees the render's preset context (turn count, model), not just a bare
-    date, since `list_watchlist_audio_episodes` carries no separate episode
-    title or summary text of its own.
+    sees the render's preset context (turn count, model) and what window of
+    source material it actually covers, not just a bare date, since
+    `list_watchlist_audio_episodes` carries no separate episode title or
+    summary text of its own. `covers_from_ts` (Task 4 review round 1: was
+    present on the row but unused) answers "what period does this episode
+    actually cover" -- the one question a title alone cannot.
 
     Args:
         row: One `list_watchlist_audio_episodes` row.
@@ -302,7 +349,9 @@ def _episode_description(row: Mapping[str, Any]) -> str:
         details.append(f"model: {model_used}")
     created_at = row.get("briefing_created_at") or "an unknown time"
     suffix = f" ({', '.join(details)})" if details else ""
-    return f"Briefing from {created_at}{suffix}"
+    covers_from = row.get("covers_from_ts")
+    coverage = f" Covers content since {covers_from}." if covers_from else ""
+    return f"Briefing from {created_at}{suffix}.{coverage}"
 
 
 def _published_from_briefing_created_at(value: Any) -> datetime:
@@ -345,6 +394,17 @@ def _copy_episode_audio_file(
     confirmed it via `audio_file_path_is_safe` and `.exists()` (module
     docstring, decision 2).
 
+    Task 4 review round 1: `shutil.copy2` preserves the SOURCE file's
+    permission mode along with its data, and production audio is written
+    by `Utils.private_paths.atomic_private_write_bytes` at `0o600`
+    (application-owned, private-storage semantics). Left alone, every
+    exported episode would inherit that private mode into the user's own
+    folder -- exactly what Decision 1 forbids, just applied to a file
+    instead of the directory, and defeating the entire point of exporting
+    a folder the user means to sync, zip, or serve. The explicit `chmod`
+    below relaxes it back to an ordinary, group/other-readable file
+    regardless of what the source's mode happened to be.
+
     Args:
         source_path: The episode's audio file inside `briefing_audio_dir()`.
         destination_dir: The already-validated feed directory.
@@ -365,6 +425,7 @@ def _copy_episode_audio_file(
     validated_filename = validate_filename(dest_path.name)
     dest_path = validated_parent / validated_filename
     shutil.copy2(source_path, dest_path)
+    os.chmod(dest_path, _EXPORTED_FILE_MODE)
     return dest_path
 
 
@@ -382,6 +443,16 @@ def _write_feed_xml_atomically(destination_dir: Path, xml_bytes: bytes) -> None:
     `chatbook_creator`'s per-export unique output path, `feed.xml` is a
     fixed name reused on every re-export, so leaving a stale partial in
     place would permanently wedge every future export behind `O_EXCL`.
+
+    Task 4 review round 1: the partial used to be opened at `0o600` (copied
+    from the `chatbook_creator` precedent verbatim, without noticing that
+    precedent's own file is APPLICATION-owned, unlike this one) -- and
+    `os.replace` preserves the replaced-in file's mode, so every exported
+    `feed.xml` inherited that private mode into the user's folder. Opened
+    at `_EXPORTED_FILE_MODE` (`0o644`) instead, with an explicit `fchmod`
+    right after creation so the result is deterministic regardless of the
+    calling process's umask -- the same defensive-`fchmod` idiom
+    `chatbook_creator._create_zip_archive` itself uses for its own mode.
 
     Args:
         destination_dir: The validated feed directory (already confirmed to
@@ -411,8 +482,10 @@ def _write_feed_xml_atomically(destination_dir: Path, xml_bytes: bytes) -> None:
     try:
         flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
         flags |= getattr(os, "O_NOFOLLOW", 0)
-        file_fd = os.open(partial_path, flags, 0o600)
+        file_fd = os.open(partial_path, flags, _EXPORTED_FILE_MODE)
         partial_created = True
+        if hasattr(os, "fchmod"):
+            os.fchmod(file_fd, _EXPORTED_FILE_MODE)
         with os.fdopen(file_fd, "wb") as stream:
             file_fd = -1  # ownership transferred to the stream
             stream.write(xml_bytes)
@@ -507,7 +580,8 @@ def export_feed_directory(
         # Decision 2 (module docstring): the safety check is the FIRST
         # thing done with a DB-sourced file_path -- before Path(...),
         # .exists(), or any copy -- exactly the order phase 2b's Qodo round
-        # established for playback (artifacts_pane.py:370-381).
+        # established for playback (artifacts_pane.py's own
+        # handle_play_audio_requested).
         if not audio_file_path_is_safe(file_path):
             skipped.append(f"audio {audio_id}: file path failed the safety check")
             continue
@@ -517,22 +591,38 @@ def export_feed_directory(
             skipped.append(f"audio {audio_id}: source file no longer exists")
             continue
 
+        # Parsed before the copy so a malformed timestamp never leaves a
+        # copied-but-never-listed orphan file behind in the user's
+        # destination directory -- fail fast on bad metadata first.
+        raw_created_at = row.get("briefing_created_at")
+        try:
+            published = _published_from_briefing_created_at(raw_created_at)
+        except ValueError:
+            skipped.append(
+                f"audio {audio_id}: briefing_created_at {raw_created_at!r} "
+                "is not a recognized timestamp"
+            )
+            continue
+
         try:
             filename = _episode_filename(row, source_path)
             dest_path = _copy_episode_audio_file(
                 source_path, validated_destination, filename
             )
             length_bytes = dest_path.stat().st_size
-            published = _published_from_briefing_created_at(
-                row.get("briefing_created_at")
+        except OSError as exc:
+            skipped.append(
+                f"audio {audio_id}: could not copy the audio file "
+                f"({type(exc).__name__})"
             )
-        except (OSError, ValueError) as exc:
-            skipped.append(f"audio {audio_id}: {type(exc).__name__}")
+            continue
+        except ValueError as exc:
+            skipped.append(f"audio {audio_id}: {exc}")
             continue
 
         episodes.append(
             FeedEpisode(
-                title=str(row.get("preset_name") or f"Episode {audio_id}"),
+                title=_episode_title(row, published),
                 filename=filename,
                 length_bytes=length_bytes,
                 duration_seconds=row.get("duration_seconds"),

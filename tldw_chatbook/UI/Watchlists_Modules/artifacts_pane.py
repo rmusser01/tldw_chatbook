@@ -49,7 +49,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Select, Static
 
-from ...Subscriptions.briefing_audio import briefing_audio_dir
+from ...Subscriptions.briefing_audio import audio_file_path_is_safe, briefing_audio_dir
 from ...Subscriptions.briefing_selection import (
     MODE_AUTO,
     MODE_AUTO_FEATURED,
@@ -61,7 +61,6 @@ from ...Subscriptions.briefing_service import (
     STATUS_FAILED,
     STATUS_GENERATING,
 )
-from ...Utils.path_validation import is_safe_path
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .table_selection import highlight_is_user_driven
 
@@ -365,29 +364,6 @@ _AUDIO_UNEXPLAINED_FAILURE = "Audio synthesis failed, but recorded no reason."
 def _audio_status_text(row: dict[str, Any]) -> str:
     """One audio render's status, as a bare lowercase string."""
     return str(row.get("status") or "").strip().lower()
-
-
-def audio_file_path_is_safe(file_path: str | Path) -> bool:
-    """Whether `file_path` resolves to somewhere inside `briefing_audio_dir()`.
-
-    Qodo review round 1, FIX B: `file_path` comes from our own DB row today,
-    but nothing enforces that at the schema level, and CLAUDE.md requires
-    every file path to be checked through `Utils/path_validation.py` before
-    the filesystem ever sees it -- a tampered or corrupted row must not let
-    this UI probe (`.exists()`) or play an arbitrary path. Shared by
-    `_audio_file_is_playable` below (disables Play) and
-    `WatchlistsCollectionsScreen.handle_play_audio_requested` (guards the
-    actual playback call), so there is exactly one place this check is
-    made.
-
-    Args:
-        file_path: The candidate path, as stored on a `briefing_audio` row.
-
-    Returns:
-        `True` only when `file_path` resolves (following `..`/symlinks)
-        to a location inside `briefing_audio_dir()`.
-    """
-    return is_safe_path(file_path, briefing_audio_dir())
 
 
 def _audio_file_is_playable(row: dict[str, Any] | None) -> bool:
