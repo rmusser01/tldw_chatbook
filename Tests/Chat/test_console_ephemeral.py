@@ -10,6 +10,7 @@ from tldw_chatbook.Chat.console_ephemeral import (
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, SOURCE_TYPE_MEDIA
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -238,5 +239,83 @@ def test_failed_promotion_rolls_back_and_stays_temporary(tmp_path, monkeypatch):
             m.persisted_message_id is None
             for m in store.messages_for_session(session.id)
         )
+    finally:
+        db.close()
+
+
+@pytest.mark.unit
+def test_failed_promotion_restores_the_held_rag_scope(tmp_path, monkeypatch):
+    """A failed save must not silently drop the user's scope selection.
+
+    ``persist_session_if_needed`` flushes (and empties) the session's held
+    RAG scope as soon as the conversation row is created -- before either
+    message write can fail. If promotion rolls back the database but
+    leaves the now-empty holder alone, the user's scope selection vanishes
+    even though the chat correctly stays temporary. This is reachable in
+    normal use: the Console screen puts a scope in the holder precisely
+    when there is no persisted conversation, which is always true for a
+    temporary chat.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Temporary chat", ephemeral=True)
+        _run_a_chat(store, session.id)
+
+        scope = RagScope(items=(ScopeItem(SOURCE_TYPE_MEDIA, "doc-1"),), updated_at="t1")
+        session.rag_scope_holder.set(scope)
+
+        calls = {"n": 0}
+        real_create = persistence.create_message
+
+        def failing_create(**kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("disk full")
+            return real_create(**kwargs)
+
+        monkeypatch.setattr(persistence, "create_message", failing_create)
+
+        with pytest.raises(RuntimeError, match="disk full"):
+            store.promote_ephemeral_session(session.id)
+
+        assert session.ephemeral is True
+        assert session.rag_scope_holder.scope == scope, (
+            "failed promotion must restore the held scope, not leave it empty"
+        )
+    finally:
+        db.close()
+
+
+@pytest.mark.unit
+def test_promotion_restores_ephemeral_flag_if_persist_returns_none_unexpectedly(
+    tmp_path, monkeypatch
+):
+    """Defensive: an unexpected None from persist_session_if_needed must not
+    silently leave the session non-ephemeral with no persisted conversation.
+
+    That state is exactly what the docstring warns about -- a failed save
+    that silently starts persisting on the next send. Nothing in
+    ``persist_session_if_needed`` reaches this today (its only None-return
+    branches are already ruled out once ``ephemeral`` is cleared and
+    ``self.persistence`` is known non-None), so this test forces the case
+    directly to prove the rollback still fires if a future change ever adds
+    one.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Temporary chat", ephemeral=True)
+        _run_a_chat(store, session.id)
+
+        monkeypatch.setattr(store, "persist_session_if_needed", lambda session_id: None)
+
+        with pytest.raises(RuntimeError):
+            store.promote_ephemeral_session(session.id)
+
+        assert session.ephemeral is True
+        assert session.persisted_conversation_id is None
+        assert _row_counts(db) == (0, 0)
     finally:
         db.close()
