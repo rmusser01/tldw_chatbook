@@ -1,5 +1,5 @@
 ---
-id: TASK-1566
+id: TASK-1692
 title: >-
   Wrap ArtifactPathError from core.install in the acquisition never-trap
   taxonomy
