@@ -70,9 +70,14 @@ UI-invisible plumbing. Everything else stands on this.
 - **Provider layer** (`LLM_Calls/LLM_API_Calls.py`):
   - Anthropic streaming: capture usage from `message_start` (input +
     cache buckets) and `message_delta` (output tokens).
-  - OpenAI-compatible streaming: send
-    `stream_options: {"include_usage": true}`; read usage off the final
-    chunk.
+  - OpenAI-style streaming: `stream_options: {"include_usage": true}` is
+    added **per provider function, opt-in** (`chat_with_openai` first;
+    DeepSeek/Groq/OpenRouter/Moonshot/Z.ai only after verifying support)
+    — there is no shared builder, and unknown compat servers can 400 on
+    the parameter. Same degrade rule as cache_control: a 4xx naming
+    `stream_options` → retry once without it + diagnostic. Local
+    providers are left untouched in PR1: usage is **captured if present,
+    never required** — absent usage falls back to estimated display.
   - Non-streaming paths already return usage; keep passing it through.
 - **Gateway** (`Chat/console_provider_gateway.py`):
   `normalize_provider_response` stops discarding usage. The gateway
@@ -173,6 +178,11 @@ unaffected (pass-through test asserts legacy paths emit no
   breakpoints and log a diagnostic. Caching must never break sends.
 - Sub-minimum prefixes silently don't cache (no error) — PR3 shows this
   honestly as "no cache" from usage ground truth.
+- Implementation note: the gateway extracts leading system rows into the
+  provider call's `system_message` string parameter, so
+  `chat_with_anthropic` must convert that string into a system **block
+  array** to carry `cache_control` — the byte-stability test covers the
+  conversion.
 
 ### Prefix-stability audit (part of PR2)
 
@@ -236,6 +246,11 @@ rows (role, model, buckets, cost), totals including variants, `~` markers
 on estimated entries. Cold-glyph/alert CSS goes in source `.tcss` files,
 never the generated bundle.
 
+The chip row lives in a control bar hard-capped at 2 rows: the cost chip
+is placed **last**, drops to a compact form (`$0.48⚠`, no delta) below a
+width threshold, and PR3's live verification includes a narrow terminal
+(80×24) to confirm nothing clips.
+
 ### Cost computation
 
 Sum of usage rows priced through the catalog. Rows without usage
@@ -255,7 +270,9 @@ estimator and set `has_estimated_entries`.
   history, in-memory, no draft) so it cannot diverge from what a send
   would transmit. Variant switches, `skip_failed` transitions, deletions,
   and image-budget rotation are covered for free. Per-message content
-  hashes are memoized → recompute cost ∝ what changed.
+  hashes are memoized, and attachments contribute a stored **digest**
+  rather than re-hashing base64 image bytes → recompute cost ∝ what
+  changed, never ∝ attachment size.
 - Component hashes: (provider+model, system, tools/config, ordered
   message-content hashes). Component-wise diff yields the reason;
   priority when several changed: **model > tools > system > history**
@@ -278,8 +295,9 @@ estimator and set `has_estimated_entries`.
 - "Is caching working?" comes from **ground truth**: last send's usage.
   Zero cache read *and* zero cache write → `NONE` ("no cache" tooltip).
 - Warm-until = last successful Anthropic send + 5 min (sliding TTL
-  refreshes on every send). Cache state is **derived from the clock at
-  sync time**, so switching to a background session tab immediately shows
+  refreshes on every send), tracked on a **monotonic clock**
+  (`time.monotonic()`) so NTP/DST wall-clock jumps can't flip cache
+  state. Cache state is **derived from the clock at sync time**, so switching to a background session tab immediately shows
   its true state; a 10-second UI timer — registered with the timer-leak
   audit, running only while the active session is WARM — exists solely to
   repaint the active tab's WARM→EXPIRED flip. Torn down on unmount.
@@ -324,9 +342,19 @@ isolation across session tabs.
 - Vision image-budget policy changes (prefix-friendly eviction).
 - Spend budgets / confirm-on-send thresholds; historical cost reporting
   UI; per-workspace aggregation.
+- The screen footer's dead `Tokens: --` slot on Console (wire it to the
+  same state or hide it — cosmetic consistency, not part of this program).
+- Auto-disable heuristic for caching when the observed hit rate stays
+  zero (slow-cadence users; see Risks).
 
 ## Risks
 
+- **Slow-cadence caching economics**: a user who always waits longer than
+  the 5-min TTL between sends pays the 1.25× write premium on every send
+  and never gets a read — up to +25% on input cost with zero benefit. The
+  ticker itself makes this visible (write costs appear in the breakdown),
+  and `[caching] anthropic_enabled = false` is the escape hatch; an
+  auto-disable heuristic is listed as a follow-up.
 - **Pricing staleness**: mitigated by `as_of` date in tooltip + config
   overrides; never fabricate a price for unknown models (tokens-only
   display instead).
