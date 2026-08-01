@@ -98,11 +98,21 @@ Character cards live in `ChaChaNotes_DB`; evals live in `Evals_DB`. There are no
 that boundary, so:
 
 - selection stores card **ids plus a name snapshot** for display,
-- at run time the card's **actual text is copied into the run snapshot** (`system_prompt`,
-  `personality`, `scenario`, `first_message`, `post_history_instructions`, `message_example`).
+- at run time the card's **actual text is copied into the run snapshot** (`description`,
+  `system_prompt`, `personality`, `scenario`, `first_message`, `post_history_instructions`,
+  `message_example`).
+
+`description` was missing from that list in the original draft of this spec. That was an **error,
+not a decision**: it is a real `character_cards` column, it is the primary V2 persona field, and
+Console already sends it. The whole-branch review of task-1691 phase 1 found the engine faithfully
+implementing the omission, so every probe ran against a character stripped of its main definition,
+with no copy of it kept anywhere in the run. Corrected under the same full-card-fidelity ruling
+that governs the rest of this section.
 
 This is the same provenance rule word_bench uses for snippets, and it means editing or deleting a
-card later never rewrites history.
+card later never rewrites history. The run snapshot therefore holds the card TEXT (not just ids),
+the composed system prompt per card per target, the resolved target list with its steering, and the
+sampler settings — a run that cannot be re-derived from the mutable bench row afterwards.
 
 The Evals view model wraps `EvalsDB` only and will need a second, read-only handle for
 `ChaChaNotes_DB`. The card picker (search + multi-select over potentially hundreds of cards) is a
@@ -169,12 +179,25 @@ here was to reuse `Character_Chat_Lib`'s card→prompt path rather than write a 
 such function exists — the actual joiner lives in
 `UI/Screens/chat_screen.py::_character_session_prompt_seed`, which the engine cannot import
 without violating its no-`UI/`-dependencies boundary. So the engine composes the prompt itself,
-deliberately including every field that shapes voice: `system_prompt`, `personality`, `scenario`,
-`message_example`, and `post_history_instructions`. Console's own joiner currently sends only
-`system_prompt`, `personality`, `description`, and `scenario` — it omits `message_example` and
+deliberately including every field that shapes voice: `system_prompt`, `personality`, `description`,
+`scenario`, `message_example`, and `post_history_instructions`. Console's own joiner currently sends
+only `system_prompt`, `personality`, `description`, and `scenario` — it omits `message_example` and
 `post_history_instructions` — so a probe run is **not** byte-identical to what Console sends
 today. Per the human's ruling, the eval's full-card fidelity is correct and Console is the one
 that should catch up; TASK-1744 tracks extracting one shared card→prompt function both paths use.
+The engine composes those four shared fields **in Console's own order** so that shared function has
+one less difference to reconcile, then appends the two Console does not send.
+
+**Card macros are resolved, not passed through.** Cards are authored against SillyTavern-style
+macros, and Console resolves `{{char}}`/`{{user}}` (and their aliases) before the text reaches any
+provider payload — task-1530 exists because they otherwise leak verbatim. The engine resolves them
+the same way, through the same non-UI function (`Character_Chat_Lib.replace_placeholders`), with
+`{{user}}` → `"User"` as Console substitutes it: a probe is a script, not a real person, and a
+probe that shipped a literal `{{user}}` would be evaluating text no real chat with that card ever
+produces. Two things are deliberately **not** macro-resolved: a probe's scripted user turns (the
+eval author's text, sent verbatim per the format's own rule) and a target's steering (attached to a
+target, not a card — a run spans several cards, so there is no one right name to substitute).
+
 The card's `first_message` seeds the opening assistant turn as in real roleplay, then the probe's
 scripted user turns alternate with model replies, accumulating context. **A card with no
 `first_message` simply starts with the user's first scripted turn** — no synthetic greeting is
@@ -271,9 +294,14 @@ a number.
 Real in-memory `EvalsDB` and a fake chat client, as elsewhere in the slice. Specific to this eval:
 
 - multi-turn ordering: turn *N* genuinely sees turn *N−1*'s reply
-- prompt assembly includes every field that shapes voice (`message_example`,
+- prompt assembly includes every field that shapes voice (`description`, `message_example`,
   `post_history_instructions` included), pending TASK-1744 bringing Console up to the same
   fidelity via a shared function
+- **targets come from real `eval_models` rows, never hand-built dicts.** A target's steering lives
+  inside the row's `config` JSON, not as a top-level column; a fixture that invents the flatter
+  shape will agree with code that reads the wrong place, which is exactly how phase 1 shipped seven
+  green tasks while every real run dropped its steering. The same rule holds for anything else read
+  off a database row.
 - annotation persistence and resumption across sessions
 - partial-conversation review after a mid-conversation failure
 - aggregation math, including that no composite score exists

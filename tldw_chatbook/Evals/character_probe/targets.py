@@ -16,8 +16,12 @@ run needs from it are NOT top-level columns:
 The steering read itself is ``word_bench.storage.model_steering`` -- the one
 existing home for that convention (task-1611), reused rather than
 reimplemented so the two bench types can never drift into disagreeing about
-what a row means. Only that reader is used; none of word_bench's measurement
-code is touched.
+what a row means. The design spec lists targets "and their steering" among
+the things this eval explicitly DOES reuse, so this import is the sanctioned
+kind; only that one reader is called, and none of word_bench's measurement
+code is referenced here or anywhere else in this package. (Importing that
+module does pull word_bench's own imports in transitively -- unavoidable
+without duplicating the reader, which is the thing worth avoiding.)
 """
 
 from __future__ import annotations
