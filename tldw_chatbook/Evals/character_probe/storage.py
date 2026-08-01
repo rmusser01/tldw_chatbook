@@ -28,17 +28,20 @@ def is_probe_set(dataset_row: Mapping[str, Any]) -> bool:
         dataset_row: A row as returned by ``EvalsDB.get_dataset``/``list_datasets``.
 
     Returns:
-        bool: True when the row is marked as a probe set.
+        bool: True when the row is marked as a probe set. A row whose
+        ``metadata`` is missing or is not itself a mapping (corrupt data)
+        is treated as "not a probe set" rather than raising, so a caller
+        that only wants a yes/no answer never has to catch an unrelated
+        ``AttributeError`` for that case.
     """
-    metadata = dataset_row.get("metadata") or {}
+    metadata = dataset_row.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return False
     return metadata.get("dataset_type") == PROBE_DATASET_TYPE
 
 
 def _probe_set_to_samples(probe_set: ProbeSet) -> list[dict[str, Any]]:
-    return [
-        {"index": index, "turns": list(probe.turns)}
-        for index, probe in enumerate(probe_set.probes)
-    ]
+    return [{"turns": list(probe.turns)} for probe in probe_set.probes]
 
 
 def _samples_to_probe_set(samples: Any) -> ProbeSet:
@@ -69,6 +72,14 @@ def save_probe_set(
 
     Returns:
         str: The dataset id holding the probes.
+
+    Raises:
+        ValueError: If ``dataset_id`` is given but does not identify a live
+            dataset row -- ``EvalsDB.update_dataset`` reports this by
+            returning ``False`` rather than raising, and silently ignoring
+            that would look like a successful save that in fact wrote
+            nothing (see ``LocalEvaluationsService.update_dataset`` for the
+            same convention).
     """
     metadata = {
         "dataset_type": PROBE_DATASET_TYPE,
@@ -81,7 +92,9 @@ def save_probe_set(
             source_path=f"inline:{name}",
             metadata=metadata,
         )
-    db.update_dataset(dataset_id, metadata=metadata)
+    updated = db.update_dataset(dataset_id, name=name, metadata=metadata)
+    if not updated:
+        raise ValueError(f"Probe set {dataset_id!r} could not be updated.")
     return dataset_id
 
 

@@ -8,6 +8,9 @@ from tldw_chatbook.Evals.character_probe.storage import (
     load_probe_set,
     save_probe_set,
 )
+from tldw_chatbook.Evaluations_Interop.evaluation_normalizers import (
+    RESERVED_LOCAL_DATASET_SAMPLES_KEY,
+)
 
 
 @pytest.fixture
@@ -62,3 +65,43 @@ def test_loading_a_non_probe_dataset_raises(db):
 def test_loading_a_missing_dataset_raises(db):
     with pytest.raises(ValueError, match="could not be found"):
         load_probe_set(db, "nope")
+
+
+def test_is_probe_set_false_for_string_metadata():
+    """Corrupt data (metadata that isn't a mapping) must not crash."""
+    assert is_probe_set({"metadata": "corrupt"}) is False
+
+
+def test_is_probe_set_false_for_list_metadata():
+    assert is_probe_set({"metadata": [1, 2, 3]}) is False
+
+
+def test_loading_a_dataset_with_corrupt_metadata_raises_the_named_error(db):
+    """A non-mapping ``metadata`` should surface as the normal 'not a probe
+    set' ValueError, not an unrelated AttributeError from ``is_probe_set``.
+    """
+    dataset_id = db.create_dataset(
+        name="snippets", format="custom", source_path="inline:snippets"
+    )
+    conn = db.get_connection()
+    with conn:
+        conn.execute(
+            "UPDATE eval_datasets SET metadata = ? WHERE id = ?",
+            ('"corrupt"', dataset_id),
+        )
+    with pytest.raises(ValueError, match="not a probe set"):
+        load_probe_set(db, dataset_id)
+
+
+def test_saving_with_a_stale_dataset_id_raises_rather_than_silently_succeeding(
+    db, probe_set
+):
+    with pytest.raises(ValueError, match="could not be updated"):
+        save_probe_set(db, "starter", probe_set, dataset_id="does-not-exist")
+
+
+def test_samples_do_not_carry_a_redundant_index_field(db, probe_set):
+    dataset_id = save_probe_set(db, "starter", probe_set)
+    row = db.get_dataset(dataset_id)
+    samples = row["metadata"][RESERVED_LOCAL_DATASET_SAMPLES_KEY]
+    assert all("index" not in sample for sample in samples)
