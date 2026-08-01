@@ -71,10 +71,10 @@ caller of that builder, so it rejects any `provider_id` outside
 `TTS/legacy_bridge.LEGACY_PROVIDER_IDS` -- the same source of truth the
 bridge itself uses to resolve routes -- before ever calling the builder.
 
-Testing: the only faked seam is the TTS service (`synthesize_exact` and
-`generate_audio_stream`) -- everything else, including the real
-`TTSAudioResponse` and the real `TextChunker`/`concat_wav_segments`, is
-exercised as-is.
+Testing (synthesis half): the only faked seam is the TTS service
+(`synthesize_exact` and `generate_audio_stream`) -- everything else,
+including the real `TTSAudioResponse` and the real
+`TextChunker`/`concat_wav_segments`, is exercised as-is.
 
 Nothing here logs turn text, a speaker name, or a voice id at any level --
 only exception types, for the same reason `briefing_cast` and
@@ -83,23 +83,84 @@ which dumps a failing frame's locals, and the frame at a synthesis failure
 holds exactly that content. `TurnSynthesisError` *messages* do name the
 speaker and turn index -- that is a caller-facing error, not a log line --
 but never a voice id or the turn's text.
+
+**Task 6 adds this module's pipeline half.** `synthesize_turn` above turns
+one turn into WAV bytes; `generate_script_audio` is the orchestrator that
+turns a whole cast script into one stored, playable `briefing_audio` row:
+it loads the script (refusing before any row exists if the script is not
+`complete` or has no readable turns), resolves the roster's voices
+(`briefing_voices.resolve_roster_voices`), creates the `briefing_audio`
+row, synthesizes and stitches every turn
+(`TTS/audio_stitch.concat_wav_segments`), and writes the finished payload
+once into `briefing_audio_dir()` via
+`Utils.private_paths.atomic_private_write_bytes`.
+
+Its error-boundary contract is copied from `briefing_cast.generate_script`
+(`Subscriptions/briefing_cast.py:562`) in every respect: a pre-flight
+refusal (script not `complete`, no readable turns) raises
+`AudioGenerationError` before any `briefing_audio` row exists; once the
+pipeline has committed to an attempt, every in-band failure (a voice that
+does not resolve, a turn's synthesis error, an unassigned speaker, a
+stitch failure, a write failure) updates that SAME row to `failed` rather
+than raising; a genuine DB error still propagates uncaught -- the caller's
+worker wraps it, matching the spec's "Error handling ethos". The parent
+`briefing_scripts` row is never touched by any outcome here, success or
+failure -- exactly as a briefing is never touched by a script's own
+outcome.
+
+**Storage is buffer-then-write-once, not streaming.** A correct
+decode-and-concat (`concat_wav_segments`) must hold every turn's decoded
+audio in memory to join them, so by the time there is anything to write,
+the whole finished payload already exists in memory; a streaming append
+would still need a full re-encode pass over everything written so far,
+and `private_paths` has no binary append call at all
+(`open_private_binary` is `O_RDONLY`). The whole payload is therefore
+written once, atomically, via `atomic_private_write_bytes`. If anything
+fails after that write succeeds, the file is removed -- a `failed` row
+must never leave an orphan audio file on disk.
+
+Testing (pipeline half): per the brief, the only faked seam is the
+per-turn `synthesize` callable itself (the `synthesize=synthesize_turn`
+parameter) -- `resolve_roster_voices` runs for real against a fake
+*profile service* (mirroring `test_briefing_voices.py`'s own rule), and
+everything else, including a real, file-backed `SubscriptionsDB` and the
+real stitcher, is exercised as-is.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import wave
+from collections.abc import Mapping
 from io import BytesIO
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
 from loguru import logger
 
-from tldw_chatbook.Subscriptions.briefing_voices import VoiceSelection
+from tldw_chatbook.config import get_user_data_dir
+from tldw_chatbook.Subscriptions.briefing_cast import STATUS_COMPLETE as _SCRIPT_STATUS_COMPLETE
+from tldw_chatbook.Subscriptions.briefing_voices import (
+    VoiceResolutionError,
+    VoiceSelection,
+    dump_voice_snapshot,
+    resolve_roster_voices,
+)
 from tldw_chatbook.TTS.adapter_types import TTSRequest
-from tldw_chatbook.TTS.audio_stitch import AudioStitchError, concat_wav_segments
+from tldw_chatbook.TTS.audio_stitch import (
+    AudioStitchError,
+    concat_wav_segments,
+    wav_duration_seconds,
+)
 from tldw_chatbook.TTS.legacy_bridge import LEGACY_PROVIDER_IDS
 from tldw_chatbook.TTS.legacy_request_builder import build_legacy_speech_request
 from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
 from tldw_chatbook.TTS.text_processing import TextChunker
+from tldw_chatbook.Utils.private_paths import (
+    atomic_private_write_bytes,
+    secure_private_directory,
+)
 
 #: Turn text longer than this many characters is split into multiple
 #: synthesis requests (see `_split_turn_text`) and the resulting WAV pieces
@@ -496,3 +557,439 @@ async def synthesize_turn(
             f"speaker {selection.speaker!r} turn {turn_index}: could not "
             f"stitch synthesized audio pieces ({type(exc).__name__})"
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Task 6: orchestrating one script's turns into one stored, playable file.
+# ---------------------------------------------------------------------------
+
+#: Statuses a `briefing_audio` row can hold. Mirrors `briefing_cast`'s own
+#: three-status shape exactly -- there is no "empty" status here either,
+#: since a script with no turns is refused before any row is ever written
+#: (see `_load_script_for_audio`).
+STATUS_GENERATING = "generating"
+STATUS_COMPLETE = "complete"
+STATUS_FAILED = "failed"
+
+#: The error text a zombie `generating` row is failed with by
+#: `fail_interrupted_audio` (mirrors `briefing_cast.INTERRUPTED_ERROR`
+#: exactly).
+INTERRUPTED_ERROR = "interrupted"
+
+#: Every stored error message -- a `TurnSynthesisError`, a
+#: `VoiceResolutionError`, an `AudioGenerationError`, or any other in-band
+#: failure -- is capped at this many characters before it reaches a
+#: `briefing_audio` row (mirrors `briefing_cast.ERROR_CHAR_CAP` exactly):
+#: the row is rendered in a status line, not a log file, and some failures
+#: (a provider's raw error body) can be arbitrarily long.
+ERROR_CHAR_CAP = 1000
+
+#: `briefing_audio_dir()`'s directory name under `get_user_data_dir()`.
+_AUDIO_SUBDIR = "briefing_audio"
+
+
+class AudioGenerationError(RuntimeError):
+    """Raised when a script cannot be turned into audio at all.
+
+    Every raise site reached directly from `generate_script_audio` (via
+    `_load_script_for_audio`) is a pre-flight refusal -- the script does
+    not exist, is not `complete`, or has no turns a synthesis attempt could
+    ever read -- so those raise sites all run BEFORE any `briefing_audio`
+    row exists (mirrors `briefing_cast.ScriptCastError`'s pre-row-insert
+    raise sites in `_start_script`). A turn naming a speaker absent from
+    the resolved voice snapshot also raises this type, but that raise site
+    runs INSIDE `generate_script_audio`'s own try/except, after the row
+    already exists, so it becomes a `failed` row rather than propagating.
+    """
+
+
+def _error_text(exc: BaseException) -> str:
+    """The exception's message, capped -- never a traceback.
+
+    Copies `briefing_cast._error_text`'s exact shape (not imported: that
+    function is private to its own module).
+
+    Args:
+        exc: The exception to render.
+
+    Returns:
+        `str(exc)`, stripped, falling back to the exception's class name
+        when that is empty, truncated to `ERROR_CHAR_CAP` characters with a
+        `" [...]"` suffix when longer.
+    """
+    message = str(exc).strip() or exc.__class__.__name__
+    if len(message) > ERROR_CHAR_CAP:
+        message = message[:ERROR_CHAR_CAP] + " [...]"
+    return message
+
+
+def _parse_turns(turns_json: str | None) -> list[dict[str, str]]:
+    """Decode a script's stored `turns_json` into synthesis-ready turns.
+
+    Args:
+        turns_json: A `briefing_scripts.turns_json` value -- expected to be
+            `briefing_cast.parse_script_turns`'s own `json.dumps` output, a
+            JSON array of `{"speaker": str, "text": str}` objects.
+
+    Returns:
+        The decoded turns, in stored order, each a plain
+        `{"speaker": str, "text": str}` dict (the speaker name stripped of
+        incidental whitespace).
+
+    Raises:
+        AudioGenerationError: If `turns_json` is `None`/empty, is not valid
+            JSON, is not a non-empty JSON array, or contains an item
+            missing a non-empty string `speaker` or a string `text`.
+    """
+    if not turns_json:
+        raise AudioGenerationError("script has no turns to synthesize")
+    try:
+        payload = json.loads(turns_json)
+    except (ValueError, TypeError) as exc:
+        raise AudioGenerationError("script turns are not valid JSON") from exc
+    if not isinstance(payload, list) or not payload:
+        raise AudioGenerationError("script has no turns to synthesize")
+
+    turns: list[dict[str, str]] = []
+    for index, item in enumerate(payload):
+        speaker = item.get("speaker") if isinstance(item, Mapping) else None
+        text = item.get("text") if isinstance(item, Mapping) else None
+        if not isinstance(speaker, str) or not speaker.strip() or not isinstance(text, str):
+            raise AudioGenerationError(f"script turn {index} is malformed")
+        turns.append({"speaker": speaker.strip(), "text": text})
+    return turns
+
+
+def _parse_roster_snapshot(roster_snapshot_json: str | None) -> list[dict[str, Any]]:
+    """Decode a script's stored `roster_snapshot_json` for voice resolution.
+
+    Args:
+        roster_snapshot_json: A `briefing_scripts.roster_snapshot_json`
+            value -- expected to be `briefing_cast.dump_roster`'s own
+            output, a JSON array of speaker objects.
+
+    Returns:
+        The decoded roster, in stored order, each entry a plain `dict`.
+
+    Raises:
+        AudioGenerationError: If the value is not valid JSON, or is not a
+            JSON array of objects.
+    """
+    try:
+        payload = json.loads(roster_snapshot_json or "[]")
+    except (ValueError, TypeError) as exc:
+        raise AudioGenerationError("script roster snapshot is not valid JSON") from exc
+    if not isinstance(payload, list) or not all(isinstance(item, Mapping) for item in payload):
+        raise AudioGenerationError(
+            "script roster snapshot must be an array of speaker objects"
+        )
+    return [dict(item) for item in payload]
+
+
+def _load_script_for_audio(
+    db: Any, script_id: int
+) -> tuple[dict[str, Any], list[dict[str, str]], list[dict[str, Any]]]:
+    """Everything before any `briefing_audio` row exists: fetch, validate, parse.
+
+    Grouped into one function so `generate_script_audio` can run it as a
+    single `asyncio.to_thread` hop (2a's whole-branch ruling): every check
+    that must refuse WITHOUT ever creating a row runs here.
+
+    Args:
+        db: An open `SubscriptionsDB`.
+        script_id: The `briefing_scripts.id` to synthesize audio for.
+
+    Returns:
+        `(script, turns, roster_snapshot)`.
+
+    Raises:
+        AudioGenerationError: If the script does not exist, is not
+            `complete`, or its stored turns/roster snapshot cannot be
+            parsed into usable data. No `briefing_audio` row is ever
+            written when this raises.
+    """
+    script = db.get_briefing_script(script_id)
+    if script is None:
+        raise AudioGenerationError(f"script {script_id} does not exist")
+    if script["status"] != _SCRIPT_STATUS_COMPLETE:
+        raise AudioGenerationError(
+            f"script {script_id} is {script['status']!r}, not complete; audio can "
+            "only be generated from a complete script"
+        )
+
+    turns = _parse_turns(script.get("turns_json"))
+    roster_snapshot = _parse_roster_snapshot(script.get("roster_snapshot_json"))
+    return script, turns, roster_snapshot
+
+
+def _record_voice_resolution_failure(db: Any, script_id: int, message: str) -> dict[str, Any]:
+    """Write a `failed` `briefing_audio` row for a voice resolution failure.
+
+    `resolve_roster_voices` must succeed before `generate_script_audio` has
+    anything to pass as `voice_snapshot_json` -- `create_briefing_audio`'s
+    own write-once contract (Task 1) means a row can never be created
+    first and "filled in" with the resolved snapshot afterward. So a
+    resolution failure creates its OWN row here, directly, with an empty
+    placeholder snapshot -- there is no meaningful voice assignment to
+    record for an attempt that never resolved one.
+
+    Args:
+        db: An open `SubscriptionsDB`.
+        script_id: The script this audio attempt belongs to.
+        message: The capped, human-readable failure text (`_error_text`'s
+            output) -- already naming the speaker and, for a stored profile
+            id that no longer resolves, the id too (see
+            `briefing_voices.VoiceResolutionError`).
+
+    Returns:
+        The finished (`failed`) `briefing_audio` row as a dict.
+    """
+    audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+    db.update_briefing_audio(audio_id, status=STATUS_FAILED, error=message)
+    return db.get_briefing_audio(audio_id)
+
+
+def _finish_audio_failure(db: Any, audio_id: int, message: str) -> dict[str, Any]:
+    """Record an in-band synthesis failure on an already-existing row.
+
+    Touches only this `briefing_audio` row -- the `briefing_scripts` row it
+    narrates is never written by this module, on any outcome (spec §Error
+    handling ethos; the named invariant
+    `test_a_failed_synthesis_never_touches_the_script`).
+
+    Args:
+        db: An open `SubscriptionsDB`.
+        audio_id: The `briefing_audio.id` row to fail.
+        message: The capped, human-readable failure text.
+
+    Returns:
+        The finished (`failed`) `briefing_audio` row as a dict.
+    """
+    db.update_briefing_audio(audio_id, status=STATUS_FAILED, error=message)
+    return db.get_briefing_audio(audio_id)
+
+
+def _finish_audio_success(
+    db: Any, audio_id: int, file_path: str, duration_seconds: float, turn_count: int
+) -> dict[str, Any]:
+    """Record a completed render and read the finished row back.
+
+    Args:
+        db: An open `SubscriptionsDB`.
+        audio_id: The `briefing_audio.id` row to complete.
+        file_path: Absolute path of the written WAV file.
+        duration_seconds: The stitched payload's duration.
+        turn_count: How many turns the finished render covers.
+
+    Returns:
+        The finished (`complete`) `briefing_audio` row as a dict.
+    """
+    db.update_briefing_audio(
+        audio_id,
+        status=STATUS_COMPLETE,
+        file_path=file_path,
+        duration_seconds=duration_seconds,
+        turn_count=turn_count,
+    )
+    return db.get_briefing_audio(audio_id)
+
+
+def _remove_file_quietly(path: Path) -> None:
+    """Best-effort delete of a possibly-already-absent file.
+
+    Used to clean up an orphaned audio file after the write succeeded but a
+    later step (a duration read, or the finalizing DB write) failed -- a
+    `failed` row must never leave an artifact on disk behind it. Never
+    raises: a failure to remove a stray file is logged (by type only) and
+    swallowed, since the caller is already on a failure path of its own and
+    must not lose that original error to a cleanup problem.
+
+    Args:
+        path: The audio file to remove.
+    """
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning(
+            "Briefing audio cleanup: could not remove an orphaned file ({}).",
+            type(exc).__name__,
+        )
+
+
+def briefing_audio_dir() -> Path:
+    """Return the secured, application-owned directory for rendered audio.
+
+    Returns:
+        `<user data dir>/briefing_audio`, created if missing and hardened
+        to this application's own private-directory posture (only this
+        user, only this app -- see
+        `Utils.private_paths.secure_private_directory`).
+    """
+    return secure_private_directory(
+        get_user_data_dir() / _AUDIO_SUBDIR,
+        create=True,
+        application_owned=True,
+    ).lexical_path
+
+
+async def generate_script_audio(
+    db: Any,
+    script_id: int,
+    *,
+    tts_service: Any,
+    profile_service: Any | None,
+    synthesize: Callable[..., Any] = synthesize_turn,
+) -> dict[str, Any]:
+    """Synthesize a cast script's turns into one stored, playable audio file.
+
+    Never raises for an in-band failure once it has committed to an
+    attempt (a voice that fails to resolve, a turn's synthesis error, an
+    unassigned speaker, a stitch failure, a write failure): the failure
+    becomes that SAME `briefing_audio` row's status and error, mirroring
+    `briefing_cast.generate_script`'s own contract exactly. It DOES raise
+    `AudioGenerationError` for a request that never should have started an
+    attempt at all -- the script isn't `complete`, or has no readable turns
+    -- and in that case no `briefing_audio` row is ever written. See the
+    module docstring's "Task 6 adds this module's pipeline half" section
+    for the full error-boundary shape this copies.
+
+    Args:
+        db: An open `SubscriptionsDB`.
+        script_id: The `briefing_scripts.id` to synthesize. Must be
+            `complete`.
+        tts_service: The app's TTS service, passed straight through to
+            `synthesize` -- never used directly by this function.
+        profile_service: The app's TTS profile service, passed straight
+            through to `briefing_voices.resolve_roster_voices`.
+        synthesize: The per-turn synthesis seam. Defaults to
+            `synthesize_turn`; per the module docstring, the only seam a
+            test needs to fake to exercise this whole orchestration
+            against a real `SubscriptionsDB` and the real stitcher.
+
+    Returns:
+        The finished `briefing_audio` row as a dict, whatever its status.
+
+    Raises:
+        AudioGenerationError: If the script does not exist, is not
+            `complete`, or its stored turns cannot be parsed. No row is
+            written in any of these cases.
+    """
+    script, turns, roster_snapshot = await asyncio.to_thread(
+        _load_script_for_audio, db, script_id
+    )
+
+    try:
+        selections = await resolve_roster_voices(
+            roster_snapshot, profile_service=profile_service
+        )
+    except VoiceResolutionError as exc:
+        # No message content logged: see the module docstring's egress
+        # note -- a `VoiceResolutionError`'s own message names the speaker
+        # (and, for a deleted profile, its id).
+        logger.warning(f"script {script_id}: voice resolution failed: {type(exc).__name__}")
+        return await asyncio.to_thread(
+            _record_voice_resolution_failure, db, script_id, _error_text(exc)
+        )
+
+    audio_id = await asyncio.to_thread(
+        db.create_briefing_audio,
+        script_id,
+        voice_snapshot_json=dump_voice_snapshot(selections),
+    )
+
+    by_speaker: dict[str, VoiceSelection] = {
+        selection.speaker: selection for selection in selections
+    }
+
+    try:
+        segments: list[bytes] = []
+        for index, turn in enumerate(turns):
+            speaker = turn["speaker"]
+            selection = by_speaker.get(speaker)
+            if selection is None:
+                raise AudioGenerationError(
+                    f"turn {index}: no voice assigned for speaker {speaker!r}"
+                )
+            segment = await synthesize(tts_service, selection, turn["text"], turn_index=index)
+            segments.append(segment)
+        payload = concat_wav_segments(segments)
+    except Exception as exc:  # noqa: BLE001 - every synthesis failure is a row
+        # No message content logged: a `TurnSynthesisError`'s own message
+        # names the speaker and turn index -- that is a caller-facing
+        # error (stored on the row), not a log line.
+        logger.warning(
+            f"script {script_id} audio {audio_id}: synthesis failed: {type(exc).__name__}"
+        )
+        return await asyncio.to_thread(_finish_audio_failure, db, audio_id, _error_text(exc))
+
+    directory = await asyncio.to_thread(briefing_audio_dir)
+    path = directory / f"script-{script_id}-audio-{audio_id}.wav"
+    try:
+        await asyncio.to_thread(
+            atomic_private_write_bytes,
+            path,
+            payload,
+            application_owned_directory=directory,
+        )
+    except Exception as exc:  # noqa: BLE001 - a write failure is a row, not a raise
+        logger.warning(
+            f"script {script_id} audio {audio_id}: audio write failed: {type(exc).__name__}"
+        )
+        return await asyncio.to_thread(_finish_audio_failure, db, audio_id, _error_text(exc))
+
+    try:
+        duration = wav_duration_seconds(payload)
+    except AudioStitchError as exc:
+        logger.warning(
+            f"script {script_id} audio {audio_id}: duration read failed: {type(exc).__name__}"
+        )
+        await asyncio.to_thread(_remove_file_quietly, path)
+        return await asyncio.to_thread(_finish_audio_failure, db, audio_id, _error_text(exc))
+
+    try:
+        return await asyncio.to_thread(
+            _finish_audio_success, db, audio_id, str(path), duration, len(turns)
+        )
+    except Exception:
+        # A genuine DB error finalizing the row: propagate uncaught (the
+        # caller's worker wraps it -- see the module docstring) but the
+        # file must not be left orphaned on disk behind a row stuck
+        # `generating` forever.
+        await asyncio.to_thread(_remove_file_quietly, path)
+        raise
+
+
+def fail_interrupted_audio(db: Any, script_id: int | None = None) -> int:
+    """Fail every `generating` audio row as `interrupted`; return the count.
+
+    Mirrors `briefing_cast.fail_interrupted_scripts` exactly: a worker that
+    crashed mid-render leaves a `generating` row that would otherwise wedge
+    a one-render-at-a-time guard shut forever. Only `generating` rows are
+    touched -- finished history keeps its status, its file, and its own
+    error text.
+
+    Args:
+        db: An open `SubscriptionsDB`.
+        script_id: Scope the sweep to one script's audio rows. `None`
+            sweeps every script's audio, which is what a startup pass
+            wants.
+
+    Returns:
+        How many rows were failed.
+    """
+    sql = (
+        "UPDATE briefing_audio SET status = ?, error = ?, updated_at = CURRENT_TIMESTAMP "
+        "WHERE status = ?"
+    )
+    params: list[Any] = [STATUS_FAILED, INTERRUPTED_ERROR, STATUS_GENERATING]
+    if script_id is not None:
+        sql += " AND script_id = ?"
+        params.append(script_id)
+
+    with db.transaction() as conn:
+        count = conn.execute(sql, params).rowcount
+    if count:
+        logger.info(f"failed {count} interrupted briefing audio row(s)")
+    return count
