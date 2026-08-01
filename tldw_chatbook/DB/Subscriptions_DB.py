@@ -807,6 +807,37 @@ class SubscriptionsDB(BaseDB):
             "ON briefing_scripts(briefing_id, status)"
         )
 
+        # Briefing audio (spec #2 phase 2b): one row per audio-synthesis run
+        # of a specific `briefing_scripts` row, turning that cast script into
+        # a playable recording. `voice_snapshot_json` freezes the voice
+        # assignment used for this render -- exactly like `roster_snapshot_
+        # json` above, it is deliberately NOT in `update_briefing_audio`'s
+        # allowlist (see that method's docstring): a synthesized artifact's
+        # provenance must never be revisable after the fact. `script_id` IS a
+        # real FK with `ON DELETE CASCADE` -- audio has no meaning once the
+        # script it narrates is gone. Additive `CREATE TABLE IF NOT EXISTS`,
+        # no data migration, so (matching `briefing_scripts` above) the
+        # `BEGIN IMMEDIATE` rebuild machinery used elsewhere in this file is
+        # deliberately not cargo-culted in here.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS briefing_audio (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                script_id INTEGER NOT NULL REFERENCES briefing_scripts(id) ON DELETE CASCADE,
+                voice_snapshot_json TEXT NOT NULL,
+                file_path TEXT,
+                duration_seconds REAL,
+                turn_count INTEGER,
+                status TEXT NOT NULL DEFAULT 'generating',
+                error TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_briefing_audio_script "
+            "ON briefing_audio(script_id, status)"
+        )
+
         # local_watchlist_runs is guaranteed to exist: BaseDB.__init__ runs
         # _initialize_schema (base_db.py:76), which creates it and then calls
         # this method. Only the column needs checking, for databases created
@@ -2099,6 +2130,139 @@ class SubscriptionsDB(BaseDB):
                 "ORDER BY created_at DESC, id DESC "
                 "LIMIT ? OFFSET ?",
                 (briefing_id, limit, offset),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def create_briefing_audio(
+        self,
+        script_id: int,
+        *,
+        voice_snapshot_json: str,
+        status: str = "generating",
+    ) -> int:
+        """Create a new `briefing_audio` row for a cast script.
+
+        Args:
+            script_id: The `briefing_scripts.id` this audio narrates. The
+                row is deleted automatically if that script is ever deleted
+                (`ON DELETE CASCADE`).
+            voice_snapshot_json: Canonical JSON encoding of the voice
+                assignment used for this render, frozen at synthesis-start
+                time. Write-once: not settable via `update_briefing_audio`
+                (see that method's docstring) -- a synthesized artifact's
+                provenance must never be revisable after the fact.
+            status: Initial status. Defaults to `"generating"`, matching
+                `insert_briefing_script`'s reasoning -- the row exists
+                before the synthesis call is even made, so a crash before
+                the first write still leaves a `generating` row behind.
+
+        Returns:
+            The new row's `id`.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "INSERT INTO briefing_audio (script_id, voice_snapshot_json, status) "
+                "VALUES (?, ?, ?)",
+                (script_id, voice_snapshot_json, status),
+            )
+            return cursor.lastrowid
+
+    def update_briefing_audio(self, audio_id: int, **fields: Any) -> None:
+        """Update named columns on a `briefing_audio` row by id.
+
+        Matches `update_briefing_script`'s pattern: keys are validated
+        against an explicit allowlist of real `briefing_audio` columns
+        rather than trusted blindly, so a typo'd or renamed field raises
+        immediately instead of silently building a SET clause for a column
+        that was never meant to be settable this way. Each key surviving the
+        allowlist is additionally run through `sql_validation.
+        validate_identifier` before it reaches the SQL text --
+        belt-and-suspenders against the allowlist itself being edited to
+        something unsafe later. `voice_snapshot_json` is deliberately absent
+        from the allowlist: it is write-once, exactly as `roster_snapshot_
+        json` is on `briefing_scripts` -- a synthesized artifact's snapshot
+        must not be revisable after the fact.
+
+        Args:
+            audio_id: `briefing_audio.id` of the row to update.
+            **fields: Column/value pairs to set. A no-op (returns
+                immediately) when empty. `updated_at` is bumped to
+                `CURRENT_TIMESTAMP` automatically unless the caller passes
+                it explicitly.
+
+        Raises:
+            ValueError: If any key in `fields` is not an allowed column, or
+                fails `validate_identifier`.
+        """
+        allowed_fields = (
+            "status",
+            "error",
+            "file_path",
+            "duration_seconds",
+            "turn_count",
+            "updated_at",
+        )
+        if not fields:
+            return
+        for key in fields:
+            if key not in allowed_fields:
+                raise ValueError(f"update_briefing_audio: unknown field {key!r}")
+            if not validate_identifier(key, "column name"):
+                raise ValueError(f"update_briefing_audio: invalid field {key!r}")
+
+        set_clause = ", ".join(f"{key} = ?" for key in fields)
+        values = list(fields.values())
+        # Only append the automatic timestamp bump when the caller didn't
+        # already supply `updated_at` explicitly -- otherwise the column
+        # would appear twice in the same SET clause.
+        extra = "" if "updated_at" in fields else ", updated_at = CURRENT_TIMESTAMP"
+        values.append(audio_id)
+        with self.transaction() as conn:
+            conn.execute(
+                f"UPDATE briefing_audio SET {set_clause}{extra} WHERE id = ?",
+                values,
+            )
+
+    def get_briefing_audio(self, audio_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch one `briefing_audio` row by id.
+
+        Args:
+            audio_id: `briefing_audio.id` to look up.
+
+        Returns:
+            The row as a dict, or `None` if no row has that id.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM briefing_audio WHERE id = ?", (audio_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_briefing_audio(
+        self, script_id: int, *, limit: int = 200, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """List a script's audio renders, newest first, paginated.
+
+        Args:
+            script_id: The `briefing_scripts.id` to list audio for.
+            limit: Maximum number of rows to return (CLAUDE.md Performance
+                Rules: paginate DB results). Defaults to 200, well above any
+                real per-script audio render count today, so existing
+                callers keep working unchanged.
+            offset: Number of rows to skip before the page starts.
+
+        Returns:
+            Up to `limit` `briefing_audio` rows for `script_id`, starting at
+            `offset`, newest first by `created_at` then `id` (the
+            tiebreaker for rows created within the same timestamp
+            resolution).
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM briefing_audio WHERE script_id = ? "
+                "ORDER BY created_at DESC, id DESC "
+                "LIMIT ? OFFSET ?",
+                (script_id, limit, offset),
             )
             return [dict(row) for row in cursor.fetchall()]
 

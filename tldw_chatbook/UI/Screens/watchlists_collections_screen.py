@@ -11,6 +11,7 @@ import asyncio
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -31,6 +32,11 @@ from ...Constants import (
     WATCHLISTS_SECTION_RUNS,
 )
 from ...runtime_policy.types import PolicyDeniedError
+from ...Subscriptions.briefing_audio import (
+    AudioGenerationError,
+    fail_interrupted_audio,
+    generate_script_audio,
+)
 from ...Subscriptions.briefing_cast import (
     ScriptCastError,
     fail_interrupted_scripts,
@@ -45,6 +51,7 @@ from ...Subscriptions.briefing_service import (
 )
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from ...Subscriptions.watchlist_normalizers import normalize_watchlist_item
+from ...TTS.audio_player import play_audio_file
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -74,8 +81,12 @@ from ..Watchlists_Modules.artifacts_pane import (
     CitationActivated,
     GenerateBriefingRequested,
     ManagePresetsRequested,
+    PlayAudioRequested,
     RefreshBriefingsRequested,
     ScriptSelected,
+    StopAudioRequested,
+    SynthesizeAudioRequested,
+    audio_file_path_is_safe,
 )
 from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
 from ..Watchlists_Modules.content_pane import ContentPane, UnreadToggleRequested
@@ -383,6 +394,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_load_briefings` (see that method).
         self._loaded_scripts: list[dict[str, Any]] = []
         self._selected_script: dict[str, Any] | None = None
+        # Review round 1, Minor #4: `{script_id: status}` for every one of
+        # `_loaded_scripts`' ids that has at least one `briefing_audio`
+        # render -- the rebuild-survival mirror of `pane.scripts_with_
+        # audio`, resolved alongside `_loaded_scripts` inside `_load_
+        # briefings` (see that method). Owner decision, task-7 phase 2b
+        # follow-up: upgraded from a bare `frozenset[int]` of "has an
+        # attempt" to carry each script's newest audio status, so the
+        # scripts table can distinguish a failed render from a
+        # successful one instead of painting both identically.
+        self._scripts_with_audio: dict[int, str] = {}
         # True only while THIS screen's `wl-cast` worker is running -- the
         # exact sibling of `_briefing_in_flight` above, for the same reason:
         # `fail_interrupted_scripts` cannot tell a crashed worker's row from
@@ -405,6 +426,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # sync with it.
         self._loaded_citations: list[dict[str, Any]] = []
         self._citation_item_lookup: dict[int, dict[str, Any]] = {}
+        # Task 7: the SELECTED script's newest `briefing_audio` render, or
+        # `None` when it has never been synthesized -- the rebuild-survival
+        # mirror of `pane.script_audio`, resolved alongside `_selected_
+        # script` inside `_load_briefings` (see that method).
+        self._loaded_script_audio: dict[str, Any] | None = None
+        # True only while THIS screen's `wl-audio` worker is running -- the
+        # exact sibling of `_cast_in_flight` above, for the same reason:
+        # `fail_interrupted_audio` cannot tell a crashed worker's row from a
+        # live one, so the live case is answered from memory here. See
+        # `handle_synthesize_audio_requested`.
+        self._audio_in_flight = False
+        # Which script `_audio_in_flight` refers to, or `None` -- the
+        # `_cast_in_flight_briefing_id` sibling, so a refusal can name the
+        # script actually being synthesized.
+        self._audio_in_flight_script_id: int | None = None
         # The item currently open in the CONTENT reader (Task 4). Held here
         # for the identical reason as `_loaded_items` above: `_build_content_pane`
         # is a factory the workbench calls on every region rebuild, and a
@@ -1341,6 +1377,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             artifacts_pane.default_preset_id = self._briefing_default_preset_id
             artifacts_pane.scripts = self._loaded_scripts
             artifacts_pane.selected_script = self._selected_script
+            artifacts_pane.script_audio = self._loaded_script_audio
+            artifacts_pane.scripts_with_audio = self._scripts_with_audio
             artifacts_pane.citations = self._loaded_citations
             children.append(artifacts_pane)
         return Vertical(
@@ -3170,6 +3208,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._briefing_default_preset_id = None
             self._loaded_scripts = []
             self._selected_script = None
+            self._loaded_script_audio = None
+            self._scripts_with_audio = {}
             self._loaded_citations = []
             self._citation_item_lookup = {}
         else:
@@ -3240,6 +3280,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if selected_briefing_id is None:
                 self._loaded_scripts = []
                 self._selected_script = None
+                self._loaded_script_audio = None
+                self._scripts_with_audio = {}
             else:
                 try:
                     # Zombie recovery for scripts, mirroring the briefing
@@ -3275,6 +3317,32 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         markup=False,
                     )
                     self._loaded_scripts = []
+                # Review round 1, Minor #4: which of THESE scripts have any
+                # audio at all, so the scripts table can show an indicator
+                # for every row -- not just the one currently selected
+                # (`_loaded_script_audio` below only ever answers that one
+                # question for ONE script). One `asyncio.to_thread` hop for
+                # the whole set, same "bundle several small reads into one
+                # thread-pool round trip" idiom `_read_watchlist_briefing_
+                # state` already uses -- `SubscriptionsDB` has no query
+                # batched by many script ids at once, and a briefing's own
+                # script count is small in practice, so N per-script
+                # existence checks inside ONE hop beats N separate hops.
+                try:
+                    script_ids = [
+                        row["id"]
+                        for row in self._loaded_scripts
+                        if row.get("id") is not None
+                    ]
+                    self._scripts_with_audio = await asyncio.to_thread(
+                        self._read_scripts_with_audio, db, script_ids
+                    )
+                except Exception as exc:  # noqa: BLE001 - reported, not raised
+                    logger.warning(
+                        "Failed to read audio presence for briefing "
+                        f"{selected_briefing_id}'s scripts: {type(exc).__name__}"
+                    )
+                    self._scripts_with_audio = {}
                 wanted_script = (
                     (self._selected_script or {}).get("id")
                     if self._selected_script
@@ -3288,6 +3356,59 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     ),
                     None,
                 )
+            # Task 7: the SELECTED script's newest audio render. Scoped to
+            # ONE script (the resolved selection above), the identical
+            # shape `_loaded_scripts` uses for ONE briefing above it --
+            # audio belongs to exactly one script, and this pane only ever
+            # shows one script's detail at a time. Runs inside the SAME
+            # `wl-briefings-load` worker/hop as everything else here (see
+            # `handle_script_selected`, which re-dispatches this whole
+            # method -- rather than an audio-only reload -- exactly so a
+            # script row click's audio arrives through this one pattern).
+            selected_script_id = (
+                (self._selected_script or {}).get("id")
+                if self._selected_script
+                else None
+            )
+            if selected_script_id is None:
+                self._loaded_script_audio = None
+            else:
+                try:
+                    # Zombie recovery for audio, mirroring the script sweep
+                    # above: a synthesis worker that crashed mid-render
+                    # leaves a `generating` row that would otherwise wedge
+                    # a one-synthesis-at-a-time guard shut forever. Gated
+                    # on `_audio_sweep_is_safe` for the identical reason
+                    # `_fail_interrupted_scripts_if_safe` is gated on
+                    # `_cast_sweep_is_safe`: a load racing a synthesis THIS
+                    # screen started must not fail that attempt's own row
+                    # out from under it.
+                    await self._fail_interrupted_audio_if_safe(
+                        db, selected_script_id
+                    )
+                except Exception as exc:  # noqa: BLE001 - best-effort, not fatal
+                    logger.warning(
+                        "Zombie-audio sweep failed for script "
+                        f"{selected_script_id}: {type(exc).__name__}"
+                    )
+                try:
+                    audio_rows = await asyncio.to_thread(
+                        db.list_briefing_audio, selected_script_id, limit=1
+                    )
+                    self._loaded_script_audio = (
+                        dict(audio_rows[0]) if audio_rows else None
+                    )
+                except Exception as exc:  # noqa: BLE001 - reported, not raised
+                    logger.warning(
+                        "Failed to read audio for script "
+                        f"{selected_script_id}: {type(exc).__name__}"
+                    )
+                    self._notify_watchlists(
+                        "Failed to read this script's audio.",
+                        severity="error",
+                        markup=False,
+                    )
+                    self._loaded_script_audio = None
             # Task 6: which items the SELECTED briefing's body actually
             # cites. `extract_citation_ids` is pure and cheap (a regex over
             # a body already held in memory), so it runs inline; only the
@@ -3399,6 +3520,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.default_preset_id = self._briefing_default_preset_id
         pane.scripts = self._loaded_scripts
         pane.selected_script = self._selected_script
+        pane.script_audio = self._loaded_script_audio
+        pane.scripts_with_audio = self._scripts_with_audio
         pane.citations = self._loaded_citations
 
     @staticmethod
@@ -3442,6 +3565,51 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         preset_rows = [dict(row) for row in db.list_briefing_presets()]
         return settings_row, preset_rows
 
+    @staticmethod
+    def _read_scripts_with_audio(db: Any, script_ids: list[int]) -> dict[int, str]:
+        """Each of `script_ids` that has at least one `briefing_audio`
+        render, mapped to that render's NEWEST status.
+
+        Review round 1, Minor #4: a single read per script
+        (`list_briefing_audio(script_id, limit=1)`, newest-first --
+        Subscriptions_DB's own `ORDER BY created_at DESC, id DESC`),
+        bundled into one synchronous unit for `_load_briefings` to
+        dispatch through a SINGLE `asyncio.to_thread` call -- the
+        `_read_watchlist_briefing_state` idiom immediately above.
+        `SubscriptionsDB` has no query batched by many script ids at once
+        (`list_briefing_audio` is scoped to exactly one), and a
+        briefing's own cast-script count is small in real use, so N of
+        these small reads inside one thread hop beats N separate hops
+        through the thread pool. Always called through `asyncio.
+        to_thread`; never call this directly from the UI thread.
+
+        Owner decision, task-7 phase 2b follow-up ("if synthesis fails,
+        show the audio glyph with a red x"): this used to return a bare
+        `frozenset[int]` of "has at least one attempt" (review round 1's
+        original ask), which let a failed synthesis paint identically to
+        a successful one in the scripts table. `limit=1` already fetches
+        the newest render -- reusing its `status` costs nothing extra,
+        so `ArtifactsPane._audio_cell` can tell a `STATUS_FAILED` render
+        apart from a `STATUS_COMPLETE`/`STATUS_GENERATING` one without a
+        second query or a second `to_thread` hop.
+
+        Args:
+            db: An open `SubscriptionsDB`.
+            script_ids: `briefing_scripts.id` values to check.
+
+        Returns:
+            `{script_id: status}` for every id in `script_ids` that has
+            at least one `briefing_audio` row, using that row's newest
+            status. A `script_id` with no `briefing_audio` row at all is
+            simply absent from the mapping.
+        """
+        result: dict[int, str] = {}
+        for script_id in script_ids:
+            rows = db.list_briefing_audio(script_id, limit=1)
+            if rows:
+                result[script_id] = str(rows[0].get("status") or "")
+        return result
+
     @on(BriefingSelected)
     def handle_briefing_selected(self, event: BriefingSelected) -> None:
         """Mirror the pane's selection so a region rebuild can re-seed it.
@@ -3474,6 +3642,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # click and that reload's completion.
         self._selected_script = None
         self._loaded_scripts = []
+        # Task 7: a different briefing means different scripts, which means
+        # different audio -- the identical stale-window hazard fixed for
+        # scripts above, one level down.
+        self._loaded_script_audio = None
+        self._scripts_with_audio = {}
         # Task 6: a different briefing also means different citations --
         # the identical stale-window hazard fix round 1 fixed for scripts
         # above, for the identical reason. Without clearing
@@ -3489,6 +3662,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if pane is not None:
             pane.scripts = []
             pane.selected_script = None
+            pane.script_audio = None
+            pane.scripts_with_audio = {}
             pane.citations = []
         self.run_worker(
             self._load_briefings(), exclusive=True, group="wl-briefings-load"
@@ -3498,9 +3673,41 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_script_selected(self, event: ScriptSelected) -> None:
         """Mirror the pane's script selection, for rebuild survival --
         the `_selected_briefing`/`handle_briefing_selected` sibling.
+
+        Task 7: a REAL selection (`event.script is not None`) also means
+        different audio to fetch -- `_loaded_script_audio` is scoped to
+        ONE script, the same way `_loaded_scripts` is scoped to one
+        briefing, and (unlike a script's own row, already fully loaded as
+        part of `_loaded_scripts`) its audio is not preloaded for every
+        script up front, so a newly selected script's audio still needs a
+        fresh read. Re-dispatches the whole `_load_briefings` (mirroring
+        `handle_briefing_selected`) rather than a narrower audio-only
+        worker, for the same one-worker-pattern reason that method's own
+        docstring gives.
+
+        Deliberately does NOT re-dispatch when `event.script is None`:
+        that case fires either from a genuine deselection or -- far more
+        commonly -- as the reactive echo of `handle_briefing_selected`
+        clearing this pane's `selected_script` to `None` itself, right
+        before dispatching its OWN `_load_briefings()` reload. Re-
+        dispatching here too would only be a second, redundant worker
+        racing the one already started.
         """
         event.stop()
         self._selected_script = event.script
+        if event.script is None:
+            self._loaded_script_audio = None
+            return
+        self._loaded_script_audio = None
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            pane = None
+        if pane is not None:
+            pane.script_audio = None
+        self.run_worker(
+            self._load_briefings(), exclusive=True, group="wl-briefings-load"
+        )
 
     @on(CitationActivated)
     def handle_citation_activated(self, event: CitationActivated) -> None:
@@ -4314,6 +4521,239 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # zombie row, and a completed cast has a new script to show.
             if self.is_attached:
                 await self._load_briefings()
+
+    # --- Artifacts: synthesizing and playing a script's audio (spec #2 --
+    # phase 2b, Task 7) --------------------------------------------------
+    #
+    # Sibling of the Cast machinery immediately above in every respect: an
+    # in-flight flag (`_audio_in_flight`), own worker group (`wl-audio`,
+    # `exclusive=True`), claimed at DISPATCH time for the identical reason
+    # `handle_cast_script_requested`'s docstring gives -- a check made
+    # inside the worker body leaves a window where two presses both pass.
+    # Unlike Cast (which has no one-generating-row-per-briefing invariant),
+    # audio's own zombie sweep runs in the SAME two separate seams `_cast_
+    # script`'s own comment names: `_load_briefings` sweeps whenever
+    # Artifacts loads (gated on `_audio_sweep_is_safe`), and `_synthesize_
+    # audio` below sweeps again at its own front, exactly where `_cast_
+    # script` sweeps for Cast.
+
+    def _audio_sweep_is_safe(self) -> bool:
+        """Whether `fail_interrupted_audio` may run right now.
+
+        Sibling of `_cast_sweep_is_safe`: a load racing a synthesis THIS
+        screen started must not fail that attempt's own `generating` row
+        out from under it, so the load path only sweeps when nothing this
+        screen started is still in flight.
+        """
+        return not self._audio_in_flight
+
+    async def _fail_interrupted_audio_if_safe(self, db: Any, script_id: int) -> int:
+        """Zombie recovery for the Artifacts-load path's audio, off the UI
+        thread. Sibling of `_fail_interrupted_scripts_if_safe`, scoped to
+        one script's audio renders rather than one briefing's scripts.
+        """
+        if not self._audio_sweep_is_safe():
+            return 0
+        return await asyncio.to_thread(fail_interrupted_audio, db, script_id)
+
+    @on(SynthesizeAudioRequested)
+    def handle_synthesize_audio_requested(
+        self, event: SynthesizeAudioRequested
+    ) -> None:
+        """Claim the one-synthesis-at-a-time guard, then dispatch.
+
+        Mirrors `handle_cast_script_requested` exactly: `_audio_in_flight`
+        is claimed HERE, before `run_worker`, and not inside the worker
+        body, for the identical reason that handler's own docstring gives.
+        """
+        event.stop()
+        db = self._briefings_db()
+        script = self._selected_script
+        if db is None or script is None:
+            self._notify_watchlists(
+                "Select a script to synthesize its audio.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._audio_in_flight:
+            running_id = self._audio_in_flight_script_id
+            message = (
+                f"Audio is already being synthesized for script {running_id}. "
+                "Nothing else was started."
+                if running_id is not None
+                else "Audio is already being synthesized. Nothing else was "
+                "started."
+            )
+            self._notify_watchlists(message, severity="warning", markup=False)
+            return
+        script_id = script.get("id")
+        self._audio_in_flight = True
+        self._audio_in_flight_script_id = script_id
+        # Snapshotted on the UI thread, alongside the rest of this
+        # synchronous dispatch -- the `preset_id` read
+        # `handle_cast_script_requested` already does the same way, for
+        # the same reason: read once, here, not again later inside the
+        # worker where a concurrent app-level rebind could change it out
+        # from under a synthesis already in flight for THIS script.
+        tts_service = getattr(self.app_instance, "tts_service", None)
+        profile_service = getattr(self.app_instance, "_tts_profile_service", None)
+        self.run_worker(
+            self._synthesize_audio(db, script_id, tts_service, profile_service),
+            exclusive=True,
+            group="wl-audio",
+        )
+
+    async def _synthesize_audio(
+        self, db: Any, script_id: int, tts_service: Any, profile_service: Any
+    ) -> None:
+        """Worker body: sweep, synthesize, repaint. Sibling of `_cast_script`.
+
+        `generate_script_audio`'s own DB calls already run through
+        `asyncio.to_thread` internally (Task 6's own docstring), but a
+        DATABASE error inside any of them still propagates OUT of
+        `generate_script_audio` uncaught -- that is Task 6's deliberate
+        "DB errors propagate" contract, the caller's own worker is where
+        they must be wrapped. An exception escaping a Textual worker with
+        the default `exit_on_error=True` takes the whole application down,
+        so -- exactly like `_cast_script` -- the call is wrapped in a bare
+        `except` that turns any surviving exception into a toast instead
+        of a crash.
+
+        `AudioGenerationError` is caught FIRST and separately: it is
+        `generate_script_audio`'s own honest, pre-flight refusal (the
+        script is not `complete`, or its turns/roster snapshot cannot be
+        parsed) -- a message safe to show verbatim (see that exception's
+        own docstring), not a database failure to hide behind a generic
+        toast.
+        """
+        try:
+            try:
+                await asyncio.to_thread(fail_interrupted_audio, db, script_id)
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                logger.warning(
+                    f"Audio guard failed for script {script_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Failed to check this script's audio. Nothing was "
+                    "started.",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            try:
+                row = await generate_script_audio(
+                    db,
+                    script_id,
+                    tts_service=tts_service,
+                    profile_service=profile_service,
+                )
+                # The freshly synthesized audio (whatever its outcome) is
+                # the one on screen, re-resolved against the reload below.
+                self._loaded_script_audio = row
+            except AudioGenerationError as exc:
+                self._notify_watchlists(str(exc), severity="warning", markup=False)
+            except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+                logger.warning(
+                    f"Audio synthesis failed for script {script_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Could not synthesize audio: the watchlist database "
+                    "could not be reached. Nothing was recorded.",
+                    severity="error",
+                    markup=False,
+                )
+        finally:
+            self._audio_in_flight = False
+            self._audio_in_flight_script_id = None
+            # Repaint on every path: a refusal may have just failed a
+            # zombie row, and a completed (or failed) attempt has a new
+            # audio row to show.
+            if self.is_attached:
+                await self._load_briefings()
+
+    @on(PlayAudioRequested)
+    def handle_play_audio_requested(self, event: PlayAudioRequested) -> None:
+        """Play the selected script's audio file, if it still exists.
+
+        Never routed through a worker/`asyncio.to_thread`: `play_audio_
+        file` only spawns a detached subprocess and returns
+        (`SimpleAudioPlayer.play`) -- `TTSEventHandler.handle_tts_
+        playback`'s own "play" branch calls it exactly this way, direct,
+        with no thread hop. Playback state itself is never held here or
+        on the pane: the shared `SimpleAudioPlayer` singleton (`TTS.
+        audio_player.get_audio_player`) is the only source of truth for
+        "what's currently loaded" -- see `ArtifactsPane`'s own module
+        docstring on why (a script selection recomposes every widget this
+        pane renders).
+
+        A missing file is refused with a toast rather than handed to the
+        player: `ArtifactsPane.compose` already disables Play for exactly
+        this case (`_audio_file_is_playable`), so reaching here with no
+        file, or a file since deleted, means the disk state changed
+        between that render and this press -- an honest race, not a bug
+        to silently swallow.
+
+        Qodo review round 1, FIX B: `audio_file_path_is_safe` is checked
+        BEFORE any filesystem access -- a path that resolves outside
+        `briefing_audio_dir()` (a tampered or corrupted row) is treated
+        exactly like the "no file at all" case: a silent return, no
+        `.exists()` probe, no exception. `ArtifactsPane.compose` already
+        disables Play for this case too (`_audio_file_is_playable` uses the
+        same helper), so reaching here with an unsafe path is the same kind
+        of race as the missing-file case above, not a new failure mode.
+        """
+        event.stop()
+        row = self._loaded_script_audio
+        file_path = row.get("file_path") if row else None
+        if not file_path:
+            return
+        if not audio_file_path_is_safe(file_path):
+            return
+        path = Path(str(file_path))
+        if not path.exists():
+            self._notify_watchlists(
+                "This audio file no longer exists on disk.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        play_audio_file(path)
+
+    @on(StopAudioRequested)
+    def handle_stop_audio_requested(self, event: StopAudioRequested) -> None:
+        """Stop playback, but only if THIS script's audio is what the
+        shared player actually has loaded.
+
+        Delegates to `tts_events.stop_audio_playback_if_current` rather
+        than reimplementing its comparison here: that function's own
+        docstring records the task-559 fix rounds (the guard must key off
+        the player's LIVE `get_current_file()`, never a local cache with a
+        TTL -- `SimpleAudioPlayer` is a single-slot, APP-WIDE singleton, so
+        a bare `.stop()` could silence a completely unrelated clip playing
+        elsewhere, e.g. Console TTS). A private copy of that same
+        comparison here would only ever be one edit away from drifting
+        from it -- exactly the failure mode that cost this branch a whole
+        task to reconcile for the two legacy TTS id-builders (Task 2's own
+        carried finding, `TTS/legacy_request_builder.py`'s module
+        docstring). Imported locally rather than at module scope, matching
+        `chat_screen.py`'s own lazy-import convention for this exact
+        module: `Event_Handlers.TTS_Events.tts_events` pulls in the TTS
+        adapter package (`tldw_chatbook.TTS`'s own imports), a cost most
+        Watchlists sessions never need to pay just to stop a clip.
+        """
+        event.stop()
+        row = self._loaded_script_audio
+        file_path = row.get("file_path") if row else None
+        if not file_path:
+            return
+        from ...Event_Handlers.TTS_Events.tts_events import (
+            stop_audio_playback_if_current,
+        )
+
+        stop_audio_playback_if_current(Path(str(file_path)))
 
     async def _load_items(self) -> None:
         notify = getattr(self.app_instance, "notify", None)

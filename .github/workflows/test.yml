@@ -60,6 +60,10 @@ jobs:
         pip install -r requirements-test.txt
         pip install pytest-json-report
         pip install -e ".[embeddings_rag,websearch,chunker]"
+        # pydub (+ its 3.13 audioop shim) only: the briefings audio tests need
+        # these two and nothing else from the `audio` extra, which would also drag
+        # in faster-whisper/ctranslate2/onnxruntime for no benefit here.
+        pip install pydub "audioop-lts; python_version >= '3.13'"
 
     - name: Setup test environment
       run: |
@@ -241,6 +245,10 @@ jobs:
         pip install -r requirements-test.txt
         pip install pytest-json-report pytest-cov
         pip install -e ".[embeddings_rag,websearch,chunker]"
+        # pydub (+ its 3.13 audioop shim) only: the briefings audio tests need
+        # these two and nothing else from the `audio` extra, which would also drag
+        # in faster-whisper/ctranslate2/onnxruntime for no benefit here.
+        pip install pydub "audioop-lts; python_version >= '3.13'"
     
     - name: Setup test environment
       run: |
@@ -319,6 +327,10 @@ jobs:
         pip install -r requirements-test.txt
         pip install pytest-json-report pytest-cov
         pip install -e ".[embeddings_rag,websearch,chunker]"
+        # pydub (+ its 3.13 audioop shim) only: the briefings audio tests need
+        # these two and nothing else from the `audio` extra, which would also drag
+        # in faster-whisper/ctranslate2/onnxruntime for no benefit here.
+        pip install pydub "audioop-lts; python_version >= '3.13'"
 
     - name: Setup test environment
       run: |

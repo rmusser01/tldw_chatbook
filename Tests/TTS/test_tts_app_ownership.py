@@ -724,6 +724,9 @@ def test_profile_service_owns_only_existing_app_dependencies() -> None:
         ) -> Any:
             raise AssertionError(character_ref)
 
+        async def get_profile(self, profile_id: UUID) -> Any:
+            raise AssertionError(profile_id)
+
         async def set_assignment(
             self,
             character_ref: tts_package.CharacterRef,
