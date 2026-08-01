@@ -56,11 +56,11 @@ from tldw_chatbook.Model_Artifacts.service import (
     ModelArtifactService,
     ProvenanceClass,
 )
+from tldw_chatbook.Model_Artifacts.store import managed_model_artifact_root
 
 if TYPE_CHECKING:
     from tldw_chatbook.Model_Artifacts.acquisition import (
         AcquisitionProgress,
-        ArtifactCatalog,
         ArtifactSourceMap,
         CredentialResolver,
         PreflightReport,
@@ -228,26 +228,6 @@ class ParakeetV2Catalog:
         if ref != parakeet_v2_reference():
             raise KeyError(ref)
         return parakeet_v2_descriptor()
-
-
-def managed_model_artifact_root() -> Path:
-    """Return the shared managed-artifact store root.
-
-    A sibling of the legacy installer's own ``models/stt/...`` destination
-    (``parakeet_v2_installer.parakeet_v2_install_dir()``), both beneath the
-    existing user-data directory -- so a fresh install and a legacy one
-    never collide on disk. Not Parakeet-specific: every future managed
-    artifact this application acquires shares this one
-    ``ModelArtifactService`` root, distinguished internally by artifact id,
-    revision, and variant.
-
-    Returns:
-        The absolute path to the shared managed-artifact store root.
-    """
-
-    from tldw_chatbook.Utils.paths import get_user_data_dir
-
-    return get_user_data_dir() / "models" / "managed"
 
 
 def parakeet_v2_managed_service() -> ModelArtifactService:

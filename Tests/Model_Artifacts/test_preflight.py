@@ -50,6 +50,9 @@ async def test_preflight_aggregates_and_grants(tmp_path):
     assert report.download_bytes == 2048
     assert report.sufficient_space is True
     assert report.entries[0].already_installed is False
+    assert report.entries[0].provenance == (
+        ProvenanceClass.CHATBOOK_CURATED,
+    )
     report.grant()  # must not raise
 
 

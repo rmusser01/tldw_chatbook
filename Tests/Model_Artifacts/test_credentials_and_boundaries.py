@@ -549,6 +549,8 @@ def test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch(
             import tldw_chatbook.STT.legacy_bridge
             import tldw_chatbook.STT.registry
             import tldw_chatbook.STT.routing
+            import tldw_chatbook.Model_Artifacts.curated_registry
+            import tldw_chatbook.Model_Artifacts.store
             import tldw_chatbook.Local_Ingestion.transcription_service
             import tldw_chatbook.Audio.console_dictation
         finally:
