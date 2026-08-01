@@ -201,8 +201,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 16,
-      "diagnostic_digest": "1e2e23035a90798c02d5",
+      "call_count": 17,
+      "diagnostic_digest": "d0e5537fef3338ffcf52",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -517,7 +517,7 @@
     },
     {
       "call_count": 1,
-      "diagnostic_digest": "bcce6d4ca07b557ce9a1",
+      "diagnostic_digest": "e83bee3fa4d7296d5f12",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Evals/word_bench/capture_client.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1861,7 +1861,7 @@
     },
     {
       "call_count": 1,
-      "diagnostic_digest": "78ff2922bf02309ec86f",
+      "diagnostic_digest": "9fec582690a29b2b5604",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Evals/inspector.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1979,8 +1979,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 136,
-      "diagnostic_digest": "fd63dca30632b16f8de5",
+      "call_count": 143,
+      "diagnostic_digest": "ef88ec19f4faf2a4520c",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/chat_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2322,8 +2322,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 13,
-      "diagnostic_digest": "758248400286cc4fa736",
+      "call_count": 15,
+      "diagnostic_digest": "c4a414326432b3732f71",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3163,7 +3163,7 @@
   "summary": {
     "owner_files": 430,
     "persistent_sink_files": 4,
-    "task_492_calls": 1067,
-    "task_494_calls": 6636
+    "task_492_calls": 1068,
+    "task_494_calls": 6645
   }
 }
