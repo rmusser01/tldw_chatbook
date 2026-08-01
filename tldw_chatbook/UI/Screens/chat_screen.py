@@ -2222,12 +2222,7 @@ class ChatScreen(BaseAppScreen):
         # is to be visible the moment the tab exists. It also clears a
         # stale "Temporary" chip left over when a new ordinary chat is
         # created right after a temporary one.
-        try:
-            status_chips = self.query_one("#console-status-chips", ConsoleStatusChips)
-        except QueryError:
-            pass
-        else:
-            status_chips.sync_temporary_chip(self._console_active_session_is_ephemeral())
+        self._sync_console_temporary_chip()
         self._focus_console_composer_if_needed(force=True)
 
     @on(Button.Pressed, "#console-change-workspace")
@@ -4765,6 +4760,14 @@ class ChatScreen(BaseAppScreen):
             if session.workspace_id == target_workspace_id:
                 self._capture_console_draft_switch_snapshot()
                 store.switch_session(session.id)
+                # task-7 review: this switches the active session with no
+                # other chip-refresh call anywhere in the caller chain (all
+                # three callers only run `_sync_native_console_chat_ui()`
+                # afterward, which never touches the temporary chip -- see
+                # `_sync_console_temporary_chip`). Without this the chip
+                # could keep reading "Temporary" on a workspace's saved
+                # session, or stay hidden on one that is actually temporary.
+                self._sync_console_temporary_chip()
                 return
         self._capture_console_draft_switch_snapshot()
         store.create_session(
@@ -4772,6 +4775,11 @@ class ChatScreen(BaseAppScreen):
             workspace_id=target_workspace_id,
             settings=inherited_settings or self._default_console_session_settings(),
         )
+        # task-7 review: `create_session` activates the new (never
+        # ephemeral -- no `ephemeral=` passed) session inline; same
+        # staleness risk as the switch branch above if the workspace's
+        # previous session was temporary.
+        self._sync_console_temporary_chip()
 
     def _console_workspace_session_title(self, workspace_id: str) -> str:
         """Return a readable title for an auto-created workspace Console tab."""
@@ -6350,6 +6358,11 @@ class ChatScreen(BaseAppScreen):
                         "Character picker: greeting seed failed; continuing."
                     )
             store.switch_session(session.id)
+            # task-7 review: a new (never-ephemeral) session may be
+            # replacing a temporary one as the active tab; the awaited
+            # `_sync_native_console_chat_ui()` below never touches the
+            # temporary chip (see `_sync_console_temporary_chip`).
+            self._sync_console_temporary_chip()
             self.app.notify(f"Started a new chat with {name}.")
         else:
             if not self._swap_console_session_character(
@@ -9269,6 +9282,36 @@ class ChatScreen(BaseAppScreen):
             session.id == active_id and session.ephemeral
             for session in store.sessions()
         )
+
+    def _sync_console_temporary_chip(self) -> None:
+        """Push the active session's temporary flag to the status-strip chip.
+
+        Deliberately scoped to ONLY the temporary chip -- unlike
+        ``_sync_console_retrieval_scope_row`` this never builds or pushes
+        scope state, so every place a Console session is created or
+        switched can call this without also needing a
+        ``ConsoleRetrievalScopeState`` on hand. Call at every such point:
+        a stale value here is not cosmetic the way a stale scope chip is --
+        it tells the user the opposite of the truth about whether their
+        conversation is on disk (task-7 review finding).
+
+        Called directly from ``_create_native_console_session_from_active_
+        context`` (every "new session" entry point),
+        ``_activate_console_session_for_workspace`` (workspace switch/
+        create), the character-picker "new chat" flow, and the
+        conversation-browser "already-open-tab" branch (task-7 review).
+        ``_sync_console_retrieval_scope_row`` (resume, tab activation,
+        scope-picker save, first-persist flush) pushes the same thing
+        inline instead of calling this helper -- it already has the
+        ``ConsoleStatusChips`` instance in hand for the scope-chip push
+        right above, so routing through here would only add a redundant
+        second query.
+        """
+        try:
+            status_chips = self.query_one("#console-status-chips", ConsoleStatusChips)
+        except QueryError:
+            return
+        status_chips.sync_temporary_chip(self._console_active_session_is_ephemeral())
 
     def _console_rail_available_columns(self) -> int | None:
         """Return available screen width for responsive rail state."""
@@ -18810,6 +18853,14 @@ class ChatScreen(BaseAppScreen):
                     self._set_active_workspace_for_console_session(session_id)
                 controller.switch_session(session_id)
                 await self._sync_native_console_chat_ui()
+                # task-7 review: an already-open native tab for this
+                # conversation is never ephemeral, but the PREVIOUS active
+                # session might have been -- `_sync_native_console_chat_ui`
+                # above never touches the temporary chip (see
+                # `_sync_console_temporary_chip`), so without this the chip
+                # could keep reading "Temporary" after switching onto a
+                # saved conversation.
+                self._sync_console_temporary_chip()
             self._focus_console_composer_if_needed(force=True)
             await self._refresh_console_conversation_browser_after_selection()
             return

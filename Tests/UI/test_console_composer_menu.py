@@ -449,6 +449,184 @@ def test_console_active_session_is_ephemeral_reads_the_active_flag():
     assert screen._console_active_session_is_ephemeral() is True
 
 
+@pytest.mark.asyncio
+async def test_activate_console_session_for_workspace_keeps_temporary_chip_honest():
+    """task-7 review: three callers reach ``_activate_console_session_for_
+    workspace`` and none of them refresh the temporary chip afterward --
+    they only await ``_sync_native_console_chat_ui()``, which never touches
+    it (same reason it never touches the scope chip). Tests the
+    CONSEQUENCE (chip visibility after the real switch/create branches
+    run), in both directions, so a push that hardcoded either answer would
+    fail this.
+    """
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleTemporaryChip,
+    )
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        store = console._ensure_console_chat_store()
+
+        normal = store.create_session(title="Normal", workspace_id="workspace-b")
+        temp = store.create_session(
+            title="Temp", workspace_id="workspace-a", ephemeral=True
+        )
+        # `temp` is active now (`create_session` activates inline). Establish
+        # a verified-correct baseline via the real sync path rather than
+        # trusting the chip's compose-time default.
+        assert store.active_session_id == temp.id
+        console._sync_console_temporary_chip()
+        chip = console.query_one("#console-temporary-chip", ConsoleTemporaryChip)
+        assert chip.display is True
+
+        # "switch to an existing session in the workspace" branch.
+        console._activate_console_session_for_workspace("workspace-b")
+        await pilot.pause()
+        assert store.active_session_id == normal.id
+        assert chip.display is False, (
+            "switching to a saved session's workspace must clear a stale "
+            "Temporary chip"
+        )
+
+        # Same branch, opposite direction.
+        console._activate_console_session_for_workspace("workspace-a")
+        await pilot.pause()
+        assert store.active_session_id == temp.id
+        assert chip.display is True
+        assert "Temporary" in str(chip.render())
+
+        # "create a new session for the workspace" branch: a brand-new
+        # workspace with no existing session. `create_session` here never
+        # passes `ephemeral=True`, so switching there from the ephemeral
+        # session must also hide the chip.
+        console._activate_console_session_for_workspace("workspace-c")
+        await pilot.pause()
+        assert store.active_session_id not in (normal.id, temp.id)
+        assert chip.display is False
+
+
+@pytest.mark.asyncio
+async def test_character_picker_new_chat_clears_a_stale_temporary_chip():
+    """task-7 review: the character picker's "new chat" placement creates
+    and activates a session that is never ephemeral (``create_session`` is
+    called with no ``ephemeral=`` there), but the method only awaits
+    ``_sync_native_console_chat_ui()`` afterward, which never touches the
+    temporary chip.
+
+    Only one direction is tested: this specific call site cannot create an
+    ephemeral session (its ``create_session`` call has no ``ephemeral=``
+    argument at all), so there is no "chip becomes visible" case reachable
+    from here to assert against.
+    """
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
+        ConsoleCharacterChoice,
+    )
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleTemporaryChip,
+    )
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        store = console._ensure_console_chat_store()
+
+        temp = store.create_session(title="Temp", ephemeral=True)
+        store.switch_session(temp.id)
+        console._sync_console_temporary_chip()
+        chip = console.query_one("#console-temporary-chip", ConsoleTemporaryChip)
+        assert chip.display is True
+
+        # Bypass the real character-card DB lookup (irrelevant to this
+        # regression) while exercising the real create/switch/notify body.
+        console._fetch_character_card_for_avatar = lambda character_id: {
+            "name": "Nova",
+            "first_message": "",
+        }
+        await console._apply_console_character_choice_async(
+            ConsoleCharacterChoice(character_id=1, name="Nova", placement="new")
+        )
+        await pilot.pause()
+
+        assert store.active_session_id != temp.id
+        assert chip.display is False
+
+
+@pytest.mark.asyncio
+async def test_workspace_conversation_row_click_on_open_tab_keeps_temporary_chip_honest():
+    """task-7 review: clicking an already-open tab's workspace-conversation
+    row (the branch that skips ``_resume_console_workspace_conversation``
+    because the session is already open) only awaited
+    ``_sync_native_console_chat_ui()`` before this fix. Ephemeral (native,
+    unpersisted) sessions appear in this same row list --
+    ``_native_console_browser_rows`` has no ephemeral filter -- so both
+    directions are genuinely reachable here: clicking an open ephemeral
+    tab's row must show the chip, and clicking a saved/normal tab's row
+    must hide it.
+    """
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_console_native_chat_flow import (
+        _click_console_workspace_conversation_for_session,
+        _configure_native_ready_console,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleTemporaryChip,
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+
+        normal = store.create_session(title="Normal chat")
+        temp = store.create_session(title="Temp chat", ephemeral=True)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        chip = console.query_one("#console-temporary-chip", ConsoleTemporaryChip)
+        # `temp` is active (created last). Establish a verified-correct
+        # baseline via the real sync path.
+        assert store.active_session_id == temp.id
+        console._sync_console_temporary_chip()
+        assert chip.display is True
+
+        await _click_console_workspace_conversation_for_session(
+            console, pilot, store, normal.id
+        )
+        await pilot.pause(0.2)
+        assert chip.display is False, (
+            "switching onto the already-open saved tab must clear a stale "
+            "Temporary chip"
+        )
+
+        await _click_console_workspace_conversation_for_session(
+            console, pilot, store, temp.id
+        )
+        await pilot.pause(0.2)
+        assert chip.display is True
+        assert "Temporary" in str(chip.render())
+
+
 @pytest.mark.unit
 def test_temporary_chip_posts_save_requested_on_activation():
     """The chip is the save affordance: activating it posts ``SaveRequested``.
