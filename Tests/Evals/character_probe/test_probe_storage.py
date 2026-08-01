@@ -100,6 +100,93 @@ def test_saving_with_a_stale_dataset_id_raises_rather_than_silently_succeeding(
         save_probe_set(db, "starter", probe_set, dataset_id="does-not-exist")
 
 
+def _store_samples(db, dataset_id, samples):
+    """Replace a probe-set dataset's stored samples with an arbitrary value,
+    as an external writer or a hand-edited row might."""
+    import json
+
+    metadata = {
+        "dataset_type": PROBE_DATASET_TYPE,
+        RESERVED_LOCAL_DATASET_SAMPLES_KEY: samples,
+    }
+    conn = db.get_connection()
+    with conn:
+        conn.execute(
+            "UPDATE eval_datasets SET metadata = ? WHERE id = ?",
+            (json.dumps(metadata), dataset_id),
+        )
+
+
+def test_a_missing_samples_key_raises_naming_the_dataset(db, probe_set):
+    """load_probe_set's docstring promises it prevents a silent empty set;
+    returning ProbeSet(probes=()) here delivered exactly what it promised to
+    prevent, and a bench would then run and produce nothing."""
+    dataset_id = save_probe_set(db, "starter", probe_set)
+    conn = db.get_connection()
+    with conn:
+        conn.execute(
+            "UPDATE eval_datasets SET metadata = ? WHERE id = ?",
+            ('{"dataset_type": "character_probe"}', dataset_id),
+        )
+    with pytest.raises(ValueError, match="no stored samples list") as excinfo:
+        load_probe_set(db, dataset_id)
+    assert dataset_id in str(excinfo.value)
+
+
+def test_a_non_list_samples_value_raises(db, probe_set):
+    dataset_id = save_probe_set(db, "starter", probe_set)
+    _store_samples(db, dataset_id, {"turns": ["One"]})
+    with pytest.raises(ValueError, match="no stored samples list"):
+        load_probe_set(db, dataset_id)
+
+
+def test_turns_stored_as_a_bare_string_are_rejected(db, probe_set):
+    """A string is iterable, so this silently produced a probe of
+    one-character turns rather than one turn."""
+    dataset_id = save_probe_set(db, "starter", probe_set)
+    _store_samples(db, dataset_id, [{"turns": "Hello"}])
+    with pytest.raises(ValueError, match="as a string") as excinfo:
+        load_probe_set(db, dataset_id)
+    assert dataset_id in str(excinfo.value)
+
+
+def test_a_sample_with_no_turns_is_rejected_rather_than_skipped(db, probe_set):
+    dataset_id = save_probe_set(db, "starter", probe_set)
+    _store_samples(db, dataset_id, [{"turns": ["One"]}, {"turns": []}])
+    with pytest.raises(ValueError, match="has no turns"):
+        load_probe_set(db, dataset_id)
+
+
+def test_a_non_mapping_sample_is_rejected(db, probe_set):
+    dataset_id = save_probe_set(db, "starter", probe_set)
+    _store_samples(db, dataset_id, ["One"])
+    with pytest.raises(ValueError, match="not a mapping"):
+        load_probe_set(db, dataset_id)
+
+
+def test_a_non_string_turn_is_rejected(db, probe_set):
+    dataset_id = save_probe_set(db, "starter", probe_set)
+    _store_samples(db, dataset_id, [{"turns": [5]}])
+    with pytest.raises(ValueError, match="non-string turn"):
+        load_probe_set(db, dataset_id)
+
+
+def test_a_whitespace_only_turn_is_rejected_with_the_dataset_named(db, probe_set):
+    """Probe's own rule, re-raised with the dataset and sample named so the
+    author can find the offending row."""
+    dataset_id = save_probe_set(db, "starter", probe_set)
+    _store_samples(db, dataset_id, [{"turns": ["   "]}])
+    with pytest.raises(ValueError, match="sample 0 is invalid") as excinfo:
+        load_probe_set(db, dataset_id)
+    assert dataset_id in str(excinfo.value)
+
+
+def test_an_explicitly_empty_probe_list_is_not_an_error(db):
+    """A deliberately empty probe set is not a missing one."""
+    dataset_id = save_probe_set(db, "empty", ProbeSet(probes=()))
+    assert load_probe_set(db, dataset_id) == ProbeSet(probes=())
+
+
 def test_samples_do_not_carry_a_redundant_index_field(db, probe_set):
     dataset_id = save_probe_set(db, "starter", probe_set)
     row = db.get_dataset(dataset_id)

@@ -8,14 +8,25 @@ directly; every call goes through ``EvalsDB``.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict
 from typing import Any, Optional
 
 from ...DB.Evals_DB import EvalsDB
 from ...Evaluations_Interop.evaluation_normalizers import (
     RESERVED_LOCAL_DATASET_SAMPLES_KEY,
 )
-from .models import CharacterProbeConfig, Conversation, ConversationTurn, Probe, ProbeSet
+from .models import (
+    CardSnapshot,
+    CharacterProbeConfig,
+    Conversation,
+    ConversationTurn,
+    Probe,
+    ProbeSet,
+)
+from .prompt import compose_system_prompt
+from .targets import ResolvedTarget, resolve_targets
 
 #: Marks a dataset row as holding probes rather than snippets.
 PROBE_DATASET_TYPE = "character_probe"
@@ -44,14 +55,71 @@ def _probe_set_to_samples(probe_set: ProbeSet) -> list[dict[str, Any]]:
     return [{"turns": list(probe.turns)} for probe in probe_set.probes]
 
 
-def _samples_to_probe_set(samples: Any) -> ProbeSet:
+def _samples_to_probe_set(samples: Any, dataset_id: str) -> ProbeSet:
+    """Rebuild a ``ProbeSet`` from a dataset row's stored samples list.
+
+    Every corrupt shape raises here, naming the dataset (and the offending
+    sample's index). Returning an empty or partial set instead would produce
+    exactly the outcome ``load_probe_set``'s docstring promises it prevents:
+    a bench that runs, produces nothing, and looks like an authoring mistake
+    rather than the damaged row it is.
+
+    Args:
+        samples: The value stored under the dataset's samples key.
+        dataset_id: The owning dataset, only for the error messages below.
+
+    Returns:
+        ProbeSet: The stored probes, in order. An explicitly-stored empty
+        list yields an empty ``ProbeSet`` and does NOT raise -- that is a
+        deliberately empty probe set, not a missing one.
+
+    Raises:
+        ValueError: If the samples key is absent or does not hold a list;
+            if any entry is not a mapping; if an entry's ``turns`` is
+            missing, empty, or a bare string (a string would otherwise
+            iterate character by character into a probe of one-character
+            turns); if any turn is not a string; or if the turns violate
+            ``Probe``'s own rules (no turns, or an empty/whitespace-only
+            turn) -- re-raised with the dataset named.
+    """
     if not isinstance(samples, list):
-        return ProbeSet(probes=())
-    probes = [
-        Probe(turns=tuple(str(turn) for turn in sample.get("turns") or ()))
-        for sample in samples
-        if isinstance(sample, Mapping) and sample.get("turns")
-    ]
+        raise ValueError(
+            f"Probe set {dataset_id!r} has no stored samples list "
+            f"(found {type(samples).__name__}); the dataset is marked as a "
+            "probe set but its probes are missing or corrupt."
+        )
+    probes: list[Probe] = []
+    for index, sample in enumerate(samples):
+        if not isinstance(sample, Mapping):
+            raise ValueError(
+                f"Probe set {dataset_id!r} sample {index} is not a mapping: "
+                f"{sample!r}"
+            )
+        turns = sample.get("turns")
+        if isinstance(turns, str):
+            raise ValueError(
+                f"Probe set {dataset_id!r} sample {index} stores its turns as "
+                f"a string ({turns!r}); a probe's turns are a list, and "
+                "iterating a string here would silently produce a probe of "
+                "one-character turns."
+            )
+        if not turns or not isinstance(turns, Sequence):
+            raise ValueError(
+                f"Probe set {dataset_id!r} sample {index} has no turns: "
+                f"{turns!r}"
+            )
+        for turn in turns:
+            if not isinstance(turn, str):
+                raise ValueError(
+                    f"Probe set {dataset_id!r} sample {index} has a "
+                    f"non-string turn: {turn!r}"
+                )
+        try:
+            probes.append(Probe(turns=tuple(turns)))
+        except ValueError as exc:
+            raise ValueError(
+                f"Probe set {dataset_id!r} sample {index} is invalid: {exc}"
+            ) from None
     return ProbeSet(probes=tuple(probes))
 
 
@@ -112,6 +180,9 @@ def load_probe_set(db: EvalsDB, dataset_id: str) -> ProbeSet:
         ValueError: If the dataset does not exist, or is not a probe set --
             loading a snippet dataset as probes would otherwise silently yield
             an empty set and look like an authoring mistake.
+        ValueError: Propagated from ``_samples_to_probe_set`` if the row IS
+            marked as a probe set but its samples are missing or corrupt --
+            same reason, one layer in.
     """
     row = db.get_dataset(dataset_id)
     if row is None:
@@ -119,7 +190,9 @@ def load_probe_set(db: EvalsDB, dataset_id: str) -> ProbeSet:
     if not is_probe_set(row):
         raise ValueError(f"Dataset {dataset_id!r} is not a probe set.")
     metadata = row.get("metadata") or {}
-    return _samples_to_probe_set(metadata.get(RESERVED_LOCAL_DATASET_SAMPLES_KEY))
+    return _samples_to_probe_set(
+        metadata.get(RESERVED_LOCAL_DATASET_SAMPLES_KEY), dataset_id
+    )
 
 
 #: Discriminates a character probe bench from a word bench in ``eval_tasks``.
@@ -133,9 +206,20 @@ def is_character_bench(task_row: Mapping[str, Any]) -> bool:
         task_row: A row as returned by ``EvalsDB.get_task``/``list_tasks``.
 
     Returns:
-        bool: True when the row carries this bench type.
+        bool: True when the row carries this bench type. A row whose
+        ``config_data`` is missing or is not itself a mapping (corrupt
+        data) is treated as "not a character bench" rather than raising --
+        byte-for-byte the guard ``is_probe_set`` above already carries, and
+        for the same reason: a caller that only wants a yes/no answer must
+        never have to catch an unrelated ``AttributeError``. ``(x or {})``
+        alone does NOT provide this: it rescues ``None`` and every other
+        falsy value, but a TRUTHY non-mapping -- a string, a list -- sails
+        straight through to ``.get`` and raises.
     """
-    return (task_row.get("config_data") or {}).get("bench_type") == BENCH_TYPE
+    config_data = task_row.get("config_data")
+    if not isinstance(config_data, Mapping):
+        return False
+    return config_data.get("bench_type") == BENCH_TYPE
 
 
 def save_character_bench(
@@ -255,21 +339,94 @@ def _stored_int_field(
 
     Raises:
         ValueError: If the key is present with a value that is not
-            integer-shaped (e.g. a string) or is negative -- naming both
-            the bench id and the field.
+            integer-shaped, or is negative -- naming both the bench id and
+            the field. "Integer-shaped" means a genuine ``int``, checked by
+            type rather than by attempting ``int(value)``: the coercion
+            this function used to perform accepted the numeric STRING
+            ``"512"`` (``int("512")`` succeeds) and silently truncated the
+            float ``2.7`` to ``2``, neither of which this docstring ever
+            claimed. ``bool`` is rejected too -- it is an ``int`` subclass,
+            but ``True`` is never a stored setting.
     """
     value = data.get(key)
     if value is None:
         return default
-    try:
-        result = int(value)
-    except (TypeError, ValueError):
+    if not isinstance(value, int) or isinstance(value, bool):
         raise ValueError(
             f"Bench {task_id!r} has a non-integer {key!r}: {value!r}"
-        ) from None
-    if result < 0:
-        raise ValueError(f"Bench {task_id!r} has a negative {key!r}: {result!r}")
-    return result
+        )
+    if value < 0:
+        raise ValueError(f"Bench {task_id!r} has a negative {key!r}: {value!r}")
+    return value
+
+
+def _stored_seed(data: Mapping[str, Any], task_id: str) -> Optional[int]:
+    """The bench's optional ``seed``, validated rather than passed through.
+
+    ``seed`` is the one genuinely optional numeric setting -- ``None`` means
+    "no seed", which is the default and is NOT an error. Everything else
+    must be a real ``int``: an unvalidated stored value reaches the runner
+    as ``config.seed + sample_index`` on the first cell of a grid, so a
+    stored string detonates with a bare ``TypeError`` mid-run, after real
+    provider calls have already been paid for and with nothing in the
+    message naming the bench or the field.
+
+    A NEGATIVE seed is accepted, unlike every other numeric field here:
+    llama.cpp uses ``-1`` for "pick a random seed", so it is a real value a
+    user may deliberately store.
+
+    Args:
+        data: The bench's ``config_data``, already parsed into a dict.
+        task_id: The owning bench's id, only for the error message below.
+
+    Returns:
+        Optional[int]: The stored seed, or ``None`` when unseeded.
+
+    Raises:
+        ValueError: If the stored seed is present and is not an ``int``
+            (``bool`` included), naming both the bench and the field.
+    """
+    value = data.get("seed")
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"Bench {task_id!r} has a non-integer 'seed': {value!r}")
+    return value
+
+
+def _stored_temperature(data: Mapping[str, Any], task_id: str, default: float) -> float:
+    """The bench's ``temperature``, with the same named-error contract.
+
+    ``float(data.get("temperature", 0.8))`` -- what this replaced -- raises
+    a bare ``TypeError`` on a stored ``null`` and a bare ``ValueError`` on a
+    stored string, two lines below ``_stored_int_field``, whose entire
+    purpose is to name the bench and the field when that happens.
+
+    Args:
+        data: The bench's ``config_data``, already parsed into a dict.
+        task_id: The owning bench's id, only for the error message below.
+        default: Value to use when the key is absent or explicitly ``None``.
+
+    Returns:
+        float: The stored temperature, or ``default``.
+
+    Raises:
+        ValueError: If the stored value is not a real number (``bool``
+            excluded, being an ``int`` subclass that is never a sampler
+            setting) or is negative -- naming the bench and the field.
+    """
+    value = data.get("temperature")
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(
+            f"Bench {task_id!r} has a non-numeric 'temperature': {value!r}"
+        )
+    if value < 0:
+        raise ValueError(
+            f"Bench {task_id!r} has a negative 'temperature': {value!r}"
+        )
+    return float(value)
 
 
 def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
@@ -288,9 +445,10 @@ def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
             config with empty characters and look like data loss. Also
             propagated from ``_stored_int_field`` (see its own docstring)
             for a corrupt ``concurrency``/``samples_per_cell``/
-            ``max_tokens``, and from ``CharacterProbeConfig.__post_init__``
-            for a stored ``concurrency``/``samples_per_cell`` below its
-            ``>= 1`` floor.
+            ``max_tokens``, from ``_stored_seed``/``_stored_temperature``
+            for a corrupt ``seed``/``temperature``, and from
+            ``CharacterProbeConfig.__post_init__`` for a stored
+            ``concurrency``/``samples_per_cell`` below its ``>= 1`` floor.
     """
     row = db.get_task(task_id)
     if row is None:
@@ -306,8 +464,8 @@ def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
         target_ids=tuple(str(tid) for tid in data.get("target_ids") or ()),
         concurrency=_stored_int_field(data, "concurrency", 1, task_id),
         samples_per_cell=_stored_int_field(data, "samples_per_cell", 1, task_id),
-        seed=data.get("seed"),
-        temperature=float(data.get("temperature", 0.8)),
+        seed=_stored_seed(data, task_id),
+        temperature=_stored_temperature(data, task_id, 0.8),
         max_tokens=_stored_int_field(data, "max_tokens", 512, task_id),
         extra_tags=tuple(data.get("extra_tags") or ()),
     )
@@ -336,6 +494,173 @@ def conversation_sample_id(card_id: int, probe_index: int, sample_index: int) ->
     return f"{card_id}:{probe_index}:{sample_index}"
 
 
+def _probe_run_snapshot(
+    config: CharacterProbeConfig,
+    cards: Sequence[CardSnapshot],
+    probe_set: ProbeSet,
+    targets: Sequence[ResolvedTarget],
+) -> dict[str, Any]:
+    """The fully-resolved configuration one run group ran with.
+
+    This is what makes a run self-describing, which the design spec requires
+    twice over: "at run time the card's actual text is copied into the run
+    snapshot", and "the sampler settings are stored in the snapshot so every
+    run is self-describing". Without it, ``CardSnapshot``'s whole provenance
+    purpose is defeated the moment the run ends -- the cards were copied
+    across the database boundary and then thrown away, so a card edited
+    afterwards silently rewrites what a past run appears to have asked.
+
+    Card TEXT is stored, not just ids, for the same reason word_bench stores
+    snippet text rather than only hashes: a run must still render after its
+    cards are edited or deleted, and there are no foreign keys across the
+    ``ChaChaNotes_DB``/``Evals_DB`` boundary to prevent either.
+
+    ``composed_system_prompts`` records the ACTUAL composed text per card
+    per target -- what the model was really told, steering included, after
+    macro resolution. The spec asks for exactly this ("the run snapshot
+    records the composed result so what actually ran is never in doubt"),
+    and it is not derivable from the parts later: field order, labelling,
+    and macro resolution all live in ``prompt.py``, which is free to change.
+
+    Args:
+        config: The bench being run.
+        cards: The snapshotted cards, in run order.
+        probe_set: The scripts being run.
+        targets: The resolved targets, in run order.
+
+    Returns:
+        dict[str, Any]: A JSON-serialisable snapshot.
+    """
+    return {
+        "bench_name": config.name,
+        "bench_description": config.description,
+        "probe_set_id": config.probe_set_id,
+        "sampler": {
+            "temperature": config.temperature,
+            "max_tokens": config.max_tokens,
+            "seed": config.seed,
+            "samples_per_cell": config.samples_per_cell,
+            "concurrency": config.concurrency,
+        },
+        "extra_tags": list(config.extra_tags),
+        "targets": [
+            {
+                "id": target.id,
+                "name": target.name,
+                "provider": target.provider,
+                "model_id": target.model_id,
+                "system_prompt": target.steering,
+            }
+            for target in targets
+        ],
+        "cards": [asdict(card) for card in cards],
+        "probes": [{"turns": list(probe.turns)} for probe in probe_set.probes],
+        "composed_system_prompts": {
+            # Card ids are INTEGERs and JSON object keys are strings, so
+            # these come back out of storage as strings; a reader keying by
+            # card id must str() it, exactly as this writer does.
+            str(card.id): {
+                target.id: compose_system_prompt(card, target.steering)
+                for target in targets
+            }
+            for card in cards
+        },
+    }
+
+
+def create_probe_run_group(
+    db: EvalsDB,
+    task_id: str,
+    config: CharacterProbeConfig,
+    cards: Sequence[CardSnapshot],
+    probe_set: ProbeSet,
+    targets: Sequence[Mapping[str, Any]],
+) -> tuple[str, dict[str, str]]:
+    """Open a run group for one probe run: one ``eval_runs`` row per target.
+
+    Mirrors ``word_bench.storage.create_run_group`` seam for seam -- a run
+    per target sharing a ``run_group_id``, with the run's own snapshot in
+    ``config_overrides["snapshot"]`` -- so the two bench types stay legible
+    against each other and a later reader can find a whole group with one
+    ``list_runs(run_group_id=...)`` call.
+
+    Call this BEFORE running, then pass the returned ``run_ids`` to
+    ``save_conversations``. The snapshot is written at launch, from the
+    resolved cards and targets the run is about to use, so it records what
+    actually ran rather than what the (mutable) bench row says afterwards.
+
+    Args:
+        db: The evals database handle.
+        task_id: The bench's ``eval_tasks`` id.
+        config: The bench being run.
+        cards: The snapshotted cards, in run order.
+        probe_set: The scripts being run.
+        targets: ``eval_models`` rows for the run's targets.
+
+    Returns:
+        tuple[str, dict[str, str]]: The new ``run_group_id``, and
+        target id -> ``eval_runs`` id for every target.
+
+    Raises:
+        ValueError: Propagated from ``resolve_targets`` for an empty target
+            list, duplicate target ids, or a malformed/prefix-steered row.
+        InputError: From ``EvalsDB.create_run`` if ``task_id`` or a target
+            id does not name a live row -- a target id IS an ``eval_models``
+            id, which ``create_run`` validates.
+    """
+    resolved = resolve_targets(targets)
+    group_id = uuid.uuid4().hex
+    snapshot = _probe_run_snapshot(config, cards, probe_set, resolved)
+    # One conversation per card x probe x sample, per target -- the target
+    # axis is the run itself, so it is NOT part of a single run's count.
+    per_target_cells = len(cards) * len(probe_set.probes) * config.samples_per_cell
+    run_ids: dict[str, str] = {}
+    for target in resolved:
+        run_id = db.create_run(
+            name=f"{config.name or 'Character probe'} · "
+            f"{target.name or target.model_id}",
+            task_id=task_id,
+            model_id=target.id,
+            config_overrides={"snapshot": snapshot, "target_id": target.id},
+        )
+        db.update_run(
+            run_id, {"run_group_id": group_id, "total_samples": per_target_cells}
+        )
+        run_ids[target.id] = run_id
+    return group_id, run_ids
+
+
+def load_probe_run_snapshot(db: EvalsDB, run_group_id: str) -> dict[str, Any]:
+    """Read back the snapshot ``create_probe_run_group`` wrote.
+
+    Every run in a group carries the same snapshot (written once, at
+    launch), so the first run found answers for the group -- the same
+    approach ``word_bench.storage._load_run_group_snapshot`` takes, and for
+    the same reason: the snapshot, never the live ``eval_tasks`` row, is
+    what a past run must render from.
+
+    Args:
+        db: The evals database handle.
+        run_group_id: The group to read.
+
+    Returns:
+        dict[str, Any]: The stored snapshot. ``{}`` for a group whose runs
+        were created some other way and carry no snapshot, rather than
+        raising -- absent provenance is not a corrupt group.
+
+    Raises:
+        ValueError: If no runs share this ``run_group_id`` -- naming the
+            group, rather than returning ``{}`` and letting a caller mistake
+            "this group does not exist" for "this group has no snapshot".
+    """
+    runs = db.list_runs(run_group_id=run_group_id, limit=10_000)
+    if not runs:
+        raise ValueError(f"No runs found for run group {run_group_id!r}.")
+    overrides = runs[0].get("config_overrides") or {}
+    snapshot = overrides.get("snapshot")
+    return snapshot if isinstance(snapshot, Mapping) else {}
+
+
 def save_conversations(
     db: EvalsDB,
     run_group_id: str,
@@ -356,6 +681,13 @@ def save_conversations(
     all failed before producing a turn -- ``load_conversations`` below has
     no other way to discover which runs belong to this group.
 
+    EVERY check runs before the FIRST write. An unknown target used to be
+    detected inside the write loop, so a group could be left half-committed
+    -- earlier conversations stored, the rest not, and the run group loading
+    back as if it were complete, since nothing distinguishes a missing
+    conversation from one that was never meant to exist. Validating in one
+    pass first means the group is either fully written or not started.
+
     Args:
         db: The evals database handle.
         run_group_id: The group these conversations belong to.
@@ -373,21 +705,25 @@ def save_conversations(
             mode ``save_probe_set``/``save_character_bench`` above already
             guard against for ``update_dataset``/``update_task``.
     """
+    unknown = sorted(
+        {c.target_id for c in conversations if c.target_id not in run_ids}
+    )
+    if unknown:
+        raise ValueError(
+            f"No run id supplied for target(s) {unknown!r} in run group "
+            f"{run_group_id!r}; run_ids covers {sorted(run_ids)!r}."
+        )
     for run_id in set(run_ids.values()):
         if db.get_run(run_id) is None:
             raise ValueError(
                 f"Run {run_id!r} (in run_ids for run group {run_group_id!r}) "
                 "does not exist; it may have been deleted."
             )
+
+    for run_id in set(run_ids.values()):
         db.update_run(run_id, {"run_group_id": run_group_id})
 
     for conversation in conversations:
-        if conversation.target_id not in run_ids:
-            raise ValueError(
-                f"No run id supplied for target {conversation.target_id!r} "
-                f"in run group {run_group_id!r}; run_ids covers "
-                f"{sorted(run_ids)!r}."
-            )
         db.store_result(
             run_id=run_ids[conversation.target_id],
             sample_id=conversation_sample_id(
