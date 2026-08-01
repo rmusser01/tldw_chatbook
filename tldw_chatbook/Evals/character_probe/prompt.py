@@ -62,11 +62,13 @@ def compose_system_prompt(card: CardSnapshot, steering: Optional[str]) -> str:
     shapes a character's voice as much as its personality does, and leaving
     either out would silently narrow what the probe evaluates.
 
-    Field order follows Console's own joiner (``system_prompt``,
-    ``personality``, ``description``, ``scenario``) so that TASK-1744, which
-    extracts one shared card-to-prompt function for both paths, has one less
-    difference to reconcile; the eval then adds ``message_example`` and
-    ``post_history_instructions``, which Console does not send yet.
+    The card->prompt join itself (field order, labels, and macro
+    resolution) lives in
+    ``Character_Chat_Lib.compose_character_card_text`` -- the ONE joiner
+    shared with Console's own session seeding
+    (``UI.Screens.chat_screen._character_session_prompt_seed``, task-1744).
+    This function's own job is narrower: attach ``steering``, which is not
+    card text and has no Console equivalent.
 
     Macros are resolved in the CARD's text only. ``steering`` is the eval
     author's own model-level instruction rather than card text, so it is
@@ -86,18 +88,24 @@ def compose_system_prompt(card: CardSnapshot, steering: Optional[str]) -> str:
         ``build_messages`` always emits exactly one leading system message,
         so the message shape stays stable even for a content-free card.
     """
-    card_parts = [
-        card.system_prompt,
-        f"Personality: {card.personality}" if card.personality else "",
-        f"Description: {card.description}" if card.description else "",
-        f"Scenario: {card.scenario}" if card.scenario else "",
-        f"Example dialogue:\n{card.message_example}" if card.message_example else "",
-        card.post_history_instructions,
-    ]
-    card_text = "\n\n".join(
-        part.strip() for part in card_parts if part and part.strip()
+    # Local import, matching this module's existing convention (see
+    # resolve_card_macros): Character_Chat_Lib imports Pillow and
+    # CharactersRAGDB at module scope, and this engine package stays
+    # importable without paying for either until a prompt is actually
+    # composed.
+    from ...Character_Chat.Character_Chat_Lib import compose_character_card_text
+
+    card_text = compose_character_card_text(
+        name=card.name.strip() or FALLBACK_CHAR_NAME,
+        system_prompt=card.system_prompt,
+        personality=card.personality,
+        description=card.description,
+        scenario=card.scenario,
+        message_example=card.message_example,
+        post_history_instructions=card.post_history_instructions,
+        user_name=USER_MACRO_NAME,
     )
-    parts = [steering or "", resolve_card_macros(card_text, card)]
+    parts = [steering or "", card_text]
     return "\n\n".join(part.strip() for part in parts if part and part.strip())
 
 

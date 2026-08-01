@@ -1,10 +1,10 @@
 ---
 id: TASK-1744
 title: Shared card-to-prompt assembly with full-card fidelity in Console
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-01 11:16'
-updated_date: '2026-08-01 20:44'
+updated_date: '2026-08-01 21:00'
 labels:
   - evals
   - roleplay
@@ -40,9 +40,9 @@ live somewhere both the engine and the UI layer are permitted to import from.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 One shared card->prompt function is used by both the character-probe engine and Console's chat path -- no second, independently-maintained copy of the assembly logic remains in either place
-- [ ] #2 Console's assembled system prompt includes `message_example` and `post_history_instructions` content for cards that carry it, matching what the character-probe engine already sends
-- [ ] #3 A test proves both callers produce identical prompt assembly output for the same card and steering input
+- [x] #1 One shared card->prompt function is used by both the character-probe engine and Console's chat path -- no second, independently-maintained copy of the assembly logic remains in either place
+- [x] #2 Console's assembled system prompt includes `message_example` and `post_history_instructions` content for cards that carry it, matching what the character-probe engine already sends
+- [x] #3 A test proves both callers produce identical prompt assembly output for the same card and steering input
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -88,3 +88,102 @@ live somewhere both the engine and the UI layer are permitted to import from.
    existing prompt tests pass unchanged (proves the refactor is behavior-
    preserving on the engine side) and report red->green accurately.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Extracted the ONE card->prompt joiner both the character-probe eval engine
+and Console's chat path now share: `compose_character_card_text` in
+`Character_Chat/Character_Chat_Lib.py`, next to `replace_placeholders`
+(which it calls). It takes plain fields -- name, system_prompt, personality,
+description, scenario, message_example, post_history_instructions,
+user_name -- not either caller's own container type (CardSnapshot or a raw
+Mapping), so both sides adapt their own shape into it rather than the
+shared function knowing about either. It joins fields in the engine's
+existing order/labels (system_prompt and post_history_instructions
+unlabelled; personality/description/scenario/message_example labelled),
+resolves {{char}}/{{user}} macros once over the joined text, and returns ""
+when every field is empty.
+
+Home: Character_Chat_Lib.py, not a new lighter module. The engine already
+had a precedent for this exact tradeoff -- resolve_card_macros already did
+a LOCAL import of replace_placeholders from this same heavy module (Pillow,
+CharactersRAGDB, world_book_import, TTS profile portability all load at its
+module scope) specifically so the engine package's own module-scope import
+stays light. compose_system_prompt now does the identical local import for
+compose_character_card_text, so this refactor adds zero new import-time
+cost to the engine; it was already paying to compose a prompt at all.
+Pillow is also a base (non-optional) dependency of this project, so there
+is no missing-optional-dep hazard, only import-time weight, and that weight
+is already deferred.
+
+Callers:
+- Evals/character_probe/prompt.py::compose_system_prompt now builds its
+  card_text via the shared function, then keeps its own steering-prepend
+  logic (steering is a target-level, non-card concept with no Console
+  equivalent, so it stays local to the engine). resolve_card_macros and
+  build_messages's first_message handling are untouched -- separate concern
+  (single-field macro resolution for the greeting-equivalent opening turn).
+- UI/Screens/chat_screen.py::_character_session_prompt_seed now builds its
+  system prompt via the same shared function, passing all seven card
+  fields (previously only four). The empty-card fallback ("Stay in
+  character.") stays OWNED BY CONSOLE, applied as `... or "Stay in
+  character."` on the shared function's output -- not folded into the
+  shared function, because the engine's own empty-card behavior is
+  different and deliberate (an intentionally blank system message, per
+  compose_system_prompt's docstring/test). Both existing call sites
+  (now ~6912, ~13746 after the docstring insert shifted line numbers)
+  needed no changes -- the
+  function's signature and return shape are unchanged.
+
+Console's assembled system prompt is a real, user-visible change: it now
+includes message_example and post_history_instructions content, and
+personality/description/scenario gain "Personality:"/"Description:"/
+"Scenario:" labels it did not have before, with "\n\n" separators instead
+of "\n". This was the point of the task, not a side effect -- the eval
+predicts what Console sends only if both build byte-identical text.
+
+Tests: Tests/UI/test_character_session_prompt_seed.py -- fixed the one
+pinned exact-equality assertion that changes under the new label
+(description now reads "Description: ..."), added a test proving
+message_example/post_history_instructions now reach Console's prompt, and
+added test_console_and_engine_compose_byte_identical_system_prompts: a real
+card dict fed through _character_session_prompt_seed and an equivalent
+CardSnapshot fed through compose_system_prompt (steering=None) must produce
+byte-identical output, with {{char}}/{{user}} macros in every field to
+prove resolution parity, not just field-inclusion parity. The greeting path
+is asserted separately in the same test and is unchanged.
+
+Found and deliberately left alone: a THIRD, independently-maintained
+card->prompt joiner, build_preview_system_prompt in
+UI/Persona_Modules/personas_preview_controller.py (Personas workbench
+preview pane, not Console's chat path or the eval engine). It has its own
+divergent behavior (folds a seeded greeting into the system row, its own
+empty-fallback). The task's AC and the dispatching instructions scoped this
+work to exactly _character_session_prompt_seed and compose_system_prompt;
+unifying the preview pane too is out of scope here and would be scope
+creep beyond what was asked. Flagging as a natural follow-up, not filing a
+new task since one wasn't requested.
+
+Verification: Tests/Evals/character_probe (142 passed, including the 22
+pre-existing compose_system_prompt/build_messages tests passing UNCHANGED
+-- proof the engine-side refactor is behavior-preserving) +
+Tests/UI/test_character_session_prompt_seed.py (5 passed) together;
+Tests/UI/test_evals_authoring_e2e/bench_editor/cell_continuation_e2e/
+continuation_e2e/deletion_guard/empty_states/results_grid/screen/
+snippet_editor/steering_e2e.py (376 passed, 1 pre-existing failure --
+test_two_ui_authored_targets_one_steered_light_up_column_mode_delta,
+task-1611's "one-model-row-ever" UI bug, reproduced identically against
+the pre-task-1744 base commit 7550ddeb6 in a throwaway git worktree, fully
+unrelated to card->prompt assembly); Tests/UI/test_console_native_chat_flow.py
+-k character (55 passed); Tests/UI/test_personas_workbench.py -k
+"character or start_chat" (127 passed); Tests/UI/test_personas_preview.py
+(39 passed, confirms the third joiner above is untouched).
+
+Modified files: tldw_chatbook/Character_Chat/Character_Chat_Lib.py (new
+compose_character_card_text), tldw_chatbook/Evals/character_probe/prompt.py
+(compose_system_prompt delegates), tldw_chatbook/UI/Screens/chat_screen.py
+(_character_session_prompt_seed delegates), Tests/UI/test_character_session_prompt_seed.py
+(one assertion updated, two tests added), Docs/superpowers/specs/2026-08-01-character-probe-eval-design.md
+(marked the Console-divergence section resolved).
+<!-- SECTION:NOTES:END -->
