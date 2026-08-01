@@ -32,6 +32,19 @@ An absolute path would both break on any other machine and leak the user's
 home directory into a file they distribute. `build_feed_xml` enforces this
 by rejecting any `FeedEpisode.filename` containing a path separator before
 emitting anything.
+
+**All timestamps must be timezone-aware.** `email.utils.format_datetime`
+does *not* treat a naive `datetime` as local time -- it emits the correct
+wall-clock digits tagged `-0000` (RFC 2822's "unverified offset"). The real
+hazard is one hop downstream: `-0000` round-trips through
+`email.utils.parsedate_to_datetime` into a *naive* result, and the common
+`dt.astimezone()` idiom then silently reinterprets those same digits as
+local time -- same digits, wrong instant. `build_feed_xml` forecloses this
+by rejecting a naive `now` or a naive `episode.published` outright rather
+than quietly coercing to UTC (a caller passing naive input has a bug worth
+surfacing, not hiding). **For Task 4:** SQLite's `CURRENT_TIMESTAMP` column
+is UTC but comes back as a naive string -- attach `timezone.utc` explicitly
+when parsing it into a `datetime` for this module.
 """
 
 from __future__ import annotations
@@ -54,9 +67,11 @@ ET.register_namespace("itunes", _ITUNES_NS)
 class FeedBuildError(RuntimeError):
     """Raised when episode data cannot be turned into a valid feed.
 
-    Currently raised for exactly one reason: an episode's `filename`
-    contains a path separator, which would let the feed reference a file
-    outside its own directory.
+    Raised when an episode's `filename` contains a path separator (which
+    would let the feed reference a file outside its own directory), or when
+    `now` or an episode's `published` is a naive `datetime` (no `tzinfo`) --
+    see the module docstring's "All timestamps must be timezone-aware"
+    section for why a naive input is rejected rather than coerced.
     """
 
 
@@ -75,7 +90,9 @@ class FeedEpisode:
         duration_seconds: Playback duration in seconds, or `None` if
             unknown. Emitted as `<itunes:duration>` only when present.
         published: The episode's publication timestamp, emitted as the
-            `<item>`'s `<pubDate>` in RFC-822 form.
+            `<item>`'s `<pubDate>` in RFC-822 form. Must be timezone-aware --
+            :func:`build_feed_xml` raises :class:`FeedBuildError` for a
+            naive value (see the module docstring).
         guid: A stable identifier for the episode, emitted verbatim as the
             `<item>`'s `<guid>`.
         description: Episode description text, emitted verbatim as the
@@ -102,9 +119,9 @@ def build_feed_xml(
 
     Pure and deterministic: no filesystem access, no `datetime.now()` --
     `now` is the caller's injected timestamp for the channel's
-    `<lastBuildDate>`. Every episode's `filename` is validated *before* any
-    XML is emitted, so a single bad episode fails the whole build rather
-    than silently emitting a feed that is missing it.
+    `<lastBuildDate>`. Every episode's `filename` and every timestamp is
+    validated *before* any XML is emitted, so a single bad episode fails the
+    whole build rather than silently emitting a feed that is missing it.
 
     Args:
         channel_title: Feed/channel title.
@@ -112,17 +129,36 @@ def build_feed_xml(
         episodes: Episodes to include as `<item>` elements, emitted in the
             order given. An empty sequence still produces a valid channel
             with zero items.
-        now: Timestamp for the channel's `<lastBuildDate>`.
+        now: Timestamp for the channel's `<lastBuildDate>`. Must be
+            timezone-aware.
 
     Returns:
         The complete RSS document, UTF-8 encoded.
 
     Raises:
-        FeedBuildError: If any episode's `filename` contains a path
-            separator (`/` or `\\`) -- naming the offending filename. A feed
-            must never reference outside its own directory.
+        FeedBuildError: If `now` is a naive `datetime` (naming `now`); if
+            any episode's `published` is a naive `datetime` (naming the
+            episode by its `guid`); or if any episode's `filename` contains
+            a path separator (`/` or `\\`, naming the offending filename) --
+            a feed must never reference outside its own directory.
     """
+    if now.tzinfo is None:
+        raise FeedBuildError(
+            "'now' must be timezone-aware (tzinfo is None); a naive value "
+            "would emit an RFC-2822 '-0000' (unverified offset) that later "
+            "round-trips into a naive datetime and silently shifts under "
+            "`.astimezone()` -- attach `timezone.utc` explicitly."
+        )
+
     for episode in episodes:
+        if episode.published.tzinfo is None:
+            raise FeedBuildError(
+                f"episode {episode.guid!r}'s `published` must be "
+                "timezone-aware (tzinfo is None); a naive value would emit "
+                "an RFC-2822 '-0000' (unverified offset) that later "
+                "round-trips into a naive datetime and silently shifts "
+                "under `.astimezone()` -- attach `timezone.utc` explicitly."
+            )
         if "/" in episode.filename or "\\" in episode.filename:
             raise FeedBuildError(
                 "episode filename must be a bare relative name with no "

@@ -186,3 +186,63 @@ def test_path_separator_guard_rejects_before_emitting_any_xml():
     bad = _episode(filename="../evil.wav", guid="g-bad")
     with pytest.raises(FeedBuildError):
         _build([good, bad])
+
+
+# --- timezone-awareness: reject naive datetimes at the boundary -------------
+#
+# `email.utils.format_datetime` does NOT treat a naive datetime as local
+# time -- it emits the correct wall-clock digits tagged "-0000" (RFC 2822's
+# "unverified offset"). The hazard is one hop downstream: "-0000" round-trips
+# through `parsedate_to_datetime` into a *naive* result, and the common
+# `.astimezone()` idiom then silently reinterprets those same digits as
+# local time -- same digits, wrong instant. `build_feed_xml` forecloses this
+# by rejecting naive input outright rather than quietly coercing it to UTC.
+
+
+def test_naive_now_raises_feed_build_error_naming_now():
+    naive_now = datetime(2026, 8, 1, 12, 0, 0)  # no tzinfo
+    with pytest.raises(FeedBuildError, match="now"):
+        _build([], now=naive_now)
+
+
+def test_naive_episode_published_raises_feed_build_error_naming_the_episode():
+    naive_published = datetime(2026, 7, 30, 8, 0, 0)  # no tzinfo
+    episode = _episode(published=naive_published, guid="briefing-audio-77")
+    with pytest.raises(FeedBuildError, match="briefing-audio-77"):
+        _build([episode])
+
+
+def test_aware_utc_datetimes_produce_a_plus_zero_offset_not_unverified():
+    """A `-0000` offset means "unverified" per RFC 2822 -- an aware UTC value
+    must emit the unambiguous `+0000` instead, proving the guard above is
+    actually necessary (not just a formality) and that the aware path is
+    unaffected by it."""
+    episode = _episode(published=_NOW)
+    xml_bytes = _build([episode], now=_NOW)
+    text = xml_bytes.decode("utf-8")
+    channel = ET.fromstring(xml_bytes).find("channel")
+    assert channel.findtext("lastBuildDate").endswith("+0000")
+    assert channel.find("item").findtext("pubDate").endswith("+0000")
+    assert "-0000" not in text
+
+
+# --- itunes namespace: pin the raw-bytes declaration, not just the URI ------
+
+
+def test_xmlns_itunes_is_declared_in_raw_bytes_when_a_duration_is_present():
+    """Finding `itunes:duration` by namespace URI (as the tests above do)
+    would still succeed even if the `xmlns:itunes` declaration were missing
+    from the serialized bytes -- an ElementTree quirk that would produce
+    invalid XML many real parsers reject. Assert the declaration itself is
+    present in the actual output, not just that the parsed tree resolves the
+    tag."""
+    episode = _episode(duration_seconds=42.0)
+    text = _build([episode]).decode("utf-8")
+    assert f'xmlns:itunes="{_ITUNES_NS}"' in text
+
+
+def test_xmlns_itunes_is_absent_from_raw_bytes_when_no_duration_is_present():
+    episode = _episode(duration_seconds=None)
+    text = _build([episode]).decode("utf-8")
+    assert "xmlns:itunes" not in text
+    assert "itunes:duration" not in text
