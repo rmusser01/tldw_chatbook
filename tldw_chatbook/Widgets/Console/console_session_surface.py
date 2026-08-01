@@ -19,7 +19,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunMarker,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
-from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE
+from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE, GLYPH_TEMPORARY
 from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
@@ -78,6 +78,10 @@ def _session_tab_tooltip(
         text = f"Active Console tab: {session.title}{tail} Click again to rename."
     else:
         text = f"Switch to Console tab: {session.title}{tail}"
+    if session.ephemeral:
+        # The ◌ glyph carries no meaning on its own; this is where it is
+        # decoded, exactly like the run-marker meanings above.
+        text = f"{text} Temporary — not saved locally."
     return _escape_markup(text)
 
 
@@ -294,7 +298,9 @@ class ConsoleSessionSurface(Vertical):
         if active:
             classes = f"{classes} console-session-tab-active"
         button = ConsoleSessionTabButton(
-            self._tab_label(session.title, marker=marker),
+            self._tab_label(
+                session.title, marker=marker, ephemeral=session.ephemeral
+            ),
             id=f"console-session-tab-{session.id}",
             classes=classes,
             compact=True,
@@ -313,7 +319,11 @@ class ConsoleSessionSurface(Vertical):
 
     @classmethod
     def _tab_label(
-        cls, title: str, *, marker: ConsoleRunMarker = ConsoleRunMarker.NONE
+        cls,
+        title: str,
+        *,
+        marker: ConsoleRunMarker = ConsoleRunMarker.NONE,
+        ephemeral: bool = False,
     ) -> str:
         """Return the tab label, prefixed with its fleet run-marker glyph.
 
@@ -322,11 +332,19 @@ class ConsoleSessionSurface(Vertical):
         not just the legacy streaming-only glyph. ``ConsoleRunMarker.NONE``'s
         glyph is the empty string, so an unmarked tab gets no stray leading
         space.
+
+        A tab can be both temporary and running (a fleet run started from a
+        never-saved chat), so the two markers stack: ``◌ ● Title`` rather
+        than one replacing the other.
         """
         label = cls._display_title(title)
         glyph = CONSOLE_RUN_MARKER_GLYPHS.get(marker, "")
         if glyph:
-            return f"{glyph} {label}"
+            label = f"{glyph} {label}"
+        # Presentation only: never written into session.title, which
+        # promotion saves verbatim.
+        if ephemeral:
+            label = f"{GLYPH_TEMPORARY} {label}"
         return label
 
     @staticmethod
@@ -406,7 +424,9 @@ class ConsoleSessionSurface(Vertical):
                     streaming_session_id=streaming_session_id,
                     run_markers=run_markers,
                 )
-                child.label = self._tab_label(session.title, marker=marker)
+                child.label = self._tab_label(
+                    session.title, marker=marker, ephemeral=session.ephemeral
+                )
                 child.tooltip = _session_tab_tooltip(
                     session,
                     active=session.id == active_session_id,

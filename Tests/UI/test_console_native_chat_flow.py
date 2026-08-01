@@ -10328,3 +10328,36 @@ def test_console_screen_state_round_trips_the_temporary_flag():
     assert screen._console_session_from_state(
         {"id": normal.id, "title": normal.title}
     ).ephemeral is False, "a payload with no key must default to saved"
+
+
+def test_temporary_tab_marker_is_presentation_only():
+    """The marker must never enter session.title.
+
+    Promotion saves `session.title` verbatim, so a marker written into the
+    title would produce a saved conversation literally named after it -- and
+    renaming would then fight the marker on every render.
+    """
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+    from tldw_chatbook.Chat.console_glyphs import GLYPH_TEMPORARY
+    from tldw_chatbook.Widgets.Console.console_session_surface import (
+        CONSOLE_SESSION_TAB_DISPLAY_CHARS,
+        ConsoleSessionSurface,
+        _session_tab_tooltip,
+    )
+
+    session = ConsoleChatSession(title="Vector store notes", ephemeral=True)
+    label = ConsoleSessionSurface._tab_label(session.title, ephemeral=True)
+
+    assert label.startswith(GLYPH_TEMPORARY)
+    assert "Vector store" in label
+    assert len(label) <= CONSOLE_SESSION_TAB_DISPLAY_CHARS + 2  # glyph + space
+    assert GLYPH_TEMPORARY not in session.title
+
+    plain = ConsoleSessionSurface._tab_label(session.title, ephemeral=False)
+    assert GLYPH_TEMPORARY not in plain
+
+    tooltip = _session_tab_tooltip(session, active=False)
+    assert "not saved" in tooltip.lower()
+    assert "not saved" not in _session_tab_tooltip(
+        ConsoleChatSession(title="Normal"), active=False
+    ).lower()
