@@ -501,6 +501,17 @@ def test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch(
     (``STT.persistence`` -- reached transitively -- uses
     ``ArtifactLeaseKey``); only the async, network-capable, credentialed
     modules are forbidden.
+
+    TASK-1696: also imports ``Audio.console_dictation`` and the new
+    ``Local_Ingestion.parakeet_v2_artifact`` adapter it and
+    ``transcription_service`` both now reach transitively -- the managed-
+    first model-directory resolver these two worker-side modules share.
+    ``parakeet_v2_artifact`` itself imports only ``Model_Artifacts.service``
+    at module scope (its ``ArtifactAcquisitionService``-based orchestration
+    helpers import ``.acquisition`` locally, inside their own function
+    bodies, and only the Library UI ever calls them -- see that module's
+    own docstring), so it must load here without pulling in ``.acquisition``
+    or ``.fetch`` either.
     """
     script = textwrap.dedent(
         """
@@ -539,6 +550,7 @@ def test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch(
             import tldw_chatbook.STT.registry
             import tldw_chatbook.STT.routing
             import tldw_chatbook.Local_Ingestion.transcription_service
+            import tldw_chatbook.Audio.console_dictation
         finally:
             builtins.__import__ = original_import
 
@@ -585,6 +597,11 @@ def test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch(
     all_modules = set(imported["all"])
     assert "tldw_chatbook.Model_Artifacts.leases" in all_modules
     assert "tldw_chatbook.Model_Artifacts.service" in all_modules
+    # TASK-1696: same sanity check for the new adapter module --
+    # ``transcription_service`` imports it at module scope (``console_
+    # dictation`` only imports it lazily, inside its own resolver method,
+    # so a plain import of that module alone would not prove this).
+    assert "tldw_chatbook.Local_Ingestion.parakeet_v2_artifact" in all_modules
 
 
 # ---------------------------------------------------------------------------

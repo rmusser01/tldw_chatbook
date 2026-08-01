@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 from rich.markup import escape as escape_markup
@@ -168,13 +168,9 @@ from ...Library.library_shell_state import (
     LibraryShellInput,
     build_library_shell_state,
 )
-from ...Local_Ingestion.parakeet_v2_installer import (
-    PARAKEET_V2_LICENSE,
-    PARAKEET_V2_REPOSITORY,
-    PARAKEET_V2_REVISION,
-    PARAKEET_V2_TOTAL_BYTES,
-    install_verified_parakeet_v2,
-    parakeet_v2_install_dir,
+from ...Local_Ingestion.parakeet_v2_artifact import (
+    run_parakeet_v2_preflight,
+    run_parakeet_v2_provision,
 )
 from ...Library.row_selection import RowSelection
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
@@ -247,6 +243,14 @@ from .study_scope_models import (
     StudyScopeContext,
     StudySourceItem,
 )
+
+if TYPE_CHECKING:
+    # TASK-1696: type-only -- the Library UI is allowed to import the
+    # async acquisition layer at runtime (unlike the STT/transcription
+    # worker surface; see ``Local_Ingestion.parakeet_v2_artifact``'s module
+    # docstring), but nothing here actually needs ``PreflightReport`` as a
+    # runtime symbol, only as a type hint on ``ParakeetV2InstallModal``.
+    from ...Model_Artifacts.acquisition import PreflightReport
 
 
 logger = logger.bind(module="LibraryScreen")
@@ -843,22 +847,65 @@ class ParakeetV2InstallModal(ModalScreen[bool]):
 
     BINDINGS = [("escape", "dismiss(false)", "Close")]
 
-    def __init__(self, destination: Path) -> None:
-        self.destination = destination
+    def __init__(self, report: "PreflightReport") -> None:
+        """Build the consent modal from an immutable preflight plan.
+
+        Args:
+            report: The ``PreflightReport`` a prior
+                ``run_parakeet_v2_preflight()`` call resolved. Every value
+                this modal renders -- repository, revision, license,
+                precision, per-artifact and total download bytes,
+                destination, free space, and the space verdict -- comes
+                from this report, not a hard-coded constant (TASK-1696).
+        """
+        self.report = report
         super().__init__()
 
+    @staticmethod
+    def _mib(size_bytes: int) -> str:
+        return f"{size_bytes / (1024 * 1024):.1f}"
+
+    @property
+    def _ungrantable(self) -> bool:
+        """Whether ``self.report.grant()`` would raise.
+
+        Mirrors ``PreflightReport.grant()``'s own condition exactly (gating
+        errors or insufficient space) without calling it, so the modal can
+        disable Install before the user ever confirms a plan that would
+        immediately fail.
+        """
+        return bool(self.report.gating_errors) or not self.report.sufficient_space
+
     def compose(self) -> ComposeResult:
-        size_mib = PARAKEET_V2_TOTAL_BYTES / (1024 * 1024)
-        details = (
-            "Install the curated Parakeet v2 INT8 speech model?\n\n"
-            f"Source: {PARAKEET_V2_REPOSITORY}\n"
-            f"Revision: {PARAKEET_V2_REVISION}\n"
-            f"License: {PARAKEET_V2_LICENSE}\n"
-            f"Download: {size_mib:.1f} MiB\n"
-            f"Destination: {self.destination}\n\n"
-            "All four files are checked against pinned sizes and SHA-256 "
-            "digests before the bundle becomes usable."
+        report = self.report
+        lines = ["Install the curated Parakeet v2 INT8 speech model?", ""]
+        for entry in report.entries:
+            already = " (already installed)" if entry.already_installed else ""
+            lines.append(f"Source: {entry.repository}{already}")
+            lines.append(f"Revision: {entry.revision}")
+            lines.append(f"License: {entry.license_id}")
+            lines.append(f"Precision: {entry.precision}")
+            lines.append(f"Artifact size: {self._mib(entry.total_bytes)} MiB")
+            lines.append("")
+        lines.append(f"Download: {self._mib(report.download_bytes)} MiB")
+        lines.append(f"Destination: {report.destination}")
+        lines.append(f"Free space: {self._mib(report.free_bytes)} MiB")
+        if report.sufficient_space:
+            lines.append("Enough free space is available for this install.")
+        else:
+            lines.append(
+                f"Not enough free space: this install needs "
+                f"{self._mib(report.required_bytes)} MiB free."
+            )
+        if report.gating_errors:
+            lines.append("")
+            lines.extend(report.gating_errors)
+        lines.append("")
+        lines.append(
+            "Every declared file is checked against pinned sizes and "
+            "SHA-256 digests before the bundle becomes usable."
         )
+        details = "\n".join(lines)
         with Vertical(id="parakeet-v2-install-modal"):
             yield Static(details, markup=False)
             with Horizontal(id="parakeet-v2-install-actions"):
@@ -871,6 +918,7 @@ class ParakeetV2InstallModal(ModalScreen[bool]):
                     "Install",
                     id="parakeet-v2-install-confirm",
                     variant="primary",
+                    disabled=self._ungrantable,
                 )
 
     @on(Button.Pressed, "#parakeet-v2-install-confirm")
@@ -880,6 +928,76 @@ class ParakeetV2InstallModal(ModalScreen[bool]):
     @on(Button.Pressed, "#parakeet-v2-install-cancel")
     def _cancel(self) -> None:
         self.dismiss(False)
+
+
+class _ParakeetV2NoPendingReportError(RuntimeError):
+    """Raised when confirm fires with no preflight report to grant.
+
+    Never carries anything but this module's own fixed, already-safe
+    message -- see ``_parakeet_v2_failure_message``, which is the only
+    place that re-reads it via ``str()``.
+    """
+
+
+def _parakeet_v2_failure_message(exc: BaseException) -> str:
+    """Map a Parakeet v2 preflight/provision failure to a stable, user-safe message.
+
+    PR-1167 review (Finding 2): the raw exception text is never shown to
+    the user -- ``PreflightNotGrantableError`` embeds the full
+    ``gating_errors`` tuple in its own message, and other acquisition
+    failures may carry internal state that has no business reaching a
+    notification. The full exception (type, message, traceback) is still
+    always logged at the two call sites via ``logger.opt(exception=True)``,
+    so nothing is lost for debugging -- only what reaches ``notify()``
+    changes.
+
+    Args:
+        exc: The exception raised by ``run_parakeet_v2_preflight()`` or
+            ``run_parakeet_v2_provision()`` (or, for the "confirm fired
+            with nothing pending" case, this module's own
+            ``_ParakeetV2NoPendingReportError``).
+
+    Returns:
+        A stable, sanitized message safe to pass to ``notify()``.
+    """
+    if isinstance(exc, _ParakeetV2NoPendingReportError):
+        # Authored entirely by this module, with no injected content --
+        # safe to surface verbatim, unlike every other branch below.
+        return str(exc)
+
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        AcquisitionBusyError,
+        CatalogError,
+        ConsentMismatchError,
+        GatedRepositoryError,
+        InsufficientSpaceError,
+        PreflightNotGrantableError,
+        TransferError,
+    )
+
+    if isinstance(exc, InsufficientSpaceError):
+        return "Not enough free disk space for this install."
+    if isinstance(exc, GatedRepositoryError):
+        return (
+            "This model's repository requires a credential. Configure "
+            "HUGGINGFACE_API_KEY (or HF_TOKEN) and retry."
+        )
+    if isinstance(exc, AcquisitionBusyError):
+        return "Another Parakeet v2 install is already in progress. Try again shortly."
+    if isinstance(exc, ConsentMismatchError):
+        return "The install plan changed since it was shown. Retry Install to see the current plan."
+    if isinstance(exc, PreflightNotGrantableError):
+        return (
+            "This install plan can no longer proceed (insufficient space or "
+            "a gating error). Retry Install to see the current plan."
+        )
+    if isinstance(exc, CatalogError):
+        return "The Parakeet v2 download source is misconfigured."
+    if isinstance(exc, TransferError):
+        if exc.retryable:
+            return "The download was interrupted. Retry Install to resume."
+        return "The download failed and cannot be retried automatically."
+    return "Parakeet v2 install failed. See the application log for details."
 
 
 def _affected_counts(preflight: PreflightResult) -> dict[str, int]:
@@ -1340,8 +1458,19 @@ class LibraryScreen(BaseAppScreen):
         # and replaced on every new trigger so rapid edits never stack.
         self._library_ingest_preflight_worker: Worker | None = None
         # Explicit user-started curated model install. It is separate from
-        # inference: providers never acquire models on first use.
+        # inference: providers never acquire models on first use. The same
+        # worker slot tracks BOTH the preflight step (plan computation) and
+        # the install step (grant + provision) -- either one running blocks
+        # a second trigger, matching the single busy notification already
+        # shown to the user.
         self._parakeet_v2_install_worker: Worker | None = None
+        # TASK-1696: the immutable PreflightReport a completed preflight
+        # worker handed to the consent modal -- read back by
+        # ``_run_parakeet_v2_install`` (kept zero-argument; see
+        # ``Tests/UI/test_parakeet_v2_install_ui.py::
+        # test_confirmation_starts_background_installer_worker``) once the
+        # user confirms.
+        self._parakeet_v2_pending_report: "PreflightReport | None" = None
         # Export canvas state (F4 Task 2). ``_library_export_counts`` is
         # ``None`` until the counts worker lands a result for the current
         # scope (drives ``LibraryExportFormState.counts_loading`` --
@@ -12221,7 +12350,13 @@ class LibraryScreen(BaseAppScreen):
         self,
         event: LibraryIngestCanvas.ParakeetInstallRequested,
     ) -> None:
-        """Show immutable source, license, size, and destination before install."""
+        """Resolve the immutable install plan, then show it for consent.
+
+        TASK-1696: the consent modal must render real repository, revision,
+        license, precision, byte, destination, and free-space figures from
+        a ``PreflightReport`` -- computed here, off the Textual event loop,
+        before the modal is ever pushed.
+        """
         event.stop()
         worker = getattr(self, "_parakeet_v2_install_worker", None)
         if worker is not None and not worker.is_finished:
@@ -12230,8 +12365,45 @@ class LibraryScreen(BaseAppScreen):
                 severity="information",
             )
             return
+        self._parakeet_v2_install_worker = self._run_parakeet_v2_preflight()
+
+    @work(thread=True, group="library_parakeet_v2_preflight", exit_on_error=False)
+    def _run_parakeet_v2_preflight(self) -> None:
+        """Resolve the managed-download plan off the Textual event loop."""
+        try:
+            report = asyncio.run(  # policy-exception: worker-thread loop
+                run_parakeet_v2_preflight()
+            )
+        except Exception as exc:
+            logger.opt(exception=True).error("Parakeet v2 preflight failed")
+            self.app.call_from_thread(
+                self._apply_parakeet_v2_preflight_result,
+                None,
+                _parakeet_v2_failure_message(exc),
+            )
+            return
+        self.app.call_from_thread(
+            self._apply_parakeet_v2_preflight_result,
+            report,
+            None,
+        )
+
+    def _apply_parakeet_v2_preflight_result(
+        self,
+        report: "PreflightReport | None",
+        error: str | None,
+    ) -> None:
+        """Show the plan-driven consent modal, or a sanitized preflight failure."""
+        self._parakeet_v2_install_worker = None
+        if error is not None or report is None:
+            self.app_instance.notify(
+                f"Parakeet v2 preflight failed: {error or 'unknown error'}",
+                severity="error",
+            )
+            return
+        self._parakeet_v2_pending_report = report
         self.app.push_screen(
-            ParakeetV2InstallModal(parakeet_v2_install_dir()),
+            ParakeetV2InstallModal(report),
             self._confirm_parakeet_v2_install,
         )
 
@@ -12250,15 +12422,30 @@ class LibraryScreen(BaseAppScreen):
 
     @work(thread=True, group="library_parakeet_v2_install", exit_on_error=False)
     def _run_parakeet_v2_install(self) -> None:
-        """Install off the Textual event loop and return one terminal result."""
+        """Grant consent and provision off the Textual event loop.
+
+        Reads the pending report from ``self`` (rather than a parameter) so
+        this stays a zero-argument call -- see
+        ``Tests/UI/test_parakeet_v2_install_ui.py::
+        test_confirmation_starts_background_installer_worker``, which pins
+        that ``_confirm_parakeet_v2_install`` invokes this with no
+        arguments.
+        """
+        report = self._parakeet_v2_pending_report
         try:
-            installed = install_verified_parakeet_v2()
+            if report is None:
+                raise _ParakeetV2NoPendingReportError(
+                    "No Parakeet v2 install plan is available; retry Install."
+                )
+            installed = asyncio.run(  # policy-exception: worker-thread loop
+                run_parakeet_v2_provision(report)
+            )
         except Exception as exc:
             logger.opt(exception=True).error("Parakeet v2 installation failed")
             self.app.call_from_thread(
                 self._apply_parakeet_v2_install_result,
                 None,
-                str(exc),
+                _parakeet_v2_failure_message(exc),
             )
             return
         self.app.call_from_thread(
@@ -12274,6 +12461,7 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Populate the current batch form only after verified publication."""
         self._parakeet_v2_install_worker = None
+        self._parakeet_v2_pending_report = None
         if error is not None or installed is None:
             self.app_instance.notify(
                 f"Parakeet v2 install failed: {error or 'unknown error'}",

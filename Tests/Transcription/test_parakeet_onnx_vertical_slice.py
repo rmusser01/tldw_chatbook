@@ -636,3 +636,114 @@ def test_parakeet_onnx_v3_transcribes_pcm_buffer_with_transparent_language_resul
     assert result["model"] == PARAKEET_V3_MODEL
     assert result["segments"][0]["text"] == "Deutsche Aufnahme."
     assert result["segments"][0]["end"] == pytest.approx(2 / 16_000)
+
+
+# ---------------------------------------------------------------------------
+# TASK-1696: managed-first resolver for the batch path, when neither an
+# explicit model_dir argument nor transcription.parakeet_onnx_model_dir is
+# configured. Order: active managed artifact, then verified legacy bundle,
+# then the existing "no model will be downloaded automatically" error.
+# ---------------------------------------------------------------------------
+
+
+def test_parakeet_onnx_batch_uses_active_managed_artifact_when_unconfigured(
+    tmp_path, monkeypatch
+) -> None:
+    audio_path = tmp_path / "speech.wav"
+    managed_dir = tmp_path / "managed"
+    _write_model_bundle(managed_dir)
+    _write_silent_wav(audio_path)
+    load_calls = []
+
+    class FakeModel:
+        def recognize(self, path):
+            return "Managed model transcript."
+
+    def fake_load_model(name, **kwargs):
+        load_calls.append((name, kwargs))
+        return FakeModel()
+
+    monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
+    monkeypatch.setitem(
+        sys.modules, "onnx_asr", SimpleNamespace(load_model=fake_load_model)
+    )
+    monkeypatch.setattr(
+        service_module, "active_managed_parakeet_v2_dir", lambda: managed_dir
+    )
+
+    def unexpected_legacy_check(*_args, **_kwargs):
+        raise AssertionError(
+            "the verified legacy bundle must not be consulted once a managed "
+            "artifact is active"
+        )
+
+    monkeypatch.setattr(
+        service_module, "verify_parakeet_v2_bundle", unexpected_legacy_check
+    )
+
+    service = TranscriptionService()
+    assert not service.config["parakeet_onnx_model_dir"]
+    result = service.transcribe(str(audio_path), provider="parakeet-onnx")
+
+    assert load_calls[0][1]["path"] == str(managed_dir)
+    assert result["text"] == "Managed model transcript."
+
+
+def test_parakeet_onnx_batch_falls_back_to_verified_legacy_bundle(
+    tmp_path, monkeypatch
+) -> None:
+    audio_path = tmp_path / "speech.wav"
+    legacy_dir = tmp_path / "legacy"
+    _write_model_bundle(legacy_dir)
+    _write_silent_wav(audio_path)
+    load_calls = []
+
+    class FakeModel:
+        def recognize(self, path):
+            return "Legacy bundle transcript."
+
+    def fake_load_model(name, **kwargs):
+        load_calls.append((name, kwargs))
+        return FakeModel()
+
+    monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
+    monkeypatch.setitem(
+        sys.modules, "onnx_asr", SimpleNamespace(load_model=fake_load_model)
+    )
+    monkeypatch.setattr(
+        service_module, "active_managed_parakeet_v2_dir", lambda: None
+    )
+    monkeypatch.setattr(service_module, "parakeet_v2_install_dir", lambda: legacy_dir)
+    monkeypatch.setattr(
+        service_module,
+        "verify_parakeet_v2_bundle",
+        lambda directory: directory == legacy_dir,
+    )
+
+    service = TranscriptionService()
+    assert not service.config["parakeet_onnx_model_dir"]
+    result = service.transcribe(str(audio_path), provider="parakeet-onnx")
+
+    assert load_calls[0][1]["path"] == str(legacy_dir)
+    assert result["text"] == "Legacy bundle transcript."
+
+
+def test_parakeet_onnx_batch_reports_missing_model_when_nothing_resolves(
+    tmp_path, monkeypatch
+) -> None:
+    audio_path = tmp_path / "speech.wav"
+    _write_silent_wav(audio_path)
+
+    monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
+    monkeypatch.setattr(
+        service_module, "active_managed_parakeet_v2_dir", lambda: None
+    )
+    monkeypatch.setattr(
+        service_module, "parakeet_v2_install_dir", lambda: tmp_path / "no-legacy"
+    )
+    monkeypatch.setattr(service_module, "verify_parakeet_v2_bundle", lambda directory: False)
+
+    service = TranscriptionService()
+    assert not service.config["parakeet_onnx_model_dir"]
+    with pytest.raises(TranscriptionError, match="no model will be downloaded"):
+        service.transcribe(str(audio_path), provider="parakeet-onnx")

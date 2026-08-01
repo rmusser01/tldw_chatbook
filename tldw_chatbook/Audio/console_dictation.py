@@ -42,6 +42,7 @@ class ConsoleDictationSession:
         model_dir: str | Path | None = None,
         installed_model_dir: str | Path | None = None,
         verify_installed_bundle: Callable[[str | Path], bool] | None = None,
+        managed_model_dir_resolver: Callable[[], Path | None] | None = None,
         recorder_factory: Callable[..., Any] | None = None,
         transcription_service: Any | None = None,
     ) -> None:
@@ -54,6 +55,7 @@ class ConsoleDictationSession:
         self._verify_installed_bundle = (
             verify_installed_bundle or verify_parakeet_v2_bundle
         )
+        self._managed_model_dir_resolver = managed_model_dir_resolver
         self._recorder_factory = recorder_factory
         self._transcription_service = transcription_service
         self._recorder: Any | None = None
@@ -95,6 +97,10 @@ class ConsoleDictationSession:
                 )
             return configured
 
+        managed = self._active_managed_model_dir()
+        if managed is not None and self._required_files_present(managed):
+            return managed
+
         if self._verify_installed_bundle(self._installed_model_dir):
             return self._installed_model_dir
 
@@ -102,6 +108,24 @@ class ConsoleDictationSession:
             "Parakeet v2 model files are missing. Install the verified "
             "Parakeet v2 INT8 bundle from Library → Models."
         )
+
+    def _active_managed_model_dir(self) -> Path | None:
+        """Return the active managed Parakeet v2 artifact directory, if any.
+
+        Checked after an explicitly configured directory and before the
+        verified legacy bundle (TASK-1696). Uses only
+        ``Model_Artifacts.service`` (via ``parakeet_v2_artifact``), never
+        the async acquisition/HTTP layer -- see
+        ``Local_Ingestion.parakeet_v2_artifact``'s module docstring for the
+        import boundary this keeps.
+        """
+        if self._managed_model_dir_resolver is not None:
+            return self._managed_model_dir_resolver()
+        from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+            active_managed_parakeet_v2_dir,
+        )
+
+        return active_managed_parakeet_v2_dir()
 
     def _build_recorder(self, *, on_buffer_limit: Callable[[], None] | None) -> Any:
         factory = self._recorder_factory
