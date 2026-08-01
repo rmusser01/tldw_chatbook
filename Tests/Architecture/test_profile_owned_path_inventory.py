@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 from pathlib import Path
 
 from scripts.check_profile_owned_path_inventory import (
+    APPROVED_EXCEPTIONS,
     Disposition,
     ExceptionRule,
     Occurrence,
     reconcile_inventory,
     scan_source,
+    scan_tree,
 )
 
 
@@ -139,8 +142,120 @@ def test_reconcile_describes_duplicate_and_empty_exception_rules() -> None:
     ]
 
 
-def test_cli_prints_the_real_source_census_and_fails_unclassified_inventory() -> None:
-    """The developer CLI uses the scanner and reconciliation contract together."""
+def test_reconcile_rejects_a_scanner_detected_duplicate_literal() -> None:
+    """A second literal in one owner context breaks the exact census."""
+    occurrences = scan_source(
+        '''def profile_path():
+    return "~/.config/tldw_cli/chatterbox_voices"
+''',
+        "tldw_chatbook/example.py",
+    )
+    rule = ExceptionRule(
+        "tldw_chatbook/example.py",
+        "function:profile_path",
+        "literal:~/.config/tldw_cli/chatterbox_voices",
+        1,
+        Disposition.SHARED_ARTIFACT,
+        "reusable Chatterbox voice profiles",
+    )
+
+    problems = reconcile_inventory(occurrences + occurrences, (rule,))
+
+    assert [problem.reason for problem in problems] == [
+        "expected 1 occurrence(s), found 2"
+    ]
+
+
+def test_production_profile_owned_path_inventory_is_exact() -> None:
+    """Production source contains only the frozen ADR-040 census."""
+    occurrences = scan_tree(REPO_ROOT / "tldw_chatbook")
+
+    assert reconcile_inventory(occurrences, APPROVED_EXCEPTIONS) == ()
+
+
+def test_exception_rules_are_sorted_by_inventory_identity() -> None:
+    """Reviewers can compare the frozen census in scanner output order."""
+    identities = tuple(
+        (rule.relative_path, rule.context, rule.expression)
+        for rule in APPROVED_EXCEPTIONS
+    )
+
+    assert identities == tuple(sorted(identities))
+
+
+def test_shared_asset_exceptions_are_explicit() -> None:
+    """Reusable TTS/tokenizer assets cannot be mistaken for profile defaults."""
+    shared_paths = (
+        "tldw_chatbook/TTS/TTS_Backends.py",
+        "tldw_chatbook/TTS/backends/kokoro.py",
+        "tldw_chatbook/TTS/kokoro_pytorch.py",
+        "tldw_chatbook/TTS/utils/download_models.py",
+        "tldw_chatbook/TTS/backends/chatterbox.py",
+        "tldw_chatbook/TTS/backends/higgs.py",
+        "tldw_chatbook/TTS/backends/higgs_voice_manager.py",
+        "tldw_chatbook/UI/STTS_Window.py",
+        "tldw_chatbook/UI/Speech/speech_catalog_mixin.py",
+        "tldw_chatbook/UI/Speech/speech_settings_mixin.py",
+        "tldw_chatbook/UI/Speech/speech_settings_model.py",
+        "tldw_chatbook/UI/Voice_Cloning_Window.py",
+        "tldw_chatbook/Utils/custom_tokenizers.py",
+    )
+    shared_rules = tuple(
+        rule
+        for rule in APPROVED_EXCEPTIONS
+        if rule.relative_path in shared_paths
+    )
+    embedding_rule = next(
+        rule
+        for rule in APPROVED_EXCEPTIONS
+        if (
+            rule.relative_path == "tldw_chatbook/config.py"
+            and rule.expression
+            == "literal:~/.local/share/tldw_cli/models/embeddings"
+        )
+    )
+
+    assert shared_rules
+    assert all(
+        rule.disposition is Disposition.SHARED_ARTIFACT for rule in shared_rules
+    )
+    assert embedding_rule.disposition is Disposition.PERSISTED_DEFAULT
+
+
+def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners() -> None:
+    """Legacy constants remain isolated from normal profile resolution."""
+    base_data_consumers: list[tuple[str, int]] = []
+    runtime_constant_definitions: list[str] = []
+    for source_path in sorted(REPO_ROOT.rglob("*.py")):
+        relative_path = source_path.relative_to(REPO_ROOT).as_posix()
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), relative_path)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                if node.id == "BASE_DATA_DIR_CLI":
+                    base_data_consumers.append((relative_path, node.lineno))
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
+                if any(
+                    isinstance(target, ast.Name)
+                    and target.id == "DEFAULT_RUNTIME_POLICY_PATH"
+                    for target in targets
+                ):
+                    runtime_constant_definitions.append(relative_path)
+
+    assert base_data_consumers == [
+        ("Helper_Scripts/Prompts/Prompts_Dump.py", 96)
+    ]
+    assert runtime_constant_definitions == [
+        "tldw_chatbook/runtime_policy/bootstrap.py"
+    ]
+
+    from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
+
+    assert isinstance(default_runtime_policy_path(), Path)
+
+
+def test_cli_prints_the_real_source_census_and_enforces_it() -> None:
+    """The developer CLI shares the exact production reconciliation contract."""
     completed = subprocess.run(
         [
             sys.executable,
@@ -153,6 +268,6 @@ def test_cli_prints_the_real_source_census_and_fails_unclassified_inventory() ->
         check=False,
     )
 
-    assert completed.returncode == 1
+    assert completed.returncode == 0
     assert "tldw_chatbook/" in completed.stdout
-    assert "unapproved occurrence" in completed.stderr
+    assert completed.stderr == ""
