@@ -3,8 +3,9 @@ from __future__ import annotations
 import copy
 import os
 import shutil
+import socket
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import FrozenInstanceError, asdict, fields, is_dataclass
 from pathlib import Path
 
@@ -71,11 +72,57 @@ def _path_identity(path: Path) -> FileSystemIdentity:
     return FileSystemIdentity(metadata.st_dev, metadata.st_ino)
 
 
+def _short_agent_socket_path(tmp_path: Path) -> Path:
+    suffix = f".s{os.getpid():x}{id(tmp_path) & 0xFFFF:x}"
+    return Path.cwd() / suffix
+
+
+def _bound_agent_socket(path: Path) -> socket.socket:
+    agent = socket.socket(socket.AF_UNIX)
+    try:
+        agent.bind(str(path))
+    except OSError as error:
+        agent.close()
+        pytest.skip(f"AF_UNIX fixture unavailable: {error.errno}")
+    return agent
+
+
+@pytest.fixture
+def isolated_ssh_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[dict[str, str]]:
+    """Provide one real, cleanup-bound SSH authority for compatibility tests."""
+    monkeypatch.setattr(
+        git_network,
+        "_SYSTEM_SSH_TRUST_PATHS",
+        (
+            tmp_path / "system-ssh" / "ssh_known_hosts",
+            tmp_path / "system-ssh" / "ssh_known_hosts2",
+        ),
+        raising=False,
+    )
+    home = tmp_path / "isolated-ssh-home"
+    home.mkdir(mode=0o700, exist_ok=True)
+    agent_path = _short_agent_socket_path(tmp_path)
+    agent = _bound_agent_socket(agent_path)
+    try:
+        yield {
+            "HOME": str(home.resolve()),
+            "PATH": os.defpath,
+            "SSH_AUTH_SOCK": str(agent_path.resolve()),
+        }
+    finally:
+        agent.close()
+        agent_path.unlink(missing_ok=True)
+
+
 def _issued_network_context(
     tmp_path: Path,
     *,
     endpoint: str,
     object_format: str = "sha1",
+    ssh_environment: Mapping[str, str] | None = None,
 ):
     worktree = tmp_path / "source"
     git_dir = worktree / ".git"
@@ -112,10 +159,26 @@ def _issued_network_context(
         _path_identity(objects),
         object_format,
     )
-    configuration = git_network._authorize_network_config_facts(
-        (),
-        configuration_fingerprint="f" * 64,
-        destination=destination,
+    environment = (
+        ssh_environment
+        if destination.scheme == "ssh"
+        else {"PATH": os.defpath}
+    )
+    assert environment is not None
+    configuration = (
+        git_network._authorize_network_config_snapshot(
+            (),
+            configuration_fingerprint="f" * 64,
+            destination=destination,
+            environment=environment,
+            repository=repository,
+        )
+        if destination.scheme == "ssh"
+        else git_network._authorize_network_config_facts(
+            (),
+            configuration_fingerprint="f" * 64,
+            destination=destination,
+        )
     )
     context_parent = tmp_path / "contexts"
     context_parent.mkdir(mode=0o700)
@@ -141,10 +204,11 @@ def _issued_network_context(
     git_exec_path = Path(exec_path_result.stdout.strip()).resolve()
     assert git_exec_path.is_dir()
     context = git_network.NetworkContextFactory(
-        environment={"PATH": os.defpath},
+        environment=environment,
         temporary_parent=context_parent,
         git_executable=git_executable,
         git_exec_path=git_exec_path,
+        allow_ssh_agent=destination.scheme == "ssh",
     ).create(
         repository=repository,
         source_objects=source_objects,
@@ -1086,10 +1150,12 @@ def test_network_context_query_argv_is_exact_and_factory_issued(
 
 def test_network_context_push_argv_is_exact_compare_and_swap(
     tmp_path: Path,
+    isolated_ssh_environment: Mapping[str, str],
 ) -> None:
     context = _issued_network_context(
         tmp_path,
         endpoint="git@example.com:team/notes.git",
+        ssh_environment=isolated_ssh_environment,
     )
     frozen = push_contracts._freeze_push_endpoint(
         "git@example.com:team/notes.git",

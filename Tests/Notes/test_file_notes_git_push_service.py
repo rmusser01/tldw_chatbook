@@ -4692,7 +4692,7 @@ async def test_push_preflight_public_waiter_cancellation_retains_one_cycle_and_c
 
 
 @pytest.mark.asyncio
-async def test_push_review_rebinding_releases_stale_context_and_allows_fresh_start(
+async def test_push_review_rebinding_releases_stale_context_and_refuses_candidate_less_start(
     tmp_path: Path,
 ) -> None:
     owner, binding, repository = _candidate_owner(tmp_path)
@@ -4720,9 +4720,11 @@ async def test_push_review_rebinding_releases_stale_context_and_allows_fresh_sta
     assert list((tmp_path / "network-contexts").iterdir())
 
     rebound = owner.select_root(tmp_path / "other-notes")
-    fresh = await service.start_push_review(rebound)
+    with pytest.raises(git_service.GitMutationAdmissionError) as refused:
+        service.start_push_review(rebound)
 
-    assert fresh.state == "stale"
+    assert refused.value.reason == "stale_binding"
+    assert owner.snapshot(rebound).push_candidate is None
     assert list((tmp_path / "network-contexts").iterdir()) == []
     assert reviewed.handle not in service._push_review_snapshots
     assert not owner._destination_authorization_matches(
@@ -4737,7 +4739,8 @@ async def test_push_review_rebinding_releases_stale_context_and_allows_fresh_sta
         )
         is None
     )
-    assert _cancel_current_push(service, rebound)
+    assert service.retained_push_operation(rebound) is None
+    assert not owner.mutation_active(rebound)
 
 
 @pytest.mark.asyncio
@@ -5038,7 +5041,8 @@ async def test_push_preflight_shutdown_is_bounded_when_tree_remains_unproved(
     await asyncio.wait_for(shutdown, timeout=1)
 
     assert not retained.settled
-    assert owner.mutation_active(binding)
+    assert not owner.mutation_active(binding)
+    assert owner.admit_mutation(binding).reason == "shutdown"
     assert list((tmp_path / "network-contexts").iterdir())
     assert service._unsettled_push_preflight is not None
     assert service._unsettled_push_preflight.retained_child is runner.token
@@ -5055,7 +5059,7 @@ async def test_push_preflight_shutdown_is_bounded_when_tree_remains_unproved(
     assert cycle.done()
     assert waiter.done()
     assert service._push_preflight_cycle is None
-    assert owner.mutation_active(binding)
+    assert not owner.mutation_active(binding)
     assert list((tmp_path / "network-contexts").iterdir())
 
 

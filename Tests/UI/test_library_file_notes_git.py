@@ -2699,12 +2699,13 @@ async def test_row_render_worker_is_registered_lazily(
 async def test_untrusted_shows_only_trust_action_and_checking_keeps_back_enabled() -> None:
     panel = LibraryFileNotesGitPanel()
     async with _PanelHarness(panel).run_test() as pilot:
+        panel.styles.display = "block"
         panel.render_untrusted("/canonical/repository")
         await pilot.pause()
         visible_actions = {
             button.id
             for button in panel.query(Button)
-            if button.display
+            if _is_effectively_displayed(button)
         }
         assert visible_actions == {
             "file-notes-git-back",
@@ -4258,7 +4259,7 @@ async def test_unavailable_discovery_exposes_no_trust_or_mutation_action(
         visible_actions = {
             button.id
             for button in panel.query(Button)
-            if button.display
+            if _is_effectively_displayed(button)
         }
         assert visible_actions == {"file-notes-git-back"}
         assert git_service.status_calls == []
