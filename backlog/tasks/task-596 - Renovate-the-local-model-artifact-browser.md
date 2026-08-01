@@ -1,10 +1,10 @@
 ---
 id: TASK-596
 title: Renovate the local model artifact browser
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-24 01:02'
-updated_date: '2026-07-29 00:30'
+updated_date: '2026-08-01 16:42'
 labels:
   - stt
   - artifacts
@@ -35,3 +35,9 @@ Replace the existing downloader-oriented GGUF browser with a provider-neutral ar
 - [ ] #7 Users can select and persist the active installed artifact revision and precision; unavailable or unverified versions cannot be selected.
 - [ ] #8 The model picker, install confirmation, progress, activation, and installed-state controls are reusable by Settings and onboarding without duplicating artifact or download logic.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Claimed 2026-08-01 (ppqq clone). Design approved section-by-section; spec at Docs/superpowers/specs/2026-08-01-task-596-model-artifact-browser-design.md. Phased: Phase 1 = curated registry + pure view-model + shared widgets + Curated/Installed views + Library modal refactored onto the shared modal (AC 1 partial, 2, 3, 4, 6 local, 7, 8). Phase 2 = Remote search with resolve-on-select. Phase 3 = GGUF import + server path resolution + retire Widgets/HuggingFace. AC 5's idle heavy-worker recycle is DEFERRED: no mechanism exists to ask a worker to unload a resident model; Phase 1 reports lease blockers honestly. Claiming per the TASK-595 duplicate-implementation guard -- check this note and the spec filename before starting parallel work.
+<!-- SECTION:NOTES:END -->
