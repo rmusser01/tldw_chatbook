@@ -24,6 +24,8 @@ import sys
 from io import BytesIO
 
 import pytest
+
+pytest.importorskip("pydub")
 from pydub import AudioSegment
 
 import tldw_chatbook.TTS.audio_stitch as audio_stitch

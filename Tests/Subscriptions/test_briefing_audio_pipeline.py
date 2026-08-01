@@ -33,6 +33,8 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+
+pytest.importorskip("pydub")
 from loguru import logger
 from pydub import AudioSegment
 

@@ -71,6 +71,42 @@ caller of that builder, so it rejects any `provider_id` outside
 `TTS/legacy_bridge.LEGACY_PROVIDER_IDS` -- the same source of truth the
 bridge itself uses to resolve routes -- before ever calling the builder.
 
+**ElevenLabs never produces a WAV container on its own, so this module
+gives it one.** Every legacy request's `response_format` is forced to
+`"wav"` (`briefing_voices._FORCED_RESPONSE_FORMAT`), but
+`TTS/legacy_request_builder._LEGACY_FORMAT_OVERRIDES` -- a table shared
+with other callers, preserved verbatim, not this module's to change --
+unconditionally rewrites elevenlabs's format to `"mp3"` regardless of what
+was requested. Asking elevenlabs for `"wav"` directly would not help
+either: `TTS/backends/elevenlabs.py`'s `_map_output_format` maps `"wav"` to
+the exact same wire format as `"pcm"` -- headerless PCM, not a WAV
+container. Decoding the mp3 elevenlabs actually returns would need pydub's
+ffmpeg-backed path, which this module deliberately avoids for the common
+case (see "pydub stays optional" below). Instead, `_synthesize_legacy_chunk`
+asks elevenlabs for `"pcm"` explicitly -- overriding the shared builder's
+forced `"mp3"` in this module's own request, after the builder returns it,
+never inside the builder itself -- and wraps the headerless samples into a
+WAV container with `_wrap_pcm16_mono_as_wav` (no pydub/ffmpeg involved,
+same header shape as `TTS/audio_service.py`'s `AudioService._pcm_to_wav`).
+The sample rate used for that header is parsed out of
+`_ELEVENLABS_PCM_WIRE_FORMAT_NAME`'s own name rather than a second,
+separately hardcoded number, matching the wire format
+`ElevenLabsTTSBackend._map_output_format`'s fixed `simple_format_map`
+entry for `"pcm"` actually returns.
+
+**A provider/adapter failure is named by speaker and turn, not left raw.**
+`TTSService.synthesize_exact` and `TTSService.generate_audio_stream` are
+the only two calls into code this module does not own; either can raise an
+adapter or network error, or (on the legacy path) a route lookup failure
+such as `TTS.legacy_bridge.UnknownLegacyModelError` for a profile whose
+model id the compatibility bridge does not enumerate. Both call sites wrap
+any `Exception` into a `TurnSynthesisError` naming the speaker and turn
+index, with the original exception preserved as `__cause__` and its text
+capped (`_error_text`, reused from Task 6's row-storage half below).
+`asyncio.CancelledError` is a `BaseException`, not an `Exception` (since
+Python 3.8), so it is never caught by this -- cancellation always
+propagates untouched.
+
 Testing (synthesis half): the only faked seam is the TTS service
 (`synthesize_exact` and `generate_audio_stream`) -- everything else,
 including the real `TTSAudioResponse` and the real
@@ -182,6 +218,72 @@ _CHUNK_MAX_TOKENS = 200
 #: chunks of one long turn. Matches that function's own default explicitly
 #: so a caller reading this module does not need to cross-reference it.
 _CHUNK_GAP_MS = 350
+
+#: The one legacy provider whose shared-builder format override
+#: (`TTS.legacy_request_builder._LEGACY_FORMAT_OVERRIDES`) does not produce
+#: a WAV container. See the module docstring's "ElevenLabs never produces
+#: a WAV container on its own" section.
+_ELEVENLABS_PROVIDER_ID = "elevenlabs"
+
+#: `TTS.backends.elevenlabs.ElevenLabsTTSBackend._map_output_format`'s fixed
+#: `simple_format_map` mapping for a bare `"pcm"` request -- the wire-level
+#: ElevenLabs output format name this module's `"pcm"` override actually
+#: resolves to, headerless 16-bit mono PCM. Named as a constant so the
+#: sample rate below is parsed out of its own name rather than a second,
+#: separately hardcoded number that could quietly drift out of sync with
+#: it.
+_ELEVENLABS_PCM_WIRE_FORMAT_NAME = "pcm_44100"
+
+
+def _elevenlabs_pcm_sample_rate() -> int:
+    """Sample rate ElevenLabs' bare "pcm" wire format actually returns.
+
+    Parsed out of `_ELEVENLABS_PCM_WIRE_FORMAT_NAME`'s own name
+    (`"pcm_44100"` -> `44100`) rather than a second, separately hardcoded
+    number, so the two can never quietly drift apart.
+
+    Returns:
+        The sample rate, in Hz, encoded in
+        `_ELEVENLABS_PCM_WIRE_FORMAT_NAME`'s name.
+    """
+    _, _, rate = _ELEVENLABS_PCM_WIRE_FORMAT_NAME.partition("_")
+    return int(rate)
+
+
+def _wrap_pcm16_mono_as_wav(pcm_data: bytes, sample_rate: int) -> bytes:
+    """Wrap headerless 16-bit mono PCM samples in a minimal WAV container.
+
+    No `pydub`/ffmpeg involved: byte-for-byte the same header shape as
+    `TTS/audio_service.py`'s `AudioService._pcm_to_wav`, reproduced here
+    rather than instantiating an `AudioService` for one private method.
+
+    Args:
+        pcm_data: Headerless 16-bit little-endian mono PCM samples.
+        sample_rate: The sample rate the samples were generated at.
+
+    Returns:
+        `pcm_data` prefixed with a RIFF/WAVE header describing it.
+    """
+    channels = 1
+    bits_per_sample = 16
+    byte_rate = sample_rate * channels * bits_per_sample // 8
+    block_align = channels * bits_per_sample // 8
+
+    header = bytearray()
+    header.extend(b"RIFF")
+    header.extend((36 + len(pcm_data)).to_bytes(4, "little"))
+    header.extend(b"WAVE")
+    header.extend(b"fmt ")
+    header.extend((16).to_bytes(4, "little"))
+    header.extend((1).to_bytes(2, "little"))
+    header.extend(channels.to_bytes(2, "little"))
+    header.extend(sample_rate.to_bytes(4, "little"))
+    header.extend(byte_rate.to_bytes(4, "little"))
+    header.extend(block_align.to_bytes(2, "little"))
+    header.extend(bits_per_sample.to_bytes(2, "little"))
+    header.extend(b"data")
+    header.extend(len(pcm_data).to_bytes(4, "little"))
+    return bytes(header) + pcm_data
 
 
 class TurnSynthesisError(RuntimeError):
@@ -382,7 +484,9 @@ async def _synthesize_exact_chunk(
 
     Raises:
         TurnSynthesisError: If the provider's returned provenance snapshot
-            disagrees with what was requested.
+            disagrees with what was requested, or if `synthesize_exact`
+            itself raises (an adapter/network error, wrapped naming the
+            speaker and turn, with the original preserved as `__cause__`).
     """
     request = TTSRequest(
         provider_id=selection.provider_id,
@@ -393,7 +497,15 @@ async def _synthesize_exact_chunk(
         speed=selection.speed,
         options=selection.options,
     )
-    response, snapshot = await tts_service.synthesize_exact(request)
+    try:
+        response, snapshot = await tts_service.synthesize_exact(request)
+    except Exception as exc:  # noqa: BLE001 - every provider failure is named by turn
+        # `asyncio.CancelledError` is a `BaseException`, not an `Exception`
+        # (since Python 3.8), so cancellation is never caught here.
+        raise TurnSynthesisError(
+            f"speaker {selection.speaker!r} turn {turn_index}: TTS provider "
+            f"call failed ({_error_text(exc)})"
+        ) from exc
 
     primary_error: BaseException | None = None
     try:
@@ -453,8 +565,11 @@ async def _synthesize_legacy_chunk(
         TurnSynthesisError: If `selection.provider_id` is not a known legacy
             provider (see `TTS.legacy_bridge.LEGACY_PROVIDER_IDS`); if
             `selection.voice_id` is empty (legacy providers cannot resolve a
-            server-default voice); if the provider returned no audio; or if
-            the joined bytes do not decode as WAV.
+            server-default voice); if the provider/adapter call itself
+            raises (wrapped naming the speaker and turn, with the original
+            preserved as `__cause__` -- see the module docstring); if the
+            provider returned no audio; or if the resulting payload does
+            not decode as WAV.
     """
     if selection.provider_id not in LEGACY_PROVIDER_IDS:
         raise TurnSynthesisError(
@@ -475,14 +590,33 @@ async def _synthesize_legacy_chunk(
         response_format=selection.response_format,
         speed=selection.speed,
     )
-    stream = tts_service.generate_audio_stream(request, internal_model_id)
-    payload = b"".join([piece async for piece in stream if piece])
+    if selection.provider_id == _ELEVENLABS_PROVIDER_ID:
+        # The shared builder's format-override table forces elevenlabs to
+        # "mp3" regardless of what was requested (preserved verbatim here --
+        # see the module docstring's "ElevenLabs never produces a WAV
+        # container on its own" section). Ask for "pcm" instead so the
+        # payload below can be wrapped into a WAV container without pydub
+        # or ffmpeg.
+        request = request.model_copy(update={"response_format": "pcm"})
+
+    try:
+        stream = tts_service.generate_audio_stream(request, internal_model_id)
+        payload = b"".join([piece async for piece in stream if piece])
+    except Exception as exc:  # noqa: BLE001 - every provider failure is named by turn
+        # `asyncio.CancelledError` is a `BaseException`, not an `Exception`
+        # (since Python 3.8), so cancellation is never caught here.
+        raise TurnSynthesisError(
+            f"speaker {selection.speaker!r} turn {turn_index}: TTS provider "
+            f"call failed ({_error_text(exc)})"
+        ) from exc
 
     if not payload:
         raise TurnSynthesisError(
             f"speaker {selection.speaker!r} turn {turn_index}: TTS provider "
             "returned no audio"
         )
+    if selection.provider_id == _ELEVENLABS_PROVIDER_ID:
+        payload = _wrap_pcm16_mono_as_wav(payload, _elevenlabs_pcm_sample_rate())
     if not _looks_like_wav(payload):
         raise TurnSynthesisError(
             f"speaker {selection.speaker!r} turn {turn_index}: TTS provider "

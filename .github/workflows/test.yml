@@ -59,7 +59,7 @@ jobs:
         pip install -r requirements.txt
         pip install -r requirements-test.txt
         pip install pytest-json-report
-        pip install -e ".[embeddings_rag,websearch,chunker]"
+        pip install -e ".[embeddings_rag,websearch,chunker,audio]"
 
     - name: Setup test environment
       run: |
@@ -240,7 +240,7 @@ jobs:
         pip install -r requirements.txt
         pip install -r requirements-test.txt
         pip install pytest-json-report pytest-cov
-        pip install -e ".[embeddings_rag,websearch,chunker]"
+        pip install -e ".[embeddings_rag,websearch,chunker,audio]"
     
     - name: Setup test environment
       run: |
@@ -318,7 +318,7 @@ jobs:
         pip install -r requirements.txt
         pip install -r requirements-test.txt
         pip install pytest-json-report pytest-cov
-        pip install -e ".[embeddings_rag,websearch,chunker]"
+        pip install -e ".[embeddings_rag,websearch,chunker,audio]"
 
     - name: Setup test environment
       run: |
