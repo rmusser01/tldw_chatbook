@@ -165,3 +165,31 @@ Cheap guards:
 - **Check sibling clones and their `.worktrees/`** before starting: the
   duplicate here was invisible to searches scoped to one checkout — a
   repo-wide `find / -name "*<task-id>*"` would have caught it on day one.
+
+## Outcome — branch B re-inspected after the ports landed
+
+All four ports are merged: TASK-1694 and TASK-1695 in PR #1165, TASK-1696 in
+PR #1167, TASK-1697 closed during #1165's fix wave.
+
+B kept building for roughly six hours *after* this document was written,
+finishing its own `downloads.py` (2,273 lines), a 3,337-line test file, and —
+between 03:28 and 05:11 on 2026-08-01 — the same Parakeet adapter, Library
+wiring, and Console resolver that TASK-1696 was porting at the same time. The
+collision recurred because nothing in the shared repo ever told B to stop:
+writing the decision down is not the same as making it visible where the other
+agent looks. B's last activity was an uncommitted formatting/typing pass at
+05:26; its branch was never pushed and has no PR.
+
+Re-reading B against merged `dev` at that final state, its remaining unique
+value is two egress changes, both now filed:
+
+- **TASK-1722** (high) — `_log_origin()`: `egress._blocked()` logs the full URL,
+  so a query-string token in a presigned source-map URL lands in the log file.
+  Affects every egress caller, not just downloads. B has the fix and the test.
+- **TASK-1723** (low) — `trusted_private_origins`: exact scheme/host/port trust
+  enforced per redirect hop. Our `trusted_origins` is hostname-only and
+  fixture-only today; adopt when a real private or LAN source lands.
+
+Everything else in B is superseded: its `downloads.py` is the synchronous-egress
+alternative to a merged, tested `fetch.py`, and its STT layer duplicates
+TASK-1696. **Retire the branch** — nothing further to port.
