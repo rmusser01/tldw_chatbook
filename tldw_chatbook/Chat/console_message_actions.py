@@ -9,6 +9,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 
 
 ConsoleActionStatus = Literal[
@@ -121,6 +122,7 @@ class ConsoleMessageActionService:
         generation_browsed_index: int = 0,
         speaking_message_id: str | None = None,
         original_attempt_available: bool = False,
+        ephemeral: bool = False,
     ) -> list[ConsoleMessageAction]:
         """Return canonical selected-message actions for a transcript message.
 
@@ -146,6 +148,9 @@ class ConsoleMessageActionService:
             original_attempt_available: Whether this completed assistant has
                 a current-session original-attempt preview. Defaults to false;
                 plain/export helpers intentionally never pass it.
+            ephemeral: Whether the active session is temporary, which blocks
+                the row actions that would write a derived artifact to disk
+                (currently just Save Image).
         """
         disabled_reason = self._disabled_reason(message)
         is_generation_message = generation_variant_count > 0
@@ -209,6 +214,7 @@ class ConsoleMessageActionService:
                     message,
                     generation_variant_count=generation_variant_count,
                     generation_browsed_index=generation_browsed_index,
+                    ephemeral=ephemeral,
                 ),
                 disabled_reason=disabled_reason
                 or self._action_disabled_reason(
@@ -216,6 +222,7 @@ class ConsoleMessageActionService:
                     message,
                     generation_variant_count=generation_variant_count,
                     generation_browsed_index=generation_browsed_index,
+                    ephemeral=ephemeral,
                 ),
             )
             for action_id, label in completed_actions
@@ -430,9 +437,12 @@ class ConsoleMessageActionService:
         *,
         generation_variant_count: int = 0,
         generation_browsed_index: int = 0,
+        ephemeral: bool = False,
     ) -> bool:
         if action_id == "regenerate":
             return ConsoleMessageActionService._is_assistant_message(message)
+        if action_id == "save-image":
+            return blocked_reason("save-image", ephemeral=ephemeral) is None
         return ConsoleMessageActionService._variant_action_enabled(
             action_id,
             message,
@@ -447,12 +457,15 @@ class ConsoleMessageActionService:
         *,
         generation_variant_count: int = 0,
         generation_browsed_index: int = 0,
+        ephemeral: bool = False,
     ) -> str:
         if (
             action_id == "regenerate"
             and not ConsoleMessageActionService._is_assistant_message(message)
         ):
             return "Only assistant messages can be regenerated."
+        if action_id == "save-image":
+            return blocked_reason("save-image", ephemeral=ephemeral) or ""
         if action_id in {
             "variant-previous",
             "variant-next",

@@ -829,3 +829,33 @@ def test_original_attempt_dispatch_returns_only_safe_target():
     assert result.target_content is None
     assert result.clipboard_text is None
     assert message.content not in result.visible_copy
+
+
+def test_save_image_is_disabled_with_a_reason_in_a_temporary_chat():
+    """The message-action row's Save Image writes a file -- blocked when
+    temporary, and still enabled otherwise (the control)."""
+    from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="a picture",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+
+    blocked_actions = {
+        action.action_id: action
+        for action in ConsoleMessageActionService().available_actions(
+            message, ephemeral=True
+        )
+    }
+    save_image = blocked_actions["save-image"]
+    assert save_image.enabled is False
+    assert save_image.disabled_reason == blocked_reason("save-image", ephemeral=True)
+
+    normal_actions = {
+        action.action_id: action
+        for action in ConsoleMessageActionService().available_actions(message)
+    }
+    assert normal_actions["save-image"].enabled is True
+    assert normal_actions["save-image"].disabled_reason == ""

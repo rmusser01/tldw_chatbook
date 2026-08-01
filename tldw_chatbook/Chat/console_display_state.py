@@ -7,6 +7,7 @@ from html import escape as html_escape
 from typing import Any, Mapping, Optional
 
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
+from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
 
@@ -629,8 +630,13 @@ class ConsoleInspectorState:
         can_save_chatbook: bool = False,
         scope_item_count: int | None = None,
         run_active: bool = False,
+        ephemeral: bool = False,
     ) -> "ConsoleInspectorState":
         provider_status = "ready" if provider_ready else "blocked"
+        # F2 (task-9 review): the inspector's Save Chatbook action is a
+        # second door onto the same write the Console workbench action
+        # already gates -- consult the same registry entry.
+        chatbook_blocked = blocked_reason("save-chatbook", ephemeral=ephemeral)
         normalized_tool_count = coerce_non_negative_int(tool_count)
         normalized_approval_count = coerce_non_negative_int(approval_count)
         rag_value = _clean(rag_status, "not staged")
@@ -714,8 +720,10 @@ class ConsoleInspectorState:
             ConsoleInspectorAction(
                 widget_id=CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
                 label=CONSOLE_INSPECTOR_SAVE_CHATBOOK_LABEL,
-                enabled=can_save_chatbook,
-                disabled_reason=CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON,
+                enabled=can_save_chatbook and chatbook_blocked is None,
+                disabled_reason=(
+                    chatbook_blocked or CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON
+                ),
             ),
         ]
         return cls(

@@ -4507,6 +4507,113 @@ def test_console_save_as_destinations_gate_on_runtime_services_and_role():
     assert all("WIP" not in reason for reason in reasons.values())
 
 
+def test_console_save_as_destinations_are_blocked_in_a_temporary_chat():
+    """A temporary chat blocks every Save as... destination, regardless of
+    service readiness -- the write itself is the problem, not the wiring.
+
+    The control: the same screen with the same services wired, but a
+    non-ephemeral session, returns the pre-existing availability.
+    """
+    from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    _install_console_save_service_fakes(app)
+    assistant = SimpleNamespace(role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    screen._console_active_session_is_ephemeral = lambda: True
+    blocked = screen._console_save_as_destinations(assistant)
+    assert all(d.available is False for d in blocked)
+    reasons = {d.label: d.reason for d in blocked}
+    assert reasons["Note"] == blocked_reason("save-as-note", ephemeral=True)
+    assert reasons["Media"] == blocked_reason("save-as-media", ephemeral=True)
+    assert reasons["Prompt"] == blocked_reason("save-as-prompt", ephemeral=True)
+    assert reasons["Chatbook"] == blocked_reason("save-as-chatbook", ephemeral=True)
+
+    screen._console_active_session_is_ephemeral = lambda: False
+    wired = screen._console_save_as_destinations(assistant)
+    assert [d.label for d in wired] == ["Chatbook", "Note", "Media", "Prompt"]
+    assert all(d.available for d in wired)
+
+
+def test_console_save_as_destinations_never_show_a_literal_none_reason():
+    """F4 (task-9 review): `blocked_reason` returns `str | None`, but the
+    reasons dict is typed `dict[str, str]` -- a future registry-key drift
+    (a "save-as-<label>" id renamed/removed) must fall back to a real
+    sentence, not silently surface the literal string "None"."""
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    _install_console_save_service_fakes(app)
+    assistant = SimpleNamespace(role=ConsoleMessageRole.ASSISTANT, content="answer")
+    screen._console_active_session_is_ephemeral = lambda: True
+
+    with patch.object(chat_screen_module, "blocked_reason", lambda *a, **k: None):
+        destinations = screen._console_save_as_destinations(assistant)
+
+    reasons = {d.label: d.reason for d in destinations}
+    assert all(reason == "Not available in a temporary chat." for reason in reasons.values())
+    assert all("None" not in reason for reason in reasons.values())
+
+
+def test_console_save_as_labels_are_all_registered_in_the_ephemeral_gate():
+    """F3 (final-review): a genuinely enumerative check on the registry.
+
+    The three tests in ``Tests/Chat/test_console_ephemeral.py`` that touch
+    ``EPHEMERAL_BLOCKED_ACTIONS`` all iterate the registry's OWN keys, so
+    none of them can detect an artifact-producing action missing FROM the
+    registry -- exactly the failure mode the module docstring claims they
+    guard against. This test derives its expected action ids from the REAL
+    runtime call site instead: ``_console_save_as_destinations`` builds
+    each save-as action id as ``f"save-as-{label.lower()}"`` from its own
+    ``("Chatbook", "Note", "Media", "Prompt")`` label list (the one
+    dynamically-constructed id family in the whole registry, and the one
+    the F4/task-9 review comment right above that call site already flags
+    as the most likely to drift). A spy on ``blocked_reason`` records every
+    action id that call path actually asks the registry about; if a future
+    label is added there without a matching registry row, this fails on
+    that id specifically -- unlike the own-keys tests, which would stay
+    green.
+    """
+    from tldw_chatbook.Chat.console_ephemeral import (
+        EPHEMERAL_BLOCKED_ACTIONS,
+        blocked_reason as real_blocked_reason,
+    )
+
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    _install_console_save_service_fakes(app)
+    assistant = SimpleNamespace(role=ConsoleMessageRole.ASSISTANT, content="answer")
+    screen._console_active_session_is_ephemeral = lambda: True
+
+    requested_action_ids: list[str] = []
+
+    def spy(action_id, *, ephemeral):
+        requested_action_ids.append(action_id)
+        return real_blocked_reason(action_id, ephemeral=ephemeral)
+
+    with patch.object(chat_screen_module, "blocked_reason", spy):
+        destinations = screen._console_save_as_destinations(assistant)
+
+    assert requested_action_ids, (
+        "the ephemeral Save-as path never asked the registry anything -- "
+        "this test would not catch a missing entry"
+    )
+    for action_id in requested_action_ids:
+        assert action_id in EPHEMERAL_BLOCKED_ACTIONS, (
+            f"{action_id!r} is exercised by the real Save-as destinations "
+            "path but has no entry in EPHEMERAL_BLOCKED_ACTIONS -- it would "
+            "silently fall back to the generic 'Not available in a "
+            "temporary chat.' sentence instead of naming the artifact it "
+            "writes"
+        )
+    # The real per-artifact sentences came back, never the generic
+    # fallback that masks exactly this kind of registry gap (see
+    # test_console_save_as_destinations_never_show_a_literal_none_reason
+    # above for the fallback's own contract).
+    reasons = {d.label: d.reason for d in destinations}
+    assert "Not available in a temporary chat." not in reasons.values()
+
+
 @pytest.mark.asyncio
 async def test_console_selected_message_save_as_note_creates_note_from_message():
     app = _build_test_app()
@@ -9062,9 +9169,15 @@ async def test_attachment_indicator_visibility_follows_label():
 
 
 @pytest.mark.asyncio
-async def test_staged_attach_button_keeps_verb_and_count_accurate_tooltips():
-    """TASK-380: staging must not morph Attach into a status glyph -- the button
-    keeps the action verb and the tooltips reflect the real staged count."""
+async def test_staged_attachment_count_stays_visible_after_attach_moved_to_the_menu():
+    """TASK-380's guarantee, re-homed: the staged count stays legible.
+
+    The original test pinned it on the Attach button's own label/tooltip
+    ("Attach +", "2 of 5"). Attach now lives in the composer's ☰ menu, so
+    the count reads off the indicator beside the row -- which is where a
+    user looks for it anyway -- and off the ✕ control that acts on it.
+    TASK-380's actual defect (staging morphing a CONTROL into an "attached
+    OK" status glyph) cannot recur for a control that is no longer there."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -9072,21 +9185,20 @@ async def test_staged_attach_button_keeps_verb_and_count_accurate_tooltips():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        attach_button = console.query_one("#console-attach-context", Button)
+        assert not console.query("#console-attach-context")
         clear_button = console.query_one("#console-clear-attachment", Button)
+        indicator = console.query_one("#console-attachment-indicator", Static)
 
         composer.set_pending_attachment_label("2 files", count=2, total=5)
         await pilot.pause()
-        # Verb kept, not the "attached OK" status glyph.
-        assert "Attach" in str(attach_button.label)
-        assert "✓" not in str(attach_button.label)
-        # Count-accurate tooltips.
-        assert "2 of 5" in str(attach_button.tooltip)
+        # The count is on the indicator, and the control that acts on it.
+        assert "2 files" in str(indicator.renderable)
+        assert clear_button.styles.display == "block"
         assert "2 attachments" in str(clear_button.tooltip)
 
         composer.set_pending_attachment_label("photo.png · 240 B", count=1, total=5)
         await pilot.pause()
-        assert "Attach" in str(attach_button.label)
+        assert "photo.png" in str(indicator.renderable)
         assert str(clear_button.tooltip) == "Clear the attachment."
 
 
@@ -9456,6 +9568,83 @@ async def test_save_console_message_image_disambiguates_filename_collision(
         assert len(saved) == 2
         assert saved[0].name != saved[1].name
         assert all(path.read_bytes() == b"\x89PNG-bytes" for path in saved)
+
+
+@pytest.mark.asyncio
+async def test_save_image_button_reflects_the_real_screen_ephemeral_accessor():
+    """F6 (task-9 review): pins the *name* ``ConsoleTranscript.
+    _console_ephemeral_active()`` reads off the owning screen.
+
+    That reader is ``getattr(screen, "_console_active_session_is_ephemeral",
+    None)``, falling back to ``False`` -- the UNSAFE direction, since it
+    fails toward writing rather than toward blocking -- when the name is
+    missing. A pure ``ConsoleMessageActionService`` test can never catch a
+    rename in ``ChatScreen`` because it never calls the reader at all; it
+    builds the ``ephemeral`` flag by hand. This mounts the REAL
+    ``ChatScreen`` and the REAL ``ConsoleTranscript`` together so a future
+    rename of ``_console_active_session_is_ephemeral`` breaks this test
+    instead of silently un-blocking Save Image.
+    """
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+    async def _save_image_button_disabled_state(*, ephemeral: bool) -> tuple[bool, str]:
+        """Mount a fresh Console, add one image message to a session with
+        the given ephemeral flag, select it, and return the real (mounted)
+        Save Image button's ``(disabled, tooltip)``. A fresh mount per case
+        avoids scrolling a second message into view in the same transcript."""
+        app = _build_test_app()
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(160, 48)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-transcript")
+            store = console._ensure_console_chat_store()
+
+            session = store.create_session(title="S", ephemeral=ephemeral)
+            store.switch_session(session.id)
+            buffer = BytesIO()
+            PILImage.new("RGB", (4, 4), (200, 10, 10)).save(buffer, format="PNG")
+            message = store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="a picture",
+                image_data=buffer.getvalue(),
+                image_mime_type="image/png",
+            )
+            await console._sync_native_console_chat_ui()
+            # Image prep runs in a worker; wait for the image row before
+            # selecting the message, mirroring the other image-bearing
+            # tests in this file (e.g. the terminal-image-rendering test
+            # above).
+            for _ in range(80):
+                if console.query(f"#console-image-{message.id}"):
+                    break
+                await pilot.pause(0.05)
+            assert console.query(
+                f"#console-image-{message.id}"
+            ), "image row never appeared"
+            message_widget = console.query_one(f"#console-message-{message.id}")
+            message_widget.scroll_visible(animate=False)
+            await pilot.pause(0.2)
+            await pilot.click(f"#console-message-{message.id}")
+            save_selector = f"console-message-action-save-image-{message.id}"
+            await _wait_for_selector(console, pilot, f"#{save_selector}")
+
+            save_button = console.query_one(f"#{save_selector}", Button)
+            return save_button.disabled, save_button.tooltip
+
+    disabled, tooltip = await _save_image_button_disabled_state(ephemeral=True)
+    assert disabled is True
+    assert tooltip == blocked_reason("save-image", ephemeral=True)
+
+    # Control: a normal (non-ephemeral) session's Save Image stays enabled.
+    normal_disabled, _normal_tooltip = await _save_image_button_disabled_state(
+        ephemeral=False
+    )
+    assert normal_disabled is False
 
 
 def test_rehydrate_console_message_image_refetches_bytes_from_db():
@@ -10297,3 +10486,67 @@ def test_console_message_serialization_round_trips_multi_attachment_labels():
     assert len(restored.attachments) == 2
     assert [a.display_name for a in restored.attachments] == ["a.png", "b.png"]
     assert all(a.data is None for a in restored.attachments)
+
+
+def test_console_screen_state_round_trips_the_temporary_flag():
+    """A temporary chat must not become a persisting one by navigating away.
+
+    `_serialize_native_console_state` writes an explicit field list; a field
+    missing from it is silently dropped on restore. For `ephemeral` that
+    drop is not cosmetic -- the next send would write the chat to the
+    database.
+    """
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = ChatScreen.__new__(ChatScreen)
+
+    # A REAL round trip: the serializer's own output feeds the restorer.
+    # Asserting on a hand-built dict would test neither half.
+    temporary = ConsoleChatSession(title="Temporary chat", ephemeral=True)
+    payload = screen._console_session_to_state(temporary)
+    assert payload["ephemeral"] is True
+    assert screen._console_session_from_state(payload).ephemeral is True
+
+    normal = ConsoleChatSession(title="Normal chat")
+    assert screen._console_session_from_state(
+        screen._console_session_to_state(normal)
+    ).ephemeral is False
+
+    # Legacy payloads predate the key entirely.
+    assert screen._console_session_from_state(
+        {"id": normal.id, "title": normal.title}
+    ).ephemeral is False, "a payload with no key must default to saved"
+
+
+def test_temporary_tab_marker_is_presentation_only():
+    """The marker must never enter session.title.
+
+    Promotion saves `session.title` verbatim, so a marker written into the
+    title would produce a saved conversation literally named after it -- and
+    renaming would then fight the marker on every render.
+    """
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+    from tldw_chatbook.Chat.console_glyphs import GLYPH_TEMPORARY
+    from tldw_chatbook.Widgets.Console.console_session_surface import (
+        CONSOLE_SESSION_TAB_DISPLAY_CHARS,
+        ConsoleSessionSurface,
+        _session_tab_tooltip,
+    )
+
+    session = ConsoleChatSession(title="Vector store notes", ephemeral=True)
+    label = ConsoleSessionSurface._tab_label(session.title, ephemeral=True)
+
+    assert label.startswith(GLYPH_TEMPORARY)
+    assert "Vector store" in label
+    assert len(label) <= CONSOLE_SESSION_TAB_DISPLAY_CHARS + 2  # glyph + space
+    assert GLYPH_TEMPORARY not in session.title
+
+    plain = ConsoleSessionSurface._tab_label(session.title, ephemeral=False)
+    assert GLYPH_TEMPORARY not in plain
+
+    tooltip = _session_tab_tooltip(session, active=False)
+    assert "not saved" in tooltip.lower()
+    assert "not saved" not in _session_tab_tooltip(
+        ConsoleChatSession(title="Normal"), active=False
+    ).lower()

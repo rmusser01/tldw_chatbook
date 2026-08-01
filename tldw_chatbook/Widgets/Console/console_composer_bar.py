@@ -143,6 +143,17 @@ class _DraftLineSlice:
     synthetic_prefix_columns: int = 0
 
 
+#: Fixed cell width of the composer action row at rest: ☰(4) + Send(8) +
+#: Stop(8) + Mic(8). Stop is display-toggled rather than removed, so it is
+#: budgeted even while hidden. Attach(10) and Save(8) used to sit here too --
+#: they moved into the ☰ menu because this row is width-bounded and every
+#: always-present button is space the draft never gets back.
+BASE_ACTIONS_WIDTH = 28
+
+#: Width while an attachment is staged, adding the ✕ clear control (4).
+ATTACHMENT_ACTIONS_WIDTH = BASE_ACTIONS_WIDTH + 4
+
+
 class ConsoleComposerBar(Horizontal):
     """Expose Console-owned composer actions while reusing active chat sessions."""
 
@@ -259,6 +270,7 @@ class ConsoleComposerBar(Horizontal):
         self._send_blocked = False
         self._setup_blocked_reason = ""
         self._can_save_chatbook = False
+        self._ephemeral = False
         self._dictation_state: _DictationState = "idle"
         #: Whether the last availability probe found both a capture backend
         #: and a transcription provider installed. Only consulted while
@@ -321,6 +333,23 @@ class ConsoleComposerBar(Horizontal):
         button.styles.height = 1
         button.styles.min_height = 1
         return button
+
+    @staticmethod
+    def _set_actions_row_width(actions: Horizontal, width: int) -> None:
+        """Pin the action row to an exact cell width.
+
+        The row is deliberately fixed rather than ``auto``: every cell it
+        claims is a cell the draft does not get, so the budget is stated
+        once here and in the two module constants rather than being an
+        emergent property of whichever buttons happen to be visible.
+
+        Args:
+            actions: The ``#console-composer-actions`` row.
+            width: Exact width in cells.
+        """
+        actions.styles.width = width
+        actions.styles.min_width = width
+        actions.styles.max_width = width
 
     def draft_text(self) -> str:
         """Return the canonical native Console draft payload.
@@ -512,6 +541,7 @@ class ConsoleComposerBar(Horizontal):
             can_save_chatbook=self._can_save_chatbook,
             send_blocked=self._send_blocked,
             setup_blocked_reason=self._setup_blocked_reason,
+            ephemeral=self._ephemeral,
         )
 
     def sync_action_state(
@@ -522,6 +552,7 @@ class ConsoleComposerBar(Horizontal):
         can_save_chatbook: bool,
         send_blocked: bool = False,
         setup_blocked_reason: str = "",
+        ephemeral: bool = False,
     ) -> None:
         """Refresh composer action priority and disabled state.
 
@@ -531,24 +562,27 @@ class ConsoleComposerBar(Horizontal):
             can_save_chatbook: Whether a Chatbook artifact is available to save.
             send_blocked: Whether the current run state blocks new sends.
             setup_blocked_reason: Provider/model setup copy when setup blocks Send.
+            ephemeral: Whether the active session is temporary, which blocks
+                Save Chatbook (a second door onto the same write the
+                workbench's Save Chatbook action already gates).
         """
         has_draft = bool(has_draft)
         run_active = bool(run_active)
         can_save_chatbook = bool(can_save_chatbook)
         send_blocked = bool(send_blocked)
         setup_blocked_reason = setup_blocked_reason.strip()
+        ephemeral = bool(ephemeral)
         setup_reason_changed = self._setup_blocked_reason != setup_blocked_reason
         self._run_active = run_active
         self._send_blocked = send_blocked
         self._setup_blocked_reason = setup_blocked_reason
         self._can_save_chatbook = can_save_chatbook
+        self._ephemeral = ephemeral
         self._sync_collapsed_presentation()
 
         try:
             send_button = self.query_one("#console-send-message", Button)
             stop_button = self.query_one("#console-stop-generation", Button)
-            attach_button = self.query_one("#console-attach-context", Button)
-            save_button = self.query_one("#console-save-chatbook", Button)
         except NoMatches:
             return
 
@@ -595,27 +629,13 @@ class ConsoleComposerBar(Horizontal):
         stop_button.set_class(not run_active, "console-action-disabled")
         stop_button.styles.display = "block" if run_active else "none"
 
-        attach_button.disabled = False
-        attach_button.variant = "default"
-        attach_button.tooltip = (
-            "Attach files or context through the active Console session."
-        )
-        attach_button.set_class(True, "console-action-secondary")
-        attach_button.set_class(False, "console-action-disabled")
-        attach_button.set_class(False, "console-action-subdued")
-
-        save_button.disabled = False
-        save_button.variant = "default"
-        save_button.tooltip = (
-            "Open the available Chatbook artifact in Artifacts."
-            if can_save_chatbook
-            else "No Chatbook artifact is available to save yet."
-        )
-        save_button.set_class(True, "console-action-secondary")
-        save_button.set_class(True, "console-save-chatbook-secondary")
-        save_button.set_class(can_save_chatbook, "console-save-chatbook-ready")
-        save_button.set_class(not can_save_chatbook, "console-action-subdued")
-        save_button.set_class(not can_save_chatbook, "console-action-disabled")
+        # Attach and Save Chatbook no longer live in this row -- their
+        # enabled/disabled presentation (including the temporary-chat block
+        # on Save) is now decided in `build_composer_menu_entries`, which
+        # reads the same `can_save_chatbook` and `ephemeral` inputs stashed
+        # on this widget above and consults the same `blocked_reason`
+        # registry. One contract, one place, rendered as a menu row instead
+        # of a button.
 
         if setup_reason_changed and not self.draft_text().strip():
             self._refresh_visible_draft()
@@ -3016,29 +3036,22 @@ class ConsoleComposerBar(Horizontal):
         try:
             indicator = self.query_one("#console-attachment-indicator", Static)
             clear_button = self.query_one("#console-clear-attachment", Button)
-            attach_button = self.query_one("#console-attach-context", Button)
             actions = self.query_one("#console-composer-actions", Horizontal)
         except NoMatches:
             return
+        # The Attach button moved into the ☰ menu, so the count-aware
+        # "Attach +" relabel it used to carry moved with it -- the staged
+        # count now reads off the indicator beside this row, which is where
+        # a user looks for it anyway. ✕ stays: it is the only control that
+        # is meaningless until something is staged, so it costs nothing at
+        # rest and burying it would hide the way to undo a visible thing.
         if normalized:
             indicator.update(escape(f"📎 {normalized}"))
             indicator.styles.display = "block"
             indicator.styles.width = "auto"
             indicator.styles.max_width = 28
             clear_button.styles.display = "block"
-            actions.styles.width = 55
-            actions.styles.min_width = 55
-            actions.styles.max_width = 55
-            # TASK-380: keep the action verb (the old "📎✓" read as a status,
-            # "attached OK", not a control), and make the tooltips count-accurate
-            # now that staging appends up to `total` files (task-217).
-            attach_button.label = "Attach +"
-            if count and total:
-                attach_button.tooltip = (
-                    f"Attach another file ({count} of {total} staged)."
-                )
-            else:
-                attach_button.tooltip = "Attach another file."
+            self._set_actions_row_width(actions, ATTACHMENT_ACTIONS_WIDTH)
             if count > 1:
                 clear_button.tooltip = f"Clear all {count} attachments."
             else:
@@ -3048,13 +3061,7 @@ class ConsoleComposerBar(Horizontal):
             indicator.styles.display = "none"
             indicator.styles.width = 0
             clear_button.styles.display = "none"
-            actions.styles.width = 50
-            actions.styles.min_width = 50
-            actions.styles.max_width = 50
-            attach_button.label = "Attach"
-            attach_button.tooltip = (
-                "Attach files or context through the active Console session."
-            )
+            self._set_actions_row_width(actions, BASE_ACTIONS_WIDTH)
 
     def set_voice_status(
         self,
@@ -3266,9 +3273,7 @@ class ConsoleComposerBar(Horizontal):
             actions = Horizontal(
                 id="console-composer-actions", classes="console-composer-actions"
             )
-            actions.styles.width = 50
-            actions.styles.min_width = 50
-            actions.styles.max_width = 50
+            self._set_actions_row_width(actions, BASE_ACTIONS_WIDTH)
             actions.styles.height = 1
             actions.styles.min_height = 1
             actions.styles.max_height = 1
@@ -3311,13 +3316,12 @@ class ConsoleComposerBar(Horizontal):
                     classes="destination-action-button console-dictation-button",
                     tooltip=self.DICTATION_IDLE_TOOLTIP,
                 )
-                yield self._bounded_button(
-                    "Attach",
-                    width=10,
-                    id="console-attach-context",
-                    classes="destination-action-button console-attach-button",
-                    tooltip="Attach files or context through the active Console session.",
-                )
+                # Attach and Save Chatbook moved into the ☰ menu: this row
+                # is width-bounded, so every always-present button here is
+                # space the draft never gets back. What remains is Send,
+                # Mic, and the two CONDITIONAL controls below (Stop while a
+                # run is active, ✕ while an attachment is staged) -- those
+                # cost nothing at rest and are time-critical when shown.
                 clear_attachment = self._bounded_button(
                     "✕",
                     width=4,
@@ -3329,13 +3333,6 @@ class ConsoleComposerBar(Horizontal):
                 )
                 clear_attachment.styles.display = "none"
                 yield clear_attachment
-                yield self._bounded_button(
-                    "Save",
-                    width=8,
-                    id="console-save-chatbook",
-                    classes=("destination-action-button console-save-chatbook-button"),
-                    tooltip="Open the available Chatbook artifact in Artifacts.",
-                )
 
         collapsed = Horizontal(
             id="console-composer-collapsed",

@@ -20,3 +20,9 @@ GLYPH_COLLAPSE_RIGHT = "▸"
 #: ConsoleScopePickerModal's checkbox rows (rag-scope-narrowing spec §4).
 GLYPH_SOURCE_MEDIA = "▦"
 GLYPH_SOURCE_NOTE = "✎"
+
+#: Temporary (never-saved) Console session tab marker. A dotted ring reads as
+#: "outline of a thing, not the thing" -- deliberately unlike the solid run
+#: markers above, which mean a run is happening. Decoded in the tab tooltip;
+#: the 19-cell tab label has no room for a word.
+GLYPH_TEMPORARY = "◌"

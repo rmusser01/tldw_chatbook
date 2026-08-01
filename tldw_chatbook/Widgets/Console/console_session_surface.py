@@ -19,7 +19,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunMarker,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
-from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE
+from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE, GLYPH_TEMPORARY
 from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
@@ -78,6 +78,10 @@ def _session_tab_tooltip(
         text = f"Active Console tab: {session.title}{tail} Click again to rename."
     else:
         text = f"Switch to Console tab: {session.title}{tail}"
+    if session.ephemeral:
+        # The ◌ glyph carries no meaning on its own; this is where it is
+        # decoded, exactly like the run-marker meanings above.
+        text = f"{text} Temporary — not saved locally."
     return _escape_markup(text)
 
 
@@ -240,6 +244,21 @@ class ConsoleSessionSurface(Vertical):
         button.styles.max_height = CONSOLE_NEW_TAB_BUTTON_HEIGHT
         return button
 
+    def _build_new_temporary_tab_button(self) -> Button:
+        """Return the tab-strip control for a chat that is never saved."""
+        button = Button("Temporary", id="console-new-temporary-tab", compact=True)
+        button.tooltip = "New temporary Console tab — not saved locally"
+        for style, value in (
+            ("width", CONSOLE_NEW_TAB_BUTTON_WIDTH),
+            ("min_width", CONSOLE_NEW_TAB_BUTTON_WIDTH),
+            ("max_width", CONSOLE_NEW_TAB_BUTTON_WIDTH),
+            ("height", CONSOLE_NEW_TAB_BUTTON_HEIGHT),
+            ("min_height", CONSOLE_NEW_TAB_BUTTON_HEIGHT),
+            ("max_height", CONSOLE_NEW_TAB_BUTTON_HEIGHT),
+        ):
+            setattr(button.styles, style, value)
+        return button
+
     @classmethod
     def _display_title(cls, title: str) -> str:
         """Return a tab label that preserves space for close/rename controls.
@@ -279,7 +298,9 @@ class ConsoleSessionSurface(Vertical):
         if active:
             classes = f"{classes} console-session-tab-active"
         button = ConsoleSessionTabButton(
-            self._tab_label(session.title, marker=marker),
+            self._tab_label(
+                session.title, marker=marker, ephemeral=session.ephemeral
+            ),
             id=f"console-session-tab-{session.id}",
             classes=classes,
             compact=True,
@@ -298,7 +319,11 @@ class ConsoleSessionSurface(Vertical):
 
     @classmethod
     def _tab_label(
-        cls, title: str, *, marker: ConsoleRunMarker = ConsoleRunMarker.NONE
+        cls,
+        title: str,
+        *,
+        marker: ConsoleRunMarker = ConsoleRunMarker.NONE,
+        ephemeral: bool = False,
     ) -> str:
         """Return the tab label, prefixed with its fleet run-marker glyph.
 
@@ -307,11 +332,19 @@ class ConsoleSessionSurface(Vertical):
         not just the legacy streaming-only glyph. ``ConsoleRunMarker.NONE``'s
         glyph is the empty string, so an unmarked tab gets no stray leading
         space.
+
+        A tab can be both temporary and running (a fleet run started from a
+        never-saved chat), so the two markers stack: ``◌ ● Title`` rather
+        than one replacing the other.
         """
         label = cls._display_title(title)
         glyph = CONSOLE_RUN_MARKER_GLYPHS.get(marker, "")
         if glyph:
-            return f"{glyph} {label}"
+            label = f"{glyph} {label}"
+        # Presentation only: never written into session.title, which
+        # promotion saves verbatim.
+        if ephemeral:
+            label = f"{GLYPH_TEMPORARY} {label}"
         return label
 
     @staticmethod
@@ -365,6 +398,7 @@ class ConsoleSessionSurface(Vertical):
             desired_ids.append(f"console-session-tab-{session.id}")
             desired_ids.append(f"console-close-session-tab-{session.id}")
         desired_ids.append("console-new-chat-tab")
+        desired_ids.append("console-new-temporary-tab")
         return desired_ids
 
     def _update_existing_tab_strip(
@@ -390,7 +424,9 @@ class ConsoleSessionSurface(Vertical):
                     streaming_session_id=streaming_session_id,
                     run_markers=run_markers,
                 )
-                child.label = self._tab_label(session.title, marker=marker)
+                child.label = self._tab_label(
+                    session.title, marker=marker, ephemeral=session.ephemeral
+                )
                 child.tooltip = _session_tab_tooltip(
                     session,
                     active=session.id == active_session_id,
@@ -455,7 +491,7 @@ class ConsoleSessionSurface(Vertical):
                 return
 
             removed_count = len(tab_strip.children)
-            mounted_count = (len(sessions) * 2) + 1
+            mounted_count = (len(sessions) * 2) + 2
             for child in list(tab_strip.children):
                 await child.remove()
             for session in sessions:
@@ -474,6 +510,7 @@ class ConsoleSessionSurface(Vertical):
                 )
                 await tab_strip.mount(self._build_close_tab_button(session))
             await tab_strip.mount(self._build_new_tab_button())
+            await tab_strip.mount(self._build_new_temporary_tab_button())
             self._record_mount_churn(mounted=mounted_count, removed=removed_count)
         if active_session_id is not None:
             try:

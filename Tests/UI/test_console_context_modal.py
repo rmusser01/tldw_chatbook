@@ -308,3 +308,28 @@ async def test_context_modal_no_prefill_section_without_key():
         next_container = modal.query_one("#console-context-next-send-body", Vertical)
         titles = [c.title for c in next_container.query(Collapsible)]
         assert "Response Prefill" not in titles
+
+
+@pytest.mark.asyncio
+async def test_context_modal_save_button_is_disabled_with_a_reason_when_ephemeral():
+    """Save Context writes a JSON file -- blocked when temporary, and still
+    enabled otherwise (the control)."""
+    from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+    app = ActionHarness()
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(ConsoleContextModal(_snapshot_factory, ephemeral=True))
+        await pilot.pause()
+
+        save_button = app.screen.query_one("#console-context-save", Button)
+        assert save_button.disabled is True
+        assert save_button.tooltip == blocked_reason("save-context", ephemeral=True)
+
+        await app.pop_screen()
+        await pilot.pause()
+
+        app.push_screen(ConsoleContextModal(_snapshot_factory, ephemeral=False))
+        await pilot.pause()
+        normal_button = app.screen.query_one("#console-context-save", Button)
+        assert normal_button.disabled is False

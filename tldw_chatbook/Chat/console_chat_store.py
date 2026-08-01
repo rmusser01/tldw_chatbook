@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
@@ -271,6 +272,15 @@ class ConsoleChatSession:
     #: IDs remain opaque in ``assistant_id`` and never populate this field.
     character_id: int | None = None
     character_name: str | None = None
+    #: Temporary conversation (spec 2026-07-31): this session is never written
+    #: to local storage. Enforced in exactly one place --
+    #: ``persist_session_if_needed`` refuses to mint a
+    #: ``persisted_conversation_id`` -- so every durable write downstream
+    #: no-ops along the branch it already takes with no persistence adapter.
+    #: A write site that forgets about this flag therefore fails toward NOT
+    #: writing, which is the whole reason the guard lives at the id and not
+    #: at the 43 sites that consult ``self.persistence``.
+    ephemeral: bool = False
 
     def local_character_id(self) -> int | None:
         """Return the exact validated local character projection, if any."""
@@ -422,8 +432,15 @@ class ConsoleChatStore:
         assistant_authority_id: str | None = None,
         character_id: int | None = None,
         character_name: str | None = None,
+        ephemeral: bool = False,
     ) -> ConsoleChatSession:
-        """Create and activate a new native Console session."""
+        """Create and activate a new native Console session.
+
+        Args:
+            ephemeral: When True the session is temporary -- never written to
+                local storage until ``promote_ephemeral_session`` clears the
+                flag.
+        """
         session = ConsoleChatSession(
             title=title,
             workspace_id=workspace_id or self.workspace_context.active_workspace_id,
@@ -434,6 +451,7 @@ class ConsoleChatStore:
             assistant_authority_id=assistant_authority_id,
             character_id=character_id,
             character_name=character_name,
+            ephemeral=ephemeral,
         )
         self._sessions[session.id] = session
         self._messages_by_session[session.id] = []
@@ -459,6 +477,7 @@ class ConsoleChatStore:
         assistant_authority_id: str | None = None,
         character_id: int | None = None,
         character_name: str | None = None,
+        ephemeral: bool = False,
     ) -> ConsoleChatSession:
         """Create and activate a native session from persisted conversation data.
 
@@ -498,6 +517,15 @@ class ConsoleChatStore:
         Returns:
             The newly created and activated Console session.
         """
+        # A restored session comes FROM durable storage, so it is by
+        # definition not temporary. Refuse rather than silently produce a
+        # session that is both temporary and persisted -- the one state the
+        # gate's invariant does not allow.
+        if ephemeral:
+            raise ValueError(
+                "Cannot restore a persisted session as temporary: a temporary "
+                "session has no persisted conversation."
+            )
         session = self.create_session(
             title=title,
             workspace_id=workspace_id,
@@ -727,6 +755,18 @@ class ConsoleChatStore:
         actually fires.
         """
         return self._session_or_raise(session_id).workspace_id
+
+    def session_is_ephemeral(self, session_id: str) -> bool:
+        """Return whether a native Console session is temporary.
+
+        Mirrors ``session_workspace_id`` exactly (final-review F4): used by
+        ``ConsoleAgentBridge.run_reply`` to thread THIS run's own session
+        into ``BuiltinToolProvider`` so it can refuse the write-shaped
+        built-in tools (``create_note``/``update_note``/``write_file``) for
+        a temporary chat -- never whatever session happens to be active in
+        the UI by the time a tool actually fires.
+        """
+        return self._session_or_raise(session_id).ephemeral
 
     def replace_session_settings(
         self,
@@ -2188,14 +2228,21 @@ class ConsoleChatStore:
         """Persist a session once, returning its persisted conversation ID.
 
         Returns:
-            The persisted conversation ID, or ``None`` when no persistence
-            adapter is configured.
+            The persisted conversation ID; ``None`` when no persistence
+            adapter is configured, or when the session is temporary.
 
         Raises:
             ValueError: If ``runtime_backend`` is not exactly ``"local"`` or
                 ``"server"``.
         """
         session = self._session_or_raise(session_id)
+        # Temporary conversations (spec 2026-07-31) stop here, BEFORE the
+        # already-persisted check and before the adapter is consulted. This
+        # single early return is the entire durability mechanism: with no
+        # conversation id, `persist_message_if_needed` and every other
+        # conversation-scoped write returns early on its own.
+        if session.ephemeral:
+            return None
         if session.persisted_conversation_id is not None:
             return session.persisted_conversation_id
         if self.persistence is None:
@@ -2313,6 +2360,142 @@ class ConsoleChatStore:
                 session.persisted_conversation_id,
             )
         return session.persisted_conversation_id
+
+    def promote_ephemeral_session(self, session_id: str) -> str | None:
+        """Save a temporary conversation to durable storage, all or nothing.
+
+        Clears ``ephemeral`` first -- that is what opens the gate in
+        ``persist_session_if_needed`` -- then mints the conversation and
+        flushes every node in the FULL conversation tree, not just the
+        active-path view: off-path branches left behind by
+        ``create_sibling`` (regenerate / edit-and-resend) are still reachable
+        by swiping back, and a normal (never-temporary) conversation persists
+        them, so a promoted one must too -- otherwise saving would silently
+        discard history the user could see a moment before clicking Save.
+        Nodes are written parent-before-child (``_tree_nodes_parent_first``)
+        since each node's persisted parent is resolved from its
+        already-persisted ancestors. The whole sequence runs inside one
+        database transaction when the adapter exposes a real database, so a
+        failure part-way through leaves NO conversation in history rather
+        than a truncated one.
+
+        On any failure the session is restored to its temporary state
+        (``ephemeral`` back to True, ids cleared, any held RAG retrieval
+        scope restored). A failed save that left the flag cleared would
+        silently start persisting on the next send -- the opposite of what
+        the user asked for. Restoring the RAG scope matters for the same
+        reason: ``persist_session_if_needed`` flushes (and empties) the
+        session's held scope as soon as the conversation row exists, before
+        any message write can fail, so a rollback that only undid the DB
+        write would still leave the user's scope selection gone.
+
+        Args:
+            session_id: Id of the temporary session to save.
+
+        Returns:
+            The new persisted conversation id, or ``None`` when the session
+            was not temporary (already saved -- this is idempotent) or no
+            persistence adapter is configured.
+
+        Raises:
+            Exception: Whatever the persistence layer raises, re-raised after
+                the in-memory rollback. Also raised (as ``RuntimeError``) if
+                ``persist_session_if_needed`` unexpectedly returns ``None``
+                after ``ephemeral`` has already been cleared -- today
+                unreachable, but treated as a failure rather than silently
+                leaving the session non-ephemeral with no persisted
+                conversation.
+        """
+        session = self._session_or_raise(session_id)
+        if not session.ephemeral:
+            return None
+        if self.persistence is None:
+            return None
+
+        messages = self._tree_nodes_parent_first(session_id)
+        db = getattr(self.persistence, "db", None)
+        transaction = getattr(db, "transaction", None)
+        # Captured BEFORE any write -- persist_session_if_needed empties the
+        # holder on a successful flush, so this is the only chance to learn
+        # what was held and restore it if the save fails partway through.
+        held_scope = session.rag_scope_holder.scope
+
+        def _write() -> str:
+            conversation_id = self.persist_session_if_needed(session_id)
+            if conversation_id is None:
+                # Unreachable today: persist_session_if_needed's only
+                # None-return branches (ephemeral, already-persisted,
+                # no adapter) are all ruled out by the checks above and by
+                # clearing `ephemeral` before this call. Raising rather than
+                # returning None keeps this on the SAME rollback path as
+                # every other failure, instead of silently leaving the
+                # session non-ephemeral with no persisted conversation.
+                raise RuntimeError(
+                    "promote_ephemeral_session: persist_session_if_needed "
+                    "unexpectedly returned None after ephemeral was cleared; "
+                    "aborting the save."
+                )
+            for message in messages:
+                self.persist_message_if_needed(message.id)
+            # F2 (final review): the `/rewind` context-summary/boundary
+            # pair is a second piece of session-held state, same class as
+            # the RAG scope holder flushed above -- must run AFTER the
+            # message loop so the boundary's native id already has a
+            # `persisted_message_id` for `_persist_context_summary` to map
+            # to. Called unconditionally, same as `rag_scope_holder.flush_
+            # to` in `persist_session_if_needed`: it is a no-op write when
+            # no summary was ever set. It runs inside this same transaction
+            # (nested `db.transaction()` seam, deferred to the outer one),
+            # but `_persist_context_summary` catches and logs its own
+            # write failure rather than re-raising, so this is NOT covered
+            # by the messages/conversation all-or-nothing guarantee above:
+            # a summary-write failure never rolls back the transaction --
+            # the conversation and its messages still commit, just without
+            # the summary. That swallow is intentional (best-effort,
+            # local-only metadata not worth failing an entire save over);
+            # the point of this note is not to claim otherwise.
+            summary, boundary_native_id = self._context_summary_by_session.get(
+                session_id, (None, None)
+            )
+            self._persist_context_summary(session_id, summary, boundary_native_id)
+            return conversation_id
+
+        session.ephemeral = False
+        try:
+            if callable(transaction):
+                with transaction():
+                    return _write()
+            # No real database seam to wrap in a transaction (e.g. a
+            # narrower persistence fake) -- production wiring always builds
+            # ChatPersistenceService with a real CharactersRAGDB, so this
+            # branch is not reachable there today, but the loss of the
+            # all-or-nothing guarantee it causes must still be observable
+            # rather than silent, matching the RAG-scope-flush warning just
+            # above in persist_session_if_needed.
+            logger.bind(session_id=session_id).warning(
+                "Saving Console session {} without a database transaction "
+                "-- the persistence adapter exposes no `db.transaction()` "
+                "seam. A failure part-way through this save may leave a "
+                "partial conversation in history instead of the "
+                "all-or-nothing guarantee this method normally provides.",
+                session_id,
+            )
+            return _write()
+        except Exception:
+            # persisted_conversation_id cleared BEFORE ephemeral is set back
+            # to True so the two are never simultaneously in the one
+            # combination the rest of the codebase treats as forbidden
+            # (ephemeral=True with a non-None persisted_conversation_id),
+            # even momentarily between statements.
+            session.persisted_conversation_id = None
+            session.ephemeral = True
+            session.rag_scope_holder.set(held_scope)
+            for message in messages:
+                message.persisted_message_id = None
+            logger.bind(session_id=session_id).exception(
+                "Saving a temporary Console conversation failed; it stays temporary."
+            )
+            raise
 
     def set_session_system_prompt(
         self,
@@ -3302,6 +3485,51 @@ class ConsoleChatStore:
             collected.append(node_id)
             stack.extend(children_map.get(node_id, []))
         return collected
+
+    def _tree_nodes_parent_first(self, session_id: str) -> list[ConsoleChatMessage]:
+        """Return EVERY tree node for a session, guaranteed parent-before-child.
+
+        Used by ``promote_ephemeral_session`` (task-3), which must persist the
+        whole conversation tree -- every off-path branch left behind by
+        ``create_sibling`` (regenerate / edit-and-resend), not just the
+        active-path view -- so a promoted temporary chat comes out
+        indistinguishable from one that had been saved from the start,
+        swipe-back included.
+
+        Ordering is load-bearing, not cosmetic: ``_persist_new_message``
+        resolves each node's persisted parent via
+        ``_nearest_persisted_ancestor_id``, which walks up
+        ``_native_parent_by_message`` looking for the nearest ANCESTOR that
+        already has a ``persisted_message_id``. Persisting a child before its
+        parent would leave that walk with nothing to find (a stray root) or,
+        worse, silently resolve to some unrelated already-persisted ancestor
+        further up the chain -- a misparented row that looks fine until a
+        later resume walks the wrong branch.
+
+        A breadth-first walk from the roots (``_children_by_parent[session_id]
+        [None]``) down through ``_children_by_parent`` guarantees this by
+        construction: a node is only enqueued once its parent has already been
+        dequeued and emitted. This does NOT rely on ``_nodes_by_session``'s
+        dict insertion/iteration order for correctness -- that order is
+        unspecified by this method's contract even though CPython dicts
+        happen to preserve insertion order today.
+
+        Returns:
+            Every node, in an order where each node's parent (if any)
+            precedes it. TOOL markers are excluded -- they are display-only
+            and never become tree nodes (see ``_register_tree_node``).
+        """
+        nodes = self._nodes_by_session.get(session_id, {})
+        children_map = self._children_by_parent.get(session_id, {})
+        ordered: list[ConsoleChatMessage] = []
+        queue: deque[str] = deque(children_map.get(None, []))
+        while queue:
+            node_id = queue.popleft()
+            node = nodes.get(node_id)
+            if node is not None:
+                ordered.append(node)
+            queue.extend(children_map.get(node_id, []))
+        return ordered
 
     def _leaf_under(self, node_id: str) -> str:
         """Return the deepest descendant of ``node_id`` (always the last child).

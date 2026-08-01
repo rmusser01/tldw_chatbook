@@ -774,3 +774,24 @@ def test_console_composer_has_no_status_strip_selector_dependency():
     source = inspect.getsource(ConsoleComposerBar)
 
     assert "console-status-chips" not in source
+
+
+@pytest.mark.asyncio
+async def test_composer_bar_no_longer_owns_the_save_chatbook_button():
+    """Save Chatbook moved into the composer's ☰ menu.
+
+    The temporary-chat block this test used to assert here moved with it and
+    is covered in `Tests/UI/test_console_composer_menu.py`. What remains
+    worth pinning is that the button did not stay behind: two surfaces for
+    one action is how this branch previously ended up with save-chatbook
+    blocked in one place and reachable in two others.
+    """
+    app = _ComposerGeometryApp()
+
+    async with app.run_test(size=(140, 42)) as pilot:
+        composer = app.query_one("#console-native-composer", ConsoleComposerBar)
+        await pilot.pause()
+
+        assert not composer.query("#console-save-chatbook")
+        assert not composer.query("#console-attach-context")
+        assert composer.query_one("#console-composer-menu", Button)

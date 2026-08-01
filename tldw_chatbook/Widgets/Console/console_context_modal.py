@@ -29,6 +29,7 @@ from textual.widgets import (
 from textual.worker import Worker, WorkerState
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
+from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 
 
 SIZE_THRESHOLD_BYTES = 1 * 1024 * 1024
@@ -68,12 +69,14 @@ class ConsoleContextModal(ModalScreen[None]):
         token_estimate: int | None = None,
         estimate_factory: Callable[[], int | None] | None = None,
         in_progress: bool = False,
+        ephemeral: bool = False,
     ) -> None:
         super().__init__()
         self._snapshot_factory = snapshot_factory
         self._estimate_factory = estimate_factory
         self.token_estimate = token_estimate
         self.in_progress = in_progress
+        self._save_blocked_reason = blocked_reason("save-context", ephemeral=ephemeral)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-context-modal"):
@@ -95,7 +98,14 @@ class ConsoleContextModal(ModalScreen[None]):
                     disabled=self.in_progress,
                 )
                 yield Button("Copy JSON", id="console-context-copy")
-                yield Button("Save to File", id="console-context-save")
+                save_button = Button(
+                    "Save to File",
+                    id="console-context-save",
+                    disabled=self._save_blocked_reason is not None,
+                )
+                if self._save_blocked_reason is not None:
+                    save_button.tooltip = self._save_blocked_reason
+                yield save_button
                 yield Button("Close", id="console-context-close")
 
     def on_mount(self) -> None:

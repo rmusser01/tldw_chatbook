@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.UI.Workbench.workbench_state import (
     Density,
     WorkbenchAction,
@@ -23,6 +24,7 @@ def build_console_workbench_state(
     can_save_chatbook: bool = False,
     density: str = "normal",
     run_active: bool = False,
+    ephemeral: bool = False,
 ) -> WorkbenchState:
     """Return a shared Workbench state snapshot for Console.
 
@@ -41,6 +43,8 @@ def build_console_workbench_state(
         can_stop: Whether an active generation can be stopped.
         can_save_chatbook: Whether the current session can be saved as a Chatbook.
         density: Requested Workbench density, currently ``normal`` or ``compact``.
+        ephemeral: Whether the active session is temporary, which blocks the
+            actions that would write a derived artifact to disk.
 
     Returns:
         Immutable shared Workbench state used by Console widgets.
@@ -49,6 +53,7 @@ def build_console_workbench_state(
     workbench_density: Density = "compact" if density == "compact" else "normal"
     provider_status = "blocked" if blocker else "ready"
     send_available = can_send and not blocker
+    chatbook_blocked = blocked_reason("save-chatbook", ephemeral=ephemeral)
 
     actions = (
         WorkbenchAction(
@@ -74,8 +79,8 @@ def build_console_workbench_state(
         WorkbenchAction(
             id="save-chatbook",
             label="Save Chatbook",
-            tooltip="Save this run as a Chatbook",
-            disabled=not can_save_chatbook,
+            tooltip=chatbook_blocked or "Save this run as a Chatbook",
+            disabled=chatbook_blocked is not None or not can_save_chatbook,
         ),
         WorkbenchAction(
             id="send",

@@ -590,10 +590,11 @@ async def test_console_composer_keeps_primary_actions_and_setup_card_recovery_vi
 
         composer = console.query_one("#console-native-composer")
         assert _is_displayed(composer)
-        assert _is_displayed(console.query_one("#console-attach-context"))
         assert _is_displayed(console.query_one("#console-send-message"))
         assert not _is_displayed(console.query_one("#console-stop-generation"))
-        assert _is_displayed(console.query_one("#console-save-chatbook"))
+        # Attach and Save Chatbook moved behind the ☰ menu; the menu
+        # button is what must be reachable from the composer now.
+        assert _is_displayed(console.query_one("#console-composer-menu"))
         assert not _is_displayed(console.query_one("#console-composer-recovery"))
         # The shared Workbench recovery banner must stay hidden — the blocking
         # setup modal owns first-run recovery guidance now.

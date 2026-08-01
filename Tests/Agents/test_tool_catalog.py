@@ -241,3 +241,79 @@ def test_gate_failure_does_not_raise_into_the_loop():
         "builtin:calculator", {"expression": "1+1"}
     )
     assert out.ok is False  # fail closed, never raise
+
+
+class _OpenGate:
+    """Approval gate that never refuses -- isolates the ephemeral check
+    below from the (separately tested) approval-gate machinery."""
+
+    def check(self, tool):
+        return None
+
+
+class _RecordingWriteTool:
+    """Stub standing in for create_note/update_note/write_file: records
+    whether it actually ran, without touching a real DB or the filesystem."""
+
+    def __init__(self, name):
+        self.name = name
+        self.description = "stub"
+        self.parameters = {"type": "object", "properties": {}}
+        self.called = False
+
+    async def execute(self, **kwargs):
+        self.called = True
+        return {"ok": True}
+
+
+def test_builtin_provider_refuses_write_shaped_tools_in_an_ephemeral_session():
+    """F4 (final-review): agent tool calls are a 9th, ungated sink -- an
+    ordinary Console reply can compose `create_note`/`update_note`/
+    `write_file` (this module's own gateable builtins) exactly like any
+    other reply, independently of the Console UI action-id registry in
+    `Chat/console_ephemeral.py`. Before this fix `BuiltinToolProvider.
+    invoke` never asked whether the running session was temporary.
+    """
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    for tool_name in ("create_note", "update_note", "write_file"):
+        stub = _RecordingWriteTool(tool_name)
+        provider = BuiltinToolProvider(gate=_OpenGate(), ephemeral=True)
+        provider._tools[tool_name] = stub
+
+        result = provider.invoke(f"builtin:{tool_name}", {})
+
+        assert result.ok is False, f"{tool_name} must refuse in a temporary chat"
+        assert "temporary chat" in result.error
+        assert stub.called is False, (
+            f"{tool_name} must never execute in a temporary chat"
+        )
+
+
+def test_builtin_provider_write_shaped_tools_run_normally_outside_ephemeral():
+    """Control for the test above: the same tools, same gate, same stub --
+    only `ephemeral` differs -- must run exactly as before this fix."""
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    for tool_name in ("create_note", "update_note", "write_file"):
+        stub = _RecordingWriteTool(tool_name)
+        provider = BuiltinToolProvider(gate=_OpenGate(), ephemeral=False)
+        provider._tools[tool_name] = stub
+
+        result = provider.invoke(f"builtin:{tool_name}", {})
+
+        assert result.ok is True, result.error
+        assert stub.called is True
+
+
+def test_builtin_provider_ephemeral_does_not_block_read_only_tools():
+    """The block is targeted at write-shaped tools, not a blanket ephemeral
+    lockout: calculator/get_current_datetime read/compute nothing to disk
+    and must keep working in a temporary chat."""
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    out = BuiltinToolProvider(gate=_OpenGate(), ephemeral=True).invoke(
+        "builtin:calculator", {"expression": "6*7"}
+    )
+    assert out.ok is True
+    assert "42" in out.content

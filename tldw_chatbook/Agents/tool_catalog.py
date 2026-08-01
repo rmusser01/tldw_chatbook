@@ -463,7 +463,10 @@ class BuiltinToolProvider:
     SOURCE = "builtin"
 
     def __init__(
-        self, gate: Any | None = None, workspace_id: str | None = None
+        self,
+        gate: Any | None = None,
+        workspace_id: str | None = None,
+        ephemeral: bool = False,
     ) -> None:
         # settings-workspaces-folder-roots spec §3: the run's workspace,
         # bound around every tool execution (see `invoke`) so file tools
@@ -474,6 +477,17 @@ class BuiltinToolProvider:
         # in `builtin_tool_gate.builtin_permission_rows`) leaves
         # `allowed_file_roots` to fall back to the active workspace.
         self._workspace_id = workspace_id
+        # final-review F4: whether THIS run's owning Console session is
+        # temporary. Mirrors `_workspace_id` exactly -- `False` (the
+        # default) preserves every pre-existing construction site's
+        # behavior unchanged; `console_agent_bridge._compose_run_registry_
+        # and_allowed` threads the real value through for an actual
+        # Console run. `invoke()` uses it to refuse the write-shaped
+        # built-ins (`create_note`/`update_note`/`write_file`) -- an
+        # ordinary agent reply composes and dispatches these exactly like
+        # any other built-in, independently of the Console UI action-id
+        # registry in `Chat/console_ephemeral.py`.
+        self._ephemeral = ephemeral
         self._tools = {t.name: t for t in (CalculatorTool(), DateTimeTool())}
         # task-584: surface the app's existing sandbox-rooted file tools to the
         # agent loop. They were registered on the global ToolExecutor but never
@@ -571,6 +585,20 @@ class BuiltinToolProvider:
         tool = self._tools.get(name)
         if tool is None:
             return ToolResult(ok=False, error=f"Unknown builtin tool: {name}")
+        # final-review F4: a temporary Console session must refuse the
+        # write-shaped built-ins outright, BEFORE the approval gate below
+        # -- this is an absolute local-durability boundary, not a
+        # permission decision, so it must win even for a tool the user has
+        # already approved (session or always-allow). Checked first, same
+        # reasoning `_console_save_as_destinations` already uses for the
+        # per-message Save-as row: "the write itself is the problem,
+        # service/approval readiness is moot."
+        if self._ephemeral:
+            from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+            reason = blocked_reason(name, ephemeral=True)
+            if reason is not None:
+                return ToolResult(ok=False, error=reason)
         # Defense in depth: the run-level review hook is the primary gate
         # (it batches approvals into one card per turn), but a caller that
         # reaches invoke() without going through it must still not execute
@@ -736,8 +764,18 @@ class SkillToolProvider:
 class ToolCatalogRegistry:
     """Ordered provider registry: catalog, search, schema, invocation."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, ephemeral: bool = False) -> None:
         self._providers: list[ToolProvider] = []
+        # Whether the Console session owning THIS run is temporary ("not
+        # saved locally"). Enforced in `invoke_by_name` -- the one choke
+        # point every provider's `invoke()` is reached through -- rather
+        # than inside any individual provider, so the guarantee does not
+        # depend on each provider (including ones added later) remembering
+        # to implement it. `BuiltinToolProvider` keeps its own equivalent
+        # check as defense in depth; this one is the load-bearing gate.
+        # `False` (the default) preserves every pre-existing construction
+        # site's behavior exactly.
+        self._ephemeral = ephemeral
         # tool_id -> owning provider, and name -> tool_id, both built
         # together (lazily) by _ensure_catalog_cache() and scoped PER RUN
         # (see reset_catalog_cache()). `None` means "not built yet" and is
@@ -756,6 +794,12 @@ class ToolCatalogRegistry:
         # generations of the catalog.
         self._owner_cache: dict[str, ToolProvider] | None = None
         self._name_to_id_cache: dict[str, str] | None = None
+        # tool_id -> the owning catalog entry's `source` ("builtin"/"skill"/
+        # "mcp"/...), built in the SAME sweep as the two maps above and used
+        # only by the ephemeral gate in `invoke_by_name`. A tool_id missing
+        # from this map resolves to `None`, which that gate treats as
+        # "unknown source" and refuses — the fail-toward-not-writing default.
+        self._source_cache: dict[str, str] | None = None
 
     def register_provider(self, provider: ToolProvider) -> None:
         self._providers.append(provider)
@@ -763,6 +807,7 @@ class ToolCatalogRegistry:
         # cache already built — invalidate so the next lookup rebuilds it.
         self._owner_cache = None
         self._name_to_id_cache = None
+        self._source_cache = None
 
     def reset_catalog_cache(self) -> None:
         """Drop the owner-map/name-map cache; call once at the start of a run.
@@ -775,6 +820,7 @@ class ToolCatalogRegistry:
         """
         self._owner_cache = None
         self._name_to_id_cache = None
+        self._source_cache = None
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         entries: list[ToolCatalogEntry] = []
@@ -792,9 +838,12 @@ class ToolCatalogRegistry:
             if needle in e.name.lower() or needle in e.one_line_description.lower()
         ]
 
-    def _build_owner_cache(self) -> tuple[dict[str, ToolProvider], dict[str, str]]:
+    def _build_owner_cache(
+        self,
+    ) -> tuple[dict[str, ToolProvider], dict[str, str], dict[str, str]]:
         owner: dict[str, ToolProvider] = {}
         name_to_id: dict[str, str] = {}
+        source_by_id: dict[str, str] = {}
         for provider in self._providers:
             for entry in provider.list_catalog():
                 owner.setdefault(entry.id, provider)
@@ -804,7 +853,12 @@ class ToolCatalogRegistry:
                 # always win a name collision) without adding a second,
                 # independently-ordered pass over the providers.
                 name_to_id.setdefault(entry.name, entry.id)
-        return owner, name_to_id
+                # Keyed by id, like `owner`, and populated with the same
+                # first-wins rule so the source always describes the entry
+                # whose provider `owner` will actually dispatch to.
+                if entry.source is not None:
+                    source_by_id.setdefault(entry.id, entry.source)
+        return owner, name_to_id, source_by_id
 
     def _ensure_catalog_cache(self) -> None:
         # This is the fix MCP (task-201) also needs: a network-backed
@@ -826,12 +880,30 @@ class ToolCatalogRegistry:
         # was reset to None. A single-cache guard would then skip the
         # rebuild and leave _name_to_id_cache (or _owner_cache) permanently
         # None for the rest of the run.
-        if self._owner_cache is None or self._name_to_id_cache is None:
-            self._owner_cache, self._name_to_id_cache = self._build_owner_cache()
+        if (
+            self._owner_cache is None
+            or self._name_to_id_cache is None
+            or self._source_cache is None
+        ):
+            (
+                self._owner_cache,
+                self._name_to_id_cache,
+                self._source_cache,
+            ) = self._build_owner_cache()
 
     def _owner_and_id(self, tool_id: str):
         self._ensure_catalog_cache()
         return self._owner_cache.get(tool_id)
+
+    def _source_for(self, tool_id: str) -> str | None:
+        """Return the catalog ``source`` that owns ``tool_id``, if known.
+
+        ``None`` when the id is absent from the cache — which the ephemeral
+        gate treats as an unaudited source and refuses, never as "allow".
+        """
+        self._ensure_catalog_cache()
+        cache = self._source_cache
+        return cache.get(tool_id) if cache else None
 
     def load_schema(self, tool_id: str) -> ToolSchema:
         provider = self._owner_and_id(tool_id)
@@ -861,6 +933,23 @@ class ToolCatalogRegistry:
             # generation by the time this line runs. This fallback never
             # lets a `None` owner surface as an AttributeError either way.
             return ToolResult(ok=False, error=f"Tool provider not found for: {name}")
+        # THE choke point for the temporary-session ("not saved locally")
+        # guarantee. Every provider's invoke() is reached through this one
+        # line, so gating here -- rather than in each provider -- is what
+        # makes the guarantee hold for MCP tools, skill tools, and any
+        # provider added later, without each of them having to opt in.
+        # `tool_blocked_reason` owns the policy (built-ins judged per name,
+        # everything else refused); an unresolvable source refuses too.
+        # Returns a ToolResult rather than raising: the pure loop must never
+        # see an exception out of tool invocation.
+        if self._ephemeral:
+            from tldw_chatbook.Chat.console_ephemeral import tool_blocked_reason
+
+            reason = tool_blocked_reason(
+                name, source=self._source_for(tool_id), ephemeral=True
+            )
+            if reason is not None:
+                return ToolResult(ok=False, error=reason)
         return provider.invoke(tool_id, args)
 
     def timeout_for(self, name: str) -> float | None:

@@ -3,13 +3,18 @@
 tasks 1680-1683.
 """
 
+import asyncio
+
 import pytest
 
+from tldw_chatbook.Chat.console_ephemeral import ACTION_SAVE_CHAT
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     ACTION_GENERATE_CAPTION,
     ACTION_GENERATE_IMAGE,
+    ACTION_ATTACH_CONTEXT,
     ACTION_IMPERSONATE,
     ACTION_NARRATE_CONVERSATION,
+    ACTION_SAVE_CHATBOOK,
     build_composer_menu_entries,
 )
 from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
@@ -19,15 +24,68 @@ from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
 
 
 @pytest.mark.unit
-def test_menu_lists_the_four_requested_actions_in_order():
-    """task-1680: the menu carries exactly the requested entries."""
+def test_menu_lists_the_requested_actions_in_order():
+    """task-1680: the menu carries exactly the requested entries.
+
+    Attach and Save Chatbook lead because they moved here from the
+    composer's action row and are the two a user previously reached with
+    one click; the generative actions keep their original relative order
+    below them.
+    """
     ids = [e.action_id for e in build_composer_menu_entries()]
     assert ids == [
+        ACTION_ATTACH_CONTEXT,
+        ACTION_SAVE_CHATBOOK,
         ACTION_GENERATE_IMAGE,
         ACTION_GENERATE_CAPTION,
         ACTION_NARRATE_CONVERSATION,
         ACTION_IMPERSONATE,
     ]
+
+
+@pytest.mark.unit
+def test_attach_and_save_chatbook_left_the_action_row_for_the_menu():
+    """The two buttons are gone from the width-bounded row, not duplicated.
+
+    Leaving a button behind AND adding a menu row would give one action two
+    surfaces that can disagree -- exactly the split this branch already had
+    to fix for save-chatbook (blocked in one surface, open in two others).
+    """
+    import inspect
+
+    from tldw_chatbook.Widgets.Console import console_composer_bar
+
+    source = inspect.getsource(console_composer_bar.ConsoleComposerBar.compose)
+    assert 'id="console-attach-context"' not in source
+    assert 'id="console-save-chatbook"' not in source
+    # The controls that stay: Send and Mic always, plus the two conditional
+    # ones whose whole point is that they appear only when actionable.
+    assert 'id="console-send-message"' in source
+    assert 'id="console-dictation"' in source
+    assert 'id="console-stop-generation"' in source
+    assert 'id="console-clear-attachment"' in source
+
+
+@pytest.mark.unit
+def test_save_chatbook_row_states_why_it_is_unavailable():
+    """Disabled-with-a-reason, carried over from the button it replaced."""
+    def row(**kwargs):
+        return {
+            e.action_id: e for e in build_composer_menu_entries(**kwargs)
+        }[ACTION_SAVE_CHATBOOK]
+
+    ready = row(can_save_chatbook=True)
+    assert ready.enabled is True
+
+    no_artifact = row(can_save_chatbook=False)
+    assert no_artifact.enabled is False
+    assert "No Chatbook artifact" in no_artifact.description
+
+    # The temporary-chat block wins over artifact availability: the write
+    # itself is the problem, so readiness is moot.
+    temporary = row(can_save_chatbook=True, ephemeral=True)
+    assert temporary.enabled is False
+    assert "temporary chat" in temporary.description
 
 
 @pytest.mark.unit
@@ -376,3 +434,670 @@ def test_transcript_trimming_keeps_newest_and_stays_user_first():
     assert len(kept) < len(rows), "a huge thread must be trimmed"
     assert kept[0]["role"] == "user", "must never lead with an assistant row"
     assert kept[-1] == rows[-1], "the newest turn is always kept"
+
+
+@pytest.mark.unit
+def test_temporary_tab_has_no_chord_but_keeps_the_palette_entry():
+    """Alt+T was removed after live verification proved it doesn't work.
+
+    Textual 8.2.7 reports ``Key("alt+t", "t").is_printable == True``, so a
+    focused composer ``Input`` -- where a chat user's focus almost always
+    is -- consumed the chord and inserted a literal "t" into the draft
+    instead of dispatching the action. The palette entry and the tab-strip
+    button are the only entry points now; this asserts the chord stays gone
+    and that both remaining paths (palette entry, underlying action) are
+    still wired, so nobody re-adds a chord that doesn't work.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
+
+    keys = [b.key for b in ChatScreen.BINDINGS]
+    assert "alt+t" not in keys, "alt+t never reaches a focused composer -- do not re-add it"
+    assert callable(ChatScreen.action_new_temporary_console_tab)
+
+    commands = ConsoleCommandProvider._commands(None, ChatScreen)
+    entry = next(c for c in commands if c[0] == "Console: New temporary chat")
+    assert entry[1] is ChatScreen.action_new_temporary_console_tab
+    assert "Alt+T" not in entry[2], "help text must not advertise a chord that doesn't work"
+
+
+@pytest.mark.unit
+def test_controller_new_session_can_be_born_temporary():
+    """`ephemeral` reaches the store, not just the controller signature."""
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    store = ConsoleChatStore()
+    assert store.create_session(title="A").ephemeral is False
+    assert store.create_session(title="B", ephemeral=True).ephemeral is True
+
+
+@pytest.mark.unit
+def test_temporary_chip_is_hidden_outside_a_temporary_chat():
+    """The chip says one thing; when it does not apply it vanishes."""
+    from tldw_chatbook.Chat.console_ephemeral import TEMPORARY_LABEL
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleStatusChips,
+    )
+
+    label, tooltip, hidden = ConsoleStatusChips._temporary_chip_render(True)
+    assert label == TEMPORARY_LABEL
+    assert hidden is False
+    assert "not saved" in tooltip.lower()
+
+    _label, _tooltip, hidden_normal = ConsoleStatusChips._temporary_chip_render(False)
+    assert hidden_normal is True
+
+
+@pytest.mark.unit
+def test_console_active_session_is_ephemeral_reads_the_active_flag():
+    """The shared accessor Task 8/9 build on: store-only, no widget needed.
+
+    ``ConsoleChatStore`` has no public single-session getter, so this reads
+    ``sessions()`` + ``active_session_id`` -- the same public surface any
+    other caller has.
+    """
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._console_chat_store = None
+    assert screen._console_active_session_is_ephemeral() is False
+
+    store = ConsoleChatStore()
+    screen._console_chat_store = store
+    normal = store.create_session(title="Normal")
+    temp = store.create_session(title="Temp", ephemeral=True)
+
+    store.switch_session(normal.id)
+    assert screen._console_active_session_is_ephemeral() is False
+
+    store.switch_session(temp.id)
+    assert screen._console_active_session_is_ephemeral() is True
+
+
+@pytest.mark.asyncio
+async def test_activate_console_session_for_workspace_keeps_temporary_chip_honest():
+    """task-7 review: three callers reach ``_activate_console_session_for_
+    workspace`` and none of them refresh the temporary chip afterward --
+    they only await ``_sync_native_console_chat_ui()``, which never touches
+    it (same reason it never touches the scope chip). Tests the
+    CONSEQUENCE (chip visibility after the real switch/create branches
+    run), in both directions, so a push that hardcoded either answer would
+    fail this.
+    """
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleTemporaryChip,
+    )
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        store = console._ensure_console_chat_store()
+
+        normal = store.create_session(title="Normal", workspace_id="workspace-b")
+        temp = store.create_session(
+            title="Temp", workspace_id="workspace-a", ephemeral=True
+        )
+        # `temp` is active now (`create_session` activates inline). Establish
+        # a verified-correct baseline via the real sync path rather than
+        # trusting the chip's compose-time default.
+        assert store.active_session_id == temp.id
+        console._sync_console_temporary_chip()
+        chip = console.query_one("#console-temporary-chip", ConsoleTemporaryChip)
+        assert chip.display is True
+
+        # "switch to an existing session in the workspace" branch.
+        console._activate_console_session_for_workspace("workspace-b")
+        await pilot.pause()
+        assert store.active_session_id == normal.id
+        assert chip.display is False, (
+            "switching to a saved session's workspace must clear a stale "
+            "Temporary chip"
+        )
+
+        # Same branch, opposite direction.
+        console._activate_console_session_for_workspace("workspace-a")
+        await pilot.pause()
+        assert store.active_session_id == temp.id
+        assert chip.display is True
+        assert "Temporary" in str(chip.render())
+
+        # "create a new session for the workspace" branch: a brand-new
+        # workspace with no existing session. `create_session` here never
+        # passes `ephemeral=True`, so switching there from the ephemeral
+        # session must also hide the chip.
+        console._activate_console_session_for_workspace("workspace-c")
+        await pilot.pause()
+        assert store.active_session_id not in (normal.id, temp.id)
+        assert chip.display is False
+
+
+@pytest.mark.asyncio
+async def test_character_picker_new_chat_clears_a_stale_temporary_chip():
+    """task-7 review: the character picker's "new chat" placement creates
+    and activates a session that is never ephemeral (``create_session`` is
+    called with no ``ephemeral=`` there), but the method only awaits
+    ``_sync_native_console_chat_ui()`` afterward, which never touches the
+    temporary chip.
+
+    Only one direction is tested: this specific call site cannot create an
+    ephemeral session (its ``create_session`` call has no ``ephemeral=``
+    argument at all), so there is no "chip becomes visible" case reachable
+    from here to assert against.
+    """
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
+        ConsoleCharacterChoice,
+    )
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleTemporaryChip,
+    )
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        store = console._ensure_console_chat_store()
+
+        temp = store.create_session(title="Temp", ephemeral=True)
+        store.switch_session(temp.id)
+        console._sync_console_temporary_chip()
+        chip = console.query_one("#console-temporary-chip", ConsoleTemporaryChip)
+        assert chip.display is True
+
+        # Bypass the real character-card DB lookup (irrelevant to this
+        # regression) while exercising the real create/switch/notify body.
+        console._fetch_character_card_for_avatar = lambda character_id: {
+            "name": "Nova",
+            "first_message": "",
+        }
+        await console._apply_console_character_choice_async(
+            ConsoleCharacterChoice(character_id=1, name="Nova", placement="new")
+        )
+        await pilot.pause()
+
+        assert store.active_session_id != temp.id
+        assert chip.display is False
+
+
+@pytest.mark.asyncio
+async def test_workspace_conversation_row_click_on_open_tab_keeps_temporary_chip_honest():
+    """task-7 review: clicking an already-open tab's workspace-conversation
+    row (the branch that skips ``_resume_console_workspace_conversation``
+    because the session is already open) only awaited
+    ``_sync_native_console_chat_ui()`` before this fix. Ephemeral (native,
+    unpersisted) sessions appear in this same row list --
+    ``_native_console_browser_rows`` has no ephemeral filter -- so both
+    directions are genuinely reachable here: clicking an open ephemeral
+    tab's row must show the chip, and clicking a saved/normal tab's row
+    must hide it.
+    """
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_console_native_chat_flow import (
+        _click_console_workspace_conversation_for_session,
+        _configure_native_ready_console,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleTemporaryChip,
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+
+        normal = store.create_session(title="Normal chat")
+        temp = store.create_session(title="Temp chat", ephemeral=True)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        chip = console.query_one("#console-temporary-chip", ConsoleTemporaryChip)
+        # `temp` is active (created last). Establish a verified-correct
+        # baseline via the real sync path.
+        assert store.active_session_id == temp.id
+        console._sync_console_temporary_chip()
+        assert chip.display is True
+
+        await _click_console_workspace_conversation_for_session(
+            console, pilot, store, normal.id
+        )
+        await pilot.pause(0.2)
+        assert chip.display is False, (
+            "switching onto the already-open saved tab must clear a stale "
+            "Temporary chip"
+        )
+
+        await _click_console_workspace_conversation_for_session(
+            console, pilot, store, temp.id
+        )
+        await pilot.pause(0.2)
+        assert chip.display is True
+        assert "Temporary" in str(chip.render())
+
+
+@pytest.mark.asyncio
+async def test_temporary_chip_survives_screen_recreation_return():
+    """F1 (final-review): the chip must be visible after the REAL mount/
+    restore navigation path (Console -> another screen -> Console), not
+    only after a manual ``_sync_console_temporary_chip()`` call.
+
+    Every chip test above calls ``_sync_console_temporary_chip()`` by hand,
+    so none of them exercises the mount path. ``ConsoleStatusChips.__init__``
+    hardcodes ``self.ephemeral = False`` no matter what session is active,
+    and neither ``ChatScreen.on_mount`` nor ``ChatScreen.restore_state``
+    ever pushes the real flag in -- ``on_mount`` only schedules
+    ``_sync_native_console_chat_ui``, which by design never touches this
+    chip. This reproduces the app's real navigation code path (``app.py``
+    calls ``restore_state()`` on a freshly constructed screen BEFORE
+    ``switch_screen``/mount), via the same ``RestoredConsoleHarness`` used
+    for the screen-recreation regression in
+    ``test_console_native_chat_flow.py``.
+    """
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_console_native_chat_flow import RestoredConsoleHarness
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleTemporaryChip,
+    )
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    saved_state: dict | None = None
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        store = console._ensure_console_chat_store()
+        store.create_session(title="Temp", ephemeral=True)
+        await console._sync_native_console_chat_ui()
+        saved_state = console.save_state()
+
+    assert saved_state is not None
+
+    restored_host = RestoredConsoleHarness(app, saved_state)
+    async with restored_host.run_test(size=(160, 44)) as pilot:
+        console = restored_host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-status-chips")
+        store = console._ensure_console_chat_store()
+        assert store.active_session_id is not None
+        assert console._console_active_session_is_ephemeral() is True
+
+        chip = console.query_one("#console-temporary-chip", ConsoleTemporaryChip)
+        assert chip.display is True, (
+            "the Temporary chip must be visible after the real mount/"
+            "restore navigation path, not just after a manual "
+            "_sync_console_temporary_chip() call"
+        )
+        assert "Temporary" in str(chip.render())
+
+
+@pytest.mark.unit
+def test_temporary_chip_posts_save_requested_on_activation():
+    """The chip is the save affordance: activating it posts ``SaveRequested``.
+
+    Mirrors ``ConsoleApprovalsChip``'s own activation contract test -- Task 8
+    wires the handler for this message.
+    """
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleTemporaryChip,
+    )
+
+    chip = ConsoleTemporaryChip.__new__(ConsoleTemporaryChip)
+    posted: list[object] = []
+    chip.post_message = lambda message: posted.append(message)  # type: ignore[assignment]
+
+    chip.action_save_chat()
+
+    assert any(isinstance(m, ConsoleTemporaryChip.SaveRequested) for m in posted)
+
+
+@pytest.mark.unit
+def test_save_this_chat_appears_only_in_a_temporary_chat():
+    """The entry is meaningless in a normal chat, so it is absent, not disabled.
+
+    This is the one case where hiding beats disabling: a disabled "Save this
+    chat" on an already-saved conversation would read as a failure.
+    """
+    from tldw_chatbook.Chat.console_ephemeral import ACTION_SAVE_CHAT
+
+    normal = [e.action_id for e in build_composer_menu_entries()]
+    assert ACTION_SAVE_CHAT not in normal
+
+    temporary = build_composer_menu_entries(ephemeral=True)
+    ids = [e.action_id for e in temporary]
+    assert ids[0] == ACTION_SAVE_CHAT, "the escape hatch goes first"
+    entry = temporary[0]
+    assert entry.enabled is True
+    assert "not saved" in entry.description.lower()
+
+
+def _bare_promote_screen(store):
+    """Build a ``ChatScreen`` stand-in wired to a fake Console store.
+
+    Shared by the ``_promote_console_temporary_session`` tests below: each
+    one only differs in what the fake store does, and in which of the
+    captured lists it inspects afterwards.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._console_chat_store = store
+    screen._ensure_console_chat_store = lambda: store
+
+    chip_calls: list[bool] = []
+    screen._sync_console_temporary_chip = lambda: chip_calls.append(
+        screen._console_active_session_is_ephemeral()
+    )
+
+    invalidated: list[bool] = []
+    screen._invalidate_console_persisted_rows_cache = lambda: invalidated.append(True)
+
+    dispatched: list[object] = []
+    screen.run_worker = lambda coroutine, **_kwargs: dispatched.append(coroutine)
+
+    notifications: list[tuple[str, str]] = []
+
+    class _App:
+        def notify(self, message, severity="information"):
+            notifications.append((message, severity))
+
+    screen.app_instance = _App()
+    return screen, chip_calls, invalidated, dispatched, notifications
+
+
+class _PromoteSession:
+    def __init__(self, id_: str, ephemeral: bool) -> None:
+        self.id = id_
+        self.ephemeral = ephemeral
+
+
+@pytest.mark.unit
+def test_promote_console_temporary_session_saves_and_refreshes_the_chip():
+    """The effect that matters: promotion ran and the chip actually clears.
+
+    Guards the task-8 hazard directly: a handler that shows a toast and
+    never reaches ``promote_ephemeral_session`` looks identical from the
+    outside. This asserts the store call happened and the session came back
+    non-temporary, not merely that a notification fired.
+
+    F5 (final review): ``_promote_console_temporary_session`` is now async
+    and offloads the store call via ``asyncio.to_thread`` -- driven directly
+    with ``asyncio.run`` here (bypassing ``run_worker`` dispatch entirely,
+    which is covered separately below) so this test still exercises the
+    real save logic synchronously to completion.
+    """
+
+    class _Store:
+        def __init__(self) -> None:
+            self.active_session_id = "s1"
+            self._session = _PromoteSession("s1", ephemeral=True)
+            self.promote_calls: list[str] = []
+
+        def sessions(self):
+            return [self._session]
+
+        def promote_ephemeral_session(self, session_id):
+            self.promote_calls.append(session_id)
+            self._session.ephemeral = False
+            return "conv-123"
+
+    store = _Store()
+    screen, chip_calls, invalidated, dispatched, notifications = (
+        _bare_promote_screen(store)
+    )
+
+    asyncio.run(screen._promote_console_temporary_session())
+
+    assert store.promote_calls == ["s1"], "the store's promotion must actually run"
+    assert store._session.ephemeral is False, "the session must come back non-temporary"
+    assert chip_calls == [False], "the chip refresh must see the now-saved session"
+    assert invalidated == [True]
+    assert len(dispatched) == 1, "_sync_native_console_chat_ui must run as a worker"
+    dispatched[0].close()
+    assert notifications == [("Chat saved.", "information")]
+
+
+@pytest.mark.unit
+def test_promote_console_temporary_session_restores_temporary_state_on_failure():
+    """A failing save must leave the chat temporary, not silently persisted."""
+
+    class _Store:
+        def __init__(self) -> None:
+            self.active_session_id = "s1"
+            self._session = _PromoteSession("s1", ephemeral=True)
+
+        def sessions(self):
+            return [self._session]
+
+        def promote_ephemeral_session(self, session_id):
+            # Mirrors promote_ephemeral_session's own contract: restore to
+            # temporary before re-raising.
+            self._session.ephemeral = True
+            raise RuntimeError("db exploded")
+
+    store = _Store()
+    screen, chip_calls, invalidated, dispatched, notifications = (
+        _bare_promote_screen(store)
+    )
+
+    asyncio.run(screen._promote_console_temporary_session())
+
+    assert store._session.ephemeral is True, "must stay temporary after a failed save"
+    assert chip_calls == [], "a failed save must not tell the chip to disappear"
+    assert invalidated == []
+    assert dispatched == []
+    assert notifications == [
+        ("Could not save this chat. It is still temporary.", "error")
+    ]
+
+
+@pytest.mark.unit
+def test_promote_console_temporary_session_notifies_when_already_saved():
+    """F6 (final review): ``promote_ephemeral_session`` returning ``None``
+    used to be entirely silent -- the user clicked "Save this chat" and got
+    no feedback at all. This branch (session already non-temporary) must
+    now say so.
+
+    Residual-fix M1: this branch is exactly what a cancelled-then-retried
+    ``console-promote`` worker hits -- the first (cancelled) run's DB write
+    completed via ``asyncio.to_thread``, so the session really is saved by
+    the time the second run gets here, but nothing has told the chip yet.
+    Without a ``_sync_console_temporary_chip()`` call in this branch, the
+    chip and the ``◌`` tab marker keep reading "Temporary" about a chat
+    that is, in fact, saved. Asserting ``chip_calls == [False]`` (not the
+    old ``[]``) is what pins that fix down.
+    """
+
+    class _Store:
+        def __init__(self) -> None:
+            self.active_session_id = "s1"
+            self._session = _PromoteSession("s1", ephemeral=False)
+
+        def sessions(self):
+            return [self._session]
+
+        def promote_ephemeral_session(self, session_id):
+            return None
+
+    store = _Store()
+    screen, chip_calls, invalidated, dispatched, notifications = (
+        _bare_promote_screen(store)
+    )
+
+    asyncio.run(screen._promote_console_temporary_session())
+
+    assert chip_calls == [False], (
+        "already saved -- the chip must still be refreshed so it stops "
+        "claiming the chat is Temporary"
+    )
+    assert invalidated == []
+    assert dispatched == []
+    assert notifications == [("This chat is already saved.", "information")]
+
+
+@pytest.mark.unit
+def test_promote_console_temporary_session_notifies_when_it_cannot_save():
+    """F6 (final review): the OTHER ``None`` branch -- no persistence
+    adapter configured, so the chat is genuinely still temporary -- must
+    read differently from "already saved". Silence here would leave the
+    user believing nothing happened when in fact their save request went
+    nowhere.
+    """
+
+    class _Store:
+        def __init__(self) -> None:
+            self.active_session_id = "s1"
+            self._session = _PromoteSession("s1", ephemeral=True)
+
+        def sessions(self):
+            return [self._session]
+
+        def promote_ephemeral_session(self, session_id):
+            return None
+
+    store = _Store()
+    screen, chip_calls, invalidated, dispatched, notifications = (
+        _bare_promote_screen(store)
+    )
+
+    asyncio.run(screen._promote_console_temporary_session())
+
+    assert chip_calls == []
+    assert invalidated == []
+    assert dispatched == []
+    assert notifications == [
+        (
+            "Could not save this chat right now. It is still temporary.",
+            "warning",
+        )
+    ]
+
+
+@pytest.mark.unit
+def test_save_chat_menu_choice_dispatches_to_the_promote_handler():
+    """The composer-menu row for ``ACTION_SAVE_CHAT`` reaches the real save
+    dispatch path (F5: now a worker-kicking wrapper, not the save coroutine
+    itself)."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = ChatScreen.__new__(ChatScreen)
+    calls: list[bool] = []
+    screen._dispatch_promote_console_temporary_session = lambda: calls.append(True)
+
+    screen._handle_console_composer_menu_choice(ACTION_SAVE_CHAT)
+
+    assert calls == [True]
+
+
+@pytest.mark.unit
+def test_temporary_chip_save_requested_reaches_the_promote_handler():
+    """The chip's activation message (task-7) drives the same save
+    dispatch path (F5: now a worker-kicking wrapper)."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleTemporaryChip,
+    )
+
+    screen = ChatScreen.__new__(ChatScreen)
+    calls: list[bool] = []
+    screen._dispatch_promote_console_temporary_session = lambda: calls.append(True)
+
+    event = ConsoleTemporaryChip.SaveRequested()
+    stopped: list[bool] = []
+    event.stop = lambda: stopped.append(True)
+
+    screen.on_console_temporary_chip_save(event)
+
+    assert stopped == [True], "the chip's own click/activation handling must not also fire"
+    assert calls == [True]
+
+
+@pytest.mark.unit
+def test_dispatch_promote_console_temporary_session_uses_its_own_worker_group():
+    """F5 (final review): the dispatch wrapper must run the save as its own
+    ``exclusive`` worker in a group distinct from ``console-sync``/
+    ``console-run-*`` -- an ungrouped (or wrongly-grouped) exclusive worker
+    already caused a real regression on this branch (Console sends silently
+    cancelled by an overlapping sync kick).
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = ChatScreen.__new__(ChatScreen)
+    calls: list[tuple[object, dict]] = []
+    screen.run_worker = lambda coroutine, **kwargs: calls.append((coroutine, kwargs))
+    screen._promote_console_temporary_session = lambda: object()
+
+    screen._dispatch_promote_console_temporary_session()
+
+    assert len(calls) == 1
+    _coroutine, kwargs = calls[0]
+    assert kwargs.get("exclusive") is True
+    assert kwargs.get("group") == "console-promote"
+    assert kwargs["group"] not in {"console-sync", "console-run", "console-impersonate"}
+
+
+@pytest.mark.unit
+def test_artifact_actions_are_disabled_with_a_reason_in_a_temporary_chat():
+    """Disabled and explained, never hidden -- and still enabled normally.
+
+    The second half is the control: an assertion that an action is disabled
+    proves nothing unless the same call proves it is enabled otherwise.
+    """
+    from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+    from tldw_chatbook.Widgets.Console.console_workbench_state import (
+        build_console_workbench_state,
+    )
+    from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+
+    menu = {
+        e.action_id: e
+        for e in build_composer_menu_entries(ephemeral=True)
+    }
+    image = menu[ACTION_GENERATE_IMAGE]
+    assert image.enabled is False
+    assert image.description == blocked_reason("generate-image", ephemeral=True)
+
+    normal = {e.action_id: e for e in build_composer_menu_entries()}
+    assert normal[ACTION_GENERATE_IMAGE].enabled is True
+
+    # ConsoleControlState has seven required label fields and no defaults.
+    control_state = ConsoleControlState(
+        provider_label="Provider: stub",
+        model_label="Model: stub",
+        assistant_label="Assistant: General",
+        rag_label="RAG: off",
+        sources_label="Sources: 0",
+        tools_label="Tools: 0",
+        approvals_label="Approvals: 0",
+    )
+
+    def chatbook_action(**kwargs):
+        state = build_console_workbench_state(
+            control_state=control_state, can_save_chatbook=True, **kwargs
+        )
+        return {a.id: a for a in state.actions}["save-chatbook"]
+
+    blocked = chatbook_action(ephemeral=True)
+    assert blocked.disabled is True
+    assert blocked.tooltip == blocked_reason("save-chatbook", ephemeral=True)
+    assert chatbook_action().disabled is False

@@ -1631,6 +1631,24 @@ class ConsoleTranscript(VerticalScroll):
             return 0
         return browsed_index
 
+    def _console_ephemeral_active(self) -> bool:
+        """Return whether the owning screen's active session is temporary.
+
+        Mirrors ``_console_tts_speaking_message_id`` below: reads the
+        screen's accessor so the message-action row (Save Image) reads the
+        same flag the composer menu and workbench state already do. Falls
+        back to ``False`` when unmounted (bare unit-construction in tests)
+        or the screen hasn't defined the accessor.
+        """
+        try:
+            screen = self.screen
+        except NoScreen:
+            return False
+        is_ephemeral = getattr(screen, "_console_active_session_is_ephemeral", None)
+        if not callable(is_ephemeral):
+            return False
+        return bool(is_ephemeral())
+
     def _console_tts_speaking_message_id(self) -> str | None:
         """Return the owning screen's ephemeral "currently speaking" id.
 
@@ -1672,6 +1690,7 @@ class ConsoleTranscript(VerticalScroll):
                 message.citation_presentation
                 and message.citation_presentation.original_attempt_available
             ),
+            ephemeral=self._console_ephemeral_active(),
             **self._generation_action_kwargs(message),
         ):
             if action.action_id == "feedback":
@@ -1697,6 +1716,7 @@ class ConsoleTranscript(VerticalScroll):
                 message.citation_presentation
                 and message.citation_presentation.original_attempt_available
             ),
+            ephemeral=self._console_ephemeral_active(),
             **self._generation_action_kwargs(message),
         ):
             if action.action_id == "feedback":

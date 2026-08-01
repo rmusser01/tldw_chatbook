@@ -286,6 +286,34 @@ def test_console_inspector_state_enables_pending_approval_tools_and_chatbook_act
     assert rows_by_label["Approvals"].status == "blocked"
 
 
+def test_console_inspector_save_chatbook_action_is_blocked_when_ephemeral():
+    """F2 (task-9 review): the run inspector's Save Chatbook action is a
+    third door onto the same write the workbench and composer bar already
+    gate. Must disable with the registry reason -- and still work normally
+    otherwise (the control)."""
+    from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+    blocked = ConsoleInspectorState.from_values(
+        artifact_status="Chatbook artifact available",
+        can_save_chatbook=True,
+        ephemeral=True,
+    )
+    blocked_actions = {action.widget_id: action for action in blocked.actions}
+    save_action = blocked_actions[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID]
+    assert save_action.enabled is False
+    assert save_action.disabled_reason == blocked_reason(
+        "save-chatbook", ephemeral=True
+    )
+
+    normal = ConsoleInspectorState.from_values(
+        artifact_status="Chatbook artifact available",
+        can_save_chatbook=True,
+        ephemeral=False,
+    )
+    normal_actions = {action.widget_id: action for action in normal.actions}
+    assert normal_actions[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID].enabled is True
+
+
 def test_assistant_label_names_the_active_character():
     state = ConsoleControlState.from_values(
         provider="llama_cpp", model="m", character="Seraphina"
