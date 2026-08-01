@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,35 @@ from tldw_chatbook.Utils.private_paths import (
     PrivatePathResult,
     PrivatePathStatus,
 )
+
+
+def _seed_backend_blend_file(directory: Path) -> tuple[Path, str]:
+    """Create a non-empty backend-format blend file without default presets."""
+    directory.mkdir(mode=0o755, exist_ok=True)
+    blend_file = directory / "voice_blends.json"
+    original_text = (
+        '{\n'
+        '  "saved": {\n'
+        '    "voices": [["af_bella", 1.0]],\n'
+        '    "description": "Saved blend",\n'
+        '    "created_at": "2026-01-01T00:00:00",\n'
+        '    "metadata": {}\n'
+        '  }\n'
+        '}\n'
+    )
+    blend_file.write_text(original_text, encoding="utf-8")
+    return blend_file, original_text
+
+
+def _cli_setting_for_blend_directory(blend_directory: Path | str):
+    """Return a CLI-setting double with one explicit Kokoro blend value."""
+
+    def get_cli_setting(section: str, key: str, default: object) -> object:
+        if (section, key) == ("app_tts", "KOKORO_VOICE_BLENDS_DIR"):
+            return blend_directory
+        return default
+
+    return get_cli_setting
 
 
 @pytest.mark.asyncio
@@ -55,6 +85,89 @@ def test_explicit_backend_blend_directory_is_preserved(tmp_path: Path) -> None:
     backend = KokoroTTSBackend(config={"KOKORO_VOICE_BLENDS_DIR": explicit})
 
     assert backend.voice_blends_dir == explicit
+
+
+def test_backend_config_blend_directory_overrides_cli_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A backend-configured blend directory wins over a CLI configured path."""
+    cli_directory = tmp_path / "cli-blends"
+    configured_directory = tmp_path / "backend-blends"
+    blend_file, _ = _seed_backend_blend_file(configured_directory)
+    monkeypatch.setattr(
+        kokoro,
+        "get_cli_setting",
+        _cli_setting_for_blend_directory(cli_directory),
+    )
+
+    backend = KokoroTTSBackend(
+        {"KOKORO_VOICE_BLENDS_DIR": configured_directory}
+    )
+
+    assert backend.voice_blends_dir == configured_directory
+    assert not cli_directory.exists()
+    assert backend._save_blends() is True
+    assert stat.S_IMODE(configured_directory.stat().st_mode) == 0o755
+    assert blend_file.exists()
+
+
+def test_cli_only_blend_directory_preserves_historical_untrusted_treatment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A CLI-only directory is used without application-owned hardening."""
+    cli_directory = tmp_path / "cli-blends"
+    blend_file, _ = _seed_backend_blend_file(cli_directory)
+    monkeypatch.setattr(
+        kokoro,
+        "get_cli_setting",
+        _cli_setting_for_blend_directory(cli_directory),
+    )
+
+    backend = KokoroTTSBackend({})
+
+    assert backend.voice_blends_dir == cli_directory
+    assert backend._save_blends() is True
+    assert stat.S_IMODE(cli_directory.stat().st_mode) == 0o755
+    assert blend_file.exists()
+
+
+def test_empty_configured_blend_directory_preserves_legacy_current_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An explicit empty string retains the historical current-directory path."""
+    tmp_path.chmod(0o755)
+    monkeypatch.chdir(tmp_path)
+    blend_file, _ = _seed_backend_blend_file(tmp_path)
+    monkeypatch.setattr(
+        kokoro,
+        "get_cli_setting",
+        _cli_setting_for_blend_directory(tmp_path / "cli-blends"),
+    )
+
+    backend = KokoroTTSBackend({"KOKORO_VOICE_BLENDS_DIR": ""})
+
+    assert backend.voice_blends_dir == Path("")
+    assert backend._save_blends() is True
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o755
+    assert blend_file.exists()
+
+
+def test_path_configured_blend_directory_is_preserved_without_hardening(
+    tmp_path: Path,
+) -> None:
+    """A Path-valued directory keeps its historical mkdir and writer behavior."""
+    explicit = tmp_path / "path-blends"
+    blend_file, _ = _seed_backend_blend_file(explicit)
+
+    backend = KokoroTTSBackend({"KOKORO_VOICE_BLENDS_DIR": explicit})
+
+    assert backend.voice_blends_dir == explicit
+    assert backend._save_blends() is True
+    assert stat.S_IMODE(explicit.stat().st_mode) == 0o755
+    assert blend_file.exists()
 
 
 def test_save_voice_blend_restores_memory_when_private_write_fails(
@@ -135,4 +248,44 @@ def test_delete_voice_blend_restores_memory_when_private_write_fails(
 
     assert backend.delete_voice_blend("saved") is False
     assert backend.saved_blends["saved"] == original_blend
+    assert blend_file.read_text(encoding="utf-8") == original_text
+
+
+def test_save_voice_blend_restores_memory_when_save_method_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An unexpected persistence exception rolls back a newly added blend."""
+    blend_directory = tmp_path / "blends"
+    blend_file, original_text = _seed_backend_blend_file(blend_directory)
+    backend = KokoroTTSBackend({"KOKORO_VOICE_BLENDS_DIR": blend_directory})
+    original_blends = backend.saved_blends.copy()
+
+    def raise_from_save() -> bool:
+        raise RuntimeError("unexpected persistence failure")
+
+    monkeypatch.setattr(backend, "_save_blends", raise_from_save)
+
+    assert backend.save_voice_blend("new", [("af_bella", 1.0)]) is False
+    assert backend.saved_blends == original_blends
+    assert blend_file.read_text(encoding="utf-8") == original_text
+
+
+def test_delete_voice_blend_restores_memory_when_save_method_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An unexpected persistence exception restores the removed blend."""
+    blend_directory = tmp_path / "blends"
+    blend_file, original_text = _seed_backend_blend_file(blend_directory)
+    backend = KokoroTTSBackend({"KOKORO_VOICE_BLENDS_DIR": blend_directory})
+    original_blends = backend.saved_blends.copy()
+
+    def raise_from_save() -> bool:
+        raise RuntimeError("unexpected persistence failure")
+
+    monkeypatch.setattr(backend, "_save_blends", raise_from_save)
+
+    assert backend.delete_voice_blend("saved") is False
+    assert backend.saved_blends == original_blends
     assert blend_file.read_text(encoding="utf-8") == original_text
