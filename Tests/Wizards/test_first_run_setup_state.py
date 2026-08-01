@@ -634,3 +634,37 @@ class TestSummaryThreeState:
             {"general": {"default_theme": "nord"}}, {}, rag_deps_installed=False
         )}
         assert rows["Theme"].state == ROW_CONFIGURED
+
+
+class TestRerunModelPrefill:
+    """TASK-1374: prefill fires when the session provider matches persisted."""
+
+    def test_same_provider_returns_persisted_model(self):
+        """Re-running with the persisted provider surfaces the saved model."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import rerun_model_prefill
+
+        cfg = {"chat_defaults": {"provider": "anthropic", "model": "claude-opus-5"}}
+        assert rerun_model_prefill(cfg, provider_value="anthropic") == "claude-opus-5"
+
+    def test_provider_forms_are_normalized(self):
+        """Display-cased template value matches the raw key the wizard writes."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import rerun_model_prefill
+
+        cfg = {"chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"}}
+        assert rerun_model_prefill(cfg, provider_value="openai") == "gpt-5.6-terra"
+
+    def test_changed_provider_returns_empty(self):
+        """A genuinely different provider must not inherit the old model."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import rerun_model_prefill
+
+        cfg = {"chat_defaults": {"provider": "openai", "model": "gpt-5.6-terra"}}
+        assert rerun_model_prefill(cfg, provider_value="anthropic") == ""
+
+    def test_empty_inputs_return_empty(self):
+        """No provider context or pristine config yields no prefill."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import rerun_model_prefill
+
+        assert rerun_model_prefill({}, provider_value="openai") == ""
+        assert rerun_model_prefill(
+            {"chat_defaults": {"provider": "openai", "model": "m"}}, provider_value=""
+        ) == ""

@@ -1,10 +1,10 @@
 ---
 id: TASK-1374
 title: ModelStep re-run prefill is dead code on the only reachable path
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-29 22:09'
-updated_date: '2026-07-29 22:10'
+updated_date: '2026-07-31 02:55'
 labels: []
 dependencies: []
 priority: medium
@@ -18,13 +18,13 @@ During the final whole-branch review of the first-run setup wizard (backlog/task
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Either ModelStep's re-run prefill fires on a genuinely reachable path (e.g. by not writing a wizard_data entry for skipped/no-op steps, or by deriving has_provider_entry from persisted config instead of session wizard_data), or the dead branch and its pinning test are removed with the resulting behavior documented as intentional
-- [ ] #2 Tests/Wizards/test_first_run_setup_wizard.py reflects whichever outcome is chosen (no test pins an unreachable state as if it were live behavior)
-- [ ] #3 Full Tests/Wizards/ and Tests/UI/test_first_run_wizard_live_contract.py suites stay green
+- [x] #1 Either ModelStep's re-run prefill fires on a genuinely reachable path (e.g. by not writing a wizard_data entry for skipped/no-op steps, or by deriving has_provider_entry from persisted config instead of session wizard_data), or the dead branch and its pinning test are removed with the resulting behavior documented as intentional
+- [x] #2 Tests/Wizards/test_first_run_setup_wizard.py reflects whichever outcome is chosen (no test pins an unreachable state as if it were live behavior)
+- [x] #3 Full Tests/Wizards/ and Tests/UI/test_first_run_wizard_live_contract.py suites stay green
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Filed during the final-fix-wave review (branch feature/first-run-setup-wizard, HEAD 77153eaaf at review time). See ModelStep.on_show()'s has_provider_entry check and SetupWizardContainer._advance() in tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py.
+Chose the make-it-reachable outcome: new pure rerun_model_prefill(app_config, provider_value) returns the persisted chat_defaults.model when the session provider matches the persisted one (both normalized via provider_config_key — template stores display-case, wizard writes raw keys). ModelStep.on_show uses it; the unreachable-state pinning test replaced by a reachable-path test; boundary test (changed provider blanks) still green.
 <!-- SECTION:NOTES:END -->

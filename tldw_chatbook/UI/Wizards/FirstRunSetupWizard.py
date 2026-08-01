@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
+from textual.compose import compose as _drain_compose_result
 from textual.containers import Container, Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, RadioButton, RadioSet, Static, Switch
@@ -74,6 +75,106 @@ class SetupStep(WizardStep):
         super().__init__(*args, **kwargs)
         self.add_class("setup-step")
 
+    #: TASK-1266: set when compose_step() raised — the container drops the
+    #: step from navigation and the Summary reports it.
+    compose_failed: bool = False
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Guard subclass lifecycle hooks against a failed compose.
+
+        TASK-1266: a step whose compose_step() raised has none of its usual
+        widgets, so its own on_mount/on_show (which query them) would crash
+        the mount. Rather than asking every step to re-check the flag, wrap
+        the hooks here once. All current hooks are sync (asserted by the
+        wrapper returning None on skip).
+
+        Args:
+            cls: The subclass being defined; supplied automatically by
+                Python whenever a ``SetupStep`` subclass is created.
+            **kwargs: Forwarded to ``super().__init_subclass__()``; unused
+                by this hook itself.
+        """
+        super().__init_subclass__(**kwargs)
+        import functools
+
+        for hook_name in ("on_mount", "on_show"):
+            hook = cls.__dict__.get(hook_name)
+            if hook is None:
+                continue
+
+            def _make(wrapped):
+                @functools.wraps(wrapped)
+                def _guarded(self, *args: Any, **kw: Any):
+                    if getattr(self, "compose_failed", False):
+                        return None
+                    return wrapped(self, *args, **kw)
+
+                return _guarded
+
+            setattr(cls, hook_name, _make(hook))
+
+    def compose(self) -> ComposeResult:
+        """Final wrapper: render compose_step(), degrading on failure.
+
+        TASK-1266 (spec §5): a step whose composition raises must never
+        crash the wizard screen. The step renders a one-line notice in its
+        place, flags itself, and the container auto-skips it; the Summary
+        adds a reasoned row. Subclasses implement ``compose_step``.
+
+        Finding A fix: ``compose_step()`` is fully drained into a list
+        BEFORE anything is yielded to Textual. The original ``yield from
+        self.compose_step()`` streamed each widget straight through as it
+        was produced, so a step that yielded some widgets and THEN raised
+        left those already-yielded widgets mounted -- rendering a
+        half-built form ABOVE the "couldn't be shown" notice, which then
+        lied about the step having been skipped. Buffering means either
+        ALL of ``compose_step()``'s widgets are yielded (success) or NONE
+        are (failure -- notice only).
+
+        Returns:
+            Yields ``compose_step()``'s widgets on success. On a raised
+            exception, yields a single ``Static`` notice explaining the
+            step was skipped instead (and sets ``compose_failed = True``
+            so the container drops the step and the Summary reports it).
+        """
+        try:
+            # Finding A: drain compose_step() through Textual's OWN
+            # textual.compose.compose() helper -- NOT a plain list(...) --
+            # because plain list() steals every yielded value away from
+            # Textual's per-item "attach to the enclosing with-block
+            # container" step (compose_add_child), which normally runs
+            # inside the SAME loop that calls next() on this generator.
+            # Nested containers (``with RadioSet(): yield SetupRadioButton``)
+            # would silently end up childless -- their leaves float as
+            # stray top-level siblings instead -- if drained with a bare
+            # list(). textual.compose.compose() reproduces that per-item
+            # attach step itself, so it is safe to fully exhaust up front.
+            buffered = _drain_compose_result(self, self.compose_step())
+        except Exception:
+            logger.exception(
+                "Wizard step %s failed to compose; auto-skipping",
+                self.config.id if self.config else type(self).__name__,
+            )
+            self.compose_failed = True
+            yield Static(
+                "This step couldn't be shown and was skipped — its settings "
+                "are still available in Settings.",
+                classes="setup-step-error",
+            )
+            return
+        yield from buffered
+
+    def compose_step(self) -> ComposeResult:
+        """Step content; override in subclasses (default: framework empty).
+
+        Returns:
+            Yields this step's content widgets. The default (unoverridden)
+            body yields whatever ``WizardStep.compose()`` yields -- a single
+            empty ``Container()``; concrete steps override this to yield
+            their own field layout.
+        """
+        yield from super().compose()
+
     async def commit(self) -> tuple[bool, str]:
         """Persist this step's data. Return (ok, error_message)."""
         return True, ""
@@ -130,7 +231,7 @@ class ProviderStep(SetupStep):
         self._entered_key = False
         self._clear_requested = False
 
-    def compose(self) -> ComposeResult:
+    def compose_step(self) -> ComposeResult:
         from tldw_chatbook.Chat.console_provider_support import (
             supported_console_provider_catalog,
         )
@@ -620,7 +721,7 @@ class ModelStep(SetupStep):
         # instead of leaving a stale custom value in place.
         self._model_id_from_custom_input: bool = False
 
-    def compose(self) -> ComposeResult:
+    def compose_step(self) -> ComposeResult:
         with Vertical(classes="setup-model"):
             yield Static("Pick a default model", classes="setup-title")
             yield Static("", id="setup-model-provider-line", classes="setup-subtitle")
@@ -652,21 +753,17 @@ class ModelStep(SetupStep):
             # via invalidate_model_for_provider_change. This just keeps the
             # step's own in-memory selection from surviving a Back-and-switch.
             #
-            # Re-run prefill: a "provider" entry is written to wizard_data
-            # only once ProviderStep has been visited and advanced past this
-            # session. A re-run user jumping forward before that has no
-            # in-session choice to reset to -- resurface the persisted
-            # default model (chat_defaults.model) instead of blanking it.
-            # Once a provider entry exists (even a real Back-and-switch),
-            # the reset-to-blank behavior is unchanged.
-            has_provider_entry = wizard_state.STEP_PROVIDER in (
-                self.wizard.wizard_data or {}
+            # TASK-1374: re-run prefill from a genuinely reachable condition.
+            # The old guard keyed on wizard_data lacking a provider entry --
+            # unreachable, since _advance() always records one before Model
+            # can be shown. The real re-run signal is the session provider
+            # MATCHING the persisted chat_defaults.provider: same provider ->
+            # surface the saved model; changed provider -> blank (the config
+            # half of that invalidation already happened in ProviderStep).
+            prefill_model_id = wizard_state.rerun_model_prefill(
+                getattr(self.wizard.app_instance, "app_config", {}) or {},
+                provider_value=provider_value,
             )
-            prefill_model_id = ""
-            if not has_provider_entry:
-                prefill_model_id = wizard_state.read_wizard_prefill(
-                    getattr(self.wizard.app_instance, "app_config", {}) or {}
-                ).model_id
             self.selected_model_id = prefill_model_id
             self._model_id_from_custom_input = False
             self._shown_for_provider = provider_key
@@ -907,7 +1004,7 @@ class RagStep(SetupStep):
         self._deps_installed = deps_installed
         self.selected_embedding_model: str = ""
 
-    def compose(self) -> ComposeResult:
+    def compose_step(self) -> ComposeResult:
         with Vertical(classes="setup-rag"):
             yield Static("Search & RAG", classes="setup-title")
             yield Static("", id="setup-rag-status", classes="setup-subtitle")
@@ -979,7 +1076,7 @@ class RagStep(SetupStep):
 class ToolsStep(SetupStep):
     """Enable built-in tools (all default OFF; risk-tagged ones still ask per call)."""
 
-    def compose(self) -> ComposeResult:
+    def compose_step(self) -> ComposeResult:
         from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
 
         self._entries = list(gateable_builtin_tools())
@@ -1077,7 +1174,7 @@ class ToolsStep(SetupStep):
 class NotesSyncStep(SetupStep):
     """Optional bidirectional notes sync: a directory and a toggle."""
 
-    def compose(self) -> ComposeResult:
+    def compose_step(self) -> ComposeResult:
         from tldw_chatbook.UI.Wizards.first_run_setup_state import read_wizard_prefill
 
         prefill = read_wizard_prefill(
@@ -1143,7 +1240,7 @@ class AppearanceStep(SetupStep):
     # (RadioSet does not fire Changed for its own initial pre-selection).
     _picked_surprise_me: bool = False
 
-    def compose(self) -> ComposeResult:
+    def compose_step(self) -> ComposeResult:
         # Re-run prefill: pre-select the theme RadioButton matching the
         # persisted default_theme, when it's in the rendered list. First-run
         # has no general.default_theme, so prefill.default_theme is "" and
@@ -1344,7 +1441,7 @@ class AppearanceStep(SetupStep):
 class WelcomeStep(SetupStep):
     """Track choice: Quick / Full / Skip."""
 
-    def compose(self) -> ComposeResult:
+    def compose_step(self) -> ComposeResult:
         with Vertical(classes="setup-welcome"):
             yield Static("Welcome to tldw chatbook", classes="setup-title")
             yield Static(
@@ -1394,7 +1491,7 @@ class ProtectKeysStep(SetupStep):
         self._enable_encryption = enable_encryption
         self.encryption_enabled = False
 
-    def compose(self) -> ComposeResult:
+    def compose_step(self) -> ComposeResult:
         with Vertical(classes="setup-protect"):
             yield Static("Protect your keys", classes="setup-title")
             yield Static(
@@ -1494,7 +1591,7 @@ class SummaryStep(SetupStep):
         self._rag_deps_installed = rag_deps_installed
         self.exit_route: Optional[str] = None
 
-    def compose(self) -> ComposeResult:
+    def compose_step(self) -> ComposeResult:
         with Vertical(classes="setup-summary"):
             yield Static("Setup summary", classes="setup-title")
             yield Static("", id="setup-summary-defaults-note", classes="setup-subtitle")
@@ -1559,6 +1656,18 @@ class SummaryStep(SetupStep):
             + (f" — {row.detail}" if row.detail else "")
             for row in rows
         ]
+        # TASK-1266: steps dropped by the compose-crash policy get a reasoned
+        # row — the matrix must reflect that an area was never presented, not
+        # silently omit it.
+        failed_titles = []
+        try:
+            failed_titles = self.wizard.compose_failed_steps()
+        except Exception:
+            logger.debug("compose_failed_steps unavailable", exc_info=True)
+        lines.extend(
+            f"✗ {title} — step couldn't be shown (skipped); configure in Settings"
+            for title in failed_titles
+        )
         self.query_one("#setup-summary-rows", Static).update("\n".join(lines))
         from tldw_chatbook.config import get_cli_config_path
 
@@ -1654,9 +1763,24 @@ class SetupWizardContainer(WizardContainer):
         """TASK-1499: base on_mount renders the progress row from the FULL
         step list; rebuild it immediately so the initial render honors the
         quick-track default (4 dots, "Step 1 of 4") instead of front-loading
-        all nine steps before the user has chosen anything."""
+        all nine steps before the user has chosen anything.
+
+        TASK-1266 follow-up: ``self.active_ids`` is first computed in
+        ``__init__``, before any step has actually composed -- a step's
+        ``compose_failed`` flag can only be known once its own compose()
+        has actually run, which Textual does while mounting this
+        container's children, i.e. by the time ``super().on_mount()``
+        (BaseWizard.on_mount, which calls ``show_step(0)`` and therefore
+        forces the children through their mount/compose pipeline) returns
+        here. Calling ``_refresh_active_ids()`` -- rather than
+        ``_rebuild_progress()`` directly -- re-derives ``active_ids``
+        against the now-accurate ``compose_failed`` flags before the very
+        first progress/nav render, instead of leaving a step that failed to
+        compose counted and shown until some later event (track selection,
+        a key being entered) happens to trigger a refresh.
+        """
         super().on_mount()
-        self._rebuild_progress()
+        self._refresh_active_ids()
         self.update_progress()
 
     # -- step construction -------------------------------------------------
@@ -1710,10 +1834,44 @@ class SetupWizardContainer(WizardContainer):
         return self.key_entered or wizard_state.stored_plaintext_key_present(app_config)
 
     def _refresh_active_ids(self) -> None:
-        self.active_ids = wizard_state.active_step_ids(
+        ids = wizard_state.active_step_ids(
             self.track, key_entered=self._effective_key_entered()
         )
+        # TASK-1266: steps whose compose failed are auto-skipped — they have
+        # no usable surface, and the Summary reports them (see
+        # compose_failed_steps / SummaryStep._render_rows).
+        failed = {
+            step.config.id
+            for step in self.steps
+            if step.config and getattr(step, "compose_failed", False)
+        }
+        self.active_ids = tuple(sid for sid in ids if sid not in failed)
         self._rebuild_progress()
+        # Finding B: a step's compose_failed flag can only be known once its
+        # own compose() has actually run -- which may land after this
+        # container already displayed it (WelcomeStep is index 0 and
+        # BaseWizard.on_mount unconditionally shows it first). If the page
+        # currently on screen has since turned out to be a casualty, advance
+        # to the next viable active step instead of leaving its "couldn't be
+        # shown" notice as the visible page.
+        if 0 <= self.current_step < len(self.steps) and getattr(
+            self.steps[self.current_step], "compose_failed", False
+        ):
+            resolved = self._resolve_visible_index(self.current_step)
+            if resolved != self.current_step:
+                self.show_step(resolved)
+
+    def compose_failed_steps(self) -> list[str]:
+        """Titles of steps dropped by the TASK-1266 compose-crash policy.
+
+        Returns:
+            Display titles of steps whose composition failed this session.
+        """
+        return [
+            step.config.title
+            for step in self.steps
+            if step.config and getattr(step, "compose_failed", False)
+        ]
 
     def _step_index_for_id(self, step_id: str) -> Optional[int]:
         for index, step in enumerate(self.steps):
@@ -1737,6 +1895,47 @@ class SetupWizardContainer(WizardContainer):
         if position <= 0:
             return None
         return self._step_index_for_id(self.active_ids[position - 1])
+
+    def _resolve_visible_index(self, step_index: int) -> int:
+        """Finding B: never show a step whose own compose_step() raised.
+
+        ``_refresh_active_ids()`` already drops a compose-failed step from
+        navigation/progress, but nothing stopped the container from still
+        SHOWING it as the current page -- WelcomeStep sits at absolute
+        index 0, and BaseWizard.on_mount (never modified) unconditionally
+        calls ``show_step(0)`` on first mount, before this container has
+        had a chance to refresh ``active_ids``. A step's own
+        ``compose_failed`` flag is already final by the time ANY
+        ``show_step`` call happens (Textual composes the whole step
+        subtree before this container's on_mount fires at all), so
+        re-derive the active set fresh here -- rather than trusting
+        ``self.active_ids``, which may still be the pre-refresh value on
+        this very first call -- and redirect to its first non-failed
+        member instead of trusting the caller's index.
+
+        Args:
+            step_index: The absolute step index the caller wants to show.
+
+        Returns:
+            ``step_index`` unchanged if that step's compose_step() did not
+            fail; otherwise the absolute index of the first active step
+            (in active-id order) whose compose_step() succeeded, or
+            ``step_index`` itself if every active step has failed.
+        """
+        if not (0 <= step_index < len(self.steps)):
+            return step_index
+        if not getattr(self.steps[step_index], "compose_failed", False):
+            return step_index
+        ids = wizard_state.active_step_ids(
+            self.track, key_entered=self._effective_key_entered()
+        )
+        for step_id in ids:
+            index = self._step_index_for_id(step_id)
+            if index is None:
+                continue
+            if not getattr(self.steps[index], "compose_failed", False):
+                return index
+        return step_index
 
     def show_step(self, step_index: int) -> None:
         """F-B root cause fix: BaseWizard.show_step() (never modified --
@@ -1770,6 +1969,7 @@ class SetupWizardContainer(WizardContainer):
         focusable widget of its own. Either way the container remains in
         the focused widget's ancestry, so ctrl+n/ctrl+b still resolve.
         """
+        step_index = self._resolve_visible_index(step_index)
         super().show_step(step_index)
         try:
             current_step = self.steps[self.current_step]
