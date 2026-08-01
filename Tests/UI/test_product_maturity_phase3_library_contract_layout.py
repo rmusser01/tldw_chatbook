@@ -102,9 +102,9 @@ def test_library_source_actions_use_console_text_control_style() -> None:
     assert "$ds-library-source-action-min-width: 0;" in bundled_stylesheet
     assert "$ds-library-source-action-height: 1;" in bundled_stylesheet
     assert ".library-source-action {" in agentic_terminal
-    source_action_block = _css_block(agentic_terminal, ".library-source-action {")
+    source_action_block = _css_block(agentic_terminal, ".library-source-action")
     bundled_source_action_block = _css_block(
-        bundled_stylesheet, ".library-source-action {"
+        bundled_stylesheet, ".library-source-action"
     )
     assert "background: transparent;" in source_action_block
     assert "background: transparent;" in bundled_source_action_block

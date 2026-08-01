@@ -331,50 +331,25 @@ async def _select_settings_category(
     )
 
 
-async def _wait_for_settings_input_value(
+async def _wait_for_settings_value(
     screen,
     pilot,
     selector: str,
     expected_value: str,
+    widget_type: type[Input] | type[Select],
     *,
     timeout: float = 4.0,
 ) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if screen.query(selector):
-            field = screen.query_one(selector, Input)
+            field = screen.query_one(selector, widget_type)
             if field.value == expected_value:
                 await pilot.pause()
                 return
         await pilot.pause(0.01)
     actual = (
-        screen.query_one(selector, Input).value
-        if screen.query(selector)
-        else "<missing>"
-    )
-    raise AssertionError(
-        f"Timed out waiting for {selector} value {expected_value!r}; actual={actual!r}"
-    )
-
-
-async def _wait_for_settings_select_value(
-    screen,
-    pilot,
-    selector: str,
-    expected_value: str,
-    *,
-    timeout: float = 4.0,
-) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if screen.query(selector):
-            field = screen.query_one(selector, Select)
-            if field.value == expected_value:
-                await pilot.pause()
-                return
-        await pilot.pause(0.01)
-    actual = (
-        screen.query_one(selector, Select).value
+        screen.query_one(selector, widget_type).value
         if screen.query(selector)
         else "<missing>"
     )
@@ -4460,11 +4435,12 @@ async def test_settings_console_behavior_revert_restores_global_defaults(monkeyp
 
         await pilot.click("#settings-revert-category")
 
-        await _wait_for_settings_input_value(
+        await _wait_for_settings_value(
             screen,
             pilot,
             "#settings-console-default-temperature",
             "0.7",
+            Input,
         )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert "No unsaved changes" in _visible_text(screen)
@@ -4660,17 +4636,19 @@ async def test_settings_navigation_context_can_preselect_provider_category_targe
                 "model": "meta-llama/test-model",
             }
         )
-        await _wait_for_settings_select_value(
+        await _wait_for_settings_value(
             screen,
             pilot,
             "#settings-provider-value",
             "huggingface",
+            Select,
         )
-        await _wait_for_settings_input_value(
+        await _wait_for_settings_value(
             screen,
             pilot,
             "#settings-model-value",
             "meta-llama/test-model",
+            Input,
         )
 
         assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
@@ -4766,17 +4744,19 @@ async def test_settings_navigation_context_preselection_does_not_create_provider
                 "model": "meta-llama/test-model",
             }
         )
-        await _wait_for_settings_select_value(
+        await _wait_for_settings_value(
             screen,
             pilot,
             "#settings-provider-value",
             "huggingface",
+            Select,
         )
-        await _wait_for_settings_input_value(
+        await _wait_for_settings_value(
             screen,
             pilot,
             "#settings-model-value",
             "meta-llama/test-model",
+            Input,
         )
 
         assert (

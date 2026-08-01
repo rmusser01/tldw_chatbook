@@ -608,6 +608,19 @@ class TestMLXParakeetUnit:
         assert "dangerous pattern" in str(exc_info.value.__cause__)
         model_loader.assert_not_called()
 
+    def test_transcription_rejects_missing_file(self, transcription_service):
+        """Reject a missing audio file before acquiring a model."""
+        with patch(
+            "tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained"
+        ) as model_loader:
+            with pytest.raises(TranscriptionError):
+                transcription_service.transcribe(
+                    audio_path="non_existent_file.wav",
+                    provider="parakeet-mlx",
+                )
+
+        model_loader.assert_not_called()
+
 
 @pytest.mark.slow
 class TestMLXParakeetIntegration:
@@ -747,18 +760,6 @@ class TestMLXParakeetIntegration:
 
             finally:
                 os.unlink(tmp_file.name)
-
-    @pytest.mark.integration
-    def test_real_transcription_invalid_file(self, real_transcription_service):
-        """Reject an invalid audio file before acquiring a model."""
-        with patch(
-            "tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained"
-        ) as model_loader:
-            with pytest.raises(TranscriptionError):
-                real_transcription_service.transcribe(
-                    audio_path="non_existent_file.wav", provider="parakeet-mlx"
-                )
-        model_loader.assert_not_called()
 
     @pytest.mark.integration
     @pytest.mark.slow
