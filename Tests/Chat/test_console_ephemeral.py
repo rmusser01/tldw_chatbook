@@ -119,3 +119,41 @@ def test_restore_persisted_session_refuses_to_open_the_second_door(tmp_path):
             )
     finally:
         db.close()
+
+
+@pytest.mark.unit
+def test_ephemeral_gate_wins_even_if_a_persisted_id_is_already_set(tmp_path):
+    """Pins the *placement* of the ephemeral guard, not just its behavior.
+
+    Every reachable code path today keeps ``ephemeral`` and
+    ``persisted_conversation_id`` mutually exclusive, so a gate placed
+    before OR after the already-persisted check currently produces the
+    same observable result for every other test in this file. That means
+    none of them would notice if a future refactor slid the
+    ``if session.ephemeral`` check down below
+    ``if session.persisted_conversation_id is not None`` in
+    ``persist_session_if_needed`` -- the suite would stay green while the
+    fail-safe silently stopped covering Task 3 (promotion) and Task 4
+    (screen-state restore), the two places that will legitimately need to
+    reason about a session that is briefly in both states at once.
+
+    This test manufactures that forbidden state by hand -- ``ephemeral``
+    and a hand-set ``persisted_conversation_id`` together, reachable only
+    by a bug or a future refactor, never through the public API -- and
+    asserts the ephemeral check still wins. If the guard is ever moved
+    below the already-persisted check, this is the test that catches it;
+    do not delete it as redundant with the proof test above.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Corrupted state")
+        # Reach past the public API to manufacture the forbidden state --
+        # `create_session` and `restore_persisted_session` both refuse to
+        # produce this combination.
+        session.ephemeral = True
+        session.persisted_conversation_id = "conv-hand-set"
+
+        assert store.persist_session_if_needed(session.id) is None
+    finally:
+        db.close()
