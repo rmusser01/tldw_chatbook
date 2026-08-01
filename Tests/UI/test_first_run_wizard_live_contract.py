@@ -274,10 +274,13 @@ async def test_full_track_skip_everything_leaves_app_usable(
             else:
                 raise AssertionError("never reached the summary step")
 
+            # TASK-1301: Speech transcription joins the FULL track right
+            # after RAG; every step here is skip-safe with nothing selected.
             assert seen_step_ids == [
                 "provider",
                 "model",
                 "rag",
+                "speech",
                 "tools",
                 "notes",
                 "appearance",

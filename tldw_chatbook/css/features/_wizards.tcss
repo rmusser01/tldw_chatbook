@@ -1073,6 +1073,7 @@ SmartContentTree Tree > .selected-node {
 .setup-provider,
 .setup-model,
 .setup-rag,
+.setup-speech,
 .setup-tools,
 .setup-notes,
 .setup-appearance,
