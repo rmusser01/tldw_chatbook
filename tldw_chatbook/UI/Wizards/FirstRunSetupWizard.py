@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
+from textual.compose import compose as _drain_compose_result
 from textual.containers import Container, Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, RadioButton, RadioSet, Static, Switch
@@ -120,6 +121,16 @@ class SetupStep(WizardStep):
         place, flags itself, and the container auto-skips it; the Summary
         adds a reasoned row. Subclasses implement ``compose_step``.
 
+        Finding A fix: ``compose_step()`` is fully drained into a list
+        BEFORE anything is yielded to Textual. The original ``yield from
+        self.compose_step()`` streamed each widget straight through as it
+        was produced, so a step that yielded some widgets and THEN raised
+        left those already-yielded widgets mounted -- rendering a
+        half-built form ABOVE the "couldn't be shown" notice, which then
+        lied about the step having been skipped. Buffering means either
+        ALL of ``compose_step()``'s widgets are yielded (success) or NONE
+        are (failure -- notice only).
+
         Returns:
             Yields ``compose_step()``'s widgets on success. On a raised
             exception, yields a single ``Static`` notice explaining the
@@ -127,7 +138,18 @@ class SetupStep(WizardStep):
             so the container drops the step and the Summary reports it).
         """
         try:
-            yield from self.compose_step()
+            # Finding A: drain compose_step() through Textual's OWN
+            # textual.compose.compose() helper -- NOT a plain list(...) --
+            # because plain list() steals every yielded value away from
+            # Textual's per-item "attach to the enclosing with-block
+            # container" step (compose_add_child), which normally runs
+            # inside the SAME loop that calls next() on this generator.
+            # Nested containers (``with RadioSet(): yield SetupRadioButton``)
+            # would silently end up childless -- their leaves float as
+            # stray top-level siblings instead -- if drained with a bare
+            # list(). textual.compose.compose() reproduces that per-item
+            # attach step itself, so it is safe to fully exhaust up front.
+            buffered = _drain_compose_result(self, self.compose_step())
         except Exception:
             logger.exception(
                 "Wizard step %s failed to compose; auto-skipping",
@@ -139,6 +161,8 @@ class SetupStep(WizardStep):
                 "are still available in Settings.",
                 classes="setup-step-error",
             )
+            return
+        yield from buffered
 
     def compose_step(self) -> ComposeResult:
         """Step content; override in subclasses (default: framework empty).
@@ -1823,6 +1847,19 @@ class SetupWizardContainer(WizardContainer):
         }
         self.active_ids = tuple(sid for sid in ids if sid not in failed)
         self._rebuild_progress()
+        # Finding B: a step's compose_failed flag can only be known once its
+        # own compose() has actually run -- which may land after this
+        # container already displayed it (WelcomeStep is index 0 and
+        # BaseWizard.on_mount unconditionally shows it first). If the page
+        # currently on screen has since turned out to be a casualty, advance
+        # to the next viable active step instead of leaving its "couldn't be
+        # shown" notice as the visible page.
+        if 0 <= self.current_step < len(self.steps) and getattr(
+            self.steps[self.current_step], "compose_failed", False
+        ):
+            resolved = self._resolve_visible_index(self.current_step)
+            if resolved != self.current_step:
+                self.show_step(resolved)
 
     def compose_failed_steps(self) -> list[str]:
         """Titles of steps dropped by the TASK-1266 compose-crash policy.
@@ -1859,6 +1896,47 @@ class SetupWizardContainer(WizardContainer):
             return None
         return self._step_index_for_id(self.active_ids[position - 1])
 
+    def _resolve_visible_index(self, step_index: int) -> int:
+        """Finding B: never show a step whose own compose_step() raised.
+
+        ``_refresh_active_ids()`` already drops a compose-failed step from
+        navigation/progress, but nothing stopped the container from still
+        SHOWING it as the current page -- WelcomeStep sits at absolute
+        index 0, and BaseWizard.on_mount (never modified) unconditionally
+        calls ``show_step(0)`` on first mount, before this container has
+        had a chance to refresh ``active_ids``. A step's own
+        ``compose_failed`` flag is already final by the time ANY
+        ``show_step`` call happens (Textual composes the whole step
+        subtree before this container's on_mount fires at all), so
+        re-derive the active set fresh here -- rather than trusting
+        ``self.active_ids``, which may still be the pre-refresh value on
+        this very first call -- and redirect to its first non-failed
+        member instead of trusting the caller's index.
+
+        Args:
+            step_index: The absolute step index the caller wants to show.
+
+        Returns:
+            ``step_index`` unchanged if that step's compose_step() did not
+            fail; otherwise the absolute index of the first active step
+            (in active-id order) whose compose_step() succeeded, or
+            ``step_index`` itself if every active step has failed.
+        """
+        if not (0 <= step_index < len(self.steps)):
+            return step_index
+        if not getattr(self.steps[step_index], "compose_failed", False):
+            return step_index
+        ids = wizard_state.active_step_ids(
+            self.track, key_entered=self._effective_key_entered()
+        )
+        for step_id in ids:
+            index = self._step_index_for_id(step_id)
+            if index is None:
+                continue
+            if not getattr(self.steps[index], "compose_failed", False):
+                return index
+        return step_index
+
     def show_step(self, step_index: int) -> None:
         """F-B root cause fix: BaseWizard.show_step() (never modified --
         this overrides it in the subclass, same pattern as update_progress/
@@ -1891,6 +1969,7 @@ class SetupWizardContainer(WizardContainer):
         focusable widget of its own. Either way the container remains in
         the focused widget's ancestry, so ctrl+n/ctrl+b still resolve.
         """
+        step_index = self._resolve_visible_index(step_index)
         super().show_step(step_index)
         try:
             current_step = self.steps[self.current_step]
