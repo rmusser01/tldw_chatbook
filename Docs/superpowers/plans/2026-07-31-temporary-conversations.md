@@ -613,7 +613,10 @@ The highest-severity risk in the spec. `save_state` serializes sessions as an ex
 
 **Interfaces:**
 - Consumes: `ConsoleChatSession.ephemeral` from Task 2.
-- Produces: the `"ephemeral"` key in the serialized session dict.
+- Produces:
+  - `ChatScreen._console_session_to_state(session) -> dict[str, Any]`
+  - `ChatScreen._console_session_from_state(raw_session: dict[str, Any]) -> ConsoleChatSession`
+  - the `"ephemeral"` key carried by both.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -631,43 +634,83 @@ def test_console_screen_state_round_trips_the_temporary_flag():
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-    temporary = ConsoleChatSession(title="Temporary chat", ephemeral=True)
-    normal = ConsoleChatSession(title="Normal chat")
-
-    serialized = {
-        "id": temporary.id,
-        "title": temporary.title,
-        "ephemeral": temporary.ephemeral,
-    }
-    assert serialized["ephemeral"] is True
-
     screen = ChatScreen.__new__(ChatScreen)
-    restored = screen._console_session_from_state(serialized)
-    assert restored.ephemeral is True
 
+    # A REAL round trip: the serializer's own output feeds the restorer.
+    # Asserting on a hand-built dict would test neither half.
+    temporary = ConsoleChatSession(title="Temporary chat", ephemeral=True)
+    payload = screen._console_session_to_state(temporary)
+    assert payload["ephemeral"] is True
+    assert screen._console_session_from_state(payload).ephemeral is True
+
+    normal = ConsoleChatSession(title="Normal chat")
+    assert screen._console_session_from_state(
+        screen._console_session_to_state(normal)
+    ).ephemeral is False
+
+    # Legacy payloads predate the key entirely.
     assert screen._console_session_from_state(
         {"id": normal.id, "title": normal.title}
-    ).ephemeral is False, "a legacy payload with no key must default to saved"
+    ).ephemeral is False, "a payload with no key must default to saved"
 ```
 
-This requires extracting the per-session restore into a helper. That extraction is the point: the round trip is currently untestable without an app, which is exactly why the field is easy to drop.
+This requires extracting **both** per-session halves into helpers. That extraction is the point: the round trip is currently untestable without a running app, which is exactly why a field is easy to drop from one side of it.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd /private/tmp/ephemeral && /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -v -k temporary_flag`
-Expected: FAIL — `AttributeError: 'ChatScreen' object has no attribute '_console_session_from_state'`
+Expected: FAIL — `AttributeError: 'ChatScreen' object has no attribute '_console_session_to_state'`
 
-- [ ] **Step 3: Extract the per-session restore into a helper**
+- [ ] **Step 3: Extract both per-session halves into helpers**
 
-In `chat_screen.py`, move the body of the `for raw_session in raw_sessions:` loop that builds `session_kwargs` and returns `ConsoleChatSession(**session_kwargs)` (lines 12642-12715) into a new method. Keep every existing branch byte-for-byte — this is a move, not a rewrite:
+In `chat_screen.py`, extract the per-session **serialize** dict literal out of `_serialize_native_console_state` (lines 12597-12611). Keep every field byte-for-byte — this is a move, not a rewrite:
+
+```python
+    @staticmethod
+    def _console_session_to_state(session: ConsoleChatSession) -> dict[str, Any]:
+        """Serialize one ConsoleChatSession for screen-state restoration.
+
+        Extracted from `_serialize_native_console_state` so the round trip
+        is testable without a running app. This is an explicit field list:
+        a field missing from it is silently dropped on the way back.
+        """
+        return {
+            "id": session.id,
+            "title": session.title,
+            "workspace_id": session.workspace_id,
+            "persisted_conversation_id": session.persisted_conversation_id,
+            "draft": session.draft,
+            "settings": ChatScreen._serialize_console_settings(session.settings),
+            "updated_at": session.updated_at,
+            "runtime_backend": session.runtime_backend,
+            "assistant_kind": session.assistant_kind,
+            "assistant_id": session.assistant_id,
+            "assistant_authority_id": session.assistant_authority_id,
+            "character_id": session.local_character_id(),
+            "character_name": session.character_name,
+        }
+```
+
+If `_serialize_console_settings` is an instance method rather than a static one, make `_console_session_to_state` an instance method too and call it as `self._serialize_console_settings(...)`; the test constructs the screen via `ChatScreen.__new__(ChatScreen)`, which supports either.
+
+The comprehension in `_serialize_native_console_state` then reads:
+
+```python
+            "sessions": [
+                self._console_session_to_state(session)
+                for session in store.sessions()
+            ],
+```
+
+Symmetrically, move the body of the `for raw_session in raw_sessions:` loop that builds `session_kwargs` and returns `ConsoleChatSession(**session_kwargs)` (lines 12642-12715) into:
 
 ```python
     def _console_session_from_state(self, raw_session: dict[str, Any]) -> ConsoleChatSession:
         """Rebuild one ConsoleChatSession from its serialized screen state.
 
-        Extracted from `_restore_native_console_state` so the field list can
-        be tested without an app: a field silently missing here is how a
-        temporary chat would come back as a persisting one.
+        The mirror of `_console_session_to_state`. Every legacy-payload
+        branch below exists because older saved states omit keys that newer
+        ones carry -- keep them.
         """
 ```
 
@@ -682,13 +725,13 @@ The loop then reads:
 
 - [ ] **Step 4: Add the field to both halves**
 
-In `_serialize_native_console_state`'s session dict (after `"character_name": session.character_name,`):
+In `_console_session_to_state`, after `"character_name": session.character_name,`:
 
 ```python
-                    # Temporary conversations: without this key a temporary
-                    # chat comes back as a persisting one after any screen
-                    # navigation, and the next send writes it to the DB.
-                    "ephemeral": session.ephemeral,
+            # Temporary conversations: without this key a temporary chat
+            # comes back as a persisting one after any screen navigation,
+            # and the next send writes it to the DB.
+            "ephemeral": session.ephemeral,
 ```
 
 In `_console_session_from_state`, before the `ConsoleChatSession(**session_kwargs)` construction:
