@@ -77,7 +77,7 @@ class ModelActivationControls(Widget):
                 disabled=self.pending or self.active or not self.ready,
             )
             yield Button(
-                "Delete now",
+                "Delete…",
                 classes="model-delete",
                 variant="error",
                 disabled=self.pending,

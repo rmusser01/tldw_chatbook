@@ -116,6 +116,32 @@ def test_lease_blocked_deletion_message_is_specific_and_sanitized() -> None:
     assert marker not in message
 
 
+def test_deletion_requires_confirmation_before_starting_worker(monkeypatch) -> None:
+    """The destructive service call starts only after explicit confirmation."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+    from tldw_chatbook.Widgets.ModelArtifacts.activation_controls import (
+        DeletionRequested,
+    )
+    from tldw_chatbook.Widgets.delete_confirmation_dialog import (
+        DeleteConfirmationDialog,
+    )
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    fake_app = MagicMock()
+    monkeypatch.setattr(InstalledView, "app", property(lambda self: fake_app))
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=Path("/tmp/models"))
+    view.refresh = MagicMock()
+    view._delete_model = MagicMock()
+
+    view._deletion_requested(DeletionRequested(reference))
+
+    view._delete_model.assert_not_called()
+    dialog, callback = fake_app.push_screen.call_args[0]
+    assert isinstance(dialog, DeleteConfirmationDialog)
+    callback(True)
+    view._delete_model.assert_called_once_with(reference)
+
+
 @pytest.mark.asyncio
 async def test_empty_inventory_still_reports_managed_and_staging_space(
     tmp_path: Path,

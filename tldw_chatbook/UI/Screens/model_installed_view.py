@@ -30,6 +30,9 @@ from tldw_chatbook.Widgets.ModelArtifacts.activation_controls import (
     DeletionRequested,
     ModelActivationControls,
 )
+from tldw_chatbook.Widgets.delete_confirmation_dialog import (
+    DeleteConfirmationDialog,
+)
 
 MAX_UNMANAGED_MODELS = 500
 _MODEL_EXTENSIONS = frozenset({".gguf", ".bin", ".safetensors", ".pt", ".pth", ".onnx"})
@@ -114,6 +117,7 @@ class InstalledView(Widget):
         self._load_error: str | None = None
         self._operation_reference: ArtifactRef | None = None
         self._operation_name: str | None = None
+        self._pending_delete_reference: ArtifactRef | None = None
         super().__init__(id=id)
 
     def compose(self) -> ComposeResult:
@@ -181,7 +185,10 @@ class InstalledView(Widget):
                     row.reference,
                     active=row.active,
                     ready=row.ready,
-                    pending=self._operation_reference is not None,
+                    pending=(
+                        self._operation_reference is not None
+                        or self._pending_delete_reference is not None
+                    ),
                 )
             )
         return Vertical(*children, classes="installed-model-row")
@@ -290,7 +297,11 @@ class InstalledView(Widget):
 
     @on(Button.Pressed, "#installed-models-repair")
     def _repair_pressed(self) -> None:
-        if self._operation_reference is not None or self._operation_name is not None:
+        if (
+            self._operation_reference is not None
+            or self._operation_name is not None
+            or self._pending_delete_reference is not None
+        ):
             return
         self._operation_name = "repair"
         self.refresh(recompose=True)
@@ -303,7 +314,11 @@ class InstalledView(Widget):
 
     def _request_activation(self, reference: ArtifactRef) -> None:
         """Start activation unless another lifecycle operation is pending."""
-        if self._operation_reference is not None or self._operation_name is not None:
+        if (
+            self._operation_reference is not None
+            or self._operation_name is not None
+            or self._pending_delete_reference is not None
+        ):
             return
         self._operation_reference = reference
         self._operation_name = "activate"
@@ -313,12 +328,43 @@ class InstalledView(Widget):
     @on(DeletionRequested)
     def _deletion_requested(self, event: DeletionRequested) -> None:
         event.stop()
-        if self._operation_reference is not None or self._operation_name is not None:
+        if (
+            self._operation_reference is not None
+            or self._operation_name is not None
+            or self._pending_delete_reference is not None
+        ):
             return
-        self._operation_reference = event.reference
+        self._pending_delete_reference = event.reference
+        self.refresh(recompose=True)
+        self.app.push_screen(
+            DeleteConfirmationDialog(
+                item_type="Model",
+                item_name=(
+                    f"{event.reference.artifact_id} "
+                    f"({event.reference.variant})"
+                ),
+                additional_warning=(
+                    "The managed model files will be removed from this device."
+                ),
+                permanent=True,
+            ),
+            self._confirm_deletion,
+        )
+
+    def _confirm_deletion(self, confirmed: bool) -> None:
+        """Start deletion only after the confirmation dialog accepts it."""
+        reference = self._pending_delete_reference
+        self._pending_delete_reference = None
+        if not confirmed or reference is None:
+            self.refresh(recompose=True)
+            return
+        if self._operation_reference is not None or self._operation_name is not None:
+            self.refresh(recompose=True)
+            return
+        self._operation_reference = reference
         self._operation_name = "delete"
         self.refresh(recompose=True)
-        self._delete_model(event.reference)
+        self._delete_model(reference)
 
     @work(thread=True, group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
     def _activate_model(self, reference: ArtifactRef) -> None:
