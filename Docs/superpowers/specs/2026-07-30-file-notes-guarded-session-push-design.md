@@ -1,7 +1,7 @@
 # File Notes Guarded Session Push Design
 
 Date: 2026-07-30
-Task: [TASK-1566](../../../backlog/tasks/task-1566%20-%20Add-guarded-exact-session-commit-push-to-File-Notes.md)
+Task: [TASK-1711](../../../backlog/tasks/task-1711%20-%20Add-guarded-exact-session-commit-push-to-File-Notes.md)
 Decision: [ADR-039](../../../backlog/decisions/039-file-notes-guarded-session-push.md)
 Amends: [ADR-038](../../../backlog/decisions/038-file-notes-guarded-session-commit.md)
 Conforms to:

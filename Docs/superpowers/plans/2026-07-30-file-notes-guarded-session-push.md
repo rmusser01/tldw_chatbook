@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11+, POSIX owner/mode semantics and process groups, Git 2.x SHA-1/SHA-256 plumbing/porcelain and smart transports, OpenSSH, immutable dataclasses plus exact-instance weak registries, Textual 3.3+, pytest/pytest-asyncio, disposable Git repositories, and hermetic loopback SSH/HTTPS fixtures. Guarded push fails closed on Windows pending separately approved owner-only ACL work.
 
-**Backlog:** [TASK-1566](../../../backlog/tasks/task-1566%20-%20Add-guarded-exact-session-commit-push-to-File-Notes.md)
+**Backlog:** [TASK-1711](../../../backlog/tasks/task-1711%20-%20Add-guarded-exact-session-commit-push-to-File-Notes.md)
 
 **Specification:** [File Notes Guarded Session Push Design](../specs/2026-07-30-file-notes-guarded-session-push-design.md)
 
@@ -143,7 +143,7 @@
     provenance.
 - `Tests/ProductionApp/test_file_notes_session_owner_lifecycle.py`
   - Owner-first push/check/recovery settlement and no restart attribution.
-- `backlog/tasks/task-1566 - Add-guarded-exact-session-commit-push-to-File-Notes.md`
+- `backlog/tasks/task-1711 - Add-guarded-exact-session-commit-push-to-File-Notes.md`
   - Plan link now; checked acceptance criteria and implementation notes only
     after implementation and acceptance evidence.
 - `backlog/decisions/039-file-notes-guarded-session-push.md`
@@ -300,7 +300,7 @@ Expected: all commands exit 0.
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_git_push.py Tests/Notes/test_file_notes_git_push.py
-git commit -m "feat(notes): add guarded push contracts [TASK-1566]"
+git commit -m "feat(notes): add guarded push contracts [TASK-1711]"
 ```
 
 ## Task 2: Atomically Publish One Exact Push Candidate
@@ -363,7 +363,7 @@ Expected: all commands exit 0.
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_session_owner.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_session_owner.py Tests/Notes/test_file_notes_git_commit_integration.py
-git commit -m "feat(notes): publish exact guarded push candidates [TASK-1566]"
+git commit -m "feat(notes): publish exact guarded push candidates [TASK-1711]"
 ```
 
 ## Task 3: Prove Local Destination, Transport, Configuration, and LFS Policy
@@ -434,7 +434,7 @@ Expected: all commands exit 0.
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_git_push.py tldw_chatbook/Notes/file_notes_git_service.py tldw_chatbook/Notes/file_notes_session_owner.py Tests/Notes/test_file_notes_git_push.py Tests/Notes/test_file_notes_git_push_service.py Tests/Notes/test_file_notes_session_owner.py
-git commit -m "feat(notes): prove guarded push destination policy [TASK-1566]"
+git commit -m "feat(notes): prove guarded push destination policy [TASK-1711]"
 ```
 
 ## Task 4: Own Network Process Trees Through Settlement
@@ -492,7 +492,7 @@ Expected: all commands exit 0.
 
 ```bash
 git add tldw_chatbook/Notes/git_process_containment.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_git_process_containment.py Tests/Notes/test_file_notes_git_push_service.py
-git commit -m "feat(notes): contain retained Git process trees [TASK-1566]"
+git commit -m "feat(notes): contain retained Git process trees [TASK-1711]"
 ```
 
 ## Task 5: Build One Immutable Network Git Execution Context
@@ -500,7 +500,7 @@ git commit -m "feat(notes): contain retained Git process trees [TASK-1566]"
 **Files:**
 
 - Modify: `backlog/decisions/039-file-notes-guarded-session-push.md`
-- Modify: `backlog/tasks/task-1566 - Add-guarded-exact-session-commit-push-to-File-Notes.md`
+- Modify: `backlog/tasks/task-1711 - Add-guarded-exact-session-commit-push-to-File-Notes.md`
 - Modify: `Docs/superpowers/specs/2026-07-30-file-notes-guarded-session-push-design.md`
 - Modify: `Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md`
 - Create: `tldw_chatbook/Notes/file_notes_git_network.py`
@@ -584,8 +584,8 @@ Expected: all commands exit 0.
 - [ ] Commit:
 
 ```bash
-git add backlog/decisions/039-file-notes-guarded-session-push.md "backlog/tasks/task-1566 - Add-guarded-exact-session-commit-push-to-File-Notes.md" Docs/superpowers/specs/2026-07-30-file-notes-guarded-session-push-design.md Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/file_notes_git_push.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_push.py Tests/Notes/test_file_notes_git_push_service.py
-git commit -m "feat(notes): isolate guarded push execution [TASK-1566]"
+git add backlog/decisions/039-file-notes-guarded-session-push.md "backlog/tasks/task-1711 - Add-guarded-exact-session-commit-push-to-File-Notes.md" Docs/superpowers/specs/2026-07-30-file-notes-guarded-session-push-design.md Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/file_notes_git_push.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_push.py Tests/Notes/test_file_notes_git_push_service.py
+git commit -m "feat(notes): isolate guarded push execution [TASK-1711]"
 ```
 
 ## Task 6: Add Authorized Remote Preflight and Immutable Review
@@ -644,7 +644,7 @@ Expected: all commands exit 0.
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_session_owner.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_session_owner.py Tests/Notes/test_file_notes_git_push_service.py
-git commit -m "feat(notes): add guarded push review authority [TASK-1566]"
+git commit -m "feat(notes): add guarded push review authority [TASK-1711]"
 ```
 
 ## Task 7: Execute the Exact Lease-Guarded Push and Prove CAS Semantics
@@ -728,7 +728,7 @@ Expected: all commands exit 0.
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_git_service.py tldw_chatbook/Notes/file_notes_session_owner.py Tests/Notes/test_file_notes_git_push_service.py Tests/Notes/test_file_notes_git_push_integration.py
-git commit -m "feat(notes): execute exact guarded session push [TASK-1566]"
+git commit -m "feat(notes): execute exact guarded session push [TASK-1711]"
 ```
 
 ## Task 8: Retain Uncertain Proof, Query Only, and Settle Shutdown
@@ -793,7 +793,7 @@ Expected: all commands exit 0.
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_session_owner.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_session_owner.py Tests/Notes/test_file_notes_git_push_service.py Tests/Notes/test_file_notes_git_push_integration.py Tests/ProductionApp/test_file_notes_session_owner_lifecycle.py
-git commit -m "feat(notes): retain uncertain guarded push proof [TASK-1566]"
+git commit -m "feat(notes): retain uncertain guarded push proof [TASK-1711]"
 ```
 
 ## Task 9: Rehydrate Push State and Keep Session Git Truthful
@@ -853,7 +853,7 @@ Expected: all commands exit 0.
 
 ```bash
 git add tldw_chatbook/Widgets/Library/library_file_notes_workspace.py Tests/UI/test_library_file_notes_git_push.py Tests/Notes/test_file_notes_git_push_service.py
-git commit -m "feat(notes): rehydrate guarded push workflow [TASK-1566]"
+git commit -m "feat(notes): rehydrate guarded push workflow [TASK-1711]"
 ```
 
 ## Task 10: Add the Separate Keyboard-Safe Push Presentation
@@ -924,7 +924,7 @@ Expected: all commands exit 0.
 
 ```bash
 git add tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py tldw_chatbook/Widgets/Library/library_file_notes_workspace.py Tests/UI/test_library_file_notes_git_push.py
-git commit -m "feat(notes): add guarded push review UI [TASK-1566]"
+git commit -m "feat(notes): add guarded push review UI [TASK-1711]"
 ```
 
 ## Task 11: Verify Compact, Remounted, and Lifecycle UX
@@ -984,7 +984,7 @@ Expected: all commands exit 0.
 
 ```bash
 git add Tests/UI/test_library_file_notes_git_push.py Tests/ProductionApp/test_file_notes_session_owner_lifecycle.py tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py tldw_chatbook/Widgets/Library/library_file_notes_workspace.py tldw_chatbook/Notes/file_notes_git_service.py tldw_chatbook/Notes/file_notes_session_owner.py
-git commit -m "test(notes): harden guarded push lifecycle UX [TASK-1566]"
+git commit -m "test(notes): harden guarded push lifecycle UX [TASK-1711]"
 ```
 
 Only stage production files in this commit if the focused failing tests required
@@ -1071,7 +1071,7 @@ Expected: all commands exit 0.
 
 ```bash
 git add Tests/Notes/test_file_notes_git_push_transport.py Tests/Notes/test_file_notes_git_push_service.py Tests/Notes/test_file_notes_git_push_integration.py tldw_chatbook/Notes/file_notes_git_push.py tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/git_process_containment.py tldw_chatbook/Notes/file_notes_git_service.py
-git commit -m "test(notes): verify guarded push transports [TASK-1566]"
+git commit -m "test(notes): verify guarded push transports [TASK-1711]"
 ```
 
 Only stage production files if the transport tests required contract fixes.
@@ -1092,7 +1092,7 @@ not retain the wrapper as acceptance evidence.
 - Modify:
   `Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md`
 - Modify:
-  `backlog/tasks/task-1566 - Add-guarded-exact-session-commit-push-to-File-Notes.md`
+  `backlog/tasks/task-1711 - Add-guarded-exact-session-commit-push-to-File-Notes.md`
 - Modify: `tldw_chatbook/Notes/file_notes_git_network.py`
 - Modify: `tldw_chatbook/Notes/file_notes_git_service.py`
 - Modify: `tldw_chatbook/Notes/file_notes_session_owner.py`
@@ -1126,7 +1126,7 @@ not retain the wrapper as acceptance evidence.
   `IdentityFile=none`, `IdentitiesOnly=no`, and the pinned `IdentityAgent`.
   An SSH destination without a safe pinned agent blocks before network contact.
 
-- [ ] Amend ADR-039, design, plan, and TASK-1566 with the exact approved trust,
+- [ ] Amend ADR-039, design, plan, and TASK-1711 with the exact approved trust,
   identity, crash-residue, and UAT boundaries before production edits.
 - [ ] Write focused failing network-context tests proving safe ordered capture,
   missing-source behavior, symlink/hard-link/group-write/oversize rejection,
@@ -1171,8 +1171,8 @@ Expected: selected tests pass, static checks exit 0, and no broad suite runs.
 - [ ] Commit:
 
 ```bash
-git add backlog/decisions/039-file-notes-guarded-session-push.md "backlog/tasks/task-1566 - Add-guarded-exact-session-commit-push-to-File-Notes.md" Docs/superpowers/specs/2026-07-30-file-notes-guarded-session-push-design.md Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/file_notes_git_service.py tldw_chatbook/Notes/file_notes_session_owner.py tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py Tests/Notes/test_file_notes_git_push_service.py Tests/Notes/test_file_notes_git_push_transport.py Tests/UI/test_library_file_notes_git_push.py
-git commit -m "fix(notes): freeze guarded push SSH trust [TASK-1566]"
+git add backlog/decisions/039-file-notes-guarded-session-push.md "backlog/tasks/task-1711 - Add-guarded-exact-session-commit-push-to-File-Notes.md" Docs/superpowers/specs/2026-07-30-file-notes-guarded-session-push-design.md Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md tldw_chatbook/Notes/file_notes_git_network.py tldw_chatbook/Notes/file_notes_git_service.py tldw_chatbook/Notes/file_notes_session_owner.py tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py Tests/Notes/test_file_notes_git_push_service.py Tests/Notes/test_file_notes_git_push_transport.py Tests/UI/test_library_file_notes_git_push.py
+git commit -m "fix(notes): freeze guarded push SSH trust [TASK-1711]"
 ```
 
 ## Task 13: Run Same-Process Production-App PTY Acceptance
@@ -1190,7 +1190,7 @@ git commit -m "fix(notes): freeze guarded push SSH trust [TASK-1566]"
 - [ ] Probe loopback OpenSSH, tmux/PTY, Git, and terminal-capture capability.
   If an isolated production-compatible OpenSSH destination is unavailable,
   record the missing lane, do not relabel a local/injected transport run as
-  end-to-end network UAT, and leave TASK-1566 In Progress. The PTY lane must be
+  end-to-end network UAT, and leave TASK-1711 In Progress. The PTY lane must be
   run in a suitable environment before Done/ADR acceptance.
 - [ ] Launch the unmodified production application with:
 
@@ -1269,7 +1269,7 @@ private-path/canary scan finds no match, and diff check passes.
 
 ```bash
 git add Docs/superpowers/qa/file-notes-guarded-push-uat-2026-07-30
-git commit -m "test(notes): record guarded push acceptance [TASK-1566]"
+git commit -m "test(notes): record guarded push acceptance [TASK-1711]"
 ```
 
 ## Task 14: Focused Regression Gate and Backlog/ADR Closeout
@@ -1277,7 +1277,7 @@ git commit -m "test(notes): record guarded push acceptance [TASK-1566]"
 **Files:**
 
 - Modify:
-  `backlog/tasks/task-1566 - Add-guarded-exact-session-commit-push-to-File-Notes.md`
+  `backlog/tasks/task-1711 - Add-guarded-exact-session-commit-push-to-File-Notes.md`
 - Modify: `backlog/decisions/039-file-notes-guarded-session-push.md`
 - Modify: relevant implementation/spec documentation only if behavior changed
   within the approved boundary.
@@ -1314,7 +1314,7 @@ git diff --check
 
 Expected: all commands exit 0.
 
-- [x] Perform a self-review against all ten TASK-1566 acceptance criteria and
+- [x] Perform a self-review against all ten TASK-1711 acceptance criteria and
   the phase-to-evidence matrix. Verify in particular:
   - no pre-authorization network/helper contact;
   - safe bounded standard host-trust capture, drift revocation, exact private
@@ -1336,10 +1336,10 @@ Expected: all commands exit 0.
     completed successfully, with zero-preauthorization-contact and exact
     one-ref evidence;
   - change ADR-039 from `Proposed` to `Accepted`;
-  - check every TASK-1566 acceptance criterion;
+  - check every TASK-1711 acceptance criterion;
   - add concise `## Implementation Notes` covering approach, tradeoffs, files,
     focused verification, UAT evidence, and ADR-039;
-  - set TASK-1566 to Done through Backlog CLI.
+  - set TASK-1711 to Done through Backlog CLI.
 - [x] Run:
 
 ```bash
@@ -1348,14 +1348,14 @@ git status --short
 git diff --check
 ```
 
-Expected: TASK-1566 is Done with every AC checked, implementation notes and ADR
+Expected: TASK-1711 is Done with every AC checked, implementation notes and ADR
 link present, and only intended closeout files are uncommitted.
 
 - [x] Commit:
 
 ```bash
-git add "backlog/tasks/task-1566 - Add-guarded-exact-session-commit-push-to-File-Notes.md" backlog/decisions/039-file-notes-guarded-session-push.md Docs/superpowers/specs/2026-07-30-file-notes-guarded-session-push-design.md Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md
-git commit -m "docs(notes): close guarded session push [TASK-1566]"
+git add "backlog/tasks/task-1711 - Add-guarded-exact-session-commit-push-to-File-Notes.md" backlog/decisions/039-file-notes-guarded-session-push.md Docs/superpowers/specs/2026-07-30-file-notes-guarded-session-push-design.md Docs/superpowers/plans/2026-07-30-file-notes-guarded-session-push.md
+git commit -m "docs(notes): close guarded session push [TASK-1711]"
 ```
 
 Do not mark the task Done or ADR Accepted merely because code exists. Both

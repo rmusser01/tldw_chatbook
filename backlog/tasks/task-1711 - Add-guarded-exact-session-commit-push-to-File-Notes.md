@@ -1,5 +1,5 @@
 ---
-id: TASK-1566
+id: TASK-1711
 title: Add guarded exact-session-commit push to File Notes
 status: Done
 assignee:
@@ -83,4 +83,8 @@ Tradeoffs: publication is limited to one direct-child candidate created and prov
 Core implementation spans file_notes_git_push.py, file_notes_git_network.py, git_process_containment.py, file_notes_session_owner.py, file_notes_git_service.py, the Library File Notes Git panel/workspace, focused tests, and the sanitized UAT bundle.
 
 Verification: the Task 14 guarded-push boundary passed 570 tests with 46 documented capability/platform skips; the isolated SSH-context fixture separately passed with AF_UNIX permission. The adjacent File Notes boundary passed 726 tests. Targeted Ruff, compileall, JSON, bundle manifest, and diff checks passed. Production-app PTY UAT passed at 120x40 and 40x20; the retained-result reopen remediation was retested in the production app at 120x40 with mounted 40x20 coverage. Evidence records zero preauthorization contact, exact one-ref success and divergence behavior, uncertainty, and explicit restoration of query-only recovery without duplicate network work. Independent focused code and acceptance-evidence reviews found no issues or blockers. ADR-039 is Accepted.
+
+Merge note: this task was renumbered from TASK-1566 to TASK-1711 because
+`dev` assigned TASK-1566 to the wizard compose-crash task before this branch
+merged. The scope, acceptance criteria, implementation, and ADR are unchanged.
 <!-- SECTION:NOTES:END -->

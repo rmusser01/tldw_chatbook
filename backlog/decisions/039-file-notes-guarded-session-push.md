@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-30
-Related Task: [TASK-1566](../tasks/task-1566%20-%20Add-guarded-exact-session-commit-push-to-File-Notes.md)
+Related Task: [TASK-1711](../tasks/task-1711%20-%20Add-guarded-exact-session-commit-push-to-File-Notes.md)
 Amends: [ADR-038 File Notes Guarded Session Commit](038-file-notes-guarded-session-commit.md)
 Conforms to:
 [ADR-035 File Notes Session Git Index Controls](035-file-notes-session-git-index-controls.md),
@@ -430,4 +430,4 @@ remain in force.
 - [ADR-029 File Notes](029-file-notes-disk-authority.md)
 - [ADR-029 Local Private Data](029-local-private-data-boundary.md)
 - [ADR-011](011-chatbook-workbench-ui-system.md)
-- [TASK-1566](../tasks/task-1566%20-%20Add-guarded-exact-session-commit-push-to-File-Notes.md)
+- [TASK-1711](../tasks/task-1711%20-%20Add-guarded-exact-session-commit-push-to-File-Notes.md)
