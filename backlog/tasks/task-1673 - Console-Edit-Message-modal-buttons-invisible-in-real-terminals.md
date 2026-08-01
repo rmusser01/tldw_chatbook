@@ -1,5 +1,5 @@
 ---
-id: TASK-1620
+id: task-1673
 title: 'Console Edit Message modal: action buttons invisible in real terminals'
 status: To Do
 assignee: []

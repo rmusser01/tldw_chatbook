@@ -27,7 +27,7 @@ at the same size, so this is specific to the prompts editor's layout
 (the skills editor avoided the same trap by using a `VerticalScroll`
 root).
 
-Related: task-1620 is the same symptom family in the Console Edit
+Related: task-1673 is the same symptom family in the Console Edit
 Message modal; a shared root cause is plausible.
 
 ## Acceptance Criteria (the what)
