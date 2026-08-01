@@ -762,6 +762,22 @@ async def test_the_import_probes_button_is_present_in_the_dataset_actions(evals_
 
 
 @pytest.mark.asyncio
+async def test_import_probes_button_pushes_a_file_open_dialog(evals_app):
+    """Mirrors ``test_import_dataset_button_pushes_a_file_open_dialog``
+    (the sibling snippet-import flow's own click-through test) for the
+    probe-import button: a REAL `pilot.click` on
+    `#evals-rail-import-probes`, not just a handler call bypassing the
+    button, so a typo'd id string or a dropped `return` in
+    `on_button_pressed`'s new branch would fail here rather than ship
+    silently."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        await pilot.click("#evals-rail-import-probes")
+        await pilot.pause()
+        assert isinstance(pilot.app.screen, FileOpen)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(160, 45), (235, 52)], ids=["160x45", "235x52"])
 async def test_dataset_action_buttons_stay_hit_testable_with_import_probes_added(
     evals_app, size
