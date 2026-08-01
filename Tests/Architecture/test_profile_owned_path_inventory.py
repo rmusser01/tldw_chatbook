@@ -22,15 +22,19 @@ def test_scanner_reports_embedded_and_multiline_physical_lines() -> None:
     """Embedded paths retain the physical line on which they appear."""
     source = '''COPY = "edit ~/.config/tldw_cli/config.toml now"
 DEFAULTS = """[database]
-media = "~/.local/share/tldw_cli/media.db"
-"""
+description = "a deliberately long preceding line makes token offsets exceed the final line column"
+media = "~/.local/share/tldw_cli/media.db"""
 '''
 
     found = scan_source(source, "tldw_chatbook/example.py")
 
-    assert [(item.line, item.expression) for item in found] == [
-        (1, "literal:~/.config/tldw_cli/config.toml"),
-        (3, "literal:~/.local/share/tldw_cli/media.db"),
+    assert [(item.line, item.context, item.expression) for item in found] == [
+        (1, "module:COPY", "literal:~/.config/tldw_cli/config.toml"),
+        (
+            4,
+            "module:DEFAULTS",
+            "literal:~/.local/share/tldw_cli/media.db",
+        ),
     ]
 
 
@@ -46,6 +50,21 @@ data = os.path.join(home, ".local", "share", "tldw_cli", "cache")
 
     assert [item.expression for item in found] == [
         "join:.config/tldw_cli",
+        "join:.config/tldw_cli",
+        "join:.local/share/tldw_cli",
+    ]
+
+
+def test_scanner_detects_join_components_that_contain_a_complete_root() -> None:
+    """Joined path components may contain more than one root segment."""
+    source = '''
+config = base / ".config/tldw_cli" / "models"
+data = base.joinpath(".local/share/tldw_cli", "cache")
+'''
+
+    found = scan_source(source, "tldw_chatbook/example.py")
+
+    assert [item.expression for item in found] == [
         "join:.config/tldw_cli",
         "join:.local/share/tldw_cli",
     ]

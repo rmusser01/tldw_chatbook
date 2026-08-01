@@ -88,6 +88,14 @@ def _physical_line(token_text: str, token_line: int, offset: int) -> int:
     return token_line + token_text[:offset].count("\n")
 
 
+def _physical_column(token_text: str, token_column: int, offset: int) -> int:
+    """Return the physical source column for a token-relative offset."""
+    final_newline = token_text.rfind("\n", 0, offset)
+    if final_newline < 0:
+        return token_column + offset
+    return offset - final_newline - 1
+
+
 def _literal_expression(value: str, root: str, offset: int) -> str:
     match = re.match(re.escape(root) + r"[A-Za-z0-9_./<>-]*", value[offset:])
     assert match is not None
@@ -213,7 +221,7 @@ def _is_os_path_join(node: ast.Call) -> bool:
 def _string_components(node: ast.AST) -> list[str | None]:
     """Flatten recognized path joins into literal and opaque components."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return [node.value]
+        return node.value.split("/")
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
         return _string_components(node.left) + _string_components(node.right)
     if isinstance(node, ast.Call) and _is_os_path_join(node):
@@ -260,7 +268,7 @@ def scan_source(source: str, relative_path: str) -> tuple[Occurrence, ...]:
             offset = token.string.find(root)
             while offset >= 0:
                 line = _physical_line(token.string, token.start[0], offset)
-                column = token.start[1] + offset
+                column = _physical_column(token.string, token.start[1], offset)
                 found.append(
                     Occurrence(
                         relative_path,
