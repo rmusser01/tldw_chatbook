@@ -2291,6 +2291,138 @@ async def test_workspace_push_recovery_authorizes_then_queries_retained_endpoint
     replica.close()
 
 
+@pytest.mark.parametrize("size", ((40, 20), (120, 40)))
+@pytest.mark.asyncio
+async def test_workspace_reopens_original_uncertain_push_without_new_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    size: tuple[int, int],
+) -> None:
+    """Back, Files, and keyboard reopen must restore the uncertain push."""
+    (
+        owner,
+        binding,
+        replica,
+        service,
+        workspace,
+        _destination,
+        operation,
+    ) = _uncertain_push_workspace(
+        tmp_path,
+        monkeypatch,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=size) as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._rehydrate_git_presentation()
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "result",
+            "original uncertain push result did not render",
+        )
+
+        observer = workspace._push_observer_task
+        result = workspace._push_result
+        projection = workspace._push_result_projection
+        assert observer is not None
+        assert isinstance(result, PushExecutionResult)
+        assert result.state == "uncertain"
+        assert result.outcome is not None
+        assert projection is not None
+        assert projection.action == "check_remote_again"
+
+        back_to_session = workspace.query_one(
+            "#file-notes-git-push-back-session",
+            Button,
+        )
+        back_to_session.focus()
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "list",
+            "Back to session did not restore the Session Git list",
+        )
+        workspace._refresh_session_changes()
+        assert workspace._git_panel_widget.push_phase == "list"
+        assert workspace._push_result_projection is None
+        workspace._rehydrate_git_presentation()
+        assert workspace._git_panel_widget.push_phase == "list"
+        assert workspace._push_result_projection is None
+
+        snapshot = owner.snapshot(binding)
+        recovery_candidate = snapshot.push_recovery_candidate
+        assert snapshot.push_recovery is not None
+        assert recovery_candidate is not None
+        mismatched_candidate = replace(
+            recovery_candidate,
+            generation=recovery_candidate.generation + 1,
+        )
+        assert workspace._push_key_for_operation(
+            operation
+        ) != workspace._push_key_for_availability(
+            binding,
+            mismatched_candidate,
+        )
+        workspace._rehydrate_push_state(
+            service,
+            binding,
+            replace(
+                snapshot,
+                push_recovery_candidate=mismatched_candidate,
+            ),
+        )
+        assert workspace._push_operation is operation
+        assert workspace._git_panel_widget.push_phase == "list"
+        assert workspace._push_result_projection is None
+
+        files = workspace.query_one("#file-notes-git-back", Button)
+        files.focus()
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: workspace._navigator_mode == "files",
+            "Files did not restore the notes navigator",
+        )
+        session_git = workspace.query_one(
+            "#file-notes-session-changes",
+            Button,
+        )
+        session_git.focus()
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "result",
+            "keyboard reopen did not restore the original uncertain result",
+        )
+
+        assert workspace._push_operation is operation
+        assert workspace._push_observer_task is observer
+        assert workspace._push_result is result
+        assert workspace._push_result_projection == projection
+        assert workspace.query_one(
+            "#file-notes-git-push-result-copy",
+            TextArea,
+        ).text == result.outcome.message
+        assert workspace.query_one(
+            "#file-notes-git-push-check-remote",
+            Button,
+        ).display
+        assert service.push_review_calls == []
+        assert service.push_query_calls == []
+        assert service.push_calls == []
+        assert service.cancel_push_calls == []
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
 @pytest.mark.parametrize("failure_mode", ["authorization", "typed_admission"])
 @pytest.mark.asyncio
 async def test_workspace_push_recovery_failure_replaces_stale_action(

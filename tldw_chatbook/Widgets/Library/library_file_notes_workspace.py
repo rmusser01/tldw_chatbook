@@ -2418,6 +2418,54 @@ class LibraryFileNotesWorkspace(Vertical):
         self._render_session_git_label()
         return True
 
+    def _restore_dismissed_push_result(
+        self,
+        binding: SessionBinding,
+        snapshot: FileNotesSessionSnapshot,
+    ) -> bool:
+        """Restore exact cached result presentation without starting work."""
+        operation = self._push_operation
+        operation_key = self._push_operation_key
+        cached_result = self._push_result
+        if (
+            operation is None
+            or operation_key is None
+            or not operation.settled
+            or self._push_result_projection is not None
+            or self._push_view_phase != "list"
+            or snapshot.push_recovery is None
+            or self._push_key_for_availability(
+                binding,
+                snapshot.push_recovery_candidate,
+            )
+            != operation_key
+            or not self._push_operation_is_current(
+                operation,
+                operation_key,
+                self._push_operation_id,
+            )
+        ):
+            return False
+        exact_result = (
+            operation.kind == "push"
+            and isinstance(cached_result, PushExecutionResult)
+            and cached_result.state == "uncertain"
+        ) or (
+            operation.kind == "recovery"
+            and isinstance(cached_result, PushRecoveryProjection)
+            and cached_result == snapshot.push_recovery
+        )
+        if not exact_result:
+            return False
+        self._publish_push_settlement(
+            operation,
+            operation_key,
+            self._push_operation_id,
+            cached_result,
+            snapshot,
+        )
+        return self._push_view_phase == "result"
+
     def _git_binding_is_current(self, binding: SessionBinding) -> bool:
         return (
             self._active
@@ -2736,7 +2784,11 @@ class LibraryFileNotesWorkspace(Vertical):
         )
         return True
 
-    def _rehydrate_git_presentation(self) -> bool:
+    def _rehydrate_git_presentation(
+        self,
+        *,
+        restore_dismissed_push_result: bool = False,
+    ) -> bool:
         """Render retained owner/task state without starting hidden Git work."""
         if not self._active or not self.is_mounted:
             return False
@@ -2750,6 +2802,8 @@ class LibraryFileNotesWorkspace(Vertical):
         push_retained = self._rehydrate_push_state(service, binding, snapshot)
         if self._navigator_mode != "git":
             return push_retained
+        if restore_dismissed_push_result:
+            self._restore_dismissed_push_result(binding, snapshot)
         if self._push_view_phase != "list":
             self._render_current_push_view()
             return True
@@ -2931,7 +2985,9 @@ class LibraryFileNotesWorkspace(Vertical):
             self._start_git_refresh()
             self.call_after_refresh(self._focus_session_git_panel)
             return
-        if self._rehydrate_git_presentation():
+        if self._rehydrate_git_presentation(
+            restore_dismissed_push_result=True,
+        ):
             self.call_after_refresh(self._focus_session_git_panel)
             return
         self._start_git_refresh()
