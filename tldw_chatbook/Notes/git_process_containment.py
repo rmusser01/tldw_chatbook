@@ -62,19 +62,76 @@ class ProcessTreeControl(Protocol):
         environment: Mapping[str, str],
         stdin: bool,
     ) -> OwnedProcessTree:
-        """Spawn and admit a direct child before returning."""
+        """Spawn and admit a direct child before returning.
+
+        Args:
+            *argv: Executable followed by its direct arguments.
+            cwd: Working directory for the child.
+            environment: Complete environment passed to the child.
+            stdin: Whether to create a writable standard-input pipe.
+
+        Returns:
+            The admitted child and its retained native containment identity.
+
+        Raises:
+            ProcessTreeAdmissionError: If a created child cannot complete
+                containment admission.
+            ValueError: If the launch arguments are invalid.
+            OSError: If native process creation or containment setup fails.
+        """
 
     def terminate(self, tree: OwnedProcessTree) -> None:
-        """Request graceful termination for the admitted tree."""
+        """Request graceful termination for the admitted tree.
+
+        Args:
+            tree: Exact admitted tree to terminate.
+
+        Raises:
+            ValueError: If the retained native identity is invalid.
+            RuntimeError: If termination would target the application process
+                group.
+            OSError: If the native graceful-stop request fails.
+        """
 
     def kill(self, tree: OwnedProcessTree) -> None:
-        """Force-stop the admitted tree."""
+        """Force-stop the admitted tree.
+
+        Args:
+            tree: Exact admitted tree to force-stop.
+
+        Raises:
+            ValueError: If the retained native identity is invalid.
+            RuntimeError: If termination would target the application process
+                group.
+            OSError: If the native forced-stop request fails.
+        """
 
     async def wait(self, tree: OwnedProcessTree, *, timeout: float) -> bool:
-        """Return true only when the direct child and containment are empty."""
+        """Wait boundedly for the direct child and containment to empty.
+
+        Args:
+            tree: Exact admitted tree whose settlement must be proved.
+            timeout: Maximum seconds to wait; nonpositive values perform an
+                immediate proof check.
+
+        Returns:
+            ``True`` only when the direct child is terminal and its native
+            containment is empty; otherwise ``False`` at the deadline.
+
+        Raises:
+            ValueError: If the retained native identity is invalid.
+        """
 
     def close(self, tree: OwnedProcessTree) -> None:
-        """Release a proved-empty containment identity."""
+        """Release a containment identity that is already proved empty.
+
+        Args:
+            tree: Exact proved-empty admitted tree to release.
+
+        Raises:
+            ValueError: If the retained native identity is invalid.
+            OSError: If releasing a native handle fails.
+        """
 
 
 class ProcessTreeController:

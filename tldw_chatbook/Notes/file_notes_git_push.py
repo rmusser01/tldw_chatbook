@@ -1377,7 +1377,17 @@ def _build_push_argv(
 
 
 def push_outcome_copy(state: PushOutcomeState) -> PushOutcomeProjection:
-    """Return fixed honest point-in-time copy for one proven outcome state."""
+    """Return fixed honest point-in-time copy for one proven outcome state.
+
+    Args:
+        state: Proven push outcome to describe.
+
+    Returns:
+        Bounded point-in-time copy for the supplied outcome.
+
+    Raises:
+        PushContractError: If the outcome state is unsupported or malformed.
+    """
     try:
         title, message, recovery_available = _OUTCOME_COPY[state]
     except (KeyError, TypeError):
@@ -1394,7 +1404,20 @@ def push_recovery_copy(
     destination: PushDestinationProjection,
     observation: RemoteRefObservation,
 ) -> PushRecoveryProjection:
-    """Return query-only copy for a current retained-destination observation."""
+    """Return query-only copy for a retained-destination observation.
+
+    Args:
+        destination: Exact validated destination retained for recovery.
+        observation: Current query-only observation of the destination ref.
+
+    Returns:
+        Recovery copy describing the observed remote state and available next
+        action.
+
+    Raises:
+        PushContractError: If the destination projection is not valid for a
+            recovery result.
+    """
     if observation.state == "candidate":
         copy_state = "candidate"
     elif observation.state == "parent":
