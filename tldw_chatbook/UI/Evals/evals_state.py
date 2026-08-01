@@ -81,13 +81,57 @@ class EvalsViewModel:
         return [task for task in self._all_tasks() if self._is_word_bench(task)]
 
     def classic_tasks(self) -> list[dict[str, Any]]:
-        """Every other ``eval_tasks`` row (pre-word-bench evaluation tasks)."""
+        """Every other ``eval_tasks`` row (pre-word-bench evaluation tasks).
+
+        This currently also includes character-probe benches: neither this
+        method nor ``benches()`` special-cases ``bench_type ==
+        "character_probe"`` (see ``character_benches()`` below), so a
+        character bench is simply "not a word bench" by this method's own
+        definition -- the rail marks it with ``CHARACTER_PROBE_MARKER``
+        rather than moving it out of this list (``library_rail.py``'s
+        ``_classic_row_label``).
+        """
         return [task for task in self._all_tasks() if not self._is_word_bench(task)]
+
+    def character_benches(self) -> list[dict[str, Any]]:
+        """Character-probe benches: ``eval_tasks`` rows tagged
+        ``bench_type == "character_probe"`` (``character_probe.storage.
+        BENCH_TYPE``).
+
+        A subset of ``classic_tasks()`` (see that method's own note) --
+        this is a separate read for callers (the character-probe bench
+        editor and detail pane) that want exactly this kind of row without
+        also getting genuinely-classic pre-word-bench tasks.
+
+        Returns:
+            list[dict[str, Any]]: Matching rows, in ``_all_tasks()``'s own
+            order, or an empty list when the evaluation service is
+            unavailable.
+        """
+        from ...Evals.character_probe.storage import is_character_bench
+
+        return [task for task in self._all_tasks() if is_character_bench(task)]
 
     def datasets(self) -> list[dict[str, Any]]:
         if self._db is None:
             return []
         return self._db.list_datasets(limit=_LIST_LIMIT)
+
+    def probe_sets(self) -> list[dict[str, Any]]:
+        """Datasets holding probes rather than snippets.
+
+        A subset of ``datasets()`` -- every probe set IS a dataset row
+        (see ``character_probe.storage.save_probe_set``), so this adds no
+        new read, only the ``is_probe_set`` filter.
+
+        Returns:
+            list[dict[str, Any]]: Matching dataset rows, in ``datasets()``'s
+            own order, or an empty list when the evaluation service is
+            unavailable.
+        """
+        from ...Evals.character_probe.storage import is_probe_set
+
+        return [row for row in self.datasets() if is_probe_set(row)]
 
     def llama_targets(self) -> list[dict[str, Any]]:
         """Configured ``llama_cpp`` ``eval_models`` rows -- what the bench

@@ -80,6 +80,7 @@ from textual.widgets import Button, Static
 
 from ...Widgets.destination_rail import GLYPH_COLLAPSED, GLYPH_EXPANDED
 from ...Constants import TAB_SETTINGS
+from ...Evals.character_probe.storage import is_character_bench, is_probe_set
 from ...Evals.word_bench.models import BenchConfig
 from ...Evals.word_bench.storage import _unique_name, save_bench
 from ...Third_Party.textual_fspicker import FileOpen, Filters
@@ -127,6 +128,15 @@ CLASSIC_SUBGROUP_LABEL = "─ classic ─"
 
 EVALS_RAIL_CLASSIC_ROW_PREFIX = "evals-rail-row-benches-classic-"
 
+#: Prefixes a rail row whose bench or dataset belongs to the character-probe
+#: eval, so the two kinds sharing one section are distinguishable at a
+#: glance -- a probe set and a snippet dataset otherwise look identical, and
+#: selecting a bench row is a guess about which detail pane will appear.
+#: Single-width by construction: a double-width glyph would shift every rail
+#: row's alignment (the ␣/⏎/✓✗ markers elsewhere follow the same rule; see
+#: ``test_the_marker_glyph_is_single_width``).
+CHARACTER_PROBE_MARKER = "◆ "
+
 
 def _bench_row_label(row: dict[str, Any]) -> str:
     # escape_markup: `Button(label=...)` parses its argument as Textual
@@ -136,15 +146,27 @@ def _bench_row_label(row: dict[str, Any]) -> str:
     # `_run_group_row_label` (below) already closed for run rows. Bench
     # names are machine-generated today, but the bench-authoring program
     # makes them user-typed (task-1482).
+    #
+    # No CHARACTER_PROBE_MARKER check here: every row reaching this
+    # function already passed `EvalsViewModel._is_word_bench` (it is only
+    # ever called for `benches()` rows -- see `_benches_section_body`
+    # below), and `is_character_bench`/`_is_word_bench` are mutually
+    # exclusive (`config_data["bench_type"]` is either `"word_bench"` or
+    # `"character_probe"`, never both). Marking here would be dead code.
+    # A character-probe bench instead reaches `_classic_row_label` below,
+    # since it is not a word bench and `classic_tasks()` has no other
+    # category for it yet (see that method's own docstring).
     return escape_markup(str(row.get("name") or "Untitled bench"))
 
 
 def _classic_row_label(row: dict[str, Any]) -> str:
-    return escape_markup(str(row.get("name") or "Untitled task"))
+    name = escape_markup(str(row.get("name") or "Untitled task"))
+    return f"{CHARACTER_PROBE_MARKER}{name}" if is_character_bench(row) else name
 
 
 def _dataset_row_label(row: dict[str, Any]) -> str:
-    return escape_markup(str(row.get("name") or "Untitled dataset"))
+    name = escape_markup(str(row.get("name") or "Untitled dataset"))
+    return f"{CHARACTER_PROBE_MARKER}{name}" if is_probe_set(row) else name
 
 
 #: Single-cell-width status glyphs for run rows -- NEVER emoji, which

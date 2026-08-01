@@ -595,6 +595,89 @@ async def test_providers_configured_via_an_existing_eval_models_row_offers_the_s
 
 
 # ---------------------------------------------------------------------------
+# The character-probe marker (task-1691 phase 2, task 1): a character-probe
+# bench and a probe-set dataset each share a rail section with a kind of row
+# they must be distinguishable from at a glance -- a word bench (Benches'
+# classic subgroup, since a character bench is not yet its own category; see
+# ``EvalsViewModel.classic_tasks()``'s own note) and a snippet dataset
+# (Datasets) respectively.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def evals_app(evals_db: EvalsDB) -> EvalsHarness:
+    """A bare harness, no configured provider -- these tests only assert on
+    rendered row labels, never click a provider-gated action, so the
+    Benches section's classic subgroup (where a character-probe bench
+    renders today -- see ``test_classic_tasks_stay_reachable_with_no_
+    provider_configured`` above) is reachable regardless."""
+    return EvalsHarness(_FakeAppInstance(evals_db))
+
+
+def _rail_row_labels(screen) -> list[str]:
+    rail = screen.query_one(LibraryRail)
+    return [
+        button.label.plain
+        for button in rail.query(Button)
+        if "evals-rail-row" in button.classes
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_character_bench_row_is_marked_in_the_rail(evals_app, evals_db):
+    from tldw_chatbook.Evals.character_probe.models import CharacterProbeConfig
+    from tldw_chatbook.Evals.character_probe.storage import save_character_bench
+
+    save_character_bench(
+        evals_db,
+        CharacterProbeConfig(
+            name="villain probes",
+            probe_set_id="ps-1",
+            character_ids=(1,),
+            target_ids=("t-1",),
+        ),
+    )
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        labels = _rail_row_labels(pilot.app.screen)
+        assert any(
+            label.startswith("◆ ") and "villain probes" in label for label in labels
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_word_bench_row_is_not_marked(evals_app, seeded_bench):
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        labels = _rail_row_labels(pilot.app.screen)
+        word_rows = [label for label in labels if "loaded-nouns" in label]
+        assert word_rows and not any(label.startswith("◆ ") for label in word_rows)
+
+
+@pytest.mark.asyncio
+async def test_a_probe_set_dataset_row_is_marked(evals_app, evals_db):
+    from tldw_chatbook.Evals.character_probe.models import Probe, ProbeSet
+    from tldw_chatbook.Evals.character_probe.storage import save_probe_set
+
+    save_probe_set(evals_db, "starter probes", ProbeSet(probes=(Probe(turns=("Hi",)),)))
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        labels = _rail_row_labels(pilot.app.screen)
+        assert any(
+            label.startswith("◆ ") and "starter probes" in label for label in labels
+        )
+
+
+def test_the_marker_glyph_is_single_width():
+    """A double-width glyph would shift every rail row's alignment."""
+    from rich.cells import cell_len
+
+    from tldw_chatbook.UI.Evals.library_rail import CHARACTER_PROBE_MARKER
+
+    assert cell_len(CHARACTER_PROBE_MARKER.strip()) == 1
+
+
+# ---------------------------------------------------------------------------
 # The one-click sample bench.
 # ---------------------------------------------------------------------------
 
