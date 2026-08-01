@@ -1,7 +1,7 @@
 # Console Prompt Workbench and Improvement Design
 
 **Date:** 2026-08-01
-**Status:** Approved design, revised written spec pending final review
+**Status:** Approved design
 **Scope:** Console prompt discovery, improvement, structured authoring, and
 Prompt Library interoperability across `tldw_chatbook` and `tldw_server2`
 
@@ -66,6 +66,16 @@ The design follows these existing seams:
 - Local prompt search already uses FTS. The server adapter exposes prompt
   search, but the current unified scope service rejects server search. This
   mismatch must be resolved before server search is presented as available.
+
+The implementation also depends on the composer-action unification completed
+as `TASK-1680` in the reference worktree `/private/tmp/ephemeral` (commits
+`d15e35e1c` and `e2ea3650b`). That work establishes a fixed-width composer row
+with one overflow menu and moves Attach/Save Chatbook through stable action IDs
+to the screen's existing handlers. Because the reference branch also carries
+unrelated temporary-conversation history, implementation must port or verify
+the behavior on the current target branch rather than blindly cherry-pick its
+commits or branch history. `Prompts` remains a top Workbench action; it is not
+added to the width-bounded composer row.
 
 ## 1. Console Entry Point and Action-Row Contract
 
@@ -248,10 +258,13 @@ chooses the stale text.
 
 The Prompt source exposes a capability descriptor. Local capabilities are
 known in-process; server capabilities extend the existing prompt health
-response. The descriptor covers supported structured schema versions,
+response. The descriptor covers supported `(schema_version, kind)` pairs,
 artifact types, search, conditional update, compiled-lane limits, and a
-definition/request-size limit. Missing v2 capability means the source remains
-browsable but v2 Save is disabled with a specific explanation.
+definition/request-size limit. Version-only capability flags are insufficient:
+the independently planned server `single_text_recipe` kind also uses schema v2
+and must not be interpreted as a Console `block_prompt` or `block_recipe`.
+Missing capability for the exact v2 kind means the source remains browsable but
+Save is disabled with a specific explanation.
 
 ### 4.2 Compilation
 
@@ -289,6 +302,11 @@ developer/assistant roles, or assembly configuration. It therefore shows the
 stored compiled System/User compatibility text read-only and offers `Convert
 and save as new`. Conversion applies the conservative parser to the compiled
 text and creates a new unsaved v2 Prompt; `Update original` remains disabled.
+
+Other known schema-v2 kinds, including the separately planned server
+`single_text_recipe`, are foreign structured records for this Console editor.
+They follow the same read-only, explicit-conversion rule unless and until a
+lossless adapter is deliberately designed.
 
 Unknown future versions and malformed definitions also preserve the original
 record. Their compiled text may be inspected or copied, but they cannot enter
@@ -409,6 +427,14 @@ The Improve entry presents exactly three choices:
 1. Analyze and auto-improve
 2. Analyze and user review
 3. Create or follow a structured recipe
+
+Before a choice runs, Improve shows the captured current System prompt and
+current unsent message in separate read-only sections using the copied context
+modal visual language. Inline-file segments appear only as protected opaque
+tokens, never as filenames, labels, paths, or content. This snapshot preview
+does not become a second editor; Auto applies to the composer transaction,
+Review edits only the returned rewrite, and Structured mode edits through the
+block editor.
 
 The effective current session system prompt and an immutable snapshot of the
 current unsent composer artifact are copied into the request snapshot.
@@ -536,9 +562,11 @@ overrides only the behavior required for this side-effect-free operation:
 - Provider-native structured response format when supported.
 - A sensitive-content policy propagated through the final provider adapter.
 
-The gateway's current generic `_chat_api_kwargs` does not forward
-`response_format`, so this capability belongs in the new typed auxiliary seam,
-not as a UI-level provider bypass.
+Although the shared `chat_api_call` supports `response_format`, the gateway's
+generic `_chat_api_kwargs` does not currently expose it and its normal stream
+normalization may synthesize user-facing fallback copy. Structured response
+routing and strict empty/error handling therefore belong in the new typed
+auxiliary seam, not in a UI-level provider bypass or the normal streaming path.
 
 Trusted optimizer instructions occupy the provider's instruction role. Source
 fields are untrusted data serialized as escaped JSON values, not interpolated
@@ -729,7 +757,8 @@ sufficient.
 - Local and server `artifact_type` migrations default existing rows to Prompt
   and preserve all prior fields.
 - Separate structured-v1 and v2 validation/compilation, with no v1 behavior
-  change and explicit kind/type/version rejection.
+  change, explicit kind/type/version rejection, and coexistence with foreign
+  schema-v2 kinds such as `single_text_recipe`.
 - Free-form, Markdown, and XML compilation.
 - Exact structured save/load and Markdown export/import round-trip.
 - Conservative, fence-aware legacy parsing and exact unchanged-legacy apply.
