@@ -26,11 +26,16 @@ from textual.binding import Binding
 from loguru import logger
 
 # Local imports
-from ..config import get_cli_setting, save_setting_to_cli_config
+from ..config import get_cli_setting, get_user_data_dir, save_setting_to_cli_config
 from ..Audio.dictation_service_lazy import LazyLiveDictationService, DictationState
 from ..Event_Handlers.Audio_Events import VoiceCommandEvent
 from ..Utils.local_stt_providers import normalize_provider_id
 from ..Widgets.audio_troubleshooting_dialog import AudioTroubleshootingDialog
+
+
+def dictation_export_directory() -> Path:
+    """Return the active user's directory for requested Dictation exports."""
+    return get_user_data_dir() / "exports" / "dictation"
 
 
 class ImprovedDictationWindow(Widget):
@@ -845,9 +850,7 @@ Performance Tips:
 
         try:
             # Create exports directory
-            export_dir = (
-                Path.home() / ".local" / "share" / "tldw_cli" / "exports" / "dictation"
-            )
+            export_dir = dictation_export_directory()
             export_dir.mkdir(parents=True, exist_ok=True)
 
             # Generate filename
@@ -871,9 +874,7 @@ Performance Tips:
 
         try:
             # Create exports directory
-            export_dir = (
-                Path.home() / ".local" / "share" / "tldw_cli" / "exports" / "dictation"
-            )
+            export_dir = dictation_export_directory()
             export_dir.mkdir(parents=True, exist_ok=True)
 
             # Generate filename
