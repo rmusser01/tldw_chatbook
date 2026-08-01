@@ -1897,9 +1897,13 @@ class TestCharacterManagement:
 @pytest.mark.unit
 class TestChatDictionary:
     @patch("tldw_chatbook.Character_Chat.Chat_Dictionary_Lib.validate_path")
-    def test_parse_user_dict_markdown_file(self, mock_validate_path, tmp_path):
+    def test_parse_user_dict_markdown_file(
+        self, mock_validate_path, monkeypatch, tmp_path
+    ):
         # Mock validate_path to return the validated path
         dict_file = tmp_path / "test_dict.md"
+        config_path = tmp_path / "selected-profile" / "config.toml"
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
         mock_validate_path.return_value = str(dict_file)
 
         dict_content = """key1: value1
@@ -1912,6 +1916,7 @@ key2: |
         dict_file.write_text(dict_content)
 
         parsed = parse_user_dict_markdown_file(str(dict_file))
+        assert mock_validate_path.call_args.args[1] == config_path.parent
         assert parsed["key1"] == "value1"
         assert parsed["key2"] == "This is a\n  multiline value."
         assert parsed["/key3/i"] == "value3"

@@ -4,7 +4,6 @@
 # Imports
 import json
 import logging
-import os
 import random
 import re
 import sqlite3
@@ -20,11 +19,17 @@ from ..Utils.input_validation import validate_text_input
 from ..Utils.path_validation import validate_path
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError
 from ..Metrics.metrics import log_counter
+from ..config import get_cli_config_path
 
 #
 #######################################################################################################################
 #
 # Chat Dictionary Classes and Functions
+
+
+def _default_dictionary_import_directory() -> Path:
+    """Return the active profile directory for default dictionary imports."""
+    return get_cli_config_path().parent
 
 
 def _clean_dictionary_text(
@@ -307,8 +312,7 @@ def parse_user_dict_markdown_file(
 
     # Validate the file path to prevent directory traversal
     if base_directory is None:
-        # Default to a safe base directory - typically config or user data directory
-        base_directory = os.path.expanduser("~/.config/tldw_cli/")
+        base_directory = _default_dictionary_import_directory()
 
     try:
         validated_path = validate_path(file_path, base_directory)

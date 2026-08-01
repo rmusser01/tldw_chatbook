@@ -204,6 +204,17 @@ from ..Navigation.main_navigation import NavigateToScreen
 
 logger = logging.getLogger(__name__)
 
+
+def _theme_save_target() -> Path:
+    """Return the active profile's directory for custom theme files."""
+    return get_cli_config_path().parent / "themes"
+
+
+def _internal_prompts_save_target() -> Path:
+    """Return the active config file for internal prompt overrides."""
+    return get_cli_config_path()
+
+
 MAX_CATEGORY_SEARCH_QUERY_CHARS = 80
 PROVIDER_ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "endpoint")
 PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
@@ -1098,7 +1109,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
     SettingsCategoryId.THEME: (
         (
             "Affected config",
-            "custom theme files under ~/.config/tldw_cli/themes/",
+            "custom theme files in the active profile",
         ),
         (
             "Recovery",
@@ -2544,8 +2555,8 @@ class SettingsScreen(BaseAppScreen):
                     "use the editor's Apply/Save/Reset buttons."
                 ),
                 recovery_copy=(
-                    "Themes are saved to ~/.config/tldw_cli/themes/; reset or delete files there "
-                    "to recover."
+                    f"Themes are saved to {_theme_save_target()}{os.sep}; reset or delete "
+                    "files there to recover."
                 ),
             ),
             SettingsOwnershipRecord(
@@ -8590,6 +8601,21 @@ class SettingsScreen(BaseAppScreen):
     def _inspector_guidance(
         self, category: SettingsCategoryId
     ) -> tuple[tuple[str, str], ...]:
+        if category is SettingsCategoryId.THEME:
+            return (
+                (
+                    "Affected config",
+                    f"custom theme files under {_theme_save_target()}{os.sep}",
+                ),
+                (
+                    "Recovery",
+                    "use the editor's Apply/Save/Reset buttons; delete a theme file to remove it",
+                ),
+                (
+                    "Boundary",
+                    "launch visual defaults stay in Appearance; theme edits never touch config.toml",
+                ),
+            )
         if category is SettingsCategoryId.IMAGE_GENERATION:
             # Final review Important 2: IMAGE_GENERATION sits in the
             # "Domain Defaults" rail group (needed for that grouping + the
@@ -11747,7 +11773,7 @@ class SettingsScreen(BaseAppScreen):
         elif summary.category is SettingsCategoryId.THEME:
             yield Static("Affects app colors and saved custom themes.", classes="destination-section")
             yield Static("Focused field guide", classes="destination-section")
-            yield self._detail_row("Save target", "~/.config/tldw_cli/themes/")
+            yield self._detail_row("Save target", f"{_theme_save_target()}{os.sep}")
             yield self._detail_row("Note", "Use the editor's own Apply/Save/Reset buttons.")
             modified = "Yes" if self.theme_editor_modified else "No"
             yield self._detail_row(
@@ -11762,7 +11788,9 @@ class SettingsScreen(BaseAppScreen):
             yield self._detail_row("Note", "Splash defaults are saved automatically.")
         elif summary.category is SettingsCategoryId.INTERNAL_PROMPTS:
             yield Static("Edit the prompts used by internal tooling.", classes="destination-section")
-            yield self._detail_row("Save target", "~/.config/tldw_cli/config.toml  [internal_prompts]")
+            yield self._detail_row(
+                "Save target", f"{_internal_prompts_save_target()}  [internal_prompts]"
+            )
             yield self._detail_row("Note", "Use each prompt's own Save / Reset buttons.")
             yield self._detail_row(
                 "Customized prompts",
