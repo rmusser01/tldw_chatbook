@@ -1579,6 +1579,48 @@ async def test_zero_models_state_offers_create_target_and_stages_it(
 
 
 @pytest.mark.asyncio
+async def test_create_target_with_no_llama_cpp_server_configured_notifies_and_creates_nothing(
+    evals_app, evals_db, bench_with_zero_llama_models
+):
+    """task-1613: pins the zero-config error path for the "+ New target"
+    mini-form's button (``#evals-bench-create-target`` -- task-1611 T2
+    renamed its LABEL from "Create target from configured llama.cpp
+    server" to "+ New target", but kept the id and the gate this test
+    drives). Unlike every other create-target test in this module, this
+    one uses the bare ``evals_app`` fixture (an empty ``app_config``, no
+    llama_cpp URL set) rather than ``evals_app_configured`` -- exercising
+    ``evals_screen.py``'s ``_on_bench_create_target_requested`` early
+    return on ``sample_bench.configured_llama_cpp_url(app_config) is
+    None``, BEFORE it ever reaches ``db.create_model``."""
+    task_id = bench_with_zero_llama_models
+    assert evals_db.list_models(provider="llama_cpp") == []
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        create_button = screen.query_one("#evals-bench-create-target", Button)
+        assert create_button.region.width > 0
+
+        await pilot.click("#evals-bench-create-target")
+        await pilot.pause()
+
+        assert evals_app.app_instance.notifications
+        message, severity = evals_app.app_instance.notifications[-1]
+        assert severity == "error"
+        assert message == (
+            "No llama.cpp server is configured; set one in Settings first."
+        )
+
+        assert evals_db.list_models(provider="llama_cpp") == [], (
+            "the zero-config click must not create an eval_models row"
+        )
+        assert not screen.query("#evals-bench-target-0"), "nothing was staged"
+
+
+@pytest.mark.asyncio
 async def test_add_target_picker_option_labels_escape_markup_hazard_names(
     evals_app, bench_with_markup_hazard_llama_model
 ):
