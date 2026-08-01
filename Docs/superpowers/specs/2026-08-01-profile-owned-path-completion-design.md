@@ -1,7 +1,7 @@
 # TASK-865 Profile-Owned Path Completion Design
 
 Date: 2026-08-01
-Status: Revised after adversarial review; approval pending
+Status: Approved
 Backlog task: [TASK-865](../../../backlog/tasks/task-865%20-%20Sweep-hardcoded-~-.config-tldw_cli-and-~-.local-share-tldw_cli-call-sites-onto-the-real-accessors.md)
 Architecture decision: [ADR-040](../../../backlog/decisions/040-profile-owned-state-and-shared-asset-paths.md)
 

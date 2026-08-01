@@ -1,6 +1,6 @@
 # ADR-040: Profile-Owned State and Shared Asset Paths
 
-Status: Proposed (revised after adversarial review)
+Status: Accepted
 Date: 2026-08-01
 Related Tasks: [TASK-865](../tasks/task-865%20-%20Sweep-hardcoded-~-.config-tldw_cli-and-~-.local-share-tldw_cli-call-sites-onto-the-real-accessors.md), [TASK-1331](../tasks/task-1331%20-%20Speech-Recognition-history-is-a-shell-switch-records-nothing.md)
 Supersedes: N/A
