@@ -435,6 +435,13 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: cannot reference Textual CSS variables the way a widget's styles can.
     _SELECTED_ROW_STYLE = "reverse bold"
 
+    #: Review round 1, Minor #4. A plain, app-controlled glyph -- never
+    #: provider/model-derived text -- exactly like `ItemsPane._QUEUED_
+    #: GLYPH`'s own phase-1 precedent: a single, plain-width character
+    #: rather than an emoji, so it cannot skew a `DataTable` column's
+    #: alignment the way a double-width glyph could.
+    _AUDIO_GLYPH = "♪"
+
     briefings = reactive[list[dict[str, Any]]]([], recompose=True)
     selected_briefing = reactive[dict[str, Any] | None](None, recompose=True)
     #: The scope line, supplied by the screen: which watchlist these
@@ -472,6 +479,13 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: it carries no `watch_`/message pair: there is nothing on this pane
     #: that "selects" a particular audio render, only ever the newest one.
     script_audio = reactive[dict[str, Any] | None](None, recompose=True)
+    #: Review round 1, Minor #4: which of `scripts`' ids have at least one
+    #: `briefing_audio` render, of ANY status -- so the scripts table can
+    #: show an "Audio" indicator for every row, not just the currently
+    #: selected one (before this, a user had to select each script in turn
+    #: to discover whether it had ever been synthesized at all). Screen-
+    #: supplied, resolved alongside `scripts` inside `_load_briefings`.
+    scripts_with_audio = reactive[frozenset[int]](frozenset(), recompose=True)
     #: Task 6: every `[item N]` id the SELECTED briefing's body cites,
     #: resolved once per selection by the screen (`_load_briefings`, via
     #: `get_subscription_items_by_ids`) -- `{"item_id": int, "label": Text,
@@ -698,7 +712,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 else None
             )
             scripts_table = DataTable(id="artifacts-scripts-table")
-            scripts_table.add_columns("Preset", "Status", "Created")
+            scripts_table.add_columns("Preset", "Status", "Created", "Audio")
             selected_script_index: int | None = None
             for index, row in enumerate(self.scripts):
                 row_key = str(row.get("id"))
@@ -709,10 +723,12 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                     if row_key == selected_script_key
                     else ""
                 )
+                has_audio = row.get("id") in self.scripts_with_audio
                 scripts_table.add_row(
                     Text(str(row.get("preset_name") or "—"), style=style),
                     Text(_script_status_text(row) or "—", style=style),
                     Text(str(row.get("created_at") or "—"), style=style),
+                    Text(self._AUDIO_GLYPH if has_audio else "", style=style),
                     key=row_key,
                 )
             if selected_script_index is not None:
