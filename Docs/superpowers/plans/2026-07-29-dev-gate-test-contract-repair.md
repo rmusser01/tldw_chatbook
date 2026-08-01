@@ -4613,7 +4613,9 @@ git diff --check
 
 Expected: all checks pass.
 
-Final evidence: the diagnostic checker and 2/2 architecture guard pass;
+Final rebased evidence: the reviewed inventory contains 430 owners, 1,067
+TASK-492 calls, 6,631 TASK-494 calls, and four unchanged sink files. The
+diagnostic checker and 3/3 architecture guards pass;
 `git diff --check origin/dev...HEAD` and `git diff --check` pass. The CSS
 builder changes only its generated timestamp, confirming source/bundle content
 is synchronized. Ruff finds no new lint or format regression: its 17 lint

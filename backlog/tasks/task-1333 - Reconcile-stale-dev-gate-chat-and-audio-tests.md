@@ -277,6 +277,8 @@ does not introduce a new storage, security, runtime, or ownership boundary.
 Verification resumed from the prior failure instead of replaying the cleared
 suite prefix. Every corrected focused node/module passed, the final ordered
 suffix passed 1,994 tests with 6 skips, and the rebased Parakeet modules pass
-28 tests with 13 intentional slow skips. Final rebased inventory, architecture,
-and diff checks are recorded in the implementation plan.
+28 tests with 13 intentional slow skips. The final reviewed inventory contains
+430 owners, 1,067 TASK-492 calls, 6,631 TASK-494 calls, and four unchanged sink
+files; its checker and all three architecture guards pass. Final diff checks
+are recorded in the implementation plan.
 <!-- SECTION:NOTES:END -->
