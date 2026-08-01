@@ -139,6 +139,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #109 Skill editor scroll coverage waits boundedly for focus-driven scrolling to place the Trust review control inside the canvas viewport, while preserving structural, keyboard-scroll, and positive-scroll assertions.
 - [ ] #110 Responsiveness artifact writer coverage supplies an explicit allowed temporary root, so a pytest `--basetemp` override outside the OS temp root does not invalidate the fixture while traversal rejection remains covered.
 - [ ] #111 Watchlists create-source form coverage waits boundedly for controller submission and form closure instead of relying on a fixed pause, while preserving the stronger upstream form/focus/Select readiness checks, real typing, tab order, both viewports, and geometry assertions.
+- [ ] #112 Real Parakeet MLX integration suites are classified as slow and selected from platform plus installed-package availability without consulting the lazy-import cache, so explicit slow runs reach production's first-use loader validation while mocked coverage remains in the mandatory gate.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -232,7 +233,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 80. Replace the incremental Chatbook import test's single-sample maximum-deviation assertion with an early-versus-late median degradation check.
 81. Retain live connection objects in the thread-local ChaChaNotes identity regression until all worker results have been asserted.
 82. Scope the two TTS profile unlink-cleanup tests' process-global standard-library patches to their candidate-validation calls.
-83. Gate both real Parakeet MLX integration entry points on the loader API production actually calls, not package discoverability alone.
+83. Classify both real Parakeet MLX integration entry points as slow and avoid consulting the intentionally empty lazy-import cache during collection.
 84. Mark the remaining faster-whisper tests that load the real tiny model as slow, matching the rest of that real-model integration class.
 85. Isolate shared-RAG construction-race regressions from unrelated process-wide background builds with a class-local autouse fixture that replaces their build lock.
 86. Replace the Evals results-grid test helper's single-pause mount assumption with a bounded selector wait.

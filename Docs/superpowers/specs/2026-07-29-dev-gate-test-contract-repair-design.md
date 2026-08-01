@@ -922,10 +922,11 @@ Update the tests to describe current behavior:
     unlink-cleanup regressions, including their paired `tempfile.mkstemp`
     replacement. Restore the real standard-library functions before assertions
     and pytest cleanup while retaining exact signal/error precedence.
-87. Gate both real Parakeet MLX integration entry points on a callable
-    `from_pretrained` attribute on the module already imported and cached by
-    optional-dependency initialization. Keep all unit/mock tests active and do
-    not import, download, or initialize a model merely to decide the skip.
+87. Classify both real Parakeet MLX integration entry points as slow and use
+    only platform plus installed-package availability for collection-time
+    selection. Do not treat an empty lazy-import cache as API absence; the real
+    slow run must reach production's first-use import and loader validation.
+    Keep all unit/mock tests active in the mandatory gate.
 88. Mark the two remaining faster-whisper cases that instantiate a real model
     as slow. Keep the invalid-file integration case in the normal gate because
     it fails before model initialization and requires no artifact.
@@ -1392,11 +1393,11 @@ behavior. No compatibility shims. No broad deletion of live tests.
   observation surface. Scoping the existing replacements to the one production
   call they own preserves their exact cleanup assertions and restores the
   standard library before teardown.
-- Letting real Parakeet MLX tests fail after package discovery conflates
-  installation with the exact runtime API under test and can trigger a model
-  download. Importing the package again during skip evaluation risks expensive
-  native initialization. Inspecting the dependency module already cached by
-  test startup is the smallest truthful capability boundary.
+- Importing Parakeet MLX during skip evaluation risks native initialization,
+  while consulting `optional_deps.MODULES` is vacuous because normal startup is
+  intentionally import-free. Marking the complete real suite slow and using
+  the existing spec-only availability flag keeps collection safe; an explicit
+  slow run then exercises production's actual first-use loader/API boundary.
 - Adding model-cache discovery to faster-whisper test setup would duplicate
   Hugging Face cache rules. The suite already has an explicit `--run-slow`
   contract for real inference; consistently marking the two omissions is both

@@ -3511,6 +3511,9 @@ modules, the full Transcription package, Ruff/format, and `git diff --check`.
 Expected: real-model cases skip with the precise missing-API reason on this
 host, while mocked provider behavior remains green.
 
+Superseded by Task 4dl after final review proved the lazy-import cache is empty
+on a valid clean installation, making this gate vacuous.
+
 ### Task 4cf: Classify all faster-whisper real-model tests as slow
 
 **Files:**
@@ -4367,6 +4370,46 @@ module, Ruff/format, and `git diff --check`.
 The corrected end-to-end pair passed focused verification. The original branch
 also recorded the complete create-source form module passing 15/15.
 
+### Task 4dl: Make real Parakeet selection compatible with lazy imports
+
+**Files:**
+- Modify: `Tests/Transcription/test_mlx_parakeet_transcription.py`
+- Modify: `Tests/Transcription/test_mlx_parakeet_integration.py`
+- Modify: `Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md`
+- Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
+
+**ADR required:** no
+
+**ADR path:** N/A
+
+**Reason:** This corrects test selection to match the existing import-free
+startup and first-use runtime boundaries; it does not change provider behavior,
+dependencies, or production code.
+
+- [x] **Step 1: Reproduce the vacuous cache gate**
+
+Final review proves a clean valid installation has
+`PARAKEET_MLX_AVAILABLE=True` and exports `from_pretrained`, while
+`optional_deps.MODULES["parakeet_mlx"]` remains absent by design. The exact
+real integration node therefore skips with the inaccurate missing-API reason.
+
+- [x] **Step 2: Separate collection safety from runtime validation**
+
+Remove both `MODULES` cache checks. Retain the spec-only platform/package gate,
+mark the complete real-model integration class slow, and let explicit slow
+runs reach production's existing first-use loader/API validation.
+
+- [x] **Step 3: Verify selection and adjacent mocked coverage**
+
+Confirm the real entry points skip only under the standard slow-test policy,
+then run both complete Parakeet modules without `--run-slow`, the adjacent
+lazy-MLX coverage, Ruff/format, and `git diff --check`.
+
+Both real entry points skip with `Need --run-slow option to run`, not a
+missing-API reason. The two complete Parakeet modules pass 28 tests with 13
+intentional slow skips, the edge-case module passes 15/15, and the lazy-MLX
+suite passes 9/9. Ruff lint, Ruff format, and `git diff --check` pass.
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -4422,7 +4465,7 @@ Include any conditionally required focused test/production files in that commit.
 - Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
 - Modify: `Docs/superpowers/plans/2026-07-29-dev-gate-test-contract-repair.md`
 
-- [ ] **Step 1: Run the affected suite**
+- [x] **Step 1: Run the affected suite**
 
 ```bash
 ../../.venv/bin/python -m pytest \
@@ -4473,7 +4516,14 @@ Include any conditionally required focused test/production files in that commit.
 
 Expected: all affected tests pass.
 
-- [ ] **Step 2: Run static and diff checks**
+The repository gate and its focused repairs exercise every affected module.
+After the user requested resuming at the prior failure instead of replaying the
+cleared prefix, the final ordered suffix from `Tests/Utils/test_optional_deps.py`
+through the end passed 1,994 tests with 6 skips. Every intervening failure was
+reproduced, corrected, repeated, and its complete module passed before the
+suffix resumed.
+
+- [x] **Step 2: Run static and diff checks**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -4563,7 +4613,16 @@ git diff --check
 
 Expected: all checks pass.
 
-- [ ] **Step 3: Run the repository-wide gate**
+Final evidence: the diagnostic checker and 2/2 architecture guard pass;
+`git diff --check origin/dev...HEAD` and `git diff --check` pass. The CSS
+builder changes only its generated timestamp, confirming source/bundle content
+is synchronized. Ruff finds no new lint or format regression: its 17 lint
+findings are identical at the branch merge base, and all 25 currently
+unformatted changed files were already unformatted there (39 base files total).
+Focused TASK-1333 edits pass Ruff lint; files without inherited drift also pass
+Ruff format.
+
+- [x] **Step 3: Run the repository-wide gate**
 
 ```bash
 ../../.venv/bin/python -m pytest -q
@@ -4574,6 +4633,13 @@ deterministically, and the diagnostic inventory is current. Do not hide
 unrelated or environment-dependent failures. Mark TASK-1333 Done only if the
 repository Definition of Done is satisfied; otherwise record exact evidence
 and leave it In Progress.
+
+Gate evidence: full-gate attempt 43 passed 21,259 tests before the now-fixed
+Console responsiveness configuration failure. Per the user's direction, the
+run then resumed from each failure rather than replaying the cleared prefix:
+responsiveness 12/12, artifact writer 6/6 repeated, Watchlists end-to-end 6/6
+repeated plus module 15/15, optional-deps 26/26, and the final ordered suffix
+1,994 passed with 6 skipped in 366.46 seconds. No remaining segment failed.
 
 - [ ] **Step 4: Request final review**
 
