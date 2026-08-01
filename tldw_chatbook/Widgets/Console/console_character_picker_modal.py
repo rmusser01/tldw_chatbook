@@ -176,8 +176,29 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
         self.query_one("#console-character-picker-query", Input).focus()
         await self._refresh_results("")
 
+    def _clear_pending(self) -> None:
+        """Un-stage the pick and hide the placement buttons.
+
+        Qodo PR #1153: ``_pending`` survived a query change or cursor move
+        while the Swap/New buttons stayed on screen, so a click could
+        apply a character the user was no longer looking at.
+        """
+        if self._pending is None:
+            return
+        self._pending = None
+        try:
+            self.query_one(
+                "#console-character-picker-placement", Horizontal
+            ).display = False
+            self.query_one("#console-character-picker-hint", Static).update(
+                "Enter picks a character, then choose where it lands."
+            )
+        except Exception:
+            pass
+
     async def _refresh_results(self, query: str) -> None:
         """Recompute and remount the result rows for ``query``."""
+        self._clear_pending()
         self._results = filter_character_options(self._options, query)
         self._selected_index = 0
         results = self.query_one("#console-character-picker-results", Vertical)
@@ -251,11 +272,13 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
         )
 
     async def action_cursor_down(self) -> None:
+        self._clear_pending()
         if self._results:
             self._selected_index = (self._selected_index + 1) % len(self._results)
             await self._repaint_markers()
 
     async def action_cursor_up(self) -> None:
+        self._clear_pending()
         if self._results:
             self._selected_index = (self._selected_index - 1) % len(self._results)
             await self._repaint_markers()

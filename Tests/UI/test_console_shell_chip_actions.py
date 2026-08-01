@@ -166,3 +166,46 @@ def test_swap_seeds_greeting_only_into_an_empty_chat():
     )
     assert busy.appended == [], "greeting must not interrupt a live chat"
     assert busy.settings.system_prompt == "SYS", "prompt still applies"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_changing_the_query_unstages_a_pending_pick():
+    """A staged pick must not survive the user looking at something else.
+
+    Qodo PR #1153: after Enter staged a character, typing a new query left
+    ``_pending`` on the OLD character while the Swap/New buttons stayed
+    visible -- clicking one would swap to a character the user was no
+    longer looking at.
+    """
+    from textual.app import App
+
+    from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
+        ConsoleCharacterPickerModal,
+    )
+
+    options = (
+        ConsoleCharacterOption(1, "Lana"),
+        ConsoleCharacterOption(2, "Zara"),
+    )
+
+    class _Host(App):
+        pass
+
+    app = _Host()
+    async with app.run_test() as pilot:
+        modal = ConsoleCharacterPickerModal(options=options)
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        modal._select(options[0])
+        assert modal._pending is options[0]
+
+        await modal._refresh_results("zara")
+        assert modal._pending is None, "stale pick survived a query change"
+        placement = modal.query_one("#console-character-picker-placement")
+        assert placement.display is False
+
+        modal._select(modal._results[0])
+        await modal.action_cursor_down()
+        assert modal._pending is None, "stale pick survived a cursor move"
