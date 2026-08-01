@@ -331,6 +331,9 @@ class _AvailabilityRepository:
     ) -> Any:
         raise AssertionError(character_ref)
 
+    async def get_profile(self, profile_id: UUID) -> Any:
+        raise AssertionError(profile_id)
+
     async def set_assignment(
         self,
         character_ref: CharacterRef,

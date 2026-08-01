@@ -463,6 +463,7 @@ class _FakeRepository:
         self.create_with_assignment_error: BaseException | None = None
         self.remove_error: BaseException | None = None
         self.get_assignment_error: BaseException | None = None
+        self.get_profile_error: BaseException | None = None
         self.count_value = 0
         self.count_generation: int | None = None
         self.advance_generation_during_count = False
@@ -475,6 +476,7 @@ class _FakeRepository:
         self.set_result: object = _UNSET
         self.remove_result: object = _UNSET
         self.get_assignment_result: object = _UNSET
+        self.get_profile_result: object = _UNSET
         self.count_result: object = _UNSET
         self.collision_result = TTSProfileCollisionSnapshot(None, None)
         self.collision_reads = 0
@@ -483,6 +485,7 @@ class _FakeRepository:
         self.last_expected_profile: TTSGenerationProfile | None = None
         self.remove_boundary: _AsyncBoundary | None = None
         self.advance_generation_after_get_assignment = False
+        self.advance_generation_after_get_profile = False
 
     def _record_coordinator_state(self) -> None:
         self.coordinator_active_at_repository_calls.append(
@@ -757,6 +760,28 @@ class _FakeRepository:
         else:
             result = ProfileStoreResult(generation=self.generation, value=None)
         if self.advance_generation_after_get_assignment:
+            self.generation += 1
+        return result
+
+    async def get_profile(
+        self,
+        profile_id: UUID,
+    ) -> ProfileStoreResult[TTSGenerationProfile]:
+        self._record_coordinator_state()
+        self.calls.append(("get_profile", profile_id))
+        if self.get_profile_error is not None:
+            raise self.get_profile_error
+        if self.get_profile_result is not _UNSET:
+            result = cast(
+                ProfileStoreResult[TTSGenerationProfile],
+                self.get_profile_result,
+            )
+        else:
+            result = ProfileStoreResult(
+                generation=self.generation,
+                value=_profile(profile_id=profile_id),
+            )
+        if self.advance_generation_after_get_profile:
             self.generation += 1
         return result
 
@@ -3006,10 +3031,133 @@ async def test_get_assigned_profile_maps_repository_failures_safely(
     assert tts_service.capability_calls == []
 
 
+@pytest.mark.asyncio
+async def test_get_profile_returns_one_exact_immutable_loaded_profile() -> None:
+    service, repository, tts_service = _service()
+    persisted = _profile(voice_id="voice-a", revision=6)
+    repository.get_profile_result = ProfileStoreResult(
+        generation=repository.generation,
+        value=persisted,
+    )
+
+    loaded = await service.get_profile(_PROFILE_ID)
+
+    assert type(loaded) is LoadedTTSProfile
+    assert loaded.repository_generation == repository.generation
+    assert loaded.profile == persisted
+    assert loaded.profile is not persisted
+    assert loaded.profile.revision == 6
+    assert len(repository.calls) == 1
+    call_name, forwarded_id = repository.calls[0]
+    assert call_name == "get_profile"
+    assert type(forwarded_id) is UUID
+    assert forwarded_id == _PROFILE_ID
+    assert forwarded_id is not _PROFILE_ID
+    assert tts_service.capability_calls == []
+
+
+@pytest.mark.asyncio
+async def test_get_profile_rejects_nonuuid_profile_id() -> None:
+    service, repository, tts_service = _service()
+
+    with pytest.raises(ProfileValidationError) as caught:
+        await service.get_profile(str(_PROFILE_ID))  # type: ignore[arg-type]
+
+    assert caught.value.code == "profile_id"
+    assert repository.calls == []
+    assert tts_service.capability_calls == []
+
+
+@pytest.mark.asyncio
+async def test_get_profile_rejects_generation_change_before_publication() -> None:
+    repository = _FakeRepository()
+    repository.get_profile_result = ProfileStoreResult(
+        generation=repository.generation,
+        value=_profile(),
+    )
+    repository.advance_generation_after_get_profile = True
+    service, repository, tts_service = _service(repository=repository)
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await service.get_profile(_PROFILE_ID)
+
+    assert caught.value.code == "stale"
+    assert [name for name, _value in repository.calls] == ["get_profile"]
+    assert tts_service.capability_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    ("wrong-id", "hostile-envelope"),
+)
+async def test_get_profile_rejects_nonexact_repository_success(case: str) -> None:
+    repository = _FakeRepository()
+    if case == "wrong-id":
+        repository.get_profile_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(_profile(), profile_id=_DUPLICATE_ID),
+        )
+    else:
+        assert case == "hostile-envelope"
+        repository.get_profile_result = _HostileResult()
+    service, repository, tts_service = _service(repository=repository)
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.get_profile(_PROFILE_ID)
+
+    _assert_safe_service_error(
+        caught.value,
+        "operation_failed",
+        "credential",
+        "example.test",
+        "/private/path",
+        "submitted text",
+    )
+    assert [name for name, _value in repository.calls] == ["get_profile"]
+    assert tts_service.capability_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "expected_type", "expected_code"),
+    (
+        (
+            ProfileRepositoryError("missing"),
+            ProfileRepositoryError,
+            "missing",
+        ),
+        (
+            RuntimeError("https://user:credential@example.test/private/path"),
+            ProfileServiceError,
+            "operation_failed",
+        ),
+    ),
+)
+async def test_get_profile_maps_repository_failures_safely(
+    error: BaseException,
+    expected_type: type[BaseException],
+    expected_code: str,
+) -> None:
+    repository = _FakeRepository()
+    repository.get_profile_error = error
+    service, repository, tts_service = _service(repository=repository)
+
+    with pytest.raises(expected_type) as caught:
+        await service.get_profile(_PROFILE_ID)
+
+    assert getattr(caught.value, "code", None) == expected_code
+    assert "credential" not in str(caught.value)
+    assert "example.test" not in str(caught.value)
+    assert [name for name, _value in repository.calls] == ["get_profile"]
+    assert tts_service.capability_calls == []
+
+
 @pytest.mark.parametrize(
     ("method_name", "required_sections"),
     (
         ("get_assigned_profile", ("Args:", "Returns:", "Raises:")),
+        ("get_profile", ("Args:", "Returns:", "Raises:")),
         ("set_assignment", ("Args:", "Returns:", "Raises:")),
         ("detach_assignment", ("Args:", "Raises:")),
     ),

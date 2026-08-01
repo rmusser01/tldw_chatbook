@@ -142,6 +142,11 @@ class _ProfileRepositoryProtocol(Protocol):
         character_ref: CharacterRef,
     ) -> ProfileStoreResult[AssignedTTSProfileSnapshot | None]: ...
 
+    async def get_profile(
+        self,
+        profile_id: UUID,
+    ) -> ProfileStoreResult[TTSGenerationProfile]: ...
+
 
 @runtime_checkable
 class _PortableProfileRepositoryProtocol(Protocol):
@@ -342,6 +347,28 @@ def _canonicalize_exact_assignment(value: object) -> CharacterTTSAssignment:
         failed = True
     if failed or not valid or canonical is None:
         raise ProfileValidationError("assignment")
+    return canonical
+
+
+def _canonicalize_exact_profile_id(value: object) -> UUID:
+    """Return a fresh exact profile UUID or fail closed.
+
+    Mirrors `_canonicalize_exact_character_ref`'s defensive shape: a hostile
+    `UUID` subclass overriding comparison or attribute access cannot slip a
+    noncanonical identity past this boundary, since the returned value is
+    always rebuilt from the plain integer representation.
+    """
+
+    canonical: UUID | None = None
+    failed = False
+    try:
+        if type(value) is not UUID or type(value.int) is not int:
+            raise TypeError
+        canonical = UUID(int=value.int)
+    except Exception:  # noqa: BLE001 - hostile identity values fail closed
+        failed = True
+    if failed or canonical is None:
+        raise ProfileValidationError("profile_id")
     return canonical
 
 
@@ -1104,6 +1131,59 @@ class TTSProfileService:
         return LoadedCharacterTTSAssignment(
             repository_generation=generation,
             snapshot=snapshot,
+        )
+
+    async def get_profile(self, profile_id: UUID) -> LoadedTTSProfile:
+        """Load one exact stored profile revision by id, if it still exists.
+
+        A thin passthrough onto the repository's own `get_profile` (added
+        for callers that hold a stored profile id, such as the briefings
+        voice resolver, and need the current revision without paging
+        `list_profiles`). Mirrors `get_assigned_profile`'s exact shape.
+
+        Args:
+            profile_id: Exact profile UUID to load.
+
+        Returns:
+            The loaded profile paired with the repository generation that
+            produced it.
+
+        Raises:
+            ProfileValidationError: If `profile_id` is not an exact `UUID`.
+            ProfileRepositoryError: If the profile no longer exists (code
+                `"missing"`) or the repository read fails safely.
+            ProfileServiceError: If the repository returns malformed state or
+                an unexpected collaborator failure occurs.
+        """
+
+        canonical_id = _canonicalize_exact_profile_id(profile_id)
+        failed = False
+        result = None
+        try:
+            result = await self._repository.get_profile(canonical_id)
+        except (ProfileRepositoryError, ProfileValidationError):
+            raise
+        except Exception:  # noqa: BLE001 - hide unexpected repository detail
+            failed = True
+        if failed or result is None:
+            raise ProfileServiceError("operation_failed")
+
+        generation, value = self._extract_store_result(result)
+        self._require_repository_generation(generation)
+        profile: TTSGenerationProfile | None = None
+        validation_failed = False
+        try:
+            profile = _canonicalize_exact_profile(value)
+            if profile.profile_id != canonical_id:
+                raise ValueError
+        except Exception:  # noqa: BLE001 - hostile results fail closed
+            validation_failed = True
+        if validation_failed or profile is None:
+            raise ProfileServiceError("operation_failed")
+        self._require_repository_generation(generation)
+        return LoadedTTSProfile(
+            repository_generation=generation,
+            profile=profile,
         )
 
     async def observe_availability(
